@@ -170,3 +170,7 @@
 {"event": "satisfied", "id": "1ffac7fb", "wave": 0, "ts": "2026-05-22T12:08:17.566156Z"}
 {"event": "declared", "id": "0661a665", "plan": "every contract declared anywhere carries a scope tag: project | global | project\u2192global \u2014 agent judges at declare time; promoted contracts mirror from project store into global store", "action": "agent-judges", "pointer_type": "agent-judges", "parent_id": "0a2669bf", "pointers": [], "ts": "2026-05-22T12:51:27.247562Z"}
 {"event": "child_added", "id": "0a2669bf", "child_id": "0661a665", "ts": "2026-05-22T12:51:27.247924Z"}
+{"event": "declared", "id": "1d03c170", "plan": "a dependency registry at ~/.contracts/dependents.jsonl maps producer projects to downstream dependents so promoted contracts propagate automatically", "action": "test -f ~/.contracts/dependents.jsonl", "pointer_type": "cli", "parent_id": "0a2669bf", "pointers": [], "ts": "2026-05-22T12:51:32.380185Z"}
+{"event": "child_added", "id": "0a2669bf", "child_id": "1d03c170", "ts": "2026-05-22T12:51:32.380490Z"}
+{"event": "declared", "id": "b9324002", "plan": "every contract is revertable via git: the relevant contracts.jsonl file is git-tracked and git-checkout of a prior SHA is the undo primitive; no contract state is ever lost, only superseded", "action": "agent-judges", "pointer_type": "agent-judges", "parent_id": "0a2669bf", "pointers": [], "ts": "2026-05-22T12:51:32.453027Z"}
+{"event": "child_added", "id": "0a2669bf", "child_id": "b9324002", "ts": "2026-05-22T12:51:32.453518Z"}
