@@ -1165,6 +1165,89 @@ json.dump({
     fi
     ;;
 
+  verify)
+    # Lock-and-key binding dispatcher. Fires every contract whose bind_to
+    # matches the given surface (file path / glob / symbol / event tag).
+    # Substrate becomes a dispatcher, not just a ledger: when a surface
+    # changes, the contracts bound to it re-iterate. Contract ae1340a6.
+    #   contract verify <surface>           # iterate matching contracts
+    #   contract verify <surface> --list    # list matches without iterating
+    #   contract verify <surface> --auto    # auto-mark cell PASSes (KEY-2 surrogate)
+    SURFACE="${1:-}"; shift || true
+    [ -z "$SURFACE" ] && { echo "usage: contract verify <surface> [--list] [--auto]" >&2; exit 2; }
+    LIST_ONLY=""; AUTO=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --list) LIST_ONLY="1"; shift ;;
+        --auto) AUTO="1"; shift ;;
+        *) shift ;;
+      esac
+    done
+    SELF="$0"
+    PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" \
+      CV_SURFACE="$SURFACE" CV_LIST="$LIST_ONLY" CV_AUTO="$AUTO" CV_SELF="$SELF" \
+      python3 - <<'PY'
+import fnmatch, os, subprocess, sys
+from contract_core import list_all, get
+
+surface = os.environ["CV_SURFACE"]
+list_only = bool(os.environ.get("CV_LIST"))
+auto = bool(os.environ.get("CV_AUTO"))
+SELF = os.environ["CV_SELF"]
+
+def _matches(bind_to: str, surf: str) -> bool:
+    """Three-mode match: literal, glob, substring. The most specific wins,
+    but every successful mode counts as a match."""
+    if not bind_to: return False
+    if bind_to == surf: return True
+    # glob match (fnmatch handles *, ?, [seq])
+    if any(c in bind_to for c in "*?["):
+        if fnmatch.fnmatch(surf, bind_to): return True
+        # also try matching surf as a path against the glob from any segment
+        try:
+            if fnmatch.fnmatch(os.path.abspath(surf), bind_to): return True
+        except Exception: pass
+        return False
+    # substring fallback (e.g., bind_to="layout.tsx" matches surf=".../src/app/layout.tsx")
+    return bind_to in surf
+
+# Build active-contract list (full rows so we can read bind_to + status)
+all_rows = list_all()
+matches = []
+for c in all_rows:
+    bt = c.get("bind_to")
+    if not bt: continue
+    if c.get("status") in ("merged",): continue  # fossils don't fire
+    if _matches(bt, surface):
+        matches.append(c)
+
+print(f"=== contract verify ({surface}) ===")
+print(f"  matched {len(matches)} bound contract(s)")
+if list_only:
+    for c in matches:
+        print(f"  - {c['id']} [{c.get('status','pending')}]  bind_to={c.get('bind_to')!r}  {c['plan'][:60]}")
+    sys.exit(0)
+
+if not matches:
+    print(f"  no contracts bound to '{surface}'. Use --bind-to on declare to bind one.")
+    sys.exit(0)
+
+fail = 0
+for c in matches:
+    print(f"\n  ── verifying {c['id']} (bind_to={c.get('bind_to')!r}) ──")
+    r = subprocess.run(["bash", SELF, "iterate", c["id"]])
+    if r.returncode != 0:
+        fail += 1
+        continue
+    if auto and c.get("action") not in ("agent-judges",) and not (c.get("action") or "").startswith(
+        ("funnel", "harness:", "loop", "sequence", "quorum", "tool-guard:")):
+        subprocess.run(["bash", SELF, "_mark", c["id"], "satisfied"])
+
+print(f"\n  surface={surface}  matched={len(matches)}  failed={fail}")
+sys.exit(0 if fail == 0 else 1)
+PY
+    ;;
+
   drive-watch)
     # Runtime-agnostic drive transport. Polls the ledger inline and re-fires
     # `contract iterate` against the next pending leaf until the organ is
