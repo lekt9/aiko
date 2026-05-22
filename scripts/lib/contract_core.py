@@ -209,8 +209,6 @@ def children_satisfy(id: str) -> bool:
     if not all(s in ("satisfied", "merged") for s in statuses):
         return False
     return any(s == "satisfied" for s in statuses)
-
-
 def first_child_satisfies(id: str) -> bool:
     """funnel-first: at least one child satisfied (OR-gate)."""
     c = get(id)
