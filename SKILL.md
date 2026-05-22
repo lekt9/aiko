@@ -353,7 +353,7 @@ contract supersede <loser-id> <winner-id> --reason "<why the winner is fitter>"
 
 `supersede` (alias: `merge`) appends a `merged` event. The superseded
 contract becomes a **fossil**: terminal `merged` status, kept in the ledger
-forever, but dropped from `list`, from `habit`, and from the declare-time
+forever, but dropped from `list`, from `search`, and from the declare-time
 contradiction surface. A fossil never resurfaces as a reuse candidate —
 selection is one-directional.
 
