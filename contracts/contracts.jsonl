@@ -355,3 +355,4 @@
 {"event": "satisfied", "id": "10db7d46", "wave": 0, "ts": "2026-05-22T14:24:48.489519Z"}
 {"event": "declared", "id": "1905f968", "plan": "banger inyo landing page shipped: evidence-built, tested e2e, deployed to cloudflare, bob notified", "action": "funnel", "pointer_type": "funnel", "parent_id": null, "pointers": [], "ts": "2026-05-22T14:32:58.392936Z"}
 {"event": "declared", "id": "929b7edc", "plan": "no unbrowse usage today \u2014 use curl/fetch/WebFetch instead", "action": "agent-judges", "pointer_type": "agent-judges", "parent_id": null, "pointers": [], "ts": "2026-05-22T14:59:02.785256Z"}
+{"event": "declared", "id": "dfc147a3", "plan": "inyo platform works e2e: onboard via SMS \u2192 profile stored \u2192 match scored \u2192 match delivered to both parties", "action": "funnel", "pointer_type": "funnel", "parent_id": null, "pointers": [], "ts": "2026-05-22T15:02:22.102506Z"}
