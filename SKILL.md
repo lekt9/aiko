@@ -387,9 +387,9 @@ Iterating the sequence always names the next unsatisfied stage — Light
 before Firmament before Land. Bound a stage's effort with `--budget N`;
 iterate then surfaces wave-vs-budget as evidence.
 
-**Step 7 — Sabbath (the verdict).** The two-key exit is the Sabbath: KEY 1
-machine, KEY 2 the agent's PROMOTE / HOLD / REJECT. Default contract #11 is
-literally Sabbath — recognize genuine convergence and stop.
+**Step 7 — Verdict.** The two-key exit is the verdict: KEY 1 machine, KEY 2
+the agent's PROMOTE / HOLD / REJECT. Recognize genuine convergence and stop;
+the two-key exit is final.
 
 **Step 8 — Judgement (the falsifier `audit`).** Before the organism is
 satisfied, `contract audit <root> --auditors N` fans out N cold auditors
