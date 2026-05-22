@@ -811,24 +811,40 @@ else:
   drive)
     ID="${1:-}"
     [ -z "$ID" ] && { echo "usage: contract drive <contract-id>  arm the agent-judged drive loop" >&2; exit 2; }
-    # Resolve the store so the Stop hook and drive-advance.sh find the right ledger.
+    # Per-contract folder substrate. Every contract has its own ~/.contracts/contracts.d/<id>/
+    # holding drive.json + cwd.txt + artifacts/. Multiple drives can be armed concurrently
+    # because state is per-folder, not a global singleton. Contract a2290c19.
     ACTIVE_STORE=$(PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 -c "from contract_core import _resolve_ledger; print(_resolve_ledger())" 2>/dev/null || echo "$HOME/.contracts/contracts.jsonl")
+    CONTRACT_FOLDER=$(PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 -c "from contract_core import contract_dir; print(contract_dir('$ID'))" 2>/dev/null)
+    if [ -z "$CONTRACT_FOLDER" ]; then
+      echo "contract: ERROR could not resolve folder for $ID" >&2
+      exit 1
+    fi
+    ARMED_TS=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ'))")
+    python3 -c "
+import json, sys
+json.dump({
+    'organ':    '$ID',
+    'cwd':      '$(pwd)',
+    'store':    '$ACTIVE_STORE',
+    'armed_ts': '$ARMED_TS',
+    'state':    'armed',
+}, open('$CONTRACT_FOLDER/drive.json', 'w'))
+"
+    echo "$(pwd)" > "$CONTRACT_FOLDER/cwd.txt"
+    # Legacy compatibility: keep the old global sidecars in lockstep so any
+    # in-flight tooling (drive-advance.sh older builds, external readers)
+    # still works during the transition. They are now derivative of the
+    # per-contract folder, never the source of truth.
     echo "$ID" > "$HOME/.contracts/.drive_active"
     echo "$ACTIVE_STORE" > "$HOME/.contracts/.drive_store"
-    # Record arming cwd so the Stop hook can refuse to fire across project boundaries.
-    # Without this, .drive_active is a global singleton that pokes EVERY new session
-    # in EVERY project, injecting cross-project "iterate <id>" prompts. See contract eb845091.
     pwd > "$HOME/.contracts/.drive_cwd"
-    # Seed drive_next.txt with the first pending leaf. The loop ADVANCES the
-    # agent with no human pause (Stop hook contract-drive.py re-injects each
-    # wave), but the agent renders KEY 2 every wave and marks it. No script
-    # marks a contract satisfied: that would be a fabricated verdict and would
-    # violate contract default #4 (harness collects, agent judges).
+    # Seed the next-pending-leaf surface via the existing internal hook.
     DRIVE_HOOK="$HOME/.contracts/hooks/drive-advance.sh"
     [ -x "$DRIVE_HOOK" ] && bash "$DRIVE_HOOK" "drive" "$ID" "0" 2>>"$HOME/.contracts/hooks/errors.log"
     echo "=== CONTRACT DRIVE ARMED: $ID ==="
-    echo "  Agent-judged turbo loop: re-fires with no human pause; the agent"
-    echo "  iterates, judges KEY 2, and marks every wave. 'contract disarm' stops it."
+    echo "  Folder: $CONTRACT_FOLDER"
+    echo "  Agent-judged turbo loop. 'contract disarm $ID' (or bare 'disarm' to clear all)."
     echo
     if [ -f "$HOME/.contracts/drive_next.txt" ]; then
       NEXT_MSG=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('msg',''))" < "$HOME/.contracts/drive_next.txt" 2>/dev/null)
@@ -843,14 +859,49 @@ else:
     ;;
 
   disarm)
-    DRIVE_STATE="$HOME/.contracts/.drive_active"
-    if [ -f "$DRIVE_STATE" ]; then
-      ARMED_ID=$(cat "$DRIVE_STATE")
-      rm -f "$DRIVE_STATE" "$HOME/.contracts/drive_next.txt" "$HOME/.contracts/.drive_store" "$HOME/.contracts/.drive_cwd"
-      echo "Contract drive disarmed (was driving organ: $ARMED_ID)."
-    else
-      echo "No drive active."
-    fi
+    # Per-contract disarm: with an id, clears that one folder's drive.json.
+    # Without an id, clears ALL drives whose cwd matches the current session
+    # (or every drive if --all is passed). The global sidecars are also cleared
+    # whenever no armed contracts remain.
+    TARGET="${1:-}"
+    ALL=""
+    if [ "$TARGET" = "--all" ]; then ALL="1"; TARGET=""; fi
+    PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 - "$TARGET" "$ALL" <<'PY'
+import json, os, sys, shutil
+from pathlib import Path
+from contract_core import contracts_d_root
+target, mode_all = sys.argv[1], sys.argv[2]
+root = contracts_d_root()
+cleared = []
+here = os.path.realpath(os.getcwd())
+if target:
+    drive = root / target / "drive.json"
+    if drive.exists():
+        drive.unlink()
+        cleared.append(target)
+else:
+    for d in (root.glob("*/drive.json") if root.exists() else []):
+        try:
+            j = json.loads(d.read_text())
+        except Exception:
+            continue
+        if mode_all or os.path.realpath(j.get("cwd", "")) == here:
+            d.unlink()
+            cleared.append(d.parent.name)
+# If no drives remain, clear the legacy global sidecars too.
+remaining = list(root.glob("*/drive.json")) if root.exists() else []
+if not remaining:
+    for f in (".drive_active", "drive_next.txt", ".drive_store", ".drive_cwd"):
+        try: (Path.home() / ".contracts" / f).unlink()
+        except FileNotFoundError: pass
+if cleared:
+    print(f"Contract drive disarmed: {', '.join(cleared)}")
+elif remaining:
+    print(f"No matching drive to disarm (cwd={here}). "
+          f"{len(remaining)} drive(s) still armed in other cwds; use --all to clear them.")
+else:
+    print("No drive active.")
+PY
     ;;
 
   corroborate)
