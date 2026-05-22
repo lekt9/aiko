@@ -520,3 +520,4 @@
 {"event": "child_added", "id": "c2bc95a4", "child_id": "e4c3e106", "ts": "2026-05-22T20:39:38.632265Z"}
 {"event": "iterated", "id": "22d4ccd8", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T20:39:40.590515Z"}
 {"event": "satisfied", "id": "22d4ccd8", "wave": 0, "ts": "2026-05-22T20:39:47.063194Z"}
+{"event": "satisfied", "id": "d4ab98a9", "wave": 0, "ts": "2026-05-22T20:39:50.326454Z"}
