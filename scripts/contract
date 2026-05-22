@@ -673,8 +673,43 @@ print(leaf['id'] if leaf else '__DONE__')
 PYEOF
 )
       if [ "$NEXT_ID" = "__DONE__" ] || [ "$NEXT_ID" = "__GONE__" ]; then
-        echo "=== DRIVE LOOP COMPLETE: all leaves satisfied ==="
-        echo "  Verify parent organ: contract iterate $ID"
+        # ── BUBBLE-UP: satisfy intermediate organs bottom-up ─────────────────
+        # Leaves are all done. Walk the tree bottom-up: any pending organ whose
+        # children are all satisfied gets iterated and marked automatically.
+        BUBBLED=1
+        while [ "$BUBBLED" = "1" ]; do
+          BUBBLED=0
+          BUBBLE_TARGET=$(CONTRACTS_STORE="$ACTIVE_STORE" PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 - "$ID" <<'BUBBLEPY'
+import sys, os
+sys.path.insert(0, os.path.expanduser('~/.claude/skills/contract/scripts/lib'))
+from contract_core import get_tree
+organ_id = sys.argv[1]
+def find_bubble_target(node):
+    if node['status'] == 'satisfied': return None
+    kids = node.get('child_nodes') or []
+    for k in kids:
+        t = find_bubble_target(k)
+        if t: return t
+    if kids and all(k['status'] == 'satisfied' for k in kids):
+        return node
+    return None
+tree = get_tree(organ_id)
+if not tree: print('__NONE__'); sys.exit(0)
+target = find_bubble_target(tree)
+print(target['id'] if target else '__NONE__')
+BUBBLEPY
+)
+          if [ "$BUBBLE_TARGET" != "__NONE__" ] && [ -n "$BUBBLE_TARGET" ]; then
+            echo "--- DRIVE LOOP bubble-up: satisfying organ $BUBBLE_TARGET ---"
+            CONTRACTS_STORE="$ACTIVE_STORE" bash "$0" iterate "$BUBBLE_TARGET"
+            if [ $? -eq 0 ]; then
+              CONTRACTS_STORE="$ACTIVE_STORE" bash "$0" _mark "$BUBBLE_TARGET" satisfied
+              BUBBLED=1
+              echo
+            fi
+          fi
+        done
+        echo "=== DRIVE LOOP COMPLETE: $ID satisfied ==="
         rm -f "$HOME/.contracts/.drive_active" "$HOME/.contracts/.drive_store" "$HOME/.contracts/drive_next.txt"
         break
       fi
@@ -693,6 +728,7 @@ PYEOF
       CONTRACTS_STORE="$ACTIVE_STORE" bash "$0" _mark "$NEXT_ID" satisfied
       echo
     done
+    ;;
     ;;
 
 
