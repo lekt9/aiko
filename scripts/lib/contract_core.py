@@ -214,43 +214,10 @@ def revise(id: str, new_action: str, reason: str = "") -> None:
 
 
 
-def get(id: str) -> Optional[dict]:
-    all_rows = _rows()
-    declared = next((r for r in all_rows if r.get("id") == id and r.get("event") == "declared"), None)
-    if not declared:
-        return None
-    children = [r["child_id"] for r in all_rows
-                if r.get("id") == id and r.get("event") == "child_added"]
-    iter_rows = [r for r in all_rows if r.get("id") == id and r.get("event") == "iterated"]
-    satisfied = any(r.get("event") == "satisfied" for r in all_rows if r.get("id") == id)
-    merged_rows = [r for r in all_rows if r.get("id") == id and r.get("event") == "merged"]
-    revised_rows = [r for r in all_rows if r.get("id") == id and r.get("event") == "revised"]
-    status_updates = [r["status"] for r in all_rows
-                      if r.get("id") == id and r.get("event") == "status_update" and r.get("status")]
-    if merged_rows:
-        status = "merged"
-    elif status_updates:
-        status = status_updates[-1]
-    elif satisfied:
-        status = "satisfied"
-    elif iter_rows:
-        status = "active"
-    else:
-        status = "pending"
-    wave = max((r.get("wave", 0) for r in iter_rows), default=0)
-    current_action = revised_rows[-1]["new_action"] if revised_rows else declared["action"]
-    result = {"id": id, "plan": declared["plan"], "action": current_action,
-              "pointer_type": declared.get("pointer_type") or _infer_pointer_type(current_action),
-              "parent_id": declared.get("parent_id"), "children": children,
-              "pointers": declared.get("pointers") or [],
-              "cwd": declared.get("cwd"), "budget": declared.get("budget"),
-              "status": status, "wave": wave}
-    if merged_rows:
-        result["merged_into"] = merged_rows[-1].get("merged_into")
-    if revised_rows:
-        result["original_action"] = declared["action"]
-    if declared.get("learning"):
+if declared.get("learning"):
         result["learning"] = declared["learning"]
+    if declared.get("bind_to"):
+        result["bind_to"] = declared["bind_to"]
     return result
 def get_tree(id: str, depth: int = 0) -> Optional[dict]:
     c = get(id)
