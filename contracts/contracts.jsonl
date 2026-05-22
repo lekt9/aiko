@@ -2582,3 +2582,7 @@
 {"event": "child_added", "id": "c9b41607", "child_id": "c7b010cd", "ts": "2026-05-22T21:30:56.571785Z"}
 {"event": "iterated", "id": "f8300680", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:30:56.631877Z"}
 {"event": "satisfied", "id": "f8300680", "wave": 0, "ts": "2026-05-22T21:30:56.690317Z"}
+{"event": "declared", "id": "dd431565", "plan": "budgetgate_selftest_87147 budget probe contract", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:32:03.184864Z", "budget": 2}
+{"event": "iterated", "id": "dd431565", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:32:03.536328Z"}
+{"event": "iterated", "id": "dd431565", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:32:03.740513Z"}
+{"event": "iterated", "id": "dd431565", "wave": 3, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:32:03.944487Z"}
