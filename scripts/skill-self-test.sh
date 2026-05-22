@@ -49,6 +49,13 @@ check "verb/install-hooks-dry"     env CONTRACTS_STORE="$HOME/.contracts/contrac
 check "verb/export-hooks-json"     env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" export-hooks --format json
 check "verb/drive-watch-missing"   env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" drive-watch nonexistent-id-XXXX
 
+# Binding substrate (contract ae1340a6)
+check "binding/declare-bind-to"    env PYTHONPATH="$SCRIPTS/lib" python3 -c \
+                                     "from contract_core import declare; import inspect; assert 'bind_to' in inspect.signature(declare).parameters"
+check "binding/get-surfaces-it"    env PYTHONPATH="$SCRIPTS/lib" python3 -c \
+                                     "from contract_core import get; import inspect; src = inspect.getsource(get); assert 'bind_to' in src"
+check "binding/verify-foreign"     env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" verify __nonexistent_surface_xyz__
+
 if [ $fail -gt 0 ]; then
   printf "\nSKILL-SELF-TEST: %d FAIL(S)\n" "$fail" >&2
   exit 1
