@@ -733,7 +733,7 @@ print(f'  next: contract iterate {id1}')
         *) shift ;;
       esac
     done
-    [ -z "$SRC" ] || [ -z "$TGT" ] && { echo "usage: contract merge <source-id> <target-id> [--reason \"<why>\"]" >&2; exit 2; }
+    [ -z "$SRC" ] || [ -z "$TGT" ] && { echo "usage: contract supersede <loser-id> <winner-id> [--reason \"<why>\"]   (alias: merge)" >&2; exit 2; }
     MH_SRC="$SRC" MH_TGT="$TGT" MH_REASON="$REASON" _py_inline "
 import os; from contract_core import merge_into, get
 src, tgt = os.environ['MH_SRC'], os.environ['MH_TGT']
