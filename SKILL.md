@@ -312,15 +312,19 @@ contract spawn <parent-id> "sub-claim that must hold" [--action "<cmd>"]
 
 `spawn` does not write to the ledger. It emits a SPAWN REQUIRED block telling the agent to route the child via a sub-agent (Agent tool) or directly. The child's ledger entry is written when the sub-agent runs `contract declare`. The parent becomes an organ when it has children; its satisfaction = all children satisfied.
 
-## Habit detection
+## Search (related-contract surfacing)
 
-`contract habit --context "<text>"` scores the context against all existing contract `plan` fields. Surfaces candidates above threshold:
+The contract IS the habit. There is no separate "habit detection" concept — there is only `contract search`, which surfaces existing contracts related to the current context. Every "candidate" it returns is already a contract in the ledger; treat it as a lookup, not a pattern-promotion prompt.
+
+`contract search --context "<text>"` (alias: `contract habit`) scores the context against all existing contract `plan` fields. Surfaces candidates above threshold:
 
 ```
-HABIT CANDIDATE (score=0.87): "verify X always holds"
-  id: <uuid>   status: satisfied
-  → contract iterate <id>         # re-satisfy in this session
-  → contract spawn <id> "<sub>"   # delegate sub-work to this parent
+RELATED CONTRACTS (threshold=0.55):
+
+  [+] score=0.87  id=<uuid>  status=satisfied
+      plan:   verify X always holds ...
+      -> contract iterate <id>         # re-satisfy in this session
+      -> contract spawn <id> "<sub>"   # delegate sub-work to this parent
 ```
 
 The detector surfaces. The agent declares. Auto-contracting is a forbidden surface (pattern-match lists prescribing behavior).
