@@ -174,9 +174,11 @@ def get(id: str) -> Optional[dict]:
               "parent_id": declared.get("parent_id"), "children": children,
               "pointers": declared.get("pointers") or [],
               "cwd": declared.get("cwd"), "budget": declared.get("budget"),
-              "status": status, "wave": wave}
-    if merged_rows:
-        result["merged_into"] = merged_rows[-1].get("merged_into")
+    if revised_rows:
+        result["original_action"] = declared["action"]
+    if declared.get("learning"):
+        result["learning"] = declared["learning"]
+    return result
     if revised_rows:
         result["original_action"] = declared["action"]
     return result
