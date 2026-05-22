@@ -277,6 +277,44 @@ HABIT CANDIDATE (score=0.87): "verify X always holds"
 
 The detector surfaces. The agent declares. Auto-contracting is a forbidden surface (pattern-match lists prescribing behavior).
 
+## Lifecycle and natural selection
+
+Contracts are not immortal. They are born, they compete, and the less-fit
+ones are retired — a natural-selection lifecycle, recorded in the one
+append-only ledger.
+
+**Birth with a contradiction check.** Every `declare` runs the habit
+detector against the new plan and surfaces the past contracts it most
+resembles, under a `lifecycle check (natural selection)` block. The
+substrate only surfaces; the agent judges in-thread whether the new
+contract genuinely **contradicts**, duplicates, or merely refines an
+existing one. No script renders the contradiction verdict — a regex on plan
+text would be a forbidden surface.
+
+**Selection by supersession.** When two contracts genuinely contradict, the
+agent picks the fitter one (newer evidence, broader truth, a real check
+versus a wish) and retires the other:
+
+```bash
+contract supersede <loser-id> <winner-id> --reason "<why the winner is fitter>"
+```
+
+`supersede` (alias: `merge`) appends a `merged` event. The superseded
+contract becomes a **fossil**: terminal `merged` status, kept in the ledger
+forever, but dropped from `list`, from `habit`, and from the declare-time
+contradiction surface. A fossil never resurfaces as a reuse candidate —
+selection is one-directional.
+
+**Heredity.** The `merged` row carries `merged_into: <winner-id>`, so every
+supersession is an edge in the contract DAG. The chain of fossils behind a
+living contract is its lineage — the evolutionary record of how that truth
+claim was refined. `contract list --show-merged` reveals the fossils.
+
+The ledger is the fossil record: append-only, every superseded contract
+preserved as evidence. Natural selection here is variation (the ledger
+accumulates contracts), selection (the agent supersedes the less-fit on a
+surfaced contradiction), and heredity (the `merged_into` lineage edge).
+
 ## What this skill does NOT do
 
 - Auto-declare from a detected pattern. Surfaces candidates only.
