@@ -2670,3 +2670,6 @@
 {"event": "child_added", "id": "7f925b0e", "child_id": "d719ff96", "ts": "2026-05-22T21:44:11.833525Z"}
 {"event": "declared", "id": "6a49df34", "plan": "The bloom Telegram webhook is graff-driven: it forwards each message to the graff-brain and the heuristic advance() state machine is retired from the live path.", "action": "bash checks/g3-webhook.sh", "pointer_type": "cli", "cwd": "/Users/lekt9/Projects/cloneyo", "parent_id": "7f925b0e", "pointers": [], "ts": "2026-05-22T21:44:12.028745Z"}
 {"event": "child_added", "id": "7f925b0e", "child_id": "6a49df34", "ts": "2026-05-22T21:44:12.029062Z"}
+{"event": "iterated", "id": "d0d89930", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:44:18.621026Z"}
+{"event": "iterated", "id": "d719ff96", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:44:18.870044Z"}
+{"event": "iterated", "id": "6a49df34", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:44:20.061386Z"}
