@@ -2622,3 +2622,6 @@
 {"event": "declared", "id": "2642433b", "plan": "propgate_selftest_95459 child leaf", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": "af1653e1", "pointers": [], "ts": "2026-05-22T21:37:58.466520Z"}
 {"event": "child_added", "id": "af1653e1", "child_id": "2642433b", "ts": "2026-05-22T21:37:58.466821Z"}
 {"event": "declared", "id": "1f8e5576", "plan": "propgate_selftest_95459 referrer that depends on the leaf", "action": "contract:2642433b", "pointer_type": "contract-ref", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:37:58.646329Z"}
+{"event": "declared", "id": "eeb14b34", "plan": "propgate_selftest_95459 synapse partner", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:37:58.826221Z"}
+{"event": "corroborated", "id": "2642433b", "corroborates": "eeb14b34", "label": "", "ts": "2026-05-22T21:37:58.999711Z"}
+{"event": "satisfied", "id": "2642433b", "wave": 0, "ts": "2026-05-22T21:37:59.028268Z"}
