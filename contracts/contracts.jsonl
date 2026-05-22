@@ -325,3 +325,9 @@
 {"event": "child_added", "id": "f8f1e965", "child_id": "9b575013", "ts": "2026-05-22T14:18:10.767344Z"}
 {"event": "declared", "id": "37dcc048", "plan": "chain-test phase-B", "action": "funnel", "pointer_type": "funnel", "parent_id": "f8f1e965", "pointers": [], "ts": "2026-05-22T14:18:10.914866Z"}
 {"event": "child_added", "id": "f8f1e965", "child_id": "37dcc048", "ts": "2026-05-22T14:18:10.915178Z"}
+{"event": "declared", "id": "19f0caa7", "plan": "phase-A leaf 1", "action": "echo A1", "pointer_type": "cli", "parent_id": "9b575013", "pointers": [], "ts": "2026-05-22T14:18:14.581745Z"}
+{"event": "child_added", "id": "9b575013", "child_id": "19f0caa7", "ts": "2026-05-22T14:18:14.582031Z"}
+{"event": "declared", "id": "d5ef1a26", "plan": "phase-A leaf 2", "action": "echo A2", "pointer_type": "cli", "parent_id": "9b575013", "pointers": [], "ts": "2026-05-22T14:18:14.643168Z"}
+{"event": "child_added", "id": "9b575013", "child_id": "d5ef1a26", "ts": "2026-05-22T14:18:14.643453Z"}
+{"event": "declared", "id": "b81691ad", "plan": "phase-B leaf 1", "action": "echo B1", "pointer_type": "cli", "parent_id": "37dcc048", "pointers": [], "ts": "2026-05-22T14:18:14.702568Z"}
+{"event": "child_added", "id": "37dcc048", "child_id": "b81691ad", "ts": "2026-05-22T14:18:14.702853Z"}
