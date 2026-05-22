@@ -815,6 +815,10 @@ else:
     ACTIVE_STORE=$(PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 -c "from contract_core import _resolve_ledger; print(_resolve_ledger())" 2>/dev/null || echo "$HOME/.contracts/contracts.jsonl")
     echo "$ID" > "$HOME/.contracts/.drive_active"
     echo "$ACTIVE_STORE" > "$HOME/.contracts/.drive_store"
+    # Record arming cwd so the Stop hook can refuse to fire across project boundaries.
+    # Without this, .drive_active is a global singleton that pokes EVERY new session
+    # in EVERY project, injecting cross-project "iterate <id>" prompts. See contract eb845091.
+    pwd > "$HOME/.contracts/.drive_cwd"
     # Seed drive_next.txt with the first pending leaf. The loop ADVANCES the
     # agent with no human pause (Stop hook contract-drive.py re-injects each
     # wave), but the agent renders KEY 2 every wave and marks it. No script
