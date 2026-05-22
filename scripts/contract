@@ -1232,6 +1232,22 @@ if not matches:
     print(f"  no contracts bound to '{surface}'. Use --bind-to on declare to bind one.")
     sys.exit(0)
 
+def _latest_action_exit(cid):
+    """Latest 'iterated' row's action_exit. iterate(1) always exits 0
+    (two-key exit defers verdict to agent); ledger row holds the truth."""
+    import json, pathlib
+    store = os.environ.get("CONTRACTS_STORE") or str(pathlib.Path.home() / ".contracts" / "contracts.jsonl")
+    last = None
+    try:
+        for l in open(store):
+            try: r = json.loads(l)
+            except Exception: continue
+            if r.get("id") == cid and r.get("event") == "iterated":
+                last = r
+    except FileNotFoundError:
+        return None
+    return last.get("action_exit") if last else None
+
 fail = 0
 for c in matches:
     print(f"\n  ── verifying {c['id']} (bind_to={c.get('bind_to')!r}) ──")
@@ -1239,9 +1255,16 @@ for c in matches:
     if r.returncode != 0:
         fail += 1
         continue
-    if auto and c.get("action") not in ("agent-judges",) and not (c.get("action") or "").startswith(
-        ("funnel", "harness:", "loop", "sequence", "quorum", "tool-guard:")):
-        subprocess.run(["bash", SELF, "_mark", c["id"], "satisfied"])
+    action = c.get("action") or ""
+    is_judgment = action == "agent-judges" or action.startswith(
+        ("funnel", "harness:", "loop", "sequence", "quorum", "tool-guard:"))
+    if not is_judgment:
+        exit_code = _latest_action_exit(c["id"])
+        if exit_code is not None and exit_code != 0:
+            fail += 1
+            continue
+        if auto:
+            subprocess.run(["bash", SELF, "_mark", c["id"], "satisfied"])
 
 print(f"\n  surface={surface}  matched={len(matches)}  failed={fail}")
 sys.exit(0 if fail == 0 else 1)
