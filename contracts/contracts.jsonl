@@ -320,3 +320,4 @@
 {"event": "iterated", "id": "e76293a6", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T14:10:33.198899Z"}
 {"event": "iterated", "id": "e76293a6", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T14:10:33.261293Z"}
 {"event": "satisfied", "id": "e76293a6", "wave": 0, "ts": "2026-05-22T14:10:33.261536Z"}
+{"event": "declared", "id": "f8f1e965", "plan": "chain-test root", "action": "funnel", "pointer_type": "funnel", "parent_id": null, "pointers": [], "ts": "2026-05-22T14:18:06.137536Z"}
