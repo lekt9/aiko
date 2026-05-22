@@ -273,3 +273,5 @@
 {"event": "declared", "id": "03ab114c", "plan": "smoke-test organ for inline drive advance", "action": "funnel", "pointer_type": "funnel", "parent_id": null, "pointers": [], "ts": "2026-05-22T13:16:34.876383Z"}
 {"event": "declared", "id": "a243ed2d", "plan": "smoke leaf A: always passes", "action": "echo LEAF_A_OK", "pointer_type": "cli", "parent_id": "03ab114c", "pointers": [], "ts": "2026-05-22T13:16:37.686515Z"}
 {"event": "child_added", "id": "03ab114c", "child_id": "a243ed2d", "ts": "2026-05-22T13:16:37.686820Z"}
+{"event": "declared", "id": "f55053a9", "plan": "smoke leaf B: also passes", "action": "echo LEAF_B_OK", "pointer_type": "cli", "parent_id": "03ab114c", "pointers": [], "ts": "2026-05-22T13:16:41.687286Z"}
+{"event": "child_added", "id": "03ab114c", "child_id": "f55053a9", "ts": "2026-05-22T13:16:41.687599Z"}
