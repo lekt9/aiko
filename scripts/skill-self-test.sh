@@ -39,9 +39,13 @@ check "hook/folder-aware"          python3 -c \
                                      "import sys; sys.exit(0 if 'contracts_d_root' in open('$HOME/.claude/hooks/contract-drive.py').read() else 1)"
 [ -x "$HOOK_DIR/drive-advance.sh" ] && \
   check "hook/drive-advance-exec"  test -x "$HOOK_DIR/drive-advance.sh"
+[ -x "$HOOK_DIR/drive-advance.sh" ] && \
+  check "hook/drive-advance-exec"  test -x "$HOOK_DIR/drive-advance.sh"
 
-if [ $fail -gt 0 ]; then
-  printf "\nSKILL-SELF-TEST: %d FAIL(S)\n" "$fail" >&2
+# Three setup verbs that replace ledger setup-noise with code (contract 33c188dc)
+check "verb/init-dry"              env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" init --dry-run
+check "verb/skills-sync"           bash "$CLI" skills sync --json
+check "verb/install-hooks-dry"     env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" install-hooks --dry-run
   exit 1
 fi
 echo
