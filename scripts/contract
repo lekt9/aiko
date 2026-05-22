@@ -583,7 +583,7 @@ for c in cs:
 
   defaults)
     cat <<'DEFAULTS'
-=== CONTRACT DEFAULTS (13 universal principles) ===
+=== CONTRACT DEFAULTS (12 universal principles) ===
 
 -- Engineering principles (CLAUDE.md + CONTRACTS.md) --
  1. substrate       (judgment)  "substrate enables, never prescribes — no forbidden surface"
