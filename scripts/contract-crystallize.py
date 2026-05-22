@@ -122,19 +122,20 @@ def _outline_config():
 
 
 def _outline_call(base, token, action, payload):
+    # A custom User-Agent is load-bearing: the Cloudflare edge in front of
+    # the self-hosted Outline 403s the default `Python-urllib` UA as a bot.
     req = urllib.request.Request(
         f"{base}/api/{action}",
         data=json.dumps(payload).encode(),
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
+            "User-Agent": "contract-crystallize/1.0",
         },
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
         return json.loads(resp.read().decode())
-
-
 def _collection_id(base, token):
     """Resolve the destination collection id, find-or-create, cached.
     Prefers an existing collection named COLLECTION_NAME - the create path is
