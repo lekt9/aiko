@@ -52,6 +52,8 @@ _run_action() {
     ptype="loop"
   elif [[ "$action" == harness:* ]]; then
     ptype="harness"
+  elif [[ "$action" == tool-guard:* ]]; then
+    ptype="tool-guard"
   elif [[ "$action" == contract:* ]]; then
     ptype="contract-ref"
   elif [[ "$action" == curl\ * || "$action" == http://* || "$action" == https://* || "$action" == wget\ * ]]; then
