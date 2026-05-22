@@ -1159,6 +1159,112 @@ json.dump({
     fi
     ;;
 
+  drive-watch)
+    # Runtime-agnostic drive transport. Polls the ledger inline and re-fires
+    # `contract iterate` against the next pending leaf until the organ is
+    # satisfied OR a leaf reports AGENT-JUDGES (which requires in-thread
+    # judgment). Replaces the Claude-Code Stop hook for any runtime that
+    # doesn't have one. Contract 31a7612c. Usage:
+    #   contract drive-watch <organ-id> [--interval N] [--max-waves N] [--auto-mark-cells]
+    # By default ONLY runs cell actions (mechanical). Judgments halt the loop
+    # so the agent can render KEY 2; the loop resumes when the agent re-runs
+    # the verb. --auto-mark-cells marks a cell SATISFIED when its exit is 0
+    # AND the agent has supplied CONTRACT_AUTOMARK=1 (still a KEY-2 surrogate
+    # for trusted-mechanical actions; off by default to preserve two-key exit).
+    ORGAN="${1:-}"; shift || true
+    [ -z "$ORGAN" ] && { echo "usage: contract drive-watch <organ-id> [--interval N] [--max-waves N] [--auto-mark-cells]" >&2; exit 2; }
+    INTERVAL="2"; MAX="200"; AUTOMARK=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --interval) INTERVAL="${2:-2}"; shift 2 ;;
+        --max-waves) MAX="${2:-200}"; shift 2 ;;
+        --auto-mark-cells) AUTOMARK="1"; shift ;;
+        *) shift ;;
+      esac
+    done
+    SELF="$0"
+    PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" \
+      CDW_ORGAN="$ORGAN" CDW_INTERVAL="$INTERVAL" CDW_MAX="$MAX" CDW_AUTOMARK="$AUTOMARK" \
+      CDW_SELF="$SELF" python3 - <<'PY'
+import json, os, subprocess, sys, time
+from contract_core import get_tree, get
+
+ORGAN    = os.environ["CDW_ORGAN"]
+INTERVAL = max(1, int(os.environ.get("CDW_INTERVAL", "2")))
+MAX      = max(1, int(os.environ.get("CDW_MAX", "200")))
+AUTOMARK = bool(os.environ.get("CDW_AUTOMARK"))
+SELF     = os.environ["CDW_SELF"]
+
+def first_pending_leaf(node):
+    if node.get("status") not in ("pending", "active"):
+        return None
+    kids = node.get("child_nodes") or []
+    if not kids:
+        return node
+    for k in kids:
+        leaf = first_pending_leaf(k)
+        if leaf: return leaf
+    return None
+
+print(f"=== contract drive-watch ({ORGAN}) ===")
+print(f"  interval={INTERVAL}s  max-waves={MAX}  auto-mark-cells={AUTOMARK}")
+print("  Halts on judgment leaves so the agent can render KEY 2;")
+print("  re-run drive-watch after marking to resume.")
+
+waves = 0
+while waves < MAX:
+    tree = get_tree(ORGAN)
+    if not tree:
+        print(f"  organ {ORGAN} not found — exiting")
+        sys.exit(0)
+    if tree["status"] == "satisfied":
+        print(f"  organ {ORGAN} SATISFIED — drive complete")
+        sys.exit(0)
+    leaf = first_pending_leaf(tree)
+    if not leaf:
+        # No pending leaf but organ not satisfied: parent iterate may close it
+        print(f"  no pending leaves — iterating organ {ORGAN}")
+        r = subprocess.run(["bash", SELF, "iterate", ORGAN])
+        if r.returncode != 0:
+            print(f"  organ iterate failed (exit {r.returncode}) — halting")
+            sys.exit(r.returncode)
+        time.sleep(INTERVAL)
+        waves += 1
+        continue
+
+    waves += 1
+    leaf_full = get(leaf["id"])
+    action = (leaf_full or {}).get("action", "")
+    print(f"\n  wave {waves}/{MAX} → leaf {leaf['id']} ({leaf['plan'][:60]}...)")
+    print(f"    action: {action[:80]}")
+    r = subprocess.run(["bash", SELF, "iterate", leaf["id"]])
+    if r.returncode != 0:
+        print(f"  iterate exited {r.returncode} — halting (fix and re-run drive-watch)")
+        sys.exit(r.returncode)
+
+    # If leaf is a mechanical cell AND --auto-mark-cells is set, mark it.
+    # Otherwise the loop halts here for the agent's KEY-2 judgment.
+    if action == "agent-judges" or action.startswith(("funnel", "harness:", "loop", "sequence", "quorum", "tool-guard:")):
+        print(f"\n  HALT: leaf {leaf['id']} requires in-thread KEY-2 judgment.")
+        print(f"    If genuinely satisfied: bash {SELF} _mark {leaf['id']} satisfied")
+        print(f"    Then re-run: bash {SELF} drive-watch {ORGAN}")
+        sys.exit(0)
+
+    if AUTOMARK:
+        print(f"  auto-marking cell leaf {leaf['id']} satisfied (KEY-2 surrogate via --auto-mark-cells)")
+        subprocess.run(["bash", SELF, "_mark", leaf["id"], "satisfied"])
+    else:
+        print(f"\n  HALT: cell {leaf['id']} passed. Agent KEY-2: bash {SELF} _mark {leaf['id']} satisfied")
+        print(f"    Then re-run: bash {SELF} drive-watch {ORGAN}  (or pass --auto-mark-cells to skip the pause)")
+        sys.exit(0)
+
+    time.sleep(INTERVAL)
+
+print(f"  reached --max-waves {MAX} without satisfaction — halting")
+sys.exit(0)
+PY
+    ;;
+
   disarm)
     # Per-contract disarm: with an id, clears that one folder's drive.json.
     # Without an id, clears ALL drives whose cwd matches the current session
