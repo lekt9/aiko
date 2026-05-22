@@ -393,3 +393,5 @@
 {"event": "child_added", "id": "1905f968", "child_id": "63c93416", "ts": "2026-05-22T15:24:03.974925Z"}
 {"event": "declared", "id": "10d57746", "plan": "waitlist API accepts new signups: POST /api/waitlist returns status:joined", "action": "curl -sf -X POST https://inyo-landing.pages.dev/api/waitlist -H 'Content-Type: application/json' -d '{\"phone\":\"5559990003\"}' | python3 -c \"import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('status')=='joined' else 1)\"", "pointer_type": "api", "parent_id": "1905f968", "pointers": [], "ts": "2026-05-22T15:24:13.985617Z"}
 {"event": "child_added", "id": "1905f968", "child_id": "10d57746", "ts": "2026-05-22T15:24:13.985956Z"}
+{"event": "iterated", "id": "63c93416", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:24:19.709890Z"}
+{"event": "iterated", "id": "10d57746", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:24:21.268861Z"}
