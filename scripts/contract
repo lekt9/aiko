@@ -347,6 +347,14 @@ print(json.dumps(c) if c else 'null')
     echo "=== CONTRACT ITERATE — wave $WAVE ==="
     echo "  id:     $ID"
     echo "  plan:   $PLAN_TEXT"
+    BUDGET_N=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('budget') or '')" "$DATA")
+    if [ -n "$BUDGET_N" ]; then
+      if [ "$WAVE" -gt "$BUDGET_N" ]; then
+        echo "  budget: wave $WAVE of $BUDGET_N — OVER BUDGET (evidence; you judge: escalate, simplify, or HOLD)"
+      else
+        echo "  budget: wave $WAVE of $BUDGET_N"
+      fi
+    fi
     echo
     _run_action "$ACTION" "$ID" "$CWD"
     ACTION_RC=$?
