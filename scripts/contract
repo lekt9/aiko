@@ -485,12 +485,11 @@ DEFAULTS
     ID="${1:-}"; STATUS="${2:-}"
     [ -z "$ID" ] || [ -z "$STATUS" ] && { echo "usage: contract _mark <id> <status>" >&2; exit 2; }
     MH_ID="$ID" MH_STATUS="$STATUS" _py_inline "
-import os; from contract_core import mark_satisfied, mark_status, record_iteration, get
+import os; from contract_core import mark_satisfied, mark_status
 id=os.environ['MH_ID']; st=os.environ['MH_STATUS']
 if st=='satisfied':
-    c = get(id)
-    cur_wave = c['wave'] if c else 0
-    record_iteration(id, cur_wave + 1, 0, 'pass', 'genuine', [])
+    # Honest mark: write only the satisfied event. The agent's KEY-2 verdict
+    # is the in-thread <promise> plus this explicit mark, never a fabricated row.
     mark_satisfied(id, 0)
 else:
     mark_status(id, st)
