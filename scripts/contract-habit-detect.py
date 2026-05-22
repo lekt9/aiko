@@ -27,14 +27,43 @@ def _tokenize(text: str) -> Counter:
     return Counter(re.findall(r"[a-z0-9]+", text.lower()))
 
 
-def _overlap(a: Counter, b: Counter) -> float:
-    if not a or not b:
-        return 0.0
-    shared = sum((a & b).values())
-    denom = min(sum(a.values()), sum(b.values()))
-    return shared / denom if denom else 0.0
+def _idf(df: int, n_docs: int) -> float:
+    """BM25 inverse document frequency. The +1 inside the log keeps it
+    non-negative even for a term that appears in every document."""
+    return math.log(1 + (n_docs - df + 0.5) / (df + 0.5))
 
 
+def _bm25_scores(query: str, docs: list) -> dict:
+    """Okapi BM25 score of `query` against each document.
+
+    docs: list of (id, text). Returns {id: raw_score}. A rare query term
+    (high idf) lifts a document far more than a common one; term frequency
+    saturates (k1); long documents are length-normalized (b). This is what
+    'discover and reuse by BM25' means at the plan stage — not bare overlap.
+    """
+    K1, B = 1.5, 0.75
+    tokenized = {did: _tokenize(text) for did, text in docs}
+    n = len(tokenized) or 1
+    lengths = {did: sum(t.values()) for did, t in tokenized.items()}
+    avgdl = (sum(lengths.values()) / n) if n else 1.0
+    df = Counter()
+    for toks in tokenized.values():
+        for term in toks:
+            df[term] += 1
+    q_terms = list(_tokenize(query))
+    scores = {}
+    for did, doc_tf in tokenized.items():
+        dl = lengths[did] or 1
+        s = 0.0
+        for term in q_terms:
+            tf = doc_tf.get(term, 0)
+            if not tf:
+                continue
+            idf = _idf(df.get(term, 0), n)
+            denom = tf + K1 * (1 - B + B * dl / (avgdl or 1))
+            s += idf * (tf * (K1 + 1)) / denom
+        scores[did] = s
+    return scores
 def load_rows() -> list[dict]:
     if not LEDGER.exists():
         return []
