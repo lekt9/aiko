@@ -96,28 +96,39 @@ def get_status(id: str, rows: list[dict]) -> str:
     return "active" if iter_rows else "pending"
 def detect(context: str, threshold: float = DEFAULT_THRESHOLD,
            exclude: "set | None" = None) -> list[dict]:
+    """Rank past contracts against `context` by BM25 and surface the
+    relevant ones. Score is BM25 normalized to 0..1 against the best match,
+    so `threshold` reads as 'at least this fraction as relevant as the top
+    hit'. Merged fossils and excluded ids never enter the corpus."""
     exclude = exclude or set()
     all_rows = load_rows()
     contracts = [r for r in all_rows if r.get("event") == "declared"]
-    ctx_tokens = _tokenize(context)
-    results = []
+    docs, meta = [], {}
     for c in contracts:
         if c["id"] in exclude:
             continue
         status = get_status(c["id"], all_rows)
         if status == "merged":
             continue  # superseded fossil — natural selection: never resurface
-        # BM25 tokens: plan + learning (why it was done that way)
         searchable = c["plan"] + (" " + c["learning"] if c.get("learning") else "")
-        score = _overlap(ctx_tokens, _tokenize(searchable))
-        if score >= threshold:
+        docs.append((c["id"], searchable))
+        meta[c["id"]] = (c, status)
+    if not docs:
+        return []
+    raw = _bm25_scores(context, docs)
+    top = max(raw.values(), default=0.0) or 1.0
+    results = []
+    for did, rs in raw.items():
+        norm = rs / top
+        if norm >= threshold:
+            c, status = meta[did]
             results.append({
-                "id": c["id"],
+                "id": did,
                 "plan": c["plan"],
                 "action": c["action"],
                 "learning": c.get("learning"),
                 "status": status,
-                "score": round(score, 2),
+                "score": round(norm, 2),
             })
     return sorted(results, key=lambda x: -x["score"])
 def main():
