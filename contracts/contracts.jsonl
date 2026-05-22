@@ -3224,3 +3224,4 @@
 {"event": "merged", "id": "a4910410", "merged_into": "328b950c", "reason": "Skills are discovered via 'contract skills sync' (live projection of ~/.claude/skills/*/SKILL.md); per-skill ledger rows are redundant.", "ts": "2026-05-22T22:55:22.017559Z"}
 {"event": "merged", "id": "07e5eacd", "merged_into": "328b950c", "reason": "Skills are discovered via 'contract skills sync' (live projection of ~/.claude/skills/*/SKILL.md); per-skill ledger rows are redundant.", "ts": "2026-05-22T22:55:22.017606Z"}
 {"event": "merged", "id": "67555813", "merged_into": "328b950c", "reason": "Skills are discovered via 'contract skills sync' (live projection of ~/.claude/skills/*/SKILL.md); per-skill ledger rows are redundant.", "ts": "2026-05-22T22:55:22.017641Z"}
+{"event": "satisfied", "id": "0ee5d1e6", "wave": 0, "ts": "2026-05-22T22:55:26.020006Z"}
