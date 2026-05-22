@@ -84,7 +84,8 @@ def _rows() -> list[dict]:
 
 
 def declare(plan: str, action: str, parent_id: Optional[str] = None,
-            pointers: list = None, learning: str = None) -> str:
+            pointers: list = None, learning: str = None,
+            budget: Optional[int] = None) -> str:
     cid = str(uuid.uuid4())[:8]
     row = {"event": "declared", "id": cid, "plan": plan, "action": action,
            "pointer_type": _infer_pointer_type(action),
