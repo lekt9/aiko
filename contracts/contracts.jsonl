@@ -224,3 +224,7 @@
 {"event": "child_added", "id": "b15cfdbb", "child_id": "b454b69e", "ts": "2026-05-22T13:05:13.674708Z"}
 {"event": "declared", "id": "5f078584", "plan": "funnel child-2: second gate in the AND-gate test", "action": "echo gate-2-passes", "pointer_type": "cli", "parent_id": "b15cfdbb", "pointers": [], "ts": "2026-05-22T13:05:13.735770Z"}
 {"event": "child_added", "id": "b15cfdbb", "child_id": "5f078584", "ts": "2026-05-22T13:05:13.736047Z"}
+{"event": "declared", "id": "962c27d1", "plan": "upstream-A: the contract that contract-ref-B will depend on", "action": "echo upstream-satisfied", "pointer_type": "cli", "parent_id": "d014e020", "pointers": [], "ts": "2026-05-22T13:05:16.923039Z"}
+{"event": "child_added", "id": "d014e020", "child_id": "962c27d1", "ts": "2026-05-22T13:05:16.923362Z"}
+{"event": "declared", "id": "b936117f", "plan": "contract-ref-B: wired to fire only when upstream-A is satisfied (action=contract:962c27d1)", "action": "contract:962c27d1", "pointer_type": "contract-ref", "parent_id": "d014e020", "pointers": [], "ts": "2026-05-22T13:05:16.986165Z"}
+{"event": "child_added", "id": "d014e020", "child_id": "b936117f", "ts": "2026-05-22T13:05:16.986514Z"}
