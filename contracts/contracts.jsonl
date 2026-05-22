@@ -2515,3 +2515,4 @@
 {"event": "status_update", "id": "b1294c3a", "status": "dropped", "ts": "2026-05-22T21:19:13.808713Z"}
 {"event": "status_update", "id": "616cd033", "status": "dropped", "ts": "2026-05-22T21:19:13.808801Z"}
 {"event": "status_update", "id": "cdc0d8e1", "status": "dropped", "ts": "2026-05-22T21:19:13.808889Z"}
+{"event": "satisfied", "id": "803c764f", "wave": 0, "ts": "2026-05-22T21:19:27.578625Z"}
