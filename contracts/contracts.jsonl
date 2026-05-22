@@ -198,3 +198,5 @@
 {"event": "iterated", "id": "88ec1511", "wave": 2, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T12:59:54.593829Z"}
 {"event": "declared", "id": "ad57b3b3", "plan": "fix validation: agent_verdict is written by the patched _mark verb", "action": "echo ok", "pointer_type": "cli", "parent_id": null, "pointers": [], "ts": "2026-05-22T13:00:27.024124Z"}
 {"event": "iterated", "id": "ad57b3b3", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T13:00:27.211972Z"}
+{"event": "iterated", "id": "ad57b3b3", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T13:00:35.211919Z"}
+{"event": "satisfied", "id": "ad57b3b3", "wave": 0, "ts": "2026-05-22T13:00:35.212215Z"}
