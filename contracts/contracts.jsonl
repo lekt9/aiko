@@ -2543,3 +2543,13 @@
 {"event": "declared", "id": "67b84ca0", "plan": "children_satisfy treats a merged (superseded) child as resolved, so a funnel is never permanently blocked by a fossil child", "action": "python3 -c \"import sys; s=open('/Users/lekt9/.claude/skills/contract/scripts/lib/contract_core.py').read(); i=s.index('def children_satisfy'); sys.exit(0 if 'merged' in s[i:i+700] else 1)\"", "pointer_type": "cli", "cwd": "/Users/lekt9/Projects/saiful2", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:28:42.502982Z"}
 {"event": "iterated", "id": "67b84ca0", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:28:42.803944Z"}
 {"event": "satisfied", "id": "67b84ca0", "wave": 0, "ts": "2026-05-22T21:28:52.674991Z"}
+{"event": "declared", "id": "8f26577a", "plan": "seqgate_selftest_81736 sequence organ probe", "action": "sequence", "pointer_type": "sequence", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:29:02.741952Z"}
+{"event": "declared", "id": "4d15443f", "plan": "seqgate_selftest_81736 stage one light", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": "8f26577a", "pointers": [], "ts": "2026-05-22T21:29:02.911619Z"}
+{"event": "child_added", "id": "8f26577a", "child_id": "4d15443f", "ts": "2026-05-22T21:29:02.911883Z"}
+{"event": "declared", "id": "26b4a07b", "plan": "seqgate_selftest_81736 stage two firmament", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": "8f26577a", "pointers": [], "ts": "2026-05-22T21:29:03.077850Z"}
+{"event": "child_added", "id": "8f26577a", "child_id": "26b4a07b", "ts": "2026-05-22T21:29:03.078120Z"}
+{"event": "iterated", "id": "8f26577a", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:29:03.380050Z"}
+{"event": "satisfied", "id": "4d15443f", "wave": 0, "ts": "2026-05-22T21:29:03.434895Z"}
+{"event": "iterated", "id": "8f26577a", "wave": 2, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:29:03.626024Z"}
+{"event": "satisfied", "id": "26b4a07b", "wave": 0, "ts": "2026-05-22T21:29:03.683420Z"}
+{"event": "iterated", "id": "8f26577a", "wave": 3, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:29:03.888540Z"}
