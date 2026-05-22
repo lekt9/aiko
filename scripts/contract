@@ -491,6 +491,27 @@ else:
 print(f'  {id} -> {st}')
 "
     _fire_contract_hooks "mark" "$ID" "0"
+    # INLINE DRIVE ADVANCE: framework-agnostic self-drive — runs synchronously inside the
+    # CLI process so any agent/runtime gets the next action without waiting for an external hook
+    if [ "$STATUS" = "satisfied" ] && [ -f "$HOME/.contracts/.drive_active" ]; then
+      DRIVE_HOOK="$HOME/.contracts/hooks/drive-advance.sh"
+      [ -x "$DRIVE_HOOK" ] && bash "$DRIVE_HOOK" "mark" "$ID" "0" 2>>"$HOME/.contracts/hooks/errors.log"
+      if [ -f "$HOME/.contracts/drive_next.txt" ]; then
+        NEXT_STATE=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('state',''))" < "$HOME/.contracts/drive_next.txt" 2>/dev/null)
+        NEXT_CMD=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('resume_cmd',''))" < "$HOME/.contracts/drive_next.txt" 2>/dev/null)
+        NEXT_MSG=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('msg',''))" < "$HOME/.contracts/drive_next.txt" 2>/dev/null)
+        echo
+        echo "=== INLINE DRIVE ADVANCE ==="
+        if [ "$NEXT_STATE" = "complete" ]; then
+          echo "  ALL CHILDREN SATISFIED — drive complete"
+          echo "  Disarm with: contract disarm"
+        else
+          echo "  next leaf: $NEXT_CMD"
+          echo "  $NEXT_MSG"
+        fi
+        echo
+      fi
+    fi
     if [ "$STATUS" = "satisfied" ] && [ -z "${CONTRACT_SELF_TEST:-}" ]; then
       bash "$HOME/.contracts/push-to-gitea.sh" &
       SELF_TEST_PREF=$(PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 -c "
