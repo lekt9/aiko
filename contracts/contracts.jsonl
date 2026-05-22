@@ -2654,3 +2654,9 @@
 {"event": "iterated", "id": "05314333", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:38:34.528930Z"}
 {"event": "iterated", "id": "88f45b94", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:38:34.802101Z"}
 {"event": "iterated", "id": "655c2433", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:38:34.996000Z"}
+{"event": "satisfied", "id": "ad51648e", "wave": 0, "ts": "2026-05-22T21:38:44.678785Z"}
+{"event": "satisfied", "id": "05314333", "wave": 0, "ts": "2026-05-22T21:38:45.481003Z"}
+{"event": "satisfied", "id": "88f45b94", "wave": 0, "ts": "2026-05-22T21:38:46.270678Z"}
+{"event": "satisfied", "id": "655c2433", "wave": 0, "ts": "2026-05-22T21:38:47.091011Z"}
+{"event": "iterated", "id": "84f0b5c2", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:38:47.346966Z"}
+{"event": "iterated", "id": "cbb2a1d3", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:38:48.044194Z"}
