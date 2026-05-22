@@ -168,3 +168,4 @@
 {"event": "declared", "id": "1ffac7fb", "plan": "the /contract skill never swallows an error silently: no except handler has a bare pass/continue body; corrupt ledger input surfaces a warning", "action": "python3 /Users/lekt9/.claude/skills/contract/scripts/check-no-silent-fallback.py", "pointer_type": "cli", "parent_id": null, "pointers": [], "ts": "2026-05-22T12:08:03.759142Z"}
 {"event": "iterated", "id": "1ffac7fb", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T12:08:03.978774Z"}
 {"event": "satisfied", "id": "1ffac7fb", "wave": 0, "ts": "2026-05-22T12:08:17.566156Z"}
+{"event":"declared","id":"test-smoke","plan":"smoke test contract for sync hook","action":"agent-judges","ts":"2026-05-22T12:00:00Z"}
