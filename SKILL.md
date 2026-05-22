@@ -431,4 +431,6 @@ From `principles-as-harnesses.md`: a principle with `--action` IS a contract. Fr
 - `scripts/contract-import-extract.py` — import extractor: surfaces past patterns as candidate contracts (L2)
 - `scripts/check-no-silent-fallback.py` — guard: fails if any skill script swallows an error silently
 - `scripts/lib/contract_core.py` — data model, sole ledger writer (L0)
+- `scripts/contract-crystallize.py` — crystallizes a learning into a memory file + an Outline doc (shared by the `learn` verb and the crystallize-learning hook)
+- `~/.contracts/hooks/crystallize-learning.py` — internal hook: on every `mark` event, crystallizes a satisfied learning-bearing contract
 - `~/.contracts/contracts.jsonl` — the single append-only store (agent-agnostic)
