@@ -567,7 +567,7 @@ for c in cs:
 "
     ;;
 
-  habit)
+  habit|search)
     PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 "$SELF/contract-habit-detect.py" "$@"
     ;;
 
