@@ -526,3 +526,9 @@
 {"event": "iterated", "id": "b772894f", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T20:45:24.875917Z"}
 {"event": "satisfied", "id": "b772894f", "wave": 0, "ts": "2026-05-22T20:45:30.305195Z"}
 {"event": "satisfied", "id": "013e67c8", "wave": 0, "ts": "2026-05-22T20:45:33.676946Z"}
+{"event": "declared", "id": "5a73ded8", "plan": "Build a frontend identity chat on the bloom site: the user says who they are in plain language, the Unbrowse SDK digs up their public footprint, and bloom uses it to enrich the profile. Honest when it finds nothing, never fabricates a person.", "action": "bash checks/c6-chat.sh", "pointer_type": "cli", "cwd": "/Users/lekt9/Projects/cloneyo", "parent_id": "c2bc95a4", "pointers": [], "ts": "2026-05-22T20:48:55.945761Z"}
+{"event": "child_added", "id": "c2bc95a4", "child_id": "5a73ded8", "ts": "2026-05-22T20:48:55.946126Z"}
+{"event": "declared", "id": "0d701f6f", "plan": "Write the bot-vs-Telethon routing rule: the Telegram Bot API webhook runs user-facing matchmaking; the Telethon user session (selfbot) drives BotFather registration and admin only. Documented so the boundary is never guessed.", "action": "bash checks/c7-routing.sh", "pointer_type": "cli", "cwd": "/Users/lekt9/Projects/cloneyo", "parent_id": "c2bc95a4", "pointers": [], "ts": "2026-05-22T20:48:56.001904Z"}
+{"event": "child_added", "id": "c2bc95a4", "child_id": "0d701f6f", "ts": "2026-05-22T20:48:56.002245Z"}
+{"event": "declared", "id": "f9d7bfc5", "plan": "When the bloom bot is registered and live, DM its @handle to @burger606 on Telegram via the Telethon user session.", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/cloneyo", "parent_id": "c2bc95a4", "pointers": [], "ts": "2026-05-22T20:48:56.057201Z"}
+{"event": "child_added", "id": "c2bc95a4", "child_id": "f9d7bfc5", "ts": "2026-05-22T20:48:56.057565Z"}
