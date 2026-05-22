@@ -283,6 +283,7 @@ case "$cmd" in
         --target)      shift 2 ;;
         --drive)       DRIVE_FLAG="1"; shift ;;
         --learning)    LEARNING="${2:-}"; shift 2 ;;
+        --budget)      BUDGET="${2:-}"; shift 2 ;;
         *) shift ;;
       esac
     done
