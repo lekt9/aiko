@@ -196,11 +196,19 @@ def list_all(show_merged: bool = False) -> list[dict]:
             if c and (show_merged or c.get("status") != "merged"):
                 result.append(c)
     return result
-
-
 def children_satisfy(id: str) -> bool:
     c = get(id)
     if not c or not c["children"]:
+        return False
+    statuses = [(get(cid) or {}).get("status") for cid in c["children"]]
+    # A merged (superseded) child is resolved: its truth claim is carried by
+    # the winner it merged into. A fossil must never permanently block its
+    # parent funnel. The funnel is satisfied when every child is satisfied or
+    # merged, and at least one child is genuinely satisfied (an all-merged
+    # organ is hollow, not satisfied).
+    if not all(s in ("satisfied", "merged") for s in statuses):
+        return False
+    return any(s == "satisfied" for s in statuses)
         return False
     return all((get(cid) or {}).get("status") == "satisfied" for cid in c["children"])
 
