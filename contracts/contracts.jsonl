@@ -210,3 +210,13 @@
 {"event": "iterated", "id": "05b50a4f", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T13:01:26.020822Z"}
 {"event": "satisfied", "id": "05b50a4f", "wave": 0, "ts": "2026-05-22T13:01:26.021113Z"}
 {"event": "declared", "id": "a709df5d", "plan": "/contract graph wires and fires correctly: all five shapes (funnel, loop-until, contract-ref, drive, loop-bare) work end-to-end and converge", "action": "funnel", "pointer_type": "funnel", "parent_id": null, "pointers": [], "ts": "2026-05-22T13:04:49.154260Z"}
+{"event": "declared", "id": "b15cfdbb", "plan": "funnel AND-gate fires correctly: after all children satisfied, parent iterate returns PASS", "action": "funnel", "pointer_type": "funnel", "parent_id": "a709df5d", "pointers": [], "ts": "2026-05-22T13:04:57.605815Z"}
+{"event": "declared", "id": "bdbb9780", "plan": "drive mode advances sequentially: Stop hook re-injects next pending child after each turn", "action": "agent-judges", "pointer_type": "agent-judges", "parent_id": "a709df5d", "pointers": [], "ts": "2026-05-22T13:04:57.605745Z"}
+{"event": "child_added", "id": "a709df5d", "child_id": "b15cfdbb", "ts": "2026-05-22T13:04:57.606061Z"}
+{"event": "child_added", "id": "a709df5d", "child_id": "bdbb9780", "ts": "2026-05-22T13:04:57.606126Z"}
+{"event": "declared", "id": "161820ff", "plan": "shallow-drive gap: drive-advance.sh is 1-level deep and does NOT recurse into nested organ children", "action": "agent-judges", "pointer_type": "agent-judges", "parent_id": "a709df5d", "pointers": [], "ts": "2026-05-22T13:04:57.605830Z"}
+{"event": "declared", "id": "064f47e7", "plan": "loop-until converges: body re-runs each iterate, exits 0 when condition met, agent judges BREAK", "action": "loop-until:test -f /tmp/contract-loop-flag", "pointer_type": "loop", "parent_id": "a709df5d", "pointers": [], "ts": "2026-05-22T13:04:57.605943Z"}
+{"event": "declared", "id": "d014e020", "plan": "contract-ref wires cross-contract dependency: action=contract:<id> passes when referenced contract is satisfied", "action": "funnel", "pointer_type": "funnel", "parent_id": "a709df5d", "pointers": [], "ts": "2026-05-22T13:04:57.605856Z"}
+{"event": "child_added", "id": "a709df5d", "child_id": "161820ff", "ts": "2026-05-22T13:04:57.606434Z"}
+{"event": "child_added", "id": "a709df5d", "child_id": "064f47e7", "ts": "2026-05-22T13:04:57.606444Z"}
+{"event": "child_added", "id": "a709df5d", "child_id": "d014e020", "ts": "2026-05-22T13:04:57.606473Z"}
