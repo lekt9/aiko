@@ -386,3 +386,6 @@
 {"event": "child_added", "id": "1905f968", "child_id": "37f8cc1b", "ts": "2026-05-22T15:23:42.514714Z"}
 {"event": "declared", "id": "52077a34", "plan": "platform e2e verified: profile, match, demo all live", "action": "contract:dfc147a3", "pointer_type": "contract-ref", "parent_id": "1905f968", "pointers": [], "ts": "2026-05-22T15:23:42.572477Z"}
 {"event": "child_added", "id": "1905f968", "child_id": "52077a34", "ts": "2026-05-22T15:23:42.572804Z"}
+{"event": "iterated", "id": "88a8f92d", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:23:47.094691Z"}
+{"event": "iterated", "id": "37f8cc1b", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:23:48.639843Z"}
+{"event": "iterated", "id": "52077a34", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:23:48.819652Z"}
