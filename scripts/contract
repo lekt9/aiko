@@ -346,7 +346,7 @@ print(_infer_pointer_type(os.environ['MH_ACTION']))
     # genuine conflict, supersede the less-fit contract — it becomes a fossil.
     _LIFECYCLE=$(PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" \
       python3 "$SELF/contract-habit-detect.py" --context "$PLAN" --exclude "$ID" 2>/dev/null)
-    if [ -n "$_LIFECYCLE" ] && [[ "$_LIFECYCLE" != *"no HABIT CANDIDATES"* ]]; then
+    if [ -n "$_LIFECYCLE" ] && [[ "$_LIFECYCLE" != *"no RELATED CONTRACTS"* ]]; then
       echo
       echo "  ── lifecycle check (natural selection) ──"
       echo "  related past contracts exist. JUDGE in-thread: does this new"
