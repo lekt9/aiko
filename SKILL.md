@@ -212,6 +212,7 @@ Every contract is simultaneously a funnel, a loop, and a harness — fractally. 
 | **funnel-first** | `funnel-first` | ANY child satisfied (OR-gate) |
 | **loop** | `loop-until:<body-action>` | body exits 0 AND agent judges genuine; re-iterate to advance |
 | **harness** | `harness:<path>` | `<path>/verify.sh` exits 0 AND agent judges genuine |
+| **tool-guard** | `tool-guard:<glob>` | a standing guard — a PreToolUse hook blocks every tool matching the glob until the contract is satisfied (which lifts it) |
 
 Fractal: funnels contain loops, loops contain funnels, harnesses wrap any shape. Every contract is itself a funnel (narrows to truth) + loop (iterate until resolved) + harness (collects evidence). `children-satisfy` remains valid; `funnel` is the canonical name. `drive` mode removes the human pause between loop iterations but does not change the two-key exit.
 
