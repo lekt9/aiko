@@ -2430,3 +2430,4 @@
 {"event": "satisfied", "id": "0d701f6f", "wave": 0, "ts": "2026-05-22T21:11:25.064071Z"}
 {"event": "iterated", "id": "f9d7bfc5", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:11:35.310452Z"}
 {"event": "iterated", "id": "c2bc95a4", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:11:35.539238Z"}
+{"event": "declared", "id": "803c764f", "plan": "Unused skills in ~/.claude/skills are killed off \u2014 GATED: 'unused' is defined from real invocation evidence (session-transcript scan), the kill is reversible (archived, never rm -rf), and no skill is removed without explicit user confirmation of the criterion and the exact set.", "action": "funnel", "pointer_type": "funnel", "cwd": "/Users/lekt9/Projects/fdry", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:12:01.488603Z"}
