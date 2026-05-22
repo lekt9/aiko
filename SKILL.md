@@ -335,7 +335,7 @@ Contracts are not immortal. They are born, they compete, and the less-fit
 ones are retired — a natural-selection lifecycle, recorded in the one
 append-only ledger.
 
-**Birth with a contradiction check.** Every `declare` runs the habit
+**Birth with a contradiction check.** Every `declare` runs the search
 detector against the new plan and surfaces the past contracts it most
 resembles, under a `lifecycle check (natural selection)` block. The
 substrate only surfaces; the agent judges in-thread whether the new
