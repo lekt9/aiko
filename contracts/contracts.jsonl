@@ -2442,3 +2442,5 @@
 {"event": "declared", "id": "528fc0ff", "plan": "lifecyclegate_selftest_71558 always prefer the alpha approach for the probe", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:17:23.727440Z"}
 {"event": "declared", "id": "0baf76d8", "plan": "lifecyclegate_selftest_71558 never prefer the alpha approach for the probe", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:17:23.888389Z"}
 {"event": "merged", "id": "528fc0ff", "merged_into": "0baf76d8", "reason": "self-test: B wins", "ts": "2026-05-22T21:17:24.061389Z"}
+{"event": "iterated", "id": "2b214382", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:17:32.779396Z"}
+{"event": "satisfied", "id": "2b214382", "wave": 0, "ts": "2026-05-22T21:17:32.835528Z"}
