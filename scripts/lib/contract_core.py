@@ -80,18 +80,18 @@ def _rows() -> list[dict]:
 
 
 def declare(plan: str, action: str, parent_id: Optional[str] = None,
-            pointers: list = None) -> str:
+            pointers: list = None, learning: str = None) -> str:
     cid = str(uuid.uuid4())[:8]
-    _append({"event": "declared", "id": cid, "plan": plan, "action": action,
-             "pointer_type": _infer_pointer_type(action),
-             "parent_id": parent_id, "pointers": pointers or [],
-             "ts": _now()})
+    row = {"event": "declared", "id": cid, "plan": plan, "action": action,
+           "pointer_type": _infer_pointer_type(action),
+           "parent_id": parent_id, "pointers": pointers or [],
+           "ts": _now()}
+    if learning:
+        row["learning"] = learning
+    _append(row)
     if parent_id:
         _append({"event": "child_added", "id": parent_id, "child_id": cid, "ts": _now()})
     return cid
-
-
-
 def record_iteration(id: str, wave: int, action_exit: int, action_result: str,
                      agent_verdict: Optional[str], children_spawned: list,
                      log_path: str = "") -> None:
