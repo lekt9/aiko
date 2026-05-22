@@ -353,3 +353,4 @@
 {"event": "iterated", "id": "10db7d46", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T14:24:43.579553Z"}
 {"event": "iterated", "id": "10db7d46", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T14:24:48.489231Z"}
 {"event": "satisfied", "id": "10db7d46", "wave": 0, "ts": "2026-05-22T14:24:48.489519Z"}
+{"event": "declared", "id": "1905f968", "plan": "banger inyo landing page shipped: evidence-built, tested e2e, deployed to cloudflare, bob notified", "action": "funnel", "pointer_type": "funnel", "parent_id": null, "pointers": [], "ts": "2026-05-22T14:32:58.392936Z"}
