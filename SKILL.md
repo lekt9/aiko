@@ -374,7 +374,7 @@ contract **organism**, assembled from the shapes above. This is the
 canonical arc for a substantial build.
 
 **Step 0 — Plan (discover and reuse by BM25).** Before declaring anything
-new, `contract habit --context "<the plan>"` ranks every past contract by
+new, `contract search --context "<the plan>"` ranks every past contract by
 BM25 (term-frequency saturation, inverse document frequency, length
 normalization) and surfaces the top hits. JUDGE: reuse or iterate an
 existing contract before creating a fresh one. The plan stage is a search,
