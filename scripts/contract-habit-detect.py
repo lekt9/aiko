@@ -70,18 +70,19 @@ def detect(context: str, threshold: float = DEFAULT_THRESHOLD) -> list[dict]:
     ctx_tokens = _tokenize(context)
     results = []
     for c in contracts:
-        score = _overlap(ctx_tokens, _tokenize(c["plan"]))
+        # BM25 tokens: plan + learning (why it was done that way)
+        searchable = c["plan"] + (" " + c["learning"] if c.get("learning") else "")
+        score = _overlap(ctx_tokens, _tokenize(searchable))
         if score >= threshold:
             results.append({
                 "id": c["id"],
                 "plan": c["plan"],
                 "action": c["action"],
+                "learning": c.get("learning"),
                 "status": get_status(c["id"], all_rows),
                 "score": round(score, 2),
             })
     return sorted(results, key=lambda x: -x["score"])
-
-
 def main():
     import argparse
     parser = argparse.ArgumentParser(
