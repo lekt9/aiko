@@ -314,6 +314,7 @@ A contract's `--action` is always a **pointer** to a capability, not raw data in
 | `funnel-first` | `funnel-first` | Any child contract (OR-gate) |
 | `loop` | `loop-until:<cmd>` or bare `loop` | Body command re-run each iterate; loop converges when body exits 0 |
 | `harness` | `harness:<path>` | External harness at `<path>/verify.sh` |
+| `tool-guard` | `tool-guard:<glob>` | A Claude Code PreToolUse hook; blocks any tool whose name matches the glob while the contract is unsatisfied |
 | `contract-ref` | `contract:<id>` | Another contract's satisfaction status |
 
 The `contract:<id>` form is pointer-to-pointer: the action is satisfied when the referenced contract is satisfied. This lets one contract's truth claim depend on another without embedding any logic.
