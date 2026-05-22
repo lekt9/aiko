@@ -200,7 +200,7 @@ Per invocation this skill produces one of:
 
 Never: a silent ledger write with no agent prompt; a synthetic pass verdict; a wave that doesn't print the two-key exit block.
 
-## The five shapes (one data model)
+## The six shapes (one data model)
 
 Every contract is simultaneously a funnel, a loop, and a harness — fractally. A loop's body can be a funnel; a funnel's children can be loops; a harness wraps any shape. The recursion bottoms out at a cell or judgment.
 
