@@ -608,6 +608,16 @@ print(f'  {id} -> {st}')
       bash "$HOME/.contracts/push-to-gitea.sh" &
       SELF_TEST_PREF=$(PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 -c "
 from contract_core import _load_prefs
+p = _load_prefs()
+print('1' if p.get('self_test_on_complete') else '0')
+")
+      if [ "$SELF_TEST_PREF" = "1" ]; then
+        echo
+        bash "$0" self-test
+      fi
+    fi
+    ;;
+
   learn)
     # Crystallize an explicit insight: write a memory file + an Outline doc,
     # and append a `learned` ledger row. The hook-like structure (the
@@ -628,16 +638,6 @@ from contract_core import _load_prefs
       python3 "$CRYS" learn "$TEXT" --source "$SOURCE"
     else
       python3 "$CRYS" learn "$TEXT"
-    fi
-    ;;
-
-p = _load_prefs()
-print('1' if p.get('self_test_on_complete') else '0')
-")
-      if [ "$SELF_TEST_PREF" = "1" ]; then
-        echo
-        bash "$0" self-test
-      fi
     fi
     ;;
 
