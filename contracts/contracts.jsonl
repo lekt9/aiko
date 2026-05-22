@@ -2553,3 +2553,11 @@
 {"event": "iterated", "id": "8f26577a", "wave": 2, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:29:03.626024Z"}
 {"event": "satisfied", "id": "26b4a07b", "wave": 0, "ts": "2026-05-22T21:29:03.683420Z"}
 {"event": "iterated", "id": "8f26577a", "wave": 3, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:29:03.888540Z"}
+{"event": "declared", "id": "b48dd802", "plan": "seqgate_selftest_82227 sequence organ probe", "action": "sequence", "pointer_type": "sequence", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:29:28.529315Z"}
+{"event": "declared", "id": "ede3c55d", "plan": "seqgate_selftest_82227 stage one light", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": "b48dd802", "pointers": [], "ts": "2026-05-22T21:29:28.692801Z"}
+{"event": "child_added", "id": "b48dd802", "child_id": "ede3c55d", "ts": "2026-05-22T21:29:28.693063Z"}
+{"event": "declared", "id": "3f5002ce", "plan": "seqgate_selftest_82227 stage two firmament", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": "b48dd802", "pointers": [], "ts": "2026-05-22T21:29:28.859923Z"}
+{"event": "child_added", "id": "b48dd802", "child_id": "3f5002ce", "ts": "2026-05-22T21:29:28.860136Z"}
+{"event": "iterated", "id": "b48dd802", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:29:29.166430Z"}
+{"event": "satisfied", "id": "ede3c55d", "wave": 0, "ts": "2026-05-22T21:29:29.220834Z"}
+{"event": "iterated", "id": "b48dd802", "wave": 2, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:29:29.415032Z"}
