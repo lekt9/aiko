@@ -98,6 +98,8 @@ def main():
     parser.add_argument("--context", default="", help="Text to match against")
     parser.add_argument("--scope", default="global", choices=["project", "global"])
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
+    parser.add_argument("--exclude", default="",
+                        help="Comma-separated contract ids to omit (e.g. the just-declared one)")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
@@ -107,7 +109,8 @@ def main():
     if not ctx:
         ctx = "contract declare iterate spawn solve"
 
-    candidates = detect(ctx, args.threshold)
+    exclude = {x.strip() for x in args.exclude.split(",") if x.strip()}
+    candidates = detect(ctx, args.threshold, exclude)
 
     if args.json:
         print(json.dumps(candidates, indent=2))
