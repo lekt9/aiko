@@ -380,3 +380,9 @@
 {"event": "iterated", "id": "dfc147a3", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:22:44.957016Z"}
 {"event": "satisfied", "id": "dfc147a3", "wave": 0, "ts": "2026-05-22T15:22:44.957334Z"}
 {"event": "iterated", "id": "1905f968", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:23:32.979676Z"}
+{"event": "declared", "id": "88a8f92d", "plan": "landing page is deployed and live at inyo-landing.pages.dev", "action": "curl -sf https://inyo-landing.pages.dev | grep -q 'The app is the problem'", "pointer_type": "api", "parent_id": "1905f968", "pointers": [], "ts": "2026-05-22T15:23:42.453782Z"}
+{"event": "child_added", "id": "1905f968", "child_id": "88a8f92d", "ts": "2026-05-22T15:23:42.454148Z"}
+{"event": "declared", "id": "37f8cc1b", "plan": "waitlist API accepts new signups: POST /api/waitlist returns ok:true", "action": "curl -sf -X POST https://inyo-landing.pages.dev/api/waitlist -H 'Content-Type: application/json' -d '{\"phone\":\"5559990001\"}' | python3 -c \"import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('ok') else 1)\"", "pointer_type": "api", "parent_id": "1905f968", "pointers": [], "ts": "2026-05-22T15:23:42.514415Z"}
+{"event": "child_added", "id": "1905f968", "child_id": "37f8cc1b", "ts": "2026-05-22T15:23:42.514714Z"}
+{"event": "declared", "id": "52077a34", "plan": "platform e2e verified: profile, match, demo all live", "action": "contract:dfc147a3", "pointer_type": "contract-ref", "parent_id": "1905f968", "pointers": [], "ts": "2026-05-22T15:23:42.572477Z"}
+{"event": "child_added", "id": "1905f968", "child_id": "52077a34", "ts": "2026-05-22T15:23:42.572804Z"}
