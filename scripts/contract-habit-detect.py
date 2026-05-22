@@ -158,7 +158,7 @@ def main():
 
     total = len([r for r in load_rows() if r.get("event") == "declared"])
     if not candidates:
-        print(f"  (no HABIT CANDIDATES above threshold={args.threshold}, {total} contracts in ledger)")
+        print(f"  (no RELATED CONTRACTS above threshold={args.threshold}, {total} contracts in ledger)")
         return
 
     print(f"HABIT CANDIDATES (threshold={args.threshold}):")
