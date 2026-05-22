@@ -359,3 +359,5 @@
 {"event": "declared", "id": "3cb8b87b", "plan": "profile API: POST /api/profile stores user prefs in KV", "action": "curl -sf -X POST https://inyo-landing.pages.dev/api/profile -H 'Content-Type: application/json' -d '{\"phone\":\"5551230001\",\"name\":\"T\",\"age\":28}' | python3 -c 'import sys,json;d=json.load(sys.stdin);exit(0 if d.get(\"ok\") else 1)'", "pointer_type": "api", "parent_id": "dfc147a3", "pointers": [], "ts": "2026-05-22T15:19:28.032059Z"}
 {"event": "child_added", "id": "dfc147a3", "child_id": "3cb8b87b", "ts": "2026-05-22T15:19:28.032374Z"}
 {"event": "iterated", "id": "3cb8b87b", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:19:29.014353Z"}
+{"event": "iterated", "id": "3cb8b87b", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:21:31.154146Z"}
+{"event": "satisfied", "id": "3cb8b87b", "wave": 0, "ts": "2026-05-22T15:21:31.154432Z"}
