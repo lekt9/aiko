@@ -1090,7 +1090,7 @@ PYSHAPE
     echo "    KEY 2 (agent):   JUDGE genuine / fake-green  (or BREAK / CONTINUE for loops)"
     echo "    No script claims satisfaction. Both keys required."
     echo
-    echo "  Self-aware contracts in ledger (habit search):"
+    echo "  Self-aware contracts in ledger (search):"
     PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 "$SELF/contract-habit-detect.py" \
       --context "contract primitive five shapes funnel loop harness cell fractal self-aware two-key exit"
     ;;
