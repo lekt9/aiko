@@ -2516,3 +2516,4 @@
 {"event": "status_update", "id": "616cd033", "status": "dropped", "ts": "2026-05-22T21:19:13.808801Z"}
 {"event": "status_update", "id": "cdc0d8e1", "status": "dropped", "ts": "2026-05-22T21:19:13.808889Z"}
 {"event": "satisfied", "id": "803c764f", "wave": 0, "ts": "2026-05-22T21:19:27.578625Z"}
+{"event": "declared", "id": "7df0c7aa", "plan": "Before asking the user for any API key, token, or credential, scour every place an existing one may live (~/.config, environment, macOS keychain, gh/wrangler/CLI auth, project .env files, memory, prior session) and reuse the one already available; never make the user re-supply a credential that already exists", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/saiful2", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:20:01.824280Z"}
