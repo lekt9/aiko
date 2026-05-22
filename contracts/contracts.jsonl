@@ -551,3 +551,4 @@
 {"event": "declared", "id": "3d72c934", "plan": "self-test guard for the tool-guard verify harness", "action": "tool-guard:__contract_toolguard_selftest__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:05:34.443757Z"}
 {"event": "satisfied", "id": "3d72c934", "wave": 0, "ts": "2026-05-22T21:05:34.547657Z"}
 {"event": "declared", "id": "357c368f", "plan": "unbrowse is contracted OFF for this session \u2014 the unbrowse browser tools (mcp__unbrowse__*) are not to be used today. Use WebFetch or a direct API call instead. Lift this guard with: contract _mark <id> satisfied", "action": "tool-guard:mcp__unbrowse__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:05:34.628280Z"}
+{"event": "satisfied", "id": "fadd631e", "wave": 0, "ts": "2026-05-22T21:05:55.224668Z"}
