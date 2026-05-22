@@ -144,8 +144,8 @@ contract status [<id>]
 # All contracts
 contract list
 
-# Surface recurring pattern candidates (never auto-declares)
-contract habit [--context "<text>"] [--scope project|global]
+# Surface related existing contracts (never auto-declares; `habit` kept as back-compat alias)
+contract search [--context "<text>"] [--scope project|global]
 
 # Surface past patterns (principle stores, canon, old ledgers) as candidate contracts
 contract import <source> [--archive] [--commands]
