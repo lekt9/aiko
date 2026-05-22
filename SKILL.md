@@ -188,6 +188,38 @@ can still judge HOLD when a result is fake-green, or disarm when genuinely block
 - `~/.contracts/drive_next.txt` — current pending action JSON
 - Both removed by `contract disarm`
 
+## Crystallizing learnings (memory + Outline)
+
+A contract is a unit of learning (`CONTRACTING_IS_LEARNING`). When a learning
+crystallizes, the skill makes it durable on two surfaces beyond the ledger:
+
+1. a **memory file** in the Claude Code auto-memory folder (survives in session recall)
+2. an **Outline document** at `docs.getfoundry.app` (the team knowledge base)
+
+This is a **hook-like structure native to /contract** — it rides the same
+internal hook bus as `drive-advance` (`_fire_contract_hooks`, fired by the CLI
+itself on every `iterate` and `mark`). Two entry points:
+
+- **Automatic** — declare a contract with `--learning "<insight>"`. When that
+  contract is marked satisfied, the `crystallize-learning` hook
+  (`~/.contracts/hooks/crystallize-learning.py`) fires on the `mark` event and
+  crystallizes it. The hook is self-guarded: a non-satisfied contract, a
+  contract with no `learning`, or an already-crystallized one is a no-op.
+- **On demand** — `contract learn "<insight>" [--source <ref>]` crystallizes an
+  explicit insight immediately and appends a `learned` ledger row.
+
+```bash
+contract declare "<plan>" --action "<cmd>" --learning "<insight>"   # auto-crystallize on satisfy
+contract learn "<insight>" [--source <ref>]                         # crystallize on demand
+```
+
+Every crystallization appends a `crystallized` ledger row — the idempotency
+key, so a learning is crystallized at most once. Both surfaces are best-effort
+and independent: the memory file is always written; the Outline push is
+skipped cleanly when `~/.config/outline/` is absent or
+`CONTRACT_CRYSTALLIZE_NO_OUTLINE=1` is set. The substrate emits the artifacts;
+it never judges them — the agent reads the memory and the doc.
+
 
 ## Output mode (load-bearing)
 
