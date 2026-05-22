@@ -166,6 +166,49 @@ print(c['status'] if c else 'not-found')
     fi
   fi
 
+  # sequence: an ORDERED funnel. Satisfied when every child is satisfied
+  # (same AND-gate as funnel), but iterate names the first unsatisfied child
+  # in declared order as the current stage — the Genesis-days arc. Ordering
+  # is surfaced, not force-blocked: the substrate points at the next stage;
+  # the agent follows it.
+  if [ "$action" = "sequence" ]; then
+    local seqinfo
+    seqinfo=$(MH_ID="$id" _py_inline "
+import os; from contract_core import get
+c = get(os.environ['MH_ID'])
+kids = c['children'] if c else []
+pending = None
+allsat = bool(kids)
+for k in kids:
+    kc = get(k)
+    st = kc['status'] if kc else 'missing'
+    if st != 'satisfied':
+        allsat = False
+        if pending is None:
+            pending = (k, st)
+if not kids:
+    print('EMPTY')
+elif allsat:
+    print('ALL-SATISFIED')
+else:
+    print('STAGE ' + pending[0] + ' ' + pending[1])
+")
+    echo "  pointer(sequence): ordered funnel"
+    case "$seqinfo" in
+      ALL-SATISFIED)
+        echo "  result: PASS — every stage satisfied, in order"
+        return 0 ;;
+      EMPTY)
+        echo "  result: FAIL — sequence has no stages yet (spawn ordered children)"
+        return 1 ;;
+      STAGE\ *)
+        set -- $seqinfo
+        echo "  result: FAIL — current stage: $2 ($3)"
+        echo "  do this stage next: contract iterate $2"
+        return 1 ;;
+    esac
+  fi
+
   # tool-guard:<pattern>: a standing PreToolUse guard. NOT exec'd as a shell
   # command. The contract-tool-guard.py hook enforces it on every tool call:
   # while this contract is unsatisfied, any tool matching <pattern> is blocked
