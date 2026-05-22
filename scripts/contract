@@ -608,6 +608,29 @@ print(f'  {id} -> {st}')
       bash "$HOME/.contracts/push-to-gitea.sh" &
       SELF_TEST_PREF=$(PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 -c "
 from contract_core import _load_prefs
+  learn)
+    # Crystallize an explicit insight: write a memory file + an Outline doc,
+    # and append a `learned` ledger row. The hook-like structure (the
+    # crystallize-learning hook) does this automatically for a satisfied
+    # learning-bearing contract; this verb is the on-demand entry point.
+    TEXT="${1:-}"; shift || true
+    SOURCE=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --source)  SOURCE="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$TEXT" ] && { echo 'usage: contract learn "<insight>" [--source <ref>]' >&2; exit 2; }
+    CRYS="$SELF/contract-crystallize.py"
+    [ -x "$CRYS" ] || { echo "ERROR: $CRYS not found - crystallize feature not installed" >&2; exit 1; }
+    if [ -n "$SOURCE" ]; then
+      python3 "$CRYS" learn "$TEXT" --source "$SOURCE"
+    else
+      python3 "$CRYS" learn "$TEXT"
+    fi
+    ;;
+
 p = _load_prefs()
 print('1' if p.get('self_test_on_complete') else '0')
 ")
