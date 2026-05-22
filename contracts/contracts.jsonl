@@ -2633,3 +2633,11 @@
 {"event": "corroborated", "id": "a415cbdc", "corroborates": "30910fb8", "label": "", "ts": "2026-05-22T21:38:07.325184Z"}
 {"event": "satisfied", "id": "a415cbdc", "wave": 0, "ts": "2026-05-22T21:38:07.353597Z"}
 {"event": "iterated", "id": "466d2347", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:38:08.177878Z"}
+{"event": "declared", "id": "9f8e14d4", "plan": "quorumgate_selftest_96054 quorum organ probe", "action": "quorum:2", "pointer_type": "quorum", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:38:08.382787Z"}
+{"event": "declared", "id": "21d1df10", "plan": "quorumgate_selftest_96054 quorum child 1", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": "9f8e14d4", "pointers": [], "ts": "2026-05-22T21:38:08.562949Z"}
+{"event": "child_added", "id": "9f8e14d4", "child_id": "21d1df10", "ts": "2026-05-22T21:38:08.563189Z"}
+{"event": "declared", "id": "77ba361b", "plan": "quorumgate_selftest_96054 quorum child 2", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": "9f8e14d4", "pointers": [], "ts": "2026-05-22T21:38:08.742759Z"}
+{"event": "child_added", "id": "9f8e14d4", "child_id": "77ba361b", "ts": "2026-05-22T21:38:08.743029Z"}
+{"event": "declared", "id": "98d8812b", "plan": "quorumgate_selftest_96054 quorum child 3", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": "9f8e14d4", "pointers": [], "ts": "2026-05-22T21:38:08.923095Z"}
+{"event": "child_added", "id": "9f8e14d4", "child_id": "98d8812b", "ts": "2026-05-22T21:38:08.923321Z"}
+{"event": "iterated", "id": "9f8e14d4", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:38:09.273120Z"}
