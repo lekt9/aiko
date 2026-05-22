@@ -400,7 +400,7 @@ when every auditor genuinely failed to falsify it.
 `<promise>CONTRACT_SATISFIED:<root></promise>`. The organism has shipped.
 
 ```bash
-contract habit --context "<plan>"                   # Step 0  — BM25 discover/reuse
+contract search --context "<plan>"                  # Step 0  — BM25 discover/reuse
 contract declare "<north star>" --action sequence    # the organism root
 contract spawn <root> "stage 1 ..." --budget 5       # Steps 1-6 — ordered creation
   ...                                                #            (one spawn per stage)
