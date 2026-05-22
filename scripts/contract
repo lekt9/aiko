@@ -762,12 +762,14 @@ PY
     esac
     ;;
 
-  install-hooks)
-    # Live projection of tool-guard contracts into ~/.claude/settings.json.
-    # Scans the ledger for active (non-satisfied, non-merged) contracts
-    # whose action starts with tool-guard:<glob> and ensures the PreToolUse
-    # hook is wired for that glob. Removes hook entries for contracts that
-    # are now satisfied. Idempotent. --dry-run prints the diff.
+  install-hooks|export-hooks)
+    # Project tool-guard contracts into a runtime hook config. Supports
+    # multiple targets so the skill is not Claude-Code-bound:
+    #   --format claude-code  → ~/.claude/settings.json PreToolUse entries
+    #   --format generic      → ~/.contracts/tool-guards.json (runtime-agnostic)
+    #   --format json         → stdout JSON for piping into any installer
+    # Scans the ledger for active (non-satisfied, non-merged) contracts whose
+    # action starts with tool-guard:<glob>. Idempotent.
     DRY=""
     SCOPE="user"
     while [ $# -gt 0 ]; do
