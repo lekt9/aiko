@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # skill-self-test.sh — runs every structural invariant the /contract skill
 # enforces on its own code. Substrate that REPLACES one-off iteration of
-# 18 skill-self contracts. Wired as pre-commit on ~/.contracts/.git so
-# every ledger event auto-revalidates the skill's structural invariants.
+# 18+ skill-self contracts. Wired as pre-commit on ~/.contracts/.git so
+# every ledger event auto-revalidates. Contracts 02471746 + 33c188dc.
 set -uo pipefail
 SKILL_DIR="${SKILL_DIR:-$HOME/.claude/skills/contract}"
 SCRIPTS="$SKILL_DIR/scripts"
@@ -21,6 +21,7 @@ check() {
   fi
 }
 
+# ── Structural invariants (was 18 individual contracts) ──────────────────────
 check "cli/bash-syntax"            bash -n "$CLI"
 check "core/import"                env PYTHONPATH="$SCRIPTS/lib" python3 -c 'import contract_core'
 check "core/folder-substrate"      env PYTHONPATH="$SCRIPTS/lib" python3 -c \
@@ -39,13 +40,14 @@ check "hook/folder-aware"          python3 -c \
                                      "import sys; sys.exit(0 if 'contracts_d_root' in open('$HOME/.claude/hooks/contract-drive.py').read() else 1)"
 [ -x "$HOOK_DIR/drive-advance.sh" ] && \
   check "hook/drive-advance-exec"  test -x "$HOOK_DIR/drive-advance.sh"
-[ -x "$HOOK_DIR/drive-advance.sh" ] && \
-  check "hook/drive-advance-exec"  test -x "$HOOK_DIR/drive-advance.sh"
 
-# Three setup verbs that replace ledger setup-noise with code (contract 33c188dc)
+# ── Setup verbs (was ~50 skill-existence + 13 default + activation rows) ─────
 check "verb/init-dry"              env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" init --dry-run
 check "verb/skills-sync"           bash "$CLI" skills sync --json
 check "verb/install-hooks-dry"     env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" install-hooks --dry-run
+
+if [ $fail -gt 0 ]; then
+  printf "\nSKILL-SELF-TEST: %d FAIL(S)\n" "$fail" >&2
   exit 1
 fi
 echo
