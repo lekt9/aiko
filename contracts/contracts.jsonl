@@ -2708,3 +2708,5 @@
 {"event": "satisfied", "id": "db45b1e2", "wave": 0, "ts": "2026-05-22T22:12:29.313440Z"}
 {"event": "merged", "id": "b9d5fb62", "merged_into": "db45b1e2", "reason": "Implemented as default-on auto-arm in declare/solve/build with --no-drive opt-out; behavioral verification confirmed both branches. The original pending spec is now a fossil.", "ts": "2026-05-22T22:12:42.140738Z"}
 {"event": "satisfied", "id": "203cfcfb", "wave": 0, "ts": "2026-05-22T22:19:56.674657Z"}
+{"event": "iterated", "id": "3c7bdfcd", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T22:19:57.760553Z"}
+{"event": "satisfied", "id": "3c7bdfcd", "wave": 0, "ts": "2026-05-22T22:19:57.827609Z"}
