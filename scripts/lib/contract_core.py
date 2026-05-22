@@ -138,6 +138,34 @@ def merge_into(source_id: str, target_id: str, reason: str = "") -> None:
     _append({"event": "merged", "id": source_id, "merged_into": target_id, "reason": reason, "ts": _now()})
 
 
+
+
+def record_learning(text: str, source: Optional[str] = None) -> str:
+    """Append a `learned` event - an explicit `contract learn` insight that
+    is not tied to a contract's satisfaction. Returns the new learning id."""
+    lid = str(uuid.uuid4())[:8]
+    row = {"event": "learned", "id": lid, "text": text, "ts": _now()}
+    if source:
+        row["source"] = source
+    _append(row)
+    return lid
+
+
+def record_crystallization(id: str, memory_path: str = "",
+                           outline_url: str = "") -> None:
+    """Append a `crystallized` event - the durable record that a learning
+    (a satisfied learning-contract, or a `learned` event) was emitted to a
+    memory file and/or an Outline doc. This row is the idempotency key."""
+    _append({"event": "crystallized", "id": id,
+             "memory_path": memory_path or "", "outline_url": outline_url or "",
+             "ts": _now()})
+
+
+def is_crystallized(id: str) -> bool:
+    """True when a `crystallized` event already exists for this id."""
+    return any(r.get("event") == "crystallized" and r.get("id") == id
+               for r in _rows())
+
 def revise(id: str, new_action: str, reason: str = "") -> None:
     """Append an action revision; future iterates use new_action (membrane update)."""
     _append({"event": "revised", "id": id, "new_action": new_action, "reason": reason, "ts": _now()})
