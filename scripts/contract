@@ -638,7 +638,7 @@ if not DRY:
 print(f"  contracts.d: {contracts_d_root()}")
 
 # 2. Default contracts — install if not already present (by plan-prefix match).
-# These are the 13 universal principles from SKILL.md. They live as eternal
+# These are the 12 universal principles from SKILL.md. They live as eternal
 # judgments in the ledger so the agent can reference them; idempotent.
 DEFAULTS = [
     ("substrate",        "judgment", "substrate enables, never prescribes — no forbidden surface in any script or agent"),
