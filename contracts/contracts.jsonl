@@ -2698,3 +2698,4 @@
 {"event": "iterated", "id": "cdb648fc", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:54:35.608522Z"}
 {"event": "satisfied", "id": "cdb648fc", "wave": 0, "ts": "2026-05-22T21:54:39.905207Z"}
 {"event": "iterated", "id": "900af694", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:54:40.287861Z"}
+{"event": "satisfied", "id": "900af694", "wave": 0, "ts": "2026-05-22T21:54:43.368498Z"}
