@@ -168,3 +168,5 @@
 {"event": "declared", "id": "1ffac7fb", "plan": "the /contract skill never swallows an error silently: no except handler has a bare pass/continue body; corrupt ledger input surfaces a warning", "action": "python3 /Users/lekt9/.claude/skills/contract/scripts/check-no-silent-fallback.py", "pointer_type": "cli", "parent_id": null, "pointers": [], "ts": "2026-05-22T12:08:03.759142Z"}
 {"event": "iterated", "id": "1ffac7fb", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T12:08:03.978774Z"}
 {"event": "satisfied", "id": "1ffac7fb", "wave": 0, "ts": "2026-05-22T12:08:17.566156Z"}
+{"event": "declared", "id": "0661a665", "plan": "every contract declared anywhere carries a scope tag: project | global | project\u2192global \u2014 agent judges at declare time; promoted contracts mirror from project store into global store", "action": "agent-judges", "pointer_type": "agent-judges", "parent_id": "0a2669bf", "pointers": [], "ts": "2026-05-22T12:51:27.247562Z"}
+{"event": "child_added", "id": "0a2669bf", "child_id": "0661a665", "ts": "2026-05-22T12:51:27.247924Z"}
