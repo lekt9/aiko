@@ -84,6 +84,7 @@ def declare(plan: str, action: str, parent_id: Optional[str] = None,
     cid = str(uuid.uuid4())[:8]
     row = {"event": "declared", "id": cid, "plan": plan, "action": action,
            "pointer_type": _infer_pointer_type(action),
+           "cwd": os.getcwd(),
            "parent_id": parent_id, "pointers": pointers or [],
            "ts": _now()}
     if learning:

@@ -35,7 +35,12 @@ _fire_contract_hooks() {
 cmd="${1:-help}"; shift || true
 
 _run_action() {
-  local action="$1" id="$2"
+  local action="$1" id="$2" cwd="${3:-}"
+  # Bind the action to its declare-time cwd: a relative-path action declared
+  # in dir A must still run in A when iterated from dir B. An empty/missing
+  # cwd (rows predating the cwd field) falls back to the current directory.
+  local _rundir="."
+  [ -n "$cwd" ] && [ -d "$cwd" ] && _rundir="$cwd"
   local ptype
   if [ "$action" = "agent-judges" ]; then
     ptype="agent-judges"
@@ -104,7 +109,7 @@ c=get(os.environ['MH_ID']); print(c['wave'] if c else 0)
   if [[ "$action" == loop-until:* ]]; then
     local body="${action#loop-until:}"
     echo "  pointer(loop-until): $body"
-    if eval "$body" >/tmp/contract-action-out 2>&1; then
+    if ( cd "$_rundir" && eval "$body" ) >/tmp/contract-action-out 2>&1; then
       echo "  result: PASS — body exited 0 (agent judges BREAK or CONTINUE)"
       return 0
     else
@@ -159,7 +164,7 @@ print(c['status'] if c else 'not-found')
     fi
   fi
   echo "  pointer($ptype): $action"
-  if eval "$action" >/tmp/contract-action-out 2>&1; then
+  if ( cd "$_rundir" && eval "$action" ) >/tmp/contract-action-out 2>&1; then
     echo "  result: PASS (exit 0)"
     return 0
   else
@@ -259,13 +264,14 @@ print(json.dumps(c) if c else 'null')
 ")
     [ "$DATA" = "null" ] && { echo "ERROR: contract $ID not found" >&2; exit 3; }
     ACTION=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['action'])" "$DATA")
+    CWD=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('cwd',''))" "$DATA")
     WAVE=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['wave']+1)" "$DATA")
     PLAN_TEXT=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['plan'][:80])" "$DATA")
     echo "=== CONTRACT ITERATE — wave $WAVE ==="
     echo "  id:     $ID"
     echo "  plan:   $PLAN_TEXT"
     echo
-    _run_action "$ACTION" "$ID"
+    _run_action "$ACTION" "$ID" "$CWD"
     ACTION_RC=$?
     MH_ID="$ID" MH_WAVE="$WAVE" MH_RC="$ACTION_RC" _py_inline "
 import os; from contract_core import record_iteration
