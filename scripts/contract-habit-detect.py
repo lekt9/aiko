@@ -3,7 +3,7 @@
 contract-habit-detect.py — surface recurring contract patterns as candidates.
 NEVER auto-declares. Surfaces evidence; agent judges.
 """
-import json, os, sys, re
+import json, os, sys, re, math
 from pathlib import Path
 from collections import Counter
 
