@@ -53,10 +53,11 @@ browser embed  ──POST messages──▶  /copilot/chat  ──loads registry
 | `fdry/frontend/functions/copilot/chat.ts` | server-held agent loop |
 | `fdry/frontend/functions/api/vaults.ts` | an example indexable API |
 | `fdry/frontend/src/components/Copilot.tsx` | thin client embed |
-
 Wiring: add `index-site.mjs` to the build script before `vite build`
 (so the registry lands in `public/` → `dist/`), gitignore the generated
-`copilot-registry.json`, mount `<Copilot />` once at the app root, set
+`copilot-registry.json`, mount `<Copilot />` once at the app root, and
+declare the Workers AI binding (`[ai]` binding = "AI" in `wrangler.toml`)
+so the server-held loop has keyless inference.
 the `ANTHROPIC_API_KEY` deploy secret.
 
 ## Why this is a contract, not a feature
