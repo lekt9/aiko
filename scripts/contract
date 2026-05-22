@@ -842,13 +842,11 @@ else:
     fi
     ;;
 
-
-
-
+  disarm)
     DRIVE_STATE="$HOME/.contracts/.drive_active"
     if [ -f "$DRIVE_STATE" ]; then
       ARMED_ID=$(cat "$DRIVE_STATE")
-      rm -f "$DRIVE_STATE" "$HOME/.contracts/drive_next.txt" "$HOME/.contracts/.drive_store"
+      rm -f "$DRIVE_STATE" "$HOME/.contracts/drive_next.txt" "$HOME/.contracts/.drive_store" "$HOME/.contracts/.drive_cwd"
       echo "Contract drive disarmed (was driving organ: $ARMED_ID)."
     else
       echo "No drive active."
