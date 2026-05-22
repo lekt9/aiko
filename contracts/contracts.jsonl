@@ -300,3 +300,11 @@
 {"event": "iterated", "id": "6567a078", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T13:24:17.833899Z"}
 {"event": "satisfied", "id": "6567a078", "wave": 0, "ts": "2026-05-22T13:24:17.834213Z"}
 {"event": "declared", "id": "4f4e5745", "plan": "drive loop end-to-end test organ", "action": "funnel", "pointer_type": "funnel", "parent_id": null, "pointers": [], "ts": "2026-05-22T14:10:18.190033Z"}
+{"event": "declared", "id": "dd461220", "plan": "python3 is available", "action": "python3 --version", "pointer_type": "cli", "parent_id": "4f4e5745", "pointers": [], "ts": "2026-05-22T14:10:28.696814Z"}
+{"event": "child_added", "id": "4f4e5745", "child_id": "dd461220", "ts": "2026-05-22T14:10:28.697102Z"}
+{"event": "declared", "id": "a81d4878", "plan": "contract ledger exists and has rows", "action": "test $(wc -l < ~/.contracts/contracts.jsonl) -gt 10", "pointer_type": "cli", "parent_id": "4f4e5745", "pointers": [], "ts": "2026-05-22T14:10:28.758855Z"}
+{"event": "child_added", "id": "4f4e5745", "child_id": "a81d4878", "ts": "2026-05-22T14:10:28.759133Z"}
+{"event": "declared", "id": "4c026e93", "plan": "drive-advance.sh is executable", "action": "test -x ~/.contracts/hooks/drive-advance.sh", "pointer_type": "cli", "parent_id": "4f4e5745", "pointers": [], "ts": "2026-05-22T14:10:28.819891Z"}
+{"event": "child_added", "id": "4f4e5745", "child_id": "4c026e93", "ts": "2026-05-22T14:10:28.820262Z"}
+{"event": "declared", "id": "e76293a6", "plan": "INLINE DRIVE string is in contract CLI", "action": "grep -q INLINE.DRIVE ~/.claude/skills/contract/scripts/contract", "pointer_type": "cli", "parent_id": "4f4e5745", "pointers": [], "ts": "2026-05-22T14:10:28.880104Z"}
+{"event": "child_added", "id": "4f4e5745", "child_id": "e76293a6", "ts": "2026-05-22T14:10:28.880390Z"}
