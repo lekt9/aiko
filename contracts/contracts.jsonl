@@ -422,3 +422,7 @@
 {"event": "declared", "id": "ce8a5aff", "plan": "Polymarket fade-the-rally arm: rolling live hit rate >= 70% over last 20 settled trades (n<20 is HOLD, not fail \u2014 just waiting for corpus)", "action": ".venv/bin/python harness/check_live_hitrate.py", "pointer_type": "cli", "parent_id": "2fc96f02", "pointers": [], "ts": "2026-05-22T15:56:44.634056Z"}
 {"event": "child_added", "id": "2fc96f02", "child_id": "ce8a5aff", "ts": "2026-05-22T15:56:44.634480Z"}
 {"event": "iterated", "id": "ce8a5aff", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:56:52.094062Z"}
+{"event": "iterated", "id": "ce8a5aff", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:57:12.467540Z"}
+{"event": "satisfied", "id": "ce8a5aff", "wave": 0, "ts": "2026-05-22T15:57:12.468010Z"}
+{"event": "declared", "id": "57b5817e", "plan": "Polymarket fade-the-rally arm: rolling live hit rate >= 70% over last 20 settled trades (n<20 = HOLD, not fail)", "action": ".venv/bin/python harness/check_live_hitrate.py", "pointer_type": "cli", "parent_id": "2fc96f02", "pointers": [], "ts": "2026-05-22T15:57:12.558693Z"}
+{"event": "child_added", "id": "2fc96f02", "child_id": "57b5817e", "ts": "2026-05-22T15:57:12.559195Z"}
