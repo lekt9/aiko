@@ -2537,3 +2537,5 @@
 {"event": "iterated", "id": "7df0c7aa", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:25:19.731855Z"}
 {"event": "satisfied", "id": "7df0c7aa", "wave": 0, "ts": "2026-05-22T21:26:31.909915Z"}
 {"event": "declared", "id": "b5ba1bb0", "plan": "bm25gate_selftest_79199 discover and reuse probe alpha bravo", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:26:39.578249Z"}
+{"event": "declared", "id": "c7414362", "plan": "bm25gate_selftest_79406 discover and reuse probe alpha bravo", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:26:59.669595Z"}
+{"event": "iterated", "id": "e82cdc40", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:26:59.982066Z"}
