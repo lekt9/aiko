@@ -2565,3 +2565,4 @@
 {"event": "iterated", "id": "b48dd802", "wave": 3, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:29:29.672079Z"}
 {"event": "iterated", "id": "0a8c992e", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:29:29.726501Z"}
 {"event": "satisfied", "id": "0a8c992e", "wave": 0, "ts": "2026-05-22T21:29:29.785678Z"}
+{"event": "declared", "id": "cbb2a1d3", "plan": "the /contract skill crystallizes learnings into durable knowledge: a native contract hook auto-emits a memory file and an Outline doc whenever a learning-bearing contract is satisfied, and a contract learn verb does the same on demand - a hook-like structure wired into the contract CLI itself", "action": "funnel", "pointer_type": "funnel", "cwd": "/private/tmp", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:30:17.379570Z"}
