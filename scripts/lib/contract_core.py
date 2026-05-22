@@ -166,6 +166,7 @@ def get(id: str) -> Optional[dict]:
               "pointer_type": declared.get("pointer_type") or _infer_pointer_type(current_action),
               "parent_id": declared.get("parent_id"), "children": children,
               "pointers": declared.get("pointers") or [],
+              "cwd": declared.get("cwd"),
               "status": status, "wave": wave}
     if merged_rows:
         result["merged_into"] = merged_rows[-1].get("merged_into")

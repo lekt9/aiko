@@ -264,7 +264,7 @@ print(json.dumps(c) if c else 'null')
 ")
     [ "$DATA" = "null" ] && { echo "ERROR: contract $ID not found" >&2; exit 3; }
     ACTION=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['action'])" "$DATA")
-    CWD=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('cwd',''))" "$DATA")
+    CWD=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('cwd') or '')" "$DATA")
     WAVE=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['wave']+1)" "$DATA")
     PLAN_TEXT=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['plan'][:80])" "$DATA")
     echo "=== CONTRACT ITERATE — wave $WAVE ==="
