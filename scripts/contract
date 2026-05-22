@@ -240,8 +240,9 @@ import os; from contract_core import _infer_pointer_type
 print(_infer_pointer_type(os.environ['MH_ACTION']))
 ")
     echo "  pointer_type: $PTYPE"
-    [ -n "$PARENT" ] && echo "  parent:      $PARENT"
+    [ -n "$PARENT" ]   && echo "  parent:      $PARENT"
     [ -n "$POINTERS" ] && echo "  pointers:    $POINTERS"
+    [ -n "$LEARNING" ] && echo "  learning:    $LEARNING"
     echo "  next:        contract iterate $ID"
     if [ -n "$DRIVE_FLAG" ]; then
       bash "$0" drive "$ID"
