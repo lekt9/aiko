@@ -161,7 +161,7 @@ def main():
         print(f"  (no RELATED CONTRACTS above threshold={args.threshold}, {total} contracts in ledger)")
         return
 
-    print(f"HABIT CANDIDATES (threshold={args.threshold}):")
+    print(f"RELATED CONTRACTS (threshold={args.threshold}):")
     print()
     for c in candidates:
         icon = "+" if c["status"] == "satisfied" else "~"
