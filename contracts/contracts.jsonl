@@ -2542,3 +2542,4 @@
 {"event": "satisfied", "id": "e82cdc40", "wave": 0, "ts": "2026-05-22T21:27:09.059848Z"}
 {"event": "declared", "id": "67b84ca0", "plan": "children_satisfy treats a merged (superseded) child as resolved, so a funnel is never permanently blocked by a fossil child", "action": "python3 -c \"import sys; s=open('/Users/lekt9/.claude/skills/contract/scripts/lib/contract_core.py').read(); i=s.index('def children_satisfy'); sys.exit(0 if 'merged' in s[i:i+700] else 1)\"", "pointer_type": "cli", "cwd": "/Users/lekt9/Projects/saiful2", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:28:42.502982Z"}
 {"event": "iterated", "id": "67b84ca0", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:28:42.803944Z"}
+{"event": "satisfied", "id": "67b84ca0", "wave": 0, "ts": "2026-05-22T21:28:52.674991Z"}
