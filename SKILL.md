@@ -510,8 +510,8 @@ From `principles-as-harnesses.md`: a principle with `--action` IS a contract. Fr
 
 ## Bundled scripts
 
-- `scripts/contract` — CLI front door (declare, iterate, build, spawn, solve, status, list, habit, _mark)
-- `scripts/contract-habit-detect.py` — passive pattern detector (L2)
+- `scripts/contract` — CLI front door (declare, iterate, build, spawn, solve, status, list, search, _mark)
+- `scripts/contract-habit-detect.py` — passive related-contract detector (L2; surfaced via `contract search`)
 - `scripts/contract-import-extract.py` — import extractor: surfaces past patterns as candidate contracts (L2)
 - `scripts/check-no-silent-fallback.py` — guard: fails if any skill script swallows an error silently
 - `scripts/lib/contract_core.py` — data model, sole ledger writer (L0)
