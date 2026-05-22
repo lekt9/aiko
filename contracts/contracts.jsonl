@@ -2577,3 +2577,8 @@
 {"event": "declared", "id": "e9591ee2", "plan": "auditgate_selftest_84511 target contract to be audited", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:30:33.273971Z"}
 {"event": "declared", "id": "bdb4e9a3", "plan": "falsifier audit of e9591ee2: 3 cold auditors each tried to break it and found no genuine defect", "action": "funnel", "pointer_type": "funnel", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": "e9591ee2", "pointers": [], "ts": "2026-05-22T21:30:33.481516Z"}
 {"event": "child_added", "id": "e9591ee2", "child_id": "bdb4e9a3", "ts": "2026-05-22T21:30:33.481807Z"}
+{"event": "declared", "id": "c9b41607", "plan": "auditgate_selftest_85256 target contract to be audited", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:30:56.362047Z"}
+{"event": "declared", "id": "c7b010cd", "plan": "falsifier audit of c9b41607: 3 cold auditors each tried to break it and found no genuine defect", "action": "funnel", "pointer_type": "funnel", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": "c9b41607", "pointers": [], "ts": "2026-05-22T21:30:56.571492Z"}
+{"event": "child_added", "id": "c9b41607", "child_id": "c7b010cd", "ts": "2026-05-22T21:30:56.571785Z"}
+{"event": "iterated", "id": "f8300680", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:30:56.631877Z"}
+{"event": "satisfied", "id": "f8300680", "wave": 0, "ts": "2026-05-22T21:30:56.690317Z"}
