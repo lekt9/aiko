@@ -600,6 +600,9 @@ else:
     ID="${1:-}"
     [ -z "$ID" ] && { echo "usage: contract drive <contract-id>  — arm autonomous drive loop (leaf or organ)" >&2; exit 2; }
     echo "$ID" > "$HOME/.contracts/.drive_active"
+    # Record which store the armed contract lives in so drive-advance.sh can find it
+    ACTIVE_STORE=$(PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 -c "from contract_core import _resolve_ledger; print(_resolve_ledger())" 2>/dev/null || echo "$HOME/.contracts/contracts.jsonl")
+    echo "$ACTIVE_STORE" > "$HOME/.contracts/.drive_store"
     echo "=== CONTRACT DRIVE ARMED ==="
     echo "  organ:  $ID"
     echo "  state:  ~/.contracts/drive_next.txt  (agent-agnostic; any runtime reads this)"
