@@ -3233,3 +3233,4 @@
 {"event": "merged", "id": "a3858350", "merged_into": "971b86b9", "reason": "original regex incorrectly listed start-guest as a violation; inventory Section B.8 tags it KEEP-AS-EDGE because the route sets an HTTP-only cookie that Convex cannot replicate. The revised contract enforces 'convex native frontend' without breaking the documented edge-route exceptions.", "ts": "2026-05-22T22:58:34.452182Z"}
 {"event": "iterated", "id": "971b86b9", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T22:58:35.304687Z"}
 {"event": "satisfied", "id": "971b86b9", "wave": 0, "ts": "2026-05-22T22:58:40.118331Z"}
+{"event": "iterated", "id": "2782ccbd", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T22:59:47.178877Z"}
