@@ -649,15 +649,26 @@ DEFAULTS = [
     ("no-adultery",      "judgment", "one contract, one truth claim — if an action checks two unrelated things it belongs as two contracts"),
     ("no-false-witness", "judgment", "every verification result traces to a real live source — no synthesized, proxied, or stubbed result"),
 ]
-existing = {r["plan"][:64]: r["id"] for r in list_all()}
+existing = list_all()
+def _already_present(plan):
+    """Idempotency by semantic anchor: first 3 distinctive 4+letter words.
+    Tolerates re-wordings ("substrate enables, never prescribes" vs
+    "the substrate enables; it does not prescribe") which a fixed-prefix
+    match would miss."""
+    import re
+    words = [w.lower() for w in re.findall(r"[a-zA-Z][a-zA-Z-]{3,}", plan)][:3]
+    if not words: return None
+    for r in existing:
+        rp = r.get("plan", "").lower()
+        if all(w in rp for w in words):
+            return r["id"]
+    return None
 installed, skipped = [], []
 for tag, shape, plan in DEFAULTS:
-    key = plan[:64]
-    if key in existing:
-        skipped.append((tag, existing[key]))
+    prior = _already_present(plan)
+    if prior:
+        skipped.append((tag, prior))
         continue
-    if DRY:
-        installed.append((tag, "(dry)"))
         continue
     cid, _ = declare(plan, action="agent-judges", parent_id=None)
     # Defaults are eternal facts — pre-satisfied so they act as references,
