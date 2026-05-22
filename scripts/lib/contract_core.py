@@ -250,6 +250,36 @@ def first_child_satisfies(id: str) -> bool:
     if not c or not c["children"]:
         return False
     return any((get(cid) or {}).get("status") == "satisfied" for cid in c["children"])
+
+
+def quorum_satisfied(id: str, k: int) -> bool:
+    """quorum:K — the integrate-and-fire neuron. Satisfied when at least K
+    of N children are genuinely satisfied. funnel is the K=N extreme;
+    funnel-first is the K=1 extreme; quorum:K is every threshold between."""
+    c = get(id)
+    if not c or not c["children"]:
+        return False
+    n_sat = sum(1 for cid in c["children"]
+                if (get(cid) or {}).get("status") == "satisfied")
+    return n_sat >= k
+
+
+def wavefront(id: str) -> dict:
+    """The signal a state change at `id` propagates. Returns the contracts a
+    change at `id` should re-evaluate: the parent organ, every contract:<id>
+    referrer, and corroborated synapses. Surfaces the wavefront only — it
+    satisfies nothing; KEY 2 stays with the agent."""
+    me = get(id)
+    out = {"parent": None, "referrers": [], "synapses": []}
+    if not me:
+        return out
+    out["parent"] = me.get("parent_id")
+    ref = "contract:" + id
+    for r in _rows():
+        if r.get("event") == "declared" and r.get("action") == ref:
+            out["referrers"].append(r["id"])
+    out["synapses"] = get_corroborations(id)
+    return out
 def dag(json_output: bool = False):
     """Build a DAG from all contracts in the active ledger."""
     all_rows = _rows()
