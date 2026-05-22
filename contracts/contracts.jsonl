@@ -2522,3 +2522,4 @@
 {"event": "satisfied", "id": "f9d7bfc5", "wave": 0, "ts": "2026-05-22T21:22:19.573681Z"}
 {"event": "satisfied", "id": "d42adb9d", "wave": 0, "ts": "2026-05-22T21:22:20.436886Z"}
 {"event": "iterated", "id": "c2bc95a4", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:22:21.342408Z"}
+{"event": "satisfied", "id": "c2bc95a4", "wave": 0, "ts": "2026-05-22T21:22:34.607820Z"}
