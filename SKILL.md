@@ -315,6 +315,50 @@ preserved as evidence. Natural selection here is variation (the ledger
 accumulates contracts), selection (the agent supersedes the less-fit on a
 surfaced contradiction), and heredity (the `merged_into` lineage edge).
 
+## The genesis organ (recipe)
+
+The jesus-loop's nine Genesis days are not a separate engine — they are one
+contract **organism**, assembled from the shapes above. This is the
+canonical arc for a substantial build.
+
+**Step 0 — Plan (discover and reuse by BM25).** Before declaring anything
+new, `contract habit --context "<the plan>"` ranks every past contract by
+BM25 (term-frequency saturation, inverse document frequency, length
+normalization) and surfaces the top hits. JUDGE: reuse or iterate an
+existing contract before creating a fresh one. The plan stage is a search,
+not a blank page. Every `declare` also runs this surface (the lifecycle
+check). The root contract's `plan` is the north star.
+
+**Steps 1-6 — Creation (an ordered `sequence`).** Declare the root with
+`--action sequence` and spawn the creation stages as ordered children.
+Iterating the sequence always names the next unsatisfied stage — Light
+before Firmament before Land. Bound a stage's effort with `--budget N`;
+iterate then surfaces wave-vs-budget as evidence.
+
+**Step 7 — Sabbath (the verdict).** The two-key exit is the Sabbath: KEY 1
+machine, KEY 2 the agent's PROMOTE / HOLD / REJECT. Default contract #11 is
+literally Sabbath — recognize genuine convergence and stop.
+
+**Step 8 — Judgement (the falsifier `audit`).** Before the organism is
+satisfied, `contract audit <root> --auditors N` fans out N cold auditors
+who each try to break the root contract. The audit organ is satisfied only
+when every auditor genuinely failed to falsify it.
+
+**Step 9 — Emergence.** `contract _mark <root> satisfied` and emit
+`<promise>CONTRACT_SATISFIED:<root></promise>`. The organism has shipped.
+
+```bash
+contract habit --context "<plan>"                   # Step 0  — BM25 discover/reuse
+contract declare "<north star>" --action sequence    # the organism root
+contract spawn <root> "stage 1 ..." --budget 5       # Steps 1-6 — ordered creation
+  ...                                                #            (one spawn per stage)
+contract audit <root> --auditors 13                  # Step 8  — falsifier judgement
+contract _mark <root> satisfied                      # Step 9  — emergence
+```
+
+Nothing here is a new engine. The genesis organ is the seven shapes, the
+BM25 plan stage, and the natural-selection lifecycle — composed.
+
 ## What this skill does NOT do
 
 - Auto-declare from a detected pattern. Surfaces candidates only.
