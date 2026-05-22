@@ -2625,3 +2625,10 @@
 {"event": "declared", "id": "eeb14b34", "plan": "propgate_selftest_95459 synapse partner", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:37:58.826221Z"}
 {"event": "corroborated", "id": "2642433b", "corroborates": "eeb14b34", "label": "", "ts": "2026-05-22T21:37:58.999711Z"}
 {"event": "satisfied", "id": "2642433b", "wave": 0, "ts": "2026-05-22T21:37:59.028268Z"}
+{"event": "declared", "id": "817eb1e5", "plan": "propgate_selftest_95785 parent organ", "action": "funnel", "pointer_type": "funnel", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:38:06.612043Z"}
+{"event": "declared", "id": "a415cbdc", "plan": "propgate_selftest_95785 child leaf", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": "817eb1e5", "pointers": [], "ts": "2026-05-22T21:38:06.796086Z"}
+{"event": "child_added", "id": "817eb1e5", "child_id": "a415cbdc", "ts": "2026-05-22T21:38:06.796334Z"}
+{"event": "declared", "id": "eb5e9997", "plan": "propgate_selftest_95785 referrer that depends on the leaf", "action": "contract:a415cbdc", "pointer_type": "contract-ref", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:38:06.975515Z"}
+{"event": "declared", "id": "30910fb8", "plan": "propgate_selftest_95785 synapse partner", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:38:07.153086Z"}
+{"event": "corroborated", "id": "a415cbdc", "corroborates": "30910fb8", "label": "", "ts": "2026-05-22T21:38:07.325184Z"}
+{"event": "satisfied", "id": "a415cbdc", "wave": 0, "ts": "2026-05-22T21:38:07.353597Z"}
