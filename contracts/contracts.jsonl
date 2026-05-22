@@ -2693,3 +2693,4 @@
 {"event": "child_added", "id": "900af694", "child_id": "ed084986", "ts": "2026-05-22T21:54:17.299273Z"}
 {"event": "declared", "id": "cdb648fc", "plan": "The user-facing layer is /humanizer-translated before returning: the final message handed to the human passes through the /humanizer discipline so it reads naturally and carries no raw substrate jargon (contract IDs, two-key-exit blocks, ledger rows, shape names) unless the human explicitly asked for that detail.", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": "900af694", "pointers": [], "ts": "2026-05-22T21:54:17.651406Z"}
 {"event": "child_added", "id": "900af694", "child_id": "cdb648fc", "ts": "2026-05-22T21:54:17.651726Z"}
+{"event": "iterated", "id": "ed084986", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:54:25.826914Z"}
