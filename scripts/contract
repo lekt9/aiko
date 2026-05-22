@@ -815,6 +815,47 @@ print(f'  next: contract iterate {tgt}   (re-verify the canonical truth)')
 "
     ;;
 
+  audit)
+    # Falsifier audit (the jesus-loop Step 8 — cold auditors). Declares an
+    # audit organ as a child of the target, then emits a fan-out prompt for
+    # N independent auditors who each TRY to break the target contract.
+    TARGET="${1:-}"; shift || true
+    AUDITORS=3
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --auditors) AUDITORS="${2:-3}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$TARGET" ] && { echo "usage: contract audit <id> [--auditors N]" >&2; exit 2; }
+    TPLAN=$(MH_ID="$TARGET" _py_inline "
+import os; from contract_core import get
+c=get(os.environ['MH_ID']); print(c['plan'][:70] if c else 'NOT-FOUND')")
+    [ "$TPLAN" = "NOT-FOUND" ] && { echo "ERROR: contract $TARGET not found" >&2; exit 1; }
+    AORG=$(MH_P="falsifier audit of $TARGET: $AUDITORS cold auditors each tried to break it and found no genuine defect" MH_PARENT="$TARGET" _py_inline "
+import os; from contract_core import declare
+print(declare(os.environ['MH_P'], 'funnel', os.environ['MH_PARENT']))")
+    echo "=== FALSIFIER AUDIT REQUIRED ==="
+    echo "  target:      $TARGET — \"$TPLAN\""
+    echo "  audit organ: $AORG  (a funnel child of $TARGET)"
+    echo "  auditors:    $AUDITORS"
+    echo
+    echo "  Route $AUDITORS COLD auditors in ONE message ($AUDITORS parallel Agent"
+    echo "  calls). Each independently tries to FALSIFY contract $TARGET — break"
+    echo "  its claim, find a counter-example, expose a fake-green. Each runs:"
+    echo
+    n=1
+    while [ "$n" -le "$AUDITORS" ]; do
+      echo "    auditor $n: contract solve \"cold auditor $n: tried to falsify $TARGET and found no genuine defect\" --action agent-judges --parent $AORG"
+      n=$((n+1))
+    done
+    echo
+    echo "  An auditor that FINDS a defect holds its contract unsatisfied and"
+    echo "  reports the break. The audit organ $AORG is satisfied only when"
+    echo "  every auditor genuinely could not break the target."
+    echo "  next: contract iterate $AORG   (after all auditors report)"
+    ;;
+
   revise)
     ID="${1:-}"; shift || true
     NEW_ACTION="" REASON=""
