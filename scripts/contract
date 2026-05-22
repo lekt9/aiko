@@ -479,9 +479,15 @@ DEFAULTS
     ID="${1:-}"; STATUS="${2:-}"
     [ -z "$ID" ] || [ -z "$STATUS" ] && { echo "usage: contract _mark <id> <status>" >&2; exit 2; }
     MH_ID="$ID" MH_STATUS="$STATUS" _py_inline "
-import os; from contract_core import mark_satisfied, mark_status
+import os; from contract_core import mark_satisfied, mark_status, record_iteration, get
 id=os.environ['MH_ID']; st=os.environ['MH_STATUS']
-mark_satisfied(id,0) if st=='satisfied' else mark_status(id,st)
+if st=='satisfied':
+    c = get(id)
+    cur_wave = c['wave'] if c else 0
+    record_iteration(id, cur_wave + 1, 0, 'pass', 'genuine', [])
+    mark_satisfied(id, 0)
+else:
+    mark_status(id, st)
 print(f'  {id} -> {st}')
 "
     _fire_contract_hooks "mark" "$ID" "0"
