@@ -46,6 +46,8 @@ check "cli/inline-drive-block"     python3 -c \
 check "verb/init-dry"              env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" init --dry-run
 check "verb/skills-sync"           bash "$CLI" skills sync --json
 check "verb/install-hooks-dry"     env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" install-hooks --dry-run
+check "verb/export-hooks-json"     env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" export-hooks --format json
+check "verb/drive-watch-missing"   env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" drive-watch nonexistent-id-XXXX
 
 if [ $fail -gt 0 ]; then
   printf "\nSKILL-SELF-TEST: %d FAIL(S)\n" "$fail" >&2
