@@ -2596,3 +2596,4 @@
 {"event": "satisfied", "id": "5da80b8a", "wave": 0, "ts": "2026-05-22T21:32:55.477245Z"}
 {"event": "iterated", "id": "0f28bc1b", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:32:55.722966Z"}
 {"event": "satisfied", "id": "0f28bc1b", "wave": 0, "ts": "2026-05-22T21:33:01.866177Z"}
+{"event": "declared", "id": "84f0b5c2", "plan": "Make the contract graph alive \u2014 process, not shapes: signal propagation (a state change surfaces the wavefront of dependents) and the integrate-and-fire neuron (a quorum:K shape).", "action": "funnel", "pointer_type": "funnel", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:36:28.830971Z"}
