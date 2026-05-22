@@ -333,9 +333,6 @@ print(declare(os.environ['MH_PLAN'], os.environ['MH_ACTION'], p, pts, lrn, bdg, 
     echo "  plan:        $PLAN"
     echo "  action:      $ACTION"
     [ -n "$BIND_TO" ] && echo "  bind_to:     $BIND_TO"
-    echo "declared: $ID"
-    echo "  plan:        $PLAN"
-    echo "  action:      $ACTION"
     PTYPE=$(MH_ACTION="$ACTION" _py_inline "
 import os; from contract_core import _infer_pointer_type
 print(_infer_pointer_type(os.environ['MH_ACTION']))
