@@ -54,6 +54,9 @@ def load_rows() -> list[dict]:
 
 
 def get_status(id: str, rows: list[dict]) -> str:
+    # A merged contract is superseded — terminal status, overrides all else.
+    if any(r.get("id") == id and r.get("event") == "merged" for r in rows):
+        return "merged"
     for r in reversed(rows):
         if r.get("id") == id:
             if r.get("event") == "satisfied":
@@ -62,8 +65,6 @@ def get_status(id: str, rows: list[dict]) -> str:
                 return r.get("status", "?")
     iter_rows = [r for r in rows if r.get("id") == id and r.get("event") == "iterated"]
     return "active" if iter_rows else "pending"
-
-
 def detect(context: str, threshold: float = DEFAULT_THRESHOLD) -> list[dict]:
     all_rows = load_rows()
     contracts = [r for r in all_rows if r.get("event") == "declared"]
