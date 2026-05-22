@@ -103,6 +103,7 @@ Crystallised from real session work, not aspiration:
 4. **Spawn when sub-work emerges.** `contract spawn <parent> "<sub>" --action "<check>"`. The parent becomes an organ; its satisfaction = all children satisfied. The spawn verb emits a SPAWN REQUIRED prompt — the agent routes the child via a sub-agent or directly.
 5. **Mark explicitly.** Emit `<promise>CONTRACT_SATISFIED:<id></promise>` then `contract _mark <id> satisfied`. No script claims satisfaction unilaterally.
 6. **Ledger is memory.** Every failed wave is evidence. Never delete rows; the history drives habit detection and informs future declares.
+7. **Drive the whole tree in one invocation.** When the user invokes `/contract`, converge the entire organ that invocation declares: iterate and mark every child and the organ itself before yielding. Never end a `/contract` invocation with a satisfiable contract left pending, and never hand the loop back to the user mid-tree. The user says `/contract` once; you drive it to a satisfied organ, or to a genuinely-blocked HOLD with the blocker named. For long autonomous runs, `contract drive <organ-id>` removes the between-iteration pause entirely.
 
 ## CLI
 
@@ -324,6 +325,7 @@ Rules:
 - If the check requires a server or API, the pointer is the URL; the server holds the logic.
 - A `contract:<id>` pointer resolves the referenced contract's current status from the ledger — it does not re-run the action; it reads the declared truth.
 - `pointer_type` is stored on every `declared` row and returned by `get()`. It is evidence for the agent, not a baked verdict.
+- Actions are bound to their declare-time working directory. `contract_core.declare()` records `cwd` on every row; `iterate` runs the action from it (rows predating the field fall back to the current directory). Declare a contract from the directory its action should run in, and a relative-path action stays correct even when iterated later from elsewhere. Do not bake `cd <dir> &&` into an action.
 
 
 ## Concept lineage (genesis .tongues)
