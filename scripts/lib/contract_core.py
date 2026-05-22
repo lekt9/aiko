@@ -60,6 +60,8 @@ def _infer_pointer_type(action: str) -> str:
         return "funnel-first"
     if action == "sequence":
         return "sequence"
+    if action.startswith("quorum:"):
+        return "quorum"
     if action.startswith("contract:"):
         return "contract-ref"
     if action.startswith("loop-until:") or action == "loop":
