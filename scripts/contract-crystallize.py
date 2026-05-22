@@ -111,16 +111,24 @@ def write_memory(memory_dir, base_name, description, body):
 # -- Outline surface ----------------------------------------------------------
 
 def _outline_config():
+    """Return (token, base) for the Outline API, or (None, None) when Outline
+    is not configured. A missing config is the normal not-set-up case (no
+    exception); a config that exists but cannot be read is a real fault and
+    is reported on stderr - never swallowed."""
+    tok_f = OUTLINE_DIR / "token"
+    base_f = OUTLINE_DIR / "baseurl"
+    if not (tok_f.exists() and base_f.exists()):
+        return None, None
     try:
-        token = (OUTLINE_DIR / "token").read_text().strip()
-        base = (OUTLINE_DIR / "baseurl").read_text().strip()
-        if token and base:
-            return token, base
-    except OSError:
-        pass
+        token = tok_f.read_text().strip()
+        base = base_f.read_text().strip()
+    except OSError as e:
+        print(f"contract-crystallize: Outline config present but unreadable: {e}",
+              file=sys.stderr)
+        return None, None
+    if token and base:
+        return token, base
     return None, None
-
-
 def _outline_call(base, token, action, payload):
     # A custom User-Agent is load-bearing: the Cloudflare edge in front of
     # the self-hosted Outline 403s the default `Python-urllib` UA as a bot.
