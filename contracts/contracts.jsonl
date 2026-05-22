@@ -372,3 +372,5 @@
 {"event": "declared", "id": "72746dc4", "plan": "demo page: GET /demo.html returns 200 with inyo onboarding UI", "action": "curl -sfL https://inyo-landing.pages.dev/demo.html | grep -q 'inyo'", "pointer_type": "api", "parent_id": "dfc147a3", "pointers": [], "ts": "2026-05-22T15:22:11.101148Z"}
 {"event": "child_added", "id": "dfc147a3", "child_id": "72746dc4", "ts": "2026-05-22T15:22:11.101451Z"}
 {"event": "iterated", "id": "72746dc4", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:22:13.707129Z"}
+{"event": "iterated", "id": "72746dc4", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:22:17.599564Z"}
+{"event": "satisfied", "id": "72746dc4", "wave": 0, "ts": "2026-05-22T15:22:17.599979Z"}
