@@ -641,99 +641,32 @@ else:
 
   drive)
     ID="${1:-}"
-    [ -z "$ID" ] && { echo "usage: contract drive <contract-id>  — native drive loop: iterates leaves until all done or a FAIL blocks" >&2; exit 2; }
-    # Record store so drive-advance.sh always finds the right ledger
+    [ -z "$ID" ] && { echo "usage: contract drive <contract-id>  arm the agent-judged drive loop" >&2; exit 2; }
+    # Resolve the store so the Stop hook and drive-advance.sh find the right ledger.
     ACTIVE_STORE=$(PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 -c "from contract_core import _resolve_ledger; print(_resolve_ledger())" 2>/dev/null || echo "$HOME/.contracts/contracts.jsonl")
     echo "$ID" > "$HOME/.contracts/.drive_active"
     echo "$ACTIVE_STORE" > "$HOME/.contracts/.drive_store"
-    echo "=== CONTRACT DRIVE LOOP: $ID ==="
+    # Seed drive_next.txt with the first pending leaf. The loop ADVANCES the
+    # agent with no human pause (Stop hook contract-drive.py re-injects each
+    # wave), but the agent renders KEY 2 every wave and marks it. No script
+    # marks a contract satisfied: that would be a fabricated verdict and would
+    # violate contract default #4 (harness collects, agent judges).
+    DRIVE_HOOK="$HOME/.contracts/hooks/drive-advance.sh"
+    [ -x "$DRIVE_HOOK" ] && bash "$DRIVE_HOOK" "drive" "$ID" "0" 2>>"$HOME/.contracts/hooks/errors.log"
+    echo "=== CONTRACT DRIVE ARMED: $ID ==="
+    echo "  Agent-judged turbo loop: re-fires with no human pause; the agent"
+    echo "  iterates, judges KEY 2, and marks every wave. 'contract disarm' stops it."
     echo
-    # ── DRIVE LOOP ────────────────────────────────────────────────────────────
-    # Iterate pending leaves in-process until organ is satisfied or a FAIL blocks.
-    # KEY 2 is the agent watching this output — Ctrl-C to interrupt fake-green.
-    WAVE=0
-    while true; do
-      WAVE=$((WAVE + 1))
-      # Find next pending leaf via python
-      NEXT_ID=$(CONTRACTS_STORE="$ACTIVE_STORE" PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 - "$ID" <<'PYEOF'
-import sys, os
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/contract/scripts/lib'))
-# CONTRACTS_STORE already set in env by the parent shell; contract_core reads it directly
-from contract_core import get_tree
-organ_id = sys.argv[1]
-def first_pending_leaf(node):
-    if node['status'] not in ('pending','active'): return None
-    kids = node.get('child_nodes') or []
-    if not kids: return node
-    for k in kids:
-        l = first_pending_leaf(k)
-        if l: return l
-    return None
-tree = get_tree(organ_id)
-if not tree: print('__GONE__'); sys.exit(0)
-if tree['status'] == 'satisfied': print('__DONE__'); sys.exit(0)
-if not (tree.get('child_nodes') or []):
-    print(tree['id']); sys.exit(0)
-leaf = first_pending_leaf(tree)
-print(leaf['id'] if leaf else '__DONE__')
-PYEOF
-)
-      if [ "$NEXT_ID" = "__DONE__" ] || [ "$NEXT_ID" = "__GONE__" ]; then
-        # ── BUBBLE-UP: satisfy intermediate organs bottom-up ─────────────────
-        # Leaves are all done. Walk the tree bottom-up: any pending organ whose
-        # children are all satisfied gets iterated and marked automatically.
-        BUBBLED=1
-        while [ "$BUBBLED" = "1" ]; do
-          BUBBLED=0
-          BUBBLE_TARGET=$(CONTRACTS_STORE="$ACTIVE_STORE" PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 - "$ID" <<'BUBBLEPY'
-import sys, os
-sys.path.insert(0, os.path.expanduser('~/.claude/skills/contract/scripts/lib'))
-from contract_core import get_tree
-organ_id = sys.argv[1]
-def find_bubble_target(node):
-    if node['status'] == 'satisfied': return None
-    kids = node.get('child_nodes') or []
-    for k in kids:
-        t = find_bubble_target(k)
-        if t: return t
-    if kids and all(k['status'] == 'satisfied' for k in kids):
-        return node
-    return None
-tree = get_tree(organ_id)
-if not tree: print('__NONE__'); sys.exit(0)
-target = find_bubble_target(tree)
-print(target['id'] if target else '__NONE__')
-BUBBLEPY
-)
-          if [ "$BUBBLE_TARGET" != "__NONE__" ] && [ -n "$BUBBLE_TARGET" ]; then
-            echo "--- DRIVE LOOP bubble-up: satisfying organ $BUBBLE_TARGET ---"
-            CONTRACTS_STORE="$ACTIVE_STORE" bash "$0" iterate "$BUBBLE_TARGET"
-            if [ $? -eq 0 ]; then
-              CONTRACTS_STORE="$ACTIVE_STORE" bash "$0" _mark "$BUBBLE_TARGET" satisfied
-              BUBBLED=1
-              echo
-            fi
-          fi
-        done
-        echo "=== DRIVE LOOP COMPLETE: $ID satisfied ==="
-        rm -f "$HOME/.contracts/.drive_active" "$HOME/.contracts/.drive_store" "$HOME/.contracts/drive_next.txt"
-        break
-      fi
-      # Iterate the leaf
-      echo "--- DRIVE LOOP wave $WAVE: iterating $NEXT_ID ---"
-      CONTRACTS_STORE="$ACTIVE_STORE" bash "$0" iterate "$NEXT_ID"
-      ITER_EXIT=$?
-      if [ "$ITER_EXIT" -ne 0 ]; then
-        echo
-        echo "=== DRIVE LOOP BLOCKED: iterate $NEXT_ID exited $ITER_EXIT ==="
-        echo "  Fix the root cause, then re-run: contract drive $ID"
-        rm -f "$HOME/.contracts/.drive_active" "$HOME/.contracts/.drive_store" "$HOME/.contracts/drive_next.txt"
-        exit 1
-      fi
-      # KEY 1 passed — auto-mark satisfied (KEY 2: agent is watching; Ctrl-C to interrupt)
-      CONTRACTS_STORE="$ACTIVE_STORE" bash "$0" _mark "$NEXT_ID" satisfied
+    if [ -f "$HOME/.contracts/drive_next.txt" ]; then
+      NEXT_MSG=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('msg',''))" < "$HOME/.contracts/drive_next.txt" 2>/dev/null)
+      NEXT_CMD=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('resume_cmd',''))" < "$HOME/.contracts/drive_next.txt" 2>/dev/null)
+      [ -n "$NEXT_MSG" ] && echo "  $NEXT_MSG"
       echo
-    done
+      echo "  Run now: ${NEXT_CMD:-bash $0 iterate <next pending leaf>}"
+      echo "  Then judge KEY 2 in-thread. If genuine: emit <promise> + contract _mark <id> satisfied."
+    else
+      echo "  (no pending leaf surfaced  run: contract status $ID)"
+    fi
     ;;
 
 
