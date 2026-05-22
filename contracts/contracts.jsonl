@@ -3250,3 +3250,4 @@
 {"event": "iterated", "id": "905c1a3a", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T23:09:06.510651Z"}
 {"event": "iterated", "id": "905c1a3a", "wave": 2, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T23:09:10.013019Z"}
 {"event": "iterated", "id": "905c1a3a", "wave": 3, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T23:09:44.298406Z"}
+{"event": "iterated", "id": "905c1a3a", "wave": 4, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T23:09:47.896420Z"}
