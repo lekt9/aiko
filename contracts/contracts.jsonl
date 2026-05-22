@@ -417,3 +417,7 @@
 {"event": "iterated", "id": "7f157b21", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:55:27.800462Z"}
 {"event": "declared", "id": "4f7c0b49", "plan": "scale-up gate: after both arms show n_live >= 20 settled trades each and arm hit rates >= 70%, bump Polymarket STRATEGY_SIZE_SCALE 1.0\u21921.5 and fdry FOLLOWER_LIVE_PER_ORDER_USD 10\u219220", "action": "agent-judges", "pointer_type": "agent-judges", "parent_id": "2fc96f02", "pointers": [], "ts": "2026-05-22T15:55:34.841928Z"}
 {"event": "child_added", "id": "2fc96f02", "child_id": "4f7c0b49", "ts": "2026-05-22T15:55:34.842375Z"}
+{"event": "iterated", "id": "80ee1954", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:56:44.544753Z"}
+{"event": "satisfied", "id": "80ee1954", "wave": 0, "ts": "2026-05-22T15:56:44.545231Z"}
+{"event": "declared", "id": "ce8a5aff", "plan": "Polymarket fade-the-rally arm: rolling live hit rate >= 70% over last 20 settled trades (n<20 is HOLD, not fail \u2014 just waiting for corpus)", "action": ".venv/bin/python harness/check_live_hitrate.py", "pointer_type": "cli", "parent_id": "2fc96f02", "pointers": [], "ts": "2026-05-22T15:56:44.634056Z"}
+{"event": "child_added", "id": "2fc96f02", "child_id": "ce8a5aff", "ts": "2026-05-22T15:56:44.634480Z"}
