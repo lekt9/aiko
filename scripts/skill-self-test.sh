@@ -39,9 +39,8 @@ check "core/folder-substrate" env PYTHONPATH="$SCRIPTS/lib" python3 -c \
 [ -f "$SCRIPTS/check-no-silent-fallback.py" ] && \
   check "guard/no-silent-fallback" python3 "$SCRIPTS/check-no-silent-fallback.py"
 
-# 5. CLI binds actions to declare-time cwd
-[ -f "$SCRIPTS/check-cwd-binding.sh" ] && \
-  check "guard/cwd-binding" bash "$SCRIPTS/check-cwd-binding.sh"
+[ -f "$SCRIPTS/check-crystallize.sh" ] && \
+  check "guard/crystallize" bash "$SCRIPTS/check-crystallize.sh" module
 
 # 6. Drive never auto-marks a contract satisfied
 [ -f "$SCRIPTS/check-drive-no-autosatisfy.py" ] && \
