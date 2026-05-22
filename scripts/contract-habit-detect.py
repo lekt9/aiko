@@ -116,11 +116,11 @@ def main():
         icon = "+" if c["status"] == "satisfied" else "~"
         print(f"  [{icon}] score={c['score']}  id={c['id']}  status={c['status']}")
         print(f"      plan:   {c['plan'][:80]}")
+        if c.get("learning"):
+            print(f"      why:    {c['learning'][:100]}")
         print(f"      action: {c['action'][:60]}")
         print(f"      -> contract iterate {c['id']}")
         print(f"      -> contract spawn {c['id']} \"<sub>\" --action \"<cmd>\"")
         print()
-
-
 if __name__ == "__main__":
     main()
