@@ -426,3 +426,7 @@
 {"event": "satisfied", "id": "ce8a5aff", "wave": 0, "ts": "2026-05-22T15:57:12.468010Z"}
 {"event": "declared", "id": "57b5817e", "plan": "Polymarket fade-the-rally arm: rolling live hit rate >= 70% over last 20 settled trades (n<20 = HOLD, not fail)", "action": ".venv/bin/python harness/check_live_hitrate.py", "pointer_type": "cli", "parent_id": "2fc96f02", "pointers": [], "ts": "2026-05-22T15:57:12.558693Z"}
 {"event": "child_added", "id": "2fc96f02", "child_id": "57b5817e", "ts": "2026-05-22T15:57:12.559195Z"}
+{"event": "iterated", "id": "57b5817e", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:57:23.587035Z"}
+{"event": "satisfied", "id": "57b5817e", "wave": 0, "ts": "2026-05-22T15:57:23.587520Z"}
+{"event": "declared", "id": "770f001e", "plan": "Polymarket fade-the-rally arm: rolling live hit rate >= 70% over last 20 settled trades (n<20 = HOLD, not fail)", "action": "python3 /Users/lekt9/Projects/imabettingman/harness/check_live_hitrate.py", "pointer_type": "cli", "parent_id": "2fc96f02", "pointers": [], "ts": "2026-05-22T15:57:23.677102Z"}
+{"event": "child_added", "id": "2fc96f02", "child_id": "770f001e", "ts": "2026-05-22T15:57:23.677530Z"}
