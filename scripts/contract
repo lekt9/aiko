@@ -1,0 +1,960 @@
+#!/usr/bin/env bash
+# contract — fractal contract primitive CLI
+# Meta-harness shaped; the primitive is a contract not a scaffold.
+# Every contract is a funnel + feedback loop + harness.
+set -uo pipefail
+
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export CONTRACT_LIB="$SELF/lib"
+
+# All python calls use env vars to avoid quoting hell
+_py() {
+  PYTHONPATH="$CONTRACT_LIB:$PYTHONPATH" python3 "$@"
+}
+
+_py_inline() {
+  PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 -c "$1"
+}
+
+# Internal hook system — agent-agnostic, fires from within the CLI itself.
+# Hooks live at ~/.contracts/hooks/ and are plain shell scripts.
+# They receive: event, contract_id, exit_code (as $1 $2 $3).
+# Runs in background so they never block the primary action.
+_fire_contract_hooks() {
+  local event="$1" id="$2" rc="${3:-0}"
+  local hook_dir="$HOME/.contracts/hooks"
+  [ -d "$hook_dir" ] || return 0
+  for hook in "$hook_dir"/*.sh; do
+    [ -x "$hook" ] && bash "$hook" "$event" "$id" "$rc" 2>>"$hook_dir/errors.log" &
+  done
+  for hook in "$hook_dir"/*.py; do
+    [ -x "$hook" ] && python3 "$hook" "$event" "$id" "$rc" 2>>"$hook_dir/errors.log" &
+  done
+}
+
+cmd="${1:-help}"; shift || true
+
+_run_action() {
+  local action="$1" id="$2"
+  local ptype
+  if [ "$action" = "agent-judges" ]; then
+    ptype="agent-judges"
+  elif [ "$action" = "children-satisfy" ] || [ "$action" = "funnel" ]; then
+    ptype="funnel"
+  elif [ "$action" = "funnel-first" ]; then
+    ptype="funnel-first"
+  elif [[ "$action" == loop-until:* ]] || [ "$action" = "loop" ]; then
+    ptype="loop"
+  elif [[ "$action" == harness:* ]]; then
+    ptype="harness"
+  elif [[ "$action" == contract:* ]]; then
+    ptype="contract-ref"
+  elif [[ "$action" == curl\ * || "$action" == http://* || "$action" == https://* || "$action" == wget\ * ]]; then
+    ptype="api"
+  else
+    ptype="cli"
+  fi
+
+  if [ "$action" = "agent-judges" ]; then
+    echo "  pointer(agent-judges): agent-judges"
+    echo "  result: AGENT-JUDGES"
+    return 0
+  fi
+
+  # funnel (AND-gate): all children must satisfy
+  if [ "$action" = "children-satisfy" ] || [ "$action" = "funnel" ]; then
+    local ok
+    ok=$(MH_CONTRACT_ID="$id" _py_inline "
+import os; from contract_core import children_satisfy
+print('PASS' if children_satisfy(os.environ['MH_CONTRACT_ID']) else 'FAIL')
+")
+    echo "  pointer(funnel): all-children-satisfy"
+    echo "  result: $ok"
+    [ "$ok" = "PASS" ] && return 0 || return 1
+  fi
+
+  # funnel-first (OR-gate): any child satisfies
+  if [ "$action" = "funnel-first" ]; then
+    local ok
+    ok=$(MH_CONTRACT_ID="$id" _py_inline "
+import os; from contract_core import first_child_satisfies
+print('PASS' if first_child_satisfies(os.environ['MH_CONTRACT_ID']) else 'FAIL')
+")
+    echo "  pointer(funnel-first): any-child-satisfies"
+    echo "  result: $ok"
+    [ "$ok" = "PASS" ] && return 0 || return 1
+  fi
+
+  # loop (bare): perpetual while-loop — runs until agent judges BREAK (mark satisfied)
+  # Each iterate = one iteration of the loop body (agent-driven or child-driven)
+  # Reference other contracts inside via: contract iterate <child-id>
+  if [ "$action" = "loop" ]; then
+    local wave
+    wave=$(MH_ID="$id" _py_inline "
+import os; from contract_core import get
+c=get(os.environ['MH_ID']); print(c['wave'] if c else 0)
+")
+    echo "  pointer(loop): perpetual"
+    echo "  wave: $wave"
+    echo "  result: LOOP-RUNNING — agent judges BREAK (mark satisfied) or CONTINUE (re-iterate)"
+    return 0
+  fi
+
+  # loop-until:<body-action>: command-body loop; break condition is body exiting 0
+  if [[ "$action" == loop-until:* ]]; then
+    local body="${action#loop-until:}"
+    echo "  pointer(loop-until): $body"
+    if eval "$body" >/tmp/contract-action-out 2>&1; then
+      echo "  result: PASS — body exited 0 (agent judges BREAK or CONTINUE)"
+      return 0
+    else
+      local rc=$?
+      echo "  result: LOOP-RUNNING (exit $rc) — body not passing; re-iterate to continue"
+      echo "  stderr: $(tail -3 /tmp/contract-action-out)"
+      return 1
+    fi
+  fi
+
+
+  # harness:<path>: delegate to external harness verify.sh
+  if [[ "$action" == harness:* ]]; then
+    local harness_dir="${action#harness:}"
+    if [[ "$harness_dir" != /* ]]; then
+      echo "  result: ERROR — harness path must be absolute (relative paths break under sub-agent CWD changes)"
+      return 1
+    fi
+    local verify="$harness_dir/verify.sh"
+    echo "  pointer(harness): $harness_dir"
+    if [ -x "$verify" ]; then
+      if bash "$verify" >/tmp/contract-action-out 2>&1; then
+        echo "  result: PASS"
+        return 0
+      else
+        echo "  result: FAIL"
+        echo "  stderr: $(tail -3 /tmp/contract-action-out)"
+        return 1
+      fi
+    else
+      echo "  result: ERROR — no executable verify.sh found at $harness_dir"
+      return 1
+    fi
+  fi
+
+  if [[ "$action" == contract:* ]]; then
+    local ref_id="${action#contract:}"
+    local ref_status
+    ref_status=$(MH_REF_ID="$ref_id" _py_inline "
+import os; from contract_core import get
+c=get(os.environ['MH_REF_ID'])
+print(c['status'] if c else 'not-found')
+")
+    echo "  pointer(contract-ref): $action"
+    echo "  referenced: $ref_id => $ref_status"
+    if [ "$ref_status" = "satisfied" ]; then
+      echo "  result: PASS (referenced contract satisfied)"
+      return 0
+    else
+      echo "  result: FAIL (referenced contract status: $ref_status)"
+      return 1
+    fi
+  fi
+  echo "  pointer($ptype): $action"
+  if eval "$action" >/tmp/contract-action-out 2>&1; then
+    echo "  result: PASS (exit 0)"
+    return 0
+  else
+    echo "  result: FAIL (exit $?)"
+    echo "  stderr: $(tail -3 /tmp/contract-action-out)"
+    return 1
+  fi
+}
+
+_two_key_exit() {
+  local id="$1" action_rc="$2" action="${3:-}"
+  echo
+  echo "=== TWO-KEY EXIT ==="
+  [ "$action_rc" -eq 0 ] && echo "  KEY 1 (machine): PASS" || echo "  KEY 1 (machine): FAIL"
+  # Loop-aware wording
+  if [ "$action" = "loop" ] || [[ "$action" == loop-until:* ]]; then
+    echo "  KEY 2 (agent):   BREAK or CONTINUE?"
+    echo
+    echo "  BREAK (truth established) → emit: <promise>CONTRACT_SATISFIED:$id</promise>"
+    echo "                              then:  contract _mark $id satisfied"
+    echo "  CONTINUE (loop still running) → contract iterate $id"
+  else
+    echo "  KEY 2 (agent):   JUDGE — is this GENUINELY satisfied, or fake-green?"
+    echo
+    if [ "$action_rc" -eq 0 ]; then
+      echo "  If genuine → emit: <promise>CONTRACT_SATISFIED:$id</promise>"
+      echo "              then:  contract _mark $id satisfied"
+    else
+      echo "  Fix the target, then: contract iterate $id"
+    fi
+  fi
+  # Drive mode — when armed, agent must not pause for user input
+  if [ -f "$HOME/.contracts/.drive_active" ]; then
+    local organ_id
+    organ_id=$(cat "$HOME/.contracts/.drive_active")
+    echo
+    echo "  DRIVE MODE ACTIVE (organ: $organ_id)"
+    if [ "$action_rc" -eq 0 ]; then
+      echo "  Act on KEY 2 immediately: judge genuine in-thread, mark satisfied, continue."
+      echo "  No pause for user. Fake-green → fix root cause and re-iterate $id."
+    else
+      echo "  Diagnose the error above, fix root cause, re-iterate $id NOW."
+      echo "  No asking user. Genuinely stuck? → contract disarm, then explain the blocker."
+    fi
+  fi
+}
+
+case "$cmd" in
+  declare)
+    PLAN="${1:-}"; shift || true
+    ACTION="" PARENT="" POINTERS="" DRIVE_FLAG=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --action)      ACTION="${2:-}";   shift 2 ;;
+        --parent)      PARENT="${2:-}";   shift 2 ;;
+        --pointer-to)  POINTERS="${POINTERS:+$POINTERS,}${2:-}"; shift 2 ;;
+        --target)      shift 2 ;;
+        --drive)       DRIVE_FLAG="1"; shift ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$PLAN" ]   && { echo "usage: contract declare \"<plan>\" --action \"<cmd>\" [--parent <id>] [--pointer-to <tag>]..." >&2; exit 2; }
+    [ -z "$ACTION" ] && { echo "ERROR: --action is required. A contract without a check is a wish." >&2; exit 2; }
+    ID=$(MH_PLAN="$PLAN" MH_ACTION="$ACTION" MH_PARENT="$PARENT" MH_POINTERS="$POINTERS" _py_inline "
+import os; from contract_core import declare
+p = os.environ.get('MH_PARENT') or None
+raw = os.environ.get('MH_POINTERS', '')
+pts = [t.strip() for t in raw.split(',') if t.strip()] if raw else []
+print(declare(os.environ['MH_PLAN'], os.environ['MH_ACTION'], p, pts))
+")
+    echo "declared: $ID"
+    echo "  plan:        $PLAN"
+    echo "  action:      $ACTION"
+    PTYPE=$(MH_ACTION="$ACTION" _py_inline "
+import os; from contract_core import _infer_pointer_type
+print(_infer_pointer_type(os.environ['MH_ACTION']))
+")
+    echo "  pointer_type: $PTYPE"
+    [ -n "$PARENT" ] && echo "  parent:      $PARENT"
+    [ -n "$POINTERS" ] && echo "  pointers:    $POINTERS"
+    echo "  next:        contract iterate $ID"
+    if [ -n "$DRIVE_FLAG" ]; then
+      bash "$0" drive "$ID"
+    fi
+    ;;
+
+  iterate)
+    ID="${1:-}"
+    [ -z "$ID" ] && { echo "usage: contract iterate <id>" >&2; exit 2; }
+    DATA=$(MH_ID="$ID" _py_inline "
+import os, json; from contract_core import get
+c=get(os.environ['MH_ID'])
+print(json.dumps(c) if c else 'null')
+")
+    [ "$DATA" = "null" ] && { echo "ERROR: contract $ID not found" >&2; exit 3; }
+    ACTION=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['action'])" "$DATA")
+    WAVE=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['wave']+1)" "$DATA")
+    PLAN_TEXT=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['plan'][:80])" "$DATA")
+    echo "=== CONTRACT ITERATE — wave $WAVE ==="
+    echo "  id:     $ID"
+    echo "  plan:   $PLAN_TEXT"
+    echo
+    _run_action "$ACTION" "$ID"
+    ACTION_RC=$?
+    MH_ID="$ID" MH_WAVE="$WAVE" MH_RC="$ACTION_RC" _py_inline "
+import os; from contract_core import record_iteration
+record_iteration(os.environ['MH_ID'], int(os.environ['MH_WAVE']),
+  int(os.environ['MH_RC']),
+  'pass' if os.environ['MH_RC']=='0' else 'fail', None, [])
+"
+    _fire_contract_hooks "iterate" "$ID" "$ACTION_RC"
+    _two_key_exit "$ID" "$ACTION_RC" "$ACTION"
+    # Synaptic firing: surface corroborated contracts so related truths are re-checked
+    MH_ID="$ID" _py_inline "
+import os; from contract_core import get_corroborations, get
+corrs = get_corroborations(os.environ['MH_ID'])
+active = [c for cid in corrs for c in [get(cid)] if c and c.get('status') not in ('merged','satisfied')]
+if active:
+    print()
+    print('--- CORROBORATED TRUTHS (synapse fired — re-check) ---')
+    for c in active:
+        shape = 'funnel' if (c.get('children') or c['action'] in ('children-satisfy','funnel')) else 'funnel-first' if c['action']=='funnel-first' else 'judgment' if c['action']=='agent-judges' else 'loop' if (c['action'].startswith('loop-until:') or c['action']=='loop') else 'harness' if c['action'].startswith('harness:') else 'cell'
+        print(f\"  {c['id']} [{c['status']}] ({shape})  \\\"{c['plan'][:60]}\\\"\")
+        print(f\"    contract iterate {c['id']}\")
+"
+    ;;
+
+  spawn)
+    PARENT="${1:-}"; shift || true
+    PLAN="${1:-}"; shift || true
+    ACTION=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --action) ACTION="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$PARENT" ] || [ -z "$PLAN" ] && { echo "usage: contract spawn <parent-id> \"<plan>\" [--action \"<cmd>\"]" >&2; exit 2; }
+    ACTION_DISPLAY="${ACTION:-agent-judges}"
+    cat <<SPAWN
+
+=== SPAWN REQUIRED ===
+  parent:  $PARENT
+  plan:    $PLAN
+  action:  $ACTION_DISPLAY
+
+The agent MUST route this sub-contract via a sub-agent or directly.
+  If this is one of N independent children for the same organ,
+  use: contract fan-out $PARENT to launch all N in one parallel message.
+
+  Option A — sub-agent (recommended for isolation):
+    contract solve "$PLAN" --action "$ACTION_DISPLAY" --parent $PARENT
+
+  Option B — inline:
+    contract declare "$PLAN" --action "$ACTION_DISPLAY" --parent $PARENT
+    contract iterate <child-id>    (until two-key exit satisfied)
+
+When child satisfies, parent re-verifies:
+    contract iterate $PARENT
+
+SPAWN
+    ;;
+
+  build)
+    PLAN="${1:-}"; shift || true
+    ACTION="" DRIVE_FLAG=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --action) ACTION="${2:-}"; shift 2 ;;
+        --drive)  DRIVE_FLAG="1"; shift ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$PLAN" ] && { echo "usage: contract build \"<plan>\" [--action \"<cmd>\"] [--drive]" >&2; exit 2; }
+    ACTION="${ACTION:-agent-judges}"
+    echo "=== CONTRACT BUILD ==="
+    echo "  plan:   $PLAN"
+    echo "  action: $ACTION"
+    echo
+    echo "--- search: similar contracts (reuse before build) ---"
+    PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 "$SELF/contract-habit-detect.py" --context "$PLAN"
+    echo
+    echo "--- declare + first wave ---"
+    MH_PLAN="$PLAN" MH_ACTION="$ACTION" bash "$0" solve "$PLAN" --action "$ACTION" ${DRIVE_FLAG:+--drive}
+    ;;
+
+  solve)
+    if [ "${1:-}" = "--continue" ]; then
+      ID="${2:-}"
+      [ -z "$ID" ] && { echo "usage: contract solve --continue <id>" >&2; exit 2; }
+      bash "$0" iterate "$ID"
+    else
+      PLAN="${1:-}"; shift || true
+      ACTION="" PARENT="" DRIVE_FLAG=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --action) ACTION="${2:-}"; shift 2 ;;
+          --parent) PARENT="${2:-}"; shift 2 ;;
+          --drive)  DRIVE_FLAG="1"; shift ;;
+          *) shift ;;
+        esac
+      done
+      [ -z "$PLAN" ]   && { echo "usage: contract solve \"<plan>\" --action \"<cmd>\" [--drive]" >&2; exit 2; }
+      [ -z "$ACTION" ] && { echo "ERROR: --action required" >&2; exit 2; }
+      echo "=== SOLVE [1/2] declare ==="
+      DECLARE_OUT=$(bash "$0" declare "$PLAN" --action "$ACTION" ${PARENT:+--parent "$PARENT"})
+      echo "$DECLARE_OUT"
+      # Parse ID from declare output — race-safe vs list_all()[-1] which races under parallel fan-out
+      ID=$(python3 -c "
+import sys
+for line in sys.stdin:
+    line = line.strip()
+    if line.startswith('declared:'):
+        print(line.split(':', 1)[1].strip())
+        break
+" <<< "$DECLARE_OUT")
+      echo
+      echo "=== SOLVE [2/2] first wave ==="
+      bash "$0" iterate "$ID"
+      if [ -n "$DRIVE_FLAG" ]; then
+        echo
+        bash "$0" drive "$ID"
+      fi
+    fi
+    ;;
+
+  status)
+    ID="${1:-}"
+    if [ -z "$ID" ]; then
+      bash "$0" list
+    else
+      MH_ID="$ID" _py_inline "
+import os, json; from contract_core import get_tree
+def pr(node, depth=0):
+    pad='  '*depth
+    shape='funnel' if (node.get('children') or node['action'] in ('children-satisfy','funnel')) else 'funnel-first' if node['action']=='funnel-first' else 'judgment' if node['action']=='agent-judges' else 'loop' if (node['action'].startswith('loop-until:') or node['action']=='loop') else 'harness' if node['action'].startswith('harness:') else 'cell'
+    print(f\"{pad}[{node['status']}] {node['id']} ({shape})\")
+    print(f\"{pad}  plan:   {node['plan'][:72]}\")
+    print(f\"{pad}  action: {node['action'][:60]}\")
+    for c in node.get('child_nodes') or []: pr(c, depth+1)
+t=get_tree(os.environ['MH_ID'])
+pr(t) if t else print('  contract not found')
+"
+    fi
+    ;;
+
+  store)
+    _py_inline "
+import os, sys
+sys.path.insert(0, os.environ['CONTRACT_LIB'])
+from contract_core import _resolve_ledger
+p = _resolve_ledger()
+src = 'env(\$CONTRACTS_STORE)' if os.environ.get('CONTRACTS_STORE') else ('project (.claude/)' if (p.parent.name == '.claude') else 'global (~/.contracts/)')
+print(f'  ledger: {p}')
+print(f'  source: {src}')
+"
+    ;;
+
+  list)
+    SHOW_MERGED=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --show-merged) SHOW_MERGED="1"; shift ;;
+        *) shift ;;
+      esac
+    done
+    MH_SHOW_MERGED="${SHOW_MERGED:-}" _py_inline "
+import os; from contract_core import list_all
+show = bool(os.environ.get('MH_SHOW_MERGED'))
+cs=list_all(show_merged=show)
+if not cs: print('  (no contracts)')
+for c in cs:
+    shape='funnel' if (c.get('children') or c['action'] in ('children-satisfy','funnel')) else 'funnel-first' if c['action']=='funnel-first' else 'judgment' if c['action']=='agent-judges' else 'loop' if (c['action'].startswith('loop-until:') or c['action']=='loop') else 'harness' if c['action'].startswith('harness:') else 'cell'
+    merged_note = f\" -> {c['merged_into']}\" if c.get('merged_into') else ''
+    revised_note = ' [revised]' if c.get('original_action') else ''
+    print(f\"[{c['status']}] {c['id']} ({shape}) w={c['wave']}{merged_note}{revised_note}\")
+    print(f\"  {c['plan'][:80]}\")
+"
+    ;;
+
+  habit)
+    PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 "$SELF/contract-habit-detect.py" "$@"
+    ;;
+
+  import)
+    PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 "$SELF/contract-import-extract.py" "$@"
+    ;;
+
+  defaults)
+    cat <<'DEFAULTS'
+=== CONTRACT DEFAULTS (13 universal principles) ===
+
+-- Engineering principles (CLAUDE.md + CONTRACTS.md) --
+ 1. substrate       (judgment)  "substrate enables, never prescribes — no forbidden surface"
+ 2. no-regression   (judgment)  "every commit introduces zero new failures vs baseline"
+ 3. pointer-payload (judgment)  "client holds only opaque pointers; all logic lives server-side"
+ 4. C-G01           (judgment)  "harness collects, agent judges — no script emits a verdict"
+ 5. C-G06           (judgment)  "verify served surface not source — build pass is never sufficient"
+ 6. C-G08           (judgment)  "fix root cause, never band-aid — no downstream compensator stage"
+ 7. C-G11           (judgment)  "explicit verdict — PROMOTE/HOLD/REJECT every evaluation"
+ 8. C-O04           (cell)      "no .db or state file un-gitignored in repo"
+    action: ! find . -maxdepth 3 -name '*.db' -not -path '*/.git/*' 2>/dev/null | grep -q .
+ 9. deploy-e2e      (judgment)  "auth/deploy chain verified against live service; not build/timestamp"
+
+-- Fruits of the spirit + commandments (mapped where genuinely distinct) --
+10. love            (judgment)  "serve the genuine need, not just the literal request"
+11. sabbath         (judgment)  "recognize genuine convergence and stop — two-key exit is final"
+12. no-adultery     (judgment)  "one contract, one truth claim — two checks = two contracts"
+13. no-false-witness (judgment) "every verification result traces to a real live source"
+DEFAULTS
+    ;;
+
+  _mark)
+    ID="${1:-}"; STATUS="${2:-}"
+    [ -z "$ID" ] || [ -z "$STATUS" ] && { echo "usage: contract _mark <id> <status>" >&2; exit 2; }
+    MH_ID="$ID" MH_STATUS="$STATUS" _py_inline "
+import os; from contract_core import mark_satisfied, mark_status
+id=os.environ['MH_ID']; st=os.environ['MH_STATUS']
+mark_satisfied(id,0) if st=='satisfied' else mark_status(id,st)
+print(f'  {id} -> {st}')
+"
+    _fire_contract_hooks "mark" "$ID" "0"
+    if [ "$STATUS" = "satisfied" ] && [ -z "${CONTRACT_SELF_TEST:-}" ]; then
+      bash "$HOME/.contracts/push-to-gitea.sh" &
+      SELF_TEST_PREF=$(PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 -c "
+from contract_core import _load_prefs
+p = _load_prefs()
+print('1' if p.get('self_test_on_complete') else '0')
+")
+      if [ "$SELF_TEST_PREF" = "1" ]; then
+        echo
+        bash "$0" self-test
+      fi
+    fi
+    ;;
+
+  fan-out)
+    PARENT="${1:-}"; shift || true
+    [ -z "$PARENT" ] && { echo 'usage: contract fan-out <parent-id> "plan1|action1" "plan2|action2" ...' >&2; exit 2; }
+    CHILDREN=("$@")
+    N=${#CHILDREN[@]}
+    [ "$N" -eq 0 ] && { echo 'ERROR: no children provided' >&2; exit 2; }
+    cat <<FANOUT
+
+=== PARALLEL FAN-OUT ===
+  parent:   $PARENT
+  children: $N
+
+  AGENT INSTRUCTION: send all $N of the following as a SINGLE message
+  with $N parallel Agent tool calls — not sequentially.
+
+FANOUT
+    for i in "${!CHILDREN[@]}"; do
+      PAIR="${CHILDREN[$i]}"
+      PLAN="${PAIR%%|*}"
+      ACTION="${PAIR#*|}"
+      [ "$ACTION" = "$PAIR" ] && ACTION="agent-judges"
+      IDX=$((i+1))
+      cat <<CHILD
+  Agent call $IDX:
+    prompt: "contract solve \"$PLAN\" --action \"$ACTION\" --parent $PARENT"
+    description: "contract child $IDX/$N: $PLAN"
+
+CHILD
+    done
+    echo "  When all $N satisfy, re-verify organ: contract iterate $PARENT"
+    echo
+    ;;
+  dag)
+    JSON_FLAG=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --json) JSON_FLAG="1"; shift ;;
+        *) shift ;;
+      esac
+    done
+    MH_JSON="$JSON_FLAG" _py_inline "
+import os; from contract_core import dag
+dag(json_output=bool(os.environ.get('MH_JSON')))
+"
+    ;;
+
+  discover)
+    SCOPE="all"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --scope) SCOPE="${2:-all}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    if [[ "$SCOPE" != "project" && "$SCOPE" != "global" && "$SCOPE" != "all" ]]; then
+      echo "ERROR: --scope must be project, global, or all" >&2; exit 2
+    fi
+    MH_SCOPE="$SCOPE" _py_inline "
+import os; from contract_core import discover
+results = discover(os.environ.get('MH_SCOPE', 'all'))
+if not results:
+    print('no contracts in scope')
+else:
+    for r in results:
+        label = f\"[{r['scope']}]\"
+        plan_trunc = r['plan'][:60] + ('...' if len(r['plan']) > 60 else '')
+        print(f\"{label:<10} {r['id']} ({r['shape']}/{r['status']}) — \\\"{plan_trunc}\\\"\")
+"
+    ;;
+
+  drive)
+    ID="${1:-}"
+    [ -z "$ID" ] && { echo "usage: contract drive <contract-id>  — arm autonomous drive loop (leaf or organ)" >&2; exit 2; }
+    echo "$ID" > "$HOME/.contracts/.drive_active"
+    echo "=== CONTRACT DRIVE ARMED ==="
+    echo "  organ:  $ID"
+    echo "  state:  ~/.contracts/drive_next.txt  (agent-agnostic; any runtime reads this)"
+    echo "  Disarm when done: contract disarm"
+    echo
+    bash "$0" status "$ID"
+    echo
+    # Seed drive_next.txt synchronously so it exists before this call returns
+    HOOK="$HOME/.contracts/hooks/drive-advance.sh"
+    [ -x "$HOOK" ] && bash "$HOOK" "drive-armed" "$ID" "0" 2>>"$HOME/.contracts/hooks/errors.log"
+    # Show next action from the file just written
+    if [ -f "$HOME/.contracts/drive_next.txt" ]; then
+      NEXT_CMD=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('resume_cmd',''))" < "$HOME/.contracts/drive_next.txt")
+      [ -n "$NEXT_CMD" ] && echo "DRIVE_NEXT: $NEXT_CMD"
+    fi
+    ;;
+
+  disarm)
+    DRIVE_STATE="$HOME/.contracts/.drive_active"
+    if [ -f "$DRIVE_STATE" ]; then
+      ARMED_ID=$(cat "$DRIVE_STATE")
+      rm -f "$DRIVE_STATE" "$HOME/.contracts/drive_next.txt"
+      echo "Contract drive disarmed (was driving organ: $ARMED_ID)."
+    else
+      echo "No drive active."
+    fi
+    ;;
+
+  corroborate)
+    ID1="${1:-}"; ID2="${2:-}"; shift 2 || true
+    LABEL=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --label) LABEL="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$ID1" ] || [ -z "$ID2" ] && { echo "usage: contract corroborate <id1> <id2> [--label \"<why>\"]" >&2; exit 2; }
+    MH_ID1="$ID1" MH_ID2="$ID2" MH_LABEL="$LABEL" _py_inline "
+import os; from contract_core import corroborate, get
+id1, id2 = os.environ['MH_ID1'], os.environ['MH_ID2']
+label = os.environ.get('MH_LABEL', '')
+c1, c2 = get(id1), get(id2)
+if not c1: print(f'ERROR: contract {id1} not found'); exit(1)
+if not c2: print(f'ERROR: contract {id2} not found'); exit(1)
+corroborate(id1, id2, label)
+print('=== CONTRACT CORROBORATE (synapse created) ===')
+print(f'  {id1}  \"{c1[\"plan\"][:60]}\"')
+print(f'  {id2}  \"{c2[\"plan\"][:60]}\"')
+if label: print(f'  label: {label}')
+print()
+print('  When either is iterated, the other will be surfaced for re-check.')
+print(f'  next: contract iterate {id1}')
+"
+    ;;
+
+  merge)
+    SRC="${1:-}"; TGT="${2:-}"; shift 2 || true
+    REASON=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --reason) REASON="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$SRC" ] || [ -z "$TGT" ] && { echo "usage: contract merge <source-id> <target-id> [--reason \"<why>\"]" >&2; exit 2; }
+    MH_SRC="$SRC" MH_TGT="$TGT" MH_REASON="$REASON" _py_inline "
+import os; from contract_core import merge_into, get
+src, tgt = os.environ['MH_SRC'], os.environ['MH_TGT']
+reason = os.environ.get('MH_REASON', '')
+cs, ct = get(src), get(tgt)
+if not cs: print(f'ERROR: contract {src} not found'); exit(1)
+if not ct: print(f'ERROR: contract {tgt} not found'); exit(1)
+merge_into(src, tgt, reason)
+print('=== CONTRACT MERGE (cell fusion) ===')
+print(f'  {src}  SUPERSEDED  \"{cs[\"plan\"][:55]}\"')
+print(f'  {tgt}  CANONICAL   \"{ct[\"plan\"][:55]}\"')
+if reason: print(f'  reason: {reason}')
+print()
+print(f'  {src} is now merged. contract list hides it by default.')
+print(f'  next: contract iterate {tgt}   (re-verify the canonical truth)')
+"
+    ;;
+
+  revise)
+    ID="${1:-}"; shift || true
+    NEW_ACTION="" REASON=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --action) NEW_ACTION="${2:-}"; shift 2 ;;
+        --reason) REASON="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$ID" ] || [ -z "$NEW_ACTION" ] && { echo "usage: contract revise <id> --action \"<new cmd>\" [--reason \"<why>\"]" >&2; exit 2; }
+    MH_ID="$ID" MH_NEW_ACTION="$NEW_ACTION" MH_REASON="$REASON" _py_inline "
+import os; from contract_core import revise, get
+id = os.environ['MH_ID']
+new_action = os.environ['MH_NEW_ACTION']
+reason = os.environ.get('MH_REASON', '')
+c = get(id)
+if not c: print(f'ERROR: contract {id} not found'); exit(1)
+revise(id, new_action, reason)
+print('=== CONTRACT REVISE (membrane update) ===')
+print(f'  id:          {id}')
+print(f'  plan:        {c[\"plan\"][:72]}')
+print(f'  old_action:  {c[\"action\"][:80]}')
+print(f'  new_action:  {new_action[:80]}')
+if reason: print(f'  reason:      {reason}')
+print()
+print(f'  next: contract iterate {id}')
+"
+    ;;
+
+  plan)
+    TASK="${*}"
+    if [ -z "$TASK" ]; then
+      echo "usage: contract plan \"<task description>\"" >&2
+      exit 1
+    fi
+    echo "=== CONTRACT PLAN ==="
+    echo "  task: ${TASK:0:120}"
+    echo ""
+    echo "--- HABIT CANDIDATES ---"
+    PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 "$SELF/contract-habit-detect.py" \
+      --context "$TASK"
+    echo ""
+    echo "--- SKILL MATCHES ---"
+    python3 - "$TASK" <<'PYSKILL'
+import os, sys
+task = sys.argv[1].lower()
+tokens = set(w.strip('.,;:!?()[]') for w in task.split() if len(w) > 3)
+skills_dir = os.path.expanduser('~/.claude/skills')
+matches = []
+try:
+    for skill in os.listdir(skills_dir):
+        if skill.startswith('_') or '.' in skill:
+            continue
+        sl = skill.lower().replace('-', ' ')
+        parts = sl.split()
+        score = sum(1 for t in tokens if t in parts or t in sl)
+        if score > 0:
+            matches.append((score, skill))
+    matches.sort(reverse=True)
+    for score, skill in matches[:8]:
+        print(f'  ({score}) {skill}')
+    if not matches:
+        print('  (no skill name matches)')
+except Exception as e:
+    print(f'  (skill scan error: {e})')
+PYSKILL
+    echo ""
+    echo "--- BINARY PRIMITIVES ---"
+    python3 - "$TASK" <<'PYBIN'
+import subprocess, sys
+task = sys.argv[1].lower()
+candidates = [
+    ('bun',      ['bun', 'javascript', 'typescript', 'test', 'build', 'run', 'install']),
+    ('npm',      ['npm', 'node', 'javascript', 'package']),
+    ('wrangler', ['cloudflare', 'worker', 'deploy', 'pages', 'wrangler']),
+    ('gh',       ['github', 'pull request', 'issue', 'workflow', 'ci', 'pr']),
+    ('python3',  ['python', 'script', 'verify', 'check']),
+    ('cargo',    ['rust', 'cargo', 'crate']),
+    ('docker',   ['docker', 'container', 'image', 'compose']),
+    ('curl',     ['api', 'http', 'endpoint', 'url', 'request']),
+    ('git',      ['commit', 'push', 'branch', 'merge', 'tag', 'deploy']),
+    ('jq',       ['json', 'parse', 'query']),
+]
+found = []
+for binary, keywords in candidates:
+    if any(kw in task for kw in keywords):
+        r = subprocess.run(['which', binary], capture_output=True, text=True)
+        if r.returncode == 0:
+            found.append(f'  {binary:<12} {r.stdout.strip()}')
+for f in found:
+    print(f)
+if not found:
+    print('  (no matching binaries detected)')
+PYBIN
+    echo ""
+    echo "--- SHAPE RECOMMENDATION ---"
+    python3 - "$TASK" <<'PYSHAPE'
+import sys
+task = sys.argv[1].lower()
+if any(w in task for w in ('ship', 'deploy', 'build', 'test', 'verify', 'check', 'pass', 'run', 'lint', 'compile', 'install')):
+    print('  cell  →  contract declare "<claim>" --action "<cmd that exits 0>"')
+elif any(w in task for w in ('always', 'never', 'principle', 'rule', 'must', 'should', 'pattern', 'law', 'gate')):
+    print('  judgment  →  contract declare "<claim>" --action "agent-judges"')
+elif any(w in task for w in ('iterate', 'loop', 'until', 'keep', 'perpetual', 'while', 'drive', 'continuously', 'forever')):
+    print('  loop  →  contract declare "<claim>" --action "loop"')
+elif any(w in task for w in ('all', 'both', 'every', 'each', 'complete', 'entire', 'full', 'and')):
+    print('  funnel  →  contract declare "<claim>" --action "funnel"')
+elif any(w in task for w in ('any', 'either', 'or', 'first', 'whichever', 'one of')):
+    print('  funnel-first  →  contract declare "<claim>" --action "funnel-first"')
+else:
+    print('  judgment (default)  →  contract declare "<claim>" --action "agent-judges"')
+PYSHAPE
+    echo ""
+    echo "  Substrate surfaces. Agent declares. Auto-contracting is forbidden."
+    ;;
+
+
+  self)
+    echo "=== CONTRACT SELF-DESCRIPTION ==="
+    echo "  The contract primitive uses its own five shapes to describe itself."
+    echo "  Every contract IS simultaneously a funnel + loop + harness."
+    echo
+    echo "  Five shapes (one data model, infinite fractal depth):"
+    echo "    cell         --action \"<cmd>\"             machine gate; exits 0 + agent judges genuine"
+    echo "    judgment     --action \"agent-judges\"       no machine check; agent IS the gate"
+    echo "    funnel       --action \"funnel\"             AND-gate; ALL children must satisfy"
+    echo "    funnel-first --action \"funnel-first\"        OR-gate;  ANY child satisfying is enough"
+    echo "    loop         --action \"loop\"               perpetual while-loop; BREAK or CONTINUE"
+    echo "    loop-until   --action \"loop-until:<cmd>\"   command-body loop; exits 0 = candidate BREAK"
+    echo "    harness      --action \"harness:<path>\"     delegates to <path>/verify.sh"
+    echo
+    echo "  Fractal: funnels contain loops → loops contain funnels → harnesses wrap any shape."
+    echo "  A loop's body can be a funnel. A funnel's children can be loops."
+    echo "  Recursion terminates at cell or judgment."
+    echo
+    echo "  Two-key exit (load-bearing invariant, all shapes):"
+    echo "    KEY 1 (machine): runs action, records exit code"
+    echo "    KEY 2 (agent):   JUDGE genuine / fake-green  (or BREAK / CONTINUE for loops)"
+    echo "    No script claims satisfaction. Both keys required."
+    echo
+    echo "  Self-aware contracts in ledger (habit search):"
+    PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 "$SELF/contract-habit-detect.py" \
+      --context "contract primitive five shapes funnel loop harness cell fractal self-aware two-key exit"
+    ;;
+
+
+  self-test)
+    # Isolated round-trip: declare → iterate → mark → read-back, using a temp ledger.
+    # CONTRACT_SELF_TEST=1 suppresses post-mark hooks to prevent recursion.
+    TMPLEDGER="/tmp/contract-self-test-$$.jsonl"
+    export CONTRACTS_STORE="$TMPLEDGER"
+    export CONTRACT_SELF_TEST="1"
+    trap 'rm -f "$TMPLEDGER"' EXIT
+    echo "=== CONTRACT SELF-TEST ==="
+    FAIL=0
+    # 1. declare
+    DECL_OUT=$(bash "$0" declare "self-test round-trip" --action "echo contract-self-test-ok" 2>&1)
+    TEST_ID=$(echo "$DECL_OUT" | grep '^declared:' | awk '{print $2}')
+    if [ -z "$TEST_ID" ]; then
+      echo "  [1/3] declare: FAIL"
+      echo "$DECL_OUT" | tail -4 | sed 's/^/    /'
+      FAIL=1
+    else
+      echo "  [1/3] declare: OK ($TEST_ID)"
+    fi
+    # 2. iterate
+    if [ "$FAIL" -eq 0 ]; then
+      ITER_OUT=$(bash "$0" iterate "$TEST_ID" 2>&1)
+      if echo "$ITER_OUT" | grep -q "result: PASS"; then
+        echo "  [2/3] iterate: PASS"
+      else
+        echo "  [2/3] iterate: FAIL"
+        echo "$ITER_OUT" | tail -6 | sed 's/^/    /'
+        FAIL=1
+      fi
+    fi
+    # 3. mark + read-back
+    if [ "$FAIL" -eq 0 ]; then
+      bash "$0" _mark "$TEST_ID" satisfied >/dev/null 2>&1
+      GOT_STATUS=$(MH_TEST_ID="$TEST_ID" _py_inline "
+import os; from contract_core import get
+c = get(os.environ['MH_TEST_ID'])
+print(c['status'] if c else 'not-found')
+")
+      if [ "$GOT_STATUS" = "satisfied" ]; then
+        echo "  [3/3] mark+read: satisfied"
+      else
+        echo "  [3/3] mark+read: FAIL (got: $GOT_STATUS)"
+        FAIL=1
+      fi
+    fi
+    echo
+    if [ "$FAIL" -eq 0 ]; then
+      echo "  RESULT: PASS — primitive round-trip OK"
+    else
+      echo "  RESULT: FAIL — contract primitive has a defect"
+      exit 1
+    fi
+    ;;
+
+  prefs)
+    KEY="" VAL="" PSCOPE="project"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --set)   KEY="${2%%=*}"; VAL="${2#*=}"; shift 2 ;;
+        --scope) PSCOPE="${2:-project}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    if [ -n "$KEY" ]; then
+      _py_inline "
+import json, os
+from pathlib import Path
+scope = '${PSCOPE}'
+if scope == 'project':
+    prefs_path = Path.cwd() / '.claude' / 'contract-prefs.json'
+else:
+    prefs_path = Path.home() / '.contracts' / 'prefs.json'
+prefs_path.parent.mkdir(parents=True, exist_ok=True)
+try:
+    prefs = json.loads(prefs_path.read_text()) if prefs_path.exists() else {}
+except json.JSONDecodeError:
+    prefs = {}
+key, val_str = '${KEY}', '${VAL}'
+if val_str.lower() in ('true','1','yes'):  val = True
+elif val_str.lower() in ('false','0','no'): val = False
+elif val_str.isdigit():                     val = int(val_str)
+else:                                       val = val_str
+prefs[key] = val
+prefs_path.write_text(json.dumps(prefs, indent=2))
+print(f'  set {key} = {json.dumps(val)}  ({prefs_path})')
+"
+    else
+      _py_inline "
+import json, os
+from pathlib import Path
+from contract_core import _load_prefs
+prefs = _load_prefs()
+global_path  = Path.home() / '.contracts' / 'prefs.json'
+project_path = Path.cwd() / '.claude' / 'contract-prefs.json'
+print('=== CONTRACT PREFERENCES ===')
+if prefs:
+    for k, v in prefs.items():
+        print(f'  {k}: {json.dumps(v)}')
+else:
+    print('  (no preferences set)')
+print()
+print(f'  project: {project_path}' + ('' if project_path.exists() else '  (not set)'))
+print(f'  global:  {global_path}'  + ('' if global_path.exists()  else '  (not set)'))
+print()
+print('  Keys:')
+print('    self_test_on_complete  bool  — run self-test after every mark satisfied')
+print('    default_action         str   — default --action for declare')
+print('    discover_scope         str   — default scope for discover (project|global|all)')
+print()
+print('  Set: contract prefs --set self_test_on_complete=true [--scope project|global]')
+"
+    fi
+    ;;
+
+  help|--help|-h|"")
+    cat <<'HELP'
+contract — fractal contract primitive (cellular organism)
+
+  declare "<plan>" --action "<cmd>" [--parent <id>] [--pointer-to <tag>] [--drive]   declare a contract
+  iterate <id>                                         one wave; two-key exit + synaptic firing
+  plan "<task>"                                        surface habit candidates + skills + shape
+  build "<plan>" [--action "<cmd>"] [--drive]          search similar + declare + first wave
+  spawn <parent> "<plan>" [--action "<cmd>"]           emit SPAWN REQUIRED for sub-agent
+  solve "<plan>" --action "<cmd>" [--drive]            declare + first wave
+  solve --continue <id>                                next wave of in-flight
+  fan-out <parent> "plan1|action1" "plan2|action2" ... parallel dispatch N children
+  drive <contract-id>                                  arm autonomous drive loop
+  disarm                                               stop drive loop
+  self                                                 system introspection — shapes + self-contracts
+  dag [--json]                                         contract DAG (shows synapses + merges)
+  self-test                                            isolated round-trip verify (declare/iterate/mark on temp ledger)
+  prefs [--set key=val] [--scope project|global]       show or set project/global preferences
+  discover [--scope project|global|all]                list contracts by scope
+  status [<id>]                                        tree view
+  list [--show-merged]                                 all contracts (merged hidden by default)
+  defaults                                             show 13 universal default contracts
+  habit [--context "<text>"] [--scope project|global]  surface habit candidates
+
+Organism primitives:
+  corroborate <id1> <id2> [--label "<why>"]   wire a synapse — when one fires, the other surfaces
+  merge <src> <tgt> [--reason "<why>"]        fuse duplicate cells — src superseded by tgt
+  revise <id> --action "<new cmd>" [--reason] update the cell membrane (self-correct false positives)
+
+Five shapes:  cell | judgment | funnel (AND) | funnel-first (OR) | loop | loop-until | harness
+Fractal:      funnels contain loops, loops contain funnels, harnesses wrap any shape
+Two-key exit: machine action + agent judges genuine (loops: BREAK or CONTINUE). Both required.
+Synaptic firing: after every iterate, corroborated contracts are surfaced for re-check.
+HELP
+    ;;
+
+
+  *)
+    echo "unknown subcommand: $cmd" >&2
+    bash "$0" help >&2
+    exit 2
+    ;;
+esac
