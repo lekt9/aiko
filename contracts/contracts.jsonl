@@ -2641,3 +2641,8 @@
 {"event": "declared", "id": "98d8812b", "plan": "quorumgate_selftest_96054 quorum child 3", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": "9f8e14d4", "pointers": [], "ts": "2026-05-22T21:38:08.923095Z"}
 {"event": "child_added", "id": "9f8e14d4", "child_id": "98d8812b", "ts": "2026-05-22T21:38:08.923321Z"}
 {"event": "iterated", "id": "9f8e14d4", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:38:09.273120Z"}
+{"event": "satisfied", "id": "21d1df10", "wave": 0, "ts": "2026-05-22T21:38:09.331849Z"}
+{"event": "iterated", "id": "9f8e14d4", "wave": 2, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:38:09.605957Z"}
+{"event": "satisfied", "id": "77ba361b", "wave": 0, "ts": "2026-05-22T21:38:09.666725Z"}
+{"event": "iterated", "id": "9f8e14d4", "wave": 3, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:38:09.936638Z"}
+{"event": "iterated", "id": "02ac4607", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:38:09.990128Z"}
