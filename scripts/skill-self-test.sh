@@ -46,8 +46,8 @@ check "core/folder-substrate" env PYTHONPATH="$SCRIPTS/lib" python3 -c \
 check "cli/inline-drive-block" python3 -c "import sys; sys.exit(0 if 'INLINE DRIVE' in open('$CLI').read() else 1)"
   check "guard/drive-no-autosatisfy" python3 "$SCRIPTS/check-drive-no-autosatisfy.py"
 
-# 7. Crystallize machinery is wired
-[ -f "$SCRIPTS/check-crystallize.sh" ] && \
+[ -f "$HOME/.claude/hooks/contract-drive.py" ] && \
+  check "hook/folder-aware" python3 -c "import sys; sys.exit(0 if 'contracts_d_root' in open('$HOME/.claude/hooks/contract-drive.py').read() else 1)"
   check "guard/crystallize" bash "$SCRIPTS/check-crystallize.sh"
 
 # 8. INLINE DRIVE block is present in the CLI (was contract e76293a6)
