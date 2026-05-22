@@ -845,18 +845,6 @@ settings = (Path.home() / ".claude" / "settings.json"
             Path.cwd() / ".claude" / "settings.json")
 print(f"=== contract install-hooks ({'DRY-RUN' if DRY else 'apply'}, claude-code, {SCOPE} scope) ===")
 print(f"  settings: {settings}")
-    PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" CONTRACT_HOOKS_DRY="$DRY" CONTRACT_HOOKS_SCOPE="$SCOPE" python3 - <<'PY'
-import json, os, sys
-from pathlib import Path
-from contract_core import list_all
-
-DRY = bool(os.environ.get("CONTRACT_HOOKS_DRY"))
-SCOPE = os.environ.get("CONTRACT_HOOKS_SCOPE", "user")
-settings = (Path.home() / ".claude" / "settings.json"
-            if SCOPE == "user" else
-            Path.cwd() / ".claude" / "settings.json")
-print(f"=== contract install-hooks ({'DRY-RUN' if DRY else 'apply'}, {SCOPE} scope) ===")
-print(f"  settings: {settings}")
 
 # Find active tool-guard contracts
 guards = []
