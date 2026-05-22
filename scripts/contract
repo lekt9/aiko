@@ -558,6 +558,43 @@ CHILD
     echo "  When all $N satisfy, re-verify organ: contract iterate $PARENT"
     echo
     ;;
+  scan)
+    PARENT="${1:-}"; shift || true
+    GENERATOR="${1:-}"; shift || true
+    [ -z "$PARENT" ] || [ -z "$GENERATOR" ] && {
+      echo "usage: contract scan <parent-id> \"<generator-cmd>\"" >&2
+      echo "  Runs GENERATOR. Every stdout line matching" >&2
+      echo "  CONTRACT: <plan> | <action>  declares a child contract under PARENT." >&2
+      exit 2
+    }
+    echo "=== CONTRACT SCAN ==="
+    echo "  parent:    $PARENT"
+    echo "  generator: $GENERATOR"
+    echo
+    SCAN_COUNT=0
+    while IFS= read -r line || [[ -n "${line:-}" ]]; do
+      if [[ "$line" =~ ^CONTRACT(_DECLARE)?:[[:space:]]*(.*)\|(.*)$ ]]; then
+        CHILD_PLAN="${BASH_REMATCH[2]# }"
+        CHILD_PLAN="${CHILD_PLAN% }"
+        CHILD_ACTION="${BASH_REMATCH[3]# }"
+        CHILD_ACTION="${CHILD_ACTION% }"
+        [ -z "$CHILD_ACTION" ] && CHILD_ACTION="agent-judges"
+        DECLARE_OUT=$(bash "$0" declare "$CHILD_PLAN" --action "$CHILD_ACTION" --parent "$PARENT")
+        CHILD_ID=$(python3 -c "
+import sys
+for l in sys.stdin:
+    l=l.strip()
+    if l.startswith('declared:'):
+        print(l.split(':',1)[1].strip()); break
+" <<< "$DECLARE_OUT")
+        echo "  + child $((SCAN_COUNT+1)): $CHILD_ID  \"${CHILD_PLAN:0:60}\""
+        SCAN_COUNT=$((SCAN_COUNT + 1))
+      fi
+    done < <(eval "$GENERATOR" 2>/dev/null)
+    echo
+    echo "  scanned $SCAN_COUNT children declared under $PARENT"
+    echo "  next: contract iterate $PARENT  (or contract drive $PARENT)"
+    ;;
   dag)
     JSON_FLAG=""
     while [ $# -gt 0 ]; do
