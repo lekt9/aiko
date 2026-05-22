@@ -116,7 +116,16 @@ def _rows() -> list[dict]:
 
 def declare(plan: str, action: str, parent_id: Optional[str] = None,
             pointers: list = None, learning: str = None,
-            budget: Optional[int] = None) -> str:
+            budget: Optional[int] = None, bind_to: Optional[str] = None) -> str:
+    """Declare a contract.
+
+    bind_to: optional surface the contract is intrinsically scoped to —
+    a file path, glob, symbol, or event tag. When 'contract verify <surface>'
+    fires, every contract whose bind_to matches is re-iterated. This makes
+    a contract a constraint on a specific surface (lock-and-key binding,
+    biology / foreign-key constraint, programming) rather than a free-floating
+    truth-claim. Contract ae1340a6.
+    """
     cid = str(uuid.uuid4())[:8]
     row = {"event": "declared", "id": cid, "plan": plan, "action": action,
            "pointer_type": _infer_pointer_type(action),
@@ -127,6 +136,8 @@ def declare(plan: str, action: str, parent_id: Optional[str] = None,
         row["learning"] = learning
     if budget:
         row["budget"] = int(budget)
+    if bind_to:
+        row["bind_to"] = bind_to
     _append(row)
     if parent_id:
         _append({"event": "child_added", "id": parent_id, "child_id": cid, "ts": _now()})
