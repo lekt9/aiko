@@ -229,3 +229,4 @@
 {"event": "declared", "id": "b936117f", "plan": "contract-ref-B: wired to fire only when upstream-A is satisfied (action=contract:962c27d1)", "action": "contract:962c27d1", "pointer_type": "contract-ref", "parent_id": "d014e020", "pointers": [], "ts": "2026-05-22T13:05:16.986165Z"}
 {"event": "child_added", "id": "d014e020", "child_id": "b936117f", "ts": "2026-05-22T13:05:16.986514Z"}
 {"event": "iterated", "id": "b936117f", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T13:05:22.278884Z"}
+{"event": "iterated", "id": "064f47e7", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T13:05:23.985172Z"}
