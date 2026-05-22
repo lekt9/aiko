@@ -62,7 +62,7 @@ is ordinary contract-use.
 
 ## Default contracts (universal — declare these in any context)
 
-Thirteen principles drawn from CLAUDE.md, CONTRACTS.md, and the fruits of the spirit / 10 commandments — mapped only where the translation is genuinely useful and non-redundant. `contract defaults` shows them; `contract search` surfaces existing matches before re-declaring.
+Twelve principles drawn from CLAUDE.md, CONTRACTS.md, and the fruits of the spirit / 10 commandments — mapped only where the translation is genuinely useful and non-redundant. `contract defaults` shows them; `contract search` surfaces existing matches before re-declaring.
 
 **From engineering principles (CLAUDE.md + CONTRACTS.md):**
 
