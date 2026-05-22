@@ -393,7 +393,7 @@ contract audit <root> --auditors 13                  # Step 8  — falsifier jud
 contract _mark <root> satisfied                      # Step 9  — emergence
 ```
 
-Nothing here is a new engine. The genesis organ is the seven shapes, the
+Nothing here is a new engine. The genesis organ is the eight shapes, the
 BM25 plan stage, and the natural-selection lifecycle — composed.
 
 ## Signal propagation (the nervous system)
