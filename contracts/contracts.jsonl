@@ -363,3 +363,4 @@
 {"event": "satisfied", "id": "3cb8b87b", "wave": 0, "ts": "2026-05-22T15:21:31.154432Z"}
 {"event": "declared", "id": "9c573cf2", "plan": "matching engine: POST /api/admin/run-match seeds profiles and returns at least one match pair", "action": "curl -sf -X POST https://inyo-landing.pages.dev/api/admin/run-match | python3 -c \"import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('matches',0)>=1 else 1)\"", "pointer_type": "api", "parent_id": "dfc147a3", "pointers": [], "ts": "2026-05-22T15:21:37.893419Z"}
 {"event": "child_added", "id": "dfc147a3", "child_id": "9c573cf2", "ts": "2026-05-22T15:21:37.893731Z"}
+{"event": "iterated", "id": "9c573cf2", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:21:50.606688Z"}
