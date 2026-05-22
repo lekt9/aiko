@@ -615,8 +615,9 @@ else:
       NEXT_ID=$(CONTRACTS_STORE="$ACTIVE_STORE" PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 - "$ID" <<'PYEOF'
 import sys, os
 sys.path.insert(0, os.path.expanduser('~/.claude/skills/contract/scripts/lib'))
-os.environ['CONTRACTS_STORE'] = sys.argv[1] if len(sys.argv) > 1 else os.environ.get('CONTRACTS_STORE','')
+# CONTRACTS_STORE already set in env by the parent shell; contract_core reads it directly
 from contract_core import get_tree
+organ_id = sys.argv[1]
 def first_pending_leaf(node):
     if node['status'] not in ('pending','active'): return None
     kids = node.get('child_nodes') or []
@@ -625,7 +626,7 @@ def first_pending_leaf(node):
         l = first_pending_leaf(k)
         if l: return l
     return None
-tree = get_tree(sys.argv[1])
+tree = get_tree(organ_id)
 if not tree: print('__GONE__'); sys.exit(0)
 if tree['status'] == 'satisfied': print('__DONE__'); sys.exit(0)
 if not (tree.get('child_nodes') or []):
@@ -633,6 +634,7 @@ if not (tree.get('child_nodes') or []):
 leaf = first_pending_leaf(tree)
 print(leaf['id'] if leaf else '__DONE__')
 PYEOF
+)
 )
       if [ "$NEXT_ID" = "__DONE__" ] || [ "$NEXT_ID" = "__GONE__" ]; then
         echo "=== DRIVE LOOP COMPLETE: all leaves satisfied ==="
