@@ -94,6 +94,28 @@ print('PASS' if first_child_satisfies(os.environ['MH_CONTRACT_ID']) else 'FAIL')
     [ "$ok" = "PASS" ] && return 0 || return 1
   fi
 
+  # quorum:K — the integrate-and-fire neuron: satisfied when at least K
+  # children are satisfied. funnel is the K=N extreme; funnel-first is K=1.
+  if [[ "$action" == quorum:* ]]; then
+    local qinfo
+    qinfo=$(MH_ID="$id" MH_K="${action#quorum:}" _py_inline "
+import os; from contract_core import get
+c = get(os.environ['MH_ID'])
+kids = c['children'] if c else []
+sat = sum(1 for cid in kids if (get(cid) or {}).get('status') == 'satisfied')
+print(str(sat) + ' ' + str(len(kids)) + ' ' + os.environ['MH_K'])
+")
+    set -- $qinfo
+    local qsat="$1" qn="$2" qk="$3"
+    echo "  pointer(quorum): >= $qk of $qn children satisfied"
+    if [ "$qsat" -ge "$qk" ]; then
+      echo "  result: PASS — $qsat/$qn satisfied (threshold $qk)"
+      return 0
+    fi
+    echo "  result: FAIL — $qsat/$qn satisfied (threshold $qk)"
+    return 1
+  fi
+
   # loop (bare): perpetual while-loop — runs until agent judges BREAK (mark satisfied)
   # Each iterate = one iteration of the loop body (agent-driven or child-driven)
   # Reference other contracts inside via: contract iterate <child-id>
