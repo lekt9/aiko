@@ -379,3 +379,4 @@
 {"event": "iterated", "id": "dfc147a3", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:22:37.422132Z"}
 {"event": "iterated", "id": "dfc147a3", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:22:44.957016Z"}
 {"event": "satisfied", "id": "dfc147a3", "wave": 0, "ts": "2026-05-22T15:22:44.957334Z"}
+{"event": "iterated", "id": "1905f968", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:23:32.979676Z"}
