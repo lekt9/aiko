@@ -2444,3 +2444,7 @@
 {"event": "merged", "id": "528fc0ff", "merged_into": "0baf76d8", "reason": "self-test: B wins", "ts": "2026-05-22T21:17:24.061389Z"}
 {"event": "iterated", "id": "2b214382", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:17:32.779396Z"}
 {"event": "satisfied", "id": "2b214382", "wave": 0, "ts": "2026-05-22T21:17:32.835528Z"}
+{"event": "declared", "id": "af445b21", "plan": "lifecyclegate_selftest_72044 always prefer the alpha approach for the probe", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:17:53.186200Z"}
+{"event": "declared", "id": "a3bea13d", "plan": "lifecyclegate_selftest_72044 never prefer the alpha approach for the probe", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/aiko-v4-lite", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:17:53.349056Z"}
+{"event": "merged", "id": "af445b21", "merged_into": "a3bea13d", "reason": "self-test: B wins", "ts": "2026-05-22T21:17:53.521479Z"}
+{"event": "iterated", "id": "fbc7b1ea", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:17:53.689789Z"}
