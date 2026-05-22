@@ -599,6 +599,241 @@ for c in cs:
 DEFAULTS
     ;;
 
+  init)
+    # Idempotent first-use bootstrap. Installs the 13 universal Default
+    # Contracts into the active ledger (project or global), runs the
+    # CLAUDE.md/AGENTS.md activation symlink check, runs the claudemd
+    # migration check, and ensures ~/.contracts/contracts.d/ exists.
+    # Re-running is a no-op once everything is in place. Contract 33c188dc.
+    DRY=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --dry-run|-n) DRY="1"; shift ;;
+        *) shift ;;
+      esac
+    done
+    PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" CONTRACT_INIT_DRY="$DRY" python3 - <<'PY'
+import json, os, sys, subprocess
+from pathlib import Path
+from contract_core import (
+    _resolve_ledger, contracts_d_root, contract_dir,
+    declare, mark_satisfied, list_all,
+)
+
+DRY = bool(os.environ.get("CONTRACT_INIT_DRY"))
+ledger = _resolve_ledger()
+print(f"=== contract init ({'DRY-RUN' if DRY else 'apply'}) ===")
+print(f"  ledger: {ledger}")
+
+# 1. Ensure ledger dir + contracts.d/ exist
+if not DRY:
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    contracts_d_root().mkdir(parents=True, exist_ok=True)
+print(f"  contracts.d: {contracts_d_root()}")
+
+# 2. Default contracts — install if not already present (by plan-prefix match).
+# These are the 13 universal principles from SKILL.md. They live as eternal
+# judgments in the ledger so the agent can reference them; idempotent.
+DEFAULTS = [
+    ("substrate",        "judgment", "substrate enables, never prescribes — no forbidden surface in any script or agent"),
+    ("no-regression",    "judgment", "every commit introduces zero new failures — diff vs baseline is non-positive"),
+    ("pointer-payload",  "judgment", "pointer-not-payload — client holds only opaque pointers; all logic lives server-side"),
+    ("C-G01",            "judgment", "harness collects, agent judges — no script emits PROMOTE/PASS/FAIL on its own"),
+    ("C-G06",            "judgment", "verify the served surface, not the source — a build pass is never sufficient"),
+    ("C-G08",            "judgment", "fix root cause, never band-aid — no downstream fix_/clean_/patch_ compensator"),
+    ("C-G11",            "judgment", "explicit verdict — PROMOTE/HOLD/REJECT with every caveat named; never bare done"),
+    ("C-O04",            "judgment", "no mutable .db or state file un-gitignored inside a git-tracked directory"),
+    ("deploy-e2e",       "judgment", "auth/deploy chain verified against the live running service; not build, not timestamp"),
+    ("love",             "judgment", "serve the genuine need, not just the literal request — technically-passing but intent-missing is fake-green"),
+    ("sabbath",          "judgment", "recognize genuine convergence and stop — do not re-iterate an already truly satisfied contract"),
+    ("no-adultery",      "judgment", "one contract, one truth claim — if an action checks two unrelated things it belongs as two contracts"),
+    ("no-false-witness", "judgment", "every verification result traces to a real live source — no synthesized, proxied, or stubbed result"),
+]
+existing = {r["plan"][:64]: r["id"] for r in list_all()}
+installed, skipped = [], []
+for tag, shape, plan in DEFAULTS:
+    key = plan[:64]
+    if key in existing:
+        skipped.append((tag, existing[key]))
+        continue
+    if DRY:
+        installed.append((tag, "(dry)"))
+        continue
+    cid, _ = declare(plan, action="agent-judges", parent_id=None)
+    # Defaults are eternal facts — pre-satisfied so they act as references,
+    # not pending iterates. The agent invokes them via wavefront / search.
+    mark_satisfied(cid, 0)
+    installed.append((tag, cid))
+print(f"  defaults installed: {len(installed)}  skipped (already present): {len(skipped)}")
+
+# 3. Activation symlinks: ~/.codex/AGENTS.md and ~/AGENTS.md → CLAUDE.md
+home = Path.home()
+claudemd = home / ".claude" / "CLAUDE.md"
+for target in (home / ".codex" / "AGENTS.md", home / "AGENTS.md"):
+    if not claudemd.exists():
+        print(f"  symlink/{target.name}: SKIP (no ~/.claude/CLAUDE.md)")
+        continue
+    if target.is_symlink():
+        actual = target.resolve()
+        ok = actual == claudemd.resolve()
+        print(f"  symlink/{target.name}: {'OK' if ok else 'MISMATCH ('+str(actual)+')'}")
+    elif target.exists():
+        print(f"  symlink/{target.name}: EXISTS as file (not symlink) — leaving alone")
+    else:
+        if DRY:
+            print(f"  symlink/{target.name}: would create -> {claudemd}")
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.symlink_to(claudemd)
+            print(f"  symlink/{target.name}: CREATED -> {claudemd}")
+
+# 4. CLAUDE.md migration check (the skill's own script)
+mig = home / ".claude" / "skills" / "contract" / "scripts" / "claudemd-migration-check.sh"
+if mig.exists():
+    r = subprocess.run(["bash", str(mig)], capture_output=True, text=True, timeout=30)
+    print(f"  claudemd-migration: {'OK' if r.returncode == 0 else 'NEEDS ATTENTION (see stderr)'}")
+    if r.returncode != 0:
+        sys.stderr.write(r.stderr[:400])
+
+print(f"\n=== init {'DRY-RUN' if DRY else 'complete'} ===")
+PY
+    ;;
+
+  skills)
+    # Programmatic discovery of ~/.claude/skills/*/SKILL.md — the directory
+    # IS the truth, no ledger duplication. Replaces ~50 "skill: X exists"
+    # rows. Subcommands: 'sync' (default = list current state), '--json'.
+    SUB="${1:-sync}"; shift || true
+    FMT="text"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --json) FMT="json"; shift ;;
+        *) shift ;;
+      esac
+    done
+    case "$SUB" in
+      sync|list|"")
+        FMT="$FMT" python3 - <<'PY'
+import json, os, sys, re
+from pathlib import Path
+fmt = os.environ.get("FMT", "text")
+skills_dir = Path.home() / ".claude" / "skills"
+rows = []
+if skills_dir.is_dir():
+    for d in sorted(skills_dir.iterdir()):
+        if not d.is_dir(): continue
+        sk = d / "SKILL.md"
+        if not sk.exists(): continue
+        size = sk.stat().st_size
+        desc = ""
+        try:
+            text = sk.read_text(errors="replace")[:2048]
+            m = re.search(r"^description:\s*(.+?)$", text, re.M)
+            if m: desc = m.group(1).strip().strip('"').strip("'")[:120]
+            elif text.lstrip().startswith("#"):
+                desc = text.lstrip().split("\n", 2)[0].lstrip("#").strip()[:120]
+        except Exception:
+            pass
+        rows.append({"name": d.name, "size": size, "desc": desc, "path": str(sk)})
+if fmt == "json":
+    json.dump({"count": len(rows), "skills": rows}, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+else:
+    print(f"=== contract skills ({len(rows)} found) ===")
+    for r in rows:
+        print(f"  {r['name']:<40} {r['size']:>7}b  {r['desc']}")
+PY
+        ;;
+      *)
+        echo "usage: contract skills [sync|list] [--json]" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+
+  install-hooks)
+    # Live projection of tool-guard contracts into ~/.claude/settings.json.
+    # Scans the ledger for active (non-satisfied, non-merged) contracts
+    # whose action starts with tool-guard:<glob> and ensures the PreToolUse
+    # hook is wired for that glob. Removes hook entries for contracts that
+    # are now satisfied. Idempotent. --dry-run prints the diff.
+    DRY=""
+    SCOPE="user"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --dry-run|-n) DRY="1"; shift ;;
+        --project) SCOPE="project"; shift ;;
+        --user) SCOPE="user"; shift ;;
+        *) shift ;;
+      esac
+    done
+    PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" CONTRACT_HOOKS_DRY="$DRY" CONTRACT_HOOKS_SCOPE="$SCOPE" python3 - <<'PY'
+import json, os, sys
+from pathlib import Path
+from contract_core import list_all
+
+DRY = bool(os.environ.get("CONTRACT_HOOKS_DRY"))
+SCOPE = os.environ.get("CONTRACT_HOOKS_SCOPE", "user")
+settings = (Path.home() / ".claude" / "settings.json"
+            if SCOPE == "user" else
+            Path.cwd() / ".claude" / "settings.json")
+print(f"=== contract install-hooks ({'DRY-RUN' if DRY else 'apply'}, {SCOPE} scope) ===")
+print(f"  settings: {settings}")
+
+# Find active tool-guard contracts
+guards = []
+for c in list_all():
+    action = c.get("action", "")
+    if not action.startswith("tool-guard:"): continue
+    if c.get("status") in ("satisfied", "merged"): continue
+    glob = action.split(":", 1)[1]
+    guards.append({"id": c["id"], "glob": glob, "plan": c["plan"][:64]})
+print(f"  active tool-guard contracts: {len(guards)}")
+
+# Load/parse settings.json
+data = {}
+if settings.exists():
+    try:
+        data = json.loads(settings.read_text())
+    except json.JSONDecodeError as e:
+        print(f"  ERROR settings.json is not valid JSON: {e}", file=sys.stderr)
+        sys.exit(1)
+
+hooks = data.setdefault("hooks", {})
+pre = hooks.setdefault("PreToolUse", [])
+
+# Strip any prior contract-managed entries (marker key)
+before = [h for h in pre if h.get("_managed_by") == "contract"]
+pre[:] = [h for h in pre if h.get("_managed_by") != "contract"]
+contract_bin = str(Path.home() / ".claude" / "skills" / "contract" / "scripts" / "contract")
+contract_tool_guard_hook = str(Path.home() / ".contracts" / "hooks" / "contract-tool-guard.py")
+
+added = []
+for g in guards:
+    entry = {
+        "_managed_by": "contract",
+        "_contract_id": g["id"],
+        "matcher": g["glob"],
+        "hooks": [{"type": "command",
+                   "command": f"python3 {contract_tool_guard_hook} {g['id']}"}]
+    }
+    pre.append(entry)
+    added.append(g)
+
+print(f"  prior contract-managed entries: {len(before)}")
+print(f"  new entries:                   {len(added)}")
+for g in added:
+    print(f"    + {g['id']}  matcher={g['glob']}  ({g['plan']})")
+
+if DRY:
+    print("  (dry-run: no write)")
+else:
+    if not settings.parent.exists():
+        settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps(data, indent=2) + "\n")
+    print(f"  wrote: {settings}")
+PY
+    ;;
   _mark)
     ID="${1:-}"; STATUS="${2:-}"
     [ -z "$ID" ] || [ -z "$STATUS" ] && { echo "usage: contract _mark <id> <status>" >&2; exit 2; }
