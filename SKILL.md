@@ -94,6 +94,16 @@ Project-specific rules (no `vercel.json`, no `h-screen`, no `#000/#fff`) do NOT 
 
 ## How to actually use this (working loop)
 
+**Self-drive is the default.** Every top-level `contract declare` / `solve` /
+`build` auto-arms self-drive on the top-level contract (opt out with
+`--no-drive`); a child (`--parent` set) never arms — the organ owns the drive.
+Once armed, a `/contract` invocation converges the WHOLE tree in-thread without
+a human prompt between iterations. Agent judging (KEY 2) is done in-thread and
+is NOT a turn boundary — `iterate` → judge → `_mark` → next `iterate` is one
+continuous turn. Never end a `/contract` turn with a satisfiable contract
+pending. The only three reasons to yield: missing credential · genuinely
+ambiguous intent · irreversible action — and then you run `contract disarm` and
+name the blocker.
 
 Crystallised from real session work, not aspiration:
 

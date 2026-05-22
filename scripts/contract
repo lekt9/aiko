@@ -279,33 +279,38 @@ _two_key_exit() {
       echo "  Fix the target, then: contract iterate $id"
     fi
   fi
-  # Drive mode — when armed, agent must not pause for user input
+  # Drive mode — when armed, the agent self-drives the whole tree in-thread.
   if [ -f "$HOME/.contracts/.drive_active" ]; then
     local organ_id
     organ_id=$(cat "$HOME/.contracts/.drive_active")
     echo
-    echo "  DRIVE MODE ACTIVE (organ: $organ_id)"
+    echo "  === DRIVE ACTIVE · DO NOT YIELD THE TURN (organ: $organ_id) ==="
     if [ "$action_rc" -eq 0 ]; then
-      echo "  Act on KEY 2 immediately: judge genuine in-thread, mark satisfied, continue."
-      echo "  No pause for user. Fake-green → fix root cause and re-iterate $id."
+      echo "  Judge KEY 2 in-thread NOW — no user prompt. If genuine:"
+      echo "    contract _mark $id satisfied   → loop auto-advances to the next leaf"
+      echo "  Fake-green? fix the root cause, then: contract iterate $id"
     else
-      echo "  Diagnose the error above, fix root cause, re-iterate $id NOW."
-      echo "  No asking user. Genuinely stuck? → contract disarm, then explain the blocker."
+      echo "  Diagnose the failure above, fix the ROOT CAUSE in-thread, then NOW:"
+      echo "    contract iterate $id"
     fi
+    echo "  Keep iterating until the organ is satisfied. End the turn ONLY if blocked by:"
+    echo "  missing credential · genuinely ambiguous intent · irreversible action"
+    echo "  (then: contract disarm and name the blocker)."
   fi
 }
 
 case "$cmd" in
   declare)
     PLAN="${1:-}"; shift || true
-    ACTION="" PARENT="" POINTERS="" DRIVE_FLAG="" LEARNING=""
+    ACTION="" PARENT="" POINTERS="" NO_DRIVE="" LEARNING=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --action)      ACTION="${2:-}";   shift 2 ;;
         --parent)      PARENT="${2:-}";   shift 2 ;;
         --pointer-to)  POINTERS="${POINTERS:+$POINTERS,}${2:-}"; shift 2 ;;
         --target)      shift 2 ;;
-        --drive)       DRIVE_FLAG="1"; shift ;;
+        --drive)       shift ;;
+        --no-drive)    NO_DRIVE="1"; shift ;;
         --learning)    LEARNING="${2:-}"; shift 2 ;;
         --budget)      BUDGET="${2:-}"; shift 2 ;;
         *) shift ;;
@@ -352,7 +357,10 @@ print(_infer_pointer_type(os.environ['MH_ACTION']))
       echo "  the superseded contract becomes a fossil — kept in the append-only"
       echo "  ledger, dropped from active list/habit surfacing. Never delete a row."
     fi
-    if [ -n "$DRIVE_FLAG" ]; then
+    # self-drive default: arm the drive loop on the top-level contract so
+    # /contract converges the whole tree without a human pause. Child
+    # contracts (--parent set) never arm — the organ owns the drive.
+    if [ -z "$NO_DRIVE" ] && [ -z "$PARENT" ] && [ ! -f "$HOME/.contracts/.drive_active" ]; then
       bash "$0" drive "$ID"
     fi
     ;;
@@ -445,15 +453,16 @@ SPAWN
 
   build)
     PLAN="${1:-}"; shift || true
-    ACTION="" DRIVE_FLAG=""
+    ACTION="" NO_DRIVE=""
     while [ $# -gt 0 ]; do
       case "$1" in
-        --action) ACTION="${2:-}"; shift 2 ;;
-        --drive)  DRIVE_FLAG="1"; shift ;;
+        --action)   ACTION="${2:-}"; shift 2 ;;
+        --drive)    shift ;;
+        --no-drive) NO_DRIVE="1"; shift ;;
         *) shift ;;
       esac
     done
-    [ -z "$PLAN" ] && { echo "usage: contract build \"<plan>\" [--action \"<cmd>\"] [--drive]" >&2; exit 2; }
+    [ -z "$PLAN" ] && { echo "usage: contract build \"<plan>\" [--action \"<cmd>\"] [--no-drive]" >&2; exit 2; }
     ACTION="${ACTION:-agent-judges}"
     echo "=== CONTRACT BUILD ==="
     echo "  plan:   $PLAN"
@@ -463,7 +472,7 @@ SPAWN
     PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 "$SELF/contract-habit-detect.py" --context "$PLAN"
     echo
     echo "--- declare + first wave ---"
-    MH_PLAN="$PLAN" MH_ACTION="$ACTION" bash "$0" solve "$PLAN" --action "$ACTION" ${DRIVE_FLAG:+--drive}
+    MH_PLAN="$PLAN" MH_ACTION="$ACTION" bash "$0" solve "$PLAN" --action "$ACTION" ${NO_DRIVE:+--no-drive}
     ;;
 
   solve)
@@ -473,19 +482,20 @@ SPAWN
       bash "$0" iterate "$ID"
     else
       PLAN="${1:-}"; shift || true
-      ACTION="" PARENT="" DRIVE_FLAG=""
+      ACTION="" PARENT="" NO_DRIVE=""
       while [ $# -gt 0 ]; do
         case "$1" in
-          --action) ACTION="${2:-}"; shift 2 ;;
-          --parent) PARENT="${2:-}"; shift 2 ;;
-          --drive)  DRIVE_FLAG="1"; shift ;;
+          --action)   ACTION="${2:-}"; shift 2 ;;
+          --parent)   PARENT="${2:-}"; shift 2 ;;
+          --drive)    shift ;;
+          --no-drive) NO_DRIVE="1"; shift ;;
           *) shift ;;
         esac
       done
-      [ -z "$PLAN" ]   && { echo "usage: contract solve \"<plan>\" --action \"<cmd>\" [--drive]" >&2; exit 2; }
+      [ -z "$PLAN" ]   && { echo "usage: contract solve \"<plan>\" --action \"<cmd>\" [--no-drive]" >&2; exit 2; }
       [ -z "$ACTION" ] && { echo "ERROR: --action required" >&2; exit 2; }
       echo "=== SOLVE [1/2] declare ==="
-      DECLARE_OUT=$(bash "$0" declare "$PLAN" --action "$ACTION" ${PARENT:+--parent "$PARENT"})
+      DECLARE_OUT=$(bash "$0" declare "$PLAN" --action "$ACTION" ${PARENT:+--parent "$PARENT"} ${NO_DRIVE:+--no-drive})
       echo "$DECLARE_OUT"
       # Parse ID from declare output — race-safe vs list_all()[-1] which races under parallel fan-out
       ID=$(python3 -c "
@@ -499,10 +509,7 @@ for line in sys.stdin:
       echo
       echo "=== SOLVE [2/2] first wave ==="
       bash "$0" iterate "$ID"
-      if [ -n "$DRIVE_FLAG" ]; then
-        echo
-        bash "$0" drive "$ID"
-      fi
+      # self-drive armed by declare; solve's tail is intentionally empty.
     fi
     ;;
 
