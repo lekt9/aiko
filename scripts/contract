@@ -355,7 +355,7 @@ print(_infer_pointer_type(os.environ['MH_ACTION']))
       echo "  on a genuine contradiction, supersede the less-fit contract:"
       echo "    contract supersede <loser-id> $ID --reason \"<why this one wins>\""
       echo "  the superseded contract becomes a fossil — kept in the append-only"
-      echo "  ledger, dropped from active list/habit surfacing. Never delete a row."
+      echo "  ledger, dropped from active list/related-contract surfacing. Never delete a row."
     fi
     # self-drive default: arm the drive loop on the top-level contract so
     # /contract converges the whole tree without a human pause. Child
