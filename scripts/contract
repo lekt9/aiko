@@ -313,6 +313,7 @@ case "$cmd" in
         --no-drive)    NO_DRIVE="1"; shift ;;
         --learning)    LEARNING="${2:-}"; shift 2 ;;
         --budget)      BUDGET="${2:-}"; shift 2 ;;
+        --bind-to)     BIND_TO="${2:-}"; shift 2 ;;
         *) shift ;;
       esac
     done
