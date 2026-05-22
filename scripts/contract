@@ -772,14 +772,79 @@ PY
     # action starts with tool-guard:<glob>. Idempotent.
     DRY=""
     SCOPE="user"
+    FORMAT="claude-code"
     while [ $# -gt 0 ]; do
       case "$1" in
         --dry-run|-n) DRY="1"; shift ;;
         --project) SCOPE="project"; shift ;;
         --user) SCOPE="user"; shift ;;
+        --format) FORMAT="${2:-claude-code}"; shift 2 ;;
         *) shift ;;
       esac
     done
+    PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" \
+      CONTRACT_HOOKS_DRY="$DRY" CONTRACT_HOOKS_SCOPE="$SCOPE" CONTRACT_HOOKS_FORMAT="$FORMAT" \
+      python3 - <<'PY'
+import json, os, sys
+from pathlib import Path
+from contract_core import list_all
+
+DRY = bool(os.environ.get("CONTRACT_HOOKS_DRY"))
+SCOPE = os.environ.get("CONTRACT_HOOKS_SCOPE", "user")
+FORMAT = os.environ.get("CONTRACT_HOOKS_FORMAT", "claude-code")
+
+# Find active tool-guard contracts (runtime-agnostic data)
+guards = []
+for c in list_all():
+    action = c.get("action", "")
+    if not action.startswith("tool-guard:"): continue
+    if c.get("status") in ("satisfied", "merged"): continue
+    glob = action.split(":", 1)[1]
+    guards.append({"id": c["id"], "glob": glob, "plan": c["plan"][:64]})
+
+contract_tool_guard_hook = str(Path.home() / ".contracts" / "hooks" / "contract-tool-guard.py")
+
+if FORMAT == "json":
+    # Pure data — runtime-agnostic projection, agent or operator wires it.
+    out = {
+        "active_tool_guards": len(guards),
+        "guards": [{"contract_id": g["id"], "match": g["glob"], "plan": g["plan"],
+                    "check_cmd": f"python3 {contract_tool_guard_hook} {g['id']}"}
+                   for g in guards],
+    }
+    json.dump(out, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    sys.exit(0)
+
+if FORMAT == "generic":
+    target = Path.home() / ".contracts" / "tool-guards.json"
+    print(f"=== export-hooks ({'DRY-RUN' if DRY else 'apply'}, format=generic) ===")
+    print(f"  target: {target}  (runtime-agnostic; any agent reads this)")
+    print(f"  active tool-guard contracts: {len(guards)}")
+    data = {
+        "active_tool_guards": len(guards),
+        "guards": [{"contract_id": g["id"], "match": g["glob"], "plan": g["plan"],
+                    "check_cmd": f"python3 {contract_tool_guard_hook} {g['id']}"}
+                   for g in guards],
+    }
+    if DRY:
+        json.dump(data, sys.stdout, indent=2); sys.stdout.write("\n  (dry-run: no write)\n")
+    else:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(data, indent=2) + "\n")
+        print(f"  wrote: {target}")
+    sys.exit(0)
+
+# Default: claude-code format
+if FORMAT != "claude-code":
+    print(f"  ERROR unknown --format {FORMAT}. Supported: claude-code, generic, json", file=sys.stderr)
+    sys.exit(2)
+
+settings = (Path.home() / ".claude" / "settings.json"
+            if SCOPE == "user" else
+            Path.cwd() / ".claude" / "settings.json")
+print(f"=== contract install-hooks ({'DRY-RUN' if DRY else 'apply'}, claude-code, {SCOPE} scope) ===")
+print(f"  settings: {settings}")
     PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" CONTRACT_HOOKS_DRY="$DRY" CONTRACT_HOOKS_SCOPE="$SCOPE" python3 - <<'PY'
 import json, os, sys
 from pathlib import Path
