@@ -180,3 +180,4 @@
 {"event": "iterated", "id": "b9324002", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T12:52:09.321776Z"}
 {"event": "satisfied", "id": "0661a665", "wave": 0, "ts": "2026-05-22T12:53:17.079911Z"}
 {"event": "satisfied", "id": "b9324002", "wave": 0, "ts": "2026-05-22T12:53:17.144140Z"}
+{"event": "declared", "id": "05b50a4f", "plan": "/contract funnel loop and two-key-exit principles hold across the global ledger: no script auto-satisfies, habit detection fires on session start, and the two-key exit is auditable", "action": "funnel", "pointer_type": "funnel", "parent_id": null, "pointers": [], "ts": "2026-05-22T12:55:19.102958Z"}
