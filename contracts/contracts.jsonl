@@ -2595,3 +2595,4 @@
 {"event": "iterated", "id": "5da80b8a", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:32:49.907495Z"}
 {"event": "satisfied", "id": "5da80b8a", "wave": 0, "ts": "2026-05-22T21:32:55.477245Z"}
 {"event": "iterated", "id": "0f28bc1b", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:32:55.722966Z"}
+{"event": "satisfied", "id": "0f28bc1b", "wave": 0, "ts": "2026-05-22T21:33:01.866177Z"}
