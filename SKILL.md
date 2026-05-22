@@ -145,6 +145,10 @@ contract drive <organ-id>
 
 # Disarm drive loop (use when genuinely stuck or complete)
 contract disarm
+
+# Crystallize a learning: memory file + Outline doc
+# (also auto-fires on satisfy for any contract declared with --learning)
+contract learn "<insight>" [--source <ref>]
 ```
 
 ## Drive mode (autonomous loop, agent-lifecycle agnostic)
