@@ -2574,3 +2574,6 @@
 {"event": "child_added", "id": "cbb2a1d3", "child_id": "88f45b94", "ts": "2026-05-22T21:30:25.703047Z"}
 {"event": "declared", "id": "655c2433", "plan": "SKILL.md documents the contract learn verb and the crystallize-learning hook as a hook-like structure of the contract system", "action": "bash /Users/lekt9/.claude/skills/contract/scripts/check-crystallize.sh docs", "pointer_type": "cli", "cwd": "/private/tmp", "parent_id": "cbb2a1d3", "pointers": [], "ts": "2026-05-22T21:30:25.884129Z"}
 {"event": "child_added", "id": "cbb2a1d3", "child_id": "655c2433", "ts": "2026-05-22T21:30:25.884393Z"}
+{"event": "declared", "id": "e9591ee2", "plan": "auditgate_selftest_84511 target contract to be audited", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:30:33.273971Z"}
+{"event": "declared", "id": "bdb4e9a3", "plan": "falsifier audit of e9591ee2: 3 cold auditors each tried to break it and found no genuine defect", "action": "funnel", "pointer_type": "funnel", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": "e9591ee2", "pointers": [], "ts": "2026-05-22T21:30:33.481516Z"}
+{"event": "child_added", "id": "e9591ee2", "child_id": "bdb4e9a3", "ts": "2026-05-22T21:30:33.481807Z"}
