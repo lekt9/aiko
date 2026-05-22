@@ -396,6 +396,38 @@ contract _mark <root> satisfied                      # Step 9  — emergence
 Nothing here is a new engine. The genesis organ is the seven shapes, the
 BM25 plan stage, and the natural-selection lifecycle — composed.
 
+## Signal propagation (the nervous system)
+
+A pile of cells is not an organism — what makes it one is **signalling**.
+The contract graph has the cells and the edges (parent links, `contract:<id>`
+references, `corroborate` synapses); signal propagation makes those edges
+**fire**.
+
+When a contract is marked satisfied — the action potential — `_mark`
+surfaces the **wavefront**: every contract a change here should
+re-evaluate.
+
+```
+=== PROPAGATION (signal) ===
+  <id> satisfied. wavefront — judge KEY 2 on each:
+  parent organ       <pid>   "<plan>"   -> contract iterate <pid>
+  unblocked referrer <rid>   "<plan>"   -> contract iterate <rid>
+  synapse            <sid>   "<plan>"   -> contract iterate <sid>
+```
+
+The wavefront has three conduction paths:
+
+- **parent organ** — the funnel / sequence / quorum this contract is a
+  child of may now be complete.
+- **unblocked referrers** — every contract whose `--action` is
+  `contract:<id>` was gated on this one; the gate just opened.
+- **synapses** — contracts `corroborate`d with this one; related truths
+  worth re-checking.
+
+The substrate surfaces the wavefront; it never satisfies anything. KEY 2
+stays with the agent on every contract the signal reaches. The graph is now
+a nervous system that fires, not a filing cabinet that is walked by hand.
+
 ## What this skill does NOT do
 
 - Auto-declare from a detected pattern. Surfaces candidates only.
