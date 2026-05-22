@@ -65,12 +65,19 @@ def get_status(id: str, rows: list[dict]) -> str:
                 return r.get("status", "?")
     iter_rows = [r for r in rows if r.get("id") == id and r.get("event") == "iterated"]
     return "active" if iter_rows else "pending"
-def detect(context: str, threshold: float = DEFAULT_THRESHOLD) -> list[dict]:
+def detect(context: str, threshold: float = DEFAULT_THRESHOLD,
+           exclude: "set | None" = None) -> list[dict]:
+    exclude = exclude or set()
     all_rows = load_rows()
     contracts = [r for r in all_rows if r.get("event") == "declared"]
     ctx_tokens = _tokenize(context)
     results = []
     for c in contracts:
+        if c["id"] in exclude:
+            continue
+        status = get_status(c["id"], all_rows)
+        if status == "merged":
+            continue  # superseded fossil — natural selection: never resurface
         # BM25 tokens: plan + learning (why it was done that way)
         searchable = c["plan"] + (" " + c["learning"] if c.get("learning") else "")
         score = _overlap(ctx_tokens, _tokenize(searchable))
@@ -80,7 +87,7 @@ def detect(context: str, threshold: float = DEFAULT_THRESHOLD) -> list[dict]:
                 "plan": c["plan"],
                 "action": c["action"],
                 "learning": c.get("learning"),
-                "status": get_status(c["id"], all_rows),
+                "status": status,
                 "score": round(score, 2),
             })
     return sorted(results, key=lambda x: -x["score"])
