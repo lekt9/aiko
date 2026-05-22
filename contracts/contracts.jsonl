@@ -267,3 +267,4 @@
 {"event": "iterated", "id": "a709df5d", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T13:07:13.606376Z"}
 {"event": "iterated", "id": "a709df5d", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T13:07:23.182637Z"}
 {"event": "satisfied", "id": "a709df5d", "wave": 0, "ts": "2026-05-22T13:07:23.182950Z"}
+{"event": "declared", "id": "b9d5fb62", "plan": "every /contract I declare self-drives to completion: --drive flag arms the Stop hook loop; no user prompts needed between iterations", "action": "funnel", "pointer_type": "funnel", "parent_id": null, "pointers": [], "ts": "2026-05-22T13:13:36.981366Z"}
