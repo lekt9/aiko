@@ -583,6 +583,35 @@ else:
 print(f'  {id} -> {st}')
 "
     _fire_contract_hooks "mark" "$ID" "0"
+    # SIGNAL PROPAGATION: a contract becoming satisfied is an action
+    # potential. Surface the wavefront — parent organ, contract:<id>
+    # referrers, corroborated synapses — so the state change is not inert.
+    # The substrate surfaces; the agent judges KEY 2 on each.
+    if [ "$STATUS" = "satisfied" ]; then
+      MH_ID="$ID" _py_inline "
+import os
+from contract_core import wavefront, get
+wf = wavefront(os.environ['MH_ID'])
+items = []
+if wf['parent']:
+    items.append(('parent organ      ', wf['parent']))
+for r in wf['referrers']:
+    items.append(('unblocked referrer', r))
+for s in wf['synapses']:
+    items.append(('synapse           ', s))
+print()
+print('=== PROPAGATION (signal) ===')
+if not items:
+    print('  leaf signal — no downstream contracts')
+else:
+    print('  ' + os.environ['MH_ID'] + ' satisfied. wavefront — judge KEY 2 on each:')
+    for label, cid in items:
+        c = get(cid)
+        plan = (c['plan'][:52] if c else '?')
+        print('  ' + label + ' ' + cid + '  \"' + plan + '\"')
+        print('    -> contract iterate ' + cid)
+"
+    fi
     # INLINE DRIVE ADVANCE: framework-agnostic self-drive — runs synchronously inside the
     # CLI process so any agent/runtime gets the next action without waiting for an external hook
     if [ "$STATUS" = "satisfied" ] && [ -f "$HOME/.contracts/.drive_active" ]; then
