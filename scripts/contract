@@ -724,7 +724,7 @@ print(f'  next: contract iterate {id1}')
 "
     ;;
 
-  merge)
+  merge|supersede)
     SRC="${1:-}"; TGT="${2:-}"; shift 2 || true
     REASON=""
     while [ $# -gt 0 ]; do
