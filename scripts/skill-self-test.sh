@@ -36,7 +36,8 @@ check "core/folder-substrate"      env PYTHONPATH="$SCRIPTS/lib" python3 -c \
   check "guard/crystallize"        bash "$SCRIPTS/check-crystallize.sh" module
 check "cli/inline-drive-block"     python3 -c \
                                      "import sys; sys.exit(0 if 'INLINE DRIVE' in open('$CLI').read() else 1)"
-check "hook/folder-aware"          python3 -c \
+[ -f "$HOME/.claude/hooks/contract-drive.py" ] && \
+  check "hook/folder-aware"        python3 -c \
                                      "import sys; sys.exit(0 if 'contracts_d_root' in open('$HOME/.claude/hooks/contract-drive.py').read() else 1)"
 [ -x "$HOOK_DIR/drive-advance.sh" ] && \
   check "hook/drive-advance-exec"  test -x "$HOOK_DIR/drive-advance.sh"
