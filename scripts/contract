@@ -1232,7 +1232,7 @@ contract — fractal contract primitive (cellular organism)
   status [<id>]                                        tree view
   list [--show-merged]                                 all contracts (merged hidden by default)
   defaults                                             show 13 universal default contracts
-  habit [--context "<text>"] [--scope project|global]  surface habit candidates
+  search [--context "<text>"] [--scope project|global] surface related contracts (alias: habit)
 
 Organism primitives:
   corroborate <id1> <id2> [--label "<why>"]   wire a synapse — when one fires, the other surfaces
