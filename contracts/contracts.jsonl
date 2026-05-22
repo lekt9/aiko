@@ -3249,3 +3249,4 @@
 {"event": "declared", "id": "905c1a3a", "plan": "test binding: surface /tmp/test-surface.txt must contain word BANANA", "action": "python3 -c \"import sys; sys.exit(0 if 'BANANA' in open('/tmp/test-surface.txt').read() else 1)\"", "pointer_type": "cli", "cwd": "/private/tmp", "parent_id": null, "pointers": [], "ts": "2026-05-22T23:07:55.224462Z", "bind_to": "/tmp/test-surface.txt"}
 {"event": "iterated", "id": "905c1a3a", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T23:09:06.510651Z"}
 {"event": "iterated", "id": "905c1a3a", "wave": 2, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T23:09:10.013019Z"}
+{"event": "iterated", "id": "905c1a3a", "wave": 3, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T23:09:44.298406Z"}
