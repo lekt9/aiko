@@ -2536,3 +2536,4 @@
 {"event": "child_added", "id": "0f28bc1b", "child_id": "5da80b8a", "ts": "2026-05-22T21:25:16.847242Z"}
 {"event": "iterated", "id": "7df0c7aa", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T21:25:19.731855Z"}
 {"event": "satisfied", "id": "7df0c7aa", "wave": 0, "ts": "2026-05-22T21:26:31.909915Z"}
+{"event": "declared", "id": "b5ba1bb0", "plan": "bm25gate_selftest_79199 discover and reuse probe alpha bravo", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": null, "pointers": [], "ts": "2026-05-22T21:26:39.578249Z"}
