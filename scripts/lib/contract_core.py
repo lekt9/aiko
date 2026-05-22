@@ -33,6 +33,35 @@ def _ledger() -> Path:
     return _resolve_ledger()
 
 
+# ── Per-contract folder substrate ─────────────────────────────────────────────
+# Each contract has a folder at ~/.contracts/contracts.d/<id>/ that holds
+# mutable state co-located with the contract: drive.json (replaces the four
+# global drive sidecars), cwd.txt (record of the arming directory), and
+# artifacts/ (sub-agent transcripts, screenshots, gate logs). The ledger
+# remains the append-only event log / identity layer; folders are the cell
+# membrane where mutable, per-contract state lives. Multiple contracts can
+# be armed concurrently because their drive state is per-folder, not a
+# global singleton. Folders are GLOBAL keyed by contract id so a drive
+# armed in project A and a drive armed in project B coexist.
+def contracts_d_root() -> Path:
+    """Root directory for per-contract folders. Always under ~/.contracts/."""
+    return Path.home() / ".contracts" / "contracts.d"
+
+
+def contract_dir(contract_id: str, *, create: bool = True) -> Path:
+    """Return ~/.contracts/contracts.d/<id>/ for a contract; mkdir by default.
+
+    The folder is the per-contract substrate for mutable state and artifacts.
+    The ledger remains the truth substrate for events; folders never overwrite
+    or replace ledger rows.
+    """
+    if not contract_id or "/" in contract_id or "\\" in contract_id:
+        raise ValueError(f"invalid contract id: {contract_id!r}")
+    d = contracts_d_root() / contract_id
+    if create:
+        d.mkdir(parents=True, exist_ok=True)
+    return d
+
 def _load_prefs() -> dict:
     """Effective preferences: global ~/.contracts/prefs.json merged with project .claude/contract-prefs.json."""
     global_path = Path.home() / ".contracts" / "prefs.json"
