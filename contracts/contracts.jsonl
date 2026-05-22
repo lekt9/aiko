@@ -414,3 +414,4 @@
 {"event": "declared", "id": "7f157b21", "plan": "fdry Jup follower arm: at least 1 live order executed and settled with nonzero PnL", "action": "ssh tencent 'grep -c SETTLED ~/.fdry/follower.log 2>/dev/null || echo 0' | python3 -c \"import sys; n=int(sys.stdin.read().strip().split()[0]); sys.exit(0 if n>=1 else 1)\"", "pointer_type": "cli", "parent_id": "2fc96f02", "pointers": [], "ts": "2026-05-22T15:55:26.004652Z"}
 {"event": "child_added", "id": "2fc96f02", "child_id": "7f157b21", "ts": "2026-05-22T15:55:26.005135Z"}
 {"event": "iterated", "id": "80ee1954", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:55:26.871214Z"}
+{"event": "iterated", "id": "7f157b21", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T15:55:27.800462Z"}
