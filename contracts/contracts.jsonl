@@ -285,3 +285,4 @@
 {"event": "iterated", "id": "d3791e2b", "wave": 3, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T13:19:25.640269Z"}
 {"event": "satisfied", "id": "d3791e2b", "wave": 0, "ts": "2026-05-22T13:19:25.640580Z"}
 {"event": "declared", "id": "6567a078", "plan": "contract drive <id> loops natively in the CLI: iterate \u2192 PASS \u2192 mark \u2192 advance \u2192 repeat until all leaves satisfied or a FAIL blocks \u2014 no external hook, no agent prompt between iterations", "action": "grep -q 'DRIVE LOOP' /Users/lekt9/.claude/skills/contract/scripts/contract", "pointer_type": "cli", "parent_id": null, "pointers": [], "ts": "2026-05-22T13:22:23.398954Z"}
+{"event": "declared", "id": "18765fbe", "plan": "drive-loop smoke organ", "action": "funnel", "pointer_type": "funnel", "parent_id": null, "pointers": [], "ts": "2026-05-22T13:22:51.932431Z"}
