@@ -181,3 +181,5 @@
 {"event": "satisfied", "id": "0661a665", "wave": 0, "ts": "2026-05-22T12:53:17.079911Z"}
 {"event": "satisfied", "id": "b9324002", "wave": 0, "ts": "2026-05-22T12:53:17.144140Z"}
 {"event": "declared", "id": "05b50a4f", "plan": "/contract funnel loop and two-key-exit principles hold across the global ledger: no script auto-satisfies, habit detection fires on session start, and the two-key exit is auditable", "action": "funnel", "pointer_type": "funnel", "parent_id": null, "pointers": [], "ts": "2026-05-22T12:55:19.102958Z"}
+{"event": "declared", "id": "f3193752", "plan": "no /contract script emits PROMOTE/PASS/FAIL unilaterally: the check-no-silent-fallback guard passes", "action": "python3 /Users/lekt9/.claude/skills/contract/scripts/check-no-silent-fallback.py", "pointer_type": "cli", "parent_id": "05b50a4f", "pointers": [], "ts": "2026-05-22T12:55:27.035750Z"}
+{"event": "child_added", "id": "05b50a4f", "child_id": "f3193752", "ts": "2026-05-22T12:55:27.036140Z"}
