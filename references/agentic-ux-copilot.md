@@ -36,7 +36,8 @@ browser embed  ──POST messages──▶  /copilot/chat  ──loads registry
 - **`/copilot/chat`** — the server. Loads the registry, runs the Claude
   agentic loop, executes tool calls (real same-origin `fetch` to the
   site's APIs; keyword search over chunks), returns reply + tool trace.
-  Holds the model key (`ANTHROPIC_API_KEY`).
+  Runs inference on the keyless Cloudflare Workers AI binding (`env.AI`)
+  — no API key, nothing to provision, nothing to pay an LLM vendor.
 - **client embed** — a chat panel. Holds only the endpoint path. Zero
   copilot logic. Fully decompiled it reveals a transport, nothing more.
 
