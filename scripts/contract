@@ -635,7 +635,6 @@ leaf = first_pending_leaf(tree)
 print(leaf['id'] if leaf else '__DONE__')
 PYEOF
 )
-      if [ "$NEXT_ID" = "__DONE__" ] || [ "$NEXT_ID" = "__GONE__" ]; then
         echo "=== DRIVE LOOP COMPLETE: all leaves satisfied ==="
         echo "  Verify parent organ: contract iterate $ID"
         rm -f "$HOME/.contracts/.drive_active" "$HOME/.contracts/.drive_store" "$HOME/.contracts/drive_next.txt"
