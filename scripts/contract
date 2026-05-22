@@ -56,6 +56,8 @@ _run_action() {
     ptype="tool-guard"
   elif [ "$action" = "sequence" ]; then
     ptype="sequence"
+  elif [[ "$action" == quorum:* ]]; then
+    ptype="quorum"
   elif [[ "$action" == contract:* ]]; then
     ptype="contract-ref"
   elif [[ "$action" == curl\ * || "$action" == http://* || "$action" == https://* || "$action" == wget\ * ]]; then
