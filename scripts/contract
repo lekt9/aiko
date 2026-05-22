@@ -263,6 +263,24 @@ print(_infer_pointer_type(os.environ['MH_ACTION']))
     [ -n "$POINTERS" ] && echo "  pointers:    $POINTERS"
     [ -n "$LEARNING" ] && echo "  learning:    $LEARNING"
     echo "  next:        contract iterate $ID"
+
+    # ── lifecycle / natural-selection check ──
+    # Surface past contracts this new one may CONTRADICT or duplicate. The
+    # substrate surfaces; the agent judges the contradiction in-thread. On a
+    # genuine conflict, supersede the less-fit contract — it becomes a fossil.
+    _LIFECYCLE=$(PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" \
+      python3 "$SELF/contract-habit-detect.py" --context "$PLAN" --exclude "$ID" 2>/dev/null)
+    if [ -n "$_LIFECYCLE" ] && [[ "$_LIFECYCLE" != *"no HABIT CANDIDATES"* ]]; then
+      echo
+      echo "  ── lifecycle check (natural selection) ──"
+      echo "  related past contracts exist. JUDGE in-thread: does this new"
+      echo "  contract CONTRADICT, duplicate, or refine any of them?"
+      echo "$_LIFECYCLE" | sed 's/^/  /'
+      echo "  on a genuine contradiction, supersede the less-fit contract:"
+      echo "    contract supersede <loser-id> $ID --reason \"<why this one wins>\""
+      echo "  the superseded contract becomes a fossil — kept in the append-only"
+      echo "  ledger, dropped from active list/habit surfacing. Never delete a row."
+    fi
     if [ -n "$DRIVE_FLAG" ]; then
       bash "$0" drive "$ID"
     fi
