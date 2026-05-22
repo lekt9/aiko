@@ -605,7 +605,7 @@ DEFAULTS
     ;;
 
   init)
-    # Idempotent first-use bootstrap. Installs the 13 universal Default
+    # Idempotent first-use bootstrap. Installs the 12 universal Default
     # Contracts into the active ledger (project or global), runs the
     # CLAUDE.md/AGENTS.md activation symlink check, runs the claudemd
     # migration check, and ensures ~/.contracts/contracts.d/ exists.
