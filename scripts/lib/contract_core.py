@@ -93,6 +93,8 @@ def declare(plan: str, action: str, parent_id: Optional[str] = None,
            "ts": _now()}
     if learning:
         row["learning"] = learning
+    if budget:
+        row["budget"] = int(budget)
     _append(row)
     if parent_id:
         _append({"event": "child_added", "id": parent_id, "child_id": cid, "ts": _now()})
