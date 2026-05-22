@@ -331,3 +331,12 @@
 {"event": "child_added", "id": "9b575013", "child_id": "d5ef1a26", "ts": "2026-05-22T14:18:14.643453Z"}
 {"event": "declared", "id": "b81691ad", "plan": "phase-B leaf 1", "action": "echo B1", "pointer_type": "cli", "parent_id": "37dcc048", "pointers": [], "ts": "2026-05-22T14:18:14.702568Z"}
 {"event": "child_added", "id": "37dcc048", "child_id": "b81691ad", "ts": "2026-05-22T14:18:14.702853Z"}
+{"event": "iterated", "id": "19f0caa7", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T14:18:17.839480Z"}
+{"event": "iterated", "id": "19f0caa7", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T14:18:17.905590Z"}
+{"event": "satisfied", "id": "19f0caa7", "wave": 0, "ts": "2026-05-22T14:18:17.905871Z"}
+{"event": "iterated", "id": "d5ef1a26", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T14:18:18.242068Z"}
+{"event": "iterated", "id": "d5ef1a26", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T14:18:18.307356Z"}
+{"event": "satisfied", "id": "d5ef1a26", "wave": 0, "ts": "2026-05-22T14:18:18.307659Z"}
+{"event": "iterated", "id": "b81691ad", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T14:18:18.664514Z"}
+{"event": "iterated", "id": "b81691ad", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": "genuine", "children_spawned": [], "log_path": "", "ts": "2026-05-22T14:18:18.729426Z"}
+{"event": "satisfied", "id": "b81691ad", "wave": 0, "ts": "2026-05-22T14:18:18.729714Z"}
