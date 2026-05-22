@@ -43,7 +43,7 @@ check "core/folder-substrate" env PYTHONPATH="$SCRIPTS/lib" python3 -c \
   check "guard/crystallize" bash "$SCRIPTS/check-crystallize.sh" module
 
 # 6. Drive never auto-marks a contract satisfied
-[ -f "$SCRIPTS/check-drive-no-autosatisfy.py" ] && \
+check "cli/inline-drive-block" python3 -c "import sys; sys.exit(0 if 'INLINE DRIVE' in open('$CLI').read() else 1)"
   check "guard/drive-no-autosatisfy" python3 "$SCRIPTS/check-drive-no-autosatisfy.py"
 
 # 7. Crystallize machinery is wired
