@@ -2728,3 +2728,4 @@
 {"event": "iterated", "id": "fc80966b", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T22:33:43.244247Z"}
 {"event": "satisfied", "id": "fc80966b", "wave": 0, "ts": "2026-05-22T22:33:49.479528Z"}
 {"event": "iterated", "id": "5518b55a", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-22T22:33:56.526284Z"}
+{"event": "satisfied", "id": "5518b55a", "wave": 0, "ts": "2026-05-22T22:34:07.899165Z"}
