@@ -1216,7 +1216,7 @@ contract — fractal contract primitive (cellular organism)
 
   declare "<plan>" --action "<cmd>" [--parent <id>] [--pointer-to <tag>] [--drive]   declare a contract
   iterate <id>                                         one wave; two-key exit + synaptic firing
-  plan "<task>"                                        surface habit candidates + skills + shape
+  plan "<task>"                                        surface related contracts + skills + shape
   build "<plan>" [--action "<cmd>"] [--drive]          search similar + declare + first wave
   spawn <parent> "<plan>" [--action "<cmd>"]           emit SPAWN REQUIRED for sub-agent
   solve "<plan>" --action "<cmd>" [--drive]            declare + first wave
