@@ -105,7 +105,18 @@ def _parse_blocks_and_text(raw: str):
             if kv:
                 args[kv.group(1)] = kv.group(2)
             j += 1
-        blocks.append((kind, args))
+        # Only blocks named in BLOCK_TO_TOOL become tool_calls. Other
+        # `=== ... ===` headers (PROPAGATION, BREAK ON RESOLUTION,
+        # iterate · wave, etc.) are substrate internals — they belong in
+        # the text content, not in the function-call surface that
+        # transports render as generative UI.
+        if kind in BLOCK_TO_TOOL:
+            blocks.append((kind, args))
+        else:
+            # Preserve as text: re-emit the original header + its KV lines
+            text_lines.append(f"=== {kind} ===")
+            for k, v in args.items():
+                text_lines.append(f"  {k}: {v}")
         i = j
     return "\n".join(text_lines).strip(), blocks
 
