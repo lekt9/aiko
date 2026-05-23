@@ -37,11 +37,68 @@ If both exit 0, the substrate is live. The ledger writes to
 
 On any invocation: read `ledgers/contracts.jsonl` — it is the only truth. The full verb list (38+) is discoverable via `contract self`; the table above is the load-bearing front door (Ψ2, working-memory cap).
 
+## Architecture (L0-L2)
 
+- **L0 core** — `scripts/lib/contract_core.py`: data model, the only code that touches `ledgers/contracts.jsonl`. `declare()`, `record_iteration()`, `mark_satisfied()`, `get_tree()`, `list_all()`, `children_satisfy()`.
+- **L1 CLI** — `scripts/contract`: the verb surface. `declare`, `iterate`, `build`, `spawn`, `solve`, `status`, `list`, `search`, `_mark`. Every verb either writes one ledger row or emits a structured prompt; nothing else.
+- **L2 detector** — `scripts/contract-habit-detect.py`: passive related-contract detector. Token overlap against all `plan` fields in the ledger. Surfaces candidates above threshold. Never declares. (Filename retained; the user-facing operation is `contract search` — the contract IS the habit.)
 
+The unifying model: a contract with a mechanical `--action` is a **cell**. `--action agent-judges` is a **judgment**. `--action funnel` (or `children-satisfy`) is a **funnel** (AND-gate). `--action funnel-first` is a **funnel-first** (OR-gate). `--action quorum:<K>` is a **quorum** (the integrate-and-fire neuron — K of N children). `--action sequence` is a **sequence** (an ordered funnel). `--action loop-until:<cmd>` is a **loop** (re-run body each iterate). `--action harness:<path>` is a **harness** (delegates to `<path>/verify.sh`). `--action tool-guard:<glob>` is a **tool-guard** (a PreToolUse hook blocks the matching tool until the contract is satisfied). One data model, nine shapes, infinite fractal depth.
 
+## The nine shapes (one data model)
 
+Every contract is simultaneously a funnel, a loop, and a harness — fractally. A loop's body can be a funnel; a funnel's children can be loops; a harness wraps any shape. The recursion bottoms out at a cell or judgment.
 
+| Shape | `action` field | Satisfied when |
+|---|---|---|
+| **cell** | shell command | action exits 0 AND agent judges genuine |
+| **judgment** | `agent-judges` | agent confirms in-thread |
+| **funnel** | `funnel` or `children-satisfy` | ALL children satisfied (AND-gate) |
+| **funnel-first** | `funnel-first` | ANY child satisfied (OR-gate) |
+| **loop** | `loop-until:<body-action>` | body exits 0 AND agent judges genuine; re-iterate to advance |
+| **harness** | `harness:<path>` | `<path>/verify.sh` exits 0 AND agent judges genuine |
+| **tool-guard** | `tool-guard:<glob>` | a standing guard — a PreToolUse hook blocks every tool matching the glob until the contract is satisfied (which lifts it) |
+| **sequence** | `sequence` | an ordered funnel — satisfied when every child is satisfied; iterate names the next unsatisfied child in declared order as the current stage |
+| **quorum** | `quorum:<K>` | the integrate-and-fire neuron — satisfied when at least K of N children are satisfied; funnel is K=N, funnel-first is K=1 |
+
+Fractal: funnels contain loops, loops contain funnels, harnesses wrap any shape. Every contract is itself a funnel (narrows to truth) + loop (iterate until resolved) + harness (collects evidence). `children-satisfy` remains valid; `funnel` is the canonical name. `drive` mode removes the human pause between loop iterations but does not change the two-key exit.
+
+### Shape IS the type system (no `--lifetime` flag will ever exist)
+
+The nine shapes ARE the lifetime / role / decay model. There is no separate
+typed-tag layer and there never will be. Concretely:
+
+| If you would reach for… | …use this shape instead |
+|---|---|
+| `--lifetime one-shot` (the default) | a plain **cell** or **judgment**. Once `_mark satisfied`, it stays satisfied. |
+| `--lifetime invariant` (auto-re-fire) | **`loop-until:<cmd>`**. The body re-runs every iterate; the loop completes when the body says so. The body IS the invariant. |
+| `--halflife 7d` (decay/staleness) | re-iterate the cell, or **`verify <surface>`** if it's bound. Staleness = "iterate later"; that's already iterate. Time-based decay would smuggle a clock-judgment into the substrate. |
+| `--precondition` vs `--postcondition` | iterate **before** for pre, **after** for post. Direction is the agent's call, not a typed field. |
+| `--lifetime capability` | **`tool-guard:<glob>`** — the gate IS the capability. |
+| `--lifetime composite` | **`funnel` / `funnel-first` / `sequence` / `quorum`** — the composition IS the lifetime. |
+
+**Discovery is a fix, not a proposal.** When the agent discovers that a
+flag/field/layer it is about to add is already provided by an existing
+shape, the response is to ship the simplification in the same turn — not
+to ask "want me to ship this?". The audit and the fix are one continuous
+turn. Asking is a redundant turn that violates the work-style discipline.
+Worked example: the "lifetime tag" thread surfaced 2026-05-22 and was
+immediately fossilized — `bind_to + verify` was the only genuine new
+primitive; the rest was already there. Contract `310f425f`.
+
+## The two-key exit (load-bearing invariant)
+
+Every `contract iterate` ends with:
+
+```
+KEY 1 (machine): <action result — PASS | FAIL | AGENT-JUDGES | ERROR>
+KEY 2 (agent):   JUDGE — is this GENUINELY satisfied, or fake-green?
+
+If genuine → run: contract _mark <id> satisfied
+Otherwise  → fix the target, then: contract iterate <id>
+```
+
+No script claims satisfaction. The machine checks; the agent judges. Both keys required.
 
 ## Standing gate IDs
 
