@@ -131,7 +131,11 @@ def _enforce_layering(title, description, body, hook):
     # Title may legitimately be a short prefix of the description (a 3-5
     # word headline that the description elaborates). The real violation is
     # the *lazy truncation* — when title is almost the whole description.
-    if d and t.lower() == d.lower():
+    # title == description is OK when both are short enough that there's
+    # nothing tighter to write (a 10-char "User facts" file's title is its
+    # description). The violation only fires when the description has room
+    # to grow into a real sentence.
+    if d and t.lower() == d.lower() and len(d) > 40:
         raise ValueError(
             f"memory layering: title equals description verbatim — pick a "
             f"shorter human-readable headline. title={t!r}")
