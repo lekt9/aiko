@@ -779,10 +779,54 @@ while genuinely failing for the human reading the page.
 | `--expect-not <substr>` | `document.body.innerText` does NOT contain | built-ins: `"Application error: a client-side exception"`, `"__next_error__"`, `"something went wrong"` |
 | `--min-text <N>` | `innerText.length >= N` (skeleton markup with no visible copy fails) | 0 = off |
 | `--no-default-expect-not` | drop the built-in error-boundary guards | — |
+| `--walk` | after each URL, harvest every same-origin `<a href>` on the page and verify each (catches stale internal links — a deleted route still referenced by a nav item) | — |
+| `--walk-include <regex>` / `--walk-exclude <regex>` | filter the walk queue by path | — |
+| `--prelude <tour.json>` | drive a small login/tour BEFORE the URL checks in a shared browser context. The session cookies + localStorage carry into every subsequent visit and walk — so the gate also covers authenticated routes and the form-submit redirect destination | — |
+| `--env-from <file>` | load `KEY=VAL` pairs for the prelude's `${VAR}` substitution | — |
 
 The gate reads `document.body.innerText` (not `outerHTML`) — invisible
 nodes and `display:none` skeleton placeholders don't count as content. A
 real user reads visible text; the gate does the same.
+
+## Walk + prelude — go from the default entry point end to end
+
+A SPA's client-side 404 (the route's catch-all renders a "404 — try home"
+fallback) emits no console.error and no HTTP 4xx. The base served-surface
++ empathy gate lights green even though a human reading the page sees
+nothing. The `--walk` and `--prelude` layers close that gap.
+
+- `--walk` follows every internal `<a href>` from each start URL. A stale
+  `setLocation("/app/deleted-route")` still referenced in nav code gets
+  caught when the walk hits the deleted route and the SPA's fallback paints.
+- `--prelude` runs a small JSON tour (`goto / fill / click / wait_idle /
+  expect_url / expect_not_text`) in a shared browser context before the URL
+  checks. The session cookies and localStorage persist, so authenticated
+  routes are verified too — including the destination the form-submit
+  redirects to. `expect_url` inside the prelude is the killer step: it
+  catches "login submit redirected to a route that 404s on the client side"
+  in one assertion.
+
+The killer combo for any rebuild of an existing site:
+
+```bash
+bash ~/.claude/skills/contract/scripts/verify-served-surface.sh \
+  https://your-site/ \
+  https://your-site/<every primary route> \
+  --prelude tours/login-flow.json \
+  --env-from .observe.env \
+  --walk \
+  --walk-exclude "^/(api|favicon)" \
+  --expect-not "404 — try home" \
+  --report .scratch/verify-e2e.json
+```
+
+Origin: a 2026-05-23 regression on this codebase — a route rename moved
+`/app/outlets` → `/app/dashboard` but the login form still
+`setLocation("/app/outlets")`'d. The URL-by-URL gate visited every route
+directly and green-lit them, but the user submitted the login form and saw
+"404 — try home". The prelude + walk gate would catch it at the
+`expect_url: "/app/dashboard"` step, AND incidentally caught five
+unrelated 400s firing from the dashboard before session-load.
 
 Worked example — gate a guest cockpit that should render `Composer` + `attach`:
 
