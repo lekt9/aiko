@@ -45,8 +45,8 @@ echo "evidence: contract-ref -> dims>=1, no cycles  OK"
 A=$(bash "$C" declare "depthgate cycle A" --action "agent-judges" --no-drive 2>/dev/null | awk '/^declared:/{print $2}')
 B=$(bash "$C" declare "depthgate cycle B" --action "agent-judges" --no-drive 2>/dev/null | awk '/^declared:/{print $2}')
 [ -n "$A" ] && [ -n "$B" ] || { echo "FAIL: declare cycle endpoints"; exit 1; }
-bash "$C" revise "$A" "contract:$B" --reason "form cycle for gate test" >/dev/null 2>&1
-bash "$C" revise "$B" "contract:$A" --reason "form cycle for gate test" >/dev/null 2>&1
+bash "$C" revise "$A" --action "contract:$B" --reason "form cycle for gate test" >/dev/null 2>&1
+bash "$C" revise "$B" --action "contract:$A" --reason "form cycle for gate test" >/dev/null 2>&1
 J=$(python3 "$DEPTH" "$A" --json 2>/dev/null)
 echo "$J" | python3 -c "import sys,json; r=json.load(sys.stdin); assert r['cycles'], 'no cycle detected'; print('cycle found:', r['cycles'])" \
   || { echo "FAIL: cycle not detected by analyzer"; echo "$J"; exit 1; }
