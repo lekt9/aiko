@@ -7,11 +7,16 @@ where user can be anon/public".
 Design:
   * Key  = sha256(contract_id ⨂ action ⨂ stdin_data ⨂ user)
   * TTL  = 10s sliding from mtime (touch-on-read extends the window)
-  * Scope = stdio-shaped pointer types ONLY (cli, api, x402, machine, harness).
-           agent-judges + composition shapes (funnel, funnel-first, sequence,
-           quorum, contract-ref, loop, tool-guard) bypass the cache — KEY 2 is
-           in-thread for those and a cached verdict would smuggle a stale
-           judgment.
+  * Scope = network-billed pointer types ONLY (api, x402). cli / harness /
+           machine / agent-judges / composition shapes bypass the cache.
+           Rationale: the cache is for request coalescing across hot callers,
+           not for "iterate, fix, re-iterate" workflows. Local-binary shapes
+           (cli, harness, machine) are the deliberate re-check path — caching
+           them would freeze stale verdicts during the very workflow they exist
+           for (see gate/harness regression caught in the 2026-05-24 wave).
+           api + x402 are the network-expensive ones where two callers asking
+           the same upstream question in a 10s window genuinely want one
+           round-trip, not two.
   * Audit = every cache HIT appends a `cached` event row to the ledger. Wave
            is NOT incremented (wave = "times the action actually fired"). Cache
            hits are invisible to wave but visible to the audit trail.
