@@ -12,7 +12,7 @@ export CONTRACTS_STORE="$TMP/ledger.jsonl"
 # 1. declare + mark satisfied → ledger row appears
 ID=$(bash "$C" declare "_markgate_happy" --action true --no-drive 2>/dev/null | awk '/^declared:/{print $2}')
 [ -n "$ID" ] || { echo "FAIL: declare returned no id"; exit 1; }
-bash "$C" _mark "$ID" satisfied >/dev/null 2>&1
+bash "$C" _mark "$ID" satisfied --proof-skip "verb-gate self-test" >/dev/null 2>&1
 grep -q "\"event\": \"satisfied\", \"id\": \"$ID\"" "$CONTRACTS_STORE" \
   || { echo "FAIL: no satisfied row written for $ID"; cat "$CONTRACTS_STORE"; exit 1; }
 echo "evidence: _mark satisfied  ->  ledger row written  OK"
