@@ -44,6 +44,17 @@
 //                                     URLs are NOT walked further.
 //     [--walk-include <regex>]        only walk URLs whose path matches
 //     [--walk-exclude <regex>]        skip URLs whose path matches
+//     [--prelude <json>]              PRELUDE layer: run a small tour
+//                                     (goto/fill/click/wait_idle steps) in
+//                                     a SHARED browser context before the
+//                                     URL checks. The session cookies and
+//                                     localStorage persist into every
+//                                     subsequent visit. Use this to log in
+//                                     to your own site so the gate verifies
+//                                     authenticated routes too, including
+//                                     the form-submit redirect target.
+//                                     ${ENV_VAR} substitution is supported.
+//     [--env-from <file>]             load KEY=VAL pairs for the prelude
 //     [--keep-html]                   include html_len in the report
 //
 // Exit 0 → every URL clean.  1 → at least one URL had errors.  2 → env fault.
