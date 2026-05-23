@@ -42,14 +42,17 @@ while IFS= read -r p; do
     /*) ;;  # already absolute
     *) abs="$SKILL/$p" ;;
   esac
-  # Glob patterns (contain *, <)  → just check the parent directory exists
+  # Glob patterns (contain *, <)  → strip from first glob char, then check the
+  # remaining REAL parent directory exists.
   case "$abs" in
     *'*'*|*'<'*)
-      parent="${abs%/*}"
+      # Truncate at the first glob/placeholder character, then take the parent
+      head="${abs%%[*<]*}"
+      parent="${head%/*}"
       if [ -d "$parent" ]; then
-        : # parent ok
+        : # documented directory family exists
       else
-        echo "  MISS $p (parent $parent missing)"
+        echo "  MISS $p (real parent $parent missing)"
         fail=$((fail + 1))
       fi
       continue
