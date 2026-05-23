@@ -25,7 +25,7 @@ case "$OUT" in
 esac
 
 # Satisfy stage 1 — the sequence must advance to stage 2.
-bash "$C" _mark "$S1" satisfied >/dev/null 2>&1
+bash "$C" _mark "$S1" satisfied --proof-skip "shape-gate self-test" >/dev/null 2> satisfied >/dev/null 2>&11
 OUT=$(bash "$C" iterate "$ORG" 2>/dev/null)
 case "$OUT" in
   *"current stage: $S2"*) echo "evidence: after stage 1, sequence advances to stage 2 ($S2)  OK" ;;
@@ -33,7 +33,7 @@ case "$OUT" in
 esac
 
 # Satisfy stage 2 — the sequence must now PASS.
-bash "$C" _mark "$S2" satisfied >/dev/null 2>&1
+bash "$C" _mark "$S2" satisfied --proof-skip "shape-gate self-test" >/dev/null 2> satisfied >/dev/null 2>&11
 OUT=$(bash "$C" iterate "$ORG" 2>/dev/null)
 case "$OUT" in
   *"result: PASS"*) echo "evidence: every stage satisfied -> sequence PASS  OK" ;;
@@ -69,8 +69,8 @@ case "$OUT" in
 esac
 
 # Satisfy A2, then B1 — every stage is now in {satisfied, merged}; sequence must PASS.
-bash "$C" _mark "$A2" satisfied >/dev/null 2>&1
-bash "$C" _mark "$B1" satisfied >/dev/null 2>&1
+bash "$C" _mark "$A2" satisfied --proof-skip "shape-gate self-test" >/dev/null 2> satisfied >/dev/null 2>&11
+bash "$C" _mark "$B1" satisfied --proof-skip "shape-gate self-test" >/dev/null 2> satisfied >/dev/null 2>&11
 OUT=$(bash "$C" iterate "$ORG2" 2>/dev/null)
 case "$OUT" in
   *"result: PASS"*) echo "evidence: organ with one merged + two satisfied children PASSes  OK" ;;

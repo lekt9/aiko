@@ -22,7 +22,7 @@ MH_A="$CH" MH_B="$SYN" PYTHONPATH="$LIB" python3 -c \
 echo "evidence: parent=$P child=$CH referrer=$REF synapse=$SYN wired"
 
 # mark the leaf satisfied — the action potential. The wavefront must surface.
-OUT=$(bash "$C" _mark "$CH" satisfied 2>/dev/null)
+OUT=$(bash "$C" _mark "$CH" satisfied --proof-skip "shape-gate self-test" 2>/dev/null)
 case "$OUT" in
   *"PROPAGATION (signal)"*) echo "evidence: _mark satisfied emitted the PROPAGATION block  OK" ;;
   *) echo "FAIL: no PROPAGATION block"; echo "$OUT"; exit 1 ;;

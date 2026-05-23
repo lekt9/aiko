@@ -24,7 +24,7 @@ echo "$STATUS_BEFORE" | grep -qE "\[pending\]|\[active\]" || {
 echo "evidence: pre-_mark status  ->  not satisfied (no auto-resolve)  OK"
 
 # Now mark
-bash "$C" _mark "$ID" satisfied >/dev/null 2>&1
+bash "$C" _mark "$ID" satisfied --proof-skip "shape-gate self-test" >/dev/null 2> satisfied >/dev/null 2>&11
 STATUS_AFTER=$(bash "$C" status "$ID" 2>/dev/null | head -1)
 echo "$STATUS_AFTER" | grep -q "\[satisfied\]" || {
   echo "FAIL: judgment _mark did not satisfy"; echo "$STATUS_AFTER"; exit 1

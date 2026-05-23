@@ -21,14 +21,14 @@ case "$O" in
   *) echo "FAIL: quorum 0/3 wrong"; echo "$O"; exit 1 ;;
 esac
 
-bash "$C" _mark "$C1" satisfied >/dev/null 2>&1
+bash "$C" _mark "$C1" satisfied --proof-skip "shape-gate self-test" >/dev/null 2> satisfied >/dev/null 2>&11
 O=$(bash "$C" iterate "$ORG" 2>/dev/null)
 case "$O" in
   *"result: FAIL — 1/3 satisfied (threshold 2)"*) echo "evidence: 1/3 -> FAIL (below threshold)  OK" ;;
   *) echo "FAIL: quorum 1/3 wrong"; echo "$O"; exit 1 ;;
 esac
 
-bash "$C" _mark "$C2" satisfied >/dev/null 2>&1
+bash "$C" _mark "$C2" satisfied --proof-skip "shape-gate self-test" >/dev/null 2> satisfied >/dev/null 2>&11
 O=$(bash "$C" iterate "$ORG" 2>/dev/null)
 case "$O" in
   *"result: PASS — 2/3 satisfied (threshold 2)"*) echo "evidence: 2/3 -> PASS — fires before all children  OK" ;;

@@ -25,26 +25,26 @@ echo "evidence: declared test guard $GID"
 OUT=$(printf '{"tool_name":"%s","cwd":"/tmp"}' "$TESTTOOL" | "$HOOK" 2>&1); RC=$?
 if [ "$RC" != "2" ]; then
   echo "FAIL: hook did not block a guarded tool (exit $RC, expected 2)"
-  bash "$CONTRACT" _mark "$GID" satisfied >/dev/null 2>&1
+  bash "$CONTRACT" _mark "$GID" satisfied --proof-skip "shape-gate self-test" >/dev/null 2> satisfied >/dev/null 2>&11
   exit 1
 fi
 case "$OUT" in
   *"$GID"*) echo "evidence: guarded tool blocked (exit 2), reason cites $GID  OK" ;;
   *) echo "FAIL: block message did not cite contract $GID"
-     bash "$CONTRACT" _mark "$GID" satisfied >/dev/null 2>&1; exit 1 ;;
+     bash "$CONTRACT" _mark "$GID" satisfied --proof-skip "shape-gate self-test" >/dev/null 2> satisfied >/dev/null 2>&11; exit 1 ;;
 esac
 
 # 3. the hook must ALLOW a non-matching tool (exit 0).
 printf '{"tool_name":"SomeUnrelatedTool","cwd":"/tmp"}' | "$HOOK" >/dev/null 2>&1; RC=$?
 if [ "$RC" != "0" ]; then
   echo "FAIL: hook blocked an unguarded tool (exit $RC)"
-  bash "$CONTRACT" _mark "$GID" satisfied >/dev/null 2>&1
+  bash "$CONTRACT" _mark "$GID" satisfied --proof-skip "shape-gate self-test" >/dev/null 2> satisfied >/dev/null 2>&11
   exit 1
 fi
 echo "evidence: unguarded tool allowed (exit 0)  OK"
 
 # 4. marking the guard satisfied LIFTS it — the matching tool is allowed again.
-bash "$CONTRACT" _mark "$GID" satisfied >/dev/null 2>&1
+bash "$CONTRACT" _mark "$GID" satisfied --proof-skip "shape-gate self-test" >/dev/null 2> satisfied >/dev/null 2>&11
 printf '{"tool_name":"%s","cwd":"/tmp"}' "$TESTTOOL" | "$HOOK" >/dev/null 2>&1; RC=$?
 if [ "$RC" != "0" ]; then
   echo "FAIL: guard still active after _mark satisfied (exit $RC)"
