@@ -35,6 +35,15 @@
 //     [--min-text <N>]                assert innerText length >= N chars
 //                                     (default 0 = off)
 //     [--no-default-expect-not]       drop the built-in error-boundary guards
+//     [--walk]                        WALK layer: after each URL, harvest
+//                                     every same-origin <a href> on the
+//                                     page and verify each link too. Catches
+//                                     stale internal links (a deleted route
+//                                     still referenced by a nav item).
+//                                     Walk is one level deep; the harvested
+//                                     URLs are NOT walked further.
+//     [--walk-include <regex>]        only walk URLs whose path matches
+//     [--walk-exclude <regex>]        skip URLs whose path matches
 //     [--keep-html]                   include html_len in the report
 //
 // Exit 0 → every URL clean.  1 → at least one URL had errors.  2 → env fault.
