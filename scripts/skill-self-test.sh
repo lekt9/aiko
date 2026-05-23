@@ -104,6 +104,13 @@ check "self/break-on-resolution"   bash "$SCRIPTS/check-break-on-resolution.sh"
 # (audits/ directory convention).
 [ -x "$SCRIPTS/run-audits.sh" ] && \
   check "self/audits-pass"         bash "$SCRIPTS/run-audits.sh"
+# ── Verb gates (one regression harness per CLI verb) ────────────────────────
+# Mirror of shape gates, one finer level. Each verb-gates/<verb>/verify.sh
+# exercises one verb in a sandboxed CONTRACTS_STORE. A regression in
+# promote / _mark / supersede / corroborate / learn (etc.) is caught by the
+# next ledger event. See verb-gates/README.md (contract 2db87011).
+[ -x "$SCRIPTS/run-verb-gates.sh" ] && \
+  check "self/verb-gates-pass"     bash "$SCRIPTS/run-verb-gates.sh"
 # ── Shape gates (regression harnesses for each contract shape) ────────────────
 # Each gate's verify.sh proves one shape behaves correctly. They honor an
 # external CONTRACTS_STORE, so we run them with a tmpdir ledger to avoid
