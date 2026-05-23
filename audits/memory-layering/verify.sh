@@ -12,14 +12,15 @@ CHECKER="$HOME/.claude/skills/contract/scripts/check-memory-layering.py"
 [ -f "$CHECKER" ] || { echo "missing checker at $CHECKER" >&2; exit 2; }
 
 # Expand scope: each non-comment line is a glob; resolve ~; expand *
-mapfile -t globs < <(grep -vE '^\s*(#|$)' "$SCOPE_FILE")
 dirs=()
-for g in "${globs[@]}"; do
+while IFS= read -r g; do
+  [ -n "$g" ] || continue
+  case "$g" in \#*) continue;; esac
   # shellcheck disable=SC2086
   for d in $(eval echo "$g"); do
     [ -d "$d" ] && dirs+=("$d")
   done
-done
+done < "$SCOPE_FILE"
 
 if [ "${#dirs[@]}" -eq 0 ]; then
   echo "verify: no memory dirs match scope.txt — vacuously OK"
