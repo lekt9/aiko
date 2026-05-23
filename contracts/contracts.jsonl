@@ -5132,3 +5132,6 @@
 {"event": "satisfied", "id": "cb4f353a", "wave": 0, "ts": "2026-05-23T12:32:17.964713Z", "proof": "v13 organ: all 5 children satisfied. Root cause chain: (a) FAL_KEY was never pushed to Pages secrets \u2192 variants returned with fal_request_id=null, (b) falStatus polled queue.fal.run/<full-endpoint>/requests/<id> but actual is queue.fal.run/<vendor>/<model>/requests/<id>, (c) duration=5 was rejected by hailuo-02 which only accepts '6' or '10', (d) when fal returned 4xx on result fetch, my fallback returned state='done' instead of 'failed', (e) in-chat 180s poll loop blew the 50-subrequest cap (error 1101). All five fixed. Live E2E verified: real v3b.fal.media URL renders in DOM at 70s after firing chat.", "agent": "lewistham9x@gmail.com"}
 {"event":"satisfied","id":"96084af9","wave":1,"ts":"2026-05-23T12:32:18Z"}
 {"event":"status_update","id":"96084af9","status":"satisfied","ts":"2026-05-23T12:32:18Z"}
+{"event":"iterated","id":"07d0a462","wave":1,"action_exit":0,"action_result":"PASS","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T12:32:18Z"}
+{"event":"satisfied","id":"07d0a462","wave":1,"ts":"2026-05-23T12:32:18Z"}
+{"event":"status_update","id":"07d0a462","status":"satisfied","ts":"2026-05-23T12:32:18Z"}
