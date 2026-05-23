@@ -19,6 +19,10 @@ trap 'rm -rf "$TD"; jobs -p | xargs -r kill 2>/dev/null' EXIT
 export HOME="$TD"
 export CONTRACTS_STORE="$TD/contracts.jsonl"
 
+# Force HTTP path for phases 0-5 so the codex-auto-default doesn't
+# pre-empt the mock LLM server. Phase 6 explicitly tests the codex path.
+export CONTRACT_LLM_VIA=http
+
 # Mock LLM server: route /chat/completions returns a verdict whose first token
 # is read from $TD/verdict.txt (so each phase can flip the expected verdict).
 PORT=$(python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));print(s.getsockname()[1]);s.close()")
