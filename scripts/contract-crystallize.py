@@ -103,9 +103,22 @@ def resolve_memory_dir(scope_cwd):
     return GLOBAL_MEMORY_FALLBACK
 
 
-def write_memory(memory_dir, base_name, description, body):
-    """Write one memory file + a pointer line into that dir's MEMORY.md.
-    Never clobbers an existing file: collisions get a numeric suffix."""
+def write_memory(memory_dir, base_name, description, body,
+                 memory_type="reference", title=None, hook=None):
+    """Write one memory file + a pointer line into that dir's MEMORY.md
+    matching the house style (see CLAUDE.md auto-memory spec).
+
+    - memory_type ∈ VALID_MEMORY_TYPES, defaults to "reference"
+    - frontmatter carries (name, description, metadata.type)
+    - MEMORY.md line: `- [<Title>](<file.md>) — <one-line-hook>`
+      where Title is human-readable (title arg or derived from base_name)
+      and hook is a short ~100-char teaser (hook arg or first sentence of
+      description). Em-dash, not hyphen, and no "crystallized learning <date>"
+      preamble — the ledger row carries provenance.
+    - Never clobbers: collisions get a numeric suffix.
+    """
+    if memory_type not in VALID_MEMORY_TYPES:
+        memory_type = "reference"
     memory_dir.mkdir(parents=True, exist_ok=True)
     path = memory_dir / f"{base_name}.md"
     n = 2
@@ -119,13 +132,22 @@ def write_memory(memory_dir, base_name, description, body):
         f"name: {name}\n"
         f"description: {desc}\n"
         "metadata:\n"
-        "  type: reference\n"
+        f"  type: {memory_type}\n"
         "---\n\n"
     )
     path.write_text(front + body.rstrip() + "\n")
+
+    # Title for MEMORY.md link text — human-readable, not a 600-char description
+    if not title:
+        title = name.replace("-", " ").strip().capitalize()
+    if not hook:
+        # First sentence (~120 chars), falling back to truncated description
+        first = re.split(r"(?<=[.!?])\s+", desc.strip(), maxsplit=1)[0]
+        hook = first if len(first) <= 200 else desc[:200].rstrip() + "..."
+
     index = memory_dir / "MEMORY.md"
     with index.open("a") as f:
-        f.write(f"- [{desc}]({path.name}) - crystallized learning {_now_iso()[:10]}\n")
+        f.write(f"- [{title}]({path.name}) — {_oneline(hook)}\n")
     return path
 
 
