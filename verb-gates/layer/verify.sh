@@ -170,4 +170,50 @@ print(get('$CID_LEGACY')['layer'])
 ")
 [ "$LEG_LAYER" = "1" ] || { echo "FAIL: legacy row inference: machine: action got L$LEG_LAYER, expected L1"; exit 1; }
 
-echo "PASS: layer gate (Π5 + Ψ5) — inference across 7 pointer-types, --layer override, --pierce authorization (writes pierced_layers), cross-layer reach soft-warns by default (still declares), STRICT mode refuses with LAYER VIOLATION block, STRICT+--pierce passes, adjacent layers (delta=1) pass silently. Ψ5: show defaults to public face (no HOW leak), --internals surfaces HOW block, --json shape preserves public/internals partition, legacy rows infer layer at read time"
+# === Phase 12: --context surfaces the DAG neighborhood (parent + children + refs) ===
+# Build a small organ: parent funnel with 2 children + a third contract that refs the parent
+P=$("$CLI" declare "ctx parent funnel" --action "funnel" --no-drive 2>&1 \
+  | grep -oE "declared: [a-f0-9]{8}" | awk '{print $2}' | head -1)
+CH1=$("$CLI" declare "ctx child 1" --action "true" --parent "$P" --no-drive 2>&1 \
+  | grep -oE "declared: [a-f0-9]{8}" | awk '{print $2}' | head -1)
+CH2=$("$CLI" declare "ctx child 2" --action "true" --parent "$P" --no-drive 2>&1 \
+  | grep -oE "declared: [a-f0-9]{8}" | awk '{print $2}' | head -1)
+# A separate contract that refs P (refs in for P)
+REFIN=$("$CLI" declare "ctx refs into parent" --action "contract:$P" --no-drive 2>&1 \
+  | grep -oE "declared: [a-f0-9]{8}" | awk '{print $2}' | head -1)
+
+OUT_CTX=$("$CLI" show "$P" --context 2>&1)
+echo "$OUT_CTX" | grep -q "DAG CONTEXT" \
+  || { echo "FAIL: --context missing DAG CONTEXT header"; exit 1; }
+echo "$OUT_CTX" | grep -q "children:    2"        || { echo "FAIL: --context missing children count"; exit 1; }
+echo "$OUT_CTX" | grep -q "$CH1"                   || { echo "FAIL: --context missing child 1 id"; exit 1; }
+echo "$OUT_CTX" | grep -q "$CH2"                   || { echo "FAIL: --context missing child 2 id"; exit 1; }
+echo "$OUT_CTX" | grep -q "refs in"                || { echo "FAIL: --context missing refs-in section"; exit 1; }
+echo "$OUT_CTX" | grep -q "$REFIN"                 || { echo "FAIL: --context missing the in-ref id"; exit 1; }
+
+# Default show (no --context) must NOT surface the DAG block
+OUT_NOCTX=$("$CLI" show "$P" 2>&1)
+echo "$OUT_NOCTX" | grep -q "DAG CONTEXT" \
+  && { echo "FAIL: default show leaked DAG CONTEXT block (should be opt-in)"; exit 1; } || true
+
+# Child shows its parent under refs/parent
+OUT_CHILD=$("$CLI" show "$CH1" --context 2>&1)
+echo "$OUT_CHILD" | grep -q "parent:" || { echo "FAIL: child show didn't surface parent"; exit 1; }
+echo "$OUT_CHILD" | grep -q "$P"      || { echo "FAIL: child show didn't name parent id"; exit 1; }
+
+# --json shape carries 'context' key
+OUT_CTX_JSON=$("$CLI" show "$P" --context --json 2>&1)
+echo "$OUT_CTX_JSON" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+assert 'context' in d, f'json missing context: keys={list(d.keys())}'
+ctx = d['context']
+assert ctx['parent'] is None, f'parent should be None for root: {ctx[\"parent\"]}'
+assert len(ctx['children']) == 2, f'children count: {len(ctx[\"children\"])}'
+ids = sorted(c['id'] for c in ctx['children'])
+assert '$CH1' in ids and '$CH2' in ids, f'child ids: {ids}'
+ref_ids = sorted(r['id'] for r in ctx['refs_in'])
+assert '$REFIN' in ref_ids, f'refs_in ids: {ref_ids}'
+" || { echo "FAIL: --context --json shape wrong"; exit 1; }
+
+echo "PASS: layer gate (Π5 + Ψ5) — inference across 7 pointer-types, --layer override, --pierce authorization (writes pierced_layers), cross-layer reach soft-warns by default (still declares), STRICT mode refuses with LAYER VIOLATION block, STRICT+--pierce passes, adjacent layers (delta=1) pass silently. Ψ5 row-view: show defaults to public face (no HOW leak), --internals surfaces HOW block, --json shape preserves public/internals partition, legacy rows infer layer at read time. DAG context: --context surfaces parent + children + refs in/out + synapses + inhibitors with layer/status; default show does NOT leak DAG block (opt-in); --context --json carries structured context key with parent/children/refs_in/refs_out arrays"
