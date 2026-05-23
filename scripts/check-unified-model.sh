@@ -70,6 +70,9 @@ grep -qE "contract:[a-f0-9]|contract:<id>" "$CORE" "$CLI" 2>/dev/null || {
   echo "FAIL: 'contract:<id>' pointer named in unified-model section but no resolver in CLI/core" >&2
   fail=$((fail+1))
 }
+
+# Cross-table check: no shape appears in BOTH action and composition tables.
+PY_BLOCK=$(cat <<'PY'
 import re, sys
 text = open("/Users/lekt9/.claude/skills/contract/SKILL.md").read()
 # Action layer table
