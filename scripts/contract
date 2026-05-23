@@ -1867,6 +1867,11 @@ Organism primitives:
   retire <id> [--reason "<why>"]              retire a contract with no successor (self-anchored marker)
   revise <id> --action "<new cmd>" [--reason] update the cell membrane (self-correct false positives)
 
+Reflection primitives:
+  pre-mortem <id> [--horizon 6m] [--voices 5] N future-failure prompts (Klein); agent reads + decides
+  baserate <id>                                related-class satisfied/total rate (sanity check)
+  invert <id>                                  declare the negation as a sibling (polarity test)
+
 Five shapes:  cell | judgment | funnel (AND) | funnel-first (OR) | loop | loop-until | harness
 Fractal:      funnels contain loops, loops contain funnels, harnesses wrap any shape
 Two-key exit: machine action + agent judges genuine (loops: BREAK or CONTINUE). Both required.
