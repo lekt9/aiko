@@ -1496,7 +1496,7 @@ ct = get(tgt)
 if not ct:
     print(f'ERROR: contract {tgt} not found')
     exit(1)
-marker_plan = f'Retirement marker for {tgt}: {reason}'
+mid = declare(marker_plan, action='agent-judges', parent_id=None)
 mid, _ = declare(marker_plan, action='agent-judges', parent_id=None)
 mark_satisfied(mid, 0)
 merge_into(tgt, mid, reason)
