@@ -327,6 +327,13 @@ case "$cmd" in
     done
     [ -z "$PLAN" ]   && { echo "usage: contract declare \"<plan>\" --action \"<cmd>\" [--parent <id>] [--pointer-to <tag>] [--learning \"<why>\"]..." >&2; exit 2; }
     [ -z "$ACTION" ] && { echo "ERROR: --action is required. A contract without a check is a wish." >&2; exit 2; }
+    PLAN_WARN=$(MH_PLAN="$PLAN" _py_inline "
+import os; from contract_core import plan_quality_warning
+print(plan_quality_warning(os.environ['MH_PLAN']))
+")
+    if [ -n "$PLAN_WARN" ]; then
+      echo "  Α1 plan-quality: $PLAN_WARN"
+    fi
     ID=$(MH_PLAN="$PLAN" MH_ACTION="$ACTION" MH_PARENT="$PARENT" MH_POINTERS="$POINTERS" MH_LEARNING="$LEARNING" MH_BUDGET="${BUDGET:-}" MH_BIND_TO="$BIND_TO" _py_inline "
 import os; from contract_core import declare
 p = os.environ.get('MH_PARENT') or None
