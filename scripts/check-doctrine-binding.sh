@@ -16,7 +16,7 @@ check() {
     echo "  MISS $code — not declared in SKILL.md ($what)"; return 1
   fi
   declared=$((declared+1))
-  if grep -qE "$cli_pat" "$CLI"; then
+  if grep -qE -- "$cli_pat" "$CLI"; then
     bound=$((bound+1))
   else
     aspirational+=("$code — $what")
