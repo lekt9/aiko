@@ -16,7 +16,7 @@ Core job: declare a truth claim, iterate until genuinely satisfied, spawn childr
 | "build and run this" | `contract build "<plan>" --action "<check>"` |
 | "solve until done" | `contract solve "<plan>" --action "<check>"` |
 | "this is a sub-problem of Y" | `contract spawn <parent-id> "<plan>" --action "<check>"` |
-| "keep building / drill to completion / finish without asking" | `contract drive <organ-id>` |
+| "drill these proposed things in a while loop / finish without asking" | `contract drill <id> [<id>...] [--auto-mark-cells] [--auto-judge]` |
 | "what contracts exist" | `contract list` or `contract status [<id>]` |
 | "is this a recurring pattern?" | `contract search` |
 | "convert past patterns" / "don't lose this in the refactor" | `contract import <source>` |
