@@ -103,7 +103,7 @@ if not args_parseable:
 PY
 
 # === Phase 4: SSE ends with data: [DONE] ===
-echo "$SSE" | grep -q "^data: \[DONE\]$" \
+grep -q "^data: \[DONE\]$" "$SSE_FILE" \
   || { echo "FAIL: SSE stream missing terminal data: [DONE]"; exit 1; }
 
 echo "PASS: routed-block gate — Σ4 emits === ROUTED === with all KV fields, openai-render lifts to agent_routed tool_call with parseable JSON args, SSE terminates cleanly"
