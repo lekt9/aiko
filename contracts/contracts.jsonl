@@ -3358,3 +3358,4 @@
 {"event": "satisfied", "id": "7d23b067", "wave": 0, "ts": "2026-05-23T03:28:22.683097Z"}
 {"event": "satisfied", "id": "c7ade437", "wave": 0, "ts": "2026-05-23T03:28:23.818295Z"}
 {"event": "satisfied", "id": "4617f459", "wave": 0, "ts": "2026-05-23T03:28:24.907097Z"}
+{"event": "declared", "id": "eb1723db", "plan": "Unreel Composer accepts ANY file type (image, video, audio, doc, archive, code, etc.) AND folders (auto-zipped client-side, unwrapped server-side into per-file storage entries the agent sees as a manifest). Plus: agent-browser exercising the live preview (landing + /app guest + an upload flow) observes ZERO red console errors in the browser console (browser-extension noise like evmAsk.js excluded \u2014 only errors that originate from our app code).", "action": "sequence", "pointer_type": "sequence", "cwd": "/Users/lekt9/Projects/unreel/unreel-influence", "parent_id": null, "pointers": [], "ts": "2026-05-23T03:29:44.675056Z"}
