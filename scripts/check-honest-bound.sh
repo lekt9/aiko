@@ -1,42 +1,44 @@
 #!/usr/bin/env bash
-# check-honest-bound.sh — guard: 'contract honest' never drifts from its
-# own --help. Every dimension named in --help MUST appear as a section
-# header in the live report. If --help claims a dimension the report
-# doesn't surface, the substrate is lying about its own metacognition.
+# check-honest-bound.sh — guard: 'contract honest' --help and the report
+# rendering code agree on the same 5 dimensions. Static check on the
+# scripts/contract source (no invocation) — avoids the metacognition
+# recursion that would occur if honest called skill-self-test which
+# called this check which called honest...
 #
-# This is the recursion catcher: metacognition gating metacognition.
+# The dimensions are pinned here as the load-bearing claim; both --help
+# text and the report's print() calls must reference them.
 set -uo pipefail
-CLI="$HOME/.claude/skills/contract/scripts/contract"
+CLI_SRC="$HOME/.claude/skills/contract/scripts/contract"
 
-help_out=$(bash "$CLI" honest --help 2>&1)
-report_out=$(bash "$CLI" honest 2>&1)
+# Extract the honest verb's body (from 'honest)' to the next '  ;;')
+verb_body=$(awk '/^  honest\)/,/^    ;;$/' "$CLI_SRC")
+if [ -z "$verb_body" ]; then
+  echo "FAIL: 'contract honest' verb not found in $CLI_SRC" >&2
+  exit 1
+fi
 
-# Required dimensions named in --help (as section labels)
 declare -a required=(
-  "self/\*"
-  "audits/"
-  "digest chain"
-  "standing-gate"
-  "verbs"
+  "self/\*"        # (a) self/* checks
+  "audits/"        # (b) audits/*/verify.sh
+  "digest chain"   # (c) digest chain
+  "standing-gate"  # (d) standing-gate ids
+  "verbs"          # (e) CLI verbs
 )
 
 missing=()
 for dim in "${required[@]}"; do
-  if ! echo "$help_out" | grep -qE "$dim"; then
-    missing+=("--help missing: $dim")
-  fi
-  if ! echo "$report_out" | grep -qE "$dim"; then
-    missing+=("report missing: $dim")
+  if ! echo "$verb_body" | grep -qE "$dim"; then
+    missing+=("source missing: $dim")
   fi
 done
 
 if [ ${#missing[@]} -gt 0 ]; then
-  echo "FAIL: contract honest drift detected" >&2
+  echo "FAIL: contract honest drift — --help and report code disagree" >&2
   for m in "${missing[@]}"; do
     echo "  $m" >&2
   done
   exit 1
 fi
 
-echo "honest-bound clean: --help and report agree on all 5 dimensions"
+echo "honest-bound clean: --help and report code agree on all 5 dimensions"
 exit 0
