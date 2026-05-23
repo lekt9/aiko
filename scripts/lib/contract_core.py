@@ -241,25 +241,77 @@ def declare(plan: str, action: str, parent_id: Optional[str] = None,
 def visible_to(contract_or_row: dict, viewer: Optional[str]) -> bool:
     """Σ2: is this contract/row visible to `viewer`?
 
-    Rules (in order):
-      - viewer is None or empty       → True (no filter applied)
-      - row has no `audience` field   → True (public by default)
-      - audience contains "public"    → True (explicit public marker)
-      - audience contains viewer      → True
-      - else                          → False
+    Three-tier audience model (Lewis 2026-05-23). Tiers and explicit
+    identities can be mixed in the audience list:
 
-    Works on either a raw declared-row dict OR a `get(id)` projection
-    (which also surfaces `audience` from the declared row). The substrate
-    filters; the agent never sees a verdict — KEY 2 still belongs to the
-    caller deciding whether to act on a filtered list."""
+      "public"          — visible to any viewer
+      "team"            — visible to any viewer in the ledger team set
+                          (derived from agents that have ever declared
+                          a row; see is_team_member)
+      "private"         — visible only to the declarer (row.agent == viewer)
+      "<identity>"      — visible to that specific viewer
+
+    Rules in order:
+      - viewer is None/empty                     → True (no filter)
+      - row has no `audience` field              → treat as ["team"]
+      - audience contains "public"               → True
+      - audience contains "private" AND viewer
+        == declarer (row.agent)                  → True
+      - audience contains "team" AND viewer is
+        a known team member (is_team_member)     → True
+      - viewer string in audience                → True
+      - else                                     → False
+
+    Default = team: every legacy row (0 audience field) is team-visible.
+    The bot (an external transport without an agent identity in the
+    ledger) is NOT team by default — it only sees rows tagged public OR
+    explicitly addressed to it. That gives the safety floor the tg-pod
+    needs without any backfill of legacy data."""
     if not viewer:
         return True
-    audience = contract_or_row.get("audience")
-    if audience is None:
-        return True
+    audience = contract_or_row.get("audience") or ["team"]
     if "public" in audience:
         return True
+    declarer = contract_or_row.get("agent") or ""
+    if "private" in audience and viewer == declarer:
+        return True
+    if "team" in audience and is_team_member(viewer):
+        return True
     return viewer in audience
+
+
+def _team_cache() -> set:
+    """Compute the set of team identities from the ledger's agent column.
+    Any identity that has ever declared a contract counts as team. This is
+    the natural overlap with Σ1: who wrote things, IS the team. No extra
+    config file. New members "join" by declaring their first contract.
+
+    Cached at module load; safe across the short-lived CLI invocations.
+    Reset by re-importing or by clearing _TEAM_CACHE in tests."""
+    global _TEAM_CACHE
+    if _TEAM_CACHE is not None:
+        return _TEAM_CACHE
+    members = set()
+    for row in _rows():
+        if row.get("event") == "declared":
+            agent = (row.get("agent") or "").strip()
+            if agent:
+                members.add(agent)
+    # Always include the current agent — the human running the CLI is
+    # implicitly a team member of their own ledger even on their first run.
+    me = current_agent()
+    if me:
+        members.add(me)
+    _TEAM_CACHE = members
+    return members
+
+
+def is_team_member(viewer: str) -> bool:
+    """True iff viewer has ever declared a contract in this ledger.
+    The bot is NOT a team member unless it appears in the agent column."""
+    if not viewer:
+        return False
+    return viewer in _team_cache()
 
 
 def active_inhibitors(target_id: str) -> list[str]:
