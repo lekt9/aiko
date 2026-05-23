@@ -182,7 +182,8 @@ def declare(plan: str, action: str, parent_id: Optional[str] = None,
             pointers: list = None, learning: str = None,
             budget: Optional[int] = None, bind_to: Optional[str] = None,
             inverted_from: Optional[str] = None,
-            inhibits: Optional[list] = None) -> str:
+            inhibits: Optional[list] = None,
+            audience: Optional[list] = None) -> str:
     """Declare a contract.
 
     bind_to: optional surface the contract is intrinsically scoped to —
@@ -198,7 +199,19 @@ def declare(plan: str, action: str, parent_id: Optional[str] = None,
     is refused while any inhibitor of that target is itself satisfied.
     Substrate-level negative regulation, distinct from supersession (lifecycle)
     and tool-guard (capability). Contract d830f26e.
-    """
+
+    audience: optional list of viewer identities this contract is visible to
+    via `contract list --for <viewer>`. Σ2 doctrine — the dual of Σ1 attribution
+    (who wrote it) is audience (who reads it). Conventions:
+        None       → field absent on row; public, visible to every viewer
+        ["public"] → explicit public marker (same effect as None, but loud)
+        ["lewis@…", "foundry_aiko_bot"] → only those identities see it
+    The substrate filters at the QUERY layer (list/dag) — raw ledger access
+    is unrestricted; this is a transport gate, not encryption. Pairs with
+    the agent field to give "who wrote it, who reads it". Designed for the
+    tg-pod and other transports that surface ledger rows to identities
+    different from the declarer. Substrate enables; the agent picks the
+    audience list at declare time."""
     cid = str(uuid.uuid4())[:8]
     row = {"event": "declared", "id": cid, "plan": plan, "action": action,
            "pointer_type": _infer_pointer_type(action),
