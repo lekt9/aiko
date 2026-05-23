@@ -4639,3 +4639,5 @@
 {"event":"iterated","id":"a39454bd","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T10:04:43Z"}
 {"event":"iterated","id":"89ed3ab2","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T10:04:44Z"}
 {"event":"iterated","id":"b2e11c96","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T10:04:45Z"}
+{"event":"satisfied","id":"d546c10d","wave":1,"ts":"2026-05-23T10:04:54Z"}
+{"event":"status_update","id":"d546c10d","status":"satisfied","ts":"2026-05-23T10:04:54Z"}
