@@ -114,4 +114,21 @@ echo "$OUT_401" | grep -q "SIGN-IN REQUIRED"        || { echo "FAIL: 401 missing
 echo "$OUT_401" | grep -q "magic-link"              || { echo "FAIL: 401 SIGN-IN block missing Telegram render hint (magic-link)"; exit 1; }
 echo "$OUT_401" | grep -q "Privy"                   || { echo "FAIL: 401 SIGN-IN block missing Panel render hint (Privy)"; exit 1; }
 
-echo "PASS: x402 gate (Π1) — 200/402/401 dispatched correctly + PAYMENT REQUIRED + SIGN-IN REQUIRED blocks carry per-transport render hints"
+# === Phase Π2-A: autopay HINT visible when 402 fires WITHOUT opt-in ===
+echo "$OUT_402" | grep -q "autopay_available"       || { echo "FAIL: 402 (no autopay) missing autopay_available opt-in hint"; exit 1; }
+
+# === Phase Π2-B: autopay ON → server settles → retry passes silently ===
+declare_ap=$( UNBROWSE_API_KEY="mock-token-ap" CONTRACT_AUTOPAY=1 "$CLI" declare \
+  "autopay-happy-path" --action "x402:http://127.0.0.1:$PORT/402-ap" \
+  --no-drive 2>&1 | grep -oE "declared: [a-f0-9]{8}" | awk '{print $2}' | head -1 )
+[ -n "$declare_ap" ] || { echo "FAIL: autopay declare empty"; exit 1; }
+OUT_AP=$( UNBROWSE_API_KEY="mock-token-ap" CONTRACT_AUTOPAY=1 CONTRACT_AUTOPAY_CAP_USD=5 "$CLI" iterate "$declare_ap" 2>&1 )
+echo "$OUT_AP" | grep -q "autopay: attempting silent settle"   || { echo "FAIL: autopay attempt line missing. OUT=$OUT_AP"; exit 1; }
+echo "$OUT_AP" | grep -q "result: PASS (HTTP 200 — autopay settled" || { echo "FAIL: autopay+retry did not silent-PASS. OUT=$OUT_AP"; exit 1; }
+echo "$OUT_AP" | grep -q "PAYMENT REQUIRED" && { echo "FAIL: autopay success still emitted PAYMENT REQUIRED block (should be invisible to user)"; exit 1; } || true
+
+# === Phase Π2-C: declared --autopay implies autopay even without env (TODO: declare-time flag) ===
+# Today: env CONTRACT_AUTOPAY is the only opt-in. Declare-time --autopay would
+# persist on the row. Document, don't gate. The env path is the load-bearing one.
+
+echo "PASS: x402 gate (Π1+Π2) — 200/402/401 + PAYMENT REQUIRED + SIGN-IN REQUIRED + autopay silent-settle path + autopay-off opt-in hint"
