@@ -5861,3 +5861,4 @@
 {"event":"status_update","id":"b0c0338d","status":"satisfied","ts":"2026-05-23T18:01:01Z"}
 {"event":"satisfied","id":"ad76a380","wave":0,"ts":"2026-05-23T18:01:01Z"}
 {"event":"status_update","id":"ad76a380","status":"satisfied","ts":"2026-05-23T18:01:01Z"}
+{"event": "declared", "id": "431c549f", "plan": "Agentic-UX copilot doctrine: every /contract-built site with a web UI embeds an agentic copilot whose tools are the site's own indexed APIs and whose knowledge is the site's own page content — the same truth-telling discipline as the primitive, applied to the end user. Projects pointer-bind via --action contract:<this-id>. Promoted to global ledger as a standing-gate during Β3 purge; was previously prose-only at references/agentic-ux-copilot.md.", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/caydenmodel", "parent_id": null, "pointers": [], "ts": "2026-05-23T18:03:26.284560Z", "agent": "lewistham9x@gmail.com"}
