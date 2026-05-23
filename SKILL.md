@@ -1286,7 +1286,7 @@ still runtime-agnostic — any OpenAI-shaped LLM endpoint works on the
 HTTP path, and codex itself is just an alternate transport to the same
 chat-completions semantics, but auth'd via ChatGPT subscription instead
 of an OpenAI API key. Binding contract for the amendment:
-`b3f1f44e` (2026-05-24).
+`e068000e` (2026-05-24).
 
 ## Β1 — backtrack-and-capture (deferred items become contract rows, mechanically)
 
