@@ -139,6 +139,8 @@ def declare(plan: str, action: str, parent_id: Optional[str] = None,
         row["budget"] = int(budget)
     if bind_to:
         row["bind_to"] = bind_to
+    if inverted_from:
+        row["inverted_from"] = inverted_from
     _append(row)
     if parent_id:
         _append({"event": "child_added", "id": parent_id, "child_id": cid, "ts": _now()})
