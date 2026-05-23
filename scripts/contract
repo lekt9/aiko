@@ -540,11 +540,34 @@ else:
     return 0
   fi
   _l0 "  pointer($ptype): $action"
-  if ( cd "$_rundir" && eval "$action" ) >/tmp/contract-action-out 2>&1; then
+  # Inbox-event delivery (mail-stdin doctrine, contract b2d15246, 2026-05-24):
+  # when an external trigger (watch-tick, receptor injector) has staged an
+  # event for this contract at ~/.contracts/inbox-pending/<id>.json, pipe the
+  # event JSON to the action's stdin AND export it as CONTRACT_INBOX_EVENT.
+  # The action chains programmatically by reading either surface; chained
+  # actions resolve the originating context via `contract context <id>`.
+  # Also expose CONTRACT_ID so the action can call `contract context $CONTRACT_ID`.
+  local _inbox_pending="$HOME/.contracts/inbox-pending/$id.json"
+  local _rc
+  if [ -f "$_inbox_pending" ]; then
+    export CONTRACT_INBOX_EVENT
+    CONTRACT_INBOX_EVENT=$(cat "$_inbox_pending")
+    export CONTRACT_ID="$id"
+    ( cd "$_rundir" && eval "$action" ) </"$_inbox_pending" >/tmp/contract-action-out 2>&1
+    _rc=$?
+    rm -f "$_inbox_pending"
+    unset CONTRACT_INBOX_EVENT CONTRACT_ID
+  else
+    export CONTRACT_ID="$id"
+    ( cd "$_rundir" && eval "$action" ) >/tmp/contract-action-out 2>&1
+    _rc=$?
+    unset CONTRACT_ID
+  fi
+  if [ "$_rc" -eq 0 ]; then
     echo "  result: PASS (exit 0)"
     return 0
   else
-    echo "  result: FAIL (exit $?)"
+    echo "  result: FAIL (exit $_rc)"
     echo "  stderr: $(tail -3 /tmp/contract-action-out)"
     return 1
   fi
