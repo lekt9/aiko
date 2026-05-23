@@ -139,7 +139,8 @@ def main():
     if total_lines > SKILL_MD_MAX_LINES:
         fails.append(
             f"SKILL.md is {total_lines} lines, over soft cap {SKILL_MD_MAX_LINES}. "
-            f"Move fattest doctrines into references/ + contract rows."
+            f"Shrink fat doctrines per Β3/Β4: each section ≤{DOCTRINE_MAX_LINES} lines, "
+            f"narrative in the standing-gate contract's plan + Outline appendix."
         )
 
     # Gate 2: each non-core doctrine section must be in REGISTRY.md
