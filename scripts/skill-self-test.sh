@@ -56,11 +56,6 @@ check "binding/get-surfaces-it"    env PYTHONPATH="$SCRIPTS/lib" python3 -c \
                                      "from contract_core import get; import inspect; src = inspect.getsource(get); assert 'bind_to' in src"
 check "binding/verify-foreign"     env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" verify __nonexistent_surface_xyz__
 
-check "binding/declare-bind-to"    env PYTHONPATH="$SCRIPTS/lib" python3 -c \
-                                     "from contract_core import declare; import inspect; assert 'bind_to' in inspect.signature(declare).parameters"
-check "binding/get-surfaces-it"    env PYTHONPATH="$SCRIPTS/lib" python3 -c \
-                                     "from contract_core import get; import inspect; src = inspect.getsource(get); assert 'bind_to' in src"
-check "binding/verify-foreign"     env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" verify __nonexistent_surface_xyz__
 
 # ── Shape gates (regression harnesses for each contract shape) ────────────────
 # Each gate's verify.sh proves one shape behaves correctly. They honor an
