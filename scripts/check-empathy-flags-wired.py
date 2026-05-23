@@ -16,17 +16,30 @@ verify = VERIFY.read_text()
 
 # Collect every flag literal mentioned in the Empathy primitives table. The
 # table is the canonical surface — agents read it; the script implements it.
-m = re.search(r"## Empathy gate.*?\n\| Flag .*?\n((?:\|.*\n)+)", skill, flags=re.DOTALL)
+# Collect every flag literal mentioned in the Empathy primitives table. The
+# table is the canonical surface — agents read it; the script implements it.
+#
+# Scope the search to just the TABLE rows (pipe-prefixed lines), not the
+# surrounding prose / code blocks that mention --action et al. as bash
+# examples.
+m = re.search(r"## Empathy gate.*?\n\| Flag .*?\n\|[- |]+\n((?:\|.*\n)+)", skill, flags=re.DOTALL)
 if not m:
     print("could not find Empathy gate primitives table in SKILL.md", file=sys.stderr)
     sys.exit(2)
 
 table = m.group(1)
-flags = sorted(set(re.findall(r"`(--[a-z][a-z0-9-]*)`", table)))
-if not flags:
-    print("Empathy primitives table had no `--flag` entries", file=sys.stderr)
-    sys.exit(2)
-
+# A flag in the table sits in the first column, backticked. Restrict to
+# that column to avoid catching `--action` in descriptions.
+flags = []
+for row in table.strip().splitlines():
+    if not row.startswith("|"):
+        continue
+    cells = [c.strip() for c in row.strip("|").split("|")]
+    if not cells:
+        continue
+    for m in re.finditer(r"`(--[a-z][a-z0-9-]*)", cells[0]):
+        flags.append(m.group(1))
+flags = sorted(set(flags))
 # Whitelist: well-known playwright bits we might document for completeness
 # but not implement ourselves. None today; kept as a clean extension point.
 WHITELIST = set()
