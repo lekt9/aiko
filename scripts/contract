@@ -756,8 +756,21 @@ print(_infer_pointer_type(os.environ['MH_ACTION']))
     ;;
 
   iterate)
-    ID="${1:-}"
-    [ -z "$ID" ] && { echo "usage: contract iterate <id>" >&2; exit 2; }
+    ID="${1:-}"; shift || true
+    USE_STDIN=""
+    NO_CACHE=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --stdin)     USE_STDIN=1; shift ;;
+        --no-cache)  NO_CACHE=1; shift ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$ID" ] && { echo "usage: contract iterate <id> [--stdin] [--no-cache]" >&2; exit 2; }
+    STDIN_DATA=""
+    if [ -n "$USE_STDIN" ] || [ ! -t 0 ]; then
+      STDIN_DATA=$(cat)
+    fi
     DATA=$(MH_ID="$ID" _py_inline "
 import os, json; from contract_core import get
 c=get(os.environ['MH_ID'])
@@ -768,6 +781,10 @@ print(json.dumps(c) if c else 'null')
     CWD=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('cwd') or '')" "$DATA")
     WAVE=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['wave']+1)" "$DATA")
     PLAN_TEXT=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['plan'][:80])" "$DATA")
+    PTYPE=$(MH_ACTION="$ACTION" _py_inline "
+import os; from contract_core import _infer_pointer_type
+print(_infer_pointer_type(os.environ['MH_ACTION']))
+")
     echo "=== CONTRACT ITERATE — wave $WAVE ==="
     echo "  id:     $ID"
     echo "  plan:   $PLAN_TEXT"
@@ -780,16 +797,42 @@ print(json.dumps(c) if c else 'null')
       fi
     fi
     echo
-    _run_action "$ACTION" "$ID" "$CWD"
-    ACTION_RC=$?
-    MH_ID="$ID" MH_WAVE="$WAVE" MH_RC="$ACTION_RC" _py_inline "
+    # ── 10s sliding-window cache lookup (per-user, stdio-shaped pointers only) ──
+    # See lib/cache_layer.py for the design. Bypass forced via --no-cache.
+    CLOOKUP_OUT=$(mktemp)
+    CACHE_HEADER="BYPASS"
+    if [ -z "$NO_CACHE" ]; then
+      printf '%s' "$STDIN_DATA" | PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" \
+        python3 "$CONTRACT_LIB/cache_layer.py" lookup "$ID" "$ACTION" "$PTYPE" >"$CLOOKUP_OUT" 2>/dev/null || true
+      CACHE_HEADER=$(head -1 "$CLOOKUP_OUT")
+    fi
+    if [[ "$CACHE_HEADER" == HIT* ]]; then
+      set -- $CACHE_HEADER
+      ACTION_RC="$2"; AGE_S="$3"; SRC_WAVE="$4"; CKEY="$5"; CUSER="$6"
+      echo "  cache_hit_from: wave $SRC_WAVE (${AGE_S}s ago, user=$CUSER, key=${CKEY:0:12})"
+      echo
+      tail -n +2 "$CLOOKUP_OUT"
+      rm -f "$CLOOKUP_OUT"
+      _two_key_exit "$ID" "$ACTION_RC" "$ACTION"
+    else
+      rm -f "$CLOOKUP_OUT"
+      CONTRACT_STDIN="$STDIN_DATA" _run_action "$ACTION" "$ID" "$CWD"
+      ACTION_RC=$?
+      MH_ID="$ID" MH_WAVE="$WAVE" MH_RC="$ACTION_RC" _py_inline "
 import os; from contract_core import record_iteration
 record_iteration(os.environ['MH_ID'], int(os.environ['MH_WAVE']),
   int(os.environ['MH_RC']),
   'pass' if os.environ['MH_RC']=='0' else 'fail', None, [])
 "
-    _fire_contract_hooks "iterate" "$ID" "$ACTION_RC"
-    _two_key_exit "$ID" "$ACTION_RC" "$ACTION"
+      if [ -z "$NO_CACHE" ] && [[ "$CACHE_HEADER" == MISS* ]]; then
+        ARESULT=""
+        [ -f /tmp/contract-action-out ] && ARESULT=$(cat /tmp/contract-action-out 2>/dev/null || true)
+        printf '%s\0%s' "$STDIN_DATA" "$ARESULT" | PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" \
+          python3 "$CONTRACT_LIB/cache_layer.py" write "$ID" "$ACTION" "$PTYPE" "$ACTION_RC" "$WAVE" 2>/dev/null || true
+      fi
+      _fire_contract_hooks "iterate" "$ID" "$ACTION_RC"
+      _two_key_exit "$ID" "$ACTION_RC" "$ACTION"
+    fi
     # Synaptic firing: surface corroborated contracts so related truths are re-checked
     MH_ID="$ID" _py_inline "
 import os; from contract_core import get_corroborations, get
