@@ -2063,6 +2063,25 @@ print(f'  next: contract status {target}     # verify state preserved')
 "
     ;;
 
+  depth)
+    # Walk the multi-dimensional resolution graph centered on <id>.
+    # Surfaces {depth, breadth_max, dims, cycles, paths}. Pretty by default;
+    # --json for machines; --strict-cycles exits 1 if any contract:<id> cycle
+    # exists (this is what _mark satisfied uses to HARD-BREAK on cycles).
+    # No new shape (per 310f425f) — depth is a query verb over the existing
+    # parent_id + contract-ref graph. Origin: contract fb9698f7, 2026-05-23.
+    TARGET="${1:-}"; shift || true
+    EXTRA=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --json|--strict-cycles) EXTRA+=("$1"); shift ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$TARGET" ] && { echo "usage: contract depth <id> [--json] [--strict-cycles]" >&2; exit 2; }
+    python3 "$SELF/contract-depth.py" "$TARGET" "${EXTRA[@]+"${EXTRA[@]}"}"
+    ;;
+
   retire)
     # Retire a contract without an external winner. Declares a self-anchored
     # retirement marker (pre-satisfied), then supersedes <id> with it via the
