@@ -571,7 +571,35 @@ for c in cs:
     ;;
 
   habit|search)
-    PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 "$SELF/contract-habit-detect.py" "$@"
+    # Stash args so we can re-derive the --context for the BASE RATE summary.
+    _SEARCH_ARGS=("$@")
+    PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 "$SELF/contract-habit-detect.py" "${_SEARCH_ARGS[@]}"
+    _RC=$?
+    # Extract --context value (if any) and append the BASE RATE one-liner.
+    _CTX=""
+    _i=0
+    while [ "$_i" -lt "${#_SEARCH_ARGS[@]}" ]; do
+      if [ "${_SEARCH_ARGS[$_i]}" = "--context" ]; then
+        _j=$((_i+1))
+        [ "$_j" -lt "${#_SEARCH_ARGS[@]}" ] && _CTX="${_SEARCH_ARGS[$_j]}"
+        break
+      fi
+      _i=$((_i+1))
+    done
+    if [ -n "$_CTX" ]; then
+      MH_CTX="$_CTX" PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 -c "
+import os, importlib.util
+spec = importlib.util.spec_from_file_location('hd_mod', '$SELF/contract-habit-detect.py')
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+ctx = os.environ['MH_CTX']
+cands = mod.detect(ctx, mod.DEFAULT_THRESHOLD)
+total = len(cands)
+sat = sum(1 for c in cands if c.get('status') == 'satisfied')
+rate = (100.0 * sat / total) if total else 0.0
+print(f'BASE RATE for this class: {sat} / {total} satisfied = {rate:.1f}% (window: all-time, threshold: {mod.DEFAULT_THRESHOLD})')
+"
+    fi
+    exit $_RC
     ;;
 
   import)
