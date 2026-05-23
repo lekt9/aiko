@@ -58,14 +58,22 @@ def set_front_field(front, key, value):
 
 
 def trim_to_cap(text, cap):
+    """Trim text to ≤cap chars without losing the lead. Greedy: pack
+    whole sentences up to the cap so single-word leads ("SUPERSEDED.")
+    don't collapse to a useless 11-char description."""
     text = " ".join((text or "").split())
     if len(text) <= cap:
         return text
-    # Try the lead sentence (≤cap)
-    first = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0]
-    if len(first) <= cap:
-        return first
-    # Hard truncate with ellipsis
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    packed = ""
+    for s in sentences:
+        candidate = (packed + " " + s).strip() if packed else s
+        if len(candidate) > cap:
+            break
+        packed = candidate
+    if packed and len(packed) >= 60:  # got a substantive packing
+        return packed
+    # Lead is too short to be useful — hard truncate with ellipsis.
     return text[:cap - 1].rstrip() + "…"
 
 
