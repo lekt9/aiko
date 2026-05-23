@@ -27,7 +27,7 @@ PATTERNS=(
 
 hits=0
 for pat in "${PATTERNS[@]}"; do
-  matches=$(rg --no-messages -nH -E "$pat" "$SESSION_DIR" 2>/dev/null \
+  matches=$(rg --no-messages -nH "$pat" "$SESSION_DIR" 2>/dev/null \
     | grep -vE "/tool-results/|\.lock$|node_modules/|/sundayservice/|/bible-significance|/research/" \
     | head -20 || true)
   if [ -n "$matches" ]; then
