@@ -168,7 +168,10 @@ def _enforce_layering(title, description, body, hook):
     if len(h) > HOOK_MAX_CHARS:
         raise ValueError(
             f"memory layering: hook {len(h)} chars > {HOOK_MAX_CHARS} cap")
-    if d and h and h == d:
+    # hook == description is OK when the description is already hook-shaped
+    # (≤ HOOK_MAX_CHARS / 2). For longer descriptions, the hook needs to be
+    # a distinct shorter teaser.
+    if d and h and h == d and len(d) > HOOK_MAX_CHARS // 2:
         raise ValueError(
             "memory layering: hook equals description — pick a tighter one-liner")
 
