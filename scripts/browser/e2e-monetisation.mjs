@@ -86,13 +86,13 @@ let me = await page.evaluate(async (uid) => (await fetch(`/api/billing/me?uid=${
 assert("/api/billing/me before provisioning isPro=false", me.isPro === false, JSON.stringify(me));
 
 // ── 3. Provision a test subscription via Stripe API ─────────────────────
-// We use the same customer the worker would create (looked up via KV by uid).
-// To avoid a chicken-and-egg, we let the worker create the customer first via
-// the /checkout call we just made — Stripe Customer is now cached at
-// `stripe:customer:<uid>` in KV. We re-derive it from Stripe.
-console.log("looking up the Customer the worker created for this uid…");
-const customers = await stripeApi(`/customers/search?query=${encodeURIComponent(`metadata['sauros_uid']:'${UID}'`)}`);
-const customer = customers.data?.[0];
+// The worker just created a Stripe Customer for this uid via the checkout
+// call. Stripe's customer SEARCH index is eventually-consistent (can lag
+// 1-10s), but the Checkout SESSION retrieve is immediately-consistent and
+// contains the .customer id directly.
+console.log("retrieving Checkout Session to get the Customer id…");
+const session = await stripeApi(`/checkout/sessions/${checkoutResp.sessionId}`);
+const customer = session.customer ? { id: session.customer } : null;
 assert("worker created Stripe Customer for uid", !!customer, customer?.id);
 if (!customer) {
   await browser.close();
