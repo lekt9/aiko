@@ -4920,3 +4920,4 @@
 {"event":"satisfied","id":"4d3370e9","wave":2,"ts":"2026-05-23T11:13:25Z"}
 {"event":"status_update","id":"4d3370e9","status":"satisfied","ts":"2026-05-23T11:13:25Z"}
 {"event": "satisfied", "id": "be5d143c", "wave": 0, "ts": "2026-05-23T11:13:26.381423Z", "proof_skip_reason": "shape-gate self-test", "agent": "lewistham9x@gmail.com"}
+{"event": "iterated", "id": "91932ec7", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T11:13:29.392713Z", "agent": "lewistham9x@gmail.com"}
