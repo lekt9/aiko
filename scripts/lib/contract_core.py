@@ -237,7 +237,9 @@ def declare(plan: str, action: str, parent_id: Optional[str] = None,
             budget: Optional[int] = None, bind_to: Optional[str] = None,
             inverted_from: Optional[str] = None,
             inhibits: Optional[list] = None,
-            audience: Optional[list] = None) -> str:
+            audience: Optional[list] = None,
+            layer: Optional[int] = None,
+            pierced_layers: Optional[list] = None) -> str:
     """Declare a contract.
 
     bind_to: optional surface the contract is intrinsically scoped to —
