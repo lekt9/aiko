@@ -758,3 +758,91 @@ Origin: a 2026-05-23 ship that passed `bun run build` and reached
 within a VisibilityProvider` on first paint and 404'd a baked-in
 Google Fonts woff2 URL. The agent only learned this when the user pasted
 the console log. The gate exists so this never recurs.
+
+## Observe-original: trace before extract (standing default for any rewrite)
+
+A counterpart to the served-surface gate, run in the **opposite
+direction**: before rebuilding an existing site, drive its **live**
+frontend through a scripted tour and capture exactly what it does on the
+wire. Don't grep endpoints out of the bundle and guess — observe.
+
+The pathology this prevents: pulling endpoint strings out of a compiled
+JS bundle gives you the URLs but not the *contract*. Whether a GET
+expects `Content-Type: application/json` (Spring rejects null on some
+routes, accepts it on others); which extra context headers gate the
+route (`outletId, supplierId, companyId`); the exact field name the body
+expects (Zeemart's login is `ZeemartId`, not `email` — sending the wrong
+field returns a generic 500 with no hint); the order in which calls
+happen on a screen so React-Query keys can mirror it. None of this is
+visible in the bundle. It IS visible on the wire.
+
+```bash
+contract spawn <root> \
+  "api surface observed: every screen the rebuild needs is captured from the live original — per-screen endpoints, real headers, real payload, real status — in docs/<site>-screen-flow.md" \
+  --action 'bash ~/.claude/skills/contract/scripts/observe-original.sh --tour tours/<site>.json --out docs/observed --env-from .observe.env && test -s docs/observed/screen-flow.md'
+```
+
+A **tour** is a small JSON file describing the click-path through the
+original site:
+
+```json
+{
+  "name": "buyer.zeemart.co",
+  "base_url": "https://buyer.zeemart.co",
+  "match_hosts": ["zm-", "buyer.zeemart.co"],
+  "steps": [
+    { "label": "login",     "goto": "/login" },
+    { "fill": "input[type=email]",    "value": "${SITE_USER}" },
+    { "fill": "input[type=password]", "value": "${SITE_PASS}" },
+    { "click": "button[type=submit]" },
+    { "wait_idle": 3000 },
+    { "label": "outlets",   "screenshot": "01-outlets" },
+    { "click": "text=Orders" },
+    { "wait_idle": 3000 },
+    { "label": "orders",    "screenshot": "02-orders" }
+  ]
+}
+```
+
+Each `label` step marks a new "screen"; every network request fired
+between that label and the next is bucketed under it in the report.
+The tour reads `${VAR}` from env (`--env-from .observe.env` is the
+recommended channel — keep it gitignored).
+
+Outputs (under `--out <dir>`):
+
+- `screen-flow.md` — human-readable: each screen, its screenshot, every
+  endpoint that fired with method + path + redacted headers + payload +
+  status + clipped response, then a distinct-endpoint summary table at
+  the end. **Read this before you write a single line of the rebuild.**
+- `endpoints.json` — programmatic endpoint map keyed by host & path.
+- `events.json` — raw per-request rows (the agent can reprocess).
+- `screenshots/*.png` — one full-page screenshot per labelled screen.
+
+Redacted by design: `mudra`, `authorization`, `cookie`, `ZToken`,
+`accessToken` are replaced with `<redacted>` in the report so the
+artifact is safe to commit. The login response payload that *carries*
+those tokens is also clipped.
+
+Filtered by design: `match_hosts` (string include) prevents the report
+from drowning in CDN / analytics noise.
+
+**The UX rule that comes out of this:**
+
+Two artifacts give you a faithful rebuild surface, not one:
+1. `endpoints.json` — what to call, with what headers, in what order.
+2. `screenshots/*.png` + the per-screen endpoint clusters in
+   `screen-flow.md` — what the user sees on each screen, and which calls
+   power it.
+
+Rebuilding screen-by-screen using *both* (route boundaries inherited
+from the original) keeps the UX legible to existing users. Rebuilding
+endpoint-by-endpoint without the screen grouping is how you ship an
+"API client with a UI on top" that doesn't match anyone's mental model.
+
+Origin: the 2026-05-23 buyer.zeemart.co rebuild — the agent grep'd
+endpoint URLs out of `main.js` and guessed at headers/methods, hitting
+415/405/400 cascades it had to debug live. Observing the *real*
+frontend first would have produced the headers, payload shapes, and
+screen-to-endpoint mapping for free. The recorder exists so this never
+recurs.
