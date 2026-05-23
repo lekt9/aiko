@@ -12,11 +12,13 @@ export CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl"
 [ -x "$HOOK" ] || { echo "FAIL: hook missing/not executable: $HOOK"; exit 1; }
 echo "evidence: hook present and executable"
 
-TESTTOOL="__contract_toolguard_selftest__probe"
+# Unique pattern per run so leaked guards from prior runs don't shadow this one.
+UNIQ="$$_$(date +%s%N | tr -d '\n' | tail -c 6)"
+TESTTOOL="__contract_toolguard_selftest_${UNIQ}__probe"
 
 # 1. declare a tool-guard on a test-only pattern (guards no real tool).
-GID=$(bash "$CONTRACT" declare "self-test guard for the tool-guard verify harness" \
-        --action "tool-guard:__contract_toolguard_selftest__*" 2>/dev/null \
+GID=$(bash "$CONTRACT" declare "self-test guard for the tool-guard verify harness ($UNIQ)" \
+        --action "tool-guard:__contract_toolguard_selftest_${UNIQ}__*" 2>/dev/null \
         | awk '/^declared:/{print $2}')
 [ -n "$GID" ] || { echo "FAIL: could not declare the test guard"; exit 1; }
 echo "evidence: declared test guard $GID"
