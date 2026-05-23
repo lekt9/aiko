@@ -1472,6 +1472,41 @@ print(f'  next: contract iterate {tgt}   (re-verify the canonical truth)')
 "
     ;;
 
+  retire)
+    # Retire a contract without an external winner. Declares a self-anchored
+    # retirement marker (pre-satisfied), then supersedes <id> with it via the
+    # same `merge_into` path. The fossil row carries the reason; <id> is
+    # dropped from list/search. Same end state as the supersede ceremony,
+    # one verb instead of three. Autonomy tuning, contract 0470f3fe.
+    TARGET="${1:-}"; shift || true
+    REASON="retired (no successor)"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --reason) REASON="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$TARGET" ] && { echo "usage: contract retire <id> [--reason \"<why>\"]" >&2; exit 2; }
+    MH_TGT="$TARGET" MH_REASON="$REASON" _py_inline "
+import os
+from contract_core import declare, mark_satisfied, merge_into, get
+tgt = os.environ['MH_TGT']
+reason = os.environ.get('MH_REASON', 'retired (no successor)')
+ct = get(tgt)
+if not ct:
+    print(f'ERROR: contract {tgt} not found')
+    exit(1)
+marker_plan = f'Retirement marker for {tgt}: {reason}'
+mid, _ = declare(marker_plan, action='agent-judges', parent_id=None)
+mark_satisfied(mid, 0)
+merge_into(tgt, mid, reason)
+print('=== CONTRACT RETIRE ===')
+print(f'  {tgt}  RETIRED via marker {mid}')
+print(f'  reason: {reason}')
+print(f'  {tgt} is now merged into a retirement marker. contract list hides it.')
+"
+    ;;
+
   audit)
     # Falsifier audit (the jesus-loop Step 8 — cold auditors). Declares an
     # audit organ as a child of the target, then emits a fan-out prompt for
