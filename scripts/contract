@@ -2248,8 +2248,8 @@ if warns:
     # The substrate surfaces; the agent judges KEY 2 on each.
     if [ "$STATUS" = "satisfied" ]; then
       MH_ID="$ID" _py_inline "
-import os
-from contract_core import wavefront, get
+import os, json, pathlib
+from contract_core import wavefront, get, _resolve_ledger
 wf = wavefront(os.environ['MH_ID'])
 items = []
 if wf['parent']:
@@ -2269,6 +2269,35 @@ else:
         plan = (c['plan'][:52] if c else '?')
         print('  ' + label + ' ' + cid + '  \"' + plan + '\"')
         print('    -> contract iterate ' + cid)
+
+# Ω1 — unblock-rewake: scan judged-HOLD rows whose blocked_by includes this id.
+# When the blocker satisfies, surface the dependent HOLD'd contract as
+# 'now re-judgeable' so the agent doesn't have to remember to re-fire it.
+ledger = _resolve_ledger()
+if ledger.exists():
+    # latest 'judged' verdict per contract id (later rows supersede earlier)
+    latest_judged = {}
+    for line in ledger.read_text().splitlines():
+        if not line.strip(): continue
+        try: row = json.loads(line)
+        except: continue
+        if row.get('event') == 'judged':
+            latest_judged[row.get('id')] = row
+    me = os.environ['MH_ID']
+    unblocked = []
+    for cid, jr in latest_judged.items():
+        if jr.get('verdict') in ('HOLD', 'REJECT') and me in (jr.get('blocked_by') or []):
+            # confirm the contract is still pending (not yet satisfied via another path)
+            c = get(cid)
+            if c and c.get('status') != 'satisfied':
+                unblocked.append((cid, c.get('plan', '?')))
+    if unblocked:
+        print()
+        print('=== Ω1 UNBLOCK-REWAKE ===')
+        print('  ' + me + ' satisfied — judge-HOLD dependents re-fireable:')
+        for cid, plan in unblocked:
+            print('  🔓 ' + cid + '  \"' + plan[:52] + '\"')
+            print('    -> contract judge ' + cid + '  # re-fire Λ1 with this blocker cleared')
 "
     fi
     # INLINE DRIVE ADVANCE: framework-agnostic self-drive — runs synchronously inside the
