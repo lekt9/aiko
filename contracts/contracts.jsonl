@@ -3631,3 +3631,5 @@
 {"event": "crystallized", "id": "68e6d09c", "memory_path": "/Users/lekt9/.claude/projects/-Users-lekt9-Projects-zeemart-revamp/memory/if-the-user-says-default-to-my-favourite.md", "outline_url": "https://docs.getfoundry.app/doc/if-the-user-says-default-to-my-favourite-7SnluBXa7T", "ts": "2026-05-23T05:04:36.436895Z", "agent": "lewistham9x@gmail.com"}
 {"event": "iterated", "id": "1a3f3dda", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T05:04:36.486878Z", "agent": "lewistham9x@gmail.com"}
 {"event": "satisfied", "id": "1a3f3dda", "wave": 0, "ts": "2026-05-23T05:04:36.596908Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "547c02f0", "plan": "self-test guard for the tool-guard verify harness", "action": "tool-guard:__contract_toolguard_selftest__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": null, "pointers": [], "ts": "2026-05-23T05:07:51.298616Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "547c02f0", "wave": 0, "ts": "2026-05-23T05:07:52.720986Z", "agent": "lewistham9x@gmail.com"}
