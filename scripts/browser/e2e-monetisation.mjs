@@ -146,9 +146,8 @@ const headerProCount = await page.locator('a:has-text("★ Pro")').count();
 assert("header Pro chip present", headerProCount > 0, `count=${headerProCount}`);
 
 // ── 6. Cancel via API → webhook → isPro flips back to false ─────────────
-console.log("cancelling subscription via API…");
-await stripeApi(`/subscriptions/${sub.id}`, { "cancel_at_period_end": "false" });
-await stripeApi(`/subscriptions/${sub.id}/cancel`).catch(() => stripeApi(`/subscriptions/${sub.id}`, { status: "canceled" }).catch(()=>{}));
+console.log("cancelling subscription via API (DELETE)…");
+await stripeApi(`/subscriptions/${sub.id}`, null, "DELETE");
 
 console.log("waiting for cancel webhook…");
 let cancelled = false;
