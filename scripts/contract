@@ -1373,8 +1373,16 @@ PY
     ID="${1:-}"; STATUS="${2:-}"
     [ -z "$ID" ] || [ -z "$STATUS" ] && { echo "usage: contract _mark <id> <status>" >&2; exit 2; }
     MH_ID="$ID" MH_STATUS="$STATUS" _py_inline "
-import os; from contract_core import mark_satisfied, mark_status
+import os, sys
+from contract_core import mark_satisfied, mark_status, get
 id=os.environ['MH_ID']; st=os.environ['MH_STATUS']
+# Substrate principle: never silently fabricate a row for an unknown id.
+# verb-gate _mark caught this — marking a nonexistent id silently appended
+# a satisfied row, which violates default #11 (every verification result
+# traces to a real live source). Reject unknown ids before writing.
+if get(id) is None:
+    print(f'ERROR: contract {id} not found in this ledger', file=sys.stderr)
+    sys.exit(1)
 if st=='satisfied':
     # Honest mark: write only the satisfied event. The agent's KEY-2 verdict
     # this explicit mark IS the verdict — no in-thread promise tag required.
@@ -1382,7 +1390,7 @@ if st=='satisfied':
 else:
     mark_status(id, st)
 print(f'  {id} -> {st}')
-"
+" || exit 1
     _fire_contract_hooks "mark" "$ID" "0"
     # BREAK ON RESOLUTION (refractory period): every satisfied mark fires a
     # substrate-enforced reflection pause BEFORE propagation. Maps to a
