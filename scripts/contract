@@ -552,19 +552,34 @@ pr(t) if t else print('  contract not found')
     ;;
 
   graph)
-    # contract graph <id> — render the gate graph centered on <id>:
-    # parents (one level up), node, children (one level down with
-    # edge-type annotation), merged_into lineage. Reads contract:<id>
-    # action strings to surface cross-cutting pointer-ref edges.
-    ID="${1:-}"
+    # contract graph <id> [--depth N] — render the gate graph centered on <id>.
+    # depth=1 (default): parents one up, node, children one down with edge-type
+    #   annotation, contract-ref pointers traced one hop, merged_into lineage.
+    # depth>=2: also walks each child's children, each contract-ref's referent,
+    #   showing the transitive DAG. Bounded at 10 for L2 readability; cycle
+    #   detection via visited-set so a contract-ref loop never spins forever.
+    ID=""
+    DEPTH=1
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --depth) DEPTH="${2:-1}"; shift 2 ;;
+        --depth=*) DEPTH="${1#--depth=}"; shift ;;
+        *) [ -z "$ID" ] && ID="$1"; shift ;;
+      esac
+    done
     if [ -z "$ID" ]; then
-      echo "Usage: contract graph <id>" >&2
+      echo "Usage: contract graph <id> [--depth N]" >&2
       exit 2
     fi
-    MH_ID="$ID" _py_inline "
+    MH_ID="$ID" MH_DEPTH="$DEPTH" _py_inline "
 import os, json, re
 from contract_core import get, list_all
 target = os.environ['MH_ID']
+try:
+    depth = int(os.environ.get('MH_DEPTH', '1'))
+except ValueError:
+    depth = 1
+depth = max(1, min(depth, 10))  # clamped 1..10
 node = get(target)
 if not node:
     print('  contract not found')
@@ -576,70 +591,102 @@ def short_plan(r, n=56):
     p = (r.get('plan') or '')[:n]
     return p + ('…' if len(r.get('plan','')) > n else '')
 
-def line(prefix, r, edge=None):
-    status = r.get('status','?')
-    sid = r['id'][:8]
-    edge_tag = f' ({edge})' if edge else ''
-    print(f'{prefix} {sid}  \"{short_plan(r)}\"  [{status}]{edge_tag}')
+def status_of(r):
+    return r.get('status', '?')
 
-# parents (one level up)
+def kid_action_kind(a):
+    a = a or ''
+    if a.startswith('contract:'):
+        return 'contract-ref'
+    if a in ('funnel', 'children-satisfy'): return 'funnel'
+    if a == 'funnel-first': return 'funnel-first'
+    if a == 'sequence': return 'sequence'
+    if a.startswith('quorum:'): return 'quorum'
+    if a == 'agent-judges': return 'judgment'
+    if a.startswith('loop-until:') or a == 'loop': return 'loop'
+    if a.startswith('harness:'): return 'harness'
+    if a.startswith('tool-guard:'): return 'tool-guard'
+    return 'cell'
+
+# parents (still one hop — upward chain isn't load-bearing for gate visibility)
 parent_id = node.get('parent_id')
 print('[parents]')
 if parent_id and parent_id in by_id:
-    line('  ←', by_id[parent_id])
+    p = by_id[parent_id]
+    print(f'  ← {p[\"id\"][:8]}  \"{short_plan(p)}\"  [{status_of(p)}]')
 else:
     print('  (none — root)')
 
 # node itself
 print('[node]')
-line('  ●', node)
+print(f'  ● {node[\"id\"][:8]}  \"{short_plan(node)}\"  [{status_of(node)}]')
 action = (node.get('action') or '')
 print(f'    action: {action[:80]}')
 
-# children (one level down)
-children = [r for r in all_rows if r.get('parent_id') == target]
-# also: contracts that reference THIS node via contract:<id> action
-refs_to_us = [
-    r for r in all_rows
-    if (r.get('action') or '').startswith(f'contract:{target}')
-]
-print('[children]')
-if not children:
-    print('  (no children)')
-for c in children:
-    a = (c.get('action') or '')
-    m = re.match(r'^contract:([a-f0-9]+)', a)
-    if m:
-        ref = m.group(1)
-        ref_row = by_id.get(ref)
-        ref_plan = short_plan(ref_row, 40) if ref_row else '(unknown)'
-        line(f'  ├ contract-ref → {ref[:8]}', c)
-        print(f'      └ points at: \"{ref_plan}\"')
-    elif a in ('funnel', 'children-satisfy', 'funnel-first', 'sequence'):
-        line(f'  ├ {a:14}', c)
-    elif a == 'agent-judges':
-        line('  ├ judgment    ', c)
-    elif a.startswith('loop-until:'):
-        line('  ├ loop        ', c)
-    else:
-        line('  ├ cell        ', c)
+# children — transitive walk to MH_DEPTH
+print(f'[children · depth={depth}]')
+visited = {target}
 
+def walk(node_id, level, prefix):
+    if level > depth:
+        return
+    children = [r for r in all_rows if r.get('parent_id') == node_id]
+    a_node = (by_id.get(node_id) or {}).get('action') or ''
+    m = re.match(r'^contract:([a-f0-9]+)', a_node)
+    ref_target = m.group(1) if m else None
+
+    # Render children of this node
+    for c in children:
+        a = (c.get('action') or '')
+        kind = kid_action_kind(a)
+        sid = c['id'][:8]
+        mref = re.match(r'^contract:([a-f0-9]+)', a)
+        ref_id = mref.group(1) if mref else None
+        ref_tag = f' → {ref_id[:8]}' if ref_id else ''
+        marker = '├' if level == 1 else '│ ' * (level - 1) + '├'
+        print(f'{prefix}{marker} [{kind}{ref_tag}] {sid}  \"{short_plan(c, 40)}\"  [{status_of(c)}]')
+        if c['id'] in visited:
+            print(f'{prefix}{\"│ \" * level}└ (already visited; cycle short-circuit)')
+            continue
+        visited.add(c['id'])
+        # Recurse into THIS child's children
+        if level < depth:
+            walk(c['id'], level + 1, prefix)
+        # Also follow contract-ref edges from this child
+        if ref_id and ref_id not in visited and level < depth:
+            ref_row = by_id.get(ref_id)
+            if ref_row:
+                print(f'{prefix}{\"│ \" * level}└─→ ref-target [{kid_action_kind(ref_row.get(\"action\"))}] {ref_id[:8]}  \"{short_plan(ref_row, 40)}\"  [{status_of(ref_row)}]')
+                visited.add(ref_id)
+                if level + 1 <= depth:
+                    walk(ref_id, level + 2, prefix)
+
+if depth >= 1:
+    direct_children = [r for r in all_rows if r.get('parent_id') == target]
+    if not direct_children:
+        print('  (no children)')
+    else:
+        walk(target, 1, '  ')
+
+# inbound pointer-refs (kept at one hop — these are the parents-by-reference)
+refs_to_us = [r for r in all_rows if (r.get('action') or '').startswith(f'contract:{target}')]
 if refs_to_us:
     print('[inbound pointer-refs]')
     for r in refs_to_us:
-        line('  →', r, edge='referrer')
+        print(f'  → {r[\"id\"][:8]}  \"{short_plan(r)}\"  [{status_of(r)}]  (referrer)')
 
-# merged_into lineage
+# merged_into lineage (one hop)
 merged_into = node.get('merged_into')
 if merged_into:
     winner = by_id.get(merged_into)
     print('[lineage]')
     if winner:
-        line(f'  ⇒ merged_into {merged_into[:8]}', winner)
+        print(f'  ⇒ merged_into {merged_into[:8]}  \"{short_plan(winner)}\"  [{status_of(winner)}]')
     else:
         print(f'  ⇒ merged_into {merged_into}  (winner not in ledger)')
 "
     ;;
+
 
   store)
     _py_inline "
