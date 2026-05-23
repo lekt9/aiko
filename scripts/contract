@@ -3471,7 +3471,7 @@ print(f'  next: contract status {target}     # verify state preserved')
     [ -z "$TARGET" ] && { echo "usage: contract context <id> [--max-iterations N]" >&2; exit 2; }
     MH_TARGET="$TARGET" MH_MAX="$MAX_ITERS" _py_inline "
 import os, json
-from contract_core import get, _read_all
+from contract_core import get, _rows
 cid = os.environ['MH_TARGET']
 c = get(cid)
 if not c:
@@ -3485,7 +3485,7 @@ while cur and cur.get('parent_id'):
     chain.append({'id': p['id'], 'plan': (p.get('plan') or '')[:120], 'status': p.get('status')})
     cur = p
 # origin_chain: corroborated peers
-rows = _read_all()
+rows = _rows()
 synapses = []
 for r in rows:
     if r.get('event') == 'corroborated' and cid in (r.get('ids') or []):
