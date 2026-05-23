@@ -38,7 +38,9 @@ DEFAULT_THRESHOLD = 0.55
 # --- embedding cache + API --------------------------------------------------
 
 EMBED_CACHE = Path.home() / ".contracts" / "embeddings.jsonl"
-# Provider selection: explicit env > OpenAI (if key) > Nebius (if key) > none.
+# Provider selection: Nebius is the default. OpenAI is only used when the
+# operator explicitly opts in via CONTRACT_EMBED_PROVIDER=openai. The auto
+# path never touches OpenAI, even if OPENAI_API_KEY is present in the env.
 # Both providers are OpenAI-compatible (v1/embeddings JSON).
 def _embed_provider():
     """Return (base_url, api_key, model_id) or (None, None, None)."""
@@ -51,8 +53,6 @@ def _embed_provider():
         return "https://api.openai.com/v1/embeddings", openai_key, openai_model
     if forced == "nebius" and nebius_key:
         return "https://api.studio.nebius.ai/v1/embeddings", nebius_key, nebius_model
-    if openai_key:
-        return "https://api.openai.com/v1/embeddings", openai_key, openai_model
     if nebius_key:
         return "https://api.studio.nebius.ai/v1/embeddings", nebius_key, nebius_model
     return None, None, None
