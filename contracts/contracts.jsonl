@@ -4685,3 +4685,15 @@
 {"event":"iterated","id":"d2818977","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T10:13:31Z"}
 {"event":"iterated","id":"d6a91322","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T10:13:32Z"}
 {"event": "satisfied", "id": "8d01c327", "wave": 0, "ts": "2026-05-23T10:13:35.099184Z", "proof": "src/render/types.ts +5 block types (echarts/dashboard/text-md/data-grid/sandbox-output); JsonRender.tsx renders each w/ lazy ECharts (385KB chunk loads only on first echarts block); tiny md-to-html subset for text-md; main bundle 94KB gz (was 86, +8 for new schemas)", "agent": "lewistham9x@gmail.com"}
+{"event":"satisfied","id":"142aba15","wave":1,"ts":"2026-05-23T10:13:44Z"}
+{"event":"status_update","id":"142aba15","status":"satisfied","ts":"2026-05-23T10:13:44Z"}
+{"event":"satisfied","id":"c57475e4","wave":1,"ts":"2026-05-23T10:13:44Z"}
+{"event":"status_update","id":"c57475e4","status":"satisfied","ts":"2026-05-23T10:13:44Z"}
+{"event": "declared", "id": "a5a5d9d4", "plan": "shvetalabs admin v8: when a user lands on /admin and tries to /start the bot but their tg_id isn't on the allowlist, OR when an admin invokes the outreach CLI with a phone/username, Lewis's userbot (Telethon, session at ~/.clawdbot/credentials/telegram-user2.session) sends them a friendly, first-person introduction message naming @shveta_concierge_bot and the /start handshake. CLI is invokable from Lewis's laptop: 'python3 scripts/tg-outreach.py --to +6596854138'. End-to-end verified: a real Telegram message lands in the recipient's chat from Lewis's account (test target = Lewis's own Saved Messages chat for proof).", "action": "sequence", "pointer_type": "sequence", "cwd": "/Users/lekt9/Projects/shveta", "parent_id": null, "pointers": [], "ts": "2026-05-23T10:13:45.135891Z", "agent": "lewistham9x@gmail.com"}
+{"event":"satisfied","id":"d2818977","wave":1,"ts":"2026-05-23T10:13:45Z"}
+{"event":"status_update","id":"d2818977","status":"satisfied","ts":"2026-05-23T10:13:45Z"}
+{"event":"satisfied","id":"d6a91322","wave":1,"ts":"2026-05-23T10:13:45Z"}
+{"event":"status_update","id":"d6a91322","status":"satisfied","ts":"2026-05-23T10:13:45Z"}
+{"event":"iterated","id":"7afd8afe","wave":1,"action_exit":0,"action_result":"PASS","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T10:13:46Z"}
+{"event":"satisfied","id":"7afd8afe","wave":1,"ts":"2026-05-23T10:13:46Z"}
+{"event":"status_update","id":"7afd8afe","status":"satisfied","ts":"2026-05-23T10:13:46Z"}
