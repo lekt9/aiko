@@ -101,6 +101,7 @@ let walkInclude = null;
 let walkExclude = null;
 let preludePath = null;
 let envFrom = null;
+let noRawJson = false;
 
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
