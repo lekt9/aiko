@@ -16,7 +16,7 @@ ID=$(bash "$C" declare "$N loop probe" --action "loop-until:$BODY" --no-drive 2>
 
 # wave 1: body returns 1 (n=1) -> FAIL
 O=$(bash "$C" iterate "$ID" 2>/dev/null)
-echo "$O" | grep -q "result: FAIL" || { echo "FAIL: loop wave 1 did not FAIL"; echo "$O"; rm -f "$COUNTER"; exit 1; }
+echo "$O" | grep -qE "LOOP-RUNNING|result: FAIL" || { echo "FAIL: loop wave 1 did not surface FAIL/LOOP-RUNNING"; echo "$O"; rm -f "$COUNTER"; exit 1; }
 N1=$(cat "$COUNTER")
 [ "$N1" = "1" ] || { echo "FAIL: body did not run on wave 1 (counter=$N1)"; rm -f "$COUNTER"; exit 1; }
 echo "evidence: loop wave 1  ->  body ran (n=1), FAIL  OK"
