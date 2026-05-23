@@ -5842,3 +5842,4 @@
 {"event": "iterated", "id": "bbdc5bca", "wave": 2, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T17:46:28.401073Z", "agent": "lewistham9x@gmail.com"}
 {"event": "iterated", "id": "f80f0c3e", "wave": 2, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T17:46:28.699541Z", "agent": "lewistham9x@gmail.com"}
 {"event": "iterated", "id": "fe987dc2", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T17:46:29.259564Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "7f64df91", "wave": 0, "ts": "2026-05-23T17:47:56.568364Z", "proof": "emunah.pages.dev returned HTTP 200 on auto-iterate probe at registration time", "agent": "lewistham9x@gmail.com"}
