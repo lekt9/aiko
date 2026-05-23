@@ -1718,6 +1718,71 @@ else:
 "
     ;;
 
+  unblocked)
+    # Ω1 — list every judged-HOLD contract whose every blocker_id is now satisfied.
+    # The substrate surfaces; the agent re-judges. Filters: --json (machine-readable).
+    UB_JSON=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --json) UB_JSON="1"; shift ;;
+        *) shift ;;
+      esac
+    done
+    MH_JSON="${UB_JSON:-}" _py_inline "
+import os, json, pathlib
+from contract_core import _resolve_ledger, get
+ledger = _resolve_ledger()
+if not ledger.exists():
+    print('=== Ω1 UNBLOCKED (no ledger yet) ===')
+    raise SystemExit(0)
+latest_judged = {}
+for line in ledger.read_text().splitlines():
+    if not line.strip(): continue
+    try: row = json.loads(line)
+    except: continue
+    if row.get('event') == 'judged':
+        latest_judged[row.get('id')] = row
+ready = []
+waiting = []
+for cid, jr in latest_judged.items():
+    if jr.get('verdict') not in ('HOLD', 'REJECT'):
+        continue
+    blockers = jr.get('blocked_by') or []
+    if not blockers:
+        continue
+    c = get(cid)
+    if not c or c.get('status') == 'satisfied':
+        continue
+    # Re-resolve every blocker's current status
+    blocker_states = [(b, (get(b) or {}).get('status', '?')) for b in blockers]
+    all_done = all(st == 'satisfied' for _, st in blocker_states)
+    (ready if all_done else waiting).append((cid, c.get('plan', '?'), jr.get('verdict'), blocker_states))
+
+if os.environ.get('MH_JSON'):
+    print(json.dumps({'ready': [{'id': cid, 'verdict': v, 'plan': p, 'blockers': bs} for cid, p, v, bs in ready],
+                       'waiting': [{'id': cid, 'verdict': v, 'plan': p, 'blockers': bs} for cid, p, v, bs in waiting]},
+                      indent=2))
+    raise SystemExit(0)
+
+print('=== Ω1 UNBLOCKED (re-judgeable now) ===')
+if not ready:
+    print('  (no HOLD/REJECT contracts have all their blockers satisfied yet)')
+else:
+    for cid, plan, verdict, bs in ready:
+        print(f'  🔓 {cid}  [{verdict}]  \"{plan[:60]}\"')
+        for b, st in bs:
+            print(f'      blocker {b}  [{st}]')
+        print(f'      -> contract judge {cid}')
+if waiting:
+    print()
+    print('=== Ω1 STILL WAITING ===')
+    for cid, plan, verdict, bs in waiting:
+        pending = [b for b, st in bs if st != 'satisfied']
+        print(f'  ⏳ {cid}  [{verdict}]  blocked by {len(pending)}: {\", \".join(pending[:3])}')
+        print(f'      \"{plan[:60]}\"')
+"
+    ;;
+
   list)
     SHOW_MERGED=""
     VIEWER=""
