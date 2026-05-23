@@ -1,0 +1,9 @@
+# scope.txt — corpora that the memory-layering audit applies to.
+# One path per line. Globs are expanded; comments (#) and blank lines ignored.
+# The audit walks every *.md (except MEMORY.md) in each path.
+
+# Every per-project Claude Code memory folder
+~/.claude/projects/*/memory
+
+# Global Claude Code memory folder (last-resort crystallize target)
+~/.claude/memory
