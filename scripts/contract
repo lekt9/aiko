@@ -1099,6 +1099,47 @@ if internals is not None:
 else:
     print()
     print('  (use --internals to surface the HOW block: action, cwd, wave, agent, timestamps)')
+
+# === DAG context block (--context) — the relevant funnel/graph neighborhood ===
+if context is not None:
+    def _fmt(n):
+        if not n: return ''
+        glyph = {'satisfied':'✓','active':'○','pending':'·','merged':'×','rejected':'✗'}.get(n.get('status','?'),'?')
+        layer = f\"L{n['layer']}\" if n.get('layer') is not None else 'L?'
+        return f\"{glyph} {n['id']}  {layer}  \\\"{n['plan']}\\\"\"
+    print()
+    print('  --- DAG CONTEXT (one hop in every direction) ---')
+    if context['parent']:
+        print(f\"  parent:      {_fmt(context['parent'])}\")
+    if context['children']:
+        print(f\"  children:    {len(context['children'])}\")
+        for ch in context['children'][:10]:
+            print(f\"    └─ {_fmt(ch)}\")
+        if len(context['children']) > 10:
+            print(f\"    ... ({len(context['children']) - 10} more)\")
+    if context['refs_out']:
+        print(f\"  refs out (this gates on):\")
+        for n in context['refs_out']:
+            print(f\"    →  {_fmt(n)}\")
+    if context['refs_in']:
+        print(f\"  refs in (these gate on us — {len(context['refs_in'])}):\")
+        for n in context['refs_in'][:10]:
+            print(f\"    ←  {_fmt(n)}\")
+        if len(context['refs_in']) > 10:
+            print(f\"    ... ({len(context['refs_in']) - 10} more)\")
+    if context['synapses']:
+        print(f\"  synapses (corroborated):\")
+        for n in context['synapses'][:10]:
+            print(f\"    ↔  {_fmt(n)}\")
+    if context['inhibitors_active']:
+        print(f\"  ACTIVE INHIBITORS (suppressing _mark):\")
+        for n in context['inhibitors_active']:
+            print(f\"    ⊘  {_fmt(n)}\")
+    if not any([context['parent'], context['children'], context['refs_out'],
+                context['refs_in'], context['synapses'], context['inhibitors_active']]):
+        print('  (isolated — no parent, children, refs, synapses, or inhibitors)')
+else:
+    print('  (use --context to surface the DAG neighborhood — parent, children, refs in/out, synapses, inhibitors)')
 "
     ;;
 
