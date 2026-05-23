@@ -35,6 +35,127 @@ LEDGER = _resolve_ledger()
 _WARNED_LINES: set = set()
 DEFAULT_THRESHOLD = 0.55
 
+# --- embedding cache + API --------------------------------------------------
+
+EMBED_CACHE = Path.home() / ".contracts" / "embeddings.jsonl"
+EMBED_MODEL = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+EMBED_DIM = 1536  # text-embedding-3-small default
+_EMBED_OK = True  # flips false on first failure; stays false for the run
+# A bounded per-process budget — never balloon when the corpus grows.
+EMBED_MISS_BUDGET = int(os.environ.get("CONTRACT_EMBED_MISS_BUDGET", "32"))
+
+
+def _content_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _load_embed_cache():
+    """Return {id: {"hash": str, "vec": list[float]}} from the JSONL cache."""
+    cache = {}
+    if not EMBED_CACHE.exists():
+        return cache
+    for line in EMBED_CACHE.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+            cache[r["id"]] = {"hash": r["hash"], "vec": r["vec"]}
+        except (json.JSONDecodeError, KeyError):
+            continue
+    return cache
+
+
+def _append_embed_cache(rid: str, text_hash: str, vec):
+    EMBED_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    with EMBED_CACHE.open("a") as f:
+        f.write(json.dumps({"id": rid, "hash": text_hash, "vec": vec}) + "\n")
+
+
+def _embed_call(texts):
+    """One OpenAI embeddings call for a batch of texts. Returns list[list[float]]
+    on success, None on any failure (substrate principle: no silent fault — a
+    real error is logged once to stderr, then degrade)."""
+    global _EMBED_OK
+    if not _EMBED_OK:
+        return None
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    payload = json.dumps({"model": EMBED_MODEL, "input": texts}).encode()
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/embeddings",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "contract-habit-detect/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+        return [d["embedding"] for d in data["data"]]
+    except (urllib.error.URLError, urllib.error.HTTPError,
+            json.JSONDecodeError, KeyError, OSError) as e:
+        _EMBED_OK = False
+        print(f"contract-habit-detect: embedding API call failed "
+              f"(falling back to BM25 only): {e}", file=sys.stderr)
+        return None
+
+
+def _cosine(a, b):
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x*y for x, y in zip(a, b))
+    na = math.sqrt(sum(x*x for x in a))
+    nb = math.sqrt(sum(y*y for y in b))
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def _embed_scores(query, docs):
+    """{id: cosine(query, doc)} for each doc. Honors the cache; bounded misses.
+    Returns {} when embeddings are unavailable."""
+    if not _EMBED_OK:
+        return {}
+    cache = _load_embed_cache()
+    misses = []  # list of (id, text, hash)
+    for did, text in docs:
+        h = _content_hash(text)
+        if did in cache and cache[did]["hash"] == h:
+            continue
+        misses.append((did, text, h))
+        if len(misses) >= EMBED_MISS_BUDGET:
+            break  # bound this run; the next call backfills more
+    if misses:
+        vecs = _embed_call([t for _, t, _ in misses])
+        if vecs is None:
+            return {}
+        for (did, _t, h), v in zip(misses, vecs):
+            cache[did] = {"hash": h, "vec": v}
+            _append_embed_cache(did, h, v)
+    # Embed the query (always — small cost, exact-text-cache-keyed)
+    q_hash = _content_hash("__query__" + query)
+    q_vec = None
+    if q_hash in cache:
+        q_vec = cache[q_hash]["vec"]
+    else:
+        vecs = _embed_call([query])
+        if vecs:
+            q_vec = vecs[0]
+            cache[q_hash] = {"hash": q_hash, "vec": q_vec}
+            _append_embed_cache(q_hash, q_hash, q_vec)
+    if not q_vec:
+        return {}
+    return {
+        did: max(0.0, _cosine(q_vec, cache[did]["vec"]))
+        for did, _t in docs
+        if did in cache
+    }
+
 
 def _tokenize(text: str) -> Counter:
     return Counter(re.findall(r"[a-z0-9]+", text.lower()))
