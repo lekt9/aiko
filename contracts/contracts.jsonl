@@ -3512,3 +3512,4 @@
 {"event": "satisfied", "id": "7723b522", "wave": 0, "ts": "2026-05-23T04:37:55.587431Z", "agent": "lewistham9x@gmail.com"}
 {"event": "iterated", "id": "8ddd5fc3", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T04:39:28.621531Z", "agent": "lewistham9x@gmail.com"}
 {"event": "satisfied", "id": "8ddd5fc3", "wave": 0, "ts": "2026-05-23T04:39:35.718189Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "866c519e", "plan": "demo: multi-dimensional gate composition \u2014 this organ resolves only when served-surface + empathy + observe-original all hold for the bound deploy. Pure pointer-gating: no logic in this contract, just references to the three standing dimensions.", "action": "funnel", "pointer_type": "funnel", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": null, "pointers": [], "ts": "2026-05-23T04:39:43.845702Z", "agent": "lewistham9x@gmail.com"}
