@@ -4906,6 +4906,33 @@ USAGE
       echo "usage: contract telegram-poll (--chat-id <int> | --username <name> | --resolve <name>) [opts]" >&2
       exit 2
     fi
+    # Session-lock guard — Telethon's SQLite session can only be held by one
+    # process at a time. If another process is holding it, refuse cleanly with
+    # a structured block naming the holder (so the caller can decide to kill
+    # or wait), instead of crashing with `database is locked`.
+    if command -v lsof >/dev/null 2>&1 && [ -f "$TG_SESSION" ]; then
+      HOLDER_PID=$(lsof -t "$TG_SESSION" 2>/dev/null | head -1)
+      MY_PID=$$
+      if [ -n "$HOLDER_PID" ] && [ "$HOLDER_PID" != "$MY_PID" ]; then
+        HOLDER_CMD=$(ps -p "$HOLDER_PID" -o command= 2>/dev/null | head -c 140)
+        cat >&2 <<EOF
+=== TELETHON SESSION LOCKED ===
+  session: $TG_SESSION
+  holder pid: $HOLDER_PID
+  holder cmd: $HOLDER_CMD
+
+  another process is holding this session's SQLite db. Telethon allows
+  only one client per session at a time. Either:
+    1. stop the existing holder:  kill $HOLDER_PID
+    2. use a different session:   contract telegram-poll --session <other-path> ...
+    3. wait for the holder to exit, then retry.
+
+  if you just want to send ONE message, use --once and pick a different
+  session to avoid contention with a long-running poller.
+EOF
+        exit 4
+      fi
+    fi
     TG_CHAT_ID="$TG_CHAT_ID" TG_USERNAME="$TG_USERNAME" TG_RESOLVE="$TG_RESOLVE" \
     TG_SESSION="$TG_SESSION" TG_INTERVAL="$TG_INTERVAL" \
     TG_ONCE="$TG_ONCE" TG_INBOUND_ONLY="$TG_INBOUND_ONLY" \
