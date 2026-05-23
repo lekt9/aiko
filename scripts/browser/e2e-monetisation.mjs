@@ -105,24 +105,18 @@ console.log("attaching pm_card_visa to customer…");
 const pm = await stripeApi(`/payment_methods/pm_card_visa/attach`, { customer: customer.id });
 await stripeApi(`/customers/${customer.id}`, { "invoice_settings[default_payment_method]": pm.id });
 
-// Create the subscription — this fires customer.subscription.created with metadata.sauros_uid
+// Create the subscription — pm_card_visa is now the default_payment_method,
+// so Stripe auto-charges the first invoice in test mode and the sub goes
+// straight to `active`. customer.subscription.created fires with metadata.sauros_uid.
 console.log("creating subscription on price_pro with metadata[sauros_uid]…");
 const sub = await stripeApi(`/subscriptions`, {
   customer: customer.id,
   "items[0][price]": PRICE_PRO,
   "metadata[sauros_uid]": UID,
-  "metadata[app]": "sauros",
-  "payment_behavior": "default_incomplete",
-  "expand[0]": "latest_invoice.payment_intent"
+  "metadata[app]": "sauros"
 });
 assert("subscription created", !!sub.id, `${sub.id} status=${sub.status}`);
-
-// Pay the first invoice with our PM (Stripe API in test mode happily settles)
-if (sub.latest_invoice && typeof sub.latest_invoice === 'object' && sub.latest_invoice.payment_intent) {
-  const pi = sub.latest_invoice.payment_intent;
-  console.log(`confirming payment_intent ${pi.id}…`);
-  await stripeApi(`/payment_intents/${pi.id}/confirm`, { payment_method: pm.id }).catch(e => console.log("  (already auto-confirmed)", e.message));
-}
+assert("subscription went to active",  sub.status === "active" || sub.status === "trialing", sub.status);
 
 // ── 4. Poll /api/billing/me until webhook flips us to Pro ───────────────
 console.log("waiting for webhook propagation…");
