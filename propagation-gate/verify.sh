@@ -5,7 +5,7 @@
 set -uo pipefail
 C="$HOME/.claude/skills/contract/scripts/contract"
 LIB="$HOME/.claude/skills/contract/scripts/lib"
-export CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl"
+export CONTRACTS_STORE="${CONTRACTS_STORE:-$HOME/.contracts/contracts.jsonl}"
 N="propgate_selftest_$$"
 
 P=$(bash "$C" declare "$N parent organ" --action funnel 2>/dev/null | awk '/^declared:/{print $2}')

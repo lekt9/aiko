@@ -4,7 +4,7 @@ set -uo pipefail
 DETECT="$HOME/.claude/skills/contract/scripts/contract-habit-detect.py"
 CONTRACT="$HOME/.claude/skills/contract/scripts/contract"
 LIB="$HOME/.claude/skills/contract/scripts/lib"
-export CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl"
+export CONTRACTS_STORE="${CONTRACTS_STORE:-$HOME/.contracts/contracts.jsonl}"
 
 # 1. BM25 idf property: a doc with a RARE query term must outscore a doc
 #    stuffed with a COMMON one. Bare token-overlap would rank them the other

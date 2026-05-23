@@ -4,7 +4,7 @@
 set -uo pipefail
 C="$HOME/.claude/skills/contract/scripts/contract"
 LIB="$HOME/.claude/skills/contract/scripts/lib"
-export CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl"
+export CONTRACTS_STORE="${CONTRACTS_STORE:-$HOME/.contracts/contracts.jsonl}"
 N="budgetgate_selftest_$$"
 
 ID=$(bash "$C" declare "$N budget probe contract" --action agent-judges --budget 2 2>/dev/null \

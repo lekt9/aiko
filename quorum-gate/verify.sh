@@ -3,7 +3,7 @@
 # K satisfied children, strictly between funnel (K=N) and funnel-first (K=1).
 set -uo pipefail
 C="$HOME/.claude/skills/contract/scripts/contract"
-export CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl"
+export CONTRACTS_STORE="${CONTRACTS_STORE:-$HOME/.contracts/contracts.jsonl}"
 N="quorumgate_selftest_$$"
 
 ORG=$(bash "$C" declare "$N quorum organ probe" --action quorum:2 2>/dev/null \

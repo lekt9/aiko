@@ -11,7 +11,7 @@ set -uo pipefail
 CONTRACT="$HOME/.claude/skills/contract/scripts/contract"
 LIB="$HOME/.claude/skills/contract/scripts/lib"
 DETECT="$HOME/.claude/skills/contract/scripts/contract-habit-detect.py"
-export CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl"
+export CONTRACTS_STORE="${CONTRACTS_STORE:-$HOME/.contracts/contracts.jsonl}"
 NONCE="lifecyclegate_selftest_$$"
 
 # 1. declare contract A on a unique claim.

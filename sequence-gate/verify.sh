@@ -4,7 +4,7 @@
 # stage is satisfied.
 set -uo pipefail
 C="$HOME/.claude/skills/contract/scripts/contract"
-export CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl"
+export CONTRACTS_STORE="${CONTRACTS_STORE:-$HOME/.contracts/contracts.jsonl}"
 N="seqgate_selftest_$$"
 
 ORG=$(bash "$C" declare "$N sequence organ probe" --action sequence 2>/dev/null \
