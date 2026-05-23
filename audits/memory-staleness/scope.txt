@@ -1,0 +1,2 @@
+# Scope: where this rule applies.
+~/.claude/projects/*/memory
