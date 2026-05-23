@@ -3900,3 +3900,5 @@
 {"event": "satisfied", "id": "54f447e0", "wave": 0, "ts": "2026-05-23T06:40:09.143956Z", "agent": "lewistham9x@gmail.com"}
 {"event": "satisfied", "id": "0bc383d0", "wave": 0, "ts": "2026-05-23T06:40:09.668336Z", "agent": "lewistham9x@gmail.com"}
 {"event": "crystallized", "id": "0bc383d0", "memory_path": "/Users/lekt9/.claude/projects/-Users-lekt9-Projects-unreel/memory/resolution-propagation-needs-a-substrate-enforced-refractory.md", "outline_url": "https://docs.getfoundry.app/doc/resolution-propagation-needs-a-substrate-enforced-refractory-pause-key-q97QPfnpnX", "ts": "2026-05-23T06:40:09.998803Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "54932390", "plan": "self-test guard for the tool-guard verify harness", "action": "tool-guard:__contract_toolguard_selftest__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": null, "pointers": [], "ts": "2026-05-23T06:40:26.214846Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "54932390", "wave": 0, "ts": "2026-05-23T06:40:30.187676Z", "agent": "lewistham9x@gmail.com"}
