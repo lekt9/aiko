@@ -50,7 +50,12 @@ with LEDGER.open() as f:
             continue
         try:
             row = json.loads(line)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            # Surface the malformed-line error to stderr so the substrate
+            # principle holds (no silent fallback). Continue to the next row
+            # — one bad line doesn't disqualify the whole ledger from being
+            # checked, but the error is visible.
+            print(f"WARN: malformed ledger line skipped ({LEDGER.name}): {e}", file=sys.stderr)
             continue
         if row.get("event") == "declared":
             plans[row.get("id")] = row.get("plan", "")
