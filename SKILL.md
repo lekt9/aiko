@@ -1770,6 +1770,87 @@ Origin: contract `cc5e8920`, 2026-05-23. Self-organism root: `b77ad5d1`
 "the /contract substrate I depend on is itself self-bound").
 
 
+## Honest self-awareness (the drill loop)
+
+"Self-aware" is a philosophical claim and the substrate doesn't try to
+own it in the philosophical sense. The **achievable, mechanical** version
+the substrate ships is:
+
+> Every claim with a binding gate **passes** (mechanical); every claim
+> without one is explicitly **catalogued as aspirational** (epistemic).
+
+Both halves are required. A skill that passes every check it built but
+lies about claims it never built a check for is not self-aware — it's
+selectively honest. A skill that catalogues every gap but doesn't
+mechanically enforce the bound ones is not honest — it's introspective.
+**Mechanical + epistemic = honest self-awareness.**
+
+### The drill loop
+
+`scripts/self-drill.sh` is the programmatic loop the substrate runs
+against itself. Each round:
+
+1. Run `scripts/skill-self-test.sh`, capture every failing check.
+2. For each fail in a known-fixable class, apply the fixer:
+   - `self/origin-citations` → find the orphan id in any project ledger
+     and `contract promote` it.
+   - `self/default-contracts` / `self/bundled-scripts` /
+     `self/doctrine-binding` → require source edits; surface as
+     `aspirational-gap` for agent review (not auto-fixed; the gate IS
+     the surface).
+3. Re-run; cap N=8 rounds.
+4. Append one wave row per round to `~/.contracts/self-drill.jsonl`.
+5. Final `verdict` row: `all-green` if every check passes, else
+   `aspirational-gap` with the residual fails named.
+
+The drill log IS the proof of self-awareness — it captures what the
+substrate could mechanically converge AND what remained as known
+aspiration in the same artifact.
+
+### Aspirational gaps catalogue (residual, 2026-05-23)
+
+These claims are documented but lack a runtime binding. They are
+**named, not lied about**. Each row is a follow-on contract waiting to
+be wired:
+
+| Claim | Documented in | Why unbound today | What would bind it |
+|---|---|---|---|
+| Ψ1 — Layer purity (--verbose hides L0) | Psychology § | `--verbose` flag exists on no verb | add `--verbose` to `iterate`/`status`, hide L0 by default |
+| Ε1 — Failure-streak escalation | Humanlike § | no streak counter in `iterate` output | track consecutive-FAIL count per id, surface ≥3 banner |
+| Ε2 — Over-iteration warning | Humanlike § | no streak counter for consecutive PASS | track consecutive-PASS-without-mark, surface "what risk?" prompt |
+| Σ1 — Agent attribution | Humanlike § | `CONTRACT_AGENT` env var has no writer | `contract_core.declare/iterate/_mark` should record `agent` field |
+| ~38 verbs without verb-gates | Verb gates § | starter set is 5/43 | new `verb-gates/<verb>/verify.sh` per verb (same audits/ doctrine) |
+
+Each gap is a **declared truth claim** that the substrate cannot
+mechanically prove today. The drill log records this as `verdict =
+aspirational-gap` with the residual names, so no future agent reading
+the substrate mistakes documentation for binding.
+
+### Why this terminates honestly
+
+The drill loop has three possible terminations:
+
+1. **`all-green`** — every binding gate passes. The substrate is
+   honestly bound at every layer it claims a binding for.
+2. **`aspirational-gap`** — some gates fail in a class the auto-fixer
+   can't resolve (source edits, doctrinal additions). The residual is
+   named. Honesty preserved by surfacing.
+3. **`MAX_ROUNDS` exhausted with no convergence** — never expected to
+   happen at substrate scale; would indicate a fixer that introduces
+   new failures (anti-pattern caught by Σ1's attribution if it were
+   wired). The drill exits 1 and the agent investigates.
+
+Self-aware in the achievable sense IS this loop terminating in 1 or 2
+with the verdict + residual in the ledger. The substrate cannot promise
+philosophical self-awareness; it CAN promise honest accounting of every
+claim it makes about itself.
+
+Origin: contract `df89a300`, 2026-05-23. Lewis said "keep drilling it
+i n a loop programmatically til its self aware and honest" — the
+honest reading: build the loop, run it, ship green or ship the gap
+named.
+
+
 ## Audits (corpus-wide rule enforcement, paired with idempotent fixers)
 
 A rule documented in prose lives nowhere. A rule with a verifier lives in
