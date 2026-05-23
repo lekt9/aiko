@@ -91,6 +91,9 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--min-text") minText = parseInt(args[++i], 10);
   else if (a === "--no-default-expect-not") useDefaultExpectNot = false;
   else if (a === "--keep-html") keepHtml = true;
+  else if (a === "--walk") walk = true;
+  else if (a === "--walk-include") walkInclude = new RegExp(args[++i]);
+  else if (a === "--walk-exclude") walkExclude = new RegExp(args[++i]);
   else urls.push(a);
 }
 
