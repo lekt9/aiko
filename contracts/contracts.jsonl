@@ -5844,3 +5844,5 @@
 {"event": "iterated", "id": "fe987dc2", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T17:46:29.259564Z", "agent": "lewistham9x@gmail.com"}
 {"event": "satisfied", "id": "7f64df91", "wave": 0, "ts": "2026-05-23T17:47:56.568364Z", "proof": "emunah.pages.dev returned HTTP 200 on auto-iterate probe at registration time", "agent": "lewistham9x@gmail.com"}
 {"event": "satisfied", "id": "b74dd8f5", "wave": 0, "ts": "2026-05-23T17:48:27.723402Z", "proof": "R2 videos/the-beasts-mark-v3.mp4 served HTTP 200 via /r/ worker with browser UA on auto-iterate", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "87c9fb31", "wave": 0, "ts": "2026-05-23T17:48:58.624452Z", "proof": "D1 query SELECT COUNT(*) FROM books WHERE status=published returned 15 (matches expected, no drift)", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "4b130d88", "wave": 0, "ts": "2026-05-23T17:49:29.056808Z", "proof": "FAL key at ~/.config/fal/api-key authenticated against fal queue with non-error response", "agent": "lewistham9x@gmail.com"}
