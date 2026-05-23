@@ -1548,7 +1548,7 @@ USAGE
     fi
     MH_JID="$JUDGE_ID" _py_inline "
 import os, json, urllib.request, urllib.error, pathlib, sys
-from contract_core import get, _load
+from contract_core import get, _store_path
 
 jid = os.environ['MH_JID']
 row = get(jid)
@@ -1570,11 +1570,21 @@ if not url or not key:
     print('  set env or write {url,key,model} to ~/.config/contract/llm.json', file=sys.stderr)
     sys.exit(2)
 
-# Get the most recent iterate row's action_result for this contract
+# Get the most recent iterate row's action_result for this contract by
+# reading the ledger directly — keeps the substrate's only-writer rule
+# intact (contract_core writes; everyone else reads the file).
 recent = ''
-for r in _load():
-    if r.get('event') == 'iterated' and r.get('id') == jid:
-        recent = r.get('action_result') or recent
+try:
+    p = pathlib.Path(_store_path() if callable(_store_path) else str(_store_path))
+except Exception:
+    p = pathlib.Path.home() / '.contracts' / 'contracts.jsonl'
+if p.exists():
+    for line in p.read_text().splitlines():
+        if not line.strip(): continue
+        try: r = json.loads(line)
+        except: continue
+        if r.get('event') == 'iterated' and r.get('id') == jid:
+            recent = r.get('action_result') or recent
 plan = row.get('plan', '')
 action = row.get('action', '')
 
