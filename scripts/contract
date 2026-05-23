@@ -654,6 +654,49 @@ print(plan_quality_warning(os.environ['MH_PLAN']))
     if [ -n "$PLAN_WARN" ]; then
       echo "  Α1 plan-quality: $PLAN_WARN"
     fi
+    # Π5 — cross-layer reach check. When --action is contract:<other> OR
+    # --parent <other>, compare the layer delta vs the new contract's
+    # inferred/explicit layer. Soft-warning by default; refusal under
+    # CONTRACT_LAYER_STRICT=1 unless --pierce <target-layer> authorizes it.
+    PI5_VIOLATION=$(MH_ACT="$ACTION" MH_LAYER="$LAYER" MH_PARENT="$PARENT" MH_PIERCE="$PIERCE" _py_inline "
+import os
+from contract_core import _infer_layer, get, layer_name
+act = os.environ['MH_ACT']
+my_layer = int(os.environ['MH_LAYER']) if os.environ.get('MH_LAYER') else _infer_layer(act)
+pierce_raw = os.environ.get('MH_PIERCE','')
+pierced = set(int(x) for x in pierce_raw.split(',') if x.strip())
+violations = []
+# Resolve every contract: reference in the action, plus the parent
+refs = []
+if act.startswith('contract:'): refs.append(act.split(':',1)[1])
+parent = os.environ.get('MH_PARENT')
+if parent: refs.append(parent)
+for ref in refs:
+    target = get(ref)
+    if not target: continue
+    tl = int(target.get('layer', 3))
+    # Rule: a contract at layer N may reach layers N or N+1 freely
+    # (cells call binaries: 2→1 OK; graph composes cells: 3→2 OK; etc.)
+    delta = my_layer - tl
+    if delta < -1 or delta > 1:
+        if tl in pierced: continue
+        violations.append(f'L{my_layer}({layer_name(my_layer)}) → L{tl}({layer_name(tl)}) via {ref}')
+if violations:
+    print('|'.join(violations))
+")
+    if [ -n "$PI5_VIOLATION" ]; then
+      echo "  ⚠ Π5 cross-layer reach (soft warning by default; CONTRACT_LAYER_STRICT=1 refuses):"
+      IFS='|' read -ra V_ARR <<< "$PI5_VIOLATION"
+      for v in "${V_ARR[@]}"; do echo "      $v"; done
+      echo "      (authorize with --pierce <target-layer>; passes silently and writes pierced_layers on the row)"
+      if [ "${CONTRACT_LAYER_STRICT:-0}" = "1" ]; then
+        echo "" >&2
+        echo "=== LAYER VIOLATION (Π5 strict) ===" >&2
+        echo "  refused: declared layer reaches across more than +/-1 without --pierce authorization" >&2
+        for v in "${V_ARR[@]}"; do echo "    $v" >&2; done
+        exit 2
+      fi
+    fi
     ID=$(MH_PLAN="$PLAN" MH_ACTION="$ACTION" MH_PARENT="$PARENT" MH_POINTERS="$POINTERS" MH_LEARNING="$LEARNING" MH_BUDGET="${BUDGET:-}" MH_BIND_TO="$BIND_TO" MH_INHIBITS="$INHIBITS" MH_AUDIENCE="$AUDIENCE" MH_LAYER="$LAYER" MH_PIERCE="$PIERCE" _py_inline "
 import os; from contract_core import declare
 p = os.environ.get('MH_PARENT') or None
