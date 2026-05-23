@@ -20,7 +20,8 @@ Core job: declare a truth claim, iterate until genuinely satisfied, spawn childr
 | "what contracts exist" | `contract list` or `contract status [<id>]` |
 | "is this a recurring pattern?" | `contract search` |
 | "convert past patterns" / "don't lose this in the refactor" | `contract import <source>` |
-| any invocation | read `ledgers/contracts.jsonl` — it is the only truth |
+
+On any invocation: read `ledgers/contracts.jsonl` — it is the only truth. The full verb list (38+) is discoverable via `contract self`; the table above is the load-bearing front door (Ψ2, working-memory cap).
 
 
 ## Architecture (L0-L2)
