@@ -259,7 +259,7 @@ print(c['status'] if c else 'not-found')
         echo ""
         echo "  Render this block per transport:"
         echo "    Telegram → sendInvoice (XTR Stars or Stripe-via-Telegram) using body.pay_url + amount"
-        echo "    Web      → x402 wallet prompt (Flex facilitator → USDC tx)"
+        echo "    Web      → wallet payment prompt (Flex facilitator → USDC tx)"
         echo "    Panel    → embed checkout button (unbrowse Stripe hosted page)"
         echo "    Terminal → user opens pay_url in browser, retries iterate after settle"
         echo "  result: FAIL (402 — payment required; user pays via transport, then re-iterate)"
