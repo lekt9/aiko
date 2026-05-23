@@ -10,14 +10,15 @@
 #   - missing flags don't emit usage / non-zero exit
 set -euo pipefail
 
+# Capture REAL home BEFORE we swap HOME into a tempdir for isolation
+REAL_HOME="$HOME"
+CLI="$REAL_HOME/.claude/skills/contract/scripts/contract"
+[ -f "$CLI" ] || { echo "FAIL: cannot locate contract CLI at $CLI"; exit 1; }
+
 TD=$(mktemp -d)
 trap 'rm -rf "$TD"' EXIT
 export HOME="$TD"
 export CONTRACTS_STORE="$TD/contracts.jsonl"
-CLI="/Users/lekt9/.claude/skills/contract/scripts/contract"
-# On tencent the path lives under the real (pre-swap) home — capture it
-[ -f "$CLI" ] || CLI="$(eval echo ~)/.claude/skills/contract/scripts/contract"
-[ -f "$CLI" ] || { echo "FAIL: cannot locate contract CLI"; exit 1; }
 
 # === Phase 0: missing required flags exit non-zero ===
 "$CLI" session register --canonical lewis 2>/dev/null && { echo "FAIL: register without --transport/--client-id should fail"; exit 1; } || true
