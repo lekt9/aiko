@@ -880,6 +880,127 @@ pr(t) if t else print('  contract not found')
     fi
     ;;
 
+  show)
+    # Ψ5 + Π5 — public-internal row view + Π5 layer-tagged read.
+    # Same row in the ledger, two views. Default: WHAT + STATUS + PROOF + LAYER
+    # (the public face). `--internals` adds HOW + HISTORY (action, cwd, wave,
+    # agent, timestamps, pierced_layers). Pointer-not-payload at the row layer.
+    # Origin: contract <PI5_ID>, 2026-05-24.
+    ID=""
+    SHOW_INTERNALS=""
+    JSON_OUT=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --internals|--how) SHOW_INTERNALS="1"; shift ;;
+        --json) JSON_OUT="1"; shift ;;
+        --help|-h)
+          cat >&2 <<'USAGE'
+contract show <id> [--internals] [--json]
+
+Render a contract's public face by default (WHAT + STATUS + PROOF + LAYER).
+Pass --internals to add the HOW block (action, pointer_type, cwd, wave,
+agent, timestamps, pierced_layers). Ψ5 — Layer 7 implementation-hidden
+applied to row reads. Storage is unchanged; only the view partitions.
+USAGE
+          exit 0
+          ;;
+        *) [ -z "$ID" ] && ID="$1"; shift ;;
+      esac
+    done
+    [ -z "$ID" ] && { echo "usage: contract show <id> [--internals] [--json]" >&2; exit 2; }
+    MH_ID="$ID" MH_INT="$SHOW_INTERNALS" MH_JSON="$JSON_OUT" _py_inline "
+import os, sys, json, textwrap
+from contract_core import get, _rows, layer_name
+cid = os.environ['MH_ID']
+c = get(cid)
+if not c:
+    print(f'ERROR: contract {cid} not found', file=sys.stderr); sys.exit(3)
+
+all_rows = list(_rows())
+latest_sat, latest_it, declared_row, latest_judged = None, None, None, None
+for r in all_rows:
+    if r.get('id') != cid: continue
+    ev = r.get('event')
+    if ev == 'declared': declared_row = r
+    elif ev == 'satisfied':
+        if not latest_sat or r.get('ts','') > latest_sat.get('ts',''): latest_sat = r
+    elif ev == 'iterated':
+        if not latest_it or r.get('ts','') > latest_it.get('ts',''): latest_it = r
+    elif ev == 'judged':
+        if not latest_judged or r.get('ts','') > latest_judged.get('ts',''): latest_judged = r
+
+proof = (latest_sat or {}).get('proof') or (latest_sat or {}).get('proof_skip_reason')
+blocked_by = (latest_judged or {}).get('blocked_by') or []
+latest_verdict = (latest_judged or {}).get('verdict')
+public = {
+    'id': cid, 'plan': c.get('plan',''), 'status': c.get('status','pending'),
+    'layer': c.get('layer'), 'layer_name': c.get('layer_name'),
+    'audience': c.get('audience'), 'parent': c.get('parent_id'),
+    'children_count': len(c.get('children') or []), 'bind_to': c.get('bind_to'),
+    'latest_proof': proof, 'latest_verdict': latest_verdict,
+    'blocked_by': blocked_by, 'inhibits': c.get('inhibits'),
+    'pierced_layers': c.get('pierced_layers'),
+}
+internals = None
+if os.environ.get('MH_INT'):
+    internals = {
+        'action': c.get('action'), 'pointer_type': c.get('pointer_type'),
+        'cwd': c.get('cwd'), 'budget': c.get('budget'),
+        'declared_ts': (declared_row or {}).get('ts'), 'agent': c.get('agent'),
+        'wave': c.get('wave', 0),
+        'last_iterated_ts': (latest_it or {}).get('ts'),
+        'last_exit': (latest_it or {}).get('action_exit'),
+        'last_result': (latest_it or {}).get('action_result'),
+        'satisfied_ts': (latest_sat or {}).get('ts'),
+        'merged_into': c.get('merged_into'),
+    }
+
+if os.environ.get('MH_JSON'):
+    out = {'public': public}
+    if internals is not None: out['internals'] = internals
+    print(json.dumps(out, indent=2, default=str)); sys.exit(0)
+
+status = public['status']
+glyph = {'satisfied':'✓','active':'○','pending':'·','merged':'×','rejected':'✗'}.get(status, '?')
+print(f\"=== {cid}  {glyph} {status}  L{public['layer']} {public['layer_name']} ===\")
+print('  WHAT must hold:')
+for line in textwrap.wrap(public['plan'], width=72) or ['(no plan)']:
+    print(f'    {line}')
+if public['audience']:        print(f\"  AUDIENCE:        {', '.join(public['audience'])}\")
+if public['parent']:          print(f\"  PARENT:          {public['parent']}\")
+if public['children_count']:  print(f\"  CHILDREN:        {public['children_count']}\")
+if public['bind_to']:         print(f\"  BIND_TO:         {public['bind_to']}\")
+if public['blocked_by']:      print(f\"  BLOCKED_BY:      {', '.join(public['blocked_by'])}\")
+if public['inhibits']:        print(f\"  INHIBITS:        {', '.join(public['inhibits'])}\")
+if public['pierced_layers']:  print(f\"  PIERCED_LAYERS:  {public['pierced_layers']}\")
+if public['latest_verdict']:  print(f\"  LATEST VERDICT:  {public['latest_verdict']}\")
+if public['latest_proof']:
+    proof_short = public['latest_proof'][:300] + ('...' if len(public['latest_proof'])>300 else '')
+    print('  LATEST PROOF:')
+    for line in textwrap.wrap(proof_short, width=72):
+        print(f'    {line}')
+if internals is not None:
+    print()
+    print('  --- HOW (Ψ5 internals — implementation surface) ---')
+    if internals['action']:
+        a = internals['action']; print(f'  action:          {a[:64]}' + ('...' if len(a)>64 else ''))
+    if internals['pointer_type']:    print(f\"  pointer_type:    {internals['pointer_type']}\")
+    if internals['cwd']:             print(f\"  cwd:             {internals['cwd']}\")
+    if internals['budget']:          print(f\"  budget:          {internals['budget']}\")
+    if internals['declared_ts']:     print(f\"  declared_ts:     {internals['declared_ts']}\")
+    if internals['agent']:           print(f\"  agent:           {internals['agent']}\")
+    print(f\"  wave:            {internals['wave']}\")
+    if internals['last_iterated_ts']: print(f\"  last_iterated:   {internals['last_iterated_ts']}\")
+    if internals['last_exit'] is not None:
+        print(f\"  last_exit:       {internals['last_exit']} ({internals.get('last_result') or ''})\")
+    if internals['satisfied_ts']:    print(f\"  satisfied_ts:    {internals['satisfied_ts']}\")
+    if internals['merged_into']:     print(f\"  merged_into:     {internals['merged_into']}\")
+else:
+    print()
+    print('  (use --internals to surface the HOW block: action, cwd, wave, agent, timestamps)')
+"
+    ;;
+
   tail)
     # contract tail <id> [--since-start] — follow ~/.contracts/streams/<id>/stdout.log
     # in real time. The substrate exposes the path convention; the action's job is
