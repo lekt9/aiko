@@ -407,12 +407,132 @@ def _team_cache() -> set:
 
 
 def is_team_member(viewer: str) -> bool:
-    """True iff viewer's canonical identity (Σ3 alias-resolved) has ever
-    declared a contract in this ledger. The bot is NOT a team member unless
-    its identity (or one of its aliases) appears in the agent column."""
+    """True iff viewer's canonical identity (Σ3 alias-resolved) is either:
+      - in the agent column (has declared a contract) — original team source
+      - OR is an invitee in any `invite` row — the viral allowlist (Σ5)
+
+    The bot is NOT a team member unless its identity (or one of its aliases)
+    appears in either set."""
     if not viewer:
         return False
-    return resolve_identity(viewer) in _team_cache()
+    canon = resolve_identity(viewer)
+    if canon in _team_cache():
+        return True
+    # Σ5 extension: invitees are allowlisted into the team set once they
+    # have at least one `invite` row pointing to them. Inviter must already
+    # be team (enforced at record_invite time), so the chain stays clean.
+    return canon in _invitee_cache()
+
+
+# ── Σ5: invite-cap allowlist ──
+_INVITEE_CACHE: Optional[set] = None
+INVITE_CAP_PER_INVITER = 2  # "give access to 2 more people" (Lewis 2026-05-23)
+
+
+def _invitee_cache() -> set:
+    """Set of canonical identities that have been invited by an existing
+    team member. Σ3-canonicalized so an invitee's aliases resolve to the
+    same membership.
+
+    Reset by `record_invite` after every write (cache busts via the same
+    pattern as _TEAM_CACHE/_ALIAS_CACHE)."""
+    global _INVITEE_CACHE
+    if _INVITEE_CACHE is not None:
+        return _INVITEE_CACHE
+    invitees = set()
+    for row in _rows():
+        if row.get("event") == "invite":
+            inv = (row.get("invitee") or "").strip()
+            if inv:
+                invitees.add(resolve_identity(inv))
+    _INVITEE_CACHE = invitees
+    return invitees
+
+
+def count_invites_by(inviter: str) -> int:
+    """How many active `invite` rows name this inviter (Σ3-canonicalized).
+    A row that has been superseded does NOT count — selection lets an
+    inviter swap one invitee for another without burning a slot. Active =
+    not present in the merged-rows set."""
+    if not inviter:
+        return 0
+    canon_inviter = resolve_identity(inviter)
+    # Build merged-out set once so superseded rows are excluded.
+    merged_out = set()
+    for row in _rows():
+        if row.get("event") == "merged" and row.get("id"):
+            merged_out.add(row["id"])
+    count = 0
+    for row in _rows():
+        if row.get("event") != "invite":
+            continue
+        if row.get("invite_id") in merged_out:
+            continue
+        if resolve_identity(row.get("inviter") or "") == canon_inviter:
+            count += 1
+    return count
+
+
+def record_invite(invitee: str) -> tuple[str, str]:
+    """Σ5 — record an invite from current_agent() to <invitee>.
+
+    Enforced rules (refused with ValueError if violated):
+      1. The inviter (current canonical) MUST be a team member (Σ2 sense:
+         in the agent column OR already an invitee). Bootstraps from the
+         declarer set; no invite from a stranger.
+      2. The inviter MUST have fewer than INVITE_CAP_PER_INVITER active
+         invites already (default 2). Superseded invites don't count.
+      3. The invitee MUST NOT already be a team member or invitee — no
+         re-inviting an existing member; supersession is the explicit
+         path to swap.
+      4. inviter != invitee (Σ3-canonical). No self-invites.
+
+    Returns (invite_row_id, inviter_canonical) on success. The row has a
+    unique `invite_id` field separate from `id` so the standard `id`-keyed
+    walkers don't accidentally collide with declared contract ids."""
+    inviter = current_agent()
+    if not inviter:
+        raise ValueError("no current_agent — set CONTRACT_AGENT or git config user.email")
+    canon_inviter = resolve_identity(inviter)
+    canon_invitee = resolve_identity(invitee) if invitee else ""
+    if not canon_invitee:
+        raise ValueError("invitee identity is required")
+    if canon_inviter == canon_invitee:
+        raise ValueError(f"can't invite yourself ({canon_inviter})")
+    # Rule 1: inviter must be team
+    if not is_team_member(inviter):
+        raise ValueError(
+            f"inviter {canon_inviter!r} is not a team member — "
+            "only allowlisted users can invite (Σ5 bootstrap)"
+        )
+    # Rule 3: invitee must not already be in the allowlist
+    if is_team_member(invitee):
+        raise ValueError(
+            f"invitee {canon_invitee!r} is already a team member or invitee — "
+            "supersede the existing invite to swap"
+        )
+    # Rule 2: inviter must not be at the cap
+    used = count_invites_by(inviter)
+    if used >= INVITE_CAP_PER_INVITER:
+        raise ValueError(
+            f"inviter {canon_inviter!r} has {used}/{INVITE_CAP_PER_INVITER} "
+            f"active invites — cap reached (supersede an existing invite to free a slot)"
+        )
+    invite_id = str(uuid.uuid4())[:8]
+    row = {
+        "event": "invite",
+        "invite_id": invite_id,
+        "inviter": canon_inviter,
+        "invitee": canon_invitee,
+        "ts": _now(),
+    }
+    _append(row)
+    # Bust both caches: a new invitee joins the team set, and the invitee
+    # cache obviously needs the new row.
+    global _TEAM_CACHE, _INVITEE_CACHE
+    _TEAM_CACHE = None
+    _INVITEE_CACHE = None
+    return invite_id, canon_inviter
 
 
 def active_inhibitors(target_id: str) -> list[str]:
