@@ -266,8 +266,18 @@ print(c['status'] if c else 'not-found')
         return 1
         ;;
       401)
-        echo "  result: FAIL (HTTP 401 — auth required; set UNBROWSE_API_KEY or ~/.config/unbrowse/api-key)"
-        echo "  body:   $(printf '%s' "$x402_body" | head -c 200)"
+        echo ""
+        echo "  === SIGN-IN REQUIRED ==="
+        echo "  upstream: $x402_url"
+        echo "  status:   401"
+        echo "  body:     $x402_body"
+        echo ""
+        echo "  Render this block per transport (same shape as PAYMENT REQUIRED):"
+        echo "    Telegram → inline keyboard with a 'Sign in' button → magic-link URL"
+        echo "    Web      → OAuth/magic-link prompt rendered in-page"
+        echo "    Panel    → embedded sign-in card with Privy magic-link button"
+        echo "    Terminal → user opens sign-in URL, retries iterate after auth"
+        echo "  result: FAIL (401 — sign-in needed; set UNBROWSE_API_KEY after auth, then re-iterate)"
         return 1
         ;;
       "")
