@@ -472,6 +472,10 @@ def get(id: str) -> Optional[dict]:
         # Surface audience on the projection so downstream filters (Σ2
         # visibility) can consult it without re-reading the declared row.
         result["audience"] = list(declared["audience"])
+    if declared.get("agent"):
+        # Σ1 attribution surfaced for Σ2 visibility (private tier needs to
+        # compare declarer.agent against viewer).
+        result["agent"] = declared["agent"]
     return result
 def get_tree(id: str, depth: int = 0) -> Optional[dict]:
     c = get(id)
