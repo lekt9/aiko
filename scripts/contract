@@ -1143,6 +1143,82 @@ else:
 "
     ;;
 
+  sync)
+    # contract sync [<dir>] [--message "<msg>"] [--no-push] — git add . + commit
+    # + push to gitea for the target dir (defaults to $PWD). Delegates first-time
+    # gitea-repo creation + remote-add to ~/.claude/skills/gitea-mirror/bin/mirror.sh
+    # (the canonical gitea engine — token from keychain, Tailscale-only URL).
+    #
+    # Composes with ffdf4eac (commit-on-touch doctrine): every /contract turn that
+    # touches code on disk can close with `contract sync` and the working tree
+    # lands on gitea programmatically. The substrate enables the action; the agent
+    # judges WHEN to call it (no auto-fire — that would violate C-O01).
+    DIR="$PWD"
+    MSG=""
+    DO_PUSH=1
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --dir)        DIR="${2:-$PWD}"; shift 2 ;;
+        --message|-m) MSG="${2:-}"; shift 2 ;;
+        --no-push)    DO_PUSH=0; shift ;;
+        --help|-h)
+          cat >&2 <<'USAGE'
+contract sync [<dir>] [--message "<msg>"] [--no-push]
+
+git add . + commit + push to gitea for the target directory.
+
+  <dir>          Repo to sync. Default: $PWD.
+  --message      Commit message. Default: auto.
+  --no-push      Stage + commit only; skip the push.
+
+First-time gitea-remote setup is delegated to gitea-mirror/bin/mirror.sh.
+Token loaded from macOS keychain (service=GITEA_TOKEN account=lekt8) or
+GITEA_TOKEN env.
+USAGE
+          exit 0
+          ;;
+        --*) shift ;;
+        *) DIR="$1"; shift ;;
+      esac
+    done
+    [ -d "$DIR" ] || { echo "ERROR: directory $DIR not found" >&2; exit 2; }
+    if [ ! -d "$DIR/.git" ]; then
+      echo "  $DIR is not a git repo — initializing..." >&2
+      git -C "$DIR" init -q >&2 || { echo "ERROR: git init failed" >&2; exit 2; }
+    fi
+    # Auto-load GITEA_TOKEN from keychain (macOS) if not in env
+    if [ -z "${GITEA_TOKEN:-}" ] && command -v security >/dev/null 2>&1; then
+      _kc=$(security find-generic-password -a lekt8 -s GITEA_TOKEN -w 2>/dev/null || true)
+      [ -n "$_kc" ] && export GITEA_TOKEN="$_kc"
+    fi
+    # Stage + commit (idempotent — nothing-to-commit is fine)
+    git -C "$DIR" add -A
+    if git -C "$DIR" diff --cached --quiet 2>/dev/null; then
+      echo "  (no staged changes — working tree clean)"
+    else
+      TS=$(date -u +%FT%TZ)
+      DIRNAME=$(basename "$DIR")
+      [ -z "$MSG" ] && MSG="contract: sync $DIRNAME $TS"
+      git -C "$DIR" commit -q -m "$MSG" >&2 || { echo "ERROR: commit failed" >&2; exit 1; }
+      echo "  committed: $(git -C "$DIR" log -1 --oneline 2>/dev/null)"
+    fi
+    [ "$DO_PUSH" = "0" ] && exit 0
+    # Push to gitea — ensure remote exists; delegate first-time setup to mirror.sh
+    if ! git -C "$DIR" remote get-url gitea >/dev/null 2>&1; then
+      [ -z "${GITEA_TOKEN:-}" ] && { echo "ERROR: no gitea remote, no GITEA_TOKEN. Set it or pre-stage with gitea-mirror." >&2; exit 2; }
+      echo "  no gitea remote — setting up via gitea-mirror/bin/mirror.sh..."
+      bash ~/.claude/skills/gitea-mirror/bin/mirror.sh "$DIR" 2>&1 | tail -5
+    else
+      BRANCH=$(git -C "$DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)
+      if git -C "$DIR" push gitea "$BRANCH" 2>&1 | tail -3; then
+        echo "  pushed: $BRANCH → gitea"
+      else
+        echo "  PUSH FAILED" >&2
+        exit 1
+      fi
+    fi
+    ;;
+
   tail)
     # contract tail <id> [--since-start] — follow ~/.contracts/streams/<id>/stdout.log
     # in real time. The substrate exposes the path convention; the action's job is
