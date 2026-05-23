@@ -1058,6 +1058,7 @@ if os.environ.get('MH_INT'):
 if os.environ.get('MH_JSON'):
     out = {'public': public}
     if internals is not None: out['internals'] = internals
+    if context is not None: out['context'] = context
     print(json.dumps(out, indent=2, default=str)); sys.exit(0)
 
 status = public['status']
