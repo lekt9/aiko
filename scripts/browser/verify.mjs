@@ -272,11 +272,16 @@ try {
   await browser.close();
 }
 
-console.log(`served-surface+empathy · urls=${out.urls.length} · total_errors=${out.errors}`);
+console.log(
+  `served-surface+empathy${walk ? "+walk" : ""} · urls=${out.urls.length}` +
+  (walk ? ` (incl ${out.walked} walked)` : "") +
+  ` · total_errors=${out.errors}`,
+);
 for (const u of out.urls) {
   const tag = u.ok ? "✓" : "✗";
+  const walkedTag = u.walked ? " [walked]" : "";
   console.log(
-    `  ${tag} ${u.url}  (${u.ms}ms, text=${u.text_len}${u.errors.length ? `, ${u.errors.length} err` : ""})`,
+    `  ${tag} ${u.url}${walkedTag}  (${u.ms}ms, text=${u.text_len}${u.errors.length ? `, ${u.errors.length} err` : ""})`,
   );
   for (const e of u.errors.slice(0, 12)) {
     const msg = e.message.length > 240 ? e.message.slice(0, 240) + " …" : e.message;
