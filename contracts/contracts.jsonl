@@ -5072,3 +5072,18 @@
 {"event":"iterated","id":"45734a6d","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T11:52:41Z"}
 {"event":"iterated","id":"2d8c79b2","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T11:53:15Z"}
 {"event":"iterated","id":"b50c0ed3","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T11:53:16Z"}
+{"event":"iterated","id":"42d2d43a","wave":1,"action_exit":1,"action_result":"fail","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T11:53:17Z"}
+{"event":"satisfied","id":"ae6cb8eb","wave":1,"ts":"2026-05-23T11:53:17Z"}
+{"event":"status_update","id":"ae6cb8eb","status":"satisfied","ts":"2026-05-23T11:53:17Z"}
+{"event":"satisfied","id":"45734a6d","wave":1,"ts":"2026-05-23T11:53:18Z"}
+{"event":"status_update","id":"45734a6d","status":"satisfied","ts":"2026-05-23T11:53:18Z"}
+{"event":"satisfied","id":"2d8c79b2","wave":1,"ts":"2026-05-23T11:53:18Z"}
+{"event":"status_update","id":"2d8c79b2","status":"satisfied","ts":"2026-05-23T11:53:18Z"}
+{"event":"satisfied","id":"b50c0ed3","wave":1,"ts":"2026-05-23T11:53:19Z"}
+{"event":"status_update","id":"b50c0ed3","status":"satisfied","ts":"2026-05-23T11:53:19Z"}
+{"event":"satisfied","id":"42d2d43a","wave":1,"ts":"2026-05-23T11:53:20Z"}
+{"event":"status_update","id":"42d2d43a","status":"satisfied","ts":"2026-05-23T11:53:20Z"}
+{"event": "declared", "id": "e458520c", "plan": "self-test guard for the tool-guard verify harness (88515_797000)", "action": "tool-guard:__contract_toolguard_selftest_88515_797000__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/Projects/unbrowse-ecosystem", "parent_id": null, "pointers": [], "ts": "2026-05-23T11:53:20.635105Z", "agent": "lewistham9x@gmail.com"}
+{"event":"iterated","id":"c83f5c5e","wave":1,"action_exit":127,"action_result":"fail","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T11:53:20Z"}
+{"event":"satisfied","id":"c83f5c5e","wave":1,"ts":"2026-05-23T11:53:21Z"}
+{"event":"status_update","id":"c83f5c5e","status":"satisfied","ts":"2026-05-23T11:53:21Z"}
