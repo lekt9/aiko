@@ -497,16 +497,12 @@ The ledger is memory. Every failed wave is `learn_from_execution`. Never delete 
 
 A contract's `--action` is always a **pointer** to a capability, not raw data inline. The pointer tells the system WHERE to find the check; never embeds the logic itself.
 
+Pointer types that aren't shapes (shapes are catalogued above):
+
 | Pointer type | `--action` form | What it points to |
 |---|---|---|
 | `cli` | `npm test`, `python3 verify.py` | A local executable or shell command |
 | `api` | `curl https://...`, `https://...` | An HTTP endpoint |
-| `agent-judges` | `agent-judges` | The in-thread agent judgment (no machine action) |
-| `funnel` | `funnel` or `children-satisfy` | All child contracts (AND-gate) |
-| `funnel-first` | `funnel-first` | Any child contract (OR-gate) |
-| `loop` | `loop-until:<cmd>` or bare `loop` | Body command re-run each iterate; loop converges when body exits 0 |
-| `harness` | `harness:<path>` | External harness at `<path>/verify.sh` |
-| `tool-guard` | `tool-guard:<glob>` | A Claude Code PreToolUse hook; blocks any tool whose name matches the glob while the contract is unsatisfied |
 | `contract-ref` | `contract:<id>` | Another contract's satisfaction status |
 
 The `contract:<id>` form is pointer-to-pointer: the action is satisfied when the referenced contract is satisfied. This lets one contract's truth claim depend on another without embedding any logic.
