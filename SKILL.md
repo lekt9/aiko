@@ -1217,6 +1217,127 @@ always so that they can understand how it works with thorough honest
 deferred-but-named server/web/repo pieces together cover the doctrine;
 each downstream piece will land its own contract when it ships.
 
+## Λ1 — runtime-agnostic KEY 2 (any LLM can be the judge)
+
+`contract judge <id>` reads a contract's latest iterate output and asks
+a configured OpenAI-compatible LLM endpoint for a structured PROMOTE /
+HOLD / REJECT verdict. Closes the loop opened by Φ1: where Φ1 streams
+substrate output to an OpenAI client, Λ1 calls an OpenAI endpoint to
+serve KEY 2 in-thread. The substrate becomes truly runtime-agnostic —
+no Claude Code, no Codex, no Cursor required; any LLM that speaks
+`/v1/chat/completions` can do the judging (Venice.ai, OpenAI, Anthropic,
+local llama.cpp, anything).
+
+### Config
+
+Env wins over file:
+
+| Surface | Effect |
+|---|---|
+| `CONTRACT_LLM_URL` env | e.g. `https://api.venice.ai/api/v1` |
+| `CONTRACT_LLM_KEY` env | bearer for the endpoint |
+| `CONTRACT_LLM_MODEL` env | e.g. `venice-uncensored`, `gpt-4o-mini` |
+| `~/.config/contract/llm.json` | `{"url":"...","key":"...","model":"..."}` persistent |
+
+### Exit semantics
+
+| Verdict | Exit | Next |
+|---|---|---|
+| `PROMOTE` | 0 | substrate emits `contract _mark <id> satisfied --proof "Λ1 ..."` hint |
+| `HOLD` | 1 | substrate emits `contract iterate <id>` hint |
+| `REJECT` | 1 | substrate emits `contract supersede` / `revise` hint |
+| missing config / unparseable verdict / unknown id | 2 | no auto-promote on failure |
+
+Verb-gate `verb-gates/judge/verify.sh` binds five phases against a mock
+LLM server: no-config refused, unknown id refused, PROMOTE exits 0 with
+_mark hint, HOLD exits 1 with iterate hint, REJECT exits 1 with
+supersede/revise hint, unparseable verdict refused. The substrate
+NEVER hits any endpoint other than `/chat/completions`.
+
+### Why this matters
+
+Drops the implicit "agent runtime" dependency. Today /contract assumes
+Claude Code (or Codex) holds KEY 2 in-thread. Λ1 lets a `pay.sh` wrapper
+plus a Venice API key be enough to drive iterate-judge-mark loops
+end to end — no chat client required. The substrate's mechanical-and-LLM
+combo IS the agent.
+
+Origin: contract `5b6d24a2`, 2026-05-23. Lewis's ask: "/contract to check
+if we even need an agent runtime or /contract that starts via a binary
+of an llm or even a pay.sh /contract to a api provider from venice might
+even be enough." Answer: no runtime needed; Λ1 lets any LLM endpoint
+serve KEY 2. Binding gate: `verb-gates/judge/verify.sh`.
+
+## Β1 — backtrack-and-capture (deferred items become contract rows, mechanically)
+
+Across a long session the agent keeps naming "deferred", "named-and-
+deferred", "honest gap", "next move that's actually yours" items in
+response prose. Without discipline those items live in the conversation
+only — they vanish on compaction or session end. Lewis's framing: "we
+kept interrupting and /contract that to always happen."
+
+Β1 is the substrate doctrine: **every deferred item named in a /contract
+response gets a declared contract row before the turn yields.** The
+ledger holds the list, not the conversation.
+
+### The discipline
+
+At the end of any /contract turn, the agent scans its own response for
+"deferred", "named-but-not-shipped", "honest gap", "next move", "TODO",
+"future wave" callouts. For each, before emitting the final summary:
+
+```bash
+contract declare "DEFERRED-<scope>: <one-line plan> ... Origin: <doctrine-id>" \
+  --action "agent-judges" --no-drive
+```
+
+The result: every named follow-up survives compaction, surfaces in
+future `contract search` runs, and can be referenced by id from the
+next session.
+
+### Worked example — session 2026-05-23 backtrack
+
+The first application of Β1 captured **12 deferred items** from this
+session as contract rows under root organ `c64b17e0`:
+
+| Slug | Id | Scope |
+|---|---|---|
+| unbrowse-autopay-endpoint | `65cac760` | unbrowse-side `/v1/billing/autopay/charge` (Π2 follow-on) |
+| unbrowse-mirror-endpoint | `3e4abc17` | unbrowse-side `/v1/contracts/mirror` (Π4 follow-on) |
+| unbrowse-chat-completions-route | `15720baa` | unbrowse-side `/v1/chat/completions` (Φ1 follow-on) |
+| unbrowse-landing-chat | `c20337e6` | unbrowse.ai homepage chat client (Φ1 follow-on) |
+| unbrowse-public-security-scope | `828ba2b4` | open-source security-relevant client extraction (Φ1 follow-on) |
+| agent-inbox-auto-append-on-requirement | `c06a3442` | substrate auto-append requirement blocks to canonical inbox (Σ6 follow-on) |
+| docker-silo-per-allowlisted-user | `731af006` | infra C1 — hardware privacy boundary |
+| referral-10pct-revenue-share | `294b265c` | unbrowse-side cut at debit time (Σ5 follow-on) |
+| verb-gate-routed-block | `0db1b0bb` | substrate gate for ROUTED block KV-shape |
+| verb-gate-inhibition-refusal-block | `977a5efb` | substrate gate for INHIBITION REFUSAL block KV-shape |
+| psi1-verbose-flag | `53615eca` | substrate `--verbose` flag (Ψ1 binding) |
+| verb-gates-coverage-rest | `c7057971` | ~30 CLI verbs without dedicated gates |
+
+The Β1 root `c64b17e0` is a funnel with 12 `contract:<id>` children —
+one per deferred item. The funnel resolves only when every deferred
+item has either shipped (its child contract satisfied) or been
+formally superseded. `contract status c64b17e0` shows the live progress.
+`contract search --context "DEFERRED"` surfaces them outside the organ.
+
+### Why the substrate not the memory
+
+Recall files survive sessions but the agent doesn't reliably read them
+back into context. The ledger has gravity: `contract search` runs on
+every `declare`, `contract list` is one command, and the
+`self/origin-citations` self-check catches when a `Β1`-cited id goes
+missing. Putting deferred items in the ledger means they get found
+again automatically; in memory files they only get found if the agent
+remembers to look.
+
+Origin: contract `c64b17e0`, 2026-05-23. Lewis's framing: "so we
+backtrack through this session and /contract all the supposed next
+moves we were supposed to do in parallel because we kept interrupting
+and /contract that to always happen." The first half is the worked
+example above; the second half is this section binding the discipline
+to the substrate's map.
+
 
 ## Concept lineage (genesis .tongues)
 
