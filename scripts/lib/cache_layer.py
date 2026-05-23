@@ -149,7 +149,8 @@ def cli_lookup(contract_id: str, action: str, stdin_data: str,
         # emit the key + user so the caller can write on miss
         print(f"MISS {key} {user}")
         return
-    record_hit(contract_id, entry["source_wave"], entry["_age_s"], user, key)
+    record_hit(contract_id, entry["source_wave"], entry["_age_s"], user, key,
+               int(entry["action_exit"]))
     print(f"HIT {entry['action_exit']} {entry['_age_s']} {entry['source_wave']} {key} {user}")
     print(entry["action_result"])
 
