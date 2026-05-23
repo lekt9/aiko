@@ -90,22 +90,30 @@ def derive_title(slug):
 
 
 def update_memory_index_line(memory_dir, filename, new_title, new_hook):
+    """Update OR insert the MEMORY.md line for filename. Dedupes any
+    additional lines pointing at the same file (an old long entry + a
+    new short entry both linger when an earlier fixer pass appended
+    instead of replacing)."""
     idx = memory_dir / "MEMORY.md"
     if not idx.exists():
         idx.write_text("")
     lines = idx.read_text().splitlines()
     pat = re.compile(rf"^- \[[^\]]+\]\({re.escape(filename)}\)\s+[—-]\s+.+$")
-    found = False
     new_line = f"- [{new_title}]({filename}) — {new_hook}"
-    for i, ln in enumerate(lines):
+    kept = []
+    inserted = False
+    for ln in lines:
         if pat.match(ln.strip()):
-            lines[i] = new_line
-            found = True
-            break
-    if not found:
-        lines.append(new_line)
-    idx.write_text("\n".join(lines) + "\n")
-    return found
+            if not inserted:
+                kept.append(new_line)
+                inserted = True
+            # else: drop duplicate
+        else:
+            kept.append(ln)
+    if not inserted:
+        kept.append(new_line)
+    idx.write_text("\n".join(kept) + "\n")
+    return inserted
 
 
 def fix_file(memory_dir, path, idx_entries, dry_run):
