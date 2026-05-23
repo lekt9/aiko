@@ -2225,18 +2225,26 @@ print(','.join(ids))
 " 2>/dev/null)
       if [ -n "$INH_LIST" ]; then
         echo "=== INHIBITION REFUSAL ==="
-        echo "  refuse to _mark $ID satisfied — active inhibitor(s) are firing:"
+        echo "  contract_id:       $ID"
+        echo "  inhibitor_ids:     $INH_LIST"
+        # Collect plans for each inhibitor as a single comma-joined KV value
+        # so the block parses cleanly through openai-render (one KV per line).
         IFS=',' read -ra INH_ARR <<< "$INH_LIST"
+        INH_PLANS_JOINED=""
         for inh_id in "${INH_ARR[@]}"; do
           INH_PLAN=$(MH_ID="$inh_id" _py_inline "
 import os; from contract_core import get
 c=get(os.environ['MH_ID']); print((c['plan'][:60]) if c else '(unknown)')
 " 2>/dev/null)
-          echo "    inhibitor: $inh_id  \"$INH_PLAN\""
+          if [ -n "$INH_PLANS_JOINED" ]; then
+            INH_PLANS_JOINED="$INH_PLANS_JOINED || $inh_id: $INH_PLAN"
+          else
+            INH_PLANS_JOINED="$inh_id: $INH_PLAN"
+          fi
         done
-        echo
-        echo "  release the inhibition first: supersede or revise each inhibitor."
-        echo "  (an inhibitory contract suppresses downstream firing while itself satisfied.)"
+        echo "  inhibitor_plans:   $INH_PLANS_JOINED"
+        echo "  release_hint:      supersede or revise each inhibitor"
+        echo "  doctrine:          an inhibitory contract suppresses downstream firing while itself satisfied"
         exit 1
       fi
       # PROOF REQUIRED: bare mark refused. Surface the plan as the rule the
