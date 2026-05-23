@@ -654,7 +654,7 @@ print(plan_quality_warning(os.environ['MH_PLAN']))
     if [ -n "$PLAN_WARN" ]; then
       echo "  Α1 plan-quality: $PLAN_WARN"
     fi
-    ID=$(MH_PLAN="$PLAN" MH_ACTION="$ACTION" MH_PARENT="$PARENT" MH_POINTERS="$POINTERS" MH_LEARNING="$LEARNING" MH_BUDGET="${BUDGET:-}" MH_BIND_TO="$BIND_TO" MH_INHIBITS="$INHIBITS" MH_AUDIENCE="$AUDIENCE" _py_inline "
+    ID=$(MH_PLAN="$PLAN" MH_ACTION="$ACTION" MH_PARENT="$PARENT" MH_POINTERS="$POINTERS" MH_LEARNING="$LEARNING" MH_BUDGET="${BUDGET:-}" MH_BIND_TO="$BIND_TO" MH_INHIBITS="$INHIBITS" MH_AUDIENCE="$AUDIENCE" MH_LAYER="$LAYER" MH_PIERCE="$PIERCE" _py_inline "
 import os; from contract_core import declare
 p = os.environ.get('MH_PARENT') or None
 raw = os.environ.get('MH_POINTERS', '')
@@ -666,7 +666,10 @@ raw_inh = os.environ.get('MH_INHIBITS', '')
 inh = [t.strip() for t in raw_inh.split(',') if t.strip()] if raw_inh else None
 raw_aud = os.environ.get('MH_AUDIENCE', '')
 aud = [t.strip() for t in raw_aud.split(',') if t.strip()] if raw_aud else None
-print(declare(os.environ['MH_PLAN'], os.environ['MH_ACTION'], p, pts, lrn, bdg, bnd, inhibits=inh, audience=aud))
+lay = int(os.environ['MH_LAYER']) if os.environ.get('MH_LAYER') else None
+raw_pierce = os.environ.get('MH_PIERCE', '')
+pierce = [int(t.strip()) for t in raw_pierce.split(',') if t.strip()] if raw_pierce else None
+print(declare(os.environ['MH_PLAN'], os.environ['MH_ACTION'], p, pts, lrn, bdg, bnd, inhibits=inh, audience=aud, layer=lay, pierced_layers=pierce))
 ")
     echo "declared: $ID"
     echo "  plan:        $PLAN"
