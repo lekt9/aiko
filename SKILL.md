@@ -997,7 +997,63 @@ sees the graph composed and either marks satisfied (when every gate
 genuinely fires) or spawns a child to close the missing dimension.
 
 ### Standing gate IDs (canonical pointers)
+canonical IDs closes that loop.
 
+## Self-modeling (biology turned inward)
+
+The skill that says "harness collects, agent judges" should hold itself to
+that same rule. Every documented behavior of /contract — every shape, every
+default principle, every standing gate — is a truth claim about /contract's
+own code. Per the dev-routing rule above, a truth claim about /contract's
+own files is **skill-modification**, and skill-modification is itself a
+contract whose action checks the implementing code.
+
+The result is a closed loop: /contract IS made of /contract.
+
+### The shape gates (regression harnesses, one per shape)
+
+Each of the 9 shapes has a dedicated gate under `~/.claude/skills/contract/<shape>-gate/verify.sh`
+that exercises the shape's semantic claim against the running CLI:
+
+| Shape | Gate proves… |
+|---|---|
+| `cell` | action exits drive KEY 1; `_mark` drives KEY 2 |
+| `judgment` | `agent-judges` surfaces a KEY 2 prompt; never auto-resolves |
+| `funnel` | AND-gate over children — resolves only when ALL satisfy |
+| `funnel-first` | OR-gate — resolves as soon as ANY child satisfies |
+| `loop` | `loop-until:<body>` re-runs body each iterate; converges on exit 0 |
+| `harness` | `harness:<path>` delegates KEY 1 to `<path>/verify.sh` |
+| `tool-guard` | PreToolUse hook blocks matching tools until the contract resolves |
+| `sequence` | ordered funnel — iterate names the next unsatisfied stage |
+| `quorum` | K-of-N — integrate-and-fire neuron, strictly between funnel (K=N) and funnel-first (K=1) |
+
+Plus the orthogonal-feature gates (`audit`, `bm25`, `budget`, `lifecycle`,
+`propagation`) that test cross-cutting behaviors of the substrate itself.
+
+### How the gates run
+
+`scripts/skill-self-test.sh` runs every gate in a tempdir-scoped
+`CONTRACTS_STORE` (no pollution of the real ledger) and asserts each one
+exits 0. The runner is wired as a pre-commit on `~/.contracts/.git` so
+every ledger event auto-revalidates the substrate's own claims. If a
+future change to `scripts/contract` breaks (say) `funnel-first` semantics,
+the next ledger write trips the pre-commit and the regression surfaces
+before any contract can reference the broken shape.
+
+### Why this matters (the biology read)
+
+A pile of cells with documented behavior is a textbook. A pile of cells
+whose behavior is BOUND by regression gates that exercise them
+continuously is an organism. The shape gates ARE the organism's immune
+system — they fire on every commit, flag drift before it propagates, and
+keep the substrate's claims load-bearing rather than aspirational.
+
+Origin: 2026-05-23. The skill documented 9 shapes but only 3 had
+dedicated semantic gates; the other 6 (cell, judgment, funnel,
+funnel-first, loop, harness) were described in prose with no binding
+check. A regression in any of them would have escaped self-test.
+Promoting all 9 to first-class gates closed that loop. Contract
+`249a46c4`.
 Already in the global ledger; reference by id:
 
 | Standing gate | Ledger id | Dimension |
