@@ -22,7 +22,7 @@ export CONTRACTS_STORE="$SRC"   # current ledger == project ledger
 # 1. declare in source, mark satisfied, promote to global
 ID=$(bash "$C" declare "promote_gate target" --action true --no-drive 2>/dev/null | awk '/^declared:/{print $2}')
 [ -n "$ID" ] || { echo "FAIL: declare returned no id"; exit 1; }
-bash "$C" _mark "$ID" satisfied >/dev/null 2>&1
+bash "$C" _mark "$ID" satisfied --proof-skip "verb-gate self-test" >/dev/null 2>&1
 bash "$C" promote "$ID" --reason "verb-gate test" >/dev/null 2>&1
 
 grep -q "\"event\": \"declared\", \"id\": \"$ID\"" "$GLOBAL" \
