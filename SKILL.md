@@ -705,5 +705,55 @@ the row. New channels are new directories; no skill change required.
 - `scripts/contract-crystallize.py` — crystallizes a learning into a memory file + an Outline doc (shared by the `learn` verb and the crystallize-learning hook)
 - `~/.contracts/hooks/crystallize-learning.py` — internal hook: on every `mark` event, crystallizes a satisfied learning-bearing contract
 - `scripts/wait-for-event.py` — receptor helper: blocks until an event row matching a filter appears in `~/.contracts/inbox/<channel>/*.jsonl`. PASS on match, FAIL on timeout. Never writes to the ledger.
+- `scripts/verify-served-surface.sh` — **served-surface gate** (see below) — bun/npm-bootstrapped Playwright wrapper that loads a list of URLs in headless Chromium and fails the action on console.error / pageerror / same-origin 4xx. The script `scripts/served-surface/verify.mjs` is the Node program; the bundled `package.json` pins Playwright.
 - `~/.contracts/contracts.jsonl` — the single append-only store (agent-agnostic)
 - `~/.contracts/inbox/<channel>/*.jsonl` — append-only event inboxes that injectors write and receptors poll (telegram, webhook, stripe, …)
+
+## Served-surface gate (standing default for any web ship)
+
+A build that compiles and a build that lights up the browser are two
+different truths. `vite build` passing does NOT prove the deployed site
+renders without throwing — providers that crash on first paint
+(`useVisibility must be used within a VisibilityProvider`), 404'd font
+URLs, and other dead-on-arrival regressions slip through type-checking
+and unit tests but the user catches them in the console.
+
+Every `/contract` loop that promotes a web deployment **must include a
+served-surface gate as one of its sequence stages**. It is a `cell`
+contract whose action points at `verify-served-surface.sh`:
+
+```bash
+contract spawn <root> \
+  "served surface clean: zero console.error, pageerror, or same-origin 4xx on <urls>" \
+  --action 'bash ~/.claude/skills/contract/scripts/verify-served-surface.sh https://my-site.example/ https://my-site.example/login --report .scratch/served-verify.json'
+```
+
+The action exits 0 only when every URL listed loads in real headless
+Chromium without:
+- emitting a `console.error`
+- raising an uncaught page error
+- 4xx-ing a same-origin asset
+
+Filtered by design (substrate enables, doesn't prescribe):
+- third-party CORS noise and console.warn are ignored
+- cross-origin asset failures are ignored (false positives from CDNs
+  and analytics blockers)
+- browser-extension chatter (FrameDoesNotExist, evmAsk, runtime.lastError)
+  is structurally absent in headless
+
+Pass `--allow <substr>` repeatably to whitelist a known-safe message.
+Pass `--report <path>` to capture the structured JSON for KEY-2 review.
+
+**Why this lives in /contract itself, not in a project-local script:**
+the discipline is universal — any agent-driven web ship benefits from the
+same gate. Promoting it to the skill means every future `/contract` loop
+the agent runs inherits the capability by default, not by remembering to
+re-derive it. The first-use cost is a one-off `bun install` inside
+`scripts/served-surface/`; every subsequent invocation is a fast headless
+load.
+
+Origin: a 2026-05-23 ship that passed `bun run build` and reached
+`https://*.pages.dev` HTTP 200, but threw `useVisibility must be used
+within a VisibilityProvider` on first paint and 404'd a baked-in
+Google Fonts woff2 URL. The agent only learned this when the user pasted
+the console log. The gate exists so this never recurs.
