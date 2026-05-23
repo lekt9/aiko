@@ -1288,6 +1288,115 @@ chat-completions semantics, but auth'd via ChatGPT subscription instead
 of an OpenAI API key. Binding contract for the amendment:
 `e068000e` (2026-05-24).
 
+## Ω1 — unblock-rewake (HOLD verdicts self-trigger when blockers satisfy)
+
+A Λ1 HOLD verdict that names a blocker contract id used to be **prose**.
+The agent read it, judged in-thread, and moved on. If the blocker
+satisfied later, nothing in the substrate remembered that the HOLD'd
+contract was now re-judgeable — the dependency lived in conversation,
+which the next session forgot.
+
+Ω1 closes that loop by recording the blocker as a **typed link** on the
+ledger row. When the blocker satisfies, the propagation wavefront
+re-surfaces every HOLD'd dependent automatically.
+
+### How it works
+
+1. `contract judge <id>` calls the LLM, captures the verdict + reason.
+2. If the verdict is HOLD or REJECT, the reason text is scanned for
+   8-hex contract ids adjacent to blocker keywords (`block`, `blocked`,
+   `depends`, `depending`, `gated`, `waiting`, `until`, `after`,
+   `when`). Every matched id that resolves to a real contract row is
+   collected into `blocked_by: [id, ...]`.
+3. The substrate appends a typed `judged` ledger event:
+   `{event: "judged", id: <X>, verdict: "HOLD", blocked_by: [<Y>], reason: "..."}`
+4. When any blocker `<Y>` is later `_mark satisfied`, the propagation
+   block scans for `judged` rows whose `blocked_by` includes `<Y>` and
+   whose own status is still pending, then emits
+   `=== Ω1 UNBLOCK-REWAKE ===` listing every now-resolvable dependent
+   with its re-judge command.
+5. `contract unblocked` is the standing query — lists every HOLD/REJECT
+   contract whose every blocker is now satisfied (the **ready** list)
+   plus those still waiting on a subset (the **waiting** list).
+
+The substrate surfaces; the agent re-judges. No script auto-promotes
+the dependent — that would violate "harness collects, agent judges".
+The shift is mechanical only at the *surfacing* layer: the agent never
+forgets a HOLD again, because the ledger remembers the link and the
+satisfy wavefront fires the reminder.
+
+### Worked example
+
+```bash
+# X depends on Y. Λ1 judges X as HOLD, names Y in the reason.
+contract judge <X>
+# → verdict: HOLD
+#   reason:  blocked on <Y> — Y must satisfy first before X can resolve
+#   blocked_by: <Y>  (will re-surface when these satisfy)
+
+# Later — Y gets done.
+contract _mark <Y> satisfied --proof "..."
+# → === PROPAGATION (signal) ===
+#     (parent/referrer/synapse rows)
+# → === Ω1 UNBLOCK-REWAKE ===
+#     <Y> satisfied — judge-HOLD dependents re-fireable:
+#     🔓 <X>  "X plan..."
+#       -> contract judge <X>  # re-fire Λ1 with this blocker cleared
+
+# Or query directly:
+contract unblocked
+# → === Ω1 UNBLOCKED (re-judgeable now) ===
+#     🔓 <X>  [HOLD]  "X plan..."
+#         blocker <Y>  [satisfied]
+#         -> contract judge <X>
+```
+
+### Recursive convergence
+
+Because the unblock-rewake fires inside the same wavefront block as
+parent/referrer/synapse propagation, satisfying any contract that
+**transitively unblocks** a chain of HOLDs cascades through the graph
+in one `_mark` call. If X is HOLD'd on Y and Y is HOLD'd on Z, then
+`_mark Z satisfied` surfaces Y; the agent re-judges Y (now PROMOTE);
+`_mark Y satisfied` surfaces X; agent re-judges X. The recursion is
+shallow per turn (one mark fires one wavefront) but compounds across
+the convergence loop until the dependency graph is drained.
+
+### Why this is the right abstraction layer
+
+The blocker information was always **in the reason text** — the LLM
+named it correctly every time. The gap was that the reason was an
+unstructured string, so the substrate couldn't query "what's blocked
+on X?" without re-parsing every prose row. Ω1 promotes the
+already-spoken dependency into a typed ledger edge:
+
+- L0 (mechanical) — `judged` row with `blocked_by: [ids]`
+- L1 (substrate) — `wavefront()` extended to scan that field
+- L2 (agent-UX) — `=== Ω1 UNBLOCK-REWAKE ===` and `contract unblocked`
+- L3 (truth-claim) — "this HOLD is now resolvable because Y satisfied"
+
+The substrate enables; the agent judges KEY 2 on the re-fire. The
+re-judge isn't auto-promoted — the agent decides whether the new state
+of the world genuinely resolves the HOLD or whether new evidence
+opened new questions.
+
+### Verb-gate
+
+`verb-gates/unblocked/verify.sh` binds six phases against a mock
+codex shim: judge captures `blocked_by` from a HOLD verdict naming
+contract Y in the reason; `contract unblocked` lists X under WAITING
+before Y satisfies; `_mark Y satisfied` emits `=== Ω1 UNBLOCK-REWAKE ===`
+naming X with a `contract judge X` hint; `contract unblocked` then
+lists X under READY; `--json` output is parseable; satisfying X
+removes it from the surface (no spurious zombies).
+
+Origin: contract `OMEGA1_ID_PLACEHOLDER`, 2026-05-24. Lewis's framing:
+"shit you go hold should be revisited when unblocked by another
+/contract." The substrate already had wavefront propagation for
+`contract:<id>` referrers; Ω1 generalizes that to the *implicit*
+dependencies the LLM names in HOLD reasons, by promoting them to typed
+ledger edges. Binding gate: `verb-gates/unblocked/verify.sh`.
+
 ## Β1 — backtrack-and-capture (deferred items become contract rows, mechanically)
 
 Across a long session the agent keeps naming "deferred", "named-and-
