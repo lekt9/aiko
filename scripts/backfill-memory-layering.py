@@ -207,6 +207,14 @@ def fix_file(memory_dir, path, idx_entries, dry_run):
     if desc is None:
         return False, "no description: field"
 
+    # Slug-looks-truncated: 6+ words AND description's first chunk matches
+    # the slug. The audit fires the same heuristic; mirror it here.
+    slug_words = path.stem.split("-")
+    if len(slug_words) >= 6:
+        slug_phrase = path.stem.replace("-", " ").lower()
+        if slug_phrase and slug_phrase[:30] in (desc or "").lower()[:60]:
+            return rename_truncated_slug(memory_dir, path, idx_entries, dry_run)
+
     # Tighten description if over cap
     new_desc = desc
     if len(desc) > cc.DESCRIPTION_MAX_CHARS:
