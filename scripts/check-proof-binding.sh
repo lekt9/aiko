@@ -51,8 +51,6 @@ if ! grep '"event": "satisfied"' "$TMP/c.jsonl" | grep -q 'the action ran and th
 fi
 
 TID2=$(CONTRACTS_STORE="$TMP/c.jsonl" bash "$CLI" declare "proof-skip probe" --action true --no-drive 2>&1 | grep -oE 'declared: [a-f0-9]{8}' | awk '{print $2}')
-CONTRACTS_STORE="$TMP/c.jsonl" bash "$CLI" declare "proof-skip probe" --action true --no-drive >/dev/null 2>&1
-TID2=$(CONTRACTS_STORE="$TMP/c.jsonl" bash "$CLI" list 2>&1 | grep -oE '\[active\] [a-f0-9]{8}' | grep -oE '[a-f0-9]{8}' | head -1)
 CONTRACTS_STORE="$TMP/c.jsonl" bash "$CLI" iterate "$TID2" >/dev/null 2>&1
 CONTRACTS_STORE="$TMP/c.jsonl" bash "$CLI" _mark "$TID2" satisfied --proof-skip "in-thread KEY 2 — autonomous drive context" >/dev/null 2>&1
 skip_ec=$?
