@@ -111,6 +111,17 @@ check "self/break-on-resolution"   bash "$SCRIPTS/check-break-on-resolution.sh"
 # next ledger event. See verb-gates/README.md (contract 2db87011).
 [ -x "$SCRIPTS/run-verb-gates.sh" ] && \
   check "self/verb-gates-pass"     bash "$SCRIPTS/run-verb-gates.sh"
+# ── Self-organism wraps (/contract follows what it says it does) ────────────
+# Every layer claim made in SKILL.md is bound to an executable verifier
+# (the self-organism root cc5e8920 pointer-gates on all of these).
+[ -x "$SCRIPTS/check-origin-citations.sh" ] && \
+  check "self/origin-citations"    bash "$SCRIPTS/check-origin-citations.sh"
+[ -x "$SCRIPTS/check-bundled-scripts.sh" ] && \
+  check "self/bundled-scripts"     bash "$SCRIPTS/check-bundled-scripts.sh"
+[ -x "$SCRIPTS/check-doctrine-binding.sh" ] && \
+  check "self/doctrine-binding"    bash "$SCRIPTS/check-doctrine-binding.sh"
+[ -x "$SCRIPTS/check-default-contracts.sh" ] && \
+  check "self/default-contracts"   bash "$SCRIPTS/check-default-contracts.sh"
 # ── Shape gates (regression harnesses for each contract shape) ────────────────
 # Each gate's verify.sh proves one shape behaves correctly. They honor an
 # external CONTRACTS_STORE, so we run them with a tmpdir ledger to avoid
