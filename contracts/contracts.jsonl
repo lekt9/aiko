@@ -3564,3 +3564,5 @@
 {"event": "child_added", "id": "24151e26", "child_id": "8562997d", "ts": "2026-05-23T04:51:51.064496Z", "agent": "lewistham9x@gmail.com"}
 {"event": "declared", "id": "02f463bd", "plan": "funnelgate_selftest_75656 funnel child 2", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": "24151e26", "pointers": [], "ts": "2026-05-23T04:51:55.063743Z", "agent": "lewistham9x@gmail.com"}
 {"event": "child_added", "id": "24151e26", "child_id": "02f463bd", "ts": "2026-05-23T04:51:55.072534Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "6f2022be", "plan": "funnelgate_selftest_75656 funnel child 3", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": "24151e26", "pointers": [], "ts": "2026-05-23T04:51:58.961812Z", "agent": "lewistham9x@gmail.com"}
+{"event": "child_added", "id": "24151e26", "child_id": "6f2022be", "ts": "2026-05-23T04:51:58.971065Z", "agent": "lewistham9x@gmail.com"}
