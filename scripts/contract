@@ -205,10 +205,16 @@ c = get(os.environ['MH_ID'])
 kids = c['children'] if c else []
 pending = None
 allsat = bool(kids)
+# A 'merged' child is a fossil whose truth claim was carried by its
+# winner — equivalent to 'satisfied' for sequence-walk purposes (mirrors
+# children_satisfy's {satisfied, merged} acceptance set). Without this,
+# a supersession mid-sequence pins the walker on the fossil and the
+# organ deadlocks at the next stage. Fixed via contract 565691ba.
+RESOLVED = ("satisfied", "merged")
 for k in kids:
     kc = get(k)
     st = kc['status'] if kc else 'missing'
-    if st != 'satisfied':
+    if st not in RESOLVED:
         allsat = False
         if pending is None:
             pending = (k, st)
