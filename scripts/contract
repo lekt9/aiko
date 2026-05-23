@@ -92,7 +92,7 @@ _run_action() {
   fi
 
   if [ "$action" = "agent-judges" ]; then
-    echo "  pointer(agent-judges): agent-judges"
+    _l0 "  pointer(agent-judges): agent-judges"
     echo "  result: AGENT-JUDGES"
     return 0
   fi
@@ -104,7 +104,7 @@ _run_action() {
 import os; from contract_core import children_satisfy
 print('PASS' if children_satisfy(os.environ['MH_CONTRACT_ID']) else 'FAIL')
 ")
-    echo "  pointer(funnel): all-children-satisfy"
+    _l0 "  pointer(funnel): all-children-satisfy"
     echo "  result: $ok"
     [ "$ok" = "PASS" ] && return 0 || return 1
   fi
@@ -116,7 +116,7 @@ print('PASS' if children_satisfy(os.environ['MH_CONTRACT_ID']) else 'FAIL')
 import os; from contract_core import first_child_satisfies
 print('PASS' if first_child_satisfies(os.environ['MH_CONTRACT_ID']) else 'FAIL')
 ")
-    echo "  pointer(funnel-first): any-child-satisfies"
+    _l0 "  pointer(funnel-first): any-child-satisfies"
     echo "  result: $ok"
     [ "$ok" = "PASS" ] && return 0 || return 1
   fi
@@ -134,7 +134,7 @@ print(str(sat) + ' ' + str(len(kids)) + ' ' + os.environ['MH_K'])
 ")
     set -- $qinfo
     local qsat="$1" qn="$2" qk="$3"
-    echo "  pointer(quorum): >= $qk of $qn children satisfied"
+    _l0 "  pointer(quorum): >= $qk of $qn children satisfied"
     if [ "$qsat" -ge "$qk" ]; then
       echo "  result: PASS — $qsat/$qn satisfied (threshold $qk)"
       return 0
@@ -152,7 +152,7 @@ print(str(sat) + ' ' + str(len(kids)) + ' ' + os.environ['MH_K'])
 import os; from contract_core import get
 c=get(os.environ['MH_ID']); print(c['wave'] if c else 0)
 ")
-    echo "  pointer(loop): perpetual"
+    _l0 "  pointer(loop): perpetual"
     echo "  wave: $wave"
     echo "  result: LOOP-RUNNING — agent judges BREAK (mark satisfied) or CONTINUE (re-iterate)"
     return 0
@@ -161,7 +161,7 @@ c=get(os.environ['MH_ID']); print(c['wave'] if c else 0)
   # loop-until:<body-action>: command-body loop; break condition is body exiting 0
   if [[ "$action" == loop-until:* ]]; then
     local body="${action#loop-until:}"
-    echo "  pointer(loop-until): $body"
+    _l0 "  pointer(loop-until): $body"
     if ( cd "$_rundir" && eval "$body" ) >/tmp/contract-action-out 2>&1; then
       echo "  result: PASS — body exited 0 (agent judges BREAK or CONTINUE)"
       return 0
@@ -182,7 +182,7 @@ c=get(os.environ['MH_ID']); print(c['wave'] if c else 0)
       return 1
     fi
     local verify="$harness_dir/verify.sh"
-    echo "  pointer(harness): $harness_dir"
+    _l0 "  pointer(harness): $harness_dir"
     if [ -x "$verify" ]; then
       if bash "$verify" >/tmp/contract-action-out 2>&1; then
         echo "  result: PASS"
@@ -206,7 +206,7 @@ import os; from contract_core import get
 c=get(os.environ['MH_REF_ID'])
 print(c['status'] if c else 'not-found')
 ")
-    echo "  pointer(contract-ref): $action"
+    _l0 "  pointer(contract-ref): $action"
     echo "  referenced: $ref_id => $ref_status"
     if [ "$ref_status" = "satisfied" ]; then
       echo "  result: PASS (referenced contract satisfied)"
@@ -242,7 +242,7 @@ print(c['status'] if c else 'not-found')
     elif [ -f "$HOME/.config/unbrowse/api-key" ]; then
       x402_token=$(cat "$HOME/.config/unbrowse/api-key" 2>/dev/null | tr -d '[:space:]')
     fi
-    echo "  pointer(payment): $x402_url"
+    _l0 "  pointer(payment): $x402_url"
     # /balance is GET; everything else (/debit, /grant, …) is POST.
     local x402_method="POST"
     [[ "$x402_url" == *balance* ]] && x402_method="GET"
@@ -380,7 +380,7 @@ print(resolve_identity(os.environ['MH_T']))
 from contract_core import current_agent, resolve_identity
 print(resolve_identity(current_agent()))
 ")
-    echo "  pointer(agent): routed to $agent_target"
+    _l0 "  pointer(agent): routed to $agent_target"
     if [ -n "$agent_target_canon" ] && [ "$agent_target_canon" = "$agent_current_canon" ]; then
       echo "  current_agent matches (canonical: $agent_current_canon) — JUDGE in-thread"
       echo "  result: AGENT-JUDGES"
@@ -462,7 +462,7 @@ except Exception:
       echo "  result: FAIL (machine: binary '$machine_name' not found on $(hostname 2>/dev/null || echo this-host))"
       return 1
     fi
-    echo "  pointer(machine): $machine_resolved $machine_args"
+    _l0 "  pointer(machine): $machine_resolved $machine_args"
     if [ -n "$machine_args" ]; then
       # shellcheck disable=SC2086
       eval "$machine_resolved $machine_args"
@@ -511,7 +511,7 @@ elif allsat:
 else:
     print('STAGE ' + pending[0] + ' ' + pending[1])
 ")
-    echo "  pointer(sequence): ordered funnel"
+    _l0 "  pointer(sequence): ordered funnel"
     case "$seqinfo" in
       ALL-SATISFIED)
         echo "  result: PASS — every stage satisfied, in order"
@@ -533,12 +533,12 @@ else:
   # with this contract's plan text as the reason. Mark satisfied to lift.
   if [[ "$action" == tool-guard:* ]]; then
     local guarded="${action#tool-guard:}"
-    echo "  pointer(tool-guard): $guarded"
+    _l0 "  pointer(tool-guard): $guarded"
     echo "  result: GUARD-ACTIVE — PreToolUse hook blocks tools matching '$guarded' while this contract is unsatisfied"
     echo "  (lift the guard by judging KEY 2 done, then: contract _mark $id satisfied)"
     return 0
   fi
-  echo "  pointer($ptype): $action"
+  _l0 "  pointer($ptype): $action"
   if ( cd "$_rundir" && eval "$action" ) >/tmp/contract-action-out 2>&1; then
     echo "  result: PASS (exit 0)"
     return 0
