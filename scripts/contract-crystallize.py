@@ -244,10 +244,84 @@ def push_outline(title, body):
 
 # -- crystallize --------------------------------------------------------------
 
-def crystallize(base_name, title, description, body, scope_cwd):
+def _compose_body(learning, cid=None, lid=None, plan=None, source=None):
+    """Build the memory body. If the learning text contains `Why:` /
+    `How to apply:` (case-insensitive) sections, render them as **Why:** /
+    **How to apply:** headings — the house style for feedback/project
+    memories. Otherwise emit a single narrative paragraph. Provenance
+    (contract id, ledger event id, source) goes at the foot, not the head."""
+    text = learning.strip()
+    # Split on Why:/How to apply: markers if present.
+    why_match = re.search(r"(?im)^\s*why\s*:\s*", text)
+    how_match = re.search(r"(?im)^\s*how(?:\s+to\s+apply)?\s*:\s*", text)
+    parts = []
+    if why_match or how_match:
+        # Narrative is everything before the first marker.
+        first = min(m.start() for m in (why_match, how_match) if m)
+        narrative = text[:first].strip()
+        if narrative:
+            parts.append(narrative)
+        if why_match:
+            end = how_match.start() if (how_match and how_match.start() > why_match.start()) else len(text)
+            why = text[why_match.end():end].strip()
+            if why:
+                parts.append(f"**Why:** {why}")
+        if how_match:
+            end = why_match.start() if (why_match and why_match.start() > how_match.start()) else len(text)
+            how = text[how_match.end():end].strip()
+            if how:
+                parts.append(f"**How to apply:** {how}")
+    else:
+        parts.append(text)
+
+    foot = []
+    if cid:
+        foot.append(f"_Contract:_ `{cid}` (satisfied)")
+    if lid:
+        foot.append(f"_Learned event:_ `{lid}`")
+    if source:
+        foot.append(f"_Source:_ {source}")
+    if plan and plan.strip() != text:
+        foot.append(f"_Truth claim:_ {plan}")
+    if foot:
+        parts.append("\n".join(foot))
+    return "\n\n".join(parts) + "\n"
+
+
+def _infer_memory_type(learning, source):
+    """Heuristic mapping from the learning's surface form to a memory type.
+
+    feedback — corrections / preferences / "BANNED" / "must always" rules
+    project — dated decisions / ongoing initiatives ("we're going to X by Y")
+    reference — facts, pointers, API/credential locations (default)
+    """
+    t = (learning or "").lower()
+    if any(k in t for k in ("banned", "must always", "never ", "always ",
+                            "do not ", "don't ", "stop ", "lesson:",
+                            "correction:", "feedback:")):
+        return "feedback"
+    if any(k in t for k in ("we will ", "we're going to ", "by 2026-",
+                            "by next ", "deadline ", "sprint ")):
+        return "project"
+    return "reference"
+
+
+def _hook_from_learning(learning):
+    """Generate a ≤200-char one-line hook from the full learning text."""
+    text = _oneline(learning)
+    # Prefer the lead sentence, fall back to a hard truncate.
+    first = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0]
+    if 30 <= len(first) <= 200:
+        return first
+    return text[:197].rstrip() + "..." if len(text) > 200 else text
+
+
+def crystallize(base_name, title, description, body, scope_cwd,
+                memory_type="reference", hook=None):
     """Write the memory file + push the Outline doc. Returns (mem_path, url)."""
     memory_dir = resolve_memory_dir(scope_cwd)
-    mem_path = write_memory(memory_dir, base_name, description, body)
+    mem_path = write_memory(memory_dir, base_name, description, body,
+                            memory_type=memory_type, title=title, hook=hook)
     url = push_outline(title, body + f"\n\nMemory: `{mem_path}`\n")
     return str(mem_path), url
 
@@ -264,14 +338,14 @@ def from_contract(cid):
     if contract_core.is_crystallized(cid):
         return 0
     plan = c.get("plan", "")
-    body = (
-        f"**Learning:** {learning}\n\n"
-        f"**Contract:** `{cid}` (satisfied)\n\n"
-        f"**Truth claim:** {plan}\n\n"
-        f"Crystallized from the contract ledger on {_now_iso()}.\n"
-    )
+    body = _compose_body(learning, cid=cid, plan=plan)
+    mtype = _infer_memory_type(learning, None)
+    hook = _hook_from_learning(learning)
+    # Title shown in MEMORY.md link text — capped human-readable phrase.
+    title = _oneline(learning)[:70].rstrip()
     mem_path, url = crystallize(
-        _slug(learning), f"Learning: {learning}", learning, body, c.get("cwd"))
+        _slug(learning), title, learning, body,
+        c.get("cwd"), memory_type=mtype, hook=hook)
     contract_core.record_crystallization(cid, mem_path, url)
     print(f"crystallized {cid}: memory={mem_path} outline={url or '(skipped)'}")
     return 1
@@ -280,15 +354,13 @@ def from_contract(cid):
 def learn(text, source):
     """Verb path. Records a `learned` event, then crystallizes it."""
     lid = contract_core.record_learning(text, source)
-    body = (
-        f"**Learning:** {text}\n\n"
-        f"**Learned event:** `{lid}`\n"
-    )
-    if source:
-        body += f"**Source:** {source}\n"
-    body += f"\nRecorded via `contract learn` on {_now_iso()}.\n"
+    body = _compose_body(text, lid=lid, source=source)
+    mtype = _infer_memory_type(text, source)
+    hook = _hook_from_learning(text)
+    title = _oneline(text)[:70].rstrip()
     mem_path, url = crystallize(
-        _slug(text), f"Learning: {text}", text, body, os.getcwd())
+        _slug(text), title, text, body,
+        os.getcwd(), memory_type=mtype, hook=hook)
     contract_core.record_crystallization(lid, mem_path, url)
     print(f"learned {lid}")
     print(f"  memory:  {mem_path}")
