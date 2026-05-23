@@ -3,7 +3,7 @@
 
 A receptor contract has an action like:
 
-    wait-for-event.py --inbox telegram --filter '"text"\s*:\s*"[^"]*\\bping\\b'
+    wait-for-event.py --inbox telegram --filter 'ping'
 
 The script tails ~/.contracts/inbox/<channel>/*.jsonl looking for a row whose
 JSON body matches the regex filter. It also accepts a --since-id (numeric
