@@ -44,20 +44,45 @@ OUT="$("$NEBIUS" compute instance get-by-name --name "$INSTANCE" --parent-id "$P
   exit 2
 }
 
-STATE=$(echo "$OUT" | awk '/^  state:/{print $2}')
-if [ "$STATE" != "RUNNING" ]; then
-  echo "nebius-l40s-ip: instance '$INSTANCE' is in state '$STATE' (not RUNNING)" >&2
-  echo "  start it with: $NEBIUS compute instance start --id <id> (or via the dashboard)" >&2
-  exit 1
-fi
+# Parse the YAML output with python — robust against the spec/status
+# duplicate "public_ip_address:" lines (spec has it as an empty {}, status
+# carries the actual address). yq isn't a guaranteed dep; PyYAML is on
+# every host that has python3.
+RESULT=$(KIND="$KIND" python3 - <<'PY' <<<"$OUT"
+import os, sys, yaml
+data = yaml.safe_load(sys.stdin)
+state = (data.get("status") or {}).get("state") or (data.get("metadata") or {}).get("state") or "UNKNOWN"
+if state != "RUNNING":
+    print(f"STATE:{state}")
+    sys.exit(1)
+nifs = (data.get("status") or {}).get("network_interfaces") or []
+kind = os.environ["KIND"]
+for nif in nifs:
+    if kind == "public":
+        a = ((nif.get("public_ip_address") or {}).get("address") or "")
+    else:
+        a = ((nif.get("ip_address") or {}).get("address") or "")
+    if a:
+        ip = a.split("/")[0]
+        print(f"IP:{ip}")
+        sys.exit(0)
+sys.exit(2)
+PY
+) || RC=$?
+RC=${RC:-0}
 
-if [ "$KIND" = "public" ]; then
-  # Public IP is under status.network_interfaces[].public_ip_address.address — the
-  # YAML pretty-printer puts it as a CIDR like 89.169.121.143/32; strip the /32.
-  IP=$(echo "$OUT" | awk '/public_ip_address:/{f=1;next} f && /address:/{gsub("/32",""); print $2; exit}')
-else
-  IP=$(echo "$OUT" | awk '/  ip_address:/{f=1;next} f && /address:/{gsub("/32",""); print $2; exit}')
-fi
-
-[ -n "$IP" ] || { echo "nebius-l40s-ip: could not parse $KIND IP from instance state" >&2; exit 2; }
-echo "$IP"
+case "$RESULT" in
+  IP:*)
+    echo "${RESULT#IP:}"
+    ;;
+  STATE:*)
+    state="${RESULT#STATE:}"
+    echo "nebius-l40s-ip: instance '$INSTANCE' is in state '$state' (not RUNNING)" >&2
+    echo "  start it with: $NEBIUS compute instance start --id <instance-id>" >&2
+    exit 1
+    ;;
+  *)
+    echo "nebius-l40s-ip: could not parse $KIND IP from instance state (rc=$RC)" >&2
+    exit 2
+    ;;
+esac
