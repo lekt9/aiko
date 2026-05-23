@@ -861,6 +861,53 @@ threw silently. The empathy gate would have caught it via `--expect-not
 "Application error"` AND via `--min-text 300` (the error boundary has
 ~80 chars of visible text). The gate exists so this never recurs.
 
+## No raw JSON in the UI (the "we don't ship a `pre`" rule)
+
+A page that renders `JSON.stringify(data, null, 2)` inside a `<pre>` is
+not a finished page — it's a debug log shipped to the user. The
+served-surface + empathy gates light green on a dashboard whose
+"insights" section just dumps the raw observed payload as fenced JSON,
+because there's no console.error and the body has plenty of text. The
+user sees `{"totalSpendingCurrWeek":4864.916,...}` and rightly calls it
+"json like that." `--no-raw-json` catches it.
+
+The flag scans `document.body.innerText` for two independent signals —
+either fires:
+
+1. **Multi-line pretty-print.** 4+ lines matching `\s*"key":` are visible
+   (the signature of `JSON.stringify(obj, null, 2)` in a `<pre>`).
+2. **Collapsed dump.** Any one line with 4+ `"key":` tokens (a one-line
+   stringify rendered as copy).
+
+Deliberately tolerant: one or two `"name": "value"` hits in prose don't
+trip either threshold. The detector is looking for JSON-as-final-UI,
+not JSON-as-quoted-example.
+
+The rule it makes mechanical: **if you have a structured response,
+render structured components — KPIs, ranked rows, cards. Never ship the
+raw object.** When you don't know the shape yet, log it to the dev
+console and render an honest empty-state for the user. JSON in the page
+= "the rebuild is unfinished here."
+
+Add this to every web-deploy gate by default:
+
+```bash
+bash ~/.claude/skills/contract/scripts/verify-served-surface.sh \
+  <urls> \
+  --prelude tours/login-flow.json --env-from .observe.env \
+  --walk --walk-exclude "^/(api|favicon)" \
+  --expect-not "404 — try home" \
+  --no-raw-json \
+  --report .scratch/verify-e2e.json
+```
+
+Origin: a 2026-05-23 dashboard ship that pretty-printed
+`bySupplier` / `byCategory` / `insights` responses straight into
+`<Markdown>` + ```json fences because the agent reached for the easy
+serializer instead of writing real components against the observed
+response shapes. The user said: "to make it so that we don't show json
+like that ever lol." This gate makes that contract mechanical.
+
 ## Observe-original: trace before extract (standing default for any rewrite)
 
 A counterpart to the served-surface gate, run in the **opposite
