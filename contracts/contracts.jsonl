@@ -3560,3 +3560,7 @@
 {"event": "iterated", "id": "a77fc0aa", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T04:51:44.015806Z", "agent": "lewistham9x@gmail.com"}
 {"event": "satisfied", "id": "a77fc0aa", "wave": 0, "ts": "2026-05-23T04:51:44.131974Z", "agent": "lewistham9x@gmail.com"}
 {"event": "declared", "id": "24151e26", "plan": "funnelgate_selftest_75656 funnel organ", "action": "funnel", "pointer_type": "funnel", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": null, "pointers": [], "ts": "2026-05-23T04:51:44.922222Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "8562997d", "plan": "funnelgate_selftest_75656 funnel child 1", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": "24151e26", "pointers": [], "ts": "2026-05-23T04:51:51.056131Z", "agent": "lewistham9x@gmail.com"}
+{"event": "child_added", "id": "24151e26", "child_id": "8562997d", "ts": "2026-05-23T04:51:51.064496Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "02f463bd", "plan": "funnelgate_selftest_75656 funnel child 2", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": "24151e26", "pointers": [], "ts": "2026-05-23T04:51:55.063743Z", "agent": "lewistham9x@gmail.com"}
+{"event": "child_added", "id": "24151e26", "child_id": "02f463bd", "ts": "2026-05-23T04:51:55.072534Z", "agent": "lewistham9x@gmail.com"}
