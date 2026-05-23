@@ -377,10 +377,15 @@ try {
 }
 
 console.log(
-  `served-surface+empathy${walk ? "+walk" : ""} · urls=${out.urls.length}` +
+  `served-surface+empathy${walk ? "+walk" : ""}${out.prelude ? "+prelude" : ""} · urls=${out.urls.length}` +
   (walk ? ` (incl ${out.walked} walked)` : "") +
   ` · total_errors=${out.errors}`,
 );
+if (out.prelude) {
+  const tag = out.prelude.ok ? "✓" : "✗";
+  console.log(`  ${tag} prelude  (${out.prelude.failures.length} failure${out.prelude.failures.length === 1 ? "" : "s"})`);
+  for (const f of out.prelude.failures) console.log(`      ${f}`);
+}
 for (const u of out.urls) {
   const tag = u.ok ? "✓" : "✗";
   const walkedTag = u.walked ? " [walked]" : "";
