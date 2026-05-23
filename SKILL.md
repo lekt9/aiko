@@ -1091,7 +1091,89 @@ them as children — the gates were aspirational documentation rather
 than load-bearing graph nodes. Naming the pattern + giving the gates
 canonical IDs closes that loop.
 
+## Containment vs reference (why the substrate is a DAG of pointers, not a tree of nested objects)
+
+The substrate makes a single design choice repeatedly: contracts **reference**
+each other, never **contain** each other. The ledger is a flat append-only
+stream where every row carries `parent_id` (upward reference) and `action` may
+be `contract:<id>` (lateral reference). There is **no structural nesting** —
+no row contains another row. The graph is reconstructed by walking those
+references at read time.
+
+This is correct, not accidental. Four first-principles reasons:
+
+1. **Append-only is load-bearing.** Structural containment forces parent
+   mutation when a child resolves — re-emit the parent row, or break
+   immutability. References don't: marking child X satisfied is one
+   appended row; the parent re-reads X's current status on next iterate.
+   The ledger stays purely additive, and the natural-selection lifecycle
+   (fossils, merged_into, lineage) works only because no row is ever
+   rewritten.
+
+2. **DAG, not tree.** A contract can be gated by many parents — the
+   multi-dimensional gates pattern has many organs all reference the same
+   standing gate (`contract:27125bd7`) as a child. Structural containment
+   forces a tree (one parent per child). References model the real shape:
+   a directed acyclic graph.
+
+3. **The fractal claim is preserved.** Every row has the SAME shape at
+   every scale: `{id, plan, action, parent_id?, …}`. A leaf cell and a
+   root organ are structurally identical. Spawn at any depth, reference
+   at any depth, view at any depth — same primitive. Containment would
+   require qualitatively different leaf vs branch rows.
+
+4. **Lazy resolution.** "Is X satisfied?" is a query at iterate time
+   against the current ledger. The contract that REFERENCES X via
+   `contract:<id>` doesn't carry X's state inline — it reads it freshly.
+   This is the substrate principle ("no script bakes a verdict") applied
+   to graph composition: every reference is a fresh question, never a
+   cached answer.
+
+### Sandboxes live at exactly two layers
+
+| Layer | Mechanism | Granularity |
+|---|---|---|
+| **per-project ledger** | `CONTRACTS_STORE` env var | one ledger file per project; same IDs in different stores never collide |
+| **per-contract action** | `cwd` field on the declared row | each contract's action runs in its declare-time directory |
+
+No per-contract sandbox **within** a ledger. That's correct: within one
+ledger, contracts share a graph, and the graph IS the value. Siloing them
+further would break the cross-contract reference machinery that makes
+multi-dimensional gating work.
+
+### Three event channels, three intents (none interchangeable)
+
+| Channel | Surface | Fires when | Right primitive for |
+|---|---|---|---|
+| **Internal hooks** | `_fire_contract_hooks` after every `iterate`/`_mark` | substrate-level events (any contract) | cross-cutting concerns that must fire universally — `drive-advance`, `crystallize-learning` |
+| **`contract:<id>` action** | resolves another contract's status at iterate time | one specific dependency | in-graph gating, multi-dimensional composition, pointer-not-payload gates |
+| **Receptors** | `wait-for-event.py` over `~/.contracts/inbox/<channel>/` | external world signal (telegram, webhook, stripe) | turning outside-the-agent events into iterate triggers |
+
+These cover orthogonal axes: substrate-level (hooks), graph-level
+(contract-refs), world-level (receptors). A hook fires for all contracts; a
+contract-ref binds one specific dependency; a receptor turns external events
+into actions. There is no fourth channel waiting to be invented — these
+three exhaust the space.
+
+### What's deliberately NOT in the substrate
+
+- **A "contains" relation on a row.** Children are flat rows with
+  `parent_id`. The tree is reconstructed, never stored.
+- **Transitive satisfaction caching.** Each iterate re-resolves. The
+  ledger IS the query history; recomputation is cheap and verifiable.
+- **Per-contract isolation.** Contracts within one ledger share the
+  graph — that's the point.
+- **A `--lifetime` / typed-tag layer.** Shape IS the type system
+  (contract `310f425f`).
+
+Origin: 2026-05-23. The agent was asked "should contracts contain
+contracts structurally, or stay decoupled by references?" The honest
+answer was "already references — and here's why that's load-bearing,
+not arbitrary." This section names the design so future agents see the
+answer in the doc, not after re-deriving it from the row schema.
+
 ## Self-modeling (biology turned inward)
+
 
 The skill that says "harness collects, agent judges" should hold itself to
 that same rule. Every documented behavior of /contract — every shape, every
