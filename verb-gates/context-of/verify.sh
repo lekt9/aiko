@@ -50,11 +50,13 @@ DECL=$("$CLI" declare "context bind for prior-source-test" --action "true" --bin
 PRIOR_CID=$(printf '%s' "$DECL" | grep -oE '^declared: [0-9a-f]+' | head -1 | awk '{print $2}')
 [ -n "$PRIOR_CID" ] || { echo "FAIL(5a): could not declare prior contract"; echo "$DECL"; exit 1; }
 OUT=$("$CLI" context-of 'prior/topic-ccc' --source prior --refresh </dev/null 2>&1)
-echo "$OUT" | python3 -c '
+EXPECTED_CID="$PRIOR_CID" echo "$OUT" | python3 -c '
 import json,sys,os
-d=json.loads(sys.stdin.read())
-assert d["source"]=="prior", f"expected prior, got {d[\"source\"]}"
-assert d.get("prior_contract_id")=="'"$PRIOR_CID"'", f"wrong prior_contract_id: {d.get(\"prior_contract_id\")}"
+d = json.loads(sys.stdin.read())
+expected = os.environ.get("EXPECTED_CID","")
+src = d["source"]; got = d.get("prior_contract_id","")
+assert src == "prior", "expected prior, got " + str(src)
+assert got == expected, "wrong prior_contract_id: " + str(got) + " (expected " + expected + ")"
 ' || { echo "FAIL(5b): prior source did not find bound contract"; echo "$OUT"; exit 1; }
 echo "PASS(5): prior source resolves bind_to context:<topic>"
 
