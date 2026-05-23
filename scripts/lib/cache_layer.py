@@ -35,7 +35,7 @@ from typing import Optional
 
 CACHE_DIR = Path.home() / ".contracts" / "cache"
 TTL_SECONDS = 10
-CACHEABLE_PTYPES = {"cli", "api", "x402", "machine", "harness"}
+CACHEABLE_PTYPES = {"api", "x402"}
 
 
 def resolve_user() -> str:
