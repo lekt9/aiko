@@ -559,6 +559,17 @@ def self_check():
     return 0 if ok else 1
 
 
+
+# Categorization: learn (default, knowledge) | decision (first-principles tradeoff) | feature (shipped impl)
+# Origin: contract c01abe0e (gap-debt session 2026-05-23) — broadens crystallize scope per Lewis directive.
+CATEGORY_ALIASES = {"learn": "learning", "learning": "learning",
+                    "decide": "decision", "decision": "decision",
+                    "feature": "feature", "feat": "feature"}
+CATEGORY_TITLE_PREFIX = {"learning": "", "decision": "DECISION: ", "feature": "FEATURE: "}
+
+def normalize_category(cat: str) -> str:
+    return CATEGORY_ALIASES.get((cat or "learning").lower(), "learning")
+
 def main(argv):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
