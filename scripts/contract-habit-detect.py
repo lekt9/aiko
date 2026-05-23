@@ -38,9 +38,27 @@ DEFAULT_THRESHOLD = 0.55
 # --- embedding cache + API --------------------------------------------------
 
 EMBED_CACHE = Path.home() / ".contracts" / "embeddings.jsonl"
-EMBED_MODEL = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
-EMBED_DIM = 1536  # text-embedding-3-small default
-_EMBED_OK = True  # flips false on first failure; stays false for the run
+# Provider selection: explicit env > OpenAI (if key) > Nebius (if key) > none.
+# Both providers are OpenAI-compatible (v1/embeddings JSON).
+def _embed_provider():
+    """Return (base_url, api_key, model_id) or (None, None, None)."""
+    forced = os.environ.get("CONTRACT_EMBED_PROVIDER", "").lower()
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    nebius_key = os.environ.get("NEBIUS_API_KEY")
+    openai_model = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+    nebius_model = os.environ.get("NEBIUS_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B")
+    if forced == "openai" and openai_key:
+        return "https://api.openai.com/v1/embeddings", openai_key, openai_model
+    if forced == "nebius" and nebius_key:
+        return "https://api.studio.nebius.ai/v1/embeddings", nebius_key, nebius_model
+    if openai_key:
+        return "https://api.openai.com/v1/embeddings", openai_key, openai_model
+    if nebius_key:
+        return "https://api.studio.nebius.ai/v1/embeddings", nebius_key, nebius_model
+    return None, None, None
+
+
+_EMBED_OK = True  # flips false on first hard failure; stays false for the run
 # A bounded per-process budget — never balloon when the corpus grows.
 EMBED_MISS_BUDGET = int(os.environ.get("CONTRACT_EMBED_MISS_BUDGET", "32"))
 
