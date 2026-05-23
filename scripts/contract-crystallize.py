@@ -214,25 +214,39 @@ def write_memory(memory_dir, base_name, description, body,
 
 
 def _derive_layers(learning):
-    """Given the raw learning text, derive (title, description, hook) tuples
-    that satisfy the three-layer rule.
+    """Given the raw learning text, derive (title, description, hook) that
+    satisfy the three-layer rule. Best-effort defaults; callers may override
+    any field with a hand-crafted one and the same enforcement applies.
 
-      title       — first ≤ 8 words of the lead sentence, capitalized
-      description — first sentence (≤ 200 chars), distinct from body
-      hook        — first sentence (≤ 150 chars), distinct from description
-                    when possible (truncates more aggressively)
-    The body itself stays full text — the caller composes it via _compose_body.
+      title       — first ≤ 8 *speakable* words (path/symbol tokens stripped)
+      description — lead sentence, ≤ 200 chars
+      hook        — lead sentence, ≤ 150 chars, strictly shorter than desc
+                    when desc is short enough that they would collide
+    The body stays full text — the caller composes it via _compose_body.
     """
     raw = _oneline(learning)
     first = re.split(r"(?<=[.!?])\s+", raw, maxsplit=1)[0]
-    words = first.split()
-    title = " ".join(words[:TITLE_MAX_WORDS]).rstrip(".,:;")
-    # Description: one sentence, ≤ 200 chars
+
+    # Title: prefer "speakable" words (skip tokens with /, \, $, ~, or only
+    # punctuation) — paths and symbols don't read as titles. Fall back to
+    # the raw first 8 words if filtering wipes everything.
+    def _speakable(w):
+        if not w:
+            return False
+        if any(ch in w for ch in "/\\$~"):
+            return False
+        return bool(re.search(r"[A-Za-z]", w))
+    raw_words = first.split()
+    speakable = [w for w in raw_words if _speakable(w)]
+    src_words = speakable if speakable else raw_words
+    title = " ".join(src_words[:TITLE_MAX_WORDS]).rstrip(".,:;-—()'\"")
+
     description = first if len(first) <= DESCRIPTION_MAX_CHARS \
                   else first[:DESCRIPTION_MAX_CHARS - 1].rstrip() + "…"
-    # Hook: tighter — ≤ 150 chars, drop the trailing period if it fits cleanly
-    hook = first if len(first) <= HOOK_MAX_CHARS \
-           else first[:HOOK_MAX_CHARS - 1].rstrip() + "…"
+
+    # Hook strictly tighter than description so they remain distinct.
+    cap = min(HOOK_MAX_CHARS, max(40, len(description) - 20))
+    hook = first if len(first) <= cap else first[:cap - 1].rstrip() + "…"
     return title, description, hook
 
 

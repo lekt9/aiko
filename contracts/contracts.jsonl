@@ -3337,3 +3337,4 @@
 {"event": "declared", "id": "47080ee3", "plan": "TEST: throwaway parent for verb self-test 1779506362", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": null, "pointers": [], "ts": "2026-05-23T03:19:22.201611Z"}
 {"event": "pre-mortem", "id": "47080ee3", "ts": "2026-05-23T03:19:30.728699Z", "voices": 3, "horizon": "6m"}
 {"event": "baserate", "id": "47080ee3", "ts": "2026-05-23T03:19:37.621749Z", "satisfied": 13, "total": 30, "rate": 43.3333}
+{"event": "declared", "id": "79c5ecb9", "plan": "INVERSION OF 47080ee3: NOT (TEST: throwaway parent for verb self-test 1779506362)", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": null, "pointers": [], "ts": "2026-05-23T03:19:45.929100Z", "inverted_from": "47080ee3"}
