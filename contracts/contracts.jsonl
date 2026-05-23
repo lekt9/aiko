@@ -4356,3 +4356,4 @@
 {"event": "satisfied", "id": "805dc3ff", "wave": 0, "ts": "2026-05-23T08:48:40.487391Z", "proof": "agent-browser loaded /, networkidle, 0 console messages of any level, innerText contains 'Kemi' (length=383)", "agent": "lewistham9x@gmail.com"}
 {"event": "iterated", "id": "b49b07a7", "wave": 2, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T08:49:00.763938Z", "agent": "lewistham9x@gmail.com"}
 {"event": "iterated", "id": "c4428080", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T08:49:03.558601Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "c4428080", "wave": 0, "ts": "2026-05-23T08:49:10.848127Z", "proof": "agent-browser Audio('/song.mp3') fired loadeddata, duration=171.04s, readyState=4 (HAVE_ENOUGH_DATA)", "agent": "lewistham9x@gmail.com"}
