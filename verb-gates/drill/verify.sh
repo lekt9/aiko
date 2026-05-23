@@ -48,7 +48,7 @@ RC=$?
 [ "$RC" -eq 0 ] || { echo "FAIL: drill cells with --auto-mark-cells expected exit 0, got $RC"; exit 1; }
 # Confirm both got marked satisfied
 for id in "$ID2" "$ID3"; do
-  STATUS=$(PYTHONPATH="$HOME/.claude/skills/contract/scripts/lib" python3 -c "from contract_core import get; r = get('$id'); print(r['status'] if r else 'MISSING')")
+  STATUS=$(PYTHONPATH="$LIB" python3 -c "from contract_core import get; r = get('$id'); print(r['status'] if r else 'MISSING')")
   [ "$STATUS" = "satisfied" ] || { echo "FAIL: $id expected satisfied, got $STATUS"; exit 1; }
 done
 echo "evidence: drill --auto-mark-cells settled both cells, exit 0  OK"
@@ -65,7 +65,7 @@ ID4=$(bash "$C" declare "drill_gate pending without automark" --action true --no
 [ -n "$ID4" ] || { echo "FAIL: declare returned no id"; exit 1; }
 bash "$C" drill "$ID4" --max-waves 3 >/dev/null 2>&1
 RC=$?
-STATUS=$(PYTHONPATH="$HOME/.claude/skills/contract/scripts/lib" python3 -c "from contract_core import get; r = get('$id4' if False else '$ID4'); print(r['status'] if r else 'MISSING')")
+STATUS=$(PYTHONPATH="$LIB" python3 -c "from contract_core import get; r = get('$id4' if False else '$ID4'); print(r['status'] if r else 'MISSING')")
 # Without --auto-mark-cells, drive-watch HALTS after cell PASS waiting for KEY 2.
 # So $ID4 stays in pending/active state, drill exits 1 (any-pending).
 [ "$RC" -eq 1 ] || { echo "FAIL: drill pending-no-automark expected exit 1, got $RC"; exit 1; }
