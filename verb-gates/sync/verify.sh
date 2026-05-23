@@ -81,14 +81,18 @@ echo "$DEFAULT_MSG" | grep -qE "^contract: sync " \
 echo "$DEFAULT_MSG" | grep -qE "work " \
   || { echo "FAIL: default message missing dir basename: '$DEFAULT_MSG'"; exit 1; }
 
-# === Phase 8: --no-push respected (no remote configured, so push would fail)
-# We've been using --no-push throughout; verify push without remote fails clean
+# === Phase 8: --no-push flag genuinely skips the push attempt ===
+# Setting up a fake gitea remote (push will fail on send), and verifying that
+# --no-push exits 0 (push not attempted) while NO --no-push exits non-zero
+# (push attempt fails because the remote is unreachable). Proves the flag is honored.
 echo "trigger-push" > "$WORK/file3.txt"
-"$CLI" sync 2>&1 | tail -3 >"$TD/push-out.txt" || true
-# Either it sets up via mirror.sh (no GITEA_TOKEN, so it should refuse) OR pushes
-# (no gitea remote). With GITEA_TOKEN="" we expect refusal.
-grep -q "no GITEA_TOKEN" "$TD/push-out.txt" || grep -q "PUSH FAILED\|no gitea remote" "$TD/push-out.txt" \
-  || { echo "FAIL: no-token push didn't surface the gitea-setup refusal. OUT="; cat "$TD/push-out.txt"; exit 1; }
+git -C "$WORK" remote add gitea "http://127.0.0.1:1/dead.git" 2>/dev/null || true
+"$CLI" sync --no-push --message "phase 8 no-push" >/dev/null 2>&1 \
+  || { echo "FAIL: --no-push with unreachable remote exited non-zero (should skip push entirely)"; exit 1; }
+# With push (and unreachable remote) the verb should exit non-zero
+echo "trigger-push-2" >> "$WORK/file3.txt"
+"$CLI" sync --message "phase 8 with-push" >/dev/null 2>&1 \
+  && { echo "FAIL: push to unreachable remote silently succeeded"; exit 1; } || true
 
 # === Phase 9: <dir> positional arg works ===
 OTHER="$TD/other"
