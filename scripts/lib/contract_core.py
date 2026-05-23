@@ -8,7 +8,7 @@ Store resolution (first match wins):
   2. <cwd>/.claude/contracts.jsonl  — if <cwd>/.claude/ directory exists (project scope)
   3. ~/.contracts/contracts.jsonl   — global fallback
 """
-import json, os, sys, uuid
+import json, os, subprocess, sys, uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -17,6 +17,7 @@ from typing import Optional
 # corrupt-line warnings are deduped per process so one bad row is
 # reported once, not once per ledger re-read.
 _WARNED_LINES: set = set()
+_AGENT_CACHE: Optional[str] = None
 
 
 def _resolve_ledger() -> Path:
@@ -102,7 +103,70 @@ def _infer_pointer_type(action: str) -> str:
     if action.startswith(("curl ", "http://", "https://", "wget ")):
         return "api"
     return "cli"
+
+
+def current_agent() -> str:
+    """Best-effort attribution for ledger rows.
+
+    Sociology default Σ1: every row can be traced to the agent/operator that
+    emitted it. CONTRACT_AGENT is explicit; git email is a stable local
+    fallback. Empty means "unknown" rather than a fabricated identity.
+    """
+    global _AGENT_CACHE
+    if _AGENT_CACHE is not None:
+        return _AGENT_CACHE
+    if agent := os.environ.get("CONTRACT_AGENT", "").strip():
+        _AGENT_CACHE = agent
+        return agent
+    try:
+        r = subprocess.run(["git", "config", "user.email"], capture_output=True,
+                           text=True, timeout=1)
+        _AGENT_CACHE = r.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        _AGENT_CACHE = ""
+    return _AGENT_CACHE
+
+
+def plan_quality_warning(plan: str) -> str:
+    """Α1: surface task-shaped plans that do not name a truth claim."""
+    import re
+    p = " ".join((plan or "").strip().split())
+    if len(p) < 24:
+        return "plan text reads as a task, not a truth claim — does it name what must hold?"
+    if re.match(r"^(do|fix|build|implement)\s+\S.{0,80}$", p, re.I):
+        return "plan text reads as a task, not a truth claim — does it name what must hold?"
+    return ""
+
+
+def humanlike_iterate_warnings(id: str) -> list[str]:
+    """Ε1/Ε2 salience signals derived from the latest iterate streak."""
+    rows = [r for r in _rows() if r.get("id") == id]
+    if any(r.get("event") == "satisfied" for r in rows):
+        return []
+    iter_rows = [r for r in rows if r.get("event") == "iterated"]
+    if not iter_rows:
+        return []
+    last_pass = int(iter_rows[-1].get("action_exit", 1)) == 0
+    streak = 0
+    for r in reversed(iter_rows):
+        is_pass = int(r.get("action_exit", 1)) == 0
+        if is_pass != last_pass:
+            break
+        streak += 1
+    if streak < 3:
+        return []
+    if last_pass:
+        return [
+            f"over-iteration warning: PASS streak={streak} without _mark — what specific risk are you still checking for?"
+        ]
+    return [
+        f"failure-streak escalation: FAIL streak={streak} — escalate (spawn child, revise action, supersede) or abandon (retire/reject)."
+    ]
+
+
 def _append(row: dict) -> None:
+    if "agent" not in row:
+        row["agent"] = current_agent()
     ledger = _ledger()
     ledger.parent.mkdir(parents=True, exist_ok=True)
     with ledger.open("a") as f:
