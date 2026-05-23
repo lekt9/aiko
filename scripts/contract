@@ -390,7 +390,16 @@ print(resolve_identity(current_agent()))
     echo "  current_agent ($agent_current_canon) ≠ routed agent ($agent_target_canon)"
     echo "  inbox row appended: $_inbox"
     echo "  result: FAIL (ROUTED — wait for $agent_target_canon to iterate from their own session)"
-    echo "  the routed agent picks this up via: python3 ~/.claude/skills/contract/scripts/wait-for-event.py --inbox agent --field target_canonical --equals '$agent_target_canon'"
+    # Structured ROUTED block — KV-shape so openai-render.py can lift it to a
+    # tool_call (`agent_routed`) for transports. The plain "result: FAIL" line
+    # above stays as the L2 agent-UX line; this block carries the L3 truth-claim.
+    echo "=== ROUTED ==="
+    echo "  contract_id:        $id"
+    echo "  target_canonical:   ${agent_target_canon:-$agent_target}"
+    echo "  target_raw:         $agent_target"
+    echo "  routed_by:          $agent_current_canon"
+    echo "  inbox_path:         $_inbox"
+    echo "  wait_cmd:           python3 ~/.claude/skills/contract/scripts/wait-for-event.py --inbox agent --field target_canonical --equals '${agent_target_canon:-$agent_target}'"
     return 1
   fi
 
