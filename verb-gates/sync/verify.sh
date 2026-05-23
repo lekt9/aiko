@@ -22,6 +22,11 @@ trap 'rm -rf "$TD"' EXIT
 
 # Force the keychain lookup to fail (we're not testing the gitea path here)
 export GITEA_TOKEN=""
+# Local-only git identity for the gate's test repos
+export GIT_AUTHOR_NAME="sync-gate"
+export GIT_AUTHOR_EMAIL="gate@example.com"
+export GIT_COMMITTER_NAME="sync-gate"
+export GIT_COMMITTER_EMAIL="gate@example.com"
 
 # === Phase 1: --help exits 0 and prints usage ===
 "$CLI" sync --help 2>&1 | grep -q "contract sync" \
