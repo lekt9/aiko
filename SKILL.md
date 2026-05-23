@@ -1102,6 +1102,121 @@ Origin: contract `397bc7bd`, 2026-05-23. Named here so the
 gap is on the substrate's map; binding gate lands when the endpoint
 ships at unbrowse.
 
+## Φ1 — OpenAI-compatible front (the public API surface for /contract)
+
+A native OpenAI-shaped endpoint is the universal client interface in
+late 2025/early 2026: every chat app, SDK, terminal client, panel, web
+playground speaks `/v1/chat/completions` over SSE. Φ1 is the doctrine
+that **/contract's public face IS that endpoint** — hosted at unbrowse,
+backed by the contract substrate, with requirement blocks flowing
+through as native OpenAI `tool_calls` so any standard client renders
+generative UI without any /contract-specific code.
+
+### Substrate side (shippable today)
+
+`scripts/openai-render.py` is the load-bearing translator. It reads
+contract iterate output on stdin and emits OpenAI-compatible SSE chunks
+on stdout:
+
+```bash
+bash ~/.claude/skills/contract/scripts/contract iterate <id> 2>&1 \
+  | python3 ~/.claude/skills/contract/scripts/openai-render.py
+# → data: {"id":"chatcmpl-...","choices":[{"delta":{...}}]}
+# → data: [DONE]
+```
+
+The mapping is mechanical:
+
+| Substrate output | OpenAI chunk |
+|---|---|
+| First chunk | `delta.role = "assistant"` |
+| Plain text (action result, propagation, refractory, BREAK blocks) | `delta.content` text deltas |
+| `=== PAYMENT REQUIRED ===` block | `tool_calls[].function.name = "payment_required"` with `arguments = <KV-pairs as JSON>` |
+| `=== SIGN-IN REQUIRED ===` block | `tool_calls[].function.name = "sign_in_required"` |
+| `=== ROUTED ===` block | `tool_calls[].function.name = "agent_routed"` |
+| `=== INHIBITION REFUSAL ===` block | `tool_calls[].function.name = "inhibition_refusal"` |
+| `=== MACHINE BINARY MISSING ===` block | `tool_calls[].function.name = "machine_binary_missing"` |
+| Final chunk | `finish_reason = "tool_calls"` if blocks present, else `"stop"`, then `data: [DONE]` |
+
+Substrate-internal `=== X ===` headers (PROPAGATION, BREAK ON RESOLUTION,
+iterate · wave) deliberately do **not** become tool_calls — they belong
+in `delta.content` because they're transparency-for-developers, not
+generative-UI-for-end-users. Only the named requirement blocks (the
+`Σ2 public`-tier surfaces) cross the API boundary as function calls.
+
+### What this enables, downstream
+
+A web client (or any OpenAI SDK) calling `/v1/chat/completions` at
+unbrowse receives a normal-shaped streaming response. The text content
+renders as the assistant's plain reply. When a requirement block fires,
+the same stream carries a `tool_call` with `payment_required` or
+`sign_in_required` etc. — the client renders the generative UI
+(payment modal, magic-link button, agent-handoff card) using the
+function-call's arguments. **No /contract-specific knowledge required
+on the client side**; any OpenAI tool-use client renders correctly.
+
+This is the public-API generalization of the Π1/Π2/Σ4/Σ6/Π3 work in
+earlier waves: the substrate emits structured requirement blocks; the
+adapter renders client-native. Φ1 puts the OpenAI SSE format in that
+adapter slot so the client doesn't have to be /contract-aware.
+
+### Verb-gate
+
+`verb-gates/openai-render/verify.sh` binds six phases:
+
+- Empty stdin exits 2 (no silent fail on misuse)
+- PASS-shape iterate (no blocks) → `finish_reason: "stop"`, no tool_calls
+- All four requirement blocks → four distinct tool_calls with the right names
+- Every SSE chunk is valid JSON; every tool_call's `arguments` is itself parseable JSON
+- Substrate-internal blocks (PROPAGATION, BREAK ON RESOLUTION) stay in content, do NOT leak as tool_calls
+- SSE format: every `data: ` chunk followed by a blank line, final `data: [DONE]`
+
+### What's deferred (named, not built today)
+
+Φ1 ships the **substrate-side translator**. Three sibling pieces live
+at unbrowse and follow in their own waves:
+
+| Piece | Lives at | What it does | Why deferred |
+|---|---|---|---|
+| **`/v1/chat/completions` HTTP route** | unbrowse-ecosystem/unbrowse | Wraps `contract solve <user-msg>` + pipes the iterate stream through `openai-render.py`. Bearer-auth via `UNBROWSE_API_KEY`, same as `/v1/credits/*`. | Server route is unbrowse's repo, not /contract's. Substrate side is ready to forward; flip the wire when unbrowse lands the route. |
+| **unbrowse.ai landing page IS the chat** | unbrowse-web | The homepage hosts an OpenAI-compatible chat client pointed at the route above. Sign-in / payment flows render from the tool_calls described in the table. | Frontend work in unbrowse-web repo. The Φ1 contract on the substrate side guarantees the SSE format is stable enough for that frontend to be built confidently. |
+| **Open-source security-relevant client code** | unbrowse public repo (security scope) | Publish: the auth dance, the API key storage shape, the requirement-block parser, the tool_call → UI mapper, the autopay opt-in path, the session-claim race. **Not** published: the unbrowse-side payment processor, the credit-balance ledger logic, anything that touches stored payment methods. The line is "every byte the client sees, the user can audit." | Repo policy + code extraction is an unbrowse-side decision. The substrate's part of the contract — what surface the client reads — is documented here so the extraction has a target. |
+
+### The "security-relevant parts MUST be public" principle
+
+For the user to trust the agent with credentials and payment, they must
+be able to **read the exact code** that handles their auth token, their
+session, and their generative-UI rendering. This is non-negotiable for
+the consumer-trust story unbrowse is selling.
+
+The boundary is sharp:
+- **Public (audit-required):** API key storage, OAuth/magic-link flow,
+  requirement-block parser, autopay opt-in toggle, session register/list/claim
+  client helpers, the Φ1 OpenAI-render translator itself.
+- **Private (server-internal):** payment processor integration, the
+  credit-balance debit logic, the stripe-customer / wallet-on-file
+  mapping, the autopay charge endpoint internals.
+
+The substrate doctrine is: **anything the client executes against the
+user's credentials must be readable by the user**. The substrate-side
+half of that scope (this skill's scripts that any installed client runs)
+is already public-by-definition — `~/.claude/skills/contract/` is a
+local install, the user reads every line. The unbrowse-side wrapper
+code that calls it inherits the requirement when published to the
+public unbrowse repo.
+
+Origin: contract `OPENAI_ID_PLACEHOLDER`, 2026-05-23. Lewis's compound ask:
+"openaicompatible endpoint on /contract based on unbrowse as an api, and
+that will be the main page of the website for unbrowse's landing,
+relying on this same agent, and /contract should allow generative ui to
+pass shit directly like logins when needed — but /contract securely
+stored proeprly, and have the /contract security relevant required parts
+of the client and logic revealed on the public repo of unbrowse /contract
+always so that they can understand how it works with thorough honest
+/contract ed documentation." The substrate-side translator + the
+deferred-but-named server/web/repo pieces together cover the doctrine;
+each downstream piece will land its own contract when it ships.
+
 
 ## Concept lineage (genesis .tongues)
 
