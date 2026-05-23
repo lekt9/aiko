@@ -4218,6 +4218,195 @@ else:
 "
     ;;
 
+  telegram-poll)
+    # Telegram DM/chat injector — the documented receptor producer for the
+    # `telegram` inbox channel (SKILL.md "Receptors" section). Writes one
+    # JSON row per inbound message to ~/.contracts/inbox/telegram/<chat-id>.jsonl
+    # so any receptor contract can block on it via
+    #   wait-for-event.py --inbox telegram --field chat_id --equals <id>
+    #
+    # Bound INTO the /contract CLI itself (not a separate scripts/*.py file)
+    # so the documented schema and the producer ship together. Telethon-based
+    # so it works for user-session accounts (DMs) and bot sessions equally.
+    #
+    # Usage:
+    #   contract telegram-poll --chat-id <int>   [--session <path>] [--interval <s>] [--once] [--inbound-only]
+    #   contract telegram-poll --username <name> [--session <path>] [--interval <s>] [--once] [--inbound-only]
+    #   contract telegram-poll --resolve <name>  [--session <path>]      # one-shot identity lookup
+    #
+    # State:
+    #   ~/.contracts/.telegram-poll/<chat-id>.hwm    (last-seen message id)
+    #   ~/.contracts/inbox/telegram/<chat-id>.jsonl  (append-only event log)
+    #
+    # Creds: TG_API_ID / TG_API_HASH env, or files at
+    #   ~/.config/telegram/api_id  and  ~/.config/telegram/api_hash
+    TG_CHAT_ID=""
+    TG_USERNAME=""
+    TG_RESOLVE=""
+    TG_SESSION="${HOME}/.config/telegram/contract-poll.session"
+    TG_INTERVAL="30"
+    TG_ONCE=""
+    TG_INBOUND_ONLY=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --chat-id)       TG_CHAT_ID="${2:-}"; shift 2 ;;
+        --username)      TG_USERNAME="${2:-}"; shift 2 ;;
+        --resolve)       TG_RESOLVE="${2:-}"; shift 2 ;;
+        --session)       TG_SESSION="${2:-}"; shift 2 ;;
+        --interval)      TG_INTERVAL="${2:-30}"; shift 2 ;;
+        --once)          TG_ONCE="1"; shift ;;
+        --inbound-only)  TG_INBOUND_ONLY="1"; shift ;;
+        -h|--help)
+          cat <<'USAGE'
+contract telegram-poll — Telethon-based injector for the `telegram` inbox channel
+
+  contract telegram-poll --chat-id <int>   [--session <path>] [--interval <s>] [--once] [--inbound-only]
+  contract telegram-poll --username <name> [--session <path>] [--interval <s>] [--once] [--inbound-only]
+  contract telegram-poll --resolve <name>  [--session <path>]
+
+Writes to ~/.contracts/inbox/telegram/<chat-id>.jsonl in the schema
+documented in SKILL.md so receptors block via:
+  wait-for-event.py --inbox telegram --field chat_id --equals <id>
+
+Defaults: interval=30s, session=~/.config/telegram/contract-poll.session.
+Creds: TG_API_ID/TG_API_HASH env or ~/.config/telegram/api_{id,hash}.
+USAGE
+          exit 0 ;;
+        *) echo "telegram-poll: unknown arg: $1" >&2; exit 2 ;;
+      esac
+    done
+    if [ -z "$TG_RESOLVE" ] && [ -z "$TG_CHAT_ID" ] && [ -z "$TG_USERNAME" ]; then
+      echo "usage: contract telegram-poll (--chat-id <int> | --username <name> | --resolve <name>) [opts]" >&2
+      exit 2
+    fi
+    TG_CHAT_ID="$TG_CHAT_ID" TG_USERNAME="$TG_USERNAME" TG_RESOLVE="$TG_RESOLVE" \
+    TG_SESSION="$TG_SESSION" TG_INTERVAL="$TG_INTERVAL" \
+    TG_ONCE="$TG_ONCE" TG_INBOUND_ONLY="$TG_INBOUND_ONLY" \
+    python3 - <<'PY'
+import os, sys, json, asyncio, pathlib, time
+try:
+    from telethon import TelegramClient
+except ImportError:
+    print("telegram-poll: telethon not installed (pip install telethon)", file=sys.stderr)
+    sys.exit(3)
+
+def _load_cred(env_key, fname):
+    v = os.environ.get(env_key)
+    if v: return v.strip()
+    p = pathlib.Path.home() / ".config" / "telegram" / fname
+    if p.exists(): return p.read_text().strip()
+    return None
+
+api_id_raw = _load_cred("TG_API_ID", "api_id")
+api_hash   = _load_cred("TG_API_HASH", "api_hash")
+if not api_id_raw or not api_hash:
+    print("telegram-poll: missing TG_API_ID / TG_API_HASH (or ~/.config/telegram/api_{id,hash})",
+          file=sys.stderr)
+    sys.exit(3)
+api_id = int(api_id_raw)
+
+session  = os.environ["TG_SESSION"]
+resolve  = os.environ.get("TG_RESOLVE") or ""
+username = os.environ.get("TG_USERNAME") or ""
+chat_id  = os.environ.get("TG_CHAT_ID") or ""
+interval = int(os.environ.get("TG_INTERVAL") or "30")
+once     = bool(os.environ.get("TG_ONCE"))
+inbound_only = bool(os.environ.get("TG_INBOUND_ONLY"))
+
+HOME = pathlib.Path.home()
+HWM_DIR = HOME / ".contracts" / ".telegram-poll"
+INBOX_DIR = HOME / ".contracts" / "inbox" / "telegram"
+HWM_DIR.mkdir(parents=True, exist_ok=True)
+INBOX_DIR.mkdir(parents=True, exist_ok=True)
+
+async def main():
+    async with TelegramClient(session, api_id, api_hash) as client:
+        me = await client.get_me()
+
+        # Resolution-only mode
+        if resolve:
+            ent = await client.get_entity(resolve)
+            uname = getattr(ent, "username", None)
+            print(json.dumps({
+                "resolved":  resolve,
+                "id":        ent.id,
+                "username":  uname,
+                "first_name": getattr(ent, "first_name", None),
+                "last_name":  getattr(ent, "last_name", None),
+            }, indent=2))
+            return 0
+
+        # Target resolution
+        target_id = None
+        target_username = None
+        if chat_id:
+            target_id = int(chat_id)
+            try:
+                ent = await client.get_entity(target_id)
+                target_username = getattr(ent, "username", None)
+            except Exception:
+                ent = None
+        else:
+            ent = await client.get_entity(username)
+            target_id = ent.id
+            target_username = getattr(ent, "username", None) or username
+
+        hwm_file = HWM_DIR / f"{target_id}.hwm"
+        inbox    = INBOX_DIR / f"{target_id}.jsonl"
+
+        def read_hwm():
+            try: return int(hwm_file.read_text().strip())
+            except FileNotFoundError: return 0
+
+        def write_hwm(v): hwm_file.write_text(str(v))
+
+        def append(row):
+            with inbox.open("a") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+        print(f"telegram-poll live as @{me.username} (id={me.id})"
+              f" -> chat_id={target_id} (@{target_username}) -> {inbox}",
+              flush=True)
+
+        async def one_poll():
+            hwm = read_hwm()
+            collected = []
+            async for m in client.iter_messages(ent or target_id, limit=20):
+                if m.id <= hwm: break
+                if inbound_only and m.out: continue
+                collected.append(m)
+            collected.reverse()
+            if not collected: return 0
+            for m in collected:
+                row = {
+                    "id": m.id,
+                    "chat_id": target_id,
+                    "from_username": target_username,
+                    "out": bool(m.out),
+                    "text": m.text or "",
+                    "date": m.date.isoformat() if m.date else None,
+                    "reply_to": m.reply_to_msg_id,
+                }
+                append(row)
+                tag = "->" if m.out else "<-"
+                print(f"  [{row['date']}] {tag} {(m.text or '')[:180]}", flush=True)
+            write_hwm(max(m.id for m in collected))
+            return len(collected)
+
+        while True:
+            try:
+                n = await one_poll()
+                if n: print(f"  +{n} event(s) appended", flush=True)
+            except Exception as e:
+                print(f"  poll err: {e}", file=sys.stderr, flush=True)
+            if once: break
+            await asyncio.sleep(interval)
+        return 0
+
+sys.exit(asyncio.run(main()) or 0)
+PY
+    ;;
+
   *)
     echo "unknown subcommand: $cmd" >&2
     bash "$0" help >&2
