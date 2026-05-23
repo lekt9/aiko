@@ -2061,3 +2061,135 @@ properly" — meaning generalise the pattern. Contract `d4074595`. The
 result is the audits/ directory convention with `memory-layering` as the
 worked first instance — and the meta-rule that every future rule lands
 the same way.
+
+
+## Biology gaps shipped: apoptosis · inhibition · hebbian
+
+Three biology primitives were mapped into the substrate after the
+question "what else from biology could /contract into contract that are
+good gaps to work with?" surfaced honest holes. Each lands as a query
+verb or a single field — no new shape (per `310f425f`, shape IS the type
+system). Together they extend the neuron model with **time-bound
+truth**, **negative regulation**, and **behavioral correlation**.
+
+### Apoptosis (time-bound truth) — `contract stale`
+
+A satisfied row is not eternal truth — it was true when the action last
+fired. Real cells have programmed death: a finite lifespan after which
+the cell auto-terminates regardless of input. The substrate analogue is
+**staleness**: a satisfaction has an implicit half-life, and the agent
+should re-iterate after enough wall-clock time has passed.
+
+`contract stale` is a query verb (no new shape, no new field — staleness
+is a documented convention on existing satisfactions):
+
+```bash
+contract stale                       # default --since 7d
+contract stale --since 24h
+contract stale --since 30d --json
+```
+
+Surfaces every satisfied contract whose latest `satisfied` row is older
+than the cutoff, with its plan + age + the suggested next action:
+
+```
+=== CONTRACT STALE (--since 7d) ===
+  2 satisfied contract(s) older than 7d:
+  [12.4d] abc1234   served-surface clean on https://...
+         last satisfied: 2026-05-11T...Z
+         -> contract iterate abc1234     # re-prove the claim still holds
+         -> contract supersede abc1234 <winner>  # if the claim is obsolete
+```
+
+The substrate surfaces; the agent decides whether to re-iterate or
+supersede. No clock-judgment is baked in — the agent's `--since` is the
+threshold for *this* iteration. Verb-gate: `verb-gates/stale/verify.sh`
+proves the happy path + the bad-`--since` refusal. Origin: contract
+`20402720`.
+
+### Inhibition (negative regulation) — `--inhibits <id>`
+
+Real neurons have both excitatory and inhibitory inputs. The substrate
+had only excitatory composition (funnel/quorum/sequence — all fire-when
+predicates). **Inhibition** is the orthogonal axis: a satisfied
+inhibitor **blocks** a downstream contract from satisfying, distinct
+from supersession (lifecycle) and tool-guard (capability).
+
+Declared at the inhibitor:
+
+```bash
+contract declare "feature flag X is OFF" \
+  --action "test ! -f /etc/flag-x" \
+  --inhibits abc1234           # this contract, when satisfied,
+                               # suppresses _mark satisfied on abc1234
+```
+
+The `inhibits` field lives on the declared row of the inhibitor; one
+contract can inhibit many targets (pass `--inhibits` repeatedly). At
+`_mark satisfied <target>` time, the substrate scans for any contract
+with `target` in its `inhibits` list whose own status is `satisfied`. If
+any such inhibitor is firing, the mark is **refused** with a non-zero
+exit and an `=== INHIBITION REFUSAL ===` block that names every active
+inhibitor by id + plan. No satisfied row is appended.
+
+The refusal lifts only when every active inhibitor is released —
+typically via `contract supersede <inhibitor> <winner>` (the inhibitor
+becomes a fossil and stops contributing to active-inhibitor scans).
+
+Verb-gate: `verb-gates/inhibits/verify.sh` proves the field plumbing,
+the fire-when-clear happy path, the refusal under active suppression,
+the multi-inhibitor surface, and the lift-on-supersede. Origin: contract
+`d830f26e`.
+
+### Hebbian (co-iteration synapse) — `contract synapse`
+
+"Cells that fire together wire together." `contract search` surfaces
+contracts related by **plan text** (BM25 + embeddings). It does NOT
+surface contracts related by **co-iteration behavior**: two contracts
+that always get iterated within the same wave-window are probably about
+the same thing even when their plan text is dissimilar.
+
+`contract synapse` walks the ledger's `iterated` events, finds pairs of
+distinct contracts whose iterations fall within the same wave-window N
+times, and surfaces them as `corroborate` candidates:
+
+```bash
+contract synapse                                  # default --window 300s --threshold 2
+contract synapse --window 60 --threshold 5
+contract synapse --window 600 --json
+```
+
+Output names each pair, the co-iteration count, both plans, both
+statuses, and the suggested `corroborate` command. Already-corroborated
+pairs are excluded (the substrate doesn't re-suggest existing synapses
+— corroboration IS the wired-up synapse).
+
+The substrate surfaces; the agent declares the corroboration. Never
+auto-fires — that would violate "no script bakes a verdict" (CLAUDE.md
+default #4 / C-G01).
+
+Verb-gate: `verb-gates/synapse/verify.sh` proves the detection on a
+constructed ledger, the threshold + window respected, and the
+already-corroborated exclusion. Origin: contract `5fc64e98`.
+
+### Why these three, why no more in this wave
+
+Mapped: apoptosis (time-bound truth), inhibition (negative regulation),
+Hebbian co-iteration (behavioral correlation).
+
+Considered + rejected as overlapping existing primitives:
+- **Mitosis / cell division** — `contract spawn` already does this.
+- **Stem cells** — `contract revise` already replaces an action late-binding.
+- **Hormonal signaling** — receptors (broad inbox filters) cover this.
+- **Glia / supporting cells** — the `audit/*` and `self/*` contracts ARE this.
+- **Mycorrhizal networks** — the cross-substrate standing-gate pattern (via `contract promote` + global ledger) covers this.
+- **Entropy / decay** — apoptosis IS this; explicit `--halflife` was rejected by `310f425f` and remains so.
+
+Considered + deferred (genuine gaps, not yet shipped):
+- **Pain / nociception (priority interrupts)** — no use case surfaced yet.
+- **Sleep / consolidation (nightly compress)** — hooks already partly cover this.
+- **Energy budget aggregate** — `--budget` is per-contract; a tree-wide energy ledger would be a separate wave.
+
+Organ root: contract `082e72cd` (biology gaps shipped). The three
+children are `20402720` (apoptosis), `d830f26e` (inhibition),
+`5fc64e98` (hebbian); each is gated on its verb-gate.
