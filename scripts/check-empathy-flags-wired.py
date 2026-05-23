@@ -22,7 +22,7 @@ verify = VERIFY.read_text()
 # Scope the search to just the TABLE rows (pipe-prefixed lines), not the
 # surrounding prose / code blocks that mention --action et al. as bash
 # examples.
-m = re.search(r"## Empathy gate.*?\n\| Flag .*?\n\|[- |]+\n((?:\|.*\n)+)", skill, flags=re.DOTALL)
+m = re.search(r"## Empathy gate[\s\S]*?\| Flag [\s\S]*?\n\|[- |]+\n((?:\|[^\n]*\n)+)", skill)
 if not m:
     print("could not find Empathy gate primitives table in SKILL.md", file=sys.stderr)
     sys.exit(2)
