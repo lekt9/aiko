@@ -512,13 +512,28 @@ def from_contract(cid):
         return 0
     if contract_core.is_crystallized(cid):
         return 0
+    if any(r.get("event") == "crystallize_skipped" and r.get("id") == cid
+           for r in contract_core._rows()):
+        # Already skipped earlier with a recorded reason — don't retry on
+        # every mark event. The agent can re-derive layers and call learn
+        # explicitly if they want to retry.
+        return 0
     plan = c.get("plan", "")
     body = _compose_body(learning, cid=cid, plan=plan)
     mtype = _infer_memory_type(learning, None)
     title, description, hook = _derive_layers(learning)
-    mem_path, url = crystallize(
-        _slug(title or learning), title, description, body,
-        c.get("cwd"), memory_type=mtype, hook=hook)
+    try:
+        mem_path, url = crystallize(
+            _slug(title or learning), title, description, body,
+            c.get("cwd"), memory_type=mtype, hook=hook)
+    except ValueError as e:
+        # Layering or other validation failure. Record a skipped event with
+        # the reason — surfaces in the ledger, gets caught by
+        # self/crystallize-consistency, and the hook stops retrying every
+        # subsequent mark event. Substrate principle: no silent fallback.
+        sys.stderr.write(f"crystallize from-contract {cid}: skipped — {e}\n")
+        contract_core.record_event("crystallize_skipped", cid, reason=str(e))
+        return 0
     contract_core.record_crystallization(cid, mem_path, url)
     print(f"crystallized {cid}: memory={mem_path} outline={url or '(skipped)'}")
     return 1
