@@ -24,6 +24,38 @@ Core job: declare a truth claim, iterate until genuinely satisfied, spawn childr
 On any invocation: read `ledgers/contracts.jsonl` — it is the only truth. The full verb list is discoverable via `contract self` (live introspection — count drifts as verbs are added); the table above is the load-bearing front door (Ψ2, working-memory cap).
 
 
+## Doctrine delegation (the thin-index discipline)
+
+The substrate's own pointer-not-payload law applied to **this file**.
+SKILL.md is a thin INDEX of doctrines, not their full prose. Each
+doctrine lives in three load-bearing places (Β3, `9d3f399f`):
+
+1. **Standing-gate contract** — the bindable id, audit trail, +
+   load-bearing narrative on the row's `plan` field.
+2. **Outline appendix** at `docs.getfoundry.app` — the human-readable
+   long-form narrative.
+3. **SKILL.md** — a ≤120-line summary that cites the standing-gate id
+   so an agent reading SKILL.md can `contract status <id>` for full
+   evidence + `contract:<id>` to pointer-bind it.
+
+Β4 (`fc3d71fd`) is the runtime binding: `check-skill-md-thin-index.py`
+counts doctrine sections, fails on size cap (total ≤1200 lines) and
+fat-section cap (each ≤120 lines), surfaces unregistered doctrines as
+warnings. The substrate self-corrects continuously: a fat new doctrine
+trips the gate on the next ledger commit, the agent shrinks it, the gate
+goes green.
+
+Why not put doctrine prose under `references/<slug>.md`? Β3's
+`audits/references-purge/` explicitly forbids it: duplicating prose
+across files + the standing-gate row + the Outline doc creates
+three-way drift that no gate can keep coherent. The narrative belongs
+on the contract row (canonical) and the Outline doc (readable). SKILL.md
+keeps only the summary.
+
+The doctrine roster lives at `references/REGISTRY.md`. Read it to find
+which standing-gate id binds which doctrine.
+
+
 ## Architecture (L0-L2)
 
 - **L0 core** — `scripts/lib/contract_core.py`: data model, the only code that touches `ledgers/contracts.jsonl`. `declare()`, `record_iteration()`, `mark_satisfied()`, `get_tree()`, `list_all()`, `children_satisfy()`.
