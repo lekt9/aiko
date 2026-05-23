@@ -263,6 +263,29 @@ Every contract is simultaneously a funnel, a loop, and a harness — fractally. 
 
 Fractal: funnels contain loops, loops contain funnels, harnesses wrap any shape. Every contract is itself a funnel (narrows to truth) + loop (iterate until resolved) + harness (collects evidence). `children-satisfy` remains valid; `funnel` is the canonical name. `drive` mode removes the human pause between loop iterations but does not change the two-key exit.
 
+### Shape IS the type system (no `--lifetime` flag will ever exist)
+
+The eight shapes ARE the lifetime / role / decay model. There is no separate
+typed-tag layer and there never will be. Concretely:
+
+| If you would reach for… | …use this shape instead |
+|---|---|
+| `--lifetime one-shot` (the default) | a plain **cell** or **judgment**. Once `_mark satisfied`, it stays satisfied. |
+| `--lifetime invariant` (auto-re-fire) | **`loop-until:<cmd>`**. The body re-runs every iterate; the loop completes when the body says so. The body IS the invariant. |
+| `--halflife 7d` (decay/staleness) | re-iterate the cell, or **`verify <surface>`** if it's bound. Staleness = "iterate later"; that's already iterate. Time-based decay would smuggle a clock-judgment into the substrate. |
+| `--precondition` vs `--postcondition` | iterate **before** for pre, **after** for post. Direction is the agent's call, not a typed field. |
+| `--lifetime capability` | **`tool-guard:<glob>`** — the gate IS the capability. |
+| `--lifetime composite` | **`funnel` / `funnel-first` / `sequence` / `quorum`** — the composition IS the lifetime. |
+
+**Discovery is a fix, not a proposal.** When the agent discovers that a
+flag/field/layer it is about to add is already provided by an existing
+shape, the response is to ship the simplification in the same turn — not
+to ask "want me to ship this?". The audit and the fix are one continuous
+turn. Asking is a redundant turn that violates the work-style discipline.
+Worked example: the "lifetime tag" thread surfaced 2026-05-22 and was
+immediately fossilized — `bind_to + verify` was the only genuine new
+primitive; the rest was already there. Contract `310f425f`.
+
 ## The two-key exit (load-bearing invariant)
 
 Every `contract iterate` ends with:
