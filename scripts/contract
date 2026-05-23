@@ -1263,6 +1263,153 @@ USAGE
     fi
     ;;
 
+  bg)
+    # contract bg <id> [--lock <path>] [--restart] -- <cmd...>
+    #
+    # Launch <cmd> as a detached background process that writes stdout+stderr
+    # to ~/.contracts/streams/<id>/stdout.log (the substrate streams convention).
+    # Returns immediately with the PID and a `contract tail <id>` hint.
+    #
+    # Long-running actions (pollers, watchers, trainers, observers) MUST use
+    # `contract bg` instead of blocking the foreground iterate. The agent's
+    # turn never waits on long-lived work; the work writes to streams; the
+    # observer (agent, user, another contract) tails the log when curious.
+    #
+    # State files (under ~/.contracts/streams/<id>/):
+    #   stdout.log   — append-only stdout+stderr from <cmd>
+    #   pid          — pid + start_ts + command line of the background job
+    #   lock         — optional file-lock guard (see --lock)
+    #
+    # --lock <path>  Refuse to start if <path> exists and names a live pid;
+    #                emit a structured "=== INSTANCE ALREADY RUNNING ==="
+    #                block with the holder's pid + log path + start_ts.
+    #                On clean start, write <pid> to <path>; on graceful exit
+    #                the action removes <path> via a substrate trap.
+    # --restart      Kill any existing instance (matched by --lock or by
+    #                streams/<id>/pid) before starting the new one.
+    #
+    # Origin: 2026-05-24 — Lewis "/contract so that we dont do shit that is
+    # long running like that that could be blocking — /contract so that its
+    # always converted to stdio into bg or something." The convention IS the
+    # streams output port (`ff6e8908`); `bg` is the canonical launcher into it.
+
+    BG_ID=""
+    BG_LOCK=""
+    BG_RESTART=""
+    declare -a BG_CMD=()
+    SEEN_DASHDASH=""
+    while [ $# -gt 0 ]; do
+      if [ -z "$SEEN_DASHDASH" ]; then
+        case "$1" in
+          --) SEEN_DASHDASH="1"; shift ;;
+          --lock)    BG_LOCK="${2:-}"; shift 2 ;;
+          --restart) BG_RESTART="1"; shift ;;
+          --help|-h)
+            cat >&2 <<'USAGE'
+contract bg <id> [--lock <path>] [--restart] -- <cmd...>
+
+Launch <cmd> in the background, redirect stdout+stderr to the contract's
+stream file, return immediately with PID and tail-hint. Never blocks.
+
+Options:
+  --lock <path>   Refuse to start if <path> holds a live pid; emit
+                  INSTANCE ALREADY RUNNING block with holder info.
+  --restart       Kill any existing instance before starting fresh.
+
+Files written (under ~/.contracts/streams/<id>/):
+  stdout.log   stdout+stderr of <cmd>
+  pid          pid + start_ts + command line
+
+Observe live:  contract tail <id>
+USAGE
+            exit 0 ;;
+          *) [ -z "$BG_ID" ] && BG_ID="$1" && shift && continue ;
+             # legacy: rest-of-args is the command without explicit --
+             SEEN_DASHDASH="1"; BG_CMD+=("$1"); shift ;;
+        esac
+      else
+        BG_CMD+=("$1"); shift
+      fi
+    done
+
+    if [ -z "$BG_ID" ] || [ ${#BG_CMD[@]} -eq 0 ]; then
+      echo "Usage: contract bg <id> [--lock <path>] [--restart] -- <cmd...>" >&2
+      exit 2
+    fi
+
+    STREAM_DIR="$HOME/.contracts/streams/$BG_ID"
+    mkdir -p "$STREAM_DIR"
+    LOG="$STREAM_DIR/stdout.log"
+    PIDFILE="$STREAM_DIR/pid"
+
+    # Check existing instance — by --lock and/or streams/<id>/pid
+    EXISTING_PID=""
+    EXISTING_VIA=""
+    if [ -n "$BG_LOCK" ] && [ -f "$BG_LOCK" ]; then
+      _p=$(head -1 "$BG_LOCK" 2>/dev/null | awk '{print $1}')
+      if [ -n "$_p" ] && kill -0 "$_p" 2>/dev/null; then
+        EXISTING_PID="$_p"; EXISTING_VIA="lock"
+      fi
+    fi
+    if [ -z "$EXISTING_PID" ] && [ -f "$PIDFILE" ]; then
+      _p=$(head -1 "$PIDFILE" 2>/dev/null | awk '{print $1}')
+      if [ -n "$_p" ] && kill -0 "$_p" 2>/dev/null; then
+        EXISTING_PID="$_p"; EXISTING_VIA="pidfile"
+      fi
+    fi
+
+    if [ -n "$EXISTING_PID" ]; then
+      if [ -n "$BG_RESTART" ]; then
+        echo "  killing existing pid $EXISTING_PID (via $EXISTING_VIA) before restart" >&2
+        kill "$EXISTING_PID" 2>/dev/null && sleep 1
+        kill -0 "$EXISTING_PID" 2>/dev/null && kill -9 "$EXISTING_PID" 2>/dev/null
+        rm -f "$BG_LOCK" 2>/dev/null
+      else
+        cat <<EOF
+=== INSTANCE ALREADY RUNNING ===
+  contract: $BG_ID
+  holder pid: $EXISTING_PID
+  detected via: $EXISTING_VIA
+  log: $LOG
+$(test -f "$PIDFILE" && echo "  start info: $(cat "$PIDFILE")")
+$(test -n "$BG_LOCK" && test -f "$BG_LOCK" && echo "  lock: $BG_LOCK")
+
+  follow live:  bash $0 tail $BG_ID
+  restart:      bash $0 bg $BG_ID${BG_LOCK:+ --lock $BG_LOCK} --restart -- ${BG_CMD[*]}
+  kill it:      kill $EXISTING_PID
+EOF
+        exit 1
+      fi
+    fi
+
+    # Launch — fully detached, stdout+stderr → log, command line baked into pidfile
+    TS=$(date -u +%FT%TZ)
+    # Use setsid where available so the child doesn't die with this shell
+    if command -v setsid >/dev/null 2>&1; then
+      setsid bash -c 'exec "$@" >> "'"$LOG"'" 2>&1' "${BG_CMD[@]}" </dev/null &
+    else
+      nohup bash -c 'exec "$@" >> "'"$LOG"'" 2>&1' "${BG_CMD[@]}" </dev/null >/dev/null 2>&1 &
+    fi
+    NEW_PID=$!
+    disown 2>/dev/null || true
+    printf '%s %s %s\n' "$NEW_PID" "$TS" "${BG_CMD[*]}" > "$PIDFILE"
+    [ -n "$BG_LOCK" ] && printf '%s\n' "$NEW_PID" > "$BG_LOCK"
+
+    cat <<EOF
+=== CONTRACT BG ===
+  contract: $BG_ID
+  pid: $NEW_PID
+  started: $TS
+  cmd: ${BG_CMD[*]}
+  log: $LOG
+  pidfile: $PIDFILE
+$(test -n "$BG_LOCK" && echo "  lock: $BG_LOCK")
+
+  follow live:  bash $0 tail $BG_ID
+  stop:         kill $NEW_PID
+EOF
+    ;;
+
   honest)
     # contract honest — metacognition report.
     # Runs every self/* check, every audit verify.sh, the digest chain,
