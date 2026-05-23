@@ -1142,6 +1142,46 @@ print(f'  source: {src}')
 "
     ;;
 
+  invite)
+    # Σ5 — invite-cap allowlist. The current agent invites an identity into
+    # the team set, capped at INVITE_CAP_PER_INVITER active invites per
+    # inviter. The substrate enforces the cap, Σ3-canonicalizes both sides,
+    # and refuses inviter-not-team / already-member / self-invite cases.
+    INVITEE="${1:-}"; shift || true
+    if [ -z "$INVITEE" ]; then
+      cat >&2 <<'USAGE'
+usage: contract invite <invitee-identity>
+
+Σ5 — allowlist a new team member. Caller (current_agent) must already be
+team. Cap is 2 active invites per inviter (canonical, Σ3-resolved).
+
+  CONTRACT_AGENT=lewis@getfoundry.app contract invite alice@example.com
+
+Refused on: inviter not team · inviter at cap · invitee already team ·
+invitee equals inviter (Σ3-canonical).
+USAGE
+      exit 2
+    fi
+    MH_INVITEE="$INVITEE" _py_inline "
+import os, sys
+from contract_core import record_invite, count_invites_by, INVITE_CAP_PER_INVITER, current_agent, resolve_identity
+try:
+    invite_id, canon = record_invite(os.environ['MH_INVITEE'])
+except ValueError as e:
+    print(f'  refused: {e}', file=sys.stderr)
+    sys.exit(2)
+remaining = INVITE_CAP_PER_INVITER - count_invites_by(canon)
+print(f'invited: {os.environ[\"MH_INVITEE\"]} (canonical: {resolve_identity(os.environ[\"MH_INVITEE\"])})')
+print(f'  invite_id: {invite_id}')
+print(f'  inviter:   {canon}')
+print(f'  remaining: {remaining}/{INVITE_CAP_PER_INVITER} invite slots for this inviter')
+print()
+print('  the invitee is now team-visible (Σ2 default) and can be addressed by:')
+print(f'    contract list --for {os.environ[\"MH_INVITEE\"]}')
+print(f'    contract declare ... --action agent:{os.environ[\"MH_INVITEE\"]}')
+"
+    ;;
+
   alias)
     # Σ3 — declare one identity equivalence class. Every alias resolves to
     # the canonical for visibility checks (visible_to), team membership
