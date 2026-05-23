@@ -549,7 +549,108 @@ substrate-enforced pause between mark and propagation. Adding it makes
 the neuron analogy complete (refractory period was the missing piece)
 and gives the agent a structured moment to catch downstream-invalidation
 bugs before they propagate. Contract `0bc383d0`.
+## Plan-fulfillment proof (the claim-to-evidence binding)
 
+The two-key exit said: KEY 1 machine, KEY 2 agent judges genuine. The
+agent's judgment lived **in-thread**, with no artifact on the ledger row.
+That made `_mark satisfied` indistinguishable between honest judgment and
+rationalized fake-green. The ledger row carried "satisfied" but not
+"satisfied **because**".
+
+Plan-fulfillment proof closes that gap by design. Every `_mark satisfied`
+**must** carry one of:
+
+```bash
+contract _mark <id> satisfied --proof "<one-line evidence the plan held>"
+contract _mark <id> satisfied --proof-skip "<why the in-thread KEY 2 is sufficient here>"
+```
+
+A bare `contract _mark <id> satisfied` is **refused with exit 2** and the
+substrate surfaces the contract's plan text alongside the two paths
+forward. The plan IS the rule; the proof IS the self-judgment artifact
+crystallized to the ledger row.
+
+### The biology read
+
+Where KEY 3 is the **refractory period** (a moment of rest between firing
+and propagation), plan-fulfillment proof is the **synaptic memory** of why
+the cell fired. A real synapse records the input pattern that triggered
+its action potential — that record is what plasticity acts on later. The
+ledger row's `proof` field IS that record: when the substrate asks "why
+did this satisfy?", the answer is on the row, not vapored into a closed
+conversation.
+
+### The ledger schema (+1 field)
+
+```json
+{
+  "event": "satisfied",
+  "id": "abc1",
+  "wave": 2,
+  "ts": "...",
+  "proof": "deploy hash 04e7 reaches https://site.example with 200 + expected text",
+  "agent": "lewis@…"
+}
+```
+
+Or for the explicit opt-out:
+
+```json
+{
+  "event": "satisfied",
+  "id": "abc1",
+  "wave": 2,
+  "ts": "...",
+  "proof_skip_reason": "autonomous drive — agent KEY 2 fired in-thread on continuous evidence; row is one of N in a tree mark",
+  "agent": "..."
+}
+```
+
+Both fields can be `null` on rows that predate this binding (existing
+satisfied rows are untouched). Both are visible via `contract status`,
+`contract self --json`, and `contract honest`.
+
+### Why fractal, by design
+
+The binding applies to **every shape, every depth**: cell, judgment,
+funnel, sequence, quorum, harness, the organ root, every leaf. There is
+no opt-out per-shape, no opt-out at depth N, no env override to silence
+the prompt. The agent CAN write a trivially-tautological proof — but the
+proof IS on the row, named, attributable, and `contract honest` can later
+surface "every proof in the last hour was 'action exited 0' — is KEY 2
+degenerating into rubber-stamping?" The binding makes the gap detectable.
+
+### When to use --proof vs --proof-skip
+
+| Path | When | Example |
+|---|---|---|
+| **`--proof "<evidence>"`** | One-shot organs, leaf cells, explicit human marks. The proof is the audit trail. | `--proof "verify-served-surface returned 0 across 4 routes, no console.error in report.json"` |
+| **`--proof-skip "<reason>"`** | Autonomous drive marks where KEY 2 fired in-thread on a wider context window. The skip-reason MUST be specific (the substrate refuses a blank reason). | `--proof-skip "autonomous drive — parent organ b77ad5d1 fired KEY 2 across all 5 stages in this turn"` |
+
+The reason `--proof-skip` exists at all: drive-mode marks fire dozens of
+satisfied rows per organ-tree-convergence; forcing every one to carry a
+verbose proof would punish the legitimate autonomous-loop case. The
+substrate enables either path; the agent picks based on context. **A
+silent bare mark is the only thing refused** — every satisfied row is
+attributable to one of the two intents.
+
+### Self-check
+
+`self/proof-binding` (in `scripts/skill-self-test.sh`,
+`scripts/check-proof-binding.sh`) statically + at runtime verifies:
+- `contract_core.mark_satisfied` accepts `proof` / `proof_skip_reason` kwargs
+- `_mark satisfied` without proof exits 2 with the `PROOF REQUIRED` prompt
+- `_mark satisfied --proof <text>` exits 0 and stores the text on the row
+- `_mark satisfied --proof-skip <reason>` exits 0 and stores the reason
+
+Origin: 2026-05-23. The agent was asked to "ensure a contract must
+perform what it says its supposed to be doing before resolving, with the
+declaration written inside it as a rule programmatically that gets self
+judged." The plan IS the rule; the proof IS the self-judgment artifact.
+KEY 2 stopped being purely in-thread the moment the artifact landed on
+the ledger row. Contract `173c8819`.
+
+## What this skill does NOT do
 ## What this skill does NOT do
 
 - Auto-declare from a detected pattern. Surfaces candidates only.
