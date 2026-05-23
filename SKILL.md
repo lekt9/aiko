@@ -727,6 +727,7 @@ is indistinguishable from one judging honestly. Σ1 closes that gap.
 | # | Default | What it enables |
 |---|---|---|
 | **Σ1** | **Agent attribution on every row.** Every ledger event carries an optional `agent` field (env `CONTRACT_AGENT`, falling back to `git config user.email`). Per-agent KEY-2 honesty rates become observable: who marks satisfied on first PASS vs who iterates an average of N waves? | reputation, trust, accountability across the ledger; supersession is one-directional but attribution makes it diagnostic |
+| **Σ2** | **Audience gates — who reads what.** Every `declare` may carry `--audience <tier-or-list>` with three tiers (`public`, `team`, `private`) and/or explicit identities. `contract list --for <viewer>` filters rows to those visible to the viewer. Σ1 attribution feeds Σ2 team membership: the team set IS the agent column. Default for legacy rows (no audience field) is `team` — visible to anyone who has ever declared a contract, invisible to external transports without a ledger identity. The bot (`foundry_aiko_bot`) is NOT team by default; it only sees `public` rows + rows explicitly addressed to it. | safe transport gates — the same /contract substrate can publish to a Telegram bot, an Outline doc, a gitea mirror, the panel UI, without leaking private rows; the agent picks the tier at declare time |
 
 ### Α — Aesthetics (craft signal)
 
