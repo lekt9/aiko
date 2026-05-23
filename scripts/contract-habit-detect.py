@@ -315,13 +315,18 @@ def main():
     print()
     for c in candidates:
         icon = "+" if c["status"] == "satisfied" else "~"
-        print(f"  [{icon}] score={c['score']}  id={c['id']}  status={c['status']}")
+        src = c.get("score_source", "bm25")
+        em = c.get("embed")
+        bm = c.get("bm25", c["score"])
+        sig = f"bm25={bm} embed={em}" if em is not None else f"bm25={bm}"
+        print(f"  [{icon}] score={c['score']} via {src}  ({sig})  id={c['id']}  status={c['status']}")
         print(f"      plan:   {c['plan'][:80]}")
         if c.get("learning"):
             print(f"      why:    {c['learning'][:100]}")
         print(f"      action: {c['action'][:60]}")
         print(f"      -> contract iterate {c['id']}")
         print(f"      -> contract spawn {c['id']} \"<sub>\" --action \"<cmd>\"")
+        print(f"      -> contract:{c['id']}    (link this contract as a gate)")
         print()
 if __name__ == "__main__":
     main()
