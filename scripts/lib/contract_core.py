@@ -113,6 +113,52 @@ def _infer_pointer_type(action: str) -> str:
     return "cli"
 
 
+def _infer_layer(action: str) -> int:
+    """Π5 — derive a contract's layer from its pointer-type.
+
+    The substrate's six effective tiers, top → bottom:
+      L6 operator   — agent:<id> routes work to a named human/agent
+      L5 value      — x402:<url> payment-gated calls
+      L4 transport  — wait-for-event.py over inbox/* (receptors)
+      L3 graph      — composition + judgments + contract-ref (substrate-internal)
+      L2 cell       — cli/api/harness/loop-until/tool-guard (mechanical checks)
+      L1 system     — machine:<bin> (host-local binaries — system-level access)
+
+    Pointer-types map deterministically. The substrate layers fall out of
+    pointer-types that already exist; Π5 doesn't add seams, it names them.
+
+    Existing rows without a layer field are inferred at read time (legacy
+    compatibility — the 184+ rows declared before Π5 keep working).
+    """
+    pt = _infer_pointer_type(action)
+    # Receptor convention: cli action invoking wait-for-event.py → transport
+    if pt == "cli" and "wait-for-event" in action:
+        return 4  # transport
+    return {
+        "agent":         6,  # operator
+        "x402":          5,  # value
+        "agent-judges":  3,  # graph (composition's bottom — agent KEY 2)
+        "funnel":        3,
+        "funnel-first":  3,
+        "sequence":      3,
+        "quorum":        3,
+        "contract-ref":  3,
+        "cli":           2,  # cell — the catch-all
+        "api":           2,  # cell — HTTP call
+        "harness":       2,  # cell — delegates to verify.sh
+        "loop":          2,
+        "tool-guard":    2,
+        "machine":       1,  # system — host binary
+    }.get(pt, 2)
+
+
+_LAYER_NAMES = {1: "system", 2: "cell", 3: "graph", 4: "transport", 5: "value", 6: "operator"}
+
+
+def layer_name(layer: int) -> str:
+    return _LAYER_NAMES.get(int(layer), f"layer{layer}")
+
+
 def current_agent() -> str:
     """Best-effort attribution for ledger rows.
 
