@@ -153,6 +153,19 @@ def record_iteration(id: str, wave: int, action_exit: int, action_result: str,
              "children_spawned": children_spawned, "log_path": log_path, "ts": _now()})
 
 
+def record_event(event: str, id: str, **fields) -> None:
+    """Append an arbitrary typed event row to the ledger.
+
+    Use for substrate verbs (pre-mortem, baserate, etc.) whose evidence must
+    be queryable later but doesn't fit declared/iterated/satisfied/merged.
+    The agent judges semantics; the substrate only records the trail.
+    """
+    row = {"event": event, "id": id, "ts": _now()}
+    for k, v in fields.items():
+        row[k] = v
+    _append(row)
+
+
 def mark_satisfied(id: str, wave: int) -> None:
     _append({"event": "satisfied", "id": id, "wave": wave, "ts": _now()})
 
