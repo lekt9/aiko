@@ -1033,7 +1033,7 @@ resolution is per-host, the action is portable.
 - Map override wins over PATH (executes the mapped wrapper, prints unique marker)
 - Stale map entry (file missing) falls through to PATH cleanly
 
-Origin: contract `MACHINE_ID_PLACEHOLDER`, 2026-05-23. Lewis's ask: "when
+Origin: contract `e7c8f6f2`, 2026-05-23. Lewis's ask: "when
 installed on a client as a computer it can rely on pointers to your
 machine's stuff ie binaries etc and run them." The composite ask also
 named server-side mirroring to the unbrowse marketplace DAG; Π3 ships
