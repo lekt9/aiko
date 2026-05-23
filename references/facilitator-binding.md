@@ -112,15 +112,15 @@ contract declare "this product's billing routes through any of our 4 wallets and
 # returns <project-root>
 
 contract declare "wallet facilitator available" \
-  --action contract:1be25e93    # agentcash — or 4d4d3ba6 / bd9c7a5a — or all three via funnel-first
+  --action contract:bae5730b    # agentcash — or 04073c2e / 4d4aefd3 — or all three via funnel-first
   --parent <project-root>
 
 contract declare "merchant facilitator with 50/50 split active" \
-  --action contract:87cd9c2f
+  --action contract:68c6de71
   --parent <project-root>
 
 contract declare "50/50 rev-split policy enforced at finalize" \
-  --action contract:8c1ac75c
+  --action contract:0f957e72
   --parent <project-root>
 ```
 
