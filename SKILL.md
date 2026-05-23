@@ -208,6 +208,96 @@ can still judge HOLD when a result is fake-green, or disarm when genuinely block
 - `~/.contracts/drive_next.txt` — current pending action JSON
 - Both removed by `contract disarm`
 
+## Drill (synchronous in-thread while-loop over N targets)
+
+`contract drill <id1> [<id2>...] [--auto-mark-cells] [--auto-judge] [--max-waves N] [--outer-rounds N]`
+is the synchronous in-thread sibling of `drive`. Where `drive` arms an
+async sentinel-based loop on **one** organ (re-fires across turns via
+Stop/SessionStart hooks), `drill` blocks **in-thread** and loops across
+**N** named targets until each is settled (`satisfied`/`merged`/`rejected`)
+or the outer-round budget is exhausted.
+
+It is the substrate-level answer to *"every named-but-pending thing /contract
+just proposed gets drilled in a while loop in the same turn — unless
+already completed properly."* The agent's prior discipline ("never end a
+/contract turn with a satisfiable contract left pending") becomes
+mechanical: surface N pendings → close the same turn with
+`contract drill <id1> ... <idN>` → either every target settles or the
+ones that didn't are honestly named in the report.
+
+### The loop
+
+For each outer round (default 8, mirrors `self-drill`):
+
+1. Filter targets: skip every id already `satisfied`/`merged`/`rejected`
+   (the **"unless already completed properly"** carve-out).
+2. For each remaining id, call `drive-watch <id>` — the existing
+   one-organ synchronous loop. `drive-watch` walks the tree leaf-first,
+   iterates the next pending leaf, and HALTS on judgments awaiting KEY 2.
+3. If `--auto-mark-cells` was passed, mechanical cells exiting 0 are
+   auto-marked (carries `--proof-skip` naming the wave context).
+4. If `--auto-judge` was passed AND Λ1 is available (codex CLI on PATH
+   or `CONTRACT_LLM_URL` set), drill calls `contract judge <id>` on the
+   halted leaf; a `PROMOTE` verdict triggers `_mark satisfied --proof
+   "drilled via contract drill — Λ1 PROMOTE in outer round N"`.
+5. After the inner pass, if any target's status changed, the outer
+   round counts as progress and the loop runs again. If a full round
+   makes no progress, drill halts with an honest "remaining N target(s)
+   need human KEY-2 or external state" message — never a fake-green.
+
+### Exit semantics
+
+| Outcome | Exit |
+|---|---|
+| Every target settled (satisfied/merged/rejected) | 0 |
+| ≥1 target still pending after halt | 1 |
+| Usage error (no ids, unknown id, unknown flag) | 2 |
+
+The final report enumerates every target with its terminal status, so
+the caller never has to re-query.
+
+### Composition with the rest of the substrate
+
+- KEY 2 stays agent-judged. `--auto-mark-cells` is a KEY-2 surrogate
+  for mechanical cells only (action exit 0 = genuine). `--auto-judge`
+  delegates KEY 2 to Λ1 (any OpenAI-compatible LLM) — same discipline
+  as `contract judge`. Without either flag, drill iterates and halts —
+  caller renders KEY 2 in-thread on the next turn.
+- Plan-fulfillment proof is preserved: every auto-mark carries a
+  specific `--proof-skip` reason (drill outer round + Λ1 verdict, or
+  drive-watch's "mechanical cell exit 0 wave N/M") — bare marks are
+  still refused.
+- Ω1 unblock-rewake fires automatically: drilling a chain like
+  `[X, Y]` where Y is HOLD'd on X, and X resolves, will surface Y as
+  re-judgeable in the next outer round and try again.
+- Inhibition is honored: if a target is suppressed by a satisfied
+  `--inhibits`, the `_mark` is refused (`=== INHIBITION REFUSAL ===`)
+  and drill leaves it pending — exiting 1 with the blocker named in
+  the final report.
+
+### Verb-gate
+
+`verb-gates/drill/verify.sh` binds five phases:
+
+1. `contract drill` with no ids → usage on stderr, exit 2.
+2. Already-satisfied id → no-op carve-out, exit 0.
+3. Multiple mechanical cells + `--auto-mark-cells` → all settled, exit 0
+   (this phase also catches a real regression in `drive-watch` if its
+   auto-mark stops carrying `--proof-skip`).
+4. Unknown id → exit 2 with "not found in ledger" message.
+5. Pending cell without `--auto-mark-cells` → stays pending, exit 1
+   (proves drill doesn't silently auto-promote).
+
+Origin: 2026-05-24. Lewis: *"programmatically /contract it in the skill
+to drill all things that you propose to me as a while loop until there's
+nothing left unless the /contract goal's already completed properly."*
+The prior pattern was agent discipline ("surface pendings then drive
+the tree in one invocation") that I forget on long turns. Promoting it
+to a verb with a verb-gate makes the discipline mechanical: every
+"here are the things I propose" closes with a `contract drill <ids>`
+call in the same turn, and the substrate's own regression check
+ensures the verb keeps doing what it claims.
+
 ## Crystallizing learnings (memory + Outline)
 
 A contract is a unit of learning (`CONTRACTING_IS_LEARNING`). When a learning
