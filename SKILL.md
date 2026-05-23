@@ -1205,7 +1205,7 @@ local install, the user reads every line. The unbrowse-side wrapper
 code that calls it inherits the requirement when published to the
 public unbrowse repo.
 
-Origin: contract `OPENAI_ID_PLACEHOLDER`, 2026-05-23. Lewis's compound ask:
+Origin: contract `a4910638`, 2026-05-23. Lewis's compound ask:
 "openaicompatible endpoint on /contract based on unbrowse as an api, and
 that will be the main page of the website for unbrowse's landing,
 relying on this same agent, and /contract should allow generative ui to
