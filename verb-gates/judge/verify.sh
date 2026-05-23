@@ -95,4 +95,54 @@ echo "$OUT_R" | grep -qE "supersede|revise" || { echo "FAIL: REJECT didn't sugge
 echo "MAYBE" > "$VERDICT_FILE"
 "$CLI" judge "$CID" 2>/dev/null && { echo "FAIL: unparseable verdict should exit 2"; exit 1; } || true
 
-echo "PASS: judge gate (Λ1) — no-config refused, unknown id refused, PROMOTE exits 0 with _mark hint, HOLD exits 1 with iterate hint, REJECT exits 1 with supersede hint, unparseable verdict refused"
+# === Phase 6: codex path — fake `codex` shim on PATH; CONTRACT_LLM_VIA=codex routes through it ===
+SHIMDIR="$TD/shim"
+mkdir -p "$SHIMDIR"
+cat > "$SHIMDIR/codex" <<'SHIM'
+#!/usr/bin/env bash
+# Fake codex shim: emit a fixed verdict to the --output-last-message file.
+# Reads the verdict from $TD/codex_verdict (set by the test), defaulting to PROMOTE.
+set -e
+OUT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --output-last-message) OUT="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+VERDICT_FILE="${CODEX_VERDICT_FILE:-/tmp/codex_verdict_NONE}"
+V=$(cat "$VERDICT_FILE" 2>/dev/null || echo "PROMOTE")
+if [ -n "$OUT" ]; then
+  printf "%s\nfake shim says verdict from %s\n" "$V" "$VERDICT_FILE" > "$OUT"
+fi
+# Consume stdin so the substrate's prompt doesn't error
+cat >/dev/null
+exit 0
+SHIM
+chmod +x "$SHIMDIR/codex"
+
+export PATH="$SHIMDIR:$PATH"
+export CODEX_VERDICT_FILE="$TD/codex_verdict"
+echo "PROMOTE" > "$CODEX_VERDICT_FILE"
+
+CID_CDX=$(CONTRACT_LLM_VIA=codex "$CLI" declare "codex-shim target" --action "true" --no-drive 2>&1 \
+  | grep -oE "declared: [a-f0-9]{8}" | awk '{print $2}' | head -1)
+CONTRACT_LLM_VIA=codex "$CLI" iterate "$CID_CDX" >/dev/null 2>&1
+
+OUT_CDX=$(CONTRACT_LLM_VIA=codex "$CLI" judge "$CID_CDX" 2>&1)
+echo "$OUT_CDX" | grep -q "verdict: PROMOTE"  || { echo "FAIL: codex path PROMOTE missing. OUT=$OUT_CDX"; exit 1; }
+echo "$OUT_CDX" | grep -q "via:     codex exec" || { echo "FAIL: codex path didn't report via=codex. OUT=$OUT_CDX"; exit 1; }
+
+# Flip the shim verdict to HOLD and re-judge
+echo "HOLD" > "$CODEX_VERDICT_FILE"
+OUT_CDX_H=$(CONTRACT_LLM_VIA=codex "$CLI" judge "$CID_CDX" 2>&1 || true)
+echo "$OUT_CDX_H" | grep -q "verdict: HOLD" || { echo "FAIL: codex HOLD path missing. OUT=$OUT_CDX_H"; exit 1; }
+
+# Default-path test: when codex is on PATH and CONTRACT_LLM_VIA is unset,
+# codex should be preferred (no HTTP config set, so HTTP fallback would refuse)
+unset CONTRACT_LLM_URL CONTRACT_LLM_KEY CONTRACT_LLM_VIA
+echo "PROMOTE" > "$CODEX_VERDICT_FILE"
+OUT_DEFAULT=$("$CLI" judge "$CID_CDX" 2>&1)
+echo "$OUT_DEFAULT" | grep -q "via:     codex exec" || { echo "FAIL: codex not picked as default when on PATH. OUT=$OUT_DEFAULT"; exit 1; }
+
+echo "PASS: judge gate (Λ1) — HTTP path: no-config refused, unknown id refused, PROMOTE/HOLD/REJECT routed, unparseable refused. Codex path: shim PROMOTE/HOLD work, codex is preferred over HTTP when on PATH"
