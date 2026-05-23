@@ -1821,6 +1821,14 @@ if waiting:
     INBOX_DIR="$HOME/.contracts/inbox/watcher"
     mkdir -p "$WATCHERS_DIR" "$INBOX_DIR" 2>/dev/null
 
+    # Default form `contract watch <id> [args]` — when SUB is not a known
+    # subcommand, treat it as the id for register. This lets the common
+    # case (the one Lewis's request names) be the shortest invocation.
+    case "$SUB" in
+      register|list|tick|stop|help|"") : ;;
+      *) set -- "$SUB" "$@"; SUB="register" ;;
+    esac
+
     case "$SUB" in
       register|"")
         if [ "$SUB" = "" ] || [ -z "${1:-}" ]; then
