@@ -1498,7 +1498,7 @@ writes inbox event + removes watcher one-shot); no-probe watcher fires
 on schedule (the receptor-shape case); stop cleanly removes without
 firing; stop on missing watcher refuses.
 
-Origin: contract `PSI4_ID`, 2026-05-24. Lewis's framing:
+Origin: contract `21f1d851`, 2026-05-24. Lewis's framing:
 "wire up hooks to wait for those to complete via /contract so that
 the relevant /contract within the /contract list will actually wait for
 it to complete and retrigger this /contract accordingly by programmatic
