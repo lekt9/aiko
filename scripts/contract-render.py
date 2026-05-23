@@ -95,17 +95,24 @@ def main() -> int:
         sys.stderr.write("contract render: no substrate stdio to render (empty stdin and no iterate output)\n")
         return 1
 
-    # Step 2 — optional humanize pass
-    if args.humanize and HUMANIZER.exists() and os.access(HUMANIZER, os.X_OK):
+    # Step 2 — optional humanize pass. Honest semantics: when humanize
+    # succeeds (exit 0), its output replaces raw even if empty (i.e. all
+    # input was substrate jargon that should be stripped). Only on
+    # non-zero exit do we fall back to raw input.
+    if args.humanize and HUMANIZER.exists():
         try:
             cp = subprocess.run(
                 ["python3", str(HUMANIZER)],
                 input=raw, text=True, capture_output=True, timeout=15,
             )
-            if cp.returncode == 0 and cp.stdout:
+            if cp.returncode == 0:
                 raw = cp.stdout
         except subprocess.TimeoutExpired:
             sys.stderr.write("humanize: timeout — using raw input\n")
+    if not raw.strip():
+        # Humanize stripped everything → all input was substrate jargon.
+        # Emit a minimal aiko-voice placeholder so renderers have something.
+        raw = "(I'm working on it. Nothing to show yet.)\n"
 
     # Step 3 — render
     env = dict(os.environ,
