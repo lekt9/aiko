@@ -181,7 +181,8 @@ def _rows() -> list[dict]:
 def declare(plan: str, action: str, parent_id: Optional[str] = None,
             pointers: list = None, learning: str = None,
             budget: Optional[int] = None, bind_to: Optional[str] = None,
-            inverted_from: Optional[str] = None) -> str:
+            inverted_from: Optional[str] = None,
+            inhibits: Optional[list] = None) -> str:
     """Declare a contract.
 
     bind_to: optional surface the contract is intrinsically scoped to —
@@ -190,6 +191,13 @@ def declare(plan: str, action: str, parent_id: Optional[str] = None,
     a contract a constraint on a specific surface (lock-and-key binding,
     biology / foreign-key constraint, programming) rather than a free-floating
     truth-claim. Contract ae1340a6.
+
+    inhibits: optional list of contract ids this contract suppresses. Biology
+    read: an inhibitory neuron (this contract, when satisfied) blocks
+    downstream firing of every target contract. _mark satisfied on a target
+    is refused while any inhibitor of that target is itself satisfied.
+    Substrate-level negative regulation, distinct from supersession (lifecycle)
+    and tool-guard (capability). Contract d830f26e.
     """
     cid = str(uuid.uuid4())[:8]
     row = {"event": "declared", "id": cid, "plan": plan, "action": action,
@@ -205,10 +213,32 @@ def declare(plan: str, action: str, parent_id: Optional[str] = None,
         row["bind_to"] = bind_to
     if inverted_from:
         row["inverted_from"] = inverted_from
+    if inhibits:
+        row["inhibits"] = list(inhibits)
     _append(row)
     if parent_id:
         _append({"event": "child_added", "id": parent_id, "child_id": cid, "ts": _now()})
     return cid
+
+
+def active_inhibitors(target_id: str) -> list[str]:
+    """Return ids of contracts that inhibit `target_id` and are currently satisfied.
+
+    Biology: returns the list of inhibitory neurons currently firing on the
+    target. An empty list means the target is free to fire (no active
+    suppression). A non-empty list means `_mark satisfied` must refuse.
+    """
+    inhibitors = []
+    for row in _rows():
+        if row.get("event") != "declared":
+            continue
+        inh = row.get("inhibits") or []
+        if target_id in inh:
+            inhibitor_id = row["id"]
+            inh_contract = get(inhibitor_id)
+            if inh_contract and inh_contract.get("status") == "satisfied":
+                inhibitors.append(inhibitor_id)
+    return inhibitors
 def record_iteration(id: str, wave: int, action_exit: int, action_result: str,
                      agent_verdict: Optional[str], children_spawned: list,
                      log_path: str = "") -> None:
