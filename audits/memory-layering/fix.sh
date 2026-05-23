@@ -12,14 +12,15 @@ FIXER="$HOME/.claude/skills/contract/scripts/backfill-memory-layering.py"
 [ -f "$SCOPE_FILE" ] || { echo "missing scope.txt at $SCOPE_FILE" >&2; exit 2; }
 [ -f "$FIXER" ] || { echo "missing fixer at $FIXER" >&2; exit 2; }
 
-mapfile -t globs < <(grep -vE '^\s*(#|$)' "$SCOPE_FILE")
 dirs=()
-for g in "${globs[@]}"; do
+while IFS= read -r g; do
+  [ -n "$g" ] || continue
+  case "$g" in \#*) continue;; esac
   # shellcheck disable=SC2086
   for d in $(eval echo "$g"); do
     [ -d "$d" ] && dirs+=("$d")
   done
-done
+done < "$SCOPE_FILE"
 
 dry="${1:-}"
 flag=""
