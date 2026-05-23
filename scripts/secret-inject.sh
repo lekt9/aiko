@@ -95,7 +95,14 @@ read_source() {
       printf '%s' "$v"
       ;;
     stdin)
-      local v; IFS= read -r v || { echo "  ✗ stdin read failed" >&2; return 1; }
+      local v=""
+      # read returns 1 on EOF-without-newline, but $v may still hold the data.
+      IFS= read -r v || true
+      if [ -z "$v" ]; then
+        # Try reading the rest if it was multi-line / no-newline.
+        v=$(cat)
+      fi
+      [ -n "$v" ] || { echo "  ✗ stdin read failed (empty input)" >&2; return 1; }
       printf '%s' "$v"
       ;;
     *) echo "  ✗ unknown source uri: $uri" >&2; return 2 ;;
