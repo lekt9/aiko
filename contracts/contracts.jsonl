@@ -4684,3 +4684,4 @@
 {"event":"iterated","id":"c57475e4","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T10:13:31Z"}
 {"event":"iterated","id":"d2818977","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T10:13:31Z"}
 {"event":"iterated","id":"d6a91322","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T10:13:32Z"}
+{"event": "satisfied", "id": "8d01c327", "wave": 0, "ts": "2026-05-23T10:13:35.099184Z", "proof": "src/render/types.ts +5 block types (echarts/dashboard/text-md/data-grid/sandbox-output); JsonRender.tsx renders each w/ lazy ECharts (385KB chunk loads only on first echarts block); tiny md-to-html subset for text-md; main bundle 94KB gz (was 86, +8 for new schemas)", "agent": "lewistham9x@gmail.com"}
