@@ -65,7 +65,7 @@ ID4=$(bash "$C" declare "drill_gate pending without automark" --action true --no
 [ -n "$ID4" ] || { echo "FAIL: declare returned no id"; exit 1; }
 bash "$C" drill "$ID4" --max-waves 3 >/dev/null 2>&1
 RC=$?
-STATUS=$(PYTHONPATH="$LIB" python3 -c "from contract_core import get; r = get('$id4' if False else '$ID4'); print(r['status'] if r else 'MISSING')")
+STATUS=$(PYTHONPATH="$LIB" python3 -c "from contract_core import get; r = get('$ID4'); print(r['status'] if r else 'MISSING')")
 # Without --auto-mark-cells, drive-watch HALTS after cell PASS waiting for KEY 2.
 # So $ID4 stays in pending/active state, drill exits 1 (any-pending).
 [ "$RC" -eq 1 ] || { echo "FAIL: drill pending-no-automark expected exit 1, got $RC"; exit 1; }
