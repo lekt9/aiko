@@ -269,11 +269,18 @@ def declare(plan: str, action: str, parent_id: Optional[str] = None,
     different from the declarer. Substrate enables; the agent picks the
     audience list at declare time."""
     cid = str(uuid.uuid4())[:8]
+    # Π5 — layer is either explicit (--layer N) or inferred from pointer-type.
+    # Pierced layers (the agent's explicit cross-layer authorizations) are
+    # stored on the row so iterate-time enforcement can consult them.
+    resolved_layer = int(layer) if layer is not None else _infer_layer(action)
     row = {"event": "declared", "id": cid, "plan": plan, "action": action,
            "pointer_type": _infer_pointer_type(action),
+           "layer": resolved_layer,
            "cwd": os.getcwd(),
            "parent_id": parent_id, "pointers": pointers or [],
            "ts": _now()}
+    if pierced_layers:
+        row["pierced_layers"] = [int(L) for L in pierced_layers]
     if learning:
         row["learning"] = learning
     if budget:
