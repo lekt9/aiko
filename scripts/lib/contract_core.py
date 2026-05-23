@@ -18,6 +18,7 @@ from typing import Optional
 # reported once, not once per ledger re-read.
 _WARNED_LINES: set = set()
 _AGENT_CACHE: Optional[str] = None
+_TEAM_CACHE: Optional[set] = None  # Σ2 team set, derived from agent column
 
 
 def _resolve_ledger() -> Path:
