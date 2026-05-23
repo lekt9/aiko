@@ -954,6 +954,154 @@ can find my fucking pkeys." Built as the substrate-side orchestration
 (opt-in flag, autopay POST, retry-on-success, honest fall-through);
 keys + settle remain at unbrowse where they belong.
 
+## Π3 — `machine:` pointer (machine-local binaries, portable contracts)
+
+A contract whose action bakes `/opt/homebrew/bin/graff --status` is
+married to one machine. The same row shipped to tencent fails because
+graff lives at `/home/ubuntu/.local/bin/graff` there. Path-baking is the
+opposite of pointer-not-payload — it turns the action into a payload
+that only resolves on the declaring host.
+
+Π3 is the portable form. `--action "machine:graff --status"` carries
+the **name + args** as a stable contract; the resolution to a concrete
+binary happens at iterate time on whichever host is iterating.
+
+### Resolution algorithm
+
+First match wins:
+
+1. **`~/.config/contract/machine-binaries.json`** — explicit map for this
+   host, e.g. `{"graff": "/opt/homebrew/bin/graff", "unbrowse": "/usr/local/bin/unbrowse"}`.
+   The mapped path is checked for `isfile` + `os.X_OK` before use; a
+   stale entry (file removed) falls through to step 2.
+2. **`command -v <name>`** — PATH lookup, the standard shell resolver.
+3. **`=== MACHINE BINARY MISSING ===` block** — substrate refuses with
+   the binary name, the hostname, the checked map path, and the fix-it
+   one-liner (`mkdir -p ~/.config/contract && echo '{...}' > ...json`).
+   Result is `FAIL`, exit 1.
+
+The map is per-host, gitignored by convention (it points to local
+absolute paths). Two engineers running the same contract repository
+maintain their own maps; the contract row itself doesn't care.
+
+### Why a new pointer-type, not just `cli:`
+
+A `cli:` action with `graff --status` works **iff** `graff` is on PATH
+**and** PATH at iterate time matches PATH at declare time. The
+`machine:` block adds two load-bearing things `cli:` doesn't:
+
+- **Per-host override surface** — the map lets you point at a wrapper,
+  a versioned install, or a non-standard location without rewriting
+  the contract action.
+- **Structured failure on missing binary** — `cli:` runs `eval "$action"`
+  and lets the shell emit `command not found` to stderr. The substrate's
+  KEY 1 sees an exit code with no extra context. `machine:` checks
+  resolution **before** invoking and emits a render-able block with the
+  exact missing name + fix hint, so a transport can prompt the user to
+  install rather than display a raw shell error.
+
+### Cross-host worked example
+
+```bash
+# Declared once, on mac:
+contract declare "graff is alive on every host" --action "machine:graff --status"
+# returns abc12345
+
+# On mac:
+~/.config/contract/machine-binaries.json:
+  {"graff": "/opt/homebrew/bin/graff"}
+contract iterate abc12345  # → pointer(machine): /opt/homebrew/bin/graff --status → PASS
+
+# On tencent (no map yet):
+contract iterate abc12345  # → PASS via `command -v graff` finding /home/ubuntu/.local/bin/graff
+
+# On a fresh client where graff isn't installed:
+contract iterate abc12345  # → === MACHINE BINARY MISSING === block names what to install, exits 1
+```
+
+The contract row is identical across all three machines. The
+resolution is per-host, the action is portable.
+
+### Verb-gate
+
+`verb-gates/machine/verify.sh` binds six phases:
+
+- `_infer_pointer_type` returns `"machine"` for `machine:*` actions
+- PATH fallback (`true` resolves and PASSes)
+- Args passthrough (success AND failure exit codes mapped correctly)
+- Missing binary emits `=== MACHINE BINARY MISSING ===` block, exits 1
+- Map override wins over PATH (executes the mapped wrapper, prints unique marker)
+- Stale map entry (file missing) falls through to PATH cleanly
+
+Origin: contract `MACHINE_ID_PLACEHOLDER`, 2026-05-23. Lewis's ask: "when
+installed on a client as a computer it can rely on pointers to your
+machine's stuff ie binaries etc and run them." The composite ask also
+named server-side mirroring to the unbrowse marketplace DAG; Π3 ships
+the substrate side of host-portability today, the mirror is named-and-
+deferred as Π4 below.
+
+## Π4 — unbrowse marketplace mirror (named, deferred)
+
+The second half of Lewis's request was: "all agents or sites i build
+uses this same /contract remote agent that we /contract built — and
+that we move all logic to the server side via the /contract unbrowse
+marketplace infrastructure dag, meaning that we could technically
+translate it to that data structure /contract based along with /contract
+unbrowse skill primitives." Every contract declared anywhere → pushed to
+unbrowse, which becomes the canonical DAG.
+
+The substrate side composes from primitives that already exist:
+
+1. **Internal hook on every `declared` / `iterated` / `satisfied` row**
+   (the same `_fire_contract_hooks` bus that drive-advance and
+   crystallize-learning ride).
+2. **`POST <unbrowse-base>/v1/contracts/mirror`** with the row + bearer
+   `UNBROWSE_API_KEY`. Mirror is fire-and-forget client-side; unbrowse
+   becomes the source of truth on receipt.
+3. **Local fallback log** at `~/.contracts/mirror-errors.jsonl` for any
+   POST that doesn't return 200 — honest accounting of what didn't
+   make it, same pattern as Π2 autopay.
+
+**Why this is deferred, not shipped today:** the endpoint
+`/v1/contracts/mirror` doesn't exist at unbrowse yet (probed:
+`https://beta-api.unbrowse.ai/v1/contracts/mirror` → 404). Wiring a
+substrate-side hook that always 404s would write noise to the error
+log on every ledger event for every contract. The honest move is to:
+
+1. Negotiate the endpoint contract with unbrowse (row schema, idempotency
+   key, conflict resolution for the case where two clients declare the
+   same id locally before mirroring).
+2. Ship the unbrowse-side route.
+3. Ship the substrate hook in a follow-on wave, gated on the endpoint
+   existing.
+
+Until then, **`contract promote <id>`** is the manual path: copies a
+row from a project ledger to the global ledger, where any other client
+referencing `contract:<id>` resolves it. That's not server-side
+canonical (the global ledger still lives at `~/.contracts/contracts.jsonl`
+on each host), but it IS the cross-project sharing primitive we have
+today. Π4 generalizes that to "all hosts share via unbrowse" rather than
+"all projects on this host share via the global ledger."
+
+### What's already true (and didn't need Π4 to be true)
+
+- **Every agent the user builds talks to the same substrate** — by
+  installing this `/contract` skill on each host, the substrate IS
+  shared. Σ3 aliases make one user one identity across them. Σ4
+  routes work between them. Σ6 multi-client lets them coordinate
+  in real time. The substrate-level "same agent everywhere" is
+  already true; Π4 makes the **ledger contents** also server-side
+  canonical, which is the remaining half.
+
+- **The DAG translation is mechanical** — `~/.contracts/contracts.jsonl`
+  is already an append-only JSONL of typed events with parent / ref /
+  corroborate / inhibit edges. Translating to the unbrowse marketplace
+  DAG is a row-shape map, not a redesign.
+
+Origin: contract `MIRROR_ID_PLACEHOLDER`, 2026-05-23. Named here so the
+gap is on the substrate's map; binding gate lands when the endpoint
+ships at unbrowse.
+
 
 ## Concept lineage (genesis .tongues)
 
