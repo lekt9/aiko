@@ -1647,6 +1647,81 @@ pattern's value on day one. Contract `0167e892` is the SKILL.md doc gate;
 the runner+self-test wiring is `9a2aa216`/`30e820c3`.
 
 
+## Depth analysis (the resolution-chain walker)
+
+`contract depth <id>` walks the multi-dimensional resolution graph
+centered on a contract and surfaces four axes of recursion:
+
+| Axis | What it measures | Wall |
+|---|---|---|
+| **depth_up** | longest chain of `parent_id` ↑ from `<id>` to a root | none (DAG) |
+| **depth_down** | longest chain of `parent_id` ↓ from `<id>` to a leaf | none (DAG) |
+| **dims** | number of contracts reached by following `contract:<id>` action refs | none (DAG) |
+| **cycles** | any `contract:<id>` chain that loops back on itself (X → Y → X) | **HARD-BREAK** |
+
+```
+contract depth <id>                  # pretty layered report
+contract depth <id> --json           # machine-readable
+contract depth <id> --strict-cycles  # exit 1 on any cycle  (this is what _mark uses)
+```
+
+### Cycle = HARD BREAK ON RESOLUTION
+
+The earlier question — *"can there be an infinitely recursive layer
+gating in this design multi-dimensionally?"* — is structurally yes, but
+**cycles are not recursion, they're divergence**. A `contract:<id>` cycle
+(X gates on Y, Y gates on X) means satisfying either side would propagate
+a false truth: Y is satisfied because X is, X is satisfied because Y is —
+both circularly empty.
+
+The substrate refuses. `_mark satisfied` runs `contract depth <id>
+--strict-cycles` BEFORE writing the satisfied row. If a cycle is
+detected, the substrate emits:
+
+```
+=== HARD BREAK ON RESOLUTION (cycle) ===
+  🔥 CYCLES DETECTED (will hard-break on satisfy):
+      <a> → <b> → <a>
+
+  refuse to _mark <a> satisfied — closing this would propagate a false truth.
+  break the cycle first (revise an action / supersede one side / declare a non-pointer leaf).
+```
+
+…and exits non-zero. No row is written. The agent must `revise` one side's
+action away from the pointer, `supersede` one of the two, or declare a
+non-pointer leaf at one end before the chain can resolve. This is the
+substrate enforcement of "no false witness" (default #11) applied to the
+graph composition layer.
+
+### Depth/dims = soft warning (Miller's 7±2)
+
+When `_mark satisfied` fires WITHOUT a cycle, the BREAK ON RESOLUTION
+block runs the analyzer and surfaces warnings when the graph exceeds
+working-memory capacity:
+
+| Threshold | Warning |
+|---|---|
+| `depth_total >= 7` | exceeds Miller's 7±2 working-memory cap — KEY-2 judgment may degrade |
+| `dims >= 4` | KEY-2 becomes pattern-matching above ~3 dimensions |
+
+These are soft — the agent decides whether to honor. The substrate
+surfaces; it never forbids. (Contrast: cycles are hard because they're
+mechanically unresolvable, not just cognitively expensive.)
+
+### Why this is in /contract itself, not a project-local script
+
+The graph IS the substrate. Cycle detection at mark time is universal —
+any organ in any project benefits from refusing to satisfy through a
+circular gate. The Miller-cap soft-warn is universal — agents reading
+KEY 2 at any depth need the integration-vs-pattern-matching honesty.
+
+Origin: contract `fb9698f7`, 2026-05-23. The question "can there be
+infinitely recursive layer gating?" surfaced the gap: structurally yes,
+mechanically only if cycles are caught. The verb-gate (`verb-gates/depth/`)
+proves the analyzer + the hard-break on a 2-node cycle in <1s, including
+that the satisfied row is NOT written.
+
+
 ## Audits (corpus-wide rule enforcement, paired with idempotent fixers)
 
 A rule documented in prose lives nowhere. A rule with a verifier lives in
