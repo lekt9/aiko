@@ -19,7 +19,8 @@ OUT1=$("$CLI" context-of 'probe/topic-aaa' --from-stdin --refresh <<<'{"body":"p
 echo "$OUT1" | python3 -c '
 import json,sys
 d=json.loads(sys.stdin.read())
-assert d["source"]=="stdin", f"expected stdin, got {d[\"source\"]}"
+src = d["source"]
+assert src == "stdin", "expected stdin, got " + str(src)
 assert d["body"]=="probe body"
 assert d["_cache_hit"] is False, "first call should not be a cache hit"
 ' || { echo "FAIL: stdin path broken"; echo "$OUT1"; exit 1; }
