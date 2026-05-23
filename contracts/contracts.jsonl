@@ -4201,3 +4201,14 @@
 {"event": "declared", "id": "9f69270b", "plan": "self-test guard for the tool-guard verify harness", "action": "tool-guard:__contract_toolguard_selftest__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": null, "pointers": [], "ts": "2026-05-23T08:15:33.310750Z", "agent": "lewistham9x@gmail.com"}
 {"event": "iterated", "id": "b77ad5d1", "wave": 2, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T08:15:41.841664Z", "agent": "lewistham9x@gmail.com"}
 {"event": "satisfied", "id": "9f69270b", "wave": 0, "ts": "2026-05-23T08:15:45.343264Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "cc5e8920", "plan": "/contract follows every claim it makes about itself on every layer — shape, verb, self-check, audit, standing-gate, doctrine, default-contract, origin-citation, bundled-script — and a canonical self-organism root pointer-gates on all of them so iterating one contract walks the whole substrate's self-binding. /contract WRAPS /contract: the same primitive that verifies the world verifies itself, fractally.", "action": "sequence", "pointer_type": "sequence", "cwd": "/Users/lekt9/Projects/unbrowse-ecosystem", "parent_id": null, "pointers": [], "ts": "2026-05-23T08:08:16.334902Z", "agent": "lewistham9x@gmail.com"}
+{"event": "child_added", "id": "cc5e8920", "child_id": "de743963", "ts": "2026-05-23T08:08:47.740312Z", "agent": "lewistham9x@gmail.com"}
+{"event": "child_added", "id": "cc5e8920", "child_id": "506d0b27", "ts": "2026-05-23T08:08:54.274144Z", "agent": "lewistham9x@gmail.com"}
+{"event": "child_added", "id": "cc5e8920", "child_id": "a5273e08", "ts": "2026-05-23T08:09:01.675795Z", "agent": "lewistham9x@gmail.com"}
+{"event": "child_added", "id": "cc5e8920", "child_id": "0cfd5c0e", "ts": "2026-05-23T08:09:08.288951Z", "agent": "lewistham9x@gmail.com"}
+{"event": "child_added", "id": "cc5e8920", "child_id": "bd288aea", "ts": "2026-05-23T08:09:16.873959Z", "agent": "lewistham9x@gmail.com"}
+{"event": "child_added", "id": "cc5e8920", "child_id": "36553883", "ts": "2026-05-23T08:09:23.388152Z", "agent": "lewistham9x@gmail.com"}
+{"event": "child_added", "id": "cc5e8920", "child_id": "30b68fc5", "ts": "2026-05-23T08:09:30.129137Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "cc5e8920", "wave": 0, "ts": "2026-05-23T08:15:24.411859Z", "agent": "lewistham9x@gmail.com"}
+{"event": "iterated", "id": "b77ad5d1", "wave": 3, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T08:16:07.117860Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "b77ad5d1", "wave": 0, "ts": "2026-05-23T08:16:13.683944Z", "agent": "lewistham9x@gmail.com"}
