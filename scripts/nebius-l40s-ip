@@ -46,12 +46,11 @@ OUT="$("$NEBIUS" compute instance get-by-name --name "$INSTANCE" --parent-id "$P
 
 # Parse the YAML output with python — robust against the spec/status
 # duplicate "public_ip_address:" lines (spec has it as an empty {}, status
-# carries the actual address). yq isn't a guaranteed dep; PyYAML is on
-# every host that has python3.
-RESULT=$(KIND="$KIND" python3 - <<'PY' <<<"$OUT"
+# carries the actual address). PyYAML is on every host that has python3.
+RESULT=$(echo "$OUT" | KIND="$KIND" python3 -c '
 import os, sys, yaml
 data = yaml.safe_load(sys.stdin)
-state = (data.get("status") or {}).get("state") or (data.get("metadata") or {}).get("state") or "UNKNOWN"
+state = (data.get("status") or {}).get("state") or "UNKNOWN"
 if state != "RUNNING":
     print(f"STATE:{state}")
     sys.exit(1)
@@ -63,12 +62,9 @@ for nif in nifs:
     else:
         a = ((nif.get("ip_address") or {}).get("address") or "")
     if a:
-        ip = a.split("/")[0]
-        print(f"IP:{ip}")
-        sys.exit(0)
+        print("IP:" + a.split("/")[0]); sys.exit(0)
 sys.exit(2)
-PY
-) || RC=$?
+') || RC=$?
 RC=${RC:-0}
 
 case "$RESULT" in
