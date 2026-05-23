@@ -89,6 +89,8 @@ let keepHtml = false;
 let walk = false;
 let walkInclude = null;
 let walkExclude = null;
+let preludePath = null;
+let envFrom = null;
 
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
