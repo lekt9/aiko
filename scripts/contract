@@ -1942,6 +1942,105 @@ print(f'  next: contract iterate {tgt}   (re-verify the canonical truth)')
 "
     ;;
 
+  promote)
+    # Promote a contract from the current ledger to the GLOBAL ledger
+    # (~/.contracts/contracts.jsonl) so other projects can reference it via
+    # `contract:<id>`. The promoted contract carries its plan/action/status
+    # forward verbatim — same id, same state. Idempotent: re-running on an
+    # already-promoted contract is a no-op (still appends a 'promoted' marker
+    # locally so the lineage is preserved).
+    #
+    # Skill-modification origin: 2026-05-23. Substrate-level contracts
+    # (telegram poller, webhook receiver, reactor) declared inside a project
+    # ledger were not visible to other projects' organs — `contract:<id>`
+    # resolution requires the row to exist in the lookup-time ledger.
+    # Promotion is the missing primitive.
+    TARGET="${1:-}"; shift || true
+    REASON=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --reason) REASON="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$TARGET" ] && { echo "usage: contract promote <id> [--reason \"<why this belongs globally>\"]" >&2; exit 2; }
+    MH_TARGET="$TARGET" MH_REASON="$REASON" _py_inline "
+import json, os, pathlib, time, uuid
+from contract_core import _resolve_ledger, get, _append
+target = os.environ['MH_TARGET']
+reason = os.environ.get('MH_REASON', '')
+
+src_path = pathlib.Path(_resolve_ledger())
+global_path = pathlib.Path.home() / '.contracts' / 'contracts.jsonl'
+global_path.parent.mkdir(parents=True, exist_ok=True)
+global_path.touch(exist_ok=True)
+
+if src_path.resolve() == global_path.resolve():
+    print(f'  {target} is already in the global ledger ({global_path}); promotion is a no-op')
+    raise SystemExit(0)
+
+c = get(target)
+if not c:
+    print(f'ERROR: contract {target} not found in current ledger ({src_path})')
+    raise SystemExit(1)
+
+# Collect every row for target id from the source ledger
+src_rows = []
+with src_path.open() as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if r.get('id') == target or r.get('parent_id') == target:
+            src_rows.append(r)
+
+# Idempotency check — is the target already in global?
+already = False
+if global_path.stat().st_size:
+    with global_path.open() as f:
+        for line in f:
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if r.get('id') == target and r.get('event') == 'declared':
+                already = True
+                break
+
+if already:
+    # still append the local 'promoted' marker for lineage
+    _append({'event': 'promoted', 'id': target, 'promoted_to': 'global', 'reason': reason or 'idempotent re-promotion', 'ts': time.strftime('%Y-%m-%dT%H:%M:%S.%fZ', time.gmtime())})
+    print(f'  {target} already in global ledger; appended idempotent promoted marker locally')
+    raise SystemExit(0)
+
+# Append target rows verbatim to global
+n_target_rows = sum(1 for r in src_rows if r.get('id') == target)
+n_child_decl = sum(1 for r in src_rows if r.get('parent_id') == target and r.get('event') == 'declared')
+with global_path.open('a') as f:
+    for r in src_rows:
+        if r.get('id') == target:
+            f.write(json.dumps(r, ensure_ascii=False) + '\n')
+
+# Append the promoted marker in source ledger
+_append({'event': 'promoted', 'id': target, 'promoted_to': 'global', 'rows_copied': n_target_rows, 'reason': reason, 'ts': time.strftime('%Y-%m-%dT%H:%M:%S.%fZ', time.gmtime())})
+
+print('=== CONTRACT PROMOTE (scope-promotion) ===')
+print(f'  {target}  \"{c[\"plan\"][:70]}\"')
+print(f'  source: {src_path}')
+print(f'  global: {global_path}')
+print(f'  rows copied: {n_target_rows}  (children NOT auto-promoted; promote them separately if needed: {n_child_decl} candidate children)')
+if reason:
+    print(f'  reason: {reason}')
+print()
+print(f'  Other projects can now reference this via:  contract:{target}')
+print(f'  next: contract status {target}     # verify state preserved')
+"
+    ;;
+
   retire)
     # Retire a contract without an external winner. Declares a self-anchored
     # retirement marker (pre-satisfied), then supersedes <id> with it via the
