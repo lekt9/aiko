@@ -116,7 +116,8 @@ def _rows() -> list[dict]:
 
 def declare(plan: str, action: str, parent_id: Optional[str] = None,
             pointers: list = None, learning: str = None,
-            budget: Optional[int] = None, bind_to: Optional[str] = None) -> str:
+            budget: Optional[int] = None, bind_to: Optional[str] = None,
+            inverted_from: Optional[str] = None) -> str:
     """Declare a contract.
 
     bind_to: optional surface the contract is intrinsically scoped to —
