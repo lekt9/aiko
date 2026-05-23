@@ -277,7 +277,7 @@ print(c['status'] if c else 'not-found')
         echo "    Web      → OAuth/magic-link prompt rendered in-page"
         echo "    Panel    → embedded sign-in card with Privy magic-link button"
         echo "    Terminal → user opens sign-in URL, retries iterate after auth"
-        echo "  result: FAIL (401 — sign-in needed; set UNBROWSE_API_KEY after auth, then re-iterate)"
+        echo "  result: FAIL (HTTP 401 — sign-in needed; set UNBROWSE_API_KEY after auth, then re-iterate)"
         return 1
         ;;
       "")
