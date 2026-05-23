@@ -82,6 +82,14 @@ check "humanlike/over-iteration"    bash -c \
                                      "tmp=\$(mktemp); out=\$(CONTRACTS_STORE=\"\$tmp\" bash '$CLI' declare 'over iteration probe contract' --action true --no-drive); id=\$(printf '%s\n' \"\$out\" | awk '/^declared:/ {print \$2}'); CONTRACTS_STORE=\"\$tmp\" bash '$CLI' iterate \"\$id\" >/dev/null; CONTRACTS_STORE=\"\$tmp\" bash '$CLI' iterate \"\$id\" >/dev/null; CONTRACTS_STORE=\"\$tmp\" bash '$CLI' iterate \"\$id\" 2>&1 | grep -q 'over-iteration warning'"
 check "self/no-drift"              env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" python3 -c \
                                      "import json, subprocess, sys; r=subprocess.run(['bash','$CLI','self','--json'],capture_output=True,text=True); d=json.loads(r.stdout); sys.exit(0 if d['drift']==[] else 1)"
+
+# ── Pre-flight self-checks (check yourself before you shrek yourself) ─────────
+# Drift between SKILL.md and the implementing code that no other gate catches.
+# Each one fails 1 when docs and code disagree; the agent reads the diff.
+check "self/heading-ladder"        python3 "$SCRIPTS/check-heading-ladder.py"
+check "self/standing-gate-ids"     env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" python3 "$SCRIPTS/check-standing-gate-ids.py"
+check "self/empathy-flags-wired"   python3 "$SCRIPTS/check-empathy-flags-wired.py"
+check "self/shape-catalog"         python3 "$SCRIPTS/check-shape-catalog.py"
 # ── Shape gates (regression harnesses for each contract shape) ────────────────
 # Each gate's verify.sh proves one shape behaves correctly. They honor an
 # external CONTRACTS_STORE, so we run them with a tmpdir ledger to avoid
