@@ -3936,3 +3936,5 @@
 {"event": "satisfied", "id": "3f857ccd", "wave": 0, "ts": "2026-05-23T06:55:32.958897Z", "agent": "lewistham9x@gmail.com"}
 {"event": "declared", "id": "4479c336", "plan": "self-test guard for the tool-guard verify harness", "action": "tool-guard:__contract_toolguard_selftest__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": null, "pointers": [], "ts": "2026-05-23T06:56:18.049651Z", "agent": "lewistham9x@gmail.com"}
 {"event": "satisfied", "id": "4479c336", "wave": 0, "ts": "2026-05-23T06:56:21.130707Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "6e77acfe", "plan": "self-test guard for the tool-guard verify harness", "action": "tool-guard:__contract_toolguard_selftest__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": null, "pointers": [], "ts": "2026-05-23T06:57:25.393099Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "6e77acfe", "wave": 0, "ts": "2026-05-23T06:57:28.510607Z", "agent": "lewistham9x@gmail.com"}
