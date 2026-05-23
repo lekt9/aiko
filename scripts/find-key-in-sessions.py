@@ -118,8 +118,10 @@ def scan_file(path: str, target: str):
                     if pk == target:
                         hits.append((lineno, "json-keypair-match", f"a 64-int JSON array at this offset derives to {target[:8]}..."))
                         break
-    except (OSError, PermissionError):
-        pass
+    except (OSError, PermissionError) as e:
+        # Surface, never swallow (substrate: no silent fallback). The file is
+        # skipped on I/O error but the operator sees what happened on stderr.
+        print(f"  find-key-in-sessions: skip {path}: {e}", file=sys.stderr)
     return hits
 
 
