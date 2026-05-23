@@ -96,6 +96,7 @@ check "self/unified-model"         bash "$SCRIPTS/check-unified-model.sh"
 check "self/readme-fresh"          bash "$SCRIPTS/check-readme-fresh.sh"
 check "self/honest-bound"          bash "$SCRIPTS/check-honest-bound.sh"
 check "self/break-on-resolution"   bash "$SCRIPTS/check-break-on-resolution.sh"
+check "self/proof-binding"         bash "$SCRIPTS/check-proof-binding.sh"
 
 # ── Corpus audits (rule-bound checks across all affected artifacts) ──────────
 # Every audits/<rule>/verify.sh is a corpus-wide check for one rule. The
