@@ -3355,3 +3355,6 @@
 {"event": "child_added", "id": "4617f459", "child_id": "7d23b067", "ts": "2026-05-23T03:28:01.315593Z"}
 {"event": "merged", "id": "c7ade437", "merged_into": "7d23b067", "reason": "previous action mis-extracted deployment ID instead of Source commit (used grep first-uuid pattern that matched the deployment ID column). The revised action awk's the actual Source column (col 5 of pipe-separated wrangler output) and compares first 7 chars to HEAD's short SHA.", "ts": "2026-05-23T03:28:10.502565Z"}
 {"event": "iterated", "id": "7d23b067", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T03:28:15.065593Z"}
+{"event": "satisfied", "id": "7d23b067", "wave": 0, "ts": "2026-05-23T03:28:22.683097Z"}
+{"event": "satisfied", "id": "c7ade437", "wave": 0, "ts": "2026-05-23T03:28:23.818295Z"}
+{"event": "satisfied", "id": "4617f459", "wave": 0, "ts": "2026-05-23T03:28:24.907097Z"}
