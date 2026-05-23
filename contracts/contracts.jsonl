@@ -3566,3 +3566,14 @@
 {"event": "child_added", "id": "24151e26", "child_id": "02f463bd", "ts": "2026-05-23T04:51:55.072534Z", "agent": "lewistham9x@gmail.com"}
 {"event": "declared", "id": "6f2022be", "plan": "funnelgate_selftest_75656 funnel child 3", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": "24151e26", "pointers": [], "ts": "2026-05-23T04:51:58.961812Z", "agent": "lewistham9x@gmail.com"}
 {"event": "child_added", "id": "24151e26", "child_id": "6f2022be", "ts": "2026-05-23T04:51:58.971065Z", "agent": "lewistham9x@gmail.com"}
+{"event": "iterated", "id": "24151e26", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T04:52:03.092971Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "8562997d", "wave": 0, "ts": "2026-05-23T04:52:03.204399Z", "agent": "lewistham9x@gmail.com"}
+{"event": "iterated", "id": "24151e26", "wave": 2, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T04:52:03.517599Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "02f463bd", "wave": 0, "ts": "2026-05-23T04:52:03.629848Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "6f2022be", "wave": 0, "ts": "2026-05-23T04:52:03.750788Z", "agent": "lewistham9x@gmail.com"}
+{"event": "iterated", "id": "24151e26", "wave": 3, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T04:52:04.061036Z", "agent": "lewistham9x@gmail.com"}
+{"event": "iterated", "id": "f736e33a", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T04:52:04.166207Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "f736e33a", "wave": 0, "ts": "2026-05-23T04:52:04.274500Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "d901c3b1", "plan": "funnelfirstgate_selftest_76188 funnel-first organ", "action": "funnel-first", "pointer_type": "funnel-first", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": null, "pointers": [], "ts": "2026-05-23T04:52:04.840999Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "2dd6f5f2", "plan": "funnelfirstgate_selftest_76188 funnel-first child 1", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": "d901c3b1", "pointers": [], "ts": "2026-05-23T04:52:08.696937Z", "agent": "lewistham9x@gmail.com"}
+{"event": "child_added", "id": "d901c3b1", "child_id": "2dd6f5f2", "ts": "2026-05-23T04:52:08.706378Z", "agent": "lewistham9x@gmail.com"}
