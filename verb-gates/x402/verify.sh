@@ -84,7 +84,7 @@ echo "$OUT_402" | grep -q "result: FAIL (402" || { echo "FAIL: 402 did not FAIL"
 echo "$OUT_402" | grep -q "PAYMENT REQUIRED"  || { echo "FAIL: 402 missing PAYMENT REQUIRED block"; exit 1; }
 echo "$OUT_402" | grep -q "pay_url"           || { echo "FAIL: 402 body missing pay_url"; exit 1; }
 echo "$OUT_402" | grep -q "sendInvoice"       || { echo "FAIL: 402 missing Telegram-render hint"; exit 1; }
-echo "$OUT_402" | grep -q "x402 wallet"       || { echo "FAIL: 402 missing Web-render hint"; exit 1; }
+echo "$OUT_402" | grep -q "wallet payment"    || { echo "FAIL: 402 missing Web-render hint"; exit 1; }
 
 # === 401 path ===
 declare_401=$( UNBROWSE_API_KEY="mock-token-401" "$CLI" declare \
