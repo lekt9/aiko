@@ -1018,22 +1018,30 @@ print(f'  source: {src}')
 
   list)
     SHOW_MERGED=""
+    VIEWER=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --show-merged) SHOW_MERGED="1"; shift ;;
+        --for)         VIEWER="${2:-}"; shift 2 ;;
         *) shift ;;
       esac
     done
-    MH_SHOW_MERGED="${SHOW_MERGED:-}" _py_inline "
+    MH_SHOW_MERGED="${SHOW_MERGED:-}" MH_VIEWER="${VIEWER:-}" _py_inline "
 import os; from contract_core import list_all
 show = bool(os.environ.get('MH_SHOW_MERGED'))
-cs=list_all(show_merged=show)
-if not cs: print('  (no contracts)')
+viewer = os.environ.get('MH_VIEWER') or None
+cs=list_all(show_merged=show, viewer=viewer)
+if not cs:
+    if viewer:
+        print(f'  (no contracts visible to {viewer!r})')
+    else:
+        print('  (no contracts)')
 for c in cs:
     shape='funnel' if (c.get('children') or c['action'] in ('children-satisfy','funnel')) else 'funnel-first' if c['action']=='funnel-first' else 'judgment' if c['action']=='agent-judges' else 'loop' if (c['action'].startswith('loop-until:') or c['action']=='loop') else 'harness' if c['action'].startswith('harness:') else 'cell'
     merged_note = f\" -> {c['merged_into']}\" if c.get('merged_into') else ''
     revised_note = ' [revised]' if c.get('original_action') else ''
-    print(f\"[{c['status']}] {c['id']} ({shape}) w={c['wave']}{merged_note}{revised_note}\")
+    aud_note = f\" audience={','.join(c['audience'])}\" if c.get('audience') else ''
+    print(f\"[{c['status']}] {c['id']} ({shape}) w={c['wave']}{merged_note}{revised_note}{aud_note}\")
     print(f\"  {c['plan'][:80]}\")
 "
     ;;
