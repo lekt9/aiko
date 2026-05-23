@@ -580,7 +580,7 @@ for c in cs:
 
   defaults)
     cat <<'DEFAULTS'
-=== CONTRACT DEFAULTS (12 universal principles) ===
+=== CONTRACT DEFAULTS (11 universal principles) ===
 
 -- Engineering principles (CLAUDE.md + CONTRACTS.md) --
 === CONTRACT DEFAULTS (11 universal principles) ===
