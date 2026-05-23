@@ -749,7 +749,7 @@ the discipline is universal — any agent-driven web ship benefits from the
 same gate. Promoting it to the skill means every future `/contract` loop
 the agent runs inherits the capability by default, not by remembering to
 re-derive it. The first-use cost is a one-off `bun install` inside
-`scripts/served-surface/`; every subsequent invocation is a fast headless
+`scripts/browser/`; every subsequent invocation is a fast headless
 load.
 
 Origin: a 2026-05-23 ship that passed `bun run build` and reached
