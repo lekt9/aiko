@@ -369,9 +369,10 @@ try {
       }
     }
 
-    await ctx.close();
+    await page.close();
   }
 } finally {
+  await sharedCtx.close();
   await browser.close();
 }
 
