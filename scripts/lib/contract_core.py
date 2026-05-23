@@ -230,8 +230,17 @@ def record_event(event: str, id: str, **fields) -> None:
     _append(row)
 
 
-def mark_satisfied(id: str, wave: int) -> None:
-    _append({"event": "satisfied", "id": id, "wave": wave, "ts": _now()})
+def mark_satisfied(id: str, wave: int, proof: str | None = None, proof_skip_reason: str | None = None) -> None:
+    """Append a satisfied row. One of `proof` (plan-fulfillment evidence)
+    or `proof_skip_reason` (explicit opt-out) should be present; both None
+    is permitted for callers that handle the requirement at the CLI layer
+    (the contract bash script enforces the bare-mark refusal)."""
+    row = {"event": "satisfied", "id": id, "wave": wave, "ts": _now()}
+    if proof is not None:
+        row["proof"] = proof
+    if proof_skip_reason is not None:
+        row["proof_skip_reason"] = proof_skip_reason
+    _append(row)
 
 
 def mark_status(id: str, status: str) -> None:
