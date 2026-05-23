@@ -233,6 +233,7 @@ try {
       ok: errors.length === 0,
       ms,
       text_len: innerText.length,
+      walked: job.walked,
       errors,
     };
     if (html) urlReport.html_len = html.length;
@@ -241,6 +242,30 @@ try {
       out.ok = false;
       out.errors += errors.length;
     }
+
+    // WALK: collect same-origin <a href> from this page, enqueue each
+    if (walk && !job.walked) {
+      let hrefs = [];
+      try {
+        hrefs = await page.evaluate(() =>
+          Array.from(document.querySelectorAll("a[href]")).map((a) => a.href),
+        );
+      } catch { /* page may be navigation-errored */ }
+      for (const h of hrefs) {
+        let u;
+        try { u = new URL(h); } catch { continue; }
+        if (u.host !== target.host) continue;
+        if (u.pathname.match(/\.(svg|png|jpe?g|gif|webp|ico|css|js|woff2?|map)$/i)) continue;
+        const norm = u.origin + u.pathname;  // strip query+hash; the gate is per-route
+        if (seen.has(norm)) continue;
+        if (walkInclude && !walkInclude.test(u.pathname)) continue;
+        if (walkExclude && walkExclude.test(u.pathname)) continue;
+        seen.add(norm);
+        queue.push({ url: norm, walked: true });
+        out.walked++;
+      }
+    }
+
     await ctx.close();
   }
 } finally {
