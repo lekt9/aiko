@@ -1397,6 +1397,116 @@ Origin: contract `bcd1a371`, 2026-05-24. Lewis's framing:
 dependencies the LLM names in HOLD reasons, by promoting them to typed
 ledger edges. Binding gate: `verb-gates/unblocked/verify.sh`.
 
+## Ψ4 — async watcher (programmatic wait for external completion)
+
+The previous primitives covered every loop **inside** the substrate:
+parent organs fire when children satisfy, `contract:<id>` referrers
+unblock when targets satisfy, Ω1 surfaces HOLD'd dependents when blockers
+satisfy. But none of them close the loop with the **world outside** the
+ledger — the unbrowse endpoint that hasn't shipped yet, the deploy that's
+still rolling out, the manual approval that hasn't landed.
+
+Until Ψ4, a contract waiting on an external condition had two paths:
+1. The agent remembers to manually `contract iterate <id>` periodically
+   (it forgets across sessions, compaction, days off).
+2. A receptor blocks on an inbox file (someone has to write the file).
+
+Neither poll the external thing. Ψ4 fills the gap with a tiny periodic
+poller — a watcher that runs a probe on a wall-clock interval, and when
+the probe flips, programmatically iterates the watched contract. From
+there the existing wavefront (parent/referrer/synapse) plus Ω1 (HOLD'd
+dependents) does its job: the dependency graph wakes up automatically.
+
+### How it works
+
+1. `contract watch <id> [--probe "<cmd>"] [--interval <s>]` — register a
+   watcher. State lives at `~/.contracts/watchers/<id>.json`.
+2. `contract watch tick` — one poll cycle. For each watcher whose
+   interval has elapsed since `last_run_ts`:
+   - run the probe (or skip if no probe — direct iterate)
+   - on **probe-FAIL**: persist `last_run_ts` + `attempts++`, keep
+     watching
+   - on **probe-PASS** (or no probe): write an event to
+     `~/.contracts/inbox/watcher/<id>.jsonl`, run
+     `contract iterate <id>` (the contract's existing action becomes
+     KEY 1), and **remove the watcher** (one-shot semantics)
+3. The auto-iterate emits the standard two-key exit. KEY 2 still belongs
+   to the agent on next session. The fire is mechanical, not a verdict.
+4. When the agent eventually `_mark`s the contract satisfied, the
+   propagation wavefront fires + Ω1 re-surfaces every dependent HOLD —
+   the whole graph wakes up from one external state flip.
+5. **`~/.contracts/hooks/watch-tick.sh`** — internal hook. Fires on
+   every `iterate` and `_mark` event via `_fire_contract_hooks`, so any
+   /contract activity advances every pending watcher's poll. Guarded
+   against re-entry (the auto-iterate it triggers doesn't recurse).
+
+### One-shot, not invariant
+
+Like apoptosis: the watcher exists to fire once and disappear. If the
+external condition flips back (an endpoint ships, then breaks), the
+agent can re-register. Persistent invariants are `loop-until:<body>`'s
+job — staleness across time is Ψ4's job. Different shapes, no overlap.
+
+### Why this is in the substrate, not a cron job
+
+Cron lives outside the contract graph. A cron-driven poller would know
+"this URL returned 200" but couldn't programmatically advance the
+contract that depends on it — the agent would still have to wake up,
+notice the cron log, and manually iterate. Ψ4 keeps the poller AND the
+iterate AND the wavefront on one substrate, so the chain "external
+state flip → contract iterate → wavefront → unblocked dependent" is
+mechanical end to end.
+
+### Composition with Ω1
+
+This is the chain Lewis named:
+- contract `A` is HOLD'd, blocker named is contract `B`
+- `B` waits on an external thing (e.g. unbrowse endpoint)
+- agent registers a watcher: `contract watch B --probe "curl -fsSL ..."`
+- some future tick (or any iterate/mark elsewhere fires the hook) flips
+  the probe → `B` is iterated → next session the agent `_mark`s `B`
+  satisfied → wavefront fires Ω1 UNBLOCK-REWAKE → `A` surfaces in
+  `contract unblocked --ready` for re-judgement
+
+No agent involvement between "register the watcher" and "wake up to
+find A ready to judge". The convergence loop self-triggers across the
+external boundary.
+
+### Worked example — wiring the unbrowse deferred items
+
+```bash
+# The deferred item 65cac760 is waiting on unbrowse to ship
+# /v1/billing/autopay/charge — when that endpoint stops 404'ing, the
+# Π2 autopay contract can resolve.
+contract watch 65cac760 \
+  --probe 'test "$(curl -s -o /dev/null -w %{http_code} https://beta-api.unbrowse.ai/v1/billing/autopay/charge)" != "404"' \
+  --interval 3600
+
+# Now any future /contract activity in any session re-checks the
+# endpoint every hour. The day it ships, 65cac760 auto-iterates,
+# the agent marks it satisfied, and any Π2 contract that referenced
+# `contract:65cac760` becomes resolvable in the wavefront.
+```
+
+### Verb-gate
+
+`verb-gates/watch/verify.sh` binds eight phases: register refuses on
+phantom ids; list surfaces watchers pretty + `--json`; tick respects
+interval (skipped count); probe-FAIL doesn't fire (no false-witness
+inbox row); probe-PASS fires (auto-iterates contract with PASS row +
+writes inbox event + removes watcher one-shot); no-probe watcher fires
+on schedule (the receptor-shape case); stop cleanly removes without
+firing; stop on missing watcher refuses.
+
+Origin: contract `PSI4_ID`, 2026-05-24. Lewis's framing:
+"wire up hooks to wait for those to complete via /contract so that
+the relevant /contract within the /contract list will actually wait for
+it to complete and retrigger this /contract accordingly by programmatic
+means." The substrate already had receptors (inbox consumers) and
+hooks (event firing) but no programmatic **producer** that turned
+external state into inbox events. Ψ4 is that producer — and it
+composes with Ω1 to make the dependency graph wake itself up.
+
 ## Β1 — backtrack-and-capture (deferred items become contract rows, mechanically)
 
 Across a long session the agent keeps naming "deferred", "named-and-
