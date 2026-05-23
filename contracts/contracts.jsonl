@@ -4481,3 +4481,5 @@
 {"event":"satisfied","id":"2b073b01","wave":2,"ts":"2026-05-23T09:18:36Z"}
 {"event":"status_update","id":"2b073b01","status":"satisfied","ts":"2026-05-23T09:18:36Z"}
 {"event":"iterated","id":"5e647dc4","wave":1,"action_exit":0,"action_result":"PASS","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T09:18:43Z"}
+{"event":"satisfied","id":"5e647dc4","wave":1,"ts":"2026-05-23T09:20:14Z"}
+{"event":"status_update","id":"5e647dc4","status":"satisfied","ts":"2026-05-23T09:20:14Z"}
