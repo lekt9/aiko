@@ -24,7 +24,7 @@ echo "evidence: status reflects [satisfied]  OK"
 
 # 3. marking an unknown id must not silently succeed
 set +e
-bash "$C" _mark "deadbeef_does_not_exist" satisfied >/dev/null 2>&1
+bash "$C" _mark "deadbeef_does_not_exist" satisfied --proof-skip "verb-gate self-test" >/dev/null 2>&1
 EC=$?
 set -e
 if [ "$EC" -eq 0 ]; then
