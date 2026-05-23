@@ -100,9 +100,13 @@ Once armed, a `/contract` invocation converges the WHOLE tree in-thread without
 a human prompt between iterations. Agent judging (KEY 2) is done in-thread and
 is NOT a turn boundary — `iterate` → judge → `_mark` → next `iterate` is one
 continuous turn. Never end a `/contract` turn with a satisfiable contract
-pending. The only three reasons to yield: missing credential · genuinely
-ambiguous intent · irreversible action — and then you run `contract disarm` and
-name the blocker.
+a human prompt between iterations. Agent judging (KEY 2) is done in-thread and
+is NOT a turn boundary — `iterate` → judge → `_mark` → next `iterate` is one
+continuous turn. Never end a `/contract` turn with a satisfiable contract
+pending. The only two reasons to yield: missing credential · irreversible action
+not already authorized — and then you run `contract disarm` and name the blocker.
+Ambiguous intent is agent-judges: act on the higher-confidence interpretation
+when reversible; the ledger row is the rollback point.
 
 Crystallised from real session work, not aspiration:
 
