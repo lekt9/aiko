@@ -109,14 +109,17 @@ while [ "$round" -lt "$MAX_ROUNDS" ]; do
   fi
 done
 
-# verdict row
-final_output=$(run_selftest_capture)
-n_final_fail=$(echo "$final_output" | grep -cE "^FAIL\s+" || true)
-final_fails=$(echo "$final_output" | grep -E "^FAIL\s+" | awk '{print $2}' | tr '\n' ' ')
-if [ "$n_final_fail" -eq 0 ]; then
-  verdict="all-green"
+# verdict row — only re-run self-test if we actually applied fixes; otherwise
+# the current state IS the final state (cap the cost of being honest)
+if [ "$verdict" = "aspirational-gap" ] || [ "$round" -ge "$MAX_ROUNDS" ]; then
+  final_fails="$fails"   # last round's fails ARE the residual
+else
+  final_output=$(run_selftest_capture)
+  n_final_fail=$(echo "$final_output" | grep -cE "^FAIL\s+" || true)
+  final_fails=$(echo "$final_output" | grep -E "^FAIL\s+" | awk '{print $2}' | tr '\n' ' ')
+  if [ "$n_final_fail" -eq 0 ]; then verdict="all-green"; fi
 fi
-row "{\"event\":\"verdict\",\"ts\":\"$(now)\",\"rounds\":$round,\"verdict\":\"$verdict\",\"residual_fails\":\"$final_fails\"}"
+row "{\"event\":\"verdict\",\"ts\":\"$(now)\",\"rounds\":$round,\"verdict\":\"$verdict\",\"residual_fails\":\"$(echo "$final_fails" | tr -d '\n')\"}"
 
 echo
 echo "=== self-drill verdict: $verdict (rounds=$round, residual_fails=\"$final_fails\")"
