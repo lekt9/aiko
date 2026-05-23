@@ -103,6 +103,8 @@ check "self/proof-binding"         bash "$SCRIPTS/check-proof-binding.sh"
   check "self/crystallize-consistency" bash "$SCRIPTS/check-crystallize-consistency.sh"
 [ -x "$SCRIPTS/check-hook-subprocess-surfacing.py" ] && \
   check "self/hook-subprocess-surfacing" python3 "$SCRIPTS/check-hook-subprocess-surfacing.py"
+[ -x "$SCRIPTS/check-identity-binding.sh" ] && \
+  check "self/identity-binding"      bash "$SCRIPTS/check-identity-binding.sh"
 
 # ── Corpus audits (rule-bound checks across all affected artifacts) ──────────
 # Every audits/<rule>/verify.sh is a corpus-wide check for one rule. The
