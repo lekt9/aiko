@@ -5916,3 +5916,4 @@
 {"criteria": "M1+M2+M3+M4+M5", "event": "promoted", "id": "d00c0364", "ts": "2026-05-23T18:19:47.993453Z", "via": "auto-promote-hook"}
 {"criteria": "M1+M2+M3+M4+M5", "event": "promoted", "id": "55135f34", "ts": "2026-05-23T18:19:48.035054Z", "via": "auto-promote-hook"}
 {"event": "declared", "id": "d99f9e8f", "plan": "self-test guard for the tool-guard verify harness (362_629000)", "action": "tool-guard:__contract_toolguard_selftest_362_629000__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/Projects/unbrowse-ecosystem/unbrowse", "parent_id": null, "pointers": [], "ts": "2026-05-23T18:21:29.737465Z", "agent": "foundry@getfoundry.app"}
+{"event": "satisfied", "id": "d99f9e8f", "wave": 0, "ts": "2026-05-23T18:21:54.647629Z", "proof_skip_reason": "shape-gate self-test", "agent": "foundry@getfoundry.app"}
