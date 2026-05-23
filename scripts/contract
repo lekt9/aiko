@@ -3625,6 +3625,17 @@ print(f'  next: contract status {target}     # verify state preserved')
     python3 "$SELF/contract-context-of.py" "$@"
     ;;
 
+  next-of)
+    # Post-iterate "next layer" proposer with pluggable non-binding sources
+    # (c1bdb2b0, 2026-05-24). Symmetric to context-of but for the question
+    # "what contract should fire NEXT if <id> can't resolve yet?"
+    # Sources: judge-says / child-gap / failure-pattern / search-bm25 / stdin.
+    # Flags: --source <name>, --order a,b,c, --from-stdin, --auto-declare,
+    # --json. --auto-declare programmatically declares the top proposal as
+    # a child contract under <id>.
+    python3 "$SELF/contract-next-of.py" "$@"
+    ;;
+
   context)
     # Mail-stdin doctrine companion (b2d15246, 2026-05-24): emit a JSON
     # envelope describing this contract's originating context so a chained
