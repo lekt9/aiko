@@ -128,10 +128,18 @@ def _enforce_layering(title, description, body, hook):
         raise ValueError(
             f"memory layering: title has {word_count} words "
             f"(max {TITLE_MAX_WORDS}): {t!r}")
-    if d and (t == d[:len(t)] or t == d):
+    # Title may legitimately be a short prefix of the description (a 3-5
+    # word headline that the description elaborates). The real violation is
+    # the *lazy truncation* — when title is almost the whole description.
+    if d and t.lower() == d.lower():
         raise ValueError(
-            f"memory layering: title is a prefix of description — pick a "
-            f"distinct human-readable title. title={t!r} desc={d[:80]!r}")
+            f"memory layering: title equals description verbatim — pick a "
+            f"shorter human-readable headline. title={t!r}")
+    if d and t.lower() == d[:len(t)].lower() and len(t) > 0.6 * len(d):
+        raise ValueError(
+            f"memory layering: title is a long prefix of description ("
+            f"{len(t)}/{len(d)} chars = {len(t)/len(d):.0%}) — pick a "
+            f"tighter headline, not a truncation. title={t!r} desc={d[:80]!r}")
     if len(d) > DESCRIPTION_MAX_CHARS:
         raise ValueError(
             f"memory layering: description {len(d)} chars > "
