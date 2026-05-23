@@ -93,6 +93,14 @@ check "self/shape-catalog"         python3 "$SCRIPTS/check-shape-catalog.py"
 check "self/graph-depth"           bash "$SCRIPTS/check-graph-depth.sh"
 check "self/streams-convention"    bash "$SCRIPTS/check-streams-convention.sh"
 check "self/unified-model"         bash "$SCRIPTS/check-unified-model.sh"
+
+# ── Corpus audits (rule-bound checks across all affected artifacts) ──────────
+# Every audits/<rule>/verify.sh is a corpus-wide check for one rule. The
+# runner walks them all. A failure here means the rule's audits/*/fix.sh
+# has not been run; the runner names which one. See contract d4074595
+# (audits/ directory convention).
+[ -x "$SCRIPTS/run-audits.sh" ] && \
+  check "self/audits-pass"         bash "$SCRIPTS/run-audits.sh"
 # ── Shape gates (regression harnesses for each contract shape) ────────────────
 # Each gate's verify.sh proves one shape behaves correctly. They honor an
 # external CONTRACTS_STORE, so we run them with a tmpdir ledger to avoid
