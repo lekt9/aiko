@@ -1847,6 +1847,131 @@ HELP
     ;;
 
 
+  pre-mortem)
+    # Pre-mortem fan-out (Klein). Imagines the contract has already FAILED
+    # at <horizon>. Emits N voice prompts; agent reads the failure modes
+    # and decides — in-thread — whether to declare new contracts. Never
+    # spawns children on its own.
+    TARGET="${1:-}"; shift || true
+    VOICES=5 HORIZON="6m"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --voices)  VOICES="${2:-5}";  shift 2 ;;
+        --horizon) HORIZON="${2:-6m}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$TARGET" ] && { echo "usage: contract pre-mortem <id> [--horizon 6m] [--voices 5]" >&2; exit 2; }
+    TPLAN=$(MH_ID="$TARGET" _py_inline "
+import os; from contract_core import get
+c=get(os.environ['MH_ID']); print(c['plan'] if c else 'NOT-FOUND')")
+    [ "$TPLAN" = "NOT-FOUND" ] && { echo "ERROR: contract $TARGET not found" >&2; exit 1; }
+    echo "=== PRE-MORTEM FAN-OUT ==="
+    echo "  target:  $TARGET"
+    echo "  plan:    ${TPLAN:0:80}"
+    echo "  horizon: $HORIZON"
+    echo "  voices:  $VOICES"
+    echo
+    n=1
+    while [ "$n" -le "$VOICES" ]; do
+      echo "PRE-MORTEM VOICE $n of $VOICES:"
+      echo "  Imagine it is $HORIZON from now. The contract \"$TPLAN\" FAILED."
+      echo "  Write 3-5 sentences as a post-mortem from that future viewpoint:"
+      echo "  what specifically went wrong, what evidence we would see now of that"
+      echo "  failure path, and what we should change today to avoid it."
+      echo
+      n=$((n+1))
+    done
+    MH_ID="$TARGET" MH_V="$VOICES" MH_H="$HORIZON" _py_inline "
+import os; from contract_core import record_event
+record_event('pre-mortem', os.environ['MH_ID'],
+             voices=int(os.environ['MH_V']),
+             horizon=os.environ['MH_H'])
+"
+    echo "  KEY 1 (machine): $VOICES voice prompts emitted; ledger row appended."
+    echo "  KEY 2 (agent):   READ each voice's failure narrative, then JUDGE —"
+    echo "                   which failure modes deserve a NEW contract? declare them."
+    echo "                   pre-mortem itself does NOT spawn children."
+    ;;
+
+  baserate)
+    # Base-rate read. Same backend as `contract search` — counts how many
+    # related contracts of this class have actually satisfied, prints the
+    # rate. Cheap reality check before the agent over-confidences a plan.
+    TARGET="${1:-}"; shift || true
+    [ -z "$TARGET" ] && { echo "usage: contract baserate <id>" >&2; exit 2; }
+    TPLAN=$(MH_ID="$TARGET" _py_inline "
+import os; from contract_core import get
+c=get(os.environ['MH_ID']); print(c['plan'] if c else 'NOT-FOUND')")
+    [ "$TPLAN" = "NOT-FOUND" ] && { echo "ERROR: contract $TARGET not found" >&2; exit 1; }
+    BR_LINE=$(MH_ID="$TARGET" MH_PLAN="$TPLAN" PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 -c "
+import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname('$SELF/contract-habit-detect.py')))
+sys.path.insert(0, '$SELF')
+from importlib import import_module
+hd = import_module('contract-habit-detect') if False else None
+# load detect() out of contract-habit-detect.py by file path
+import importlib.util
+spec = importlib.util.spec_from_file_location('hd_mod', '$SELF/contract-habit-detect.py')
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+me = os.environ['MH_ID']; plan = os.environ['MH_PLAN']
+cands = mod.detect(plan, mod.DEFAULT_THRESHOLD, exclude={me})
+total = len(cands)
+sat = sum(1 for c in cands if c.get('status') == 'satisfied')
+rate = (100.0 * sat / total) if total else 0.0
+print(f'BASE RATE for this class: {sat} / {total} satisfied = {rate:.1f}% (window: all-time, threshold: {mod.DEFAULT_THRESHOLD})')
+print(f'__BR__|{sat}|{total}|{rate:.4f}')
+")
+    # Split the summary (printed) from the machine row (parsed)
+    HUMAN=$(echo "$BR_LINE" | grep -v '^__BR__')
+    MACHINE=$(echo "$BR_LINE" | grep '^__BR__' | head -1)
+    SAT=$(echo "$MACHINE" | awk -F'|' '{print $2}')
+    TOTAL=$(echo "$MACHINE" | awk -F'|' '{print $3}')
+    RATE=$(echo "$MACHINE" | awk -F'|' '{print $4}')
+    echo "=== CONTRACT BASERATE ==="
+    echo "  target: $TARGET — \"${TPLAN:0:72}\""
+    echo
+    echo "$HUMAN"
+    MH_ID="$TARGET" MH_SAT="$SAT" MH_TOT="$TOTAL" MH_RATE="$RATE" _py_inline "
+import os; from contract_core import record_event
+record_event('baserate', os.environ['MH_ID'],
+             satisfied=int(os.environ['MH_SAT']),
+             total=int(os.environ['MH_TOT']),
+             rate=float(os.environ['MH_RATE']))
+"
+    echo
+    echo "  KEY 1 (machine): base rate computed against related-contract corpus."
+    echo "  KEY 2 (agent):   if base rate is LOW, treat this plan as ambitious —"
+    echo "                   demand more evidence per wave; do not auto-promote."
+    ;;
+
+  invert)
+    # Inversion (declare the negation as a sibling). If the inverted form
+    # satisfies more readily than the original, the original was wrong-polarity.
+    # The agent iterates the sibling and judges KEY 2 carefully.
+    TARGET="${1:-}"; shift || true
+    [ -z "$TARGET" ] && { echo "usage: contract invert <id>" >&2; exit 2; }
+    TPLAN=$(MH_ID="$TARGET" _py_inline "
+import os; from contract_core import get
+c=get(os.environ['MH_ID']); print(c['plan'] if c else 'NOT-FOUND')")
+    [ "$TPLAN" = "NOT-FOUND" ] && { echo "ERROR: contract $TARGET not found" >&2; exit 1; }
+    INV_PLAN="INVERSION OF $TARGET: NOT ($TPLAN)"
+    NEW_ID=$(MH_PLAN="$INV_PLAN" MH_PARENT="$TARGET" _py_inline "
+import os; from contract_core import declare
+print(declare(os.environ['MH_PLAN'], 'agent-judges',
+              parent_id=None,
+              inverted_from=os.environ['MH_PARENT']))")
+    echo "=== INVERSION DECLARED ==="
+    echo "  original: $TARGET — \"${TPLAN:0:72}\""
+    echo "  sibling:  $NEW_ID"
+    echo "  plan:     ${INV_PLAN:0:100}"
+    echo
+    echo "  next: contract iterate $NEW_ID"
+    echo
+    echo "  If the inverted contract satisfies more readily than the original,"
+    echo "  the original was wrong-polarity. Iterate it and judge KEY 2 carefully."
+    ;;
+
   *)
     echo "unknown subcommand: $cmd" >&2
     bash "$0" help >&2
