@@ -91,32 +91,43 @@ def _append_embed_cache(rid: str, text_hash: str, vec):
 
 
 def _embed_call(texts):
-    """One OpenAI embeddings call for a batch of texts. Returns list[list[float]]
-    on success, None on any failure (substrate principle: no silent fault — a
-    real error is logged once to stderr, then degrade)."""
+    """One embeddings call for a batch of texts via the resolved provider
+    (OpenAI-compatible). Returns list[list[float]] on success, None on any
+    failure (substrate principle: no silent fault — a real error is logged
+    once to stderr, then degrade)."""
     global _EMBED_OK
     if not _EMBED_OK:
         return None
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
+    base, key, model = _embed_provider()
+    if not key:
         return None
-    payload = json.dumps({"model": EMBED_MODEL, "input": texts}).encode()
+    payload = json.dumps({"model": model, "input": texts}).encode()
     req = urllib.request.Request(
-        "https://api.openai.com/v1/embeddings",
+        base,
         data=payload,
         headers={
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
             "User-Agent": "contract-habit-detect/1.0",
         },
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=20) as resp:
             data = json.loads(resp.read().decode())
         return [d["embedding"] for d in data["data"]]
     except (urllib.error.URLError, urllib.error.HTTPError,
             json.JSONDecodeError, KeyError, OSError) as e:
+        # Try the alternate provider once before giving up for the run.
+        alt_key = ("NEBIUS_API_KEY" if "openai.com" in base else "OPENAI_API_KEY")
+        if os.environ.get(alt_key) and os.environ.get("CONTRACT_EMBED_PROVIDER") != "openai":
+            # Force the alternate by toggling the env hint for this one retry.
+            os.environ["CONTRACT_EMBED_PROVIDER"] = (
+                "nebius" if "openai.com" in base else "openai")
+            print(f"contract-habit-detect: {base} failed ({e}); "
+                  f"retrying via {os.environ['CONTRACT_EMBED_PROVIDER']}",
+                  file=sys.stderr)
+            return _embed_call(texts)  # one-shot retry on the alternate
         _EMBED_OK = False
         print(f"contract-habit-detect: embedding API call failed "
               f"(falling back to BM25 only): {e}", file=sys.stderr)
