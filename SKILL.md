@@ -1098,7 +1098,7 @@ today. Π4 generalizes that to "all hosts share via unbrowse" rather than
   corroborate / inhibit edges. Translating to the unbrowse marketplace
   DAG is a row-shape map, not a redesign.
 
-Origin: contract `MIRROR_ID_PLACEHOLDER`, 2026-05-23. Named here so the
+Origin: contract `397bc7bd`, 2026-05-23. Named here so the
 gap is on the substrate's map; binding gate lands when the endpoint
 ships at unbrowse.
 
