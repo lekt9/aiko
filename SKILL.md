@@ -947,7 +947,7 @@ substrate dumb about pricing; the cashier does the math.
   → result is silent `PASS (HTTP 200 — autopay settled $N cap, retry succeeded)`,
   no `=== PAYMENT REQUIRED ===` block emitted
 
-Origin: contract `AUTOPAY_ID_PLACEHOLDER`, 2026-05-23. Lewis's plain ask:
+Origin: contract `1f14917d`, 2026-05-23. Lewis's plain ask:
 "so that i can sort of just chill and not have to pay x402 because you
 can find my fucking pkeys." Built as the substrate-side orchestration
 (opt-in flag, autopay POST, retry-on-success, honest fall-through);
