@@ -142,6 +142,44 @@ function allowed(msg) {
   return allow.some((a) => msg.includes(a));
 }
 
+/**
+ * Detect raw-JSON dumps in rendered visible text.
+ *
+ * Two independent signals — either triggers:
+ *
+ *  (A) Multi-line pretty-printed JSON. Count lines that look like a JSON
+ *      property (`  "key": value`). If 4+ such lines appear, the page is
+ *      almost certainly rendering a JSON.stringify pretty-print.
+ *
+ *  (B) Single-line collapsed JSON. Any line containing 4+ `"key":` tokens
+ *      is a serialized object dump.
+ *
+ * Both signals tolerate occasional `"name": "value"` in prose copy (one or
+ * two such hits in a paragraph wouldn't trip either threshold).
+ *
+ * Returns the first matching evidence string, or null if the text is clean.
+ */
+function detectRawJson(text) {
+  if (!text) return null;
+  const lines = text.split(/\r?\n/);
+  let propLines = 0;
+  let sampleLine = "";
+  for (const line of lines) {
+    if (/^\s*["'][\w.-]+["']\s*:/.test(line)) {
+      propLines++;
+      if (!sampleLine) sampleLine = line.trim();
+      if (propLines >= 4) {
+        return `${propLines}+ JSON-property lines visible (e.g. ${JSON.stringify(sampleLine.slice(0, 80))})`;
+      }
+    }
+    const inlineMatches = (line.match(/"[\w.-]+"\s*:/g) || []).length;
+    if (inlineMatches >= 4) {
+      return `inline JSON dump on one line (${inlineMatches} "key": tokens, e.g. ${JSON.stringify(line.trim().slice(0, 120))})`;
+    }
+  }
+  return null;
+}
+
 function loadEnvFile(p) {
   if (!p || !existsSync(p)) return;
   for (const line of readFileSync(p, "utf8").split(/\r?\n/)) {
