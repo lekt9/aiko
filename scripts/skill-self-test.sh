@@ -72,6 +72,13 @@ check "psych/abstraction-layers"   python3 -c \
 # Humanlike (Ε/Σ/Α) — emotion, sociology, aesthetics dimensions in SKILL.md (contract 5cc21029)
 check "humanlike/dimensions"       python3 -c \
                                      "import sys; t=open('$SKILL_DIR/SKILL.md').read().lower(); sys.exit(0 if all(d in t for d in ['humanlike','emotion','sociology','aesthetics']) and all(g in t.lower() for g in ['ε1','ε2','σ1','α1']) else 1)"
+check "humanlike/agent-attribution" env PYTHONPATH="$SCRIPTS/lib" CONTRACTS_STORE="$(mktemp)" CONTRACT_AGENT="skill-self-test" python3 -c \
+                                     "import json, os; from contract_core import declare; cid=declare('attribution row must carry agent','true'); row=json.loads(open(os.environ['CONTRACTS_STORE']).readline()); assert row['id']==cid and row.get('agent')=='skill-self-test'"
+check "humanlike/plan-quality"      env CONTRACTS_STORE="$(mktemp)" bash "$CLI" declare "fix ui" --action true --no-drive
+check "humanlike/failure-streak"    bash -c \
+                                     "tmp=\$(mktemp); out=\$(CONTRACTS_STORE=\"\$tmp\" bash '$CLI' declare 'failure streak probe contract' --action false --no-drive); id=\$(printf '%s\n' \"\$out\" | awk '/^declared:/ {print \$2}'); CONTRACTS_STORE=\"\$tmp\" bash '$CLI' iterate \"\$id\" >/dev/null; CONTRACTS_STORE=\"\$tmp\" bash '$CLI' iterate \"\$id\" >/dev/null; CONTRACTS_STORE=\"\$tmp\" bash '$CLI' iterate \"\$id\" 2>&1 | grep -q 'failure-streak escalation'"
+check "humanlike/over-iteration"    bash -c \
+                                     "tmp=\$(mktemp); out=\$(CONTRACTS_STORE=\"\$tmp\" bash '$CLI' declare 'over iteration probe contract' --action true --no-drive); id=\$(printf '%s\n' \"\$out\" | awk '/^declared:/ {print \$2}'); CONTRACTS_STORE=\"\$tmp\" bash '$CLI' iterate \"\$id\" >/dev/null; CONTRACTS_STORE=\"\$tmp\" bash '$CLI' iterate \"\$id\" >/dev/null; CONTRACTS_STORE=\"\$tmp\" bash '$CLI' iterate \"\$id\" 2>&1 | grep -q 'over-iteration warning'"
 check "self/no-drift"              env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" python3 -c \
                                      "import json, subprocess, sys; r=subprocess.run(['bash','$CLI','self','--json'],capture_output=True,text=True); d=json.loads(r.stdout); sys.exit(0 if d['drift']==[] else 1)"
 # ── Shape gates (regression harnesses for each contract shape) ────────────────
