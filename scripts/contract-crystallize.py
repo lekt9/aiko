@@ -69,20 +69,38 @@ def _slug(text: str, maxlen: int = 60) -> str:
 
 def resolve_memory_dir(scope_cwd):
     """Resolve the Claude Code project memory dir for a working dir.
-    Falls back to ~/.contracts/learnings/ when no project memory dir exists.
-    CONTRACT_CRYSTALLIZE_MEMORY_DIR overrides everything (tests)."""
+
+    Walks UP from scope_cwd through each ancestor, slugifying it (slashes ->
+    dashes, the Claude Code convention), and returns the FIRST existing
+    `~/.claude/projects/<slug>/memory/` it finds. Longest prefix wins.
+
+    Example: scope_cwd `/Users/lekt9/Projects/unbrowse-ecosystem/unbrowse/frontend`
+    tries the slugs for `.../frontend`, `.../unbrowse`, `.../unbrowse-ecosystem`,
+    `.../Projects`, `/Users/lekt9`, `/Users`, `/` — and stops at the first
+    one whose memory/ exists (the unbrowse project memory in practice).
+
+    If no project memory matches, falls back to `~/.claude/memory/` — the
+    GLOBAL memory dir, NEVER `~/.contracts/learnings/` (the ledger lives
+    there; memory lives under `~/.claude/`).
+
+    CONTRACT_CRYSTALLIZE_MEMORY_DIR overrides everything (tests).
+    """
     override = os.environ.get("CONTRACT_CRYSTALLIZE_MEMORY_DIR")
     if override:
         d = Path(override)
         d.mkdir(parents=True, exist_ok=True)
         return d
     if scope_cwd:
-        slug = str(Path(scope_cwd)).replace("/", "-")
-        proj = Path.home() / ".claude" / "projects" / slug / "memory"
-        if proj.is_dir():
-            return proj
-    LEARNINGS_FALLBACK.mkdir(parents=True, exist_ok=True)
-    return LEARNINGS_FALLBACK
+        cur = Path(scope_cwd).resolve()
+        # Generate ancestors longest-first (current dir, parent, grandparent...)
+        candidates = [cur, *cur.parents]
+        for ancestor in candidates:
+            slug = str(ancestor).replace("/", "-")
+            proj = Path.home() / ".claude" / "projects" / slug / "memory"
+            if proj.is_dir():
+                return proj
+    GLOBAL_MEMORY_FALLBACK.mkdir(parents=True, exist_ok=True)
+    return GLOBAL_MEMORY_FALLBACK
 
 
 def write_memory(memory_dir, base_name, description, body):
