@@ -122,12 +122,11 @@ def write(key: str, action_exit: int, action_result: str, wave: int,
         os.replace(tmp, p)
     except OSError as e:
         sys.stderr.write(f"cache_layer.write: {p.name} failed ({e}); cache miss next time\n")
-        try:
-            os.unlink(tmp)
-        except FileNotFoundError:
-            pass
-        except OSError as ce:
-            sys.stderr.write(f"cache_layer.write: tempfile cleanup {tmp} failed ({ce})\n")
+        if os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError as ce:
+                sys.stderr.write(f"cache_layer.write: tempfile cleanup {tmp} failed ({ce})\n")
 
 
 def record_hit(contract_id: str, source_wave: int, cache_age_s: float,
