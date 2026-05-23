@@ -54,6 +54,7 @@ import json
 import os
 import re
 import sys
+import sys
 
 # base58 alphabet — used to detect candidate secrets without decoding them inline
 B58_RE = re.compile(r"[1-9A-HJ-NP-Za-km-z]{87,88}")
