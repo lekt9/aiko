@@ -70,16 +70,12 @@ grep -qE "contract:[a-f0-9]|contract:<id>" "$CORE" "$CLI" 2>/dev/null || {
   echo "FAIL: 'contract:<id>' pointer named in unified-model section but no resolver in CLI/core" >&2
   fail=$((fail+1))
 }
+import re, sys
+text = open("/Users/lekt9/.claude/skills/contract/SKILL.md").read()
 # Action layer table
 m_a = re.search(r"### The action layer[\s\S]*?\| Surface \|[\s\S]*?\n((?:\|[^\n]*\n)+)", text)
 # Composition layer table
 m_c = re.search(r"### The composition layer[\s\S]*?\| Shape \|[\s\S]*?\n((?:\|[^\n]*\n)+)", text)
-import re, sys
-text = open("/Users/lekt9/.claude/skills/contract/SKILL.md").read()
-# Action layer table
-m_a = re.search(r"### The action layer.*?\| Surface \|[\s\S]*?\n((?:\|[^\n]*\n)+)", text)
-# Composition layer table
-m_c = re.search(r"### The composition layer.*?\| Shape \|[\s\S]*?\n((?:\|[^\n]*\n)+)", text)
 if not m_a or not m_c:
     print("could not parse action/composition tables", file=sys.stderr)
     sys.exit(1)
