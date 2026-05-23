@@ -3955,3 +3955,5 @@
 {"event": "child_added", "id": "9463733b", "child_id": "0dbfb66b", "ts": "2026-05-23T06:59:29.572937Z", "agent": "lewistham9x@gmail.com"}
 {"event": "declared", "id": "f03c66d3", "plan": "Stage 6 \u2014 Ship to Sam: telegram message sent to stake_asaurus / Sam with production URL, one-line pitch, and screenshot. Ledger row records send timestamp + chat id.", "action": "test -f .scratch/sam-dm-sent.json", "pointer_type": "cli", "cwd": "/Users/lekt9/Projects/sam", "parent_id": "9463733b", "pointers": [], "ts": "2026-05-23T06:59:35.278641Z", "agent": "lewistham9x@gmail.com"}
 {"event": "child_added", "id": "9463733b", "child_id": "f03c66d3", "ts": "2026-05-23T06:59:35.288432Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "0111a2ed", "plan": "self-test guard for the tool-guard verify harness", "action": "tool-guard:__contract_toolguard_selftest__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": null, "pointers": [], "ts": "2026-05-23T07:00:15.343914Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "0111a2ed", "wave": 0, "ts": "2026-05-23T07:00:19.857717Z", "agent": "lewistham9x@gmail.com"}
