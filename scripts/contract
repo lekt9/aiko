@@ -570,7 +570,7 @@ if not node:
     print('  contract not found')
     raise SystemExit(0)
 all_rows = list_all(include_merged=True)
-by_id = {r['id']: r for r in all_rows}
+all_rows = list_all(show_merged=True)
 
 def short_plan(r, n=56):
     p = (r.get('plan') or '')[:n]
