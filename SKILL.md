@@ -74,9 +74,8 @@ Twelve principles drawn from CLAUDE.md, CONTRACTS.md, and the fruits of the spir
 | 4 | "harness collects, agent judges — no script emits PROMOTE/PASS/FAIL on its own" | judgment | C-G01 |
 | 5 | "verify the served surface, not the source — a build pass is never sufficient" | judgment | C-G06 |
 | 6 | "fix root cause, never band-aid — no downstream fix_*/clean_*/patch_* compensator" | judgment | C-G08 |
-| 7 | "explicit verdict — PROMOTE/HOLD/REJECT with every caveat named; never bare 'done'" | judgment | C-G11 |
-| 8 | "no mutable .db or state file un-gitignored inside a git-tracked directory" | cell | C-O04 |
-| 9 | "auth/deploy chain verified against the live running service; not build, not timestamp" | judgment | cross-harness pattern |
+| 7 | "no mutable .db or state file un-gitignored inside a git-tracked directory" | cell | C-O04 |
+| 8 | "auth/deploy chain verified against the live running service; not build, not timestamp" | judgment | cross-harness pattern |
 
 **From fruits of the spirit + commandments (mapped only where genuinely distinct):**
 
