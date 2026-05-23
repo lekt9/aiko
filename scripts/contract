@@ -550,6 +550,97 @@ pr(t) if t else print('  contract not found')
 "
     fi
     ;;
+    ;;
+
+  graph)
+    # contract graph <id> — render the gate graph centered on <id>:
+    # parents (one level up), node, children (one level down with
+    # edge-type annotation), merged_into lineage. Reads contract:<id>
+    # action strings to surface cross-cutting pointer-ref edges.
+    ID="${1:-}"
+    if [ -z "$ID" ]; then
+      echo "Usage: contract graph <id>" >&2
+      exit 2
+    fi
+    MH_ID="$ID" _py_inline "
+import os, json, re
+from contract_core import get, list_all
+target = os.environ['MH_ID']
+node = get(target)
+if not node:
+    print('  contract not found')
+    raise SystemExit(0)
+all_rows = list_all(include_merged=True)
+by_id = {r['id']: r for r in all_rows}
+
+def short_plan(r, n=56):
+    p = (r.get('plan') or '')[:n]
+    return p + ('…' if len(r.get('plan','')) > n else '')
+
+def line(prefix, r, edge=None):
+    status = r.get('status','?')
+    sid = r['id'][:8]
+    edge_tag = f' ({edge})' if edge else ''
+    print(f'{prefix} {sid}  \"{short_plan(r)}\"  [{status}]{edge_tag}')
+
+# parents (one level up)
+parent_id = node.get('parent_id')
+print('[parents]')
+if parent_id and parent_id in by_id:
+    line('  ←', by_id[parent_id])
+else:
+    print('  (none — root)')
+
+# node itself
+print('[node]')
+line('  ●', node)
+action = (node.get('action') or '')
+print(f'    action: {action[:80]}')
+
+# children (one level down)
+children = [r for r in all_rows if r.get('parent_id') == target]
+# also: contracts that reference THIS node via contract:<id> action
+refs_to_us = [
+    r for r in all_rows
+    if (r.get('action') or '').startswith(f'contract:{target}')
+]
+print('[children]')
+if not children:
+    print('  (no children)')
+for c in children:
+    a = (c.get('action') or '')
+    m = re.match(r'^contract:([a-f0-9]+)', a)
+    if m:
+        ref = m.group(1)
+        ref_row = by_id.get(ref)
+        ref_plan = short_plan(ref_row, 40) if ref_row else '(unknown)'
+        line(f'  ├ contract-ref → {ref[:8]}', c)
+        print(f'      └ points at: \"{ref_plan}\"')
+    elif a in ('funnel', 'children-satisfy', 'funnel-first', 'sequence'):
+        line(f'  ├ {a:14}', c)
+    elif a == 'agent-judges':
+        line('  ├ judgment    ', c)
+    elif a.startswith('loop-until:'):
+        line('  ├ loop        ', c)
+    else:
+        line('  ├ cell        ', c)
+
+if refs_to_us:
+    print('[inbound pointer-refs]')
+    for r in refs_to_us:
+        line('  →', r, edge='referrer')
+
+# merged_into lineage
+merged_into = node.get('merged_into')
+if merged_into:
+    winner = by_id.get(merged_into)
+    print('[lineage]')
+    if winner:
+        line(f'  ⇒ merged_into {merged_into[:8]}', winner)
+    else:
+        print(f'  ⇒ merged_into {merged_into}  (winner not in ledger)')
+"
+    ;;
 
   store)
     _py_inline "
