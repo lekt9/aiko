@@ -378,7 +378,12 @@ def _team_cache() -> set:
     config file. New members "join" by declaring their first contract.
 
     Cached at module load; safe across the short-lived CLI invocations.
-    Reset by re-importing or by clearing _TEAM_CACHE in tests."""
+    Reset by re-importing or by clearing _TEAM_CACHE in tests.
+
+    Σ3-aware: every agent identity is canonicalized via resolve_identity
+    before joining the team set, so an alias chain (lewis@gmail = lewis@foundry
+    = lekt8) contributes ONE team member, not three. is_team_member resolves
+    the viewer the same way."""
     global _TEAM_CACHE
     if _TEAM_CACHE is not None:
         return _TEAM_CACHE
@@ -387,12 +392,12 @@ def _team_cache() -> set:
         if row.get("event") == "declared":
             agent = (row.get("agent") or "").strip()
             if agent:
-                members.add(agent)
+                members.add(resolve_identity(agent))
     # Always include the current agent — the human running the CLI is
     # implicitly a team member of their own ledger even on their first run.
     me = current_agent()
     if me:
-        members.add(me)
+        members.add(resolve_identity(me))
     _TEAM_CACHE = members
     return members
 
