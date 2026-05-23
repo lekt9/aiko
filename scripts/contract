@@ -3447,6 +3447,15 @@ print(f'  next: contract status {target}     # verify state preserved')
     python3 "$SELF/contract-depth.py" "$TARGET" "${EXTRA[@]+"${EXTRA[@]}"}"
     ;;
 
+  context-of)
+    # On-demand library/topic context with pluggable non-binding sources
+    # (eb663e04, 2026-05-24). Forward every arg to the orchestrator —
+    # the python script handles --source / --from-stdin / --cache-only /
+    # --refresh / --order and exits 0 on success, 1 on context-needed,
+    # 2 on usage error.
+    python3 "$SELF/contract-context-of.py" "$@"
+    ;;
+
   context)
     # Mail-stdin doctrine companion (b2d15246, 2026-05-24): emit a JSON
     # envelope describing this contract's originating context so a chained
