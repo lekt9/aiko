@@ -569,7 +569,6 @@ node = get(target)
 if not node:
     print('  contract not found')
     raise SystemExit(0)
-all_rows = list_all(include_merged=True)
 all_rows = list_all(show_merged=True)
 
 def short_plan(r, n=56):
