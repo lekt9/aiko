@@ -233,7 +233,7 @@ print(c['status'] if c else 'not-found')
     elif [ -f "$HOME/.config/unbrowse/api-key" ]; then
       x402_token=$(cat "$HOME/.config/unbrowse/api-key" 2>/dev/null | tr -d '[:space:]')
     fi
-    echo "  pointer(x402): $x402_url"
+    echo "  pointer(payment): $x402_url"
     # /balance is GET; everything else (/debit, /grant, …) is POST.
     local x402_method="POST"
     [[ "$x402_url" == *balance* ]] && x402_method="GET"
