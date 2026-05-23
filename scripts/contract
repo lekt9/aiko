@@ -394,6 +394,72 @@ print(resolve_identity(current_agent()))
     return 1
   fi
 
+  # Π3 — machine: pointer (machine-local binary resolution).
+  # --action "machine:<name> [args...]" makes the contract portable across hosts:
+  # the substrate looks up the binary at iterate time per-machine, so the same
+  # row works on mac (graff at /opt/homebrew/bin/graff) and tencent
+  # (graff at /home/ubuntu/.local/bin/graff) without baking an absolute path.
+  #
+  # Resolution order (first hit wins):
+  #   1. ~/.config/contract/machine-binaries.json — explicit map
+  #        {"graff": "/opt/homebrew/bin/graff", "unbrowse": "/usr/local/bin/unbrowse"}
+  #   2. command -v <name> — fall back to PATH lookup
+  #   3. emit === MACHINE BINARY MISSING === block with the name + checked locations
+  if [[ "$action" == machine:* ]]; then
+    local machine_spec="${action#machine:}"
+    local machine_name machine_args
+    machine_name=$(printf '%s' "$machine_spec" | awk '{print $1}')
+    machine_args=$(printf '%s' "$machine_spec" | sed -E 's/^[^ ]+ ?//')
+    if [ -z "$machine_name" ]; then
+      echo "  result: ERROR — machine: action missing binary name (got: $action)"
+      return 1
+    fi
+    local machine_resolved=""
+    local machine_map="$HOME/.config/contract/machine-binaries.json"
+    if [ -f "$machine_map" ]; then
+      machine_resolved=$(MH_NAME="$machine_name" MH_MAP="$machine_map" python3 -c "
+import os, json
+try:
+  m = json.load(open(os.environ['MH_MAP']))
+  v = m.get(os.environ['MH_NAME'])
+  if v and os.path.isfile(v) and os.access(v, os.X_OK):
+    print(v)
+except Exception:
+  pass
+" 2>/dev/null)
+    fi
+    if [ -z "$machine_resolved" ]; then
+      machine_resolved=$(command -v "$machine_name" 2>/dev/null || true)
+    fi
+    if [ -z "$machine_resolved" ]; then
+      echo ""
+      echo "  === MACHINE BINARY MISSING ==="
+      echo "  name:     $machine_name"
+      echo "  checked:  $machine_map (map), PATH=\$PATH"
+      echo "  hostname: $(hostname 2>/dev/null || echo unknown)"
+      echo ""
+      echo "  Fix: install $machine_name on this machine, OR add it to the map:"
+      echo "    mkdir -p ~/.config/contract && echo '{\"$machine_name\":\"/path/to/$machine_name\"}' > $machine_map"
+      echo "  Then re-iterate. Cross-host contracts stay portable — pin the binary path here, not in the action."
+      echo "  result: FAIL (machine: binary '$machine_name' not found on $(hostname 2>/dev/null || echo this-host))"
+      return 1
+    fi
+    echo "  pointer(machine): $machine_resolved $machine_args"
+    if [ -n "$machine_args" ]; then
+      # shellcheck disable=SC2086
+      eval "$machine_resolved $machine_args"
+    else
+      "$machine_resolved"
+    fi
+    local machine_exit=$?
+    if [ $machine_exit -eq 0 ]; then
+      echo "  result: PASS (exit 0, host=$(hostname 2>/dev/null || echo unknown), bin=$machine_resolved)"
+    else
+      echo "  result: FAIL (exit $machine_exit, host=$(hostname 2>/dev/null || echo unknown), bin=$machine_resolved)"
+    fi
+    return $machine_exit
+  fi
+
   # sequence: an ORDERED funnel. Satisfied when every child is satisfied
   # (same AND-gate as funnel), but iterate names the first unsatisfied child
   # in declared order as the current stage — the Genesis-days arc. Ordering
