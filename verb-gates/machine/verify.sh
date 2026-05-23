@@ -31,8 +31,8 @@ print(_infer_pointer_type(os.environ['MH_ACTION']))
 CID_PATH=$("$CLI" declare "machine PATH lookup" --action "machine:true" --no-drive 2>&1 \
   | grep -oE "declared: [a-f0-9]{8}" | awk '{print $2}' | head -1)
 [ -n "$CID_PATH" ] || { echo "FAIL: declare for machine:true returned no id"; exit 1; }
-OUT_PATH=$("$CLI" iterate "$CID_PATH" 2>&1)
-echo "$OUT_PATH" | grep -q "pointer(machine):" || { echo "FAIL: PATH iterate missing pointer(machine): line. OUT=$OUT_PATH"; exit 1; }
+OUT_PATH=$("$CLI" iterate "$CID_PATH" --verbose 2>&1)
+echo "$OUT_PATH" | grep -q "pointer(machine):" || { echo "FAIL: PATH iterate (--verbose) missing pointer(machine): line. OUT=$OUT_PATH"; exit 1; }
 echo "$OUT_PATH" | grep -q "result: PASS"      || { echo "FAIL: PATH-resolved true didn't PASS. OUT=$OUT_PATH"; exit 1; }
 
 # === Phase 3: args pass through ===
