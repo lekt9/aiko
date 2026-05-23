@@ -1228,16 +1228,24 @@ no Claude Code, no Codex, no Cursor required; any LLM that speaks
 `/v1/chat/completions` can do the judging (Venice.ai, OpenAI, Anthropic,
 local llama.cpp, anything).
 
-### Config
+### Routing — codex first, HTTP as fallback
 
-Env wins over file:
+The substrate prefers the **codex CLI** when it's on PATH. Codex is auth'd
+through the user's ChatGPT subscription, so there's no API-key shape to
+manage and no per-call quota to top up. The HTTP fallback exists for
+hosts without codex (servers, fresh containers, foreign laptops).
 
-| Surface | Effect |
+| Surface | Routing |
 |---|---|
-| `CONTRACT_LLM_URL` env | e.g. `https://api.venice.ai/api/v1` |
-| `CONTRACT_LLM_KEY` env | bearer for the endpoint |
-| `CONTRACT_LLM_MODEL` env | e.g. `venice-uncensored`, `gpt-4o-mini` |
-| `~/.config/contract/llm.json` | `{"url":"...","key":"...","model":"..."}` persistent |
+| `codex` on PATH | **default** — uses `codex exec --skip-git-repo-check -s read-only --output-last-message <tmp> -`; prompt on stdin; verdict captured from `--output-last-message` file (only the final model reply, not the streaming chatter) |
+| `CONTRACT_LLM_VIA=codex` env | force codex even if HTTP config is set |
+| `CONTRACT_LLM_VIA=http` env | force HTTP even if codex is on PATH (used by the verb-gate's mock-LLM phase) |
+| `CONTRACT_LLM_MODEL` env | optional `-m <model>` passthrough for codex; OR `"model"` field for HTTP |
+| `CONTRACT_LLM_URL` + `CONTRACT_LLM_KEY` env | HTTP path: bearer-auth `/v1/chat/completions` (e.g. `https://api.openai.com/v1`, `https://api.venice.ai/api/v1`) |
+| `~/.config/contract/llm.json` | persistent `{"url":"...","key":"...","model":"..."}` for the HTTP path |
+
+When neither codex nor HTTP config is reachable, `contract judge` exits 2
+with the "no judging surface available" prompt naming both options.
 
 ### Exit semantics
 
