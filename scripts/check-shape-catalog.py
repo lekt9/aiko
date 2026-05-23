@@ -12,11 +12,10 @@ from pathlib import Path
 SKILL_DIR = Path(os.environ.get("SKILL_DIR", Path.home() / ".claude/skills/contract"))
 SKILL = SKILL_DIR / "SKILL.md"
 
-text = SKILL.read_text()
-# Locate the shape-gates table inside the Self-modeling section.
 m = re.search(
-    r"### The shape gates.*?\n\| Shape \| Gate proves.*?\n((?:\|.*\n)+)",
+    r"### The shape gates[\s\S]*?\| Shape \| Gate proves[\s\S]*?\n((?:\|[^\n]*\n)+)",
     text,
+)
     flags=re.DOTALL,
 )
 if not m:
