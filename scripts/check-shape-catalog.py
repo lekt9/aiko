@@ -16,8 +16,6 @@ m = re.search(
     r"### The shape gates[\s\S]*?\| Shape \| Gate proves[\s\S]*?\n((?:\|[^\n]*\n)+)",
     text,
 )
-    flags=re.DOTALL,
-)
 if not m:
     print("could not find 'shape gates' table under Self-modeling in SKILL.md", file=sys.stderr)
     sys.exit(2)
