@@ -1830,12 +1830,13 @@ contract — fractal contract primitive (cellular organism)
   discover [--scope project|global|all]                list contracts by scope
   status [<id>]                                        tree view
   list [--show-merged]                                 all contracts (merged hidden by default)
-  defaults                                             show 13 universal default contracts
+  defaults                                             show 11 universal default contracts
   search [--context "<text>"] [--scope project|global] surface related contracts (alias: habit)
 
 Organism primitives:
   corroborate <id1> <id2> [--label "<why>"]   wire a synapse — when one fires, the other surfaces
   merge <src> <tgt> [--reason "<why>"]        fuse duplicate cells — src superseded by tgt
+  retire <id> [--reason "<why>"]              retire a contract with no successor (self-anchored marker)
   revise <id> --action "<new cmd>" [--reason] update the cell membrane (self-correct false positives)
 
 Five shapes:  cell | judgment | funnel (AND) | funnel-first (OR) | loop | loop-until | harness
