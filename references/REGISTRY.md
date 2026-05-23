@@ -23,7 +23,39 @@ Read the narrative: open the Outline router doc and jump to the appendix.
 | **Ξ1** Fractal layer wrapping (programmatic L0..L4 enforcement) | `c9de1eb9` | Xi1 fractal-layer-wrapping |
 | **Λ2** Periodic distillate retraining on RunPod | `1c090ac9` | Lambda2 distillate-retraining |
 | **Β2** Drill-binding (loop until the statement is real) | `10572c91` | Beta2 drill-binding |
+| **Β4** SKILL.md is a thin index; each doctrine ≤120 lines, registry-backed | `fc3d71fd` | (substrate-level discipline, no Outline appendix — narrative on the row) |
 | **agentic-ux-copilot** Every site with a web UI embeds an agentic copilot | `431c549f` | (predates Outline publishing — narrative lives in this row's plan text) |
+
+### Doctrines extracted from SKILL.md `## ` sections (Β4 inventory)
+
+These doctrine sections already carry an `Origin: contract <id>` line in
+SKILL.md but were not previously surfaced here. Listed so the
+`check-skill-md-thin-index.py` gate sees them as registered. Outline
+appendices are TODO — narrative still lives in SKILL.md and on the
+standing-gate row until each is migrated to a dedicated appendix.
+
+| Doctrine | Standing-gate | Outline appendix |
+|---|---|---|
+| **Humanlike dimensions (emotion, sociology, aesthetics)** | `f580248f` | TODO |
+| **Requirement blocks (the generative-UI handoff)** | `74392a21` | TODO |
+| **Π2** autopay (chill mode, no popup tax) | `1f14917d` | TODO |
+| **Π3** `machine:` pointer (portable binaries) | `e7c8f6f2` | TODO |
+| **Π4** unbrowse marketplace mirror (named, deferred) | `397bc7bd` | TODO |
+| **Φ1** OpenAI-compatible front | `a4910638` | TODO |
+| **Λ1** runtime-agnostic KEY 2 | `9d00660b` | TODO |
+| **Ω1** unblock-rewake | `bcd1a371` | TODO |
+| **Ψ4** async watcher | `21f1d851` | TODO |
+| **Β1** backtrack-and-capture | `c64b17e0` | TODO |
+| **Verb gates** (regression harnesses, one per CLI verb) | `2db87011` | TODO |
+| **Depth analysis** (resolution-chain walker) | `fb9698f7` | TODO |
+| **Self-organism** (the wrap) | `cc5e8920` | TODO |
+| **Honest self-awareness** (the drill loop) | `df89a300` | TODO |
+| **Biology gaps** (apoptosis · inhibition · hebbian) | `5fc64e98` | TODO |
+| **Identity** (public-facing is Aiko) | `1bed8068` | TODO |
+| **Drive mode** (autonomous loop, agent-lifecycle agnostic) | `31a7612c` | TODO |
+| **Drill** (synchronous in-thread while-loop) | `7af4e88b` | TODO |
+| **Break on resolution** (the refractory period / KEY 3) | `0bc383d0` | TODO |
+| **Plan-fulfillment proof** (claim-to-evidence binding) | `173c8819` | TODO |
 
 Router doc: `docs.getfoundry.app` →
 */contract IS the unbrowse router (Π5 facilitators, Π6 auth annotation, …)*
