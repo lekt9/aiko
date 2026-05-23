@@ -932,26 +932,33 @@ pr(t) if t else print('  contract not found')
     ID=""
     SHOW_INTERNALS=""
     JSON_OUT=""
+    SHOW_CONTEXT=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --internals|--how) SHOW_INTERNALS="1"; shift ;;
+        --context|--dag)   SHOW_CONTEXT="1"; shift ;;
         --json) JSON_OUT="1"; shift ;;
         --help|-h)
           cat >&2 <<'USAGE'
-contract show <id> [--internals] [--json]
+contract show <id> [--internals] [--context] [--json]
 
 Render a contract's public face by default (WHAT + STATUS + PROOF + LAYER).
-Pass --internals to add the HOW block (action, pointer_type, cwd, wave,
-agent, timestamps, pierced_layers). Ψ5 — Layer 7 implementation-hidden
-applied to row reads. Storage is unchanged; only the view partitions.
+
+  --internals   Add HOW block — action, pointer_type, cwd, wave, agent,
+                timestamps, pierced_layers (Ψ5 internal surface).
+  --context     Add DAG block — parent + children + contract-refs in/out +
+                synapses + inhibitors, each shown with id/layer/status.
+                Surfaces how this contract sits inside the funnel it's part
+                of (one hop in every direction — the relevant context).
+  --json        Emit structured JSON instead of pretty text.
 USAGE
           exit 0
           ;;
         *) [ -z "$ID" ] && ID="$1"; shift ;;
       esac
     done
-    [ -z "$ID" ] && { echo "usage: contract show <id> [--internals] [--json]" >&2; exit 2; }
-    MH_ID="$ID" MH_INT="$SHOW_INTERNALS" MH_JSON="$JSON_OUT" _py_inline "
+    [ -z "$ID" ] && { echo "usage: contract show <id> [--internals] [--context] [--json]" >&2; exit 2; }
+    MH_ID="$ID" MH_INT="$SHOW_INTERNALS" MH_JSON="$JSON_OUT" MH_CTX="$SHOW_CONTEXT" _py_inline "
 import os, sys, json, textwrap
 from contract_core import get, _rows, layer_name
 cid = os.environ['MH_ID']
