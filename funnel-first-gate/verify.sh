@@ -19,7 +19,7 @@ echo "$O" | grep -qE "FAIL|0/3|none satisfied" || { echo "FAIL: funnel-first 0/3
 echo "evidence: funnel-first 0/3  ->  FAIL (no child satisfied)  OK"
 
 # 1/3 — must PASS (first child fires the gate)
-bash "$C" _mark "$C2" satisfied --proof-skip "shape-gate self-test" >/dev/null 2> satisfied >/dev/null 2>&11
+bash "$C" _mark "$C2" satisfied --proof-skip "shape-gate self-test" >/dev/null 2>&1
 O=$(bash "$C" iterate "$ORG" 2>/dev/null)
 echo "$O" | grep -qE "PASS|1/3|at least one" || { echo "FAIL: funnel-first 1/3 did not PASS"; echo "$O"; exit 1; }
 echo "evidence: funnel-first 1/3  ->  PASS (single child fires the OR-gate)  OK"

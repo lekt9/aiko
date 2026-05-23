@@ -19,14 +19,14 @@ echo "$O" | grep -qE "FAIL|0/3|not all children" || { echo "FAIL: funnel 0/3 did
 echo "evidence: funnel 0/3 satisfied  ->  FAIL  OK"
 
 # 1/3 — still FAIL
-bash "$C" _mark "$C1" satisfied --proof-skip "shape-gate self-test" >/dev/null 2> satisfied >/dev/null 2>&11
+bash "$C" _mark "$C1" satisfied --proof-skip "shape-gate self-test" >/dev/null 2>&1
 O=$(bash "$C" iterate "$ORG" 2>/dev/null)
 echo "$O" | grep -qE "FAIL|1/3|not all children" || { echo "FAIL: funnel 1/3 did not FAIL"; echo "$O"; exit 1; }
 echo "evidence: funnel 1/3  ->  still FAIL  OK"
 
 # 3/3 — must PASS
-bash "$C" _mark "$C2" satisfied --proof-skip "shape-gate self-test" >/dev/null 2> satisfied >/dev/null 2>&11
-bash "$C" _mark "$C3" satisfied --proof-skip "shape-gate self-test" >/dev/null 2> satisfied >/dev/null 2>&11
+bash "$C" _mark "$C2" satisfied --proof-skip "shape-gate self-test" >/dev/null 2>&1
+bash "$C" _mark "$C3" satisfied --proof-skip "shape-gate self-test" >/dev/null 2>&1
 O=$(bash "$C" iterate "$ORG" 2>/dev/null)
 echo "$O" | grep -qE "PASS|3/3|all children satisfied" || { echo "FAIL: funnel 3/3 did not PASS"; echo "$O"; exit 1; }
 echo "evidence: funnel 3/3  ->  PASS  OK"
