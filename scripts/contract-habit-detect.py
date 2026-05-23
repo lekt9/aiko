@@ -79,7 +79,10 @@ def _load_embed_cache():
         try:
             r = json.loads(line)
             cache[r["id"]] = {"hash": r["hash"], "vec": r["vec"]}
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError) as exc:
+            # corrupt cache line; log once and skip. Real recovery is the
+            # next iterate which rebuilds from the ledger.
+            sys.stderr.write(f"contract-habit-detect: skipping malformed cache line: {exc}\n")
             continue
     return cache
 
