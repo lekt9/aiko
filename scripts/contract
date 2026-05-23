@@ -589,10 +589,9 @@ for c in cs:
  4. C-G01           (judgment)  "harness collects, agent judges — no script emits a verdict"
  5. C-G06           (judgment)  "verify served surface not source — build pass is never sufficient"
  6. C-G08           (judgment)  "fix root cause, never band-aid — no downstream compensator stage"
- 7. C-G11           (judgment)  "explicit verdict — PROMOTE/HOLD/REJECT every evaluation"
- 8. C-O04           (cell)      "no .db or state file un-gitignored in repo"
+ 7. C-O04           (cell)      "no .db or state file un-gitignored in repo"
     action: ! find . -maxdepth 3 -name '*.db' -not -path '*/.git/*' 2>/dev/null | grep -q .
- 9. deploy-e2e      (judgment)  "auth/deploy chain verified against live service; not build/timestamp"
+ 8. deploy-e2e      (judgment)  "auth/deploy chain verified against live service; not build/timestamp"
 
 -- Fruits of the spirit + commandments (mapped where genuinely distinct) --
 10. love            (judgment)  "serve the genuine need, not just the literal request"
