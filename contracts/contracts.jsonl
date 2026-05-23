@@ -5891,3 +5891,21 @@
 {"criteria": "M1+M2+M3+M4+M5", "event": "promoted", "id": "4b130d88", "ts": "2026-05-23T18:14:15.562639Z", "via": "auto-promote-hook"}
 {"criteria": "M1+M2+M3+M4+M5", "event": "promoted", "id": "4d43074f", "ts": "2026-05-23T18:14:15.603629Z", "via": "auto-promote-hook"}
 {"criteria": "M1+M2+M3+M4+M5", "event": "promoted", "id": "fe987dc2", "ts": "2026-05-23T18:14:15.642215Z", "via": "auto-promote-hook"}
+{"event":"declared","id":"5d61252d","plan":"Mechanical: no live file references a retired surface (Qa332X narrator, hailuo video, stock cover variants) — slop-removal discipline enforced by scripts/check_no_retired_slop.sh","action":"bash /Users/lekt9/Projects/emunah/scripts/check_no_retired_slop.sh","pointer_type":"cli","parent_id":null,"pointers":[],"blocked_by":[],"ui_spec_url":null,"ts":"2026-05-23T18:16:02Z"}
+{"event":"declared","id":"d00c0364","plan":"Mechanical: content-factory uses fal-ai/nano-banana-pro and no forbidden image models (SD/flux/dalle/MJ/seedance-t2v for image work). Probe: scripts/probe-image-model.sh","action":"bash /Users/lekt9/Projects/emunah/scripts/probe-image-model.sh","pointer_type":"cli","parent_id":null,"pointers":[],"blocked_by":[],"ui_spec_url":null,"ts":"2026-05-23T18:16:02Z"}
+{"event":"declared","id":"55135f34","plan":"Mechanical: every content-factory/scripts/*-v4-genz.json carries psych_hook + marketing_primitive + genz_lever fields from the closed taxonomies in brand/PSYCH-MARKETING-TAXONOMY.md. Probe: scripts/probe-script-cells.sh","action":"python3 /Users/lekt9/Projects/emunah/scripts/probe-script-cells.sh","pointer_type":"cli","parent_id":null,"pointers":[],"blocked_by":[],"ui_spec_url":null,"ts":"2026-05-23T18:16:02Z"}
+{"event":"iterated","id":"5d61252d","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T18:16:03Z"}
+{"event":"iterated","id":"d00c0364","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T18:16:03Z"}
+{"event":"iterated","id":"55135f34","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T18:16:03Z"}
+{"event": "learned", "id": "4b8de56b", "text": "slop guard: retired surfaces in brand/VIBE.md \u00a70 must not have live file references; scripts/check_no_retired_slop.sh sweeps for them", "ts": "2026-05-23T18:16:03.491422Z", "source": "5d61252d", "agent": "lewistham9x@gmail.com"}
+{"event": "crystallized", "id": "4b8de56b", "memory_path": "/Users/lekt9/.claude/projects/-Users-lekt9-Projects-emunah/memory/slop-guard-retired-surfaces-in-must-not-have.md", "outline_url": "", "ts": "2026-05-23T18:16:03.503108Z", "agent": "lewistham9x@gmail.com"}
+{"event": "learned", "id": "0fead343", "text": "image-model default: nano-banana-pro is THE image gen; never SD/flux/dalle/MJ/seedance-t2v; scripts/probe-image-model.sh enforces", "ts": "2026-05-23T18:16:03.553772Z", "source": "d00c0364", "agent": "lewistham9x@gmail.com"}
+{"event": "crystallized", "id": "0fead343", "memory_path": "/Users/lekt9/.claude/projects/-Users-lekt9-Projects-emunah/memory/image-model-default-nano-banana-pro-is-the-image-gen-never.md", "outline_url": "", "ts": "2026-05-23T18:16:03.564558Z", "agent": "lewistham9x@gmail.com"}
+{"event": "learned", "id": "e6bc9461", "text": "psych+marketing+genz explicit cells: every v4-genz video script JSON names its hook+primitive+lever from the closed 12+13+8 taxonomy", "ts": "2026-05-23T18:16:03.614211Z", "source": "55135f34", "agent": "lewistham9x@gmail.com"}
+{"event": "crystallized", "id": "e6bc9461", "memory_path": "/Users/lekt9/.claude/projects/-Users-lekt9-Projects-emunah/memory/psych-marketing-genz-explicit-cells-every-v4-genz-video-scri.md", "outline_url": "", "ts": "2026-05-23T18:16:03.624972Z", "agent": "lewistham9x@gmail.com"}
+{"event":"satisfied","id":"5d61252d","wave":1,"ts":"2026-05-23T18:16:03Z"}
+{"event":"status_update","id":"5d61252d","status":"satisfied","ts":"2026-05-23T18:16:03Z"}
+{"event":"satisfied","id":"d00c0364","wave":1,"ts":"2026-05-23T18:16:04Z"}
+{"event":"status_update","id":"d00c0364","status":"satisfied","ts":"2026-05-23T18:16:04Z"}
+{"event":"satisfied","id":"55135f34","wave":1,"ts":"2026-05-23T18:16:04Z"}
+{"event":"status_update","id":"55135f34","status":"satisfied","ts":"2026-05-23T18:16:04Z"}
