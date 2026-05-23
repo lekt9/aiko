@@ -13,20 +13,23 @@ set -euo pipefail
 TD=$(mktemp -d)
 trap 'rm -rf "$TD"' EXIT
 
-# Isolate inbox into the tempdir too so the gate doesn't litter real ~/.contracts/inbox/
+# Capture the REAL contract skill path BEFORE swapping HOME — the gate runs
+# under host-specific ~ ($HOME → /Users/lekt9 on mac, /home/ubuntu on tencent).
+# The skill always sits at $HOME/.claude/skills/contract on every host.
+REAL_HOME="$HOME"
+SKILL_DIR="$REAL_HOME/.claude/skills/contract"
+SKILL_LIB="$SKILL_DIR/scripts/lib"
+CLI="$SKILL_DIR/scripts/contract"
+
+# Isolate inbox + ledger into the tempdir so the gate doesn't litter real ~/.contracts/.
+# HOME-swap is the right primitive — the CLI resolves both ledger and inbox via $HOME.
 export HOME="$TD"
 export CONTRACTS_STORE="$TD/contracts.jsonl"
-mkdir -p "$TD/.claude/skills/contract/scripts" 2>/dev/null
-# But we still need the real CLI — symlink the scripts dir back
-ln -sf "$(readlink -f /Users/lekt9/.claude/skills/contract/scripts)" "$TD/.claude/skills/contract/scripts" 2>/dev/null || \
-  ln -sf "/Users/lekt9/.claude/skills/contract/scripts" "$TD/.claude/skills/contract/scripts"
 
-CLI="/Users/lekt9/.claude/skills/contract/scripts/contract"
-
-# Phase 0: pointer-type sanity
-PTYPE=$(python3 -c "
-import sys
-sys.path.insert(0, '/Users/lekt9/.claude/skills/contract/scripts/lib')
+# Phase 0: pointer-type sanity — use the captured real lib path, not the swapped HOME.
+PTYPE=$(MH_LIB="$SKILL_LIB" python3 -c "
+import os, sys
+sys.path.insert(0, os.environ['MH_LIB'])
 from contract_core import _infer_pointer_type
 print(_infer_pointer_type('agent:alice@example.com'))
 ")
