@@ -470,6 +470,78 @@ The substrate surfaces the wavefront; it never satisfies anything. KEY 2
 stays with the agent on every contract the signal reaches. The graph is now
 a nervous system that fires, not a filing cabinet that is walked by hand.
 
+## Break on resolution (the refractory period)
+
+A real neuron has an **absolute refractory period** after firing — roughly
+1ms during which the cell physically cannot fire again, no matter how
+strong the input. The soma must re-polarise before the next action
+potential is even possible. This is not optional, not opt-in, and not
+skippable — it's a property of the membrane.
+
+/contract enforces the same thing **by design, fractally**. Every
+`_mark satisfied` emits a `=== BREAK ON RESOLUTION (refractory) ===`
+block BEFORE the propagation wavefront. KEY 3 lives here.
+
+```
+=== BREAK ON RESOLUTION (refractory) ===
+  <id> just fired. KEY 3 (agent): pause and judge BEFORE propagating:
+    · is the mark still genuine in retrospect (no fake-green)?
+    · does this satisfaction invalidate any downstream claim?
+    · are any peer or parent contracts now stale or duplicated?
+  If any answer is yes — supersede / revise / iterate before continuing.
+```
+
+### Three keys, not two
+
+The two-key exit was always incomplete — it gated the mark, not the
+propagation. KEY 3 closes that gap:
+
+| Key | Verb | Asks |
+|---|---|---|
+| **KEY 1** | the action exits | did the mechanical check pass? |
+| **KEY 2** | `_mark satisfied` runs | is the pass genuine (no fake-green)? |
+| **KEY 3** | the refractory pause | does this firing invalidate anything downstream? |
+
+The wavefront is still surfaced — KEY 3 doesn't replace propagation, it
+**precedes** it. The order is biology-mandatory: action potential → refractory
+period → axonal propagation. Reversing the order is the substrate equivalent
+of a cardiac arrhythmia: signals fire while the soma hasn't recovered, and
+the organ destabilises.
+
+### Why fractal, by design
+
+KEY 3 fires on every shape, every depth, no opt-out — same as the
+membrane property. A cell mark, an organ mark, a quorum mark, a sequence
+stage completion: all of them emit BREAK. The agent CAN race past
+("no, nothing's invalidated, keep moving") but the prompt is structurally
+present, so the racing is deliberate, not accidental.
+
+This is the substrate enforcing **reflection points fractally**, the way
+neurons enforce refractory periods at every fire site. The biology read:
+the immune system (shape gates) catches drift in cells. The homeostatic
+regulator (audits) catches drift across the corpus. The refractory period
+(KEY 3) catches drift **across time** — the moment between one firing and
+the next, when a wrong conclusion has the smallest blast radius.
+
+### Self-check
+
+`self/break-on-resolution` (in `scripts/skill-self-test.sh`,
+`scripts/check-break-on-resolution.sh`) statically verifies:
+- the `BREAK ON RESOLUTION (refractory)` string is present in `_mark`
+- `KEY 3` is named explicitly
+- BREAK source line number is **less than** the SIGNAL PROPAGATION line
+  number (biology order: refractory before signal travels)
+
+Origin: 2026-05-23. The agent was asked "every contract needs a break
+on resolution fractally too by design." The honest answer: this is a
+genuine missing primitive — KEY 1 + KEY 2 + wavefront, but no
+substrate-enforced pause between mark and propagation. Adding it makes
+the neuron analogy complete (refractory period was the missing piece)
+and gives the agent a structured moment to catch downstream-invalidation
+bugs before they propagate. Contract `0bc383d0`.
+
+## What this skill does NOT do
+
 ## What this skill does NOT do
 
 - Auto-declare from a detected pattern. Surfaces candidates only.
