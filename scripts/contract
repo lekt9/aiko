@@ -1548,7 +1548,7 @@ USAGE
     fi
     MH_JID="$JUDGE_ID" _py_inline "
 import os, json, urllib.request, urllib.error, pathlib, sys
-from contract_core import get, _store_path
+from contract_core import get, _resolve_ledger
 
 jid = os.environ['MH_JID']
 row = get(jid)
