@@ -423,8 +423,7 @@ satisfied, `contract audit <root> --auditors N` fans out N cold auditors
 who each try to break the root contract. The audit organ is satisfied only
 when every auditor genuinely failed to falsify it.
 
-**Step 9 — Emergence.** `contract _mark <root> satisfied` and emit
-`<promise>CONTRACT_SATISFIED:<root></promise>`. The organism has shipped.
+**Step 9 — Emergence.** `contract _mark <root> satisfied`. The organism has shipped.
 
 ```bash
 contract search --context "<plan>"                  # Step 0  — BM25 discover/reuse
