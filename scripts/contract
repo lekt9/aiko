@@ -933,7 +933,7 @@ import os; from contract_core import mark_satisfied, mark_status
 id=os.environ['MH_ID']; st=os.environ['MH_STATUS']
 if st=='satisfied':
     # Honest mark: write only the satisfied event. The agent's KEY-2 verdict
-    # is the in-thread <promise> plus this explicit mark, never a fabricated row.
+    # this explicit mark IS the verdict — no in-thread promise tag required.
     mark_satisfied(id, 0)
 else:
     mark_status(id, st)
