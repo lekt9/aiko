@@ -583,7 +583,7 @@ for c in cs:
 === CONTRACT DEFAULTS (12 universal principles) ===
 
 -- Engineering principles (CLAUDE.md + CONTRACTS.md) --
- 1. substrate       (judgment)  "substrate enables, never prescribes — no forbidden surface"
+=== CONTRACT DEFAULTS (11 universal principles) ===
  2. no-regression   (judgment)  "every commit introduces zero new failures vs baseline"
  3. pointer-payload (judgment)  "client holds only opaque pointers; all logic lives server-side"
  4. C-G01           (judgment)  "harness collects, agent judges — no script emits a verdict"
