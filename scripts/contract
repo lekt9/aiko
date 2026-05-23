@@ -928,7 +928,7 @@ pr(t) if t else print('  contract not found')
     # Same row in the ledger, two views. Default: WHAT + STATUS + PROOF + LAYER
     # (the public face). `--internals` adds HOW + HISTORY (action, cwd, wave,
     # agent, timestamps, pierced_layers). Pointer-not-payload at the row layer.
-    # Origin: contract <PI5_ID>, 2026-05-24.
+    # Origin: contract d10b3dbb, 2026-05-24.
     ID=""
     SHOW_INTERNALS=""
     JSON_OUT=""
