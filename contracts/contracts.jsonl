@@ -3617,3 +3617,8 @@
 {"event":"child_added","id":"bad003d5","child_id":"a34cba58","ts":"2026-05-23T05:01:04Z"}
 {"event":"iterated","id":"7fa27416","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T05:01:07Z"}
 {"event":"iterated","id":"a34cba58","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T05:01:08Z"}
+{"event":"satisfied","id":"7fa27416","wave":1,"ts":"2026-05-23T05:01:18Z"}
+{"event":"status_update","id":"7fa27416","status":"satisfied","ts":"2026-05-23T05:01:18Z"}
+{"event":"satisfied","id":"a34cba58","wave":1,"ts":"2026-05-23T05:01:18Z"}
+{"event":"status_update","id":"a34cba58","status":"satisfied","ts":"2026-05-23T05:01:18Z"}
+{"event":"iterated","id":"bad003d5","wave":1,"action_exit":0,"action_result":"PASS","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T05:01:18Z"}
