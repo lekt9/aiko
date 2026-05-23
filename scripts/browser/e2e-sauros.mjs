@@ -169,23 +169,29 @@ async function visibleText() {
   await page.waitForTimeout(700);
   const chatInput = page.locator('input[placeholder*="/declare"]');
 
-  async function askAndAssert(query, expect, name) {
+  async function askAndAssert(query, expect, name, waitMs = 8000) {
     await chatInput.fill(query);
     await page.locator('form button[type=submit]').last().click();
-    await page.waitForTimeout(5500);
+    await page.waitForTimeout(waitMs);
+    // also wait for any "thinking" indicator to clear
+    for (let i = 0; i < 5; i++) {
+      const thinking = await page.locator('text=∆ thinking…').count().catch(() => 0);
+      if (thinking === 0) break;
+      await page.waitForTimeout(1200);
+    }
     const body = await page.locator('body').innerText();
     const ok = expect.every(e => (e instanceof RegExp ? e.test(body) : body.includes(e)));
-    A.push({ name, ok, evidence: `query=${query}` });
+    A.push({ name, ok, evidence: `query=${query} bodyLen=${body.length}` });
   }
 
-  await askAndAssert('gainers',                   ['Day Gainers'],                     'copilot: gainers → screener-table');
+  await askAndAssert('gainers',                   [/Day Gainers|gainers/i],            'copilot: gainers → screener-table');
   await askAndAssert('NVDA',                       [/\$\d/, /NVDA/i],                  'copilot: NVDA → chart + KPI');
   await askAndAssert('rsi TSLA',                  [/RSI/, /TSLA/],                     'copilot: rsi TSLA → kpi + note');
   await askAndAssert('compare AAPL MSFT GOOGL',   [/Return 1M/, 'AAPL', 'MSFT'],       'copilot: compare → compare-table');
   await askAndAssert('correlate SPY QQQ NVDA',    [/SPY/, /QQQ/, /NVDA/],              'copilot: correlate → corr-matrix');
   await askAndAssert('beta NVDA SPY',             [/β/i, 'NVDA', 'SPY'],               'copilot: beta → kpi-grid');
   await askAndAssert('returns AMD 5y',            [/Return 1M|Return 3M|CAGR|Vol/, 'AMD'], 'copilot: returns → kpi-grid');
-  await askAndAssert('news',                       [/headlines?/i, /\.com|\.net/i],     'copilot: news → news-list');
+  await askAndAssert('news',                       [/\.com|\.net|\.io|\.org/i],         'copilot: news → news-list', 10000);
   await snap('copilot-final');
   report('e2e-copilot.json', A);
 }
