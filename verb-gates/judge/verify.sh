@@ -62,9 +62,10 @@ CID=$("$CLI" declare "test judge target" --action "true" --no-drive 2>&1 \
 ( unset CONTRACT_LLM_URL CONTRACT_LLM_KEY; "$CLI" judge "$CID" 2>/dev/null && \
   { echo "FAIL: judge without LLM config should exit 2"; exit 1; } ) || true
 
-# === Phase 1: unknown id refused ===
-"$CLI" judge "deadbeef" 2>&1 | grep -q "unknown id" \
-  || { echo "FAIL: unknown id not refused"; exit 1; }
+# === Phase 1: unknown id refused (exit 2 + "unknown id" on stderr) ===
+OUT_U=$("$CLI" judge "deadbeef" 2>&1 || true)
+echo "$OUT_U" | grep -q "unknown id" \
+  || { echo "FAIL: unknown id not refused. OUT=$OUT_U"; exit 1; }
 
 # === Phase 2: PROMOTE verdict exits 0 ===
 echo "PROMOTE" > "$VERDICT_FILE"
