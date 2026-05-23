@@ -99,6 +99,8 @@ check "self/break-on-resolution"   bash "$SCRIPTS/check-break-on-resolution.sh"
 check "self/proof-binding"         bash "$SCRIPTS/check-proof-binding.sh"
 [ -x "$SCRIPTS/check-contradictions.sh" ] && \
   check "self/no-contradictions"   bash "$SCRIPTS/check-contradictions.sh"
+[ -x "$SCRIPTS/check-crystallize-consistency.sh" ] && \
+  check "self/crystallize-consistency" bash "$SCRIPTS/check-crystallize-consistency.sh"
 
 # ── Corpus audits (rule-bound checks across all affected artifacts) ──────────
 # Every audits/<rule>/verify.sh is a corpus-wide check for one rule. The
