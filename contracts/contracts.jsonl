@@ -3958,3 +3958,4 @@
 {"event": "declared", "id": "0111a2ed", "plan": "self-test guard for the tool-guard verify harness", "action": "tool-guard:__contract_toolguard_selftest__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": null, "pointers": [], "ts": "2026-05-23T07:00:15.343914Z", "agent": "lewistham9x@gmail.com"}
 {"event": "satisfied", "id": "0111a2ed", "wave": 0, "ts": "2026-05-23T07:00:19.857717Z", "agent": "lewistham9x@gmail.com"}
 {"event": "declared", "id": "9cb4450d", "plan": "self-test guard for the tool-guard verify harness", "action": "tool-guard:__contract_toolguard_selftest__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": null, "pointers": [], "ts": "2026-05-23T07:01:28.664925Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "9cb4450d", "wave": 0, "ts": "2026-05-23T07:02:15.446285Z", "agent": "lewistham9x@gmail.com"}
