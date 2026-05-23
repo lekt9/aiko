@@ -372,6 +372,8 @@ def get(id: str) -> Optional[dict]:
         result["learning"] = declared["learning"]
     if declared.get("bind_to"):
         result["bind_to"] = declared["bind_to"]
+    if declared.get("inhibits"):
+        result["inhibits"] = list(declared["inhibits"])
     return result
 def get_tree(id: str, depth: int = 0) -> Optional[dict]:
     c = get(id)
