@@ -2,8 +2,21 @@
 """
 contract-habit-detect.py — surface recurring contract patterns as candidates.
 NEVER auto-declares. Surfaces evidence; agent judges.
+
+Ranking is HYBRID. For each candidate we compute both:
+  - bm25_norm  (lexical, Okapi BM25, normalized to the top hit)
+  - embed_cos  (semantic, OpenAI text-embedding-3-small cosine, range 0..1)
+and report the MAX of the two as the final score, plus a `score_source`
+field naming which signal lifted it: "bm25" | "embed" | "hybrid".
+
+Embeddings are cached per-contract at ~/.contracts/embeddings.jsonl keyed
+by contract id + a content hash. A cache hit costs zero API calls; a
+miss makes one call per new contract. The whole embedding path is
+self-guarded: missing OPENAI_API_KEY, network failure, or any other
+error degrades cleanly to BM25-only (substrate principle — evidence
+only, never a hidden fault).
 """
-import json, os, sys, re, math
+import json, os, sys, re, math, hashlib, time, urllib.request, urllib.error
 from pathlib import Path
 from collections import Counter
 
