@@ -1422,6 +1422,25 @@ print(f'  {id} -> {st}')
       echo "    · does this satisfaction invalidate any downstream claim?"
       echo "    · are any peer or parent contracts now stale or duplicated?"
       echo "  If any answer is yes — supersede / revise / iterate before continuing."
+      # Soft warnings: when depth>=7 or dims>=4 (Miller's 7±2 working-memory cap)
+      # KEY-2 judgment becomes pattern-matching rather than integration.
+      # Substrate surfaces; agent decides whether to honor.
+      python3 "$SELF/contract-depth.py" "$ID" --json 2>/dev/null | python3 -c "
+import json, sys
+try:
+    r = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+warns = []
+if r.get('depth_total', 0) >= 7:
+    warns.append(f'depth_total={r[\"depth_total\"]} >= 7 (exceeds Miller working-memory cap)')
+if r.get('dims', 0) >= 4:
+    warns.append(f'dims={r[\"dims\"]} >= 4 (KEY-2 becomes pattern-matching above ~3 dims)')
+if warns:
+    print('  ⚠️  multi-dimensional gate warnings:')
+    for w in warns:
+        print(f'      {w}')
+" || true
     fi
     # SIGNAL PROPAGATION: a contract becoming satisfied is an action
     # potential. Surface the wavefront — parent organ, contract:<id>
