@@ -94,6 +94,7 @@ check "self/graph-depth"           bash "$SCRIPTS/check-graph-depth.sh"
 check "self/streams-convention"    bash "$SCRIPTS/check-streams-convention.sh"
 check "self/unified-model"         bash "$SCRIPTS/check-unified-model.sh"
 check "self/readme-fresh"          bash "$SCRIPTS/check-readme-fresh.sh"
+check "self/honest-bound"          bash "$SCRIPTS/check-honest-bound.sh"
 
 # ── Corpus audits (rule-bound checks across all affected artifacts) ──────────
 # Every audits/<rule>/verify.sh is a corpus-wide check for one rule. The
