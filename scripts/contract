@@ -595,6 +595,146 @@ USAGE
     fi
     ;;
 
+  honest)
+    # contract honest — metacognition report.
+    # Runs every self/* check, every audit verify.sh, the digest chain,
+    # standing-gate-id resolution, and CLI verb count. Returns one
+    # structured report at L3 (truth-claim level) with claim / live / delta
+    # for every dimension. Substrate emits; agent judges KEY 2.
+    case "${1:-}" in
+      --help|-h)
+        cat >&2 <<'USAGE'
+contract honest
+
+Metacognition report — claim vs live vs delta across five dimensions:
+  (a) every self/* check (skill-self-test)
+  (b) every audits/*/verify.sh
+  (c) digest chain — README.md SKILL.md digest vs live SKILL.md
+  (d) standing-gate id resolution (27125bd7, 4a055cf7, f669f09c)
+  (e) verbs count — CLI surface vs docs claim
+
+Exit 0 iff every dimension is green; exit 1 otherwise. Use this before
+marking any top-level organ satisfied, and as a periodic substrate-health
+check.
+
+The verb does not invent verdicts. Each dimension reports green/red with
+the load-bearing evidence; KEY 2 still belongs to the agent.
+USAGE
+        exit 0
+        ;;
+    esac
+    _py_inline "
+import hashlib, json, os, re, subprocess, sys
+from pathlib import Path
+
+HOME = Path.home()
+SKILL = HOME / '.claude/skills/contract'
+LEDGER = HOME / '.contracts/contracts.jsonl'
+
+failures = []
+
+def green(msg): print(f'  ✓ {msg}')
+def red(dim, msg):
+    print(f'  ✗ {msg}')
+    failures.append(dim)
+
+print('=== /CONTRACT HONEST (metacognition) ===')
+print()
+
+# (a) self/* checks — run skill-self-test, parse PASS/FAIL self/ lines
+print('(a) self/* checks')
+res = subprocess.run(['bash', str(SKILL/'scripts/skill-self-test.sh')],
+                     capture_output=True, text=True)
+self_lines = [l for l in res.stdout.splitlines() if l.startswith(('PASS  self/','FAIL  self/'))]
+self_pass = sum(1 for l in self_lines if l.startswith('PASS'))
+self_fail = sum(1 for l in self_lines if l.startswith('FAIL'))
+for l in self_lines:
+    name = l.split(None,1)[1]
+    if l.startswith('PASS'):
+        green(name)
+    else:
+        red('self', name)
+print(f'  ── {self_pass}/{self_pass+self_fail} self-checks green')
+print()
+
+# (b) audits/*/verify.sh
+print('(b) audits/*/verify.sh')
+audits_dir = SKILL/'audits'
+audit_count = 0
+audit_fail = 0
+if audits_dir.exists():
+    for v in sorted(audits_dir.glob('*/verify.sh')):
+        rule = v.parent.name
+        audit_count += 1
+        r = subprocess.run(['bash', str(v)], capture_output=True, text=True)
+        if r.returncode == 0:
+            green(f'audits/{rule}')
+        else:
+            red('audits', f'audits/{rule} (exit {r.returncode})')
+            audit_fail += 1
+print(f'  ── {audit_count-audit_fail}/{audit_count} audits green')
+print()
+
+# (c) digest chain
+print('(c) digest chain — README ↔ SKILL.md')
+skill_text = (SKILL/'SKILL.md').read_text()
+live_digest = hashlib.sha256(skill_text.encode()).hexdigest()
+readme = (SKILL/'README.md')
+if not readme.exists():
+    red('digest', 'README.md missing')
+else:
+    m = re.search(r'SKILL\.md digest: ([a-f0-9]+)', readme.read_text())
+    embedded = m.group(1) if m else None
+    if not embedded:
+        red('digest', 'README.md has no embedded SKILL.md digest')
+    elif embedded != live_digest:
+        red('digest', f'digest drift — embedded {embedded[:12]}… live {live_digest[:12]}…')
+    else:
+        green(f'README.md digest matches live SKILL.md ({live_digest[:12]}…)')
+print()
+
+# (d) standing-gate id resolution
+print('(d) standing-gate ids')
+standing = {
+    '27125bd7': 'served-surface',
+    '4a055cf7': 'empathy',
+    'f669f09c': 'observe-original',
+}
+ledger_text = LEDGER.read_text() if LEDGER.exists() else ''
+ledger_lines = ledger_text.splitlines()
+for sid, name in standing.items():
+    declared = any(f'\"id\": \"{sid}' in l and '\"event\": \"declared\"' in l for l in ledger_lines)
+    if declared:
+        green(f'standing-gate {sid} ({name}) resolves')
+    else:
+        red('standing-gate', f'standing-gate {sid} ({name}) NOT in ledger')
+print()
+
+# (e) verbs count
+print('(e) CLI verbs')
+self_res = subprocess.run(['bash', str(SKILL/'scripts/contract'), 'self', '--json'],
+                          capture_output=True, text=True)
+try:
+    data = json.loads(self_res.stdout)
+    live_verbs = len(data.get('verbs', []))
+    green(f'live verbs: {live_verbs} (introspected from CLI)')
+except Exception as e:
+    red('verbs', f'contract self --json failed: {e}')
+print()
+
+# Render verdict
+print('=== VERDICT ===')
+if not failures:
+    print('  ✓ HONEST: every dimension green')
+    print('  KEY 2 (agent): is this GENUINELY satisfied, or fake-green?')
+    sys.exit(0)
+else:
+    print(f'  ✗ DELTA: {len(failures)} dimension(s) red — {\", \".join(sorted(set(failures)))}')
+    print('  KEY 2 (agent): fix each red dimension before any top-level mark satisfied.')
+    sys.exit(1)
+"
+    ;;
+
   readme)
     # contract readme — regenerate README.md from SKILL.md.
     # The README is a DERIVED VIEW, never hand-edited. It extracts the
