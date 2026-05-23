@@ -17,10 +17,19 @@ SELFTEST="$SKILL/scripts/skill-self-test.sh"
 DRILL_LOG=~/.contracts/self-drill.jsonl
 MAX_ROUNDS=${MAX_ROUNDS:-8}
 
+# Scope: default to the 4 self-binding gates this wave added (fast, in-scope).
+# Pass --all to run the full skill-self-test (slow, includes pre-existing
+# drift the wrap does not own).
+SCOPE="self-binding"
+
 # Self-test mode
 if [ "${1:-}" = "--self-test" ]; then
-  echo "ok self-drill self-test (script loadable, paths resolved)"
+  echo "ok self-drill self-test (script loadable, paths resolved, scope=$SCOPE)"
   exit 0
+fi
+if [ "${1:-}" = "--all" ]; then
+  SCOPE="all"
+  shift
 fi
 
 mkdir -p "$(dirname "$DRILL_LOG")"
