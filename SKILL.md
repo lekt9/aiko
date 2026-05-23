@@ -1556,6 +1556,97 @@ contracts, undocumented-implementation gaps, and shape-catalog vs
 gate-directory mismatches. Those became the `self/*` pre-flight checks.
 
 
+## Verb gates (regression harnesses, one per CLI verb)
+
+Shape gates cover the **nine shapes** — the firing rules of the substrate.
+They catch a `funnel` that resolves on partial children, a `loop-until`
+that doesn't re-fire, etc. They do **not** cover the 43 surface verbs that
+land on `~/.claude/skills/contract/scripts/contract`. A regression in
+`promote` or `supersede` could ship undetected — the shape semantics
+still pass; the verb just does the wrong thing.
+
+Verb gates close that gap. Mirror of `audits/` and `<shape>-gate/`, one
+finer level:
+
+```
+~/.claude/skills/contract/verb-gates/<verb>/
+  verify.sh   # sandboxed CONTRACTS_STORE; happy path + ≥1 failure mode
+  README.md   # optional — what truth the gate binds
+```
+
+**Verbs are language, contracts are sentences.** Per `310f425f` (shape
+is the type system), there is no new shape and there are no
+verbs-as-first-class-contracts. Each verb-gate is a plain `cell` whose
+`--action` runs the verb against a tempdir-scoped ledger and asserts the
+expected behaviour. The substrate's truth model — "verbs WRITE ledger
+rows; contracts ARE ledger rows" — stays exactly as before. The gate
+binds the language to its documented surface; nothing else changes.
+
+### Why not verbs-as-first-class-contracts?
+
+It was the natural-sounding alternative. It loses on three grounds:
+
+1. **Bootstrap.** You'd need `declare` to declare `declare`. The
+   chicken-and-egg can be papered over (seed rows at install time) but
+   it's a permanent ugliness in the substrate.
+2. **Hot-path cost.** Every CLI invocation would look up its verb's
+   contract before dispatch. The bash dispatcher costs ~0; the contract
+   resolver costs a ledger read. Multiplied by 43 verbs ✕ every call,
+   that's measurable.
+3. **Layer confusion.** A verb is a primitive of the substrate's
+   *language*. A contract is a primitive of the substrate's *claims*. A
+   sentence is not a word; a word is not a sentence. The languages
+   share the ledger, but they don't share their granularity.
+
+Verb gates give the genuine win — "promote actually copies rows", "_mark
+never silently fabricates" — without paying any of those costs.
+
+### The runner + self-test wiring
+
+`scripts/run-verb-gates.sh` walks `verb-gates/*/verify.sh` (mirror of
+`scripts/run-audits.sh`). Wired into `scripts/skill-self-test.sh` as
+`self/verb-gates-pass`, so every ledger event re-runs every verb's gate
+through the pre-commit on `~/.contracts/.git`.
+
+### Starter set (2026-05-23)
+
+The first five gates were the verbs with the least existing coverage and
+the highest blast radius if they broke. Each gate runs the verb against a
+tempdir-scoped ledger and proves at minimum the happy path AND one
+failure mode.
+
+| Verb | What the gate binds |
+|---|---|
+| `promote` | Cross-ledger row copy preserves id + state; idempotent; unknown ids rejected |
+| `_mark` | Writes `satisfied` row; `status` reflects it; unknown ids rejected (catch: this gate found a real silent-fabrication bug in `_mark` and the verb was fixed in the same wave) |
+| `supersede` | `merged` row carries `merged_into=<winner>`; loser drops out of `list`; loser stays in raw ledger; unknown ids rejected |
+| `corroborate` | Synapse event references both ids; unknown ids rejected |
+| `learn` | Writes `learned` row + memory file; Outline push opt-out via `CONTRACT_CRYSTALLIZE_NO_OUTLINE=1` |
+
+The other ~38 verbs land the same way as new gates are added — same
+directory, same `verify.sh` shape. New verb → new dir → no skill change
+required, no new shape.
+
+### What a verb-gate's verify.sh does
+
+1. Make a tempdir and trap-rm it.
+2. Set `CONTRACTS_STORE` (or `HOME` if the verb hard-codes `~/.contracts`)
+   to live inside the tempdir.
+3. Run the verb with concrete inputs.
+4. `grep` / `python3 -c` the resulting ledger to assert the expected
+   row(s) appeared, with the expected fields.
+5. Run the verb again with a deliberately invalid input — assert a clean
+   error, not a silent success.
+6. `exit 0` if every assertion holds; `exit 1` with `FAIL: <what>` otherwise.
+
+Origin: contract `2db87011`, 2026-05-23. The skill had 14 shape gates + 5
+self-checks + 1 audit but **zero** behavioural coverage for the 43 verbs.
+The first wave of 5 verb-gates immediately found a substrate-principle
+violation (`_mark` silently fabricated rows for unknown ids), proving the
+pattern's value on day one. Contract `0167e892` is the SKILL.md doc gate;
+the runner+self-test wiring is `9a2aa216`/`30e820c3`.
+
+
 ## Audits (corpus-wide rule enforcement, paired with idempotent fixers)
 
 A rule documented in prose lives nowhere. A rule with a verifier lives in
