@@ -2895,19 +2895,20 @@ for cid, sat in latest.items():
         stale.append({'id': cid, 'plan': c.get('plan',''), 'satisfied_ts': sat['ts'], 'age_days': round((datetime.now(timezone.utc)-ts).total_seconds()/86400, 1)})
 stale.sort(key=lambda r: r['satisfied_ts'])
 
+since_label = os.environ['MH_SINCE']
 if os.environ.get('MH_JSON'):
-    print(json.dumps({'since': os.environ['MH_SINCE'], 'count': len(stale), 'stale': stale}, indent=2))
+    print(json.dumps({'since': since_label, 'count': len(stale), 'stale': stale}, indent=2))
 else:
-    print(f'=== CONTRACT STALE (--since {os.environ[\"MH_SINCE\"]}) ===')
+    print('=== CONTRACT STALE (--since %s) ===' % since_label)
     if not stale:
         print('  no satisfied contracts older than the cutoff.')
     else:
-        print(f'  {len(stale)} satisfied contract(s) older than {os.environ[\"MH_SINCE\"]}:')
+        print('  %d satisfied contract(s) older than %s:' % (len(stale), since_label))
         for r in stale:
-            print(f'  [{r[\"age_days\"]}d] {r[\"id\"]}  {r[\"plan\"][:60]}')
-            print(f'         last satisfied: {r[\"satisfied_ts\"]}')
-            print(f'         -> contract iterate {r[\"id\"]}     # re-prove the claim still holds')
-            print(f'         -> contract supersede {r[\"id\"]} <winner>  # if the claim is obsolete')
+            print('  [%sd] %s  %s' % (r['age_days'], r['id'], r['plan'][:60]))
+            print('         last satisfied: %s' % r['satisfied_ts'])
+            print('         -> contract iterate %s     # re-prove the claim still holds' % r['id'])
+            print('         -> contract supersede %s <winner>  # if the claim is obsolete' % r['id'])
         print()
         print('  staleness is a documented convention, not a typed field.')
         print('  the substrate surfaces; the agent decides whether to re-iterate or supersede.')
