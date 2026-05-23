@@ -114,7 +114,7 @@ if not got_call:
 PY
 
 # === Phase 4: SSE terminates cleanly ===
-echo "$SSE" | grep -q "^data: \[DONE\]$" \
+grep -q "^data: \[DONE\]$" "$SSE_FILE" \
   || { echo "FAIL: SSE stream missing terminal data: [DONE]"; exit 1; }
 
 # === Phase 5: clearing the inhibitor (supersede) lifts the refusal ===
