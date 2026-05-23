@@ -5196,3 +5196,4 @@
 {"event":"iterated","id":"d03f491b","wave":1,"action_exit":0,"action_result":"PASS","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T12:40:48Z"}
 {"event":"satisfied","id":"d03f491b","wave":1,"ts":"2026-05-23T12:40:48Z"}
 {"event":"status_update","id":"d03f491b","status":"satisfied","ts":"2026-05-23T12:40:48Z"}
+{"event": "declared", "id": "2e29689b", "plan": "jobby ships: unemployed users (opt-in via LinkedIn + cold-outbound to publicly-signalled job seekers) are deeply profiled via unbrowse, matched against country-local job portals discovered via DDG-unbrowse, have CVs auto-generated and applied on their behalf with a humanizer-wrapped proxy-agent email handling the employer side, and only owe $1 unlocked-after-hire to receive the employer's real contact bridge", "action": "sequence", "pointer_type": "sequence", "cwd": "/Users/lekt9/Projects/jobby", "parent_id": null, "pointers": [], "ts": "2026-05-23T12:40:55.669429Z", "agent": ""}
