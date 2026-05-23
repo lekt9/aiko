@@ -19,14 +19,26 @@ GROUP_IDS=(-1003661261221 -5137678004 1003661261221 5137678004)
 # raw chat-history captures (those record incoming messages, not outgoing).
 EXCLUDE_RE='(/node_modules/|/\.archived/|/archive/|/\.git/|/dist/|/build/|/tool-results/|aiko-v2/fractal-cells/archive|tmp_lekt9_chats|raw_tool_model\.json|mined_reasoning_patterns\.json|home-extension-manifest\.json|history\.jsonl|/research/|/sundayservice/|/bible-significance-plan/|CLAUDE\.md|README\.md)'
 
-# Collect candidate violators: any file that mentions a group id AND contains
-# send_message / sendMessage / send_text / bot.sendMessage style call.
+# Collect candidate violators using ripgrep — memory-bounded, fast, only
+# scans code-like files. macOS `grep -r` will OOM-kill on the full ~/Projects tree.
+RG_BIN=${RG_BIN:-rg}
 violators=()
-candidates=$(
-  for gid in "${GROUP_IDS[@]}"; do
-    grep -rlE "$gid" "$SCOPE" 2>/dev/null
-  done | sort -u | grep -vE "$EXCLUDE_RE" || true
+if ! command -v "$RG_BIN" >/dev/null 2>&1; then
+  echo "  ✗ ripgrep (rg) not found — install via 'brew install ripgrep'"; exit 2
+fi
+
+# Only scan typical bot-runner file types. Skip enormous data dumps / archives.
+RG_TYPES=(--type py --type ts --type js --type sh --type lua --type yaml --type toml)
+RG_GLOBS=(
+  '!**/node_modules/**' '!**/.archived/**' '!**/archive/**' '!**/.git/**'
+  '!**/dist/**' '!**/build/**' '!**/.next/**' '!**/.venv/**'
+  '!**/tool-results/**' '!**/research/**' '!**/sundayservice/**'
+  '!**/bible-significance-plan/**' '!**/aiko-v2/fractal-cells/archive/**'
+  '!**/history.jsonl' '!**/tmp_lekt9_chats*' '!**/*.jsonl' '!**/*.log'
 )
+PATTERN="\\b(1003661261221|5137678004)\\b"
+candidates=$("$RG_BIN" -l --no-messages "${RG_TYPES[@]}" $(printf -- "--glob %s " "${RG_GLOBS[@]}") "$PATTERN" "$SCOPE" 2>/dev/null \
+  | grep -vE "$EXCLUDE_RE" | sort -u || true)
 
 if [ -z "$candidates" ]; then
   echo "  ✓ no candidate files reference the algamer/eggsy group ids"
