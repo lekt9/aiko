@@ -1802,6 +1802,224 @@ if waiting:
 "
     ;;
 
+  watch)
+    # Ψ4 — async watcher. Programmatic poller that periodically checks an
+    # external condition (or the contract's own action) and auto-iterates
+    # the contract when it PASSes. Composes with Ω1: when the watcher's
+    # iterate flips the contract to satisfied, the wavefront re-surfaces
+    # every dependent HOLD'd contract for re-judgement.
+    #
+    # The substrate enables; it never bakes a verdict. The watcher fires
+    # the iterate (mechanical KEY 1); the agent still owns KEY 2 on the
+    # _mark satisfied. The tick is one-shot — once the probe flips, the
+    # watcher writes its inbox event, iterates the contract, and removes
+    # itself. Re-register if you want continued polling.
+    #
+    # Subcommands: register | list | tick | stop. Origin: contract <Ψ4-id>.
+    SUB="${1:-help}"; shift || true
+    WATCHERS_DIR="$HOME/.contracts/watchers"
+    INBOX_DIR="$HOME/.contracts/inbox/watcher"
+    mkdir -p "$WATCHERS_DIR" "$INBOX_DIR" 2>/dev/null
+
+    case "$SUB" in
+      register|"")
+        if [ "$SUB" = "" ] || [ -z "${1:-}" ]; then
+          cat >&2 <<'USAGE'
+usage:
+  contract watch <id> [--probe "<cmd>"] [--interval <s>]   # register a watcher
+  contract watch list [--json]                              # list registered watchers
+  contract watch tick                                       # one poll cycle (all watchers)
+  contract watch stop <id>                                  # remove a watcher
+USAGE
+          exit 2
+        fi
+        # Default form: `contract watch <id> [args]` (SUB held the id).
+        # Explicit form: `contract watch register <id> [args]`.
+        if [ "$SUB" = "register" ]; then
+          W_ID="${1:-}"; shift || true
+        else
+          W_ID="$SUB"
+        fi
+        [ -z "$W_ID" ] && { echo "usage: contract watch <id> [--probe \"<cmd>\"] [--interval <s>]" >&2; exit 2; }
+        W_PROBE=""
+        W_INTERVAL="60"
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --probe)    W_PROBE="${2:-}"; shift 2 ;;
+            --interval) W_INTERVAL="${2:-60}"; shift 2 ;;
+            *) shift ;;
+          esac
+        done
+        # Verify the contract exists — refuse to register a watcher on a phantom
+        EXISTS=$(MH_ID="$W_ID" _py_inline "
+import os; from contract_core import get
+c = get(os.environ['MH_ID']); print('yes' if c else 'no')
+")
+        [ "$EXISTS" = "yes" ] || { echo "ERROR: contract $W_ID not found — declare it first" >&2; exit 3; }
+        TS=$(date -u +%FT%TZ)
+        # Use python3 to write valid JSON (handles probe escaping safely)
+        W_ID="$W_ID" W_PROBE="$W_PROBE" W_INT="$W_INTERVAL" W_TS="$TS" W_FILE="$WATCHERS_DIR/$W_ID.json" python3 -c "
+import os, json
+data = {
+    'contract_id': os.environ['W_ID'],
+    'probe': os.environ['W_PROBE'] or None,
+    'interval_s': int(os.environ['W_INT']),
+    'registered_ts': os.environ['W_TS'],
+    'last_run_ts': None,
+    'last_probe_exit': None,
+    'attempts': 0,
+}
+with open(os.environ['W_FILE'], 'w') as f:
+    json.dump(data, f, indent=2)
+print(f\"watcher registered: {data['contract_id']}\")
+print(f\"  probe:    {data['probe'] or '(none — tick auto-iterates the contract directly)'}\")
+print(f\"  interval: {data['interval_s']}s\")
+print(f\"  state:    {os.environ['W_FILE']}\")
+print(f\"  inbox:    \" + os.environ['HOME'] + f\"/.contracts/inbox/watcher/{data['contract_id']}.jsonl\")
+print()
+print(f\"the watcher fires once: when the probe PASSes (or directly when no probe is set),\")
+print(f\"the tick auto-iterates the contract AND removes the watcher. re-register to re-arm.\")
+print(f\"the tick runs on every iterate/_mark via internal hook, plus on demand:\")
+print(f\"  -> contract watch tick\")
+"
+        ;;
+
+      list)
+        JSON_OUT=""
+        [ "${1:-}" = "--json" ] && JSON_OUT="1"
+        W_DIR="$WATCHERS_DIR" JSON_OUT="$JSON_OUT" python3 -c "
+import os, json, glob
+d = os.environ['W_DIR']
+watchers = []
+for f in sorted(glob.glob(d + '/*.json')):
+    try:
+        with open(f) as fh: w = json.load(fh)
+        watchers.append(w)
+    except Exception:
+        continue
+if os.environ.get('JSON_OUT'):
+    print(json.dumps({'count': len(watchers), 'watchers': watchers}, indent=2))
+else:
+    print(f'=== Ψ4 WATCHERS ({len(watchers)} registered) ===')
+    if not watchers:
+        print('  (none)')
+    for w in watchers:
+        probe = w.get('probe') or '(none — direct iterate)'
+        print(f\"  {w['contract_id']}  every {w['interval_s']}s\")
+        print(f\"    probe:    {probe[:80]}\")
+        print(f\"    last run: {w.get('last_run_ts') or '(never)'}  attempts: {w.get('attempts',0)}\")
+"
+        ;;
+
+      tick)
+        # One poll cycle. For every registered watcher: if interval has elapsed
+        # since last_run, run the probe (or skip to iterate when no probe).
+        # On probe-PASS (or no-probe): emit inbox event, run `contract iterate`,
+        # remove the watcher. On probe-FAIL: update last_run_ts and attempts.
+        VERBOSE_TICK=""
+        [ "${1:-}" = "--verbose" ] && VERBOSE_TICK="1"
+        CLI_SELF="$SELF/contract"
+        W_DIR="$WATCHERS_DIR" \
+        INBOX_DIR="$INBOX_DIR" \
+        CLI_SELF="$CLI_SELF" \
+        VERBOSE_TICK="$VERBOSE_TICK" \
+        python3 -c "
+import os, sys, json, glob, subprocess, time
+from datetime import datetime, timezone
+W_DIR    = os.environ['W_DIR']
+INBOX_DIR= os.environ['INBOX_DIR']
+CLI_SELF = os.environ['CLI_SELF']
+VERBOSE  = bool(os.environ.get('VERBOSE_TICK'))
+now      = datetime.now(timezone.utc)
+fired    = 0
+polled   = 0
+skipped  = 0
+for fpath in sorted(glob.glob(W_DIR + '/*.json')):
+    try:
+        with open(fpath) as fh: w = json.load(fh)
+    except Exception:
+        continue
+    cid = w['contract_id']
+    interval = int(w.get('interval_s', 60))
+    last_ts = w.get('last_run_ts')
+    if last_ts:
+        try:
+            last_dt = datetime.fromisoformat(last_ts.replace('Z','+00:00'))
+            elapsed = (now - last_dt).total_seconds()
+        except Exception:
+            elapsed = interval + 1
+    else:
+        elapsed = interval + 1
+    if elapsed < interval:
+        skipped += 1
+        if VERBOSE: print(f\"  skip   {cid}  ({int(interval-elapsed)}s until next poll)\")
+        continue
+    polled += 1
+    probe = w.get('probe')
+    probe_exit = None
+    if probe:
+        try:
+            r = subprocess.run(probe, shell=True, capture_output=True, timeout=30)
+            probe_exit = r.returncode
+        except Exception:
+            probe_exit = 124
+        if VERBOSE: print(f\"  probe  {cid}  -> exit {probe_exit}\")
+    # Update state
+    w['last_run_ts']     = now.strftime('%Y-%m-%dT%H:%M:%SZ')
+    w['last_probe_exit'] = probe_exit
+    w['attempts']        = int(w.get('attempts', 0)) + 1
+    should_fire = (probe is None) or (probe_exit == 0)
+    if not should_fire:
+        # Persist updated state; keep watching
+        with open(fpath, 'w') as fh: json.dump(w, fh, indent=2)
+        continue
+    # FIRE: emit inbox event + auto-iterate the contract + remove watcher
+    inbox_path = INBOX_DIR + '/' + cid + '.jsonl'
+    event = {
+        'event': 'flipped',
+        'contract_id': cid,
+        'ts': w['last_run_ts'],
+        'probe_exit': probe_exit,
+        'attempts': w['attempts'],
+    }
+    with open(inbox_path, 'a') as fh:
+        fh.write(json.dumps(event) + '\\n')
+    # Auto-iterate. This emits the standard two-key exit; KEY 2 still belongs
+    # to the agent next session. The fire is mechanical, not a verdict.
+    try:
+        subprocess.run([CLI_SELF, 'iterate', cid], capture_output=True, timeout=60)
+    except Exception:
+        pass
+    # One-shot — remove the watcher
+    try: os.unlink(fpath)
+    except Exception: pass
+    fired += 1
+    if VERBOSE: print(f\"  FIRED  {cid}  (auto-iterated, inbox event written, watcher removed)\")
+print(f'=== Ψ4 WATCH TICK === polled={polled} fired={fired} skipped={skipped}')
+"
+        ;;
+
+      stop)
+        S_ID="${1:-}"
+        [ -z "$S_ID" ] && { echo "usage: contract watch stop <id>" >&2; exit 2; }
+        S_FILE="$WATCHERS_DIR/$S_ID.json"
+        if [ ! -f "$S_FILE" ]; then
+          echo "no watcher registered for $S_ID" >&2
+          exit 1
+        fi
+        rm -f "$S_FILE"
+        echo "watcher stopped: $S_ID"
+        ;;
+
+      *)
+        # Fallthrough — treat $SUB as an id (default form: `contract watch <id>`)
+        # Re-dispatch by prepending `register`.
+        echo "ERROR: unknown watch subcommand '$SUB' (try: register | list | tick | stop)" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+
   list)
     SHOW_MERGED=""
     VIEWER=""
