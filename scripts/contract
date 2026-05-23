@@ -266,8 +266,7 @@ _two_key_exit() {
   if [ "$action" = "loop" ] || [[ "$action" == loop-until:* ]]; then
     echo "  KEY 2 (agent):   BREAK or CONTINUE?"
     echo
-    echo "  BREAK (truth established) → emit: <promise>CONTRACT_SATISFIED:$id</promise>"
-    echo "                              then:  contract _mark $id satisfied"
+    echo "  BREAK (truth established) → run: contract _mark $id satisfied"
     echo "  CONTINUE (loop still running) → contract iterate $id"
   else
     echo "  KEY 2 (agent):   JUDGE — is this GENUINELY satisfied, or fake-green?"
