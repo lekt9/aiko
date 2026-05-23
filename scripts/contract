@@ -551,6 +551,50 @@ pr(t) if t else print('  contract not found')
     fi
     ;;
 
+  tail)
+    # contract tail <id> [--since-start] — follow ~/.contracts/streams/<id>/stdout.log
+    # in real time. The substrate exposes the path convention; the action's job is
+    # to write to it. See SKILL.md "Streams (the output side of receptors)".
+    ID=""
+    SINCE_START=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --since-start) SINCE_START="1"; shift ;;
+        --help|-h)
+          cat >&2 <<'USAGE'
+contract tail <id> [--since-start]
+
+Follow the contract's mid-flight stdout — ~/.contracts/streams/<id>/stdout.log
+in real time. The stream convention is the OUTPUT dual of receptors (inbox).
+
+Options:
+  --since-start   Dump existing content first, then follow new lines.
+                  Default: only follow new lines (tail -f).
+USAGE
+          exit 0
+          ;;
+        *) [ -z "$ID" ] && ID="$1"; shift ;;
+      esac
+    done
+    if [ -z "$ID" ]; then
+      echo "Usage: contract tail <id> [--since-start]" >&2
+      exit 2
+    fi
+    STREAM_DIR="$HOME/.contracts/streams/$ID"
+    LOG="$STREAM_DIR/stdout.log"
+    if [ ! -f "$LOG" ]; then
+      echo "no stream file yet at: $LOG" >&2
+      echo "the contract's action writes here when it opts into the streams convention." >&2
+      echo "see: contract tail --help" >&2
+      exit 1
+    fi
+    if [ -n "$SINCE_START" ]; then
+      exec tail -n +1 -f "$LOG"
+    else
+      exec tail -f "$LOG"
+    fi
+    ;;
+
   graph)
     # contract graph <id> [--depth N] — render the gate graph centered on <id>.
     # depth=1 (default): parents one up, node, children one down with edge-type
