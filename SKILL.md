@@ -1678,7 +1678,7 @@ to the substrate's map.
 
 From `principles-as-harnesses.md`: a principle with `--action` IS a contract. From `dag-schema.md`: the graph is the single substrate. These are not external dependencies; they are the concept lineage this primitive implements directly.
 
-See also `references/agentic-ux-copilot.md` for the standing-default doctrine: every `/contract`-built site with a web UI embeds an agentic copilot whose tools are the site's own indexed APIs and whose knowledge is the site's own page content — the same truth-telling discipline as the primitive, applied to the end user.
+See standing-gate `contract:431c549f` (with `references/REGISTRY.md` for the full doctrine → standing-gate-id map, per Β3) for the standing-default: every `/contract`-built site with a web UI embeds an agentic copilot whose tools are the site's own indexed APIs and whose knowledge is the site's own page content — the same truth-telling discipline as the primitive, applied to the end user.
 
 ## Receptors (external events as ligands)
 
