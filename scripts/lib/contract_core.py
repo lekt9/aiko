@@ -732,12 +732,22 @@ def get(id: str) -> Optional[dict]:
         status = "pending"
     wave = max((r.get("wave", 0) for r in iter_rows), default=0)
     current_action = revised_rows[-1]["new_action"] if revised_rows else declared["action"]
+    # Π5 — layer is stored on the row when known; for legacy rows (declared
+    # pre-Π5) we infer at read time from the current action so backfill is
+    # automatic. pierced_layers stays optional — absent = no cross-layer auth.
+    row_layer = declared.get("layer")
+    if row_layer is None:
+        row_layer = _infer_layer(current_action)
     result = {"id": id, "plan": declared["plan"], "action": current_action,
               "pointer_type": declared.get("pointer_type") or _infer_pointer_type(current_action),
+              "layer": int(row_layer),
+              "layer_name": layer_name(row_layer),
               "parent_id": declared.get("parent_id"), "children": children,
               "pointers": declared.get("pointers") or [],
               "cwd": declared.get("cwd"), "budget": declared.get("budget"),
               "status": status, "wave": wave}
+    if declared.get("pierced_layers"):
+        result["pierced_layers"] = list(declared["pierced_layers"])
     if merged_rows:
         result["merged_into"] = merged_rows[-1].get("merged_into")
     if revised_rows:
