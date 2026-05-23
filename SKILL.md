@@ -293,6 +293,15 @@ Worked example: the "lifetime tag" thread surfaced 2026-05-22 and was
 immediately fossilized — `bind_to + verify` was the only genuine new
 primitive; the rest was already there. Contract `310f425f`.
 
+The **`bind_to + verify` primitive** referenced above: every contract may
+carry an optional `bind_to <surface>` field at declare time (a file path,
+URL, or other resource id). The `contract verify <surface>` verb re-runs
+every contract bound to that surface, asserting they're still satisfied
+against the current state. This binds a contract to a concrete artifact
+rather than to a one-shot check. See `binding/declare-bind-to` and
+`binding/verify-foreign` in `skill-self-test.sh` for the runtime
+gates that prove `bind_to` and `verify` are bound (contract `ae1340a6`).
+
 ## The two-key exit (load-bearing invariant)
 
 Every `contract iterate` ends with:
