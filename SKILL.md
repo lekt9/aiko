@@ -1271,6 +1271,11 @@ Already in the global ledger; reference by id:
 | served-surface gate | `27125bd7` | console / network crashes on first paint |
 | empathy gate | `4a055cf7` | rendered content, no error boundary |
 | observe-original gate | `f669f09c` | trace before rebuild |
+| receptor substrate | `838d1447` | external events → contract iterate (inbox + injectors) |
+| telegram inbox poller | `bb9c351a` | bot getUpdates → `~/.contracts/inbox/telegram/<chat>.jsonl` |
+| signed webhook receiver | `20d51ba7` | HMAC-SHA256 endpoint → `~/.contracts/inbox/webhook/<source>.jsonl` |
+| aiko reactor v2 (humanlike) | `95509a44` | full telethon history + project brief + grounded reply |
+| telegram bot best-practices | `7cb69f94` | /commands menu + reactions + inline keyboards + HTML + 429 retry |
 
 Each is `agent-judges` so the project that references it binds the
 concrete URLs / floors / substrings via a wrapper action (a sibling
@@ -1278,6 +1283,13 @@ contract whose mechanical action runs the actual `verify-served-surface.sh`
 / `observe-original.sh` call). The standing gate carries the **truth claim**;
 the wrapper carries the **bound check**. This is the pointer-not-payload
 discipline applied to gates.
+
+The bottom five rows were promoted into the global ledger via
+`contract promote <id>` on 2026-05-23 — substrate-level contracts
+originally declared inside a project ledger that should be reusable
+across every project. The verb is idempotent; promotion is reversible
+only by manual ledger surgery (which the substrate forbids — supersede
+instead).
 
 ### Viewing the graph
 
