@@ -128,10 +128,16 @@ try {
   process.exit(2);
 }
 
-const out = { urls: [], ok: true, errors: 0 };
+const out = { urls: [], ok: true, errors: 0, walked: 0 };
+
+// queue of URLs to verify; walk adds harvested children to it
+const queue = [...urls.map((u) => ({ url: u, walked: false }))];
+const seen = new Set(urls.map((u) => u));
 
 try {
-  for (const url of urls) {
+  while (queue.length) {
+    const job = queue.shift();
+    const url = job.url;
     const target = new URL(url);
     const ctx = await browser.newContext({
       viewport: { width: 1280, height: 800 },
