@@ -218,6 +218,99 @@ def humanlike_iterate_warnings(id: str) -> list[str]:
     ]
 
 
+def _cloud_mirror(row: dict) -> None:
+    """Best-effort POST of one ledger row to the cloud-canonical substrate
+    at unbrowse, when CONTRACT_REMOTE is set. Fire-and-forget: a failed
+    POST never blocks the local write, and a non-200 response is logged
+    to ~/.contracts/cloud-mirror-errors.jsonl but doesn't raise.
+
+    Pairs with the cloud-side resolver in unbrowse's
+    backend/src/services/contract-ledger-postgres.ts (commit e4b620d4):
+    the route at POST /v1/contract/declare or /v1/contract/iterate
+    receives this row, picks postgresLedger() when DATABASE_URL is set,
+    appends to contract_events keyed by (namespace='contracts:'+agent_id,
+    event_id) so duplicate POSTs collapse via ON CONFLICT.
+
+    Local file remains the source of truth UNTIL the cloud is verified
+    to hold the row — this is the safe-migration phase. Phase 2 will
+    flip reads to cloud-canonical with local-cache; phase 1 (this) is
+    write-mirror only.
+    """
+    remote = os.environ.get("CONTRACT_REMOTE", "").strip()
+    if not remote:
+        return
+    api_key = os.environ.get("UNBROWSE_API_KEY", "").strip()
+    if not api_key:
+        # Try the canonical file location
+        key_file = Path.home() / ".config" / "unbrowse" / "api-key"
+        if key_file.exists():
+            api_key = key_file.read_text().strip()
+    if not api_key:
+        # Silently skip — the user hasn't authenticated yet. Local
+        # ledger still works; cloud mirror requires auth.
+        return
+
+    # Pick the right endpoint based on the event type. declared/iterated
+    # have first-class routes; other events post as a generic ledger
+    # append (the cloud's contract_events table accepts any event row).
+    event = row.get("event", "")
+    if event == "declared":
+        path = "/v1/contract/declare"
+        body = {
+            "plan": row.get("plan", ""),
+            "action": row.get("action", ""),
+            "pointer_type": row.get("pointer_type"),
+            "parent_id": row.get("parent_id"),
+            "agent": row.get("agent"),
+            "learning": row.get("learning"),
+        }
+    elif event == "iterated":
+        path = "/v1/contract/iterate"
+        body = {
+            "id": row.get("id"),
+            "agent": row.get("agent"),
+        }
+    else:
+        # Generic events (satisfied, merged, spawned, judged, etc) — no
+        # current route at unbrowse. Phase 1: log them locally pending
+        # the /v1/contract/append-event route. The local ledger still
+        # has them; phase 2 ships the generic-append route.
+        return
+
+    import urllib.request as _req
+    import urllib.error as _err
+    url = remote.rstrip("/") + path
+    try:
+        req = _req.Request(
+            url,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            data=json.dumps(body).encode("utf-8"),
+        )
+        # Tight timeout — the cloud mirror is fire-and-forget; the local
+        # write has already succeeded by the time this runs.
+        _req.urlopen(req, timeout=5).read()
+    except (_err.URLError, _err.HTTPError, OSError) as exc:
+        # Log honestly, never raise. Phase 2 can build a retry queue from
+        # this file. Phase 1 just records what didn't make it.
+        err_file = Path.home() / ".contracts" / "cloud-mirror-errors.jsonl"
+        err_file.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with err_file.open("a") as f:
+                f.write(json.dumps({
+                    "ts": _now(),
+                    "url": url,
+                    "event": event,
+                    "id": row.get("id"),
+                    "error": str(exc)[:200],
+                }) + "\n")
+        except Exception:
+            pass  # last-resort silent failure — never block the local write
+
+
 def _append(row: dict) -> None:
     if "agent" not in row:
         row["agent"] = current_agent()
@@ -225,6 +318,9 @@ def _append(row: dict) -> None:
     ledger.parent.mkdir(parents=True, exist_ok=True)
     with ledger.open("a") as f:
         f.write(json.dumps(row) + "\n")
+    # Best-effort cloud mirror — runs only when CONTRACT_REMOTE is set.
+    # Never raises; local write is canonical until phase 2 flips reads.
+    _cloud_mirror(row)
 
 
 def _rows() -> list[dict]:
