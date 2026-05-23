@@ -3307,3 +3307,4 @@
 {"event": "iterated", "id": "f0bcb583", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T02:59:29.461408Z"}
 {"event": "iterated", "id": "0470f3fe", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T03:00:59.141272Z"}
 {"event": "iterated", "id": "f0bcb583", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T03:01:20.349020Z"}
+{"event": "satisfied", "id": "f0bcb583", "wave": 0, "ts": "2026-05-23T03:01:25.011216Z"}
