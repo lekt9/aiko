@@ -5493,3 +5493,5 @@
 {"event": "child_added", "id": "826b5efd", "child_id": "516af09e", "ts": "2026-05-23T14:22:07.381533Z", "agent": "lewistham9x@gmail.com"}
 {"event": "declared", "id": "a502b6a3", "plan": "App.tsx opt-in to ?gen=1 -> GenerativeScreen route=home, else hardcoded legacy.", "action": "grep -qE \"GenerativeScreen|gen=1|generative\" src/App.tsx src/screens/Markets.tsx 2>/dev/null", "pointer_type": "cli", "cwd": "/Users/lekt9/Projects/sam", "parent_id": "826b5efd", "pointers": [], "ts": "2026-05-23T14:22:18.318933Z", "agent": "lewistham9x@gmail.com"}
 {"event": "child_added", "id": "826b5efd", "child_id": "a502b6a3", "ts": "2026-05-23T14:22:18.330920Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "6129285c", "plan": "binds to global generative-everywhere rule", "action": "contract:3edca1f4", "pointer_type": "contract-ref", "cwd": "/Users/lekt9/Projects/sam", "parent_id": "826b5efd", "pointers": [], "ts": "2026-05-23T14:22:28.889793Z", "agent": "lewistham9x@gmail.com"}
+{"event": "child_added", "id": "826b5efd", "child_id": "6129285c", "ts": "2026-05-23T14:22:28.901835Z", "agent": "lewistham9x@gmail.com"}
