@@ -5113,3 +5113,4 @@
 {"event":"iterated","id":"cc6a0524","wave":1,"action_exit":0,"action_result":"PASS","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T12:24:21Z"}
 {"event":"satisfied","id":"cc6a0524","wave":1,"ts":"2026-05-23T12:24:21Z"}
 {"event":"status_update","id":"cc6a0524","status":"satisfied","ts":"2026-05-23T12:24:21Z"}
+{"event":"declared","id":"07d0a462","plan":"the x402 royalty residual is closed: blockers are NOTIFIED to the human responsible (Bob via @burger606 DM) and the architecture pivots from a custom-built 99/1 splitter to the existing unbrowse x402 substrate (Flex multi-recipient settlement, lobster.cash signer, 35% indexer share for Lewis as the bloom/cto skill indexer) — no money is irreversible until Bob responds and registers the skill","action":"funnel","pointer_type":"funnel","parent_id":null,"pointers":[],"blocked_by":[],"ui_spec_url":null,"ts":"2026-05-23T12:26:28Z"}
