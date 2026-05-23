@@ -22,6 +22,16 @@ _spec = importlib.util.spec_from_file_location("cc", _CC_PATH)
 _cc = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_cc)
 
 
+def _unquote(val):
+    """Strip wrapping quotes from a YAML scalar and un-escape \\\" → \"."""
+    if not val:
+        return val
+    if (val.startswith('"') and val.endswith('"')) or \
+       (val.startswith("'") and val.endswith("'")):
+        val = val[1:-1]
+    return val.replace('\\"', '"').replace("\\'", "'").replace("\\\\", "\\")
+
+
 def parse_memory(path: Path):
     """Return {title, description, body, hook?}. Title is derived from
     `name:` frontmatter (the slug, humanized). Hook is unknown from the
