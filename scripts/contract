@@ -2797,6 +2797,169 @@ print(declare(os.environ['MH_PLAN'], 'agent-judges',
     echo "  the original was wrong-polarity. Iterate it and judge KEY 2 carefully."
     ;;
 
+  stale)
+    # Apoptosis (biology): a satisfied row is not eternal truth — it was
+    # true when the action last fired. The `stale` verb scans the ledger
+    # for satisfied rows older than --since and surfaces them with their
+    # plan + age, so the agent can re-iterate or supersede. No new shape
+    # (per 310f425f) — `stale` is a query verb; staleness is a documented
+    # convention on existing loop-until / cell satisfactions, not a typed
+    # field. Origin: contract 20402720 (biology gaps wave).
+    SINCE="7d"
+    JSON=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --since) SINCE="${2:-7d}"; shift 2 ;;
+        --json)  JSON="1"; shift ;;
+        *) shift ;;
+      esac
+    done
+    MH_SINCE="$SINCE" MH_JSON="$JSON" _py_inline "
+import os, re, json, sys
+from datetime import datetime, timezone, timedelta
+from contract_core import _rows, get
+
+def parse_since(s):
+    m = re.fullmatch(r'(\d+)([smhdw])', s.strip())
+    if not m:
+        print(f'ERROR: --since must look like 7d, 24h, 30m, 60s, 2w; got {s!r}', file=sys.stderr); sys.exit(2)
+    n = int(m.group(1)); unit = m.group(2)
+    mult = {'s':1,'m':60,'h':3600,'d':86400,'w':604800}[unit]
+    return timedelta(seconds=n*mult)
+
+cutoff = datetime.now(timezone.utc) - parse_since(os.environ['MH_SINCE'])
+# latest satisfied row per id
+latest = {}
+for r in _rows():
+    if r.get('event') == 'satisfied':
+        prev = latest.get(r['id'])
+        if not prev or r.get('ts','') > prev.get('ts',''):
+            latest[r['id']] = r
+
+stale = []
+for cid, sat in latest.items():
+    try:
+        ts = datetime.fromisoformat(sat['ts'].replace('Z','+00:00'))
+    except Exception:
+        continue
+    if ts < cutoff:
+        c = get(cid) or {}
+        if c.get('status') != 'satisfied':
+            continue  # superseded since, no longer satisfied
+        stale.append({'id': cid, 'plan': c.get('plan',''), 'satisfied_ts': sat['ts'], 'age_days': round((datetime.now(timezone.utc)-ts).total_seconds()/86400, 1)})
+stale.sort(key=lambda r: r['satisfied_ts'])
+
+if os.environ.get('MH_JSON'):
+    print(json.dumps({'since': os.environ['MH_SINCE'], 'count': len(stale), 'stale': stale}, indent=2))
+else:
+    print(f'=== CONTRACT STALE (--since {os.environ[\"MH_SINCE\"]}) ===')
+    if not stale:
+        print('  no satisfied contracts older than the cutoff.')
+    else:
+        print(f'  {len(stale)} satisfied contract(s) older than {os.environ[\"MH_SINCE\"]}:')
+        for r in stale:
+            print(f'  [{r[\"age_days\"]}d] {r[\"id\"]}  {r[\"plan\"][:60]}')
+            print(f'         last satisfied: {r[\"satisfied_ts\"]}')
+            print(f'         -> contract iterate {r[\"id\"]}     # re-prove the claim still holds')
+            print(f'         -> contract supersede {r[\"id\"]} <winner>  # if the claim is obsolete')
+        print()
+        print('  staleness is a documented convention, not a typed field.')
+        print('  the substrate surfaces; the agent decides whether to re-iterate or supersede.')
+"
+    ;;
+
+  synapse)
+    # Hebbian (biology): \"cells that fire together wire together.\" The
+    # synapse verb walks the ledger for contract pairs whose `iterated`
+    # events fall within the same wave-window N times — co-firing is
+    # behavioral evidence the two truths are related, distinct from the
+    # text-similarity \`search\` surfaces. Surfaces candidates as
+    # `corroborate` suggestions; never auto-declares (substrate principle).
+    # No new shape — synapse is a query verb. Origin: contract 5fc64e98.
+    WINDOW="300"   # seconds — default 5min wave window
+    THRESHOLD="2"  # default: 2 co-iterations -> surface
+    JSON=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --window)    WINDOW="${2:-300}"; shift 2 ;;
+        --threshold) THRESHOLD="${2:-2}"; shift 2 ;;
+        --json)      JSON="1"; shift ;;
+        *) shift ;;
+      esac
+    done
+    MH_WINDOW="$WINDOW" MH_THRESHOLD="$THRESHOLD" MH_JSON="$JSON" _py_inline "
+import os, json, sys
+from datetime import datetime
+from collections import defaultdict
+from contract_core import _rows, get_corroborations, get
+
+window = int(os.environ['MH_WINDOW'])
+thresh = int(os.environ['MH_THRESHOLD'])
+
+# Collect all iterated events with their ts (epoch seconds)
+events = []
+for r in _rows():
+    if r.get('event') == 'iterated' and r.get('id') and r.get('ts'):
+        try:
+            ts = datetime.fromisoformat(r['ts'].replace('Z','+00:00')).timestamp()
+            events.append((ts, r['id']))
+        except Exception:
+            continue
+events.sort()
+
+# Count co-iteration pairs within window. Sliding window over sorted events.
+pair_count = defaultdict(int)
+n = len(events)
+for i, (ts_i, id_i) in enumerate(events):
+    for j in range(i+1, n):
+        ts_j, id_j = events[j]
+        if ts_j - ts_i > window:
+            break
+        if id_i == id_j:
+            continue
+        key = tuple(sorted([id_i, id_j]))
+        pair_count[key] += 1
+
+# Filter: above threshold AND not already corroborated
+candidates = []
+for (a, b), n_co in sorted(pair_count.items(), key=lambda kv: -kv[1]):
+    if n_co < thresh:
+        continue
+    existing = set(get_corroborations(a))
+    if b in existing:
+        continue
+    ca = get(a); cb = get(b)
+    if not ca or not cb:
+        continue
+    candidates.append({
+        'a': a, 'b': b, 'co_iterations': n_co,
+        'plan_a': ca.get('plan',''), 'plan_b': cb.get('plan',''),
+        'status_a': ca.get('status'), 'status_b': cb.get('status'),
+    })
+
+if os.environ.get('MH_JSON'):
+    print(json.dumps({'window_seconds': window, 'threshold': thresh,
+                      'count': len(candidates), 'candidates': candidates}, indent=2))
+else:
+    print(f'=== CONTRACT SYNAPSE (Hebbian co-iteration scan) ===')
+    print(f'  window: {window}s    threshold: {thresh} co-iterations')
+    if not candidates:
+        print('  no co-iteration pairs above threshold (no existing-corroboration overlap).')
+        print()
+        print('  Hebbian principle: cells that fire together wire together.')
+        print('  raise --window or lower --threshold to surface weaker correlations.')
+    else:
+        print(f'  {len(candidates)} candidate synapse(s) — pairs co-iterated together but not yet corroborated:')
+        for c in candidates:
+            print(f'  [{c[\"co_iterations\"]}x]  {c[\"a\"]} <-> {c[\"b\"]}')
+            print(f'         {c[\"a\"]}: {c[\"plan_a\"][:60]}   [{c[\"status_a\"]}]')
+            print(f'         {c[\"b\"]}: {c[\"plan_b\"][:60]}   [{c[\"status_b\"]}]')
+            print(f'         -> contract corroborate {c[\"a\"]} {c[\"b\"]}  # if behaviorally related')
+        print()
+        print('  substrate surfaces; agent decides. corroborate is the synapse — never auto-fired.')
+"
+    ;;
+
   *)
     echo "unknown subcommand: $cmd" >&2
     bash "$0" help >&2
