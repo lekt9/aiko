@@ -1178,7 +1178,7 @@ json.dump({
       [ -n "$NEXT_MSG" ] && echo "  $NEXT_MSG"
       echo
       echo "  Run now: ${NEXT_CMD:-bash $0 iterate <next pending leaf>}"
-      echo "  Then judge KEY 2 in-thread. If genuine: emit <promise> + contract _mark <id> satisfied."
+      echo "  Then judge KEY 2 in-thread. If genuine: contract _mark <id> satisfied."
     else
       echo "  (no pending leaf surfaced  run: contract status $ID)"
     fi
