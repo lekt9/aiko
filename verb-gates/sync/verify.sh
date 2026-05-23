@@ -44,8 +44,6 @@ mkdir -p "$WORK"
 echo "hello" > "$WORK/file1.txt"
 cd "$WORK"
 # Provide local git identity so commit doesn't fail on agents without global config
-git -C "$WORK" config user.email "gate@example.com"
-git -C "$WORK" config user.name  "sync-gate"
 OUT_INIT=$("$CLI" sync --no-push --message "init test" 2>&1)
 [ -d "$WORK/.git" ] || { echo "FAIL: sync didn't init git repo. OUT=$OUT_INIT"; exit 1; }
 echo "$OUT_INIT" | grep -q "committed:" \
