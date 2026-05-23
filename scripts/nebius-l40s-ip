@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# nebius-l40s-ip — resolve the current public IP of an L40S instance via
+# the Nebius CLI. Never hardcode the IP in contract actions or scripts;
+# instances get rebuilt / restarted / migrated, and a baked address
+# silently breaks every dependent gate.
+#
+# Usage:
+#   nebius-l40s-ip                          # default: aiko-l40s-a
+#   nebius-l40s-ip aiko-l40s-b              # explicit instance name
+#   nebius-l40s-ip aiko-l40s-a --internal   # internal address
+#
+# Exit codes:
+#   0  IP printed to stdout
+#   1  instance not RUNNING (state printed to stderr)
+#   2  instance not found / CLI error
+#
+# This is the substrate primitive Lewis named on 2026-05-24: "use nebius cli
+# properly" — every L40S ssh target resolves through this helper so the
+# Nebius CLI IS the metadata layer, ssh is the execution layer.
+
+set -euo pipefail
+
+INSTANCE="${1:-aiko-l40s-a}"
+KIND="public"
+[ "${2:-}" = "--internal" ] && KIND="internal"
+
+NEBIUS="${NEBIUS:-$HOME/.nebius/bin/nebius}"
+[ -x "$NEBIUS" ] || NEBIUS="$(command -v nebius || true)"
+[ -n "$NEBIUS" ] || { echo "nebius-l40s-ip: nebius CLI not found on PATH or ~/.nebius/bin" >&2; exit 2; }
+
+# Cache the parent project id once — fetched from the first instance list.
+PROJECT_ID_CACHE="$HOME/.config/contract/nebius-project-id"
+mkdir -p "$(dirname "$PROJECT_ID_CACHE")"
+if [ ! -s "$PROJECT_ID_CACHE" ]; then
+  PID=$("$NEBIUS" compute instance list 2>/dev/null | awk '/parent_id:/{print $2; exit}')
+  [ -n "$PID" ] || { echo "nebius-l40s-ip: could not discover parent project id" >&2; exit 2; }
+  echo "$PID" > "$PROJECT_ID_CACHE"
+fi
+PARENT_ID="$(cat "$PROJECT_ID_CACHE")"
+
+OUT="$("$NEBIUS" compute instance get-by-name --name "$INSTANCE" --parent-id "$PARENT_ID" 2>&1)" || {
+  echo "nebius-l40s-ip: instance '$INSTANCE' lookup failed:" >&2
+  echo "$OUT" >&2
+  exit 2
+}
+
+STATE=$(echo "$OUT" | awk '/^  state:/{print $2}')
+if [ "$STATE" != "RUNNING" ]; then
+  echo "nebius-l40s-ip: instance '$INSTANCE' is in state '$STATE' (not RUNNING)" >&2
+  echo "  start it with: $NEBIUS compute instance start --id <id> (or via the dashboard)" >&2
+  exit 1
+fi
+
+if [ "$KIND" = "public" ]; then
+  # Public IP is under status.network_interfaces[].public_ip_address.address — the
+  # YAML pretty-printer puts it as a CIDR like 89.169.121.143/32; strip the /32.
+  IP=$(echo "$OUT" | awk '/public_ip_address:/{f=1;next} f && /address:/{gsub("/32",""); print $2; exit}')
+else
+  IP=$(echo "$OUT" | awk '/  ip_address:/{f=1;next} f && /address:/{gsub("/32",""); print $2; exit}')
+fi
+
+[ -n "$IP" ] || { echo "nebius-l40s-ip: could not parse $KIND IP from instance state" >&2; exit 2; }
+echo "$IP"
