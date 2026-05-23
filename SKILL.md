@@ -1629,7 +1629,6 @@ catches one drift class:
 | `self/heading-ladder` | a section header wedged inside another section (my own patch broke this once — Self-modeling appeared mid-way through Multi-dimensional gates) |
 | `self/standing-gate-ids` | every `27125bd7` / `4a055cf7` / `f669f09c` referenced in SKILL.md still resolves to a ledger row with the documented plan text |
 | `self/empathy-flags-wired` | every `--flag` named in the Empathy gate table is actually parsed by `verify.mjs` (docs and CLI agree) |
-| `self/shape-catalog-matches-gates` | every shape named in the SKILL.md "shape gates" table has a corresponding `<shape>-gate/verify.sh` (catalogue == file system) |
 
 These are not new shapes. They're plain `cell` contracts whose action is a
 grep / Python one-liner against `SKILL.md` + the implementing file. The
