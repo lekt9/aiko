@@ -121,16 +121,14 @@ def _embed_call(texts):
         return [d["embedding"] for d in data["data"]]
     except (urllib.error.URLError, urllib.error.HTTPError,
             json.JSONDecodeError, KeyError, OSError) as e:
-        # Try the alternate provider once before giving up for the run.
-        alt_key = ("NEBIUS_API_KEY" if "openai.com" in base else "OPENAI_API_KEY")
-        if os.environ.get(alt_key) and os.environ.get("CONTRACT_EMBED_PROVIDER") != "openai":
-            # Force the alternate by toggling the env hint for this one retry.
-            os.environ["CONTRACT_EMBED_PROVIDER"] = (
-                "nebius" if "openai.com" in base else "openai")
+        # One-shot retry on the alternate provider, BUT only fall back to
+        # nebius (never auto-bounce to openai). Auto-pick has no openai
+        # surface — operator must explicitly set CONTRACT_EMBED_PROVIDER=openai.
+        if "openai.com" in base and os.environ.get("NEBIUS_API_KEY"):
+            os.environ["CONTRACT_EMBED_PROVIDER"] = "nebius"
             print(f"contract-habit-detect: {base} failed ({e}); "
-                  f"retrying via {os.environ['CONTRACT_EMBED_PROVIDER']}",
-                  file=sys.stderr)
-            return _embed_call(texts)  # one-shot retry on the alternate
+                  f"retrying via nebius", file=sys.stderr)
+            return _embed_call(texts)
         _EMBED_OK = False
         print(f"contract-habit-detect: embedding API call failed "
               f"(falling back to BM25 only): {e}", file=sys.stderr)
