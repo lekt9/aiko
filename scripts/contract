@@ -3447,6 +3447,78 @@ print(f'  next: contract status {target}     # verify state preserved')
     python3 "$SELF/contract-depth.py" "$TARGET" "${EXTRA[@]+"${EXTRA[@]}"}"
     ;;
 
+  context)
+    # Mail-stdin doctrine companion (b2d15246, 2026-05-24): emit a JSON
+    # envelope describing this contract's originating context so a chained
+    # action can load it programmatically. Output is JSON to stdout — every
+    # action that consumes the inbox event via stdin/CONTRACT_INBOX_EVENT
+    # calls `contract context $CONTRACT_ID` to load the upstream chain.
+    #
+    # Envelope: {id, plan, status, action, cwd, parent_chain, origin_chain,
+    # last_iterations}. parent_chain walks parent_id upward; origin_chain
+    # walks `corroborate` synapses (contracts that fired in the same wave
+    # — co-iteration neighbours). last_iterations returns the most-recent
+    # --max-iterations rows (default 5).
+    TARGET="${1:-}"; shift || true
+    MAX_ITERS="5"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --max-iterations) MAX_ITERS="${2:-5}"; shift 2 ;;
+        --json) shift ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$TARGET" ] && { echo "usage: contract context <id> [--max-iterations N]" >&2; exit 2; }
+    MH_TARGET="$TARGET" MH_MAX="$MAX_ITERS" _py_inline "
+import os, json
+from contract_core import get, _read_all
+cid = os.environ['MH_TARGET']
+c = get(cid)
+if not c:
+    print(json.dumps({'error': 'not-found', 'id': cid})); raise SystemExit(2)
+# parent_chain
+chain = []
+cur = c
+while cur and cur.get('parent_id'):
+    p = get(cur['parent_id'])
+    if not p: break
+    chain.append({'id': p['id'], 'plan': (p.get('plan') or '')[:120], 'status': p.get('status')})
+    cur = p
+# origin_chain: corroborated peers
+rows = _read_all()
+synapses = []
+for r in rows:
+    if r.get('event') == 'corroborated' and cid in (r.get('ids') or []):
+        for other in (r.get('ids') or []):
+            if other != cid:
+                o = get(other)
+                if o:
+                    synapses.append({'id': other, 'plan': (o.get('plan') or '')[:120], 'status': o.get('status')})
+# last_iterations
+iters = [r for r in rows if r.get('event') == 'iterated' and r.get('id') == cid]
+max_n = int(os.environ['MH_MAX'])
+last_iters = []
+for r in iters[-max_n:]:
+    last_iters.append({
+        'wave': r.get('wave'),
+        'action_exit': r.get('action_exit'),
+        'action_result': r.get('action_result'),
+        'ts': r.get('ts'),
+    })
+envelope = {
+    'id': c['id'],
+    'plan': c.get('plan'),
+    'status': c.get('status'),
+    'action': c.get('action'),
+    'cwd': c.get('cwd'),
+    'parent_chain': chain,
+    'origin_chain': synapses,
+    'last_iterations': last_iters,
+}
+print(json.dumps(envelope, indent=2))
+"
+    ;;
+
   retire)
     # Retire a contract without an external winner. Declares a self-anchored
     # retirement marker (pre-satisfied), then supersedes <id> with it via the
