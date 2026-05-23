@@ -4849,3 +4849,4 @@
 {"event":"iterated","id":"dad82680","wave":1,"action_exit":0,"action_result":"PASS","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T10:43:34Z"}
 {"event":"satisfied","id":"dad82680","wave":1,"ts":"2026-05-23T10:43:34Z"}
 {"event":"status_update","id":"dad82680","status":"satisfied","ts":"2026-05-23T10:43:34Z"}
+{"event": "satisfied", "id": "f1b011c5", "wave": 0, "ts": "2026-05-23T10:43:37.162843Z", "proof": "Global Nebius-only rule established as agent-judges contract f1b011c5; first project enforcement: Sauros (ab5939d2 satisfied). Every future Lewis project copilot pulls from api.studio.nebius.com w/ NEBIUS_API_KEY; Anthropic forbidden by default", "agent": "lewistham9x@gmail.com"}
