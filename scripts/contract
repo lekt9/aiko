@@ -294,7 +294,7 @@ _two_key_exit() {
       echo "    contract iterate $id"
     fi
     echo "  Keep iterating until the organ is satisfied. End the turn ONLY if blocked by:"
-    echo "  missing credential · genuinely ambiguous intent · irreversible action"
+    echo "  missing credential · irreversible action"
     echo "  (then: contract disarm and name the blocker)."
   fi
 }
