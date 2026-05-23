@@ -130,6 +130,66 @@ function allowed(msg) {
   return allow.some((a) => msg.includes(a));
 }
 
+function loadEnvFile(p) {
+  if (!p || !existsSync(p)) return;
+  for (const line of readFileSync(p, "utf8").split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const eq = t.indexOf("=");
+    if (eq < 0) continue;
+    const k = t.slice(0, eq).trim();
+    let v = t.slice(eq + 1).trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+      v = v.slice(1, -1);
+    }
+    if (!(k in process.env)) process.env[k] = v;
+  }
+}
+
+function expand(value) {
+  if (typeof value !== "string") return value;
+  return value.replace(/\$\{([A-Z0-9_]+)\}/g, (_, k) => {
+    const v = process.env[k];
+    if (v === undefined) throw new Error(`prelude requires env var ${k} but it is not set`);
+    return v;
+  });
+}
+
+async function runPrelude(steps, ctx, timeoutMs) {
+  const page = await ctx.newPage();
+  const failures = [];
+  page.on("console", (msg) => {
+    if (msg.type() === "error") failures.push(`[prelude.console.error] ${msg.text()}`);
+  });
+  page.on("pageerror", (e) => failures.push(`[prelude.pageerror] ${(e && e.message) || e}`));
+  for (const step of steps) {
+    try {
+      if (step.goto)          await page.goto(expand(step.goto), { waitUntil: "domcontentloaded", timeout: timeoutMs });
+      if (step.fill)          await page.fill(step.fill, expand(step.value ?? ""));
+      if (step.click)         await page.click(step.click, { timeout: timeoutMs });
+      if (step.wait_for_url)  await page.waitForURL(step.wait_for_url, { timeout: timeoutMs });
+      if (step.wait_for_selector) await page.waitForSelector(step.wait_for_selector, { timeout: timeoutMs });
+      if (step.wait_idle)     await page.waitForTimeout(parseInt(step.wait_idle, 10));
+      if (step.expect_url) {
+        const cur = page.url();
+        if (!cur.includes(step.expect_url)) {
+          failures.push(`[prelude.expect_url] current=${cur} does not include ${JSON.stringify(step.expect_url)}`);
+        }
+      }
+      if (step.expect_not_text) {
+        const t = await page.evaluate(() => document.body && document.body.innerText) || "";
+        if (t.includes(step.expect_not_text)) {
+          failures.push(`[prelude.expect_not_text] forbidden text ${JSON.stringify(step.expect_not_text)} visible after step`);
+        }
+      }
+    } catch (e) {
+      failures.push(`[prelude.step] ${step.click || step.goto || step.fill || step.wait_for_url || JSON.stringify(step)}: ${(e && e.message) || e}`);
+    }
+  }
+  await page.close();
+  return failures;
+}
+
 let browser;
 try {
   browser = await chromium.launch({ headless: true });
