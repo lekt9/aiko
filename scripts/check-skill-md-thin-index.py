@@ -2,8 +2,12 @@
 # check-skill-md-thin-index.py — Β4 binding gate.
 #
 # The substrate's own pointer-not-payload law says: SKILL.md should be a
-# THIN INDEX of doctrines, each delegating to its own contract row +
-# reference file. Not a 3000-line monolith with all doctrine prose inline.
+# THIN INDEX of doctrines, each delegating to its own standing-gate
+# contract (Β3 pattern). Not a 3000-line monolith with all doctrine prose
+# inline. NB: Β3's `audits/references-purge/` forbids new doctrine .md
+# files under references/; the long narrative belongs in (a) the
+# standing-gate contract's plan text + (b) the Outline appendix. SKILL.md
+# carries only a ≤120-line summary citing the standing-gate id.
 #
 # This check surfaces the drift mechanically:
 #   1. SKILL.md total line count ≤ SKILL_MD_MAX_LINES (soft target).
@@ -11,8 +15,8 @@
 #      operational core) has a corresponding row in
 #      references/REGISTRY.md naming the doctrine + its standing-gate id.
 #   3. No single doctrine section exceeds DOCTRINE_MAX_LINES — once a
-#      section grows beyond that, its prose belongs in references/<slug>.md
-#      with a thin pointer in SKILL.md.
+#      section grows beyond that, its prose moves to the standing-gate
+#      contract's plan / Outline appendix; SKILL.md keeps the summary.
 #
 # Origin: Β4 doctrine, 2026-05-24. Lewis: "break down skill.md so each
 # contract layer lives inside its own contract — delegate responsibly,
