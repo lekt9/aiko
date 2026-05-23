@@ -283,6 +283,53 @@ print(c['status'] if c else 'not-found')
     esac
   fi
 
+  # Σ4 — agent routing pointer: action is `agent:<identity>`.
+  # The substrate compares the CURRENT iterating agent (CONTRACT_AGENT or
+  # git user.email, both Σ3-canonicalized) to the routed identity. If they
+  # match, the action behaves like `agent-judges` — the current agent does
+  # the work and judges KEY 2 in-thread. If they don't match, the iterate
+  # is REFUSED and a row is appended to ~/.contracts/inbox/agent/<identity>.jsonl
+  # so the routed agent picks it up via wait-for-event.py on next poll.
+  #
+  # Σ4 is the dual of Σ2 (audience gates LIST visibility) — Σ4 gates ITERATE
+  # routing. Composable: declare `--action agent:lewis@getfoundry.app
+  # --audience private` and you get both "only lewis can iterate" + "only
+  # lewis sees it in list". Σ3 aliases mean any of lewis's identities
+  # (lekt8, lewistham9x@gmail) resolves to the canonical and iterates fine.
+  if [[ "$action" == agent:* ]]; then
+    local agent_target="${action#agent:}"
+    local agent_target_canon agent_current_canon
+    agent_target_canon=$(MH_T="$agent_target" _py_inline "
+import os; from contract_core import resolve_identity
+print(resolve_identity(os.environ['MH_T']))
+")
+    agent_current_canon=$(_py_inline "
+from contract_core import current_agent, resolve_identity
+print(resolve_identity(current_agent()))
+")
+    echo "  pointer(agent): routed to $agent_target"
+    if [ -n "$agent_target_canon" ] && [ "$agent_target_canon" = "$agent_current_canon" ]; then
+      echo "  current_agent matches (canonical: $agent_current_canon) — JUDGE in-thread"
+      echo "  result: AGENT-JUDGES"
+      return 0
+    fi
+    # Mismatched agent: write an inbox row so the routed agent picks it up,
+    # then refuse the iterate. The substrate enables the handoff; the
+    # routed agent (when they next iterate from their own CONTRACT_AGENT
+    # session) is the one that actually does the work.
+    mkdir -p "$HOME/.contracts/inbox/agent" 2>/dev/null
+    local _inbox="$HOME/.contracts/inbox/agent/${agent_target_canon:-$agent_target}.jsonl"
+    local _ts
+    _ts=$(date -u +%FT%TZ)
+    printf '{"event":"agent-routed","contract_id":"%s","target":"%s","target_canonical":"%s","routed_by":"%s","ts":"%s"}\n' \
+      "$id" "$agent_target" "$agent_target_canon" "$agent_current_canon" "$_ts" >> "$_inbox"
+    echo "  current_agent ($agent_current_canon) ≠ routed agent ($agent_target_canon)"
+    echo "  inbox row appended: $_inbox"
+    echo "  result: FAIL (ROUTED — wait for $agent_target_canon to iterate from their own session)"
+    echo "  the routed agent picks this up via: python3 ~/.claude/skills/contract/scripts/wait-for-event.py --inbox agent --field target_canonical --equals '$agent_target_canon'"
+    return 1
+  fi
+
   # sequence: an ORDERED funnel. Satisfied when every child is satisfied
   # (same AND-gate as funnel), but iterate names the first unsatisfied child
   # in declared order as the current stage — the Genesis-days arc. Ordering
