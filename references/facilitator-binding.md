@@ -97,12 +97,12 @@ gate `27125bd7` and empathy gate `4a055cf7`):
 
 | Facilitator | Standing-gate id | Side | Bound binary |
 |---|---|---|---|
-| pay.sh | `4d4d3ba6` | wallet | `pay` MCP + TouchID |
-| lobstercash | `bd9c7a5a` | wallet | `npx @crossmint/lobster-cli` |
-| agentcash | `1be25e93` | wallet / unified | `npx agentcash@latest onboard` |
-| Faremeter Flex (Corbits marketplace) | `87cd9c2f` | merchant / split-config | `@faremeter/payment-solana/flex/facilitator` on our self-hosted stack |
+| pay.sh | `04073c2e` | wallet | `pay` MCP + TouchID |
+| lobstercash | `4d4aefd3` | wallet | `npx @crossmint/lobster-cli` |
+| agentcash | `bae5730b` | wallet / unified | `npx agentcash@latest onboard` |
+| Faremeter Flex (Corbits marketplace) | `68c6de71` | merchant / split-config | `@faremeter/payment-solana/flex/facilitator` on our self-hosted stack |
 
-Plus the 50/50 split policy as its own contract: `8c1ac75c`.
+Plus the 50/50 split policy as its own contract: `0f957e72`.
 
 Any project can compose:
 
