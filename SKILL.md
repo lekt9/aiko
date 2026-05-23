@@ -1470,3 +1470,93 @@ Promoting all 9 to first-class gates closed that loop. Contract
 and the code that no gate caught — section-wedging, missing standing-gate
 contracts, undocumented-implementation gaps, and shape-catalog vs
 gate-directory mismatches. Those became the `self/*` pre-flight checks.
+
+
+## Audits (corpus-wide rule enforcement, paired with idempotent fixers)
+
+A rule documented in prose lives nowhere. A rule with a verifier lives in
+one file. A rule with a verifier **plus an idempotent fixer plus a corpus
+scope** lives across the entire substrate forever. That last form is what
+`audits/<rule>/` is.
+
+The biology read: shape gates are the **immune system** (per-shape
+regression checks). Audits are the **homeostatic regulator** — they sweep
+the corpus continuously and pull every drifting cell back into range.
+
+### Directory convention
+
+```
+~/.claude/skills/contract/audits/<rule>/
+  verify.sh   # pure-read, exits 0 on full-corpus compliance, 1 otherwise
+  fix.sh      # idempotent, brings the corpus into compliance, never edits content
+  scope.txt   # newline-separated globs of corpora the rule applies to
+  README.md   # what the rule is, why it exists, link to memory + contract
+```
+
+The `scope.txt` file is the substrate's answer to "what does this rule
+apply to?" Each non-comment line is a shell glob (resolved with `eval echo`
+so `~` and `*` work). The audit walks every matched directory.
+
+### The runner + self-test wiring
+
+`scripts/run-audits.sh` walks `audits/*/verify.sh` and runs each in turn.
+It's wired into `scripts/skill-self-test.sh` as `self/audits-pass`, so the
+pre-commit hook on `~/.contracts/.git` re-runs every rule's corpus audit on
+every ledger event. A rule that drifts shows up in the next commit, not
+two weeks later when Lewis catches it.
+
+### What lives in audits vs check-*.py vs shape-gates
+
+| Layer | Scope | Lives at | Example |
+|---|---|---|---|
+| **shape gate** | one of the 9 contract shapes | `<skill>/<shape>-gate/verify.sh` | `cell-gate`, `funnel-gate` |
+| **drift check** | SKILL.md docs vs implementing code | `scripts/check-*.py` | `check-heading-ladder.py`, `check-shape-catalog.py` |
+| **audit** | a corpus rule across many files | `audits/<rule>/verify.sh` + `fix.sh` + `scope.txt` | `audits/memory-layering/` |
+
+Shape gates fire when the CLI's semantics drift. Drift checks fire when
+docs and code disagree. Audits fire when the **content the substrate
+governs** drifts — memory files, ledger rows, generated artifacts.
+
+### Worked example — `audits/memory-layering/`
+
+The three-layer doc-org rule (contract `767fd41d`) is the first audit. Its
+files:
+
+- `verify.sh` — walks every `~/.claude/projects/*/memory/` + `~/.claude/memory/`
+  and runs `scripts/check-memory-layering.py` against each. Exits 1 on any
+  violation across the whole corpus (559 files, 39 dirs at last count).
+- `fix.sh` — calls `scripts/backfill-memory-layering.py` against the same
+  dirs. Idempotent: trims over-long descriptions/hooks/titles, indexes
+  orphans, wraps unparseable files with synthesized frontmatter, renames
+  truncated-slug files. Body content is never touched.
+- `scope.txt` — `~/.claude/projects/*/memory` + `~/.claude/memory`.
+- `README.md` — what the rule is + how it was introduced.
+
+When the rule was added in contract `767fd41d`, the original fix touched
+only the project memory dir it ran in (115 files). Lewis caught the gap:
+"whenever you make some change like that, you could actually rewrite all
+things to update to match." Contract `d4074595` promoted the fix into the
+audits convention; re-running surfaced **236 violations across the other
+39 dirs**, all fixed by the same idempotent script.
+
+### Rules for adding a new audit
+
+1. **Build verify.sh first**, before fix.sh. The audit is the rule made
+   executable; without it, "the corpus passes" is unfalsifiable.
+2. **Walk the WHOLE scope**, not just the dir you're editing. The point
+   of `scope.txt` is to make the corpus surface explicit.
+3. **fix.sh is idempotent.** Running it on a green corpus reports 0 fixes
+   and changes nothing. Without idempotency, re-runs cause churn.
+4. **fix.sh never touches body content.** Memory bodies are knowledge the
+   agent wrote; the fixer only adjusts metadata layers (frontmatter,
+   index lines, slugs, file wrapping).
+5. **Mark satisfied only when corpus-wide verify is green.** Local-only
+   "I fixed the file I touched" is not satisfaction — the rule applies to
+   the whole corpus or it applies to nothing.
+
+Origin: 2026-05-23. The agent shipped the layering rule + a narrow
+bespoke fixer for one folder. Lewis pointed out: "deep solve this
+properly" — meaning generalise the pattern. Contract `d4074595`. The
+result is the audits/ directory convention with `memory-layering` as the
+worked first instance — and the meta-rule that every future rule lands
+the same way.
