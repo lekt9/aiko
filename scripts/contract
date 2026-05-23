@@ -1575,7 +1575,7 @@ if not url or not key:
 # intact (contract_core writes; everyone else reads the file).
 recent = ''
 try:
-    p = pathlib.Path(_store_path() if callable(_store_path) else str(_store_path))
+    p = _resolve_ledger()
 except Exception:
     p = pathlib.Path.home() / '.contracts' / 'contracts.jsonl'
 if p.exists():
