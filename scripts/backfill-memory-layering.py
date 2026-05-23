@@ -116,12 +116,92 @@ def update_memory_index_line(memory_dir, filename, new_title, new_hook):
     return inserted
 
 
+SHORT_SLUG_MAX_WORDS = 5  # rename threshold for slug-looks-like-truncated-description
+
+
+def wrap_unparseable(memory_dir, path, idx_entries, dry_run):
+    """A memory file with no frontmatter is wrapped in place: derive
+    title/description/hook from the body's lead sentence (or the slug
+    when the body has no recognisable English text), write a synthesised
+    `---name/description/metadata---` header, and index it in MEMORY.md.
+    Body content is preserved untouched after the header."""
+    body = path.read_text().lstrip("﻿").strip("\n") + "\n"
+    # Strip any leading Markdown heading from the lead-sentence harvest
+    no_heading = re.sub(r"^#+\s+", "", body, count=1, flags=re.M)
+    lead = no_heading.split("\n\n", 1)[0].strip()
+    lead = re.sub(r"\s+", " ", lead)
+    if len(lead) < 10:
+        lead = derive_title(path.stem)
+    description = trim_to_cap(lead, cc.DESCRIPTION_MAX_CHARS)
+    title = derive_title(path.stem)
+    hook = trim_to_cap(description, cc.HOOK_MAX_CHARS)
+    if hook == description and len(description) > 30:
+        hook = trim_to_cap(description, max(40, len(description) - 10))
+    name = path.stem
+    desc_for_yaml = description.replace("\\", "\\\\").replace('"', '\\"')
+    front = (
+        "---\n"
+        f"name: {name}\n"
+        f'description: "{desc_for_yaml}"\n'
+        "metadata:\n"
+        "  type: reference\n"
+        "---\n\n"
+    )
+    if dry_run:
+        return True, f"wrap unparseable (desc={len(description)}c)"
+    path.write_text(front + body)
+    update_memory_index_line(memory_dir, path.name, title, hook)
+    return True, f"wrap unparseable + index"
+
+
+def rename_truncated_slug(memory_dir, path, idx_entries, dry_run):
+    """Slug looks like a truncated description (≥6 words). Rename the
+    file to a tighter slug derived from the (now-fixed) description's
+    first ≤5 words, and update the MEMORY.md link accordingly.
+    Idempotent: if the tighter slug is already taken, leave the file
+    alone and report (the audit will keep complaining; caller can hand-
+    rename)."""
+    raw = path.read_text()
+    parsed = parse(raw)
+    if not parsed:
+        return False, "unparseable (handle separately)"
+    front, body = parsed
+    desc = front_field(front, "description") or ""
+    # Build a short slug from the description's first ≤SHORT_SLUG_MAX_WORDS speakable words
+    raw_words = re.findall(r"[A-Za-z0-9]+", desc)
+    short = "-".join(raw_words[:SHORT_SLUG_MAX_WORDS]).lower() or path.stem
+    if short == path.stem:
+        return False, "slug already short"
+    new_path = path.with_name(f"{short}.md")
+    n = 2
+    while new_path.exists() and new_path != path:
+        new_path = path.with_name(f"{short}-{n}.md")
+        n += 1
+    if dry_run:
+        return True, f"rename slug → {new_path.name}"
+    # Re-write frontmatter with the new name field
+    new_front = re.sub(r"^name:\s*.+$", f"name: {new_path.stem}",
+                       front, count=1, flags=re.M)
+    new_path.write_text(new_front + body)
+    # Update MEMORY.md: replace any line linking the old filename
+    idx = memory_dir / "MEMORY.md"
+    if idx.exists():
+        lines = idx.read_text().splitlines()
+        new_lines = []
+        for ln in lines:
+            new_lines.append(ln.replace(f"]({path.name})", f"]({new_path.name})"))
+        idx.write_text("\n".join(new_lines) + "\n")
+    if new_path != path:
+        path.unlink()
+    return True, f"renamed {path.name} → {new_path.name}"
+
+
 def fix_file(memory_dir, path, idx_entries, dry_run):
     """Return (changed, reason)."""
     raw = path.read_text()
     parsed = parse(raw)
     if not parsed:
-        return False, "unparseable (no frontmatter)"
+        return wrap_unparseable(memory_dir, path, idx_entries, dry_run)
     front, body = parsed
     desc = front_field(front, "description")
     if desc is None:
