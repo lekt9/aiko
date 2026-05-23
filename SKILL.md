@@ -865,6 +865,94 @@ the convention and unifying `SIGN-IN REQUIRED` under the same shape made
 the substrate the single source of truth for "transport, here's what to
 render."
 
+## Π2 — autopay (chill mode, no popup tax)
+
+A `=== PAYMENT REQUIRED ===` block every time a credit balance hits zero
+is hostile to the user who already has a card or wallet on file at
+unbrowse and just wants their agent to keep running. Π2 is the opt-in
+that says "use my account's payment method to settle small charges
+silently, up to a cap I set — only prompt me when the cap is breached
+or the method fails."
+
+The substrate side is small and load-bearing; the actual settle happens
+at unbrowse (per the unbrowse-payments-canonical rule — keys live there,
+not here).
+
+### How it works
+
+When `--action x402:<url>` returns 402 AND autopay is enabled, BEFORE
+emitting `=== PAYMENT REQUIRED ===` the substrate:
+
+1. Derives the unbrowse base from the original URL (`scheme://host`)
+2. `POST <base>/v1/billing/autopay/charge` with bearer `UNBROWSE_API_KEY`
+   and body `{intent_body: <402_body>, cap_usd: <cap>, source: contract-substrate}`
+3. On `200` — settles the user's account → retries the original 402 call →
+   on `200` returns `result: PASS (HTTP 200 — autopay settled $N cap, retry succeeded)` silently, **no PAYMENT REQUIRED block fires**
+4. On any non-200 (404 endpoint not shipped yet, 403 no method on file,
+   402 cap exceeded, etc.) — falls through to PAYMENT REQUIRED with an
+   honest `autopay_attempted: <reason>` field surfaced in the block
+
+When autopay is **not** enabled, the block carries a hint:
+`autopay_available: opt in with CONTRACT_AUTOPAY=1 or ~/.config/unbrowse/autopay.json {"cap_usd": N}`
+so the user discovers the chill-mode path.
+
+### Opt-in surfaces
+
+| Surface | Effect |
+|---|---|
+| `CONTRACT_AUTOPAY=1` env | enable for this process |
+| `CONTRACT_AUTOPAY_CAP_USD=<N>` env | override the cap (default $10) |
+| `~/.config/unbrowse/autopay.json` with `{"cap_usd": N}` | persistent opt-in for this user |
+
+Any of the three turns it on. The env always wins over the file for cap
+override. There is no global `~/.contracts/autopay.json` — autopay is
+**per-unbrowse-account** because the API key + payment method are
+per-account; storing the opt-in at `~/.config/unbrowse/` keeps it
+co-located with the API key.
+
+### Why keys stay at unbrowse
+
+Lewis's framing: "you can find my fucking pkeys." Read honestly: he has
+payment credentials configured (stripe card or wallet) at unbrowse
+already, and the agent has the bearer to authenticate as him. The
+substrate doesn't hold private keys — it just calls an authenticated
+unbrowse endpoint that uses *his stored method* to settle. Same key
+that authenticates `/v1/credits/debit` authenticates
+`/v1/billing/autopay/charge`. Pointer-not-payload (CLAUDE.md
+architecture) preserved.
+
+### When unbrowse hasn't shipped the endpoint yet
+
+`/v1/billing/autopay/charge` is the substrate-side contract; unbrowse
+is the server side. Until unbrowse implements it, the call returns 404
+and the substrate falls through to PAYMENT REQUIRED with
+`autopay_attempted: autopay endpoint not yet shipped at unbrowse (HTTP 404) — falling through to manual`.
+No user-facing surface regresses; the opt-in is wired and ready for
+the day unbrowse lands the route.
+
+### Cap semantics
+
+`cap_usd` is forwarded in the autopay POST as the maximum the user
+authorizes per single 402 settle. Unbrowse-side logic decides whether
+the 402's `amount` fits the cap — if not, returns 402 itself, the
+substrate surfaces "cap exceeded — fall through". This keeps the
+substrate dumb about pricing; the cashier does the math.
+
+### Verb-gate
+
+`verb-gates/x402/verify.sh` (extended) binds the autopay path:
+
+- Phase Π2-A: 402 without opt-in surfaces `autopay_available:` hint
+- Phase Π2-B: 402 with `CONTRACT_AUTOPAY=1` + mock 200 settle + mock retry 200
+  → result is silent `PASS (HTTP 200 — autopay settled $N cap, retry succeeded)`,
+  no `=== PAYMENT REQUIRED ===` block emitted
+
+Origin: contract `AUTOPAY_ID_PLACEHOLDER`, 2026-05-23. Lewis's plain ask:
+"so that i can sort of just chill and not have to pay x402 because you
+can find my fucking pkeys." Built as the substrate-side orchestration
+(opt-in flag, autopay POST, retry-on-success, honest fall-through);
+keys + settle remain at unbrowse where they belong.
+
 
 ## Concept lineage (genesis .tongues)
 
