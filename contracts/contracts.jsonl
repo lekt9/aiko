@@ -3975,3 +3975,5 @@
 {"event": "iterated", "id": "1f1686de", "wave": 3, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T07:12:12.799916Z", "agent": "lewistham9x@gmail.com"}
 {"event": "declared", "id": "704da611", "plan": "self-test guard for the tool-guard verify harness", "action": "tool-guard:__contract_toolguard_selftest__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/.contracts", "parent_id": null, "pointers": [], "ts": "2026-05-23T07:17:25.247713Z", "agent": "contract-hook@localhost"}
 {"event": "satisfied", "id": "704da611", "wave": 0, "ts": "2026-05-23T07:17:28.994709Z", "agent": "contract-hook@localhost"}
+{"event": "declared", "id": "f49eee76", "plan": "self-test guard for the tool-guard verify harness", "action": "tool-guard:__contract_toolguard_selftest__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/.contracts", "parent_id": null, "pointers": [], "ts": "2026-05-23T07:18:21.505185Z", "agent": "contract-hook@localhost"}
+{"event": "satisfied", "id": "f49eee76", "wave": 0, "ts": "2026-05-23T07:18:25.075977Z", "agent": "contract-hook@localhost"}
