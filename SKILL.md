@@ -301,9 +301,9 @@ Otherwise  → fix the target, then: contract iterate <id>
 
 No script claims satisfaction. The machine checks; the agent judges. Both keys required.
 
-## Parallel fan-out (binding rule)
+## Parallel fan-out (heuristic)
 
-When a problem decomposes into N **independent** sub-contracts (they do not need each other's output to start), the agent MUST launch them as N parallel Agent tool calls in a **single message** -- not sequentially.
+When a problem decomposes into N **independent** sub-contracts (their verify gates don't share state), N parallel Agent calls in a single message dispatch faster than serial. It's a heuristic, not a binding rule — sequential dispatch is also fine, especially when N is small or the agent already has the context loaded.
 
 ```bash
 # Pattern: declare organ then fan-out N children in one parallel message
