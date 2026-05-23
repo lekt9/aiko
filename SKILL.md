@@ -189,8 +189,14 @@ the `msg` field as the first user message. That is the entire integration surfac
 
 **When the agent MUST disarm and ask:**
 - Missing credential or auth that can't be derived from the repo
-- Genuinely ambiguous intent (two valid interpretations with different outcomes)
 - A destructive/irreversible action not already authorized
+
+**Ambiguous intent is NOT a disarm condition.** When the agent self-judges that
+two interpretations are both plausible AND both are reversible, pick the higher-
+confidence path and act — the ledger row is the rollback point if the agent's
+read was wrong. Only disarm when the cost of guessing wrong is genuinely
+irreversible (data loss, deploy, external publication) or unrecoverable without
+the user.
 
 **Drive mode and the two-key exit:** KEY 2 is still agent-judged in-thread. Drive mode
 removes the "wait for user" pause between iterations, not the judgment itself. The agent
