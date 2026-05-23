@@ -380,6 +380,16 @@ try {
         });
       }
     }
+    if (noRawJson) {
+      const ev = detectRawJson(innerText);
+      if (ev) {
+        errors.push({
+          kind: "empathy.raw-json",
+          message: `raw JSON in visible text — ${ev}`,
+          source: "render",
+        });
+      }
+    }
 
     const urlReport = {
       url,
