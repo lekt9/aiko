@@ -20,7 +20,7 @@ LEDGER = Path(os.environ.get("CONTRACTS_STORE", Path.home() / ".contracts/contra
 
 text = SKILL.read_text()
 # Find the "Standing gate IDs" table: 3-column markdown table with backticked IDs.
-m = re.search(r"### Standing gate IDs.*?\|---\|---\|---\|\n((?:\|.*\n)+)", text, flags=re.DOTALL)
+m = re.search(r"### Standing gate IDs[\s\S]*?\|---\|---\|---\|\n((?:\|[^\n]*\n)+)", text)
 if not m:
     print("could not find Standing gate IDs table in SKILL.md", file=sys.stderr)
     sys.exit(2)
