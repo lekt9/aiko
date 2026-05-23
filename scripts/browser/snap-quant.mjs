@@ -10,7 +10,7 @@ await page.goto('https://sauros.lewis-6d8.workers.dev/', { waitUntil: 'domconten
 await page.waitForTimeout(4000);
 await page.locator('button[aria-label="Open copilot"]').click();
 await page.waitForTimeout(500);
-const input = page.locator('input[placeholder*="ticker"]');
+const input = page.locator('input[placeholder*="/declare"]');
 await input.fill('compare AAPL MSFT GOOGL');
 await page.locator('button[type=submit]').click();
 await page.waitForTimeout(5000);
