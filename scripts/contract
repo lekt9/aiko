@@ -206,6 +206,81 @@ print(c['status'] if c else 'not-found')
     fi
   fi
 
+  # Π1 — x402 payment-gate pointer: action is `x402:<unbrowse-endpoint>`.
+  # The substrate POSTs (or GETs for *balance* URLs) to the endpoint with
+  # a Bearer token resolved from UNBROWSE_API_KEY env or ~/.config/unbrowse/api-key.
+  #
+  # Response semantics:
+  #   200 → PASS (free quota or paid balance covered the call)
+  #   402 → FAIL with === PAYMENT REQUIRED === block surfacing the payment
+  #         payload from the response body. Transport adapters MUST render
+  #         this block: Telegram → sendInvoice (Stars / Stripe-via-tg),
+  #         Web → x402 wallet (Flex facilitator), Panel → checkout button,
+  #         Terminal → print pay_url + amount.
+  #   401 → FAIL with sign-in hint (UNBROWSE_API_KEY missing or invalid).
+  #   other → FAIL with raw status + body excerpt.
+  #
+  # The substrate NEVER does payment logic itself — all settlement happens
+  # at unbrowse (project CLAUDE.md, unbrowse-payments-canonical rule).
+  # /contract is the referrer; unbrowse is the cashier.
+  if [[ "$action" == x402:* ]]; then
+    local x402_url="${action#x402:}"
+    local x402_token=""
+    if [ -n "${UNBROWSE_API_KEY:-}" ]; then
+      x402_token="$UNBROWSE_API_KEY"
+    elif [ -f "$HOME/.config/unbrowse/api-key" ]; then
+      x402_token=$(cat "$HOME/.config/unbrowse/api-key" 2>/dev/null | tr -d '[:space:]')
+    fi
+    echo "  pointer(x402): $x402_url"
+    # /balance is GET; everything else (/debit, /grant, …) is POST.
+    local x402_method="POST"
+    [[ "$x402_url" == *balance* ]] && x402_method="GET"
+    local x402_curl_args=( -sS -X "$x402_method" -w "\n__X402_HTTP_CODE__%{http_code}" )
+    [ -n "$x402_token" ] && x402_curl_args+=( -H "Authorization: Bearer $x402_token" )
+    x402_curl_args+=( -H "Content-Type: application/json" "$x402_url" )
+    local x402_resp x402_code x402_body
+    x402_resp=$(curl "${x402_curl_args[@]}" 2>&1)
+    x402_code=$(printf '%s' "$x402_resp" | awk -F'__X402_HTTP_CODE__' '{print $2}' | tail -1)
+    x402_body=$(printf '%s' "$x402_resp" | sed 's/__X402_HTTP_CODE__[0-9]*$//')
+    case "$x402_code" in
+      200)
+        echo "  result: PASS (HTTP 200 — paid or free-tier covered)"
+        echo "  body:   $(printf '%s' "$x402_body" | head -c 200)"
+        return 0
+        ;;
+      402)
+        echo ""
+        echo "  === PAYMENT REQUIRED ==="
+        echo "  upstream:   $x402_url"
+        echo "  status:     402"
+        echo "  body:       $x402_body"
+        echo ""
+        echo "  Render this block per transport:"
+        echo "    Telegram → sendInvoice (XTR Stars or Stripe-via-Telegram) using body.pay_url + amount"
+        echo "    Web      → x402 wallet prompt (Flex facilitator → USDC tx)"
+        echo "    Panel    → embed checkout button (unbrowse Stripe hosted page)"
+        echo "    Terminal → user opens pay_url in browser, retries iterate after settle"
+        echo "  result:     FAIL (402 — payment required; user pays via transport, then re-iterate)"
+        return 1
+        ;;
+      401)
+        echo "  result: FAIL (HTTP 401 — auth required; set UNBROWSE_API_KEY or ~/.config/unbrowse/api-key)"
+        echo "  body:   $(printf '%s' "$x402_body" | head -c 200)"
+        return 1
+        ;;
+      "")
+        echo "  result: ERROR — no HTTP response (network? curl=$? on $x402_url)"
+        echo "  raw:    $(printf '%s' "$x402_resp" | head -c 200)"
+        return 1
+        ;;
+      *)
+        echo "  result: FAIL (HTTP $x402_code)"
+        echo "  body:   $(printf '%s' "$x402_body" | head -c 300)"
+        return 1
+        ;;
+    esac
+  fi
+
   # sequence: an ORDERED funnel. Satisfied when every child is satisfied
   # (same AND-gate as funnel), but iterate names the first unsatisfied child
   # in declared order as the current stage — the Genesis-days arc. Ordering
