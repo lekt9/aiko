@@ -4697,3 +4697,4 @@
 {"event":"iterated","id":"7afd8afe","wave":1,"action_exit":0,"action_result":"PASS","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T10:13:46Z"}
 {"event":"satisfied","id":"7afd8afe","wave":1,"ts":"2026-05-23T10:13:46Z"}
 {"event":"status_update","id":"7afd8afe","status":"satisfied","ts":"2026-05-23T10:13:46Z"}
+{"event": "satisfied", "id": "723ac8b8", "wave": 0, "ts": "2026-05-23T10:13:52.717755Z", "proof": "src/worker/copilot.ts 220 LOC: Anthropic claude-haiku-4-5 + 4 tools (quote/chart/screener/search), tool-use loop max 5 rounds, KV-cached 1h by SHA1(question), Pro-gated returns 'pricing' note for Free, honest 503 'anthropic_credit_low' on low credit (verified live \u2014 Lewis's key works but credit low \u2192 returned exactly that note)", "agent": "lewistham9x@gmail.com"}
