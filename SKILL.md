@@ -779,6 +779,7 @@ while genuinely failing for the human reading the page.
 | `--expect-not <substr>` | `document.body.innerText` does NOT contain | built-ins: `"Application error: a client-side exception"`, `"__next_error__"`, `"something went wrong"` |
 | `--min-text <N>` | `innerText.length >= N` (skeleton markup with no visible copy fails) | 0 = off |
 | `--no-default-expect-not` | drop the built-in error-boundary guards | — |
+| `--no-raw-json` | fail when the visible text contains a JSON dump (4+ JSON-property lines, or any line with 4+ `"key":` tokens). Catches lazy `JSON.stringify()` rendering that ships as "real UI" but is just unsalvaged data | — |
 | `--walk` | after each URL, harvest every same-origin `<a href>` on the page and verify each (catches stale internal links — a deleted route still referenced by a nav item) | — |
 | `--walk-include <regex>` / `--walk-exclude <regex>` | filter the walk queue by path | — |
 | `--prelude <tour.json>` | drive a small login/tour BEFORE the URL checks in a shared browser context. The session cookies + localStorage carry into every subsequent visit and walk — so the gate also covers authenticated routes and the form-submit redirect destination | — |
