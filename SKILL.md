@@ -791,6 +791,129 @@ output existed in latent form (any action can write a file) but was
 never NAMED. Naming it makes the symmetry visible and the convention
 discoverable. Contract `ff6e8908`.
 
+## Everything is stdio (the unified model)
+
+The nine shapes split cleanly into two layers, joined by the ledger as
+their shared file. The split is load-bearing — it's why the neuron
+analogy is exact, not just metaphor.
+
+### The action layer (stdio-shaped)
+
+Every shape that runs code reads stdin / env / files and writes stdout
++ exit code:
+
+| Surface | Reads (stdin) | Writes (stdout) | Exit code drives |
+|---|---|---|---|
+| `cell` action | env, stdin, fs | stdout, stderr, side-files | KEY 1 |
+| `judgment` body (agent) | conversation context | agent_verdict text | KEY 2 |
+| `loop-until:` body | env, fs (often a counter file) | stdout per iterate | KEY 1 each wave |
+| `harness:<path>/verify.sh` | env, fs | stdout, stream files | KEY 1 |
+| `tool-guard:` PreToolUse hook | tool-call JSON on stdin | block/allow JSON on stdout | tool gate |
+| receptor (`wait-for-event.py`) | inbox JSONL file | matched-row JSON on stdout | PASS / FAIL |
+| stream writer (any action) | (writer side) | `streams/<id>/stdout.log` | n/a |
+| internal hook handler | ledger row on stdin | side-effect artifact | n/a |
+
+Every one of these is a tiny stdio process. Receptors are the standardised
+stdin port (inbox file). Streams are the standardised stdout port
+(`streams/<id>/stdout.log`). The other shapes are bare-shell stdio with
+no naming convention required.
+
+### The composition layer (pure ledger queries)
+
+Composition shapes do NOT have stdin/stdout of their own. They're pure
+functions over the ledger's current state, evaluated at iterate time:
+
+| Shape | What it queries | Predicate |
+|---|---|---|
+| `funnel` / `children-satisfy` | every child's status | "ALL satisfied?" |
+| `funnel-first` | every child's status | "ANY satisfied?" |
+| `sequence` | children in declared order | "first unsatisfied" |
+| `quorum:K` | every child's status | "≥K of N satisfied?" |
+| `contract:<id>` (action) | the referenced contract's status | "is that one satisfied?" |
+
+These have no I/O footprint of their own. They produce KEY 1 by reading
+the ledger and applying a predicate. No subprocess runs.
+
+### The ledger is the trunk stdout
+
+The ledger (`~/.contracts/contracts.jsonl`) is itself a stdio surface
+at the substrate scale — append-only, line-delimited, every contract
+event writes one line to it, every other contract reads from it. The
+action layer's exit codes become satisfied/iterated rows on the trunk;
+the composition layer reads those rows to decide its own predicate.
+
+```
+                    ┌─────────────────────────────────────┐
+                    │  ~/.contracts/contracts.jsonl       │
+                    │  (append-only trunk — substrate     │
+                    │   stdout that everyone shares)      │
+                    └────▲──────────────────────────┬─────┘
+       writes events ────┘                          └──── reads events
+              │                                                │
+   ┌──────────┴──────────┐                       ┌─────────────┴────────┐
+   │  ACTION LAYER       │                       │  COMPOSITION LAYER   │
+   │  (stdio)            │                       │  (ledger queries)    │
+   │                     │                       │                      │
+   │  cell · judgment    │                       │  funnel · funnel-first│
+   │  loop body · harness│                       │  sequence · quorum   │
+   │  tool-guard · hook  │                       │  contract:<id> resolver│
+   │  receptor · stream  │                       │                      │
+   └─────────────────────┘                       └──────────────────────┘
+        ▲          │                                       ▲
+        │          │ inbox files / stream files            │
+        │          ▼                                       │
+   ┌────┴──────────────────┐                  ┌────────────┴────────────┐
+   │  EXTERNAL WORLD       │                  │  AGENT (KEY 2)          │
+   │  injectors → inbox    │                  │  judges genuine / fake  │
+   │  observers ← streams  │                  │  marks satisfied        │
+   └───────────────────────┘                  └─────────────────────────┘
+```
+
+### Why the neuron analogy is exact (not metaphor)
+
+Map each layer onto a real neuron:
+
+| Neuron part | /contract surface |
+|---|---|
+| **Dendrites** (incoming signals) | env vars, inbox files, ledger reads of parent/refs, stream readers, stdin |
+| **Soma** (integration, fires the action potential) | the action — the shell command, the agent's judgment, the body of a loop |
+| **Membrane voltage** (gates the fire) | KEY 1 exit code AND KEY 2 agent verdict |
+| **Action potential** (the discrete fire event) | `_mark satisfied` writing the row to the trunk |
+| **Axon** (carries the signal out) | the satisfied row in the ledger + optional stream file |
+| **Synapses** (downstream connections) | parent organs, contract-ref referrers — the wavefront on `_mark` |
+| **Dendritic geometry** (what input pattern fires the cell) | composition shape: funnel = AND, funnel-first = OR, quorum:K = threshold, sequence = ordered chain |
+
+The composition layer isn't a separate kind of neuron — it's the **firing
+rule** of the upstream cell. A funnel parent has the dendritic geometry
+"fire when ALL inputs fire"; a quorum:K parent has "fire when K of N
+inputs fire". Real neurons do the same — threshold integration is
+geometry, not a separate process.
+
+### Practical consequence: the agent's mental model
+
+When you read a contract, sort it by layer first:
+
+- **Action shape?** Think "what stdio is this doing?" — what reads, what
+  writes, what exit code maps to KEY 1, what stream file (if any).
+- **Composition shape?** Think "what predicate over which children?" —
+  no stdio question to ask, just the firing rule.
+
+When you write one:
+- **Need to verify something concrete?** Action shape (cell most often).
+- **Need to combine other contracts?** Composition shape.
+
+Never embed composition logic in a cell's action (don't write a script
+that grep's the ledger to AND children — declare a funnel). Never embed
+stdio logic in a composition (don't add file I/O to a funnel — give the
+funnel a cell child that does the I/O).
+
+Origin: 2026-05-23. The agent asked "so everything is stdio as a
+contract/cell/neuron type design?" The honest answer is YES at the
+action layer, NO at the composition layer, and the ledger is the
+trunk stdio that joins them — which is exactly the two-layer structure
+of a biological neural circuit. Naming the split makes the model
+mechanical rather than metaphorical.
+
 ## Bundled scripts
 
 - `scripts/contract` — CLI front door (declare, iterate, build, spawn, solve, status, list, search, _mark)
