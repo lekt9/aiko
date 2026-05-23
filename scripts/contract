@@ -1372,6 +1372,23 @@ PY
   _mark)
     ID="${1:-}"; STATUS="${2:-}"
     [ -z "$ID" ] || [ -z "$STATUS" ] && { echo "usage: contract _mark <id> <status>" >&2; exit 2; }
+    # HARD-BREAK on resolution cycle: if this contract participates in a
+    # contract:<id> cycle, refuse to satisfy. A cycle means satisfaction
+    # would propagate falsely (Y depends on X depends on Y). Substrate
+    # forbids; agent must supersede or revise to break the cycle first.
+    # Contract fb9698f7 (depth + hard-break on cycles).
+    if [ "$STATUS" = "satisfied" ]; then
+      DEPTH_OUT=$(python3 "$SELF/contract-depth.py" "$ID" --strict-cycles 2>&1)
+      DEPTH_EC=$?
+      if [ "$DEPTH_EC" -ne 0 ]; then
+        echo "=== HARD BREAK ON RESOLUTION (cycle) ==="
+        echo "$DEPTH_OUT" | grep -E "CYCLES|→" | head -20
+        echo
+        echo "  refuse to _mark $ID satisfied — closing this would propagate a false truth."
+        echo "  break the cycle first (revise an action / supersede one side / declare a non-pointer leaf)."
+        exit 1
+      fi
+    fi
     MH_ID="$ID" MH_STATUS="$STATUS" _py_inline "
 import os, sys
 from contract_core import mark_satisfied, mark_status, get
