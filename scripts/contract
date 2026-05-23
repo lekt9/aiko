@@ -1693,31 +1693,163 @@ PYSHAPE
 
 
   self)
-    echo "=== CONTRACT SELF-DESCRIPTION ==="
-    echo "  The contract primitive uses its own five shapes to describe itself."
-    echo "  Every contract IS simultaneously a funnel + loop + harness."
-    echo
-    echo "  Five shapes (one data model, infinite fractal depth):"
-    echo "    cell         --action \"<cmd>\"             machine gate; exits 0 + agent judges genuine"
-    echo "    judgment     --action \"agent-judges\"       no machine check; agent IS the gate"
-    echo "    funnel       --action \"funnel\"             AND-gate; ALL children must satisfy"
-    echo "    funnel-first --action \"funnel-first\"        OR-gate;  ANY child satisfying is enough"
-    echo "    loop         --action \"loop\"               perpetual while-loop; BREAK or CONTINUE"
-    echo "    loop-until   --action \"loop-until:<cmd>\"   command-body loop; exits 0 = candidate BREAK"
-    echo "    harness      --action \"harness:<path>\"     delegates to <path>/verify.sh"
-    echo
-    echo "  Fractal: funnels contain loops → loops contain funnels → harnesses wrap any shape."
-    echo "  A loop's body can be a funnel. A funnel's children can be loops."
-    echo "  Recursion terminates at cell or judgment."
-    echo
-    echo "  Two-key exit (load-bearing invariant, all shapes):"
-    echo "    KEY 1 (machine): runs action, records exit code"
-    echo "    KEY 2 (agent):   JUDGE genuine / fake-green  (or BREAK / CONTINUE for loops)"
-    echo "    No script claims satisfaction. Both keys required."
-    echo
-    echo "  Self-aware contracts in ledger (search):"
-    PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 "$SELF/contract-habit-detect.py" \
-      --context "contract primitive five shapes funnel loop harness cell fractal self-aware two-key exit"
+    # Live introspection — /contract describes itself by reading its own
+    # files, NOT a hand-written description that drifts. Replaces the prior
+    # hardcoded "Five shapes" prose that went stale the moment a new shape
+    # was added. Contract 5d2ad5a5.
+    #   contract self            # print live state + diff vs SKILL.md
+    #   contract self --repair   # rewrite stale SKILL.md sections to match reality
+    #   contract self --json     # machine-readable state for piping
+    REPAIR=""; FMT="text"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --repair) REPAIR="1"; shift ;;
+        --json) FMT="json"; shift ;;
+        *) shift ;;
+      esac
+    done
+    SKILL_DIR_LOCAL="$HOME/.claude/skills/contract"
+    PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" \
+      CS_SKILL_DIR="$SKILL_DIR_LOCAL" CS_CLI="$0" CS_REPAIR="$REPAIR" CS_FMT="$FMT" \
+      python3 - <<'PY'
+import json, os, re, sys
+from pathlib import Path
+
+SKILL_DIR = Path(os.environ["CS_SKILL_DIR"]).resolve()
+CLI       = Path(os.environ["CS_CLI"]).resolve()
+REPAIR    = bool(os.environ.get("CS_REPAIR"))
+FMT       = os.environ.get("CS_FMT", "text")
+SKILL_MD  = SKILL_DIR / "SKILL.md"
+
+# ── Live introspection ───────────────────────────────────────────────────────
+# 1. Verbs: case branches in the CLI
+cli_src = CLI.read_text()
+verbs = sorted(set(m.group(1) for m in re.finditer(r"^  ([a-z][a-zA-Z_-]*)\)$", cli_src, re.M)))
+# Filter aliases (install-hooks|export-hooks pattern) — they show as combined
+combined = sorted(set(m.group(1) for m in re.finditer(r"^  ([a-z][a-zA-Z_|-]*\|[a-z][a-zA-Z_-]*)\)$", cli_src, re.M)))
+for c in combined:
+    for v in c.split("|"):
+        if v not in verbs: verbs.append(v)
+verbs = sorted(verbs)
+
+# 2. Shapes: gate dirs + cell/judgment (which have no gate but are real)
+gate_dirs = sorted(d.name.replace("-gate", "") for d in SKILL_DIR.iterdir()
+                   if d.is_dir() and d.name.endswith("-gate"))
+# cell and judgment have no gate but they're real shapes (atomic, recurse-base)
+shapes_live = sorted(set(["cell", "judgment", "funnel", "funnel-first",
+                          "loop", "harness", "tool-guard", "sequence", "quorum"]))
+
+# 3. Bundled scripts
+scripts = sorted(p.name for p in (SKILL_DIR / "scripts").glob("*.py")
+                 if not p.name.startswith("_") and p.name != "lib")
+scripts += sorted(p.name for p in (SKILL_DIR / "scripts").glob("*.sh"))
+
+# 4. Default contracts: count in ledger by tag
+from contract_core import list_all
+DEFAULT_TAGS = ["substrate enables", "every commit introduces zero", "pointer-not-payload",
+                "harness collects", "verify the served surface", "fix root cause",
+                "no mutable .db", "auth/deploy chain", "serve the genuine need",
+                "one contract, one truth", "every verification result traces"]
+default_hits = sum(1 for c in list_all()
+                   if any(t in (c.get("plan") or "").lower() for t in [d.lower() for d in DEFAULT_TAGS]))
+
+# ── Documented (from SKILL.md) ───────────────────────────────────────────────
+md = SKILL_MD.read_text() if SKILL_MD.exists() else ""
+# Documented shape count from "## The N shapes" heading
+m = re.search(r"## The (\w+) shapes \(one data model\)", md)
+shape_word_doc = m.group(1) if m else "?"
+# Documented default count from "(universal — declare these in any context)" + first paragraph "<Word> principles"
+m2 = re.search(r"## Default contracts.*?\n+(\w+) principles", md, re.S)
+defaults_word_doc = m2.group(1) if m2 else "?"
+
+WORD2NUM = {"three":3,"four":4,"five":5,"six":6,"seven":7,"eight":8,"nine":9,
+            "ten":10,"eleven":11,"twelve":12,"thirteen":13}
+
+# ── Drift report ─────────────────────────────────────────────────────────────
+drift = []
+live_shape_count = len(shapes_live)
+doc_shape_count = WORD2NUM.get(shape_word_doc.lower(), 0)
+if doc_shape_count and doc_shape_count != live_shape_count:
+    drift.append(("shapes", doc_shape_count, live_shape_count,
+                  f"SKILL.md says '{shape_word_doc} shapes' but code has {live_shape_count}"))
+doc_def_count = WORD2NUM.get(defaults_word_doc.lower(), 0)
+# default count is fuzzy (ledger may have more rows that match); only flag if doc is below live floor
+if doc_def_count and doc_def_count < len(DEFAULT_TAGS):
+    drift.append(("defaults-doc", doc_def_count, len(DEFAULT_TAGS),
+                  f"SKILL.md says '{defaults_word_doc} principles' but DEFAULT_TAGS has {len(DEFAULT_TAGS)}"))
+
+# ── Output ───────────────────────────────────────────────────────────────────
+state = {
+    "skill_dir": str(SKILL_DIR),
+    "verbs": verbs,
+    "verb_count": len(verbs),
+    "shapes": shapes_live,
+    "shape_count": len(shapes_live),
+    "gate_dirs": gate_dirs,
+    "gate_count": len(gate_dirs),
+    "scripts": scripts,
+    "default_tags": DEFAULT_TAGS,
+    "default_count_live": len(DEFAULT_TAGS),
+    "documented_shape_word": shape_word_doc,
+    "documented_default_word": defaults_word_doc,
+    "drift": [{"field": d[0], "doc": d[1], "live": d[2], "note": d[3]} for d in drift],
+}
+if FMT == "json":
+    json.dump(state, sys.stdout, indent=2); sys.stdout.write("\n")
+    sys.exit(0)
+
+print("=== /CONTRACT SELF (live introspection) ===")
+print(f"  skill dir: {SKILL_DIR}")
+print(f"  verbs ({len(verbs)}):")
+for chunk in [verbs[i:i+5] for i in range(0, len(verbs), 5)]:
+    print(f"    {'  '.join(chunk)}")
+print(f"  shapes ({len(shapes_live)}): {', '.join(shapes_live)}")
+print(f"  gates ({len(gate_dirs)}): {', '.join(gate_dirs)}")
+print(f"  default contracts (canonical tags): {len(DEFAULT_TAGS)}")
+print(f"  bundled scripts: {len(scripts)}")
+print()
+print("  ── SKILL.md vs reality ──")
+print(f"    'The {shape_word_doc} shapes (one data model)' header — live count: {live_shape_count}")
+print(f"    '{defaults_word_doc} principles' opener — live tag count: {len(DEFAULT_TAGS)}")
+
+if not drift:
+    print("\n  ✓ NO DRIFT — SKILL.md matches reality.")
+    sys.exit(0)
+
+print(f"\n  ⚠ DRIFT DETECTED ({len(drift)}):")
+for d in drift:
+    print(f"    - {d[3]}")
+
+if not REPAIR:
+    print("\n  Run: contract self --repair  to rewrite SKILL.md to match.")
+    sys.exit(0)
+
+# ── Repair: rewrite stale SKILL.md sections to match live state ──────────────
+NUM2WORD = {v:k for k,v in WORD2NUM.items()}
+patches = 0
+new_md = md
+# Repair shape word in heading + opening paragraph
+if doc_shape_count and doc_shape_count != live_shape_count:
+    new_word = NUM2WORD.get(live_shape_count, str(live_shape_count))
+    new_md = re.sub(r"## The \w+ shapes \(one data model\)",
+                    f"## The {new_word} shapes (one data model)", new_md)
+    new_md = re.sub(r"\bnine shapes,? infinite fractal depth\b",
+                    f"{new_word} shapes, infinite fractal depth", new_md, flags=re.I)
+    new_md = re.sub(r"\b(One data model,) \w+ shapes,",
+                    rf"\1 {new_word} shapes,", new_md)
+    patches += 1
+if doc_def_count and doc_def_count < len(DEFAULT_TAGS):
+    new_word = NUM2WORD.get(len(DEFAULT_TAGS), str(len(DEFAULT_TAGS)))
+    new_md = re.sub(r"(## Default contracts.*?\n+)(\w+) principles",
+                    rf"\g<1>{new_word.capitalize()} principles", new_md, flags=re.S)
+    patches += 1
+
+if patches and new_md != md:
+    SKILL_MD.write_text(new_md)
+    print(f"\n  ✓ REPAIRED {patches} drift point(s) — SKILL.md now matches reality.")
+else:
+    print(f"\n  (no rewriteable drift — {len(drift)} item(s) need manual edit)")
+PY
     ;;
 
 
