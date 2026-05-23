@@ -783,6 +783,7 @@ Pointer types that aren't shapes (shapes are catalogued above):
 | `api` | `curl https://...`, `https://...` | An HTTP endpoint |
 | `contract-ref` | `contract:<id>` | Another contract's satisfaction status |
 | `x402` | `x402:https://beta-api.unbrowse.ai/v1/credits/debit?cost=10` | Π1 payment-gated HTTP call — 200 PASS, 402 surfaces `=== PAYMENT REQUIRED ===` block with `pay_url` for transports to render, 401 surfaces sign-in hint. Bearer from `UNBROWSE_API_KEY` env or `~/.config/unbrowse/api-key`. Settlement happens at unbrowse, never in /contract. |
+| `agent` | `agent:lewis@getfoundry.app` | Σ4 routes the action to a named agent identity. Routed agent (Σ3-canonical) gets `AGENT-JUDGES` (in-thread judgment); anyone else gets refused + inbox row at `~/.contracts/inbox/agent/<id>.jsonl`. Compose with `--audience <id>` for full invisibility + un-actability gating. |
 
 The `contract:<id>` form is pointer-to-pointer: the action is satisfied when the referenced contract is satisfied. This lets one contract's truth claim depend on another without embedding any logic.
 
