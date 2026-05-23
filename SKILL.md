@@ -798,6 +798,58 @@ Rules:
 - Actions are bound to their declare-time working directory. `contract_core.declare()` records `cwd` on every row; `iterate` runs the action from it (rows predating the field fall back to the current directory). Declare a contract from the directory its action should run in, and a relative-path action stays correct even when iterated later from elsewhere. Do not bake `cd <dir> &&` into an action.
 
 
+## Requirement blocks (the generative-UI handoff)
+
+When iterate FAILs because the user needs to **do something out-of-band**
+before the action can pass — pay an invoice, sign in, attach a credential,
+let another agent take over — the substrate doesn't say "FAIL: try again".
+It emits a **requirement block**: a structured `=== <KIND> REQUIRED ===`
+section carrying the upstream URL, the response body, and per-transport
+render hints. Each transport (Telegram bot, web app, Panel, terminal)
+parses the block and renders a **client-native generative UI** — a
+sendInvoice in Telegram, a modal in web, an inline card in Panel, a plain
+URL in terminal.
+
+The substrate's contribution is the **structured surface**. Per-transport
+rendering is the adapter's job; the substrate guarantees the same fields
+appear in the same shape no matter which pointer-type fails.
+
+| Block | Fires on | Carries | Native render examples |
+|---|---|---|---|
+| `=== PAYMENT REQUIRED ===` | x402 → 402 | `upstream`, `status`, `body` (with `pay_url`, `amount`, `asset`) | Telegram `sendInvoice` · Web wallet payment prompt · Panel "Top up" card · Terminal URL |
+| `=== SIGN-IN REQUIRED ===` | x402 → 401 | `upstream`, `status`, `body` | Telegram inline keyboard → magic-link · Web OAuth modal · Panel Privy sign-in card · Terminal URL |
+| `=== ROUTED ===` | `agent:<id>` mismatch | `target_canonical`, `inbox_path`, `wait_cmd` | Telegram "@<agent> picking this up" · Web spinner with target name · Panel agent-handoff card |
+| `=== INHIBITION REFUSAL ===` | `--inhibits` active | `inhibitor_ids`, `inhibitor_plans` | Surface inhibitors with "supersede or release" controls |
+
+**Why this is one section, not four.** The four blocks share the same
+shape on purpose: a `kind`, an upstream context, a body the transport can
+parse, and a render-hint list. A new pointer-type's failure case can add a
+new `=== <NEW-KIND> REQUIRED ===` block with the same convention; no
+transport rewiring needed — adapters that handle the existing four already
+know how to parse a fifth.
+
+**Why generative-UI not template-UI.** The substrate names *what* the
+block represents (payment / sign-in / route / inhibit) and *what payload
+it carries*. The transport decides *how to render* given its capabilities:
+a Telegram bot ships `sendInvoice` because it has one; a web app ships an
+x402 wallet popup because it has one; a terminal ships a clickable URL
+because that's all it has. The render is generated client-side from the
+substrate's structured prompt — same data, different surfaces.
+
+Verb-gate: `verb-gates/x402/verify.sh` binds the PAYMENT REQUIRED + SIGN-IN
+REQUIRED blocks (presence + at least two per-transport render hints).
+Future requirement-block additions (`ROUTED`, `INHIBITION REFUSAL`) get
+their own gate rows when added.
+
+Origin: contract `97e90e21`, 2026-05-23. Lewis's request: "when things are
+required — credentials or x402 payments — allow generative UI via /contract
+building appropriately based on the context of the client being used."
+The block-shape was already in latent form for `PAYMENT REQUIRED`; naming
+the convention and unifying `SIGN-IN REQUIRED` under the same shape made
+the substrate the single source of truth for "transport, here's what to
+render."
+
+
 ## Concept lineage (genesis .tongues)
 
 | Tongues doctrine | Implementation |
