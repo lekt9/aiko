@@ -300,8 +300,7 @@ Every `contract iterate` ends with:
 KEY 1 (machine): <action result — PASS | FAIL | AGENT-JUDGES | ERROR>
 KEY 2 (agent):   JUDGE — is this GENUINELY satisfied, or fake-green?
 
-If genuine → emit: <promise>CONTRACT_SATISFIED:<id></promise>
-             then: contract _mark <id> satisfied
+If genuine → run: contract _mark <id> satisfied
 Otherwise  → fix the target, then: contract iterate <id>
 ```
 
