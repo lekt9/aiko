@@ -37,9 +37,17 @@ def iter_rows(channel, since_ts):
                         continue
                     try:
                         yield json.loads(line), f
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as e:
+                        print(
+                            f"wait-for-event: ignored invalid JSON in {f}: {e}",
+                            file=sys.stderr,
+                        )
                         continue
-        except FileNotFoundError:
+        except FileNotFoundError as e:
+            print(
+                f"wait-for-event: inbox file disappeared while reading {f}: {e}",
+                file=sys.stderr,
+            )
             continue
 
 
