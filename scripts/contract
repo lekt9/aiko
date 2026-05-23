@@ -1675,7 +1675,7 @@ if rest:
 print(f'  via:     {source}')
 print()
 if 'PROMOTE' in first_line:
-    print(f'  next: contract _mark {jid} satisfied --proof \"Λ1 LLM judge ({model}): {rest[:160]}\"')
+    print(f'  next: contract _mark {jid} satisfied --proof \"Λ1 LLM judge ({source}): {rest[:160]}\"')
     sys.exit(0)
 elif 'HOLD' in first_line:
     print(f'  next: contract iterate {jid}  # judge says fake-green or unconvinced')
