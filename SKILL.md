@@ -1278,6 +1278,16 @@ of an llm or even a pay.sh /contract to a api provider from venice might
 even be enough." Answer: no runtime needed; Λ1 lets any LLM endpoint
 serve KEY 2. Binding gate: `verb-gates/judge/verify.sh`.
 
+Routing-default amendment 2026-05-24: codex CLI is the default judging
+surface when on PATH; HTTP /v1/chat/completions is the fallback for
+hosts without codex. Lewis's follow-on: "use codex cli instead of
+openai always." Same Λ1 doctrine, different default. The substrate is
+still runtime-agnostic — any OpenAI-shaped LLM endpoint works on the
+HTTP path, and codex itself is just an alternate transport to the same
+chat-completions semantics, but auth'd via ChatGPT subscription instead
+of an OpenAI API key. Binding contract for the amendment:
+`b3f1f44e` (2026-05-24).
+
 ## Β1 — backtrack-and-capture (deferred items become contract rows, mechanically)
 
 Across a long session the agent keeps naming "deferred", "named-and-
