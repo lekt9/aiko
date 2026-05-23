@@ -415,6 +415,10 @@ def get(id: str) -> Optional[dict]:
         result["bind_to"] = declared["bind_to"]
     if declared.get("inhibits"):
         result["inhibits"] = list(declared["inhibits"])
+    if declared.get("audience"):
+        # Surface audience on the projection so downstream filters (Σ2
+        # visibility) can consult it without re-reading the declared row.
+        result["audience"] = list(declared["audience"])
     return result
 def get_tree(id: str, depth: int = 0) -> Optional[dict]:
     c = get(id)
