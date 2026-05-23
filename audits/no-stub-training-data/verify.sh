@@ -43,14 +43,21 @@ fi
 
 # Collect candidate jsonl files: training files under any data subdir,
 # ≥1000 rows (cheap line count first to filter).
-CANDIDATES=()
+CANDIDATES_RAW=()
 for d in "${DIRS[@]}"; do
   while IFS= read -r f; do
     [ -f "$f" ] || continue
     rows=$(wc -l < "$f" 2>/dev/null || echo 0)
-    [ "$rows" -ge 1000 ] && CANDIDATES+=("$f")
+    [ "$rows" -ge 1000 ] && CANDIDATES_RAW+=("$f")
   done < <(find "$d" -maxdepth 3 -type f \( -name "train.jsonl" -o -name "valid.jsonl" -o -name "*_train.jsonl" -o -name "*_sft.jsonl" \) 2>/dev/null)
 done
+# Dedupe (scope.txt globs can overlap — the same file shouldn't be scanned twice)
+CANDIDATES=()
+if [ ${#CANDIDATES_RAW[@]} -gt 0 ]; then
+  while IFS= read -r f; do
+    CANDIDATES+=("$f")
+  done < <(printf '%s\n' "${CANDIDATES_RAW[@]}" | sort -u)
+fi
 
 if [ ${#CANDIDATES[@]} -eq 0 ]; then
   echo "no candidate training jsonl found in scope — skip"
