@@ -228,10 +228,38 @@ def declare(plan: str, action: str, parent_id: Optional[str] = None,
         row["inverted_from"] = inverted_from
     if inhibits:
         row["inhibits"] = list(inhibits)
+    if audience:
+        # Empty list means "audience field intentionally omitted = public".
+        # A list with one or more identities restricts visibility to those.
+        row["audience"] = list(audience)
     _append(row)
     if parent_id:
         _append({"event": "child_added", "id": parent_id, "child_id": cid, "ts": _now()})
     return cid
+
+
+def visible_to(contract_or_row: dict, viewer: Optional[str]) -> bool:
+    """Σ2: is this contract/row visible to `viewer`?
+
+    Rules (in order):
+      - viewer is None or empty       → True (no filter applied)
+      - row has no `audience` field   → True (public by default)
+      - audience contains "public"    → True (explicit public marker)
+      - audience contains viewer      → True
+      - else                          → False
+
+    Works on either a raw declared-row dict OR a `get(id)` projection
+    (which also surfaces `audience` from the declared row). The substrate
+    filters; the agent never sees a verdict — KEY 2 still belongs to the
+    caller deciding whether to act on a filtered list."""
+    if not viewer:
+        return True
+    audience = contract_or_row.get("audience")
+    if audience is None:
+        return True
+    if "public" in audience:
+        return True
+    return viewer in audience
 
 
 def active_inhibitors(target_id: str) -> list[str]:
