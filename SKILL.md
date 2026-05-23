@@ -1390,7 +1390,7 @@ naming X with a `contract judge X` hint; `contract unblocked` then
 lists X under READY; `--json` output is parseable; satisfying X
 removes it from the surface (no spurious zombies).
 
-Origin: contract `OMEGA1_ID_PLACEHOLDER`, 2026-05-24. Lewis's framing:
+Origin: contract `bcd1a371`, 2026-05-24. Lewis's framing:
 "shit you go hold should be revisited when unblocked by another
 /contract." The substrate already had wavefront propagation for
 `contract:<id>` referrers; Ω1 generalizes that to the *implicit*
