@@ -651,7 +651,6 @@ KEY 2 stopped being purely in-thread the moment the artifact landed on
 the ledger row. Contract `173c8819`.
 
 ## What this skill does NOT do
-## What this skill does NOT do
 
 - Auto-declare from a detected pattern. Surfaces candidates only.
 - Auto-satisfy when the action exits 0. Agent is the second key.
