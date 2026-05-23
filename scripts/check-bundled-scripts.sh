@@ -11,22 +11,22 @@ PATHS=$(python3 - "$DOC" <<'PY'
 import re, sys
 doc = open(sys.argv[1]).read()
 # Locate the "## Bundled scripts" section
-m = re.search(r'^##\s+Bundled scripts\b(.*?)(?=^##\s|\Z)', doc, re.M | re.S)
+m = re.search(r'^##\s+Bundled scripts\b(.*?)(?=^##\s)', doc, re.M | re.S)
 if not m:
     sys.exit(0)
 body = m.group(1)
-# Extract paths from `backticked` markers
-paths = re.findall(r'`([^`\s]+)`', body)
-# Keep filesystem-shaped entries (contain '/' or end with .py/.sh/.jsonl etc.)
-ok = []
-for p in paths:
-    if '/' in p or p.endswith(('.py', '.sh', '.jsonl', '.md')):
-        ok.append(p)
+# Only extract the LEADING backticked path in each bullet item — this is the
+# bundled-script "subject", not inline mentions in descriptions.
 seen = set()
-for p in ok:
-    if p in seen: continue
-    seen.add(p)
-    print(p)
+for line in body.split('\n'):
+    line = line.strip()
+    if not line.startswith('- '):
+        continue
+    m2 = re.match(r'-\s+`([^`]+)`', line)
+    if m2:
+        p = m2.group(1)
+        if p in seen: continue
+        seen.add(p); print(p)
 PY
 )
 
