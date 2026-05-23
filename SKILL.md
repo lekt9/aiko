@@ -542,8 +542,6 @@ bugs before they propagate. Contract `0bc383d0`.
 
 ## What this skill does NOT do
 
-## What this skill does NOT do
-
 - Auto-declare from a detected pattern. Surfaces candidates only.
 - Auto-satisfy when the action exits 0. Agent is the second key.
 - Maintain a separate principle store. `~/.contracts/contracts.jsonl` is the single store.
