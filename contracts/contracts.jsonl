@@ -5102,3 +5102,9 @@
 {"event":"declared","id":"3a90b467","plan":"x402 royalty config has Lewis's real Solana wallet (3dePTEY7HMvEJgimvWS4ATh7oad2E63w1ycc2s1uvNmv from ~/.config/unbrowse/PROD_PAYMENT_RECIPIENT_NOTE.md) + chain=solana + lobster.cash rail; verify.sh is the standing gate that reports 2/5 halves real, names every remaining BLOCKED-BY-BOB / BLOCKED-BY-LIVE-TEST blocker, and exits 1 until all 5 are real","action":"bash bot-tools/x402-royalty/verify.sh 2>&1 | grep -q \"lewis_wallet real solana addr.*✓\" && bash bot-tools/x402-royalty/verify.sh 2>&1 | grep -q \"BLOCKED-BY-BOB\" && ! bash bot-tools/x402-royalty/verify.sh >/dev/null 2>&1","pointer_type":"cli","parent_id":"cc6a0524","pointers":[],"blocked_by":[],"ui_spec_url":null,"ts":"2026-05-23T12:23:00Z"}
 {"event":"child_added","id":"cc6a0524","child_id":"3a90b467","ts":"2026-05-23T12:23:00Z"}
 {"event":"iterated","id":"1f0a6ff8","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T12:23:26Z"}
+{"event":"iterated","id":"89ac46f7","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T12:24:18Z"}
+{"event":"iterated","id":"3a90b467","wave":1,"action_exit":1,"action_result":"fail","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T12:24:18Z"}
+{"event":"satisfied","id":"1f0a6ff8","wave":1,"ts":"2026-05-23T12:24:18Z"}
+{"event":"status_update","id":"1f0a6ff8","status":"satisfied","ts":"2026-05-23T12:24:18Z"}
+{"event":"satisfied","id":"89ac46f7","wave":1,"ts":"2026-05-23T12:24:19Z"}
+{"event":"status_update","id":"89ac46f7","status":"satisfied","ts":"2026-05-23T12:24:19Z"}
