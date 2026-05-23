@@ -251,19 +251,35 @@ def detect(context: str, threshold: float = DEFAULT_THRESHOLD,
         return []
     raw = _bm25_scores(context, docs)
     top = max(raw.values(), default=0.0) or 1.0
+    bm25 = {did: (rs / top) for did, rs in raw.items()}
+    embed = _embed_scores(context, docs)  # {} when key absent / call fails
+
     results = []
-    for did, rs in raw.items():
-        norm = rs / top
-        if norm >= threshold:
-            c, status = meta[did]
-            results.append({
-                "id": did,
-                "plan": c["plan"],
-                "action": c["action"],
-                "learning": c.get("learning"),
-                "status": status,
-                "score": round(norm, 2),
-            })
+    for did in bm25:
+        bm = bm25.get(did, 0.0)
+        em = embed.get(did, 0.0)
+        score = max(bm, em)
+        if score < threshold:
+            continue
+        # Attribute which signal lifted this candidate above threshold.
+        if em >= threshold and bm >= threshold:
+            src = "hybrid"
+        elif em >= threshold and em > bm:
+            src = "embed"
+        else:
+            src = "bm25"
+        c, status = meta[did]
+        results.append({
+            "id": did,
+            "plan": c["plan"],
+            "action": c["action"],
+            "learning": c.get("learning"),
+            "status": status,
+            "score": round(score, 2),
+            "bm25": round(bm, 2),
+            "embed": round(em, 2) if em else None,
+            "score_source": src,
+        })
     return sorted(results, key=lambda x: -x["score"])
 def main():
     import argparse
