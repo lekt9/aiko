@@ -1256,11 +1256,13 @@ with the "no judging surface available" prompt naming both options.
 | `REJECT` | 1 | substrate emits `contract supersede` / `revise` hint |
 | missing config / unparseable verdict / unknown id | 2 | no auto-promote on failure |
 
-Verb-gate `verb-gates/judge/verify.sh` binds five phases against a mock
-LLM server: no-config refused, unknown id refused, PROMOTE exits 0 with
-_mark hint, HOLD exits 1 with iterate hint, REJECT exits 1 with
-supersede/revise hint, unparseable verdict refused. The substrate
-NEVER hits any endpoint other than `/chat/completions`.
+Verb-gate `verb-gates/judge/verify.sh` binds both routing paths. HTTP
+phases (against a mock `/chat/completions` server): no-config refused,
+unknown id refused, PROMOTE exits 0 with _mark hint, HOLD exits 1 with
+iterate hint, REJECT exits 1 with supersede/revise hint, unparseable
+verdict refused. Codex phases (against a fake `codex` shim on PATH): the
+shim's PROMOTE/HOLD verdict reaches the substrate intact AND codex is
+preferred over HTTP when both are available (auto-default).
 
 ### Why this matters
 
