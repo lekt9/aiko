@@ -33,8 +33,8 @@ def parse_memory(path: Path):
     front, body = m.group(1), m.group(2)
     name_m = re.search(r"^name:\s*(.+)$", front, re.M)
     desc_m = re.search(r"^description:\s*(.+)$", front, re.M)
-    name = name_m.group(1).strip() if name_m else path.stem
-    desc = desc_m.group(1).strip() if desc_m else ""
+    name = _unquote(name_m.group(1).strip()) if name_m else path.stem
+    desc = _unquote(desc_m.group(1).strip()) if desc_m else ""
     # Title — derived from the slug. Memories don't store a separate title
     # field; the MEMORY.md link text is the "title" surface. We probe THAT
     # below via index_hooks().
