@@ -18,10 +18,9 @@ GLOBAL="$HOME/.contracts/contracts.jsonl"
 touch "$GLOBAL"
 export CONTRACTS_STORE="$GLOBAL"
 # Ensure Λ1 path is off so --auto-judge doesn't fire in the gate (no codex shim, no URL).
+# The gate never passes --auto-judge so this is belt-and-suspenders; PATH stays inherited
+# (contract_core requires Python ≥3.10 PEP-604 syntax — system /usr/bin/python3 is 3.9 on mac).
 unset CONTRACT_LLM_URL CONTRACT_LLM_KEY CONTRACT_LLM_VIA
-# Some hosts have codex on PATH; hide it for the gate's deterministic phases.
-PATH="/usr/bin:/bin"
-export PATH
 
 # 1. usage on no ids
 OUT=$(bash "$C" drill 2>&1) && { echo "FAIL: drill with no ids should exit non-zero"; exit 1; }
