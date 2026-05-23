@@ -19,9 +19,8 @@ SKILL = Path(os.environ.get("SKILL_MD", Path.home() / ".claude/skills/contract/S
 LEDGER = Path(os.environ.get("CONTRACTS_STORE", Path.home() / ".contracts/contracts.jsonl"))
 
 text = SKILL.read_text()
-m = re.search(r"### Standing gate IDs.*?\|---\|---\|---\|\n((?:\|.*\n)+)", text, flags=re.DOTALL)
 # Find the "Standing gate IDs" table: 3-column markdown table with backticked IDs.
-m = re.search(r"### Standing gate IDs.*?\n\| Standing gate.*?\n((?:\|.*\n)+)", text)
+m = re.search(r"### Standing gate IDs.*?\|---\|---\|---\|\n((?:\|.*\n)+)", text, flags=re.DOTALL)
 if not m:
     print("could not find Standing gate IDs table in SKILL.md", file=sys.stderr)
     sys.exit(2)
