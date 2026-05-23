@@ -4572,3 +4572,4 @@
 {"event":"child_added","id":"56cf325b","child_id":"992507c3","ts":"2026-05-23T09:53:37Z"}
 {"event":"declared","id":"ffac843c","plan":"lane-burger-dm: 1779530017","action":"bash checks/lane-burger-dm.sh","pointer_type":"cli","parent_id":"56cf325b","pointers":[],"blocked_by":[],"ui_spec_url":null,"ts":"2026-05-23T09:53:37Z"}
 {"event":"child_added","id":"56cf325b","child_id":"ffac843c","ts":"2026-05-23T09:53:37Z"}
+{"event":"iterated","id":"6a09c778","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T09:53:46Z"}
