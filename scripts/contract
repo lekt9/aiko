@@ -210,7 +210,7 @@ allsat = bool(kids)
 # children_satisfy's {satisfied, merged} acceptance set). Without this,
 # a supersession mid-sequence pins the walker on the fossil and the
 # organ deadlocks at the next stage. Fixed via contract 565691ba.
-RESOLVED = ("satisfied", "merged")
+RESOLVED = ('satisfied', 'merged')
 for k in kids:
     kc = get(k)
     st = kc['status'] if kc else 'missing'
