@@ -29,7 +29,7 @@ Core job: declare a truth claim, iterate until genuinely satisfied, spawn childr
 - **L1 CLI** — `scripts/contract`: the verb surface. `declare`, `iterate`, `build`, `spawn`, `solve`, `status`, `list`, `search`, `_mark`. Every verb either writes one ledger row or emits a structured prompt; nothing else.
 - **L2 detector** — `scripts/contract-habit-detect.py`: passive related-contract detector. Token overlap against all `plan` fields in the ledger. Surfaces candidates above threshold. Never declares. (Filename retained; the user-facing operation is `contract search` — the contract IS the habit.)
 
-The unifying model: a contract with a mechanical `--action` is a **cell**. `--action agent-judges` is a **judgment**. `--action funnel` (or `children-satisfy`) is a **funnel** (AND-gate). `--action funnel-first` is a **funnel-first** (OR-gate). `--action quorum:<K>` is a **quorum** (the integrate-and-fire neuron — K of N children). `--action sequence` is a **sequence** (an ordered funnel). `--action loop-until:<cmd>` is a **loop** (re-run body each iterate). `--action harness:<path>` is a **harness** (delegates to `<path>/verify.sh`). `--action tool-guard:<glob>` is a **tool-guard** (a PreToolUse hook blocks the matching tool until the contract is satisfied). One data model, eight shapes, infinite fractal depth.
+The unifying model: a contract with a mechanical `--action` is a **cell**. `--action agent-judges` is a **judgment**. `--action funnel` (or `children-satisfy`) is a **funnel** (AND-gate). `--action funnel-first` is a **funnel-first** (OR-gate). `--action quorum:<K>` is a **quorum** (the integrate-and-fire neuron — K of N children). `--action sequence` is a **sequence** (an ordered funnel). `--action loop-until:<cmd>` is a **loop** (re-run body each iterate). `--action harness:<path>` is a **harness** (delegates to `<path>/verify.sh`). `--action tool-guard:<glob>` is a **tool-guard** (a PreToolUse hook blocks the matching tool until the contract is satisfied). One data model, nine shapes, infinite fractal depth.
 
 ## Modifying the skill vs creating contracts (dev-level routing)
 
@@ -251,7 +251,7 @@ Per invocation this skill produces one of:
 
 Never: a silent ledger write with no agent prompt; a synthetic pass verdict; a wave that doesn't print the two-key exit block.
 
-## The eight shapes (one data model)
+## The nine shapes (one data model)
 
 Every contract is simultaneously a funnel, a loop, and a harness — fractally. A loop's body can be a funnel; a funnel's children can be loops; a harness wraps any shape. The recursion bottoms out at a cell or judgment.
 
@@ -271,7 +271,7 @@ Fractal: funnels contain loops, loops contain funnels, harnesses wrap any shape.
 
 ### Shape IS the type system (no `--lifetime` flag will ever exist)
 
-The eight shapes ARE the lifetime / role / decay model. There is no separate
+The nine shapes ARE the lifetime / role / decay model. There is no separate
 typed-tag layer and there never will be. Concretely:
 
 | If you would reach for… | …use this shape instead |
@@ -434,7 +434,7 @@ contract audit <root> --auditors 13                  # Step 8  — falsifier jud
 contract _mark <root> satisfied                      # Step 9  — emergence
 ```
 
-Nothing here is a new engine. The genesis organ is the eight shapes, the
+Nothing here is a new engine. The genesis organ is the nine shapes, the
 BM25 plan stage, and the natural-selection lifecycle — composed.
 
 ## Signal propagation (the nervous system)
