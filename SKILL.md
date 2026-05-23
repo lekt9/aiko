@@ -476,8 +476,6 @@ a nervous system that fires, not a filing cabinet that is walked by hand.
 - Auto-satisfy when the action exits 0. Agent is the second key.
 - Maintain a separate principle store. `~/.contracts/contracts.jsonl` is the single store.
 - Prescribe plan text format. The declarant authors it.
-| `tool-guard` | `tool-guard:<glob>` | A Claude Code PreToolUse hook; blocks any tool whose name matches the glob while the contract is unsatisfied |
-| `quorum` | `quorum:<K>` | The K children threshold — satisfied when at least K of N children are satisfied (integrate-and-fire) |
 ## Substrate principle (inherited, invariant)
 
 The substrate enables; it does not prescribe. Scripts emit evidence only. No script bakes a verdict, a banned list, or a per-case rule. The agent renders every verdict in-thread. A contract that auto-satisfies is a tautology, not a contract.
