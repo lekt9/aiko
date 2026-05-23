@@ -251,11 +251,65 @@ print(c['status'] if c else 'not-found')
         return 0
         ;;
       402)
+        # Π2 — autopay (chill mode). If the user opted in (CONTRACT_AUTOPAY=1
+        # env or autopay config file), attempt a server-side settle at unbrowse
+        # using the same API key, then retry the original call. Keys live at
+        # unbrowse, not in the substrate — the substrate only orchestrates.
+        local ap_enabled="0" ap_cap_usd="10" ap_reason="" ap_status="" ap_body=""
+        if [ "${CONTRACT_AUTOPAY:-0}" = "1" ]; then ap_enabled="1"; fi
+        if [ -f "$HOME/.config/unbrowse/autopay.json" ]; then
+          ap_enabled="1"
+          ap_cap_usd=$(python3 -c "import json;print(json.load(open('$HOME/.config/unbrowse/autopay.json')).get('cap_usd',10))" 2>/dev/null || echo "10")
+        fi
+        [ -n "${CONTRACT_AUTOPAY_CAP_USD:-}" ] && ap_cap_usd="$CONTRACT_AUTOPAY_CAP_USD"
+        if [ "$ap_enabled" = "1" ] && [ -n "$x402_token" ]; then
+          # Derive the unbrowse base from the original URL (preserve host)
+          local ap_base ap_url
+          ap_base=$(printf '%s' "$x402_url" | python3 -c "import sys, urllib.parse as u; p=u.urlparse(sys.stdin.read().strip()); print(f'{p.scheme}://{p.netloc}')")
+          ap_url="${ap_base}/v1/billing/autopay/charge"
+          echo "  autopay: attempting silent settle (cap=\$${ap_cap_usd}, endpoint=${ap_url})"
+          local ap_payload
+          ap_payload=$(python3 -c "import json,sys; print(json.dumps({'intent_body': sys.argv[1], 'cap_usd': float(sys.argv[2]), 'source':'contract-substrate'}))" "$x402_body" "$ap_cap_usd")
+          local ap_resp
+          ap_resp=$(curl -sS -X POST -w "\n__AP_HTTP_CODE__%{http_code}" \
+            -H "Authorization: Bearer $x402_token" \
+            -H "Content-Type: application/json" \
+            -d "$ap_payload" \
+            "$ap_url" 2>&1)
+          ap_status=$(printf '%s' "$ap_resp" | awk -F'__AP_HTTP_CODE__' '{print $2}' | tail -1)
+          ap_body=$(printf '%s' "$ap_resp" | sed 's/__AP_HTTP_CODE__[0-9]*$//')
+          if [ "$ap_status" = "200" ]; then
+            # Settled — retry the original 402 call
+            local retry_resp retry_code
+            retry_resp=$(curl "${x402_curl_args[@]}" 2>&1)
+            retry_code=$(printf '%s' "$retry_resp" | awk -F'__X402_HTTP_CODE__' '{print $2}' | tail -1)
+            if [ "$retry_code" = "200" ]; then
+              echo "  result: PASS (HTTP 200 — autopay settled \$${ap_cap_usd} cap, retry succeeded)"
+              echo "  autopay_body: $(printf '%s' "$ap_body" | head -c 200)"
+              return 0
+            else
+              ap_reason="autopay charge 200 but retry returned HTTP $retry_code — falling through"
+            fi
+          else
+            case "$ap_status" in
+              404) ap_reason="autopay endpoint not yet shipped at unbrowse (HTTP 404) — falling through to manual" ;;
+              403) ap_reason="autopay forbidden (HTTP 403 — likely no payment method on file) — falling through" ;;
+              402) ap_reason="autopay itself returned 402 (cap exceeded or insufficient method) — falling through" ;;
+              *)   ap_reason="autopay HTTP $ap_status — falling through" ;;
+            esac
+          fi
+        fi
         echo ""
         echo "  === PAYMENT REQUIRED ==="
         echo "  upstream: $x402_url"
         echo "  status:   402"
         echo "  body:     $x402_body"
+        if [ -n "$ap_reason" ]; then
+          echo "  autopay_attempted: $ap_reason"
+          echo "  autopay_body:      $(printf '%s' "$ap_body" | head -c 200)"
+        elif [ "$ap_enabled" != "1" ]; then
+          echo "  autopay_available: opt in with CONTRACT_AUTOPAY=1 or ~/.config/unbrowse/autopay.json {\"cap_usd\": N}"
+        fi
         echo ""
         echo "  Render this block per transport:"
         echo "    Telegram → sendInvoice (XTR Stars or Stripe-via-Telegram) using body.pay_url + amount"
