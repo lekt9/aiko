@@ -203,11 +203,44 @@ try {
   process.exit(2);
 }
 
-const out = { urls: [], ok: true, errors: 0, walked: 0 };
+const out = { urls: [], ok: true, errors: 0, walked: 0, prelude: null };
 
 // queue of URLs to verify; walk adds harvested children to it
 const queue = [...urls.map((u) => ({ url: u, walked: false }))];
 const seen = new Set(urls.map((u) => u));
+
+// Shared context — survives across all URLs so the prelude's cookies +
+// localStorage carry into authenticated URL visits.
+loadEnvFile(envFrom);
+const sharedCtx = await browser.newContext({
+  viewport: { width: 1280, height: 800 },
+  userAgent:
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+});
+
+if (preludePath) {
+  if (!existsSync(preludePath)) {
+    console.error(`prelude file not found: ${preludePath}`);
+    process.exit(2);
+  }
+  let steps;
+  try {
+    steps = JSON.parse(readFileSync(preludePath, "utf8"));
+  } catch (e) {
+    console.error(`prelude JSON parse error: ${(e && e.message) || e}`);
+    process.exit(2);
+  }
+  if (!Array.isArray(steps)) {
+    console.error("prelude must be a JSON array of step objects");
+    process.exit(2);
+  }
+  const fails = await runPrelude(steps, sharedCtx, timeoutMs);
+  out.prelude = { ok: fails.length === 0, failures: fails };
+  if (fails.length > 0) {
+    out.ok = false;
+    out.errors += fails.length;
+  }
+}
 
 try {
   while (queue.length) {
