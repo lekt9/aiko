@@ -143,8 +143,8 @@ async function visibleText() {
   const peMatch = body.match(/P\/E \(TTM\)\s*([\d.]+)/);
   A.push({ name: 'P/E (TTM) numeric', ok: !!peMatch && parseFloat(peMatch[1]) > 0, evidence: peMatch?.[1] });
 
-  const betaMatch = body.match(/β\s*\n?\s*([\d.]+)/);
-  A.push({ name: 'β numeric', ok: !!betaMatch && parseFloat(betaMatch[1]) > 0, evidence: betaMatch?.[1] });
+  const betaMatch = body.match(/β[\s\S]{0,8}?([0-9]+\.[0-9]+)/);
+  A.push({ name: 'β numeric', ok: !!betaMatch && parseFloat(betaMatch[1]) > 0, evidence: betaMatch?.[1] ?? body.slice(body.indexOf('β'), body.indexOf('β')+60) });
 
   const divMatch = body.match(/DIV YIELD\s*[+\-]?([\d.]+)%/);
   A.push({ name: 'Div Yield numeric', ok: !!divMatch, evidence: divMatch?.[0] });
