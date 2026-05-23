@@ -436,12 +436,58 @@ def _hook_from_learning(learning):
 
 def crystallize(base_name, title, description, body, scope_cwd,
                 memory_type="reference", hook=None):
-    """Write the memory file + push the Outline doc. Returns (mem_path, url)."""
+    """Write the memory file + push the Outline doc. Returns (mem_path, url).
+
+    Surfaces a READ + JUDGE prompt on stderr after the write so the calling
+    agent can't miss the file. Contract 285ea9d3: the layering audit catches
+    shape, the agent catches slop. Auto-derived bodies — especially
+    single-sentence learnings dumped via `contract learn` — must be opened
+    and rewritten before the turn ends if they read as slop."""
     memory_dir = resolve_memory_dir(scope_cwd)
     mem_path = write_memory(memory_dir, base_name, description, body,
                             memory_type=memory_type, title=title, hook=hook)
     url = push_outline(title, body + f"\n\nMemory: `{mem_path}`\n")
+    _surface_judge_prompt(mem_path)
     return str(mem_path), url
+
+
+def _surface_judge_prompt(mem_path):
+    """Print the written body + a READ+JUDGE block to stderr. The agent
+    reading the iterate output cannot miss this — slop dies here, not
+    after Lewis catches it."""
+    try:
+        body = Path(mem_path).read_text()
+    except OSError as e:
+        print(f"contract-crystallize: could not re-read {mem_path} for JUDGE prompt: {e}",
+              file=sys.stderr)
+        return
+    bar = "═" * 72
+    print(f"\n{bar}", file=sys.stderr)
+    print(f"  READ + JUDGE — crystallized memory at {mem_path}", file=sys.stderr)
+    print(bar, file=sys.stderr)
+    # First ~40 lines, then a truncation marker so the agent sees the SHAPE.
+    lines = body.splitlines()
+    head = lines[:40]
+    for ln in head:
+        print(f"  │ {ln}", file=sys.stderr)
+    if len(lines) > 40:
+        print(f"  │ ... ({len(lines) - 40} more lines — read the file)",
+              file=sys.stderr)
+    print(bar, file=sys.stderr)
+    print("  JUDGE in-thread: is this comprehensive and useful, or slop?",
+          file=sys.stderr)
+    print("    - body is one wall-of-text paragraph ........ → slop, rewrite",
+          file=sys.stderr)
+    print("    - body is the description verbatim ........... → slop, rewrite",
+          file=sys.stderr)
+    print("    - no worked example, no concrete files/ids ... → slop, rewrite",
+          file=sys.stderr)
+    print("    - Overview / Why / How to apply / Examples ... → keep",
+          file=sys.stderr)
+    print(f"  If slop, edit {mem_path} now (the file is the artifact;",
+          file=sys.stderr)
+    print("  the auto-derive is a starting point, not done).", file=sys.stderr)
+    print(f"{bar}\n", file=sys.stderr)
 
 
 def from_contract(cid):
