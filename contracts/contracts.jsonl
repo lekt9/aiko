@@ -5495,3 +5495,5 @@
 {"event": "child_added", "id": "826b5efd", "child_id": "a502b6a3", "ts": "2026-05-23T14:22:18.330920Z", "agent": "lewistham9x@gmail.com"}
 {"event": "declared", "id": "6129285c", "plan": "binds to global generative-everywhere rule", "action": "contract:3edca1f4", "pointer_type": "contract-ref", "cwd": "/Users/lekt9/Projects/sam", "parent_id": "826b5efd", "pointers": [], "ts": "2026-05-23T14:22:28.889793Z", "agent": "lewistham9x@gmail.com"}
 {"event": "child_added", "id": "826b5efd", "child_id": "6129285c", "ts": "2026-05-23T14:22:28.901835Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "e1275ba9", "plan": "kuri drill: /?gen=1 streams Block dashboard end to end; .scratch/e2e-gen-home-kuri.json all_passed", "action": "test -s .scratch/e2e-gen-home-kuri.json", "pointer_type": "cli", "cwd": "/Users/lekt9/Projects/sam", "parent_id": "826b5efd", "pointers": [], "ts": "2026-05-23T14:22:46.578393Z", "agent": "lewistham9x@gmail.com"}
+{"event": "child_added", "id": "826b5efd", "child_id": "e1275ba9", "ts": "2026-05-23T14:22:46.607974Z", "agent": "lewistham9x@gmail.com"}
