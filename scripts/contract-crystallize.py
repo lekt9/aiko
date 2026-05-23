@@ -103,22 +103,93 @@ def resolve_memory_dir(scope_cwd):
     return GLOBAL_MEMORY_FALLBACK
 
 
+# --- three-layer doc-org rule (contract 767fd41d) ---------------------------
+TITLE_MAX_WORDS = 8
+DESCRIPTION_MAX_CHARS = 200
+HOOK_MAX_CHARS = 150
+
+
+def _enforce_layering(title, description, body, hook):
+    """Refuse to write a memory file that violates the layering rule:
+      - title is ≤ TITLE_MAX_WORDS words and not a prefix of description
+      - description is ≤ DESCRIPTION_MAX_CHARS and not equal to (a prefix of) body
+      - hook is ≤ HOOK_MAX_CHARS and not equal to description
+    Raises ValueError with a precise message so the caller can fix the source,
+    not a silent slop write. The substrate emits evidence (the violation) — the
+    agent fixes the cause."""
+    t = _oneline(title or "")
+    d = _oneline(description or "")
+    b_oneline = _oneline(body or "")
+    h = _oneline(hook or "")
+    word_count = len(t.split())
+    if word_count == 0:
+        raise ValueError("memory layering: title is empty")
+    if word_count > TITLE_MAX_WORDS:
+        raise ValueError(
+            f"memory layering: title has {word_count} words "
+            f"(max {TITLE_MAX_WORDS}): {t!r}")
+    if d and (t == d[:len(t)] or t == d):
+        raise ValueError(
+            f"memory layering: title is a prefix of description — pick a "
+            f"distinct human-readable title. title={t!r} desc={d[:80]!r}")
+    if len(d) > DESCRIPTION_MAX_CHARS:
+        raise ValueError(
+            f"memory layering: description {len(d)} chars > "
+            f"{DESCRIPTION_MAX_CHARS} cap: {d[:60]!r}…")
+    if d and b_oneline:
+        # description must not be equal to body or be a prefix of body
+        if d == b_oneline[:len(d)] or d == b_oneline:
+            raise ValueError(
+                "memory layering: description duplicates body verbatim — "
+                "description is a one-sentence GIST, not the body itself")
+    if len(h) > HOOK_MAX_CHARS:
+        raise ValueError(
+            f"memory layering: hook {len(h)} chars > {HOOK_MAX_CHARS} cap")
+    if d and h and h == d:
+        raise ValueError(
+            "memory layering: hook equals description — pick a tighter one-liner")
+
+
 def write_memory(memory_dir, base_name, description, body,
                  memory_type="reference", title=None, hook=None):
     """Write one memory file + a pointer line into that dir's MEMORY.md
-    matching the house style (see CLAUDE.md auto-memory spec).
+    matching the house style (see CLAUDE.md auto-memory spec). Enforces the
+    three-layer doc-org rule (contract 767fd41d):
 
-    - memory_type ∈ VALID_MEMORY_TYPES, defaults to "reference"
-    - frontmatter carries (name, description, metadata.type)
-    - MEMORY.md line: `- [<Title>](<file.md>) — <one-line-hook>`
-      where Title is human-readable (title arg or derived from base_name)
-      and hook is a short ~100-char teaser (hook arg or first sentence of
-      description). Em-dash, not hyphen, and no "crystallized learning <date>"
-      preamble — the ledger row carries provenance.
-    - Never clobbers: collisions get a numeric suffix.
+      L1 title (≤ 8 words, human-readable)        — the recall key
+      L2 description (≤ 200 chars, one sentence)  — the search gist
+      L3 body (full Markdown, **Why:** + **How to apply:** for feedback)
+
+    Each layer is distinct: title is never a prefix of description, description
+    is never a verbatim prefix of body, hook (the MEMORY.md teaser) is never
+    equal to description and is ≤ 150 chars.
+
+    Provenance (contract id, source) goes in the body's foot, not the head.
+    MEMORY.md line: `- [<Title>](<file.md>) — <hook>` (em-dash).
+
+    Never clobbers: collisions get a numeric suffix.
+    Raises ValueError when layering is violated — callers must derive distinct
+    title/description/hook fields (use _derive_layers as a starting point).
     """
     if memory_type not in VALID_MEMORY_TYPES:
         memory_type = "reference"
+    # Fill in defaults from base_name BEFORE enforcement so callers can
+    # depend on _derive_layers's defaults being layering-valid.
+    if not title:
+        # Capitalize-first-word title from the slug — typically already a
+        # short human-readable phrase. Slug is already ≤ 60 chars; truncate
+        # to the first 8 words to satisfy the layer cap.
+        words = base_name.replace("-", " ").split()[:TITLE_MAX_WORDS]
+        title = " ".join(words).strip().capitalize()
+    desc = _oneline(description)
+    if not hook:
+        # First sentence of description (≤ HOOK_MAX_CHARS), falling back to a
+        # truncated description with ellipsis.
+        first = re.split(r"(?<=[.!?])\s+", desc.strip(), maxsplit=1)[0]
+        hook = first if len(first) <= HOOK_MAX_CHARS else \
+               desc[:HOOK_MAX_CHARS - 1].rstrip() + "…"
+    _enforce_layering(title, desc, body, hook)
+
     memory_dir.mkdir(parents=True, exist_ok=True)
     path = memory_dir / f"{base_name}.md"
     n = 2
@@ -126,7 +197,6 @@ def write_memory(memory_dir, base_name, description, body,
         path = memory_dir / f"{base_name}-{n}.md"
         n += 1
     name = path.stem
-    desc = _oneline(description)
     front = (
         "---\n"
         f"name: {name}\n"
@@ -137,18 +207,33 @@ def write_memory(memory_dir, base_name, description, body,
     )
     path.write_text(front + body.rstrip() + "\n")
 
-    # Title for MEMORY.md link text — human-readable, not a 600-char description
-    if not title:
-        title = name.replace("-", " ").strip().capitalize()
-    if not hook:
-        # First sentence (~120 chars), falling back to truncated description
-        first = re.split(r"(?<=[.!?])\s+", desc.strip(), maxsplit=1)[0]
-        hook = first if len(first) <= 200 else desc[:200].rstrip() + "..."
-
     index = memory_dir / "MEMORY.md"
     with index.open("a") as f:
         f.write(f"- [{title}]({path.name}) — {_oneline(hook)}\n")
     return path
+
+
+def _derive_layers(learning):
+    """Given the raw learning text, derive (title, description, hook) tuples
+    that satisfy the three-layer rule.
+
+      title       — first ≤ 8 words of the lead sentence, capitalized
+      description — first sentence (≤ 200 chars), distinct from body
+      hook        — first sentence (≤ 150 chars), distinct from description
+                    when possible (truncates more aggressively)
+    The body itself stays full text — the caller composes it via _compose_body.
+    """
+    raw = _oneline(learning)
+    first = re.split(r"(?<=[.!?])\s+", raw, maxsplit=1)[0]
+    words = first.split()
+    title = " ".join(words[:TITLE_MAX_WORDS]).rstrip(".,:;")
+    # Description: one sentence, ≤ 200 chars
+    description = first if len(first) <= DESCRIPTION_MAX_CHARS \
+                  else first[:DESCRIPTION_MAX_CHARS - 1].rstrip() + "…"
+    # Hook: tighter — ≤ 150 chars, drop the trailing period if it fits cleanly
+    hook = first if len(first) <= HOOK_MAX_CHARS \
+           else first[:HOOK_MAX_CHARS - 1].rstrip() + "…"
+    return title, description, hook
 
 
 # -- Outline surface ----------------------------------------------------------
