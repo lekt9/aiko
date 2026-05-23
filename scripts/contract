@@ -1384,6 +1384,20 @@ else:
 print(f'  {id} -> {st}')
 "
     _fire_contract_hooks "mark" "$ID" "0"
+    # BREAK ON RESOLUTION (refractory period): every satisfied mark fires a
+    # substrate-enforced reflection pause BEFORE propagation. Maps to a
+    # neuron's absolute refractory period — the cell that just fired
+    # cannot fire again until the soma re-polarises. KEY 3 is the agent's
+    # re-judgment: did this mark invalidate downstream claims?
+    if [ "$STATUS" = "satisfied" ]; then
+      echo
+      echo "=== BREAK ON RESOLUTION (refractory) ==="
+      echo "  $ID just fired. KEY 3 (agent): pause and judge BEFORE propagating:"
+      echo "    · is the mark still genuine in retrospect (no fake-green)?"
+      echo "    · does this satisfaction invalidate any downstream claim?"
+      echo "    · are any peer or parent contracts now stale or duplicated?"
+      echo "  If any answer is yes — supersede / revise / iterate before continuing."
+    fi
     # SIGNAL PROPAGATION: a contract becoming satisfied is an action
     # potential. Surface the wavefront — parent organ, contract:<id>
     # referrers, corroborated synapses — so the state change is not inert.
