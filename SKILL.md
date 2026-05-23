@@ -1262,7 +1262,7 @@ plus a Venice API key be enough to drive iterate-judge-mark loops
 end to end — no chat client required. The substrate's mechanical-and-LLM
 combo IS the agent.
 
-Origin: contract `5b6d24a2`, 2026-05-23. Lewis's ask: "/contract to check
+Origin: contract `9d00660b`, 2026-05-23. Lewis's ask: "/contract to check
 if we even need an agent runtime or /contract that starts via a binary
 of an llm or even a pay.sh /contract to a api provider from venice might
 even be enough." Answer: no runtime needed; Λ1 lets any LLM endpoint
