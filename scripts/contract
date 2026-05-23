@@ -1230,6 +1230,167 @@ print(f'        is_team_member({aliases[0] if aliases else canon!r}) now returns
 "
     ;;
 
+  session)
+    # Σ6 — multi-client presence + claim semantics. One canonical identity
+    # (resolved via Σ3) may have many concurrent clients (telegram, web,
+    # panel, terminal). The substrate doesn't dictate where requirement
+    # blocks render; it surfaces WHICH clients are present and lets the
+    # first claim win.
+    SUB="${1:-}"; shift || true
+    case "$SUB" in
+      register)
+        # contract session register --canonical <id> --transport <name> --client-id <id> [--ttl 300]
+        SESS_CANON=""; SESS_TRANSPORT=""; SESS_CID=""; SESS_TTL="300"
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --canonical)  SESS_CANON="${2:-}"; shift 2 ;;
+            --transport)  SESS_TRANSPORT="${2:-}"; shift 2 ;;
+            --client-id)  SESS_CID="${2:-}"; shift 2 ;;
+            --ttl)        SESS_TTL="${2:-300}"; shift 2 ;;
+            *) shift ;;
+          esac
+        done
+        [ -n "$SESS_CANON" ] && [ -n "$SESS_TRANSPORT" ] && [ -n "$SESS_CID" ] || {
+          echo "usage: contract session register --canonical <id> --transport <name> --client-id <id> [--ttl 300]" >&2
+          exit 2
+        }
+        MH_CANON="$SESS_CANON" MH_T="$SESS_TRANSPORT" MH_CID="$SESS_CID" MH_TTL="$SESS_TTL" _py_inline "
+import os, json, time, pathlib
+from contract_core import resolve_identity
+canon = resolve_identity(os.environ['MH_CANON'])
+inbox = pathlib.Path.home() / '.contracts' / 'inbox' / 'sessions'
+inbox.mkdir(parents=True, exist_ok=True)
+p = inbox / f'{canon.replace(\"/\",\"_\")}.jsonl'
+row = {
+  'event': 'session_register',
+  'canonical': canon,
+  'transport': os.environ['MH_T'],
+  'client_id': os.environ['MH_CID'],
+  'ttl': int(os.environ['MH_TTL']),
+  'ts': time.time(),
+  'ts_iso': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+}
+with p.open('a') as f:
+  f.write(json.dumps(row) + '\n')
+print(f'registered: {os.environ[\"MH_CID\"]} ({os.environ[\"MH_T\"]}) → {canon}')
+print(f'  inbox: {p}')
+print(f'  ttl:   {os.environ[\"MH_TTL\"]}s — heartbeat to keep alive')
+"
+        ;;
+      list)
+        # contract session list --canonical <id> [--ttl 300]
+        SESS_CANON=""; SESS_TTL="300"
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --canonical)  SESS_CANON="${2:-}"; shift 2 ;;
+            --ttl)        SESS_TTL="${2:-300}"; shift 2 ;;
+            *) shift ;;
+          esac
+        done
+        [ -n "$SESS_CANON" ] || { echo "usage: contract session list --canonical <id> [--ttl 300]" >&2; exit 2; }
+        MH_CANON="$SESS_CANON" MH_TTL="$SESS_TTL" _py_inline "
+import os, json, time, pathlib
+from contract_core import resolve_identity
+canon = resolve_identity(os.environ['MH_CANON'])
+p = pathlib.Path.home() / '.contracts' / 'inbox' / 'sessions' / f'{canon.replace(\"/\",\"_\")}.jsonl'
+ttl = int(os.environ['MH_TTL'])
+now = time.time()
+active = {}  # client_id -> latest row
+if p.exists():
+  for line in p.read_text().splitlines():
+    if not line.strip(): continue
+    try: r = json.loads(line)
+    except: continue
+    if r.get('event') != 'session_register': continue
+    if (now - r.get('ts', 0)) > max(ttl, r.get('ttl', 300)): continue
+    cid = r.get('client_id')
+    if cid:
+      active[cid] = r
+print(f'=== SESSIONS for {canon} (ttl={ttl}s) ===')
+if not active:
+  print('  (no active clients)')
+else:
+  for cid, r in sorted(active.items(), key=lambda kv: -kv[1]['ts']):
+    age = int(now - r['ts'])
+    print(f'  {cid:24s} transport={r[\"transport\"]:10s} age={age:4d}s')
+"
+        ;;
+      claim)
+        # contract session claim <requirement-id> --client-id <id>
+        REQ_ID="${1:-}"; shift || true
+        SESS_CID=""
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --client-id) SESS_CID="${2:-}"; shift 2 ;;
+            *) shift ;;
+          esac
+        done
+        [ -n "$REQ_ID" ] && [ -n "$SESS_CID" ] || {
+          echo "usage: contract session claim <requirement-id> --client-id <id>" >&2
+          exit 2
+        }
+        MH_REQ="$REQ_ID" MH_CID="$SESS_CID" _py_inline "
+import os, json, time, pathlib, sys
+inbox = pathlib.Path.home() / '.contracts' / 'inbox' / 'claims'
+inbox.mkdir(parents=True, exist_ok=True)
+p = inbox / f'{os.environ[\"MH_REQ\"].replace(\"/\",\"_\")}.jsonl'
+existing = []
+if p.exists():
+  for line in p.read_text().splitlines():
+    if not line.strip(): continue
+    try: existing.append(json.loads(line))
+    except: pass
+prior_claim = next((r for r in existing if r.get('event') == 'claim'), None)
+if prior_claim and prior_claim.get('client_id') != os.environ['MH_CID']:
+  print(f'=== ALREADY CLAIMED ===')
+  print(f'  requirement: {os.environ[\"MH_REQ\"]}')
+  print(f'  claimed by:  {prior_claim[\"client_id\"]} at {prior_claim.get(\"ts_iso\",\"?\")}')
+  print(f'  this client: {os.environ[\"MH_CID\"]} — show \"resolved on another device\" hint')
+  sys.exit(1)
+row = {
+  'event': 'claim',
+  'requirement_id': os.environ['MH_REQ'],
+  'client_id': os.environ['MH_CID'],
+  'ts': time.time(),
+  'ts_iso': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+}
+with p.open('a') as f:
+  f.write(json.dumps(row) + '\n')
+print(f'claimed: {os.environ[\"MH_REQ\"]} by {os.environ[\"MH_CID\"]}')
+print(f'  other clients calling claim on this id will be refused')
+"
+        ;;
+      ""|help|--help|-h)
+        cat <<'USAGE'
+usage: contract session <subcommand>
+
+Σ6 — multi-client session presence + claim. Compose with Σ3 (aliases) +
+Σ4 (agent inbox fan-out) for cross-device generative-UI routing.
+
+  register   --canonical <id> --transport <name> --client-id <id> [--ttl 300]
+             Announce this client is online for a canonical identity.
+             Heartbeat by re-running before TTL expires.
+
+  list       --canonical <id> [--ttl 300]
+             Show all clients currently active for an identity.
+             A transport adapter consults this before rendering a
+             requirement block — if multiple sessions are present,
+             one renders + claims; the others show a handoff hint.
+
+  claim      <requirement-id> --client-id <id>
+             First-write-wins claim on a requirement block. Subsequent
+             claims on the same id are refused (exit 1) so two devices
+             don't both pop the same payment modal.
+USAGE
+        ;;
+      *)
+        echo "unknown session subcommand: $SUB" >&2
+        echo "see: contract session help" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+
   list)
     SHOW_MERGED=""
     VIEWER=""
