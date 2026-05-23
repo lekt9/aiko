@@ -624,6 +624,77 @@ From `principles-as-harnesses.md`: a principle with `--action` IS a contract. Fr
 
 See also `references/agentic-ux-copilot.md` for the standing-default doctrine: every `/contract`-built site with a web UI embeds an agentic copilot whose tools are the site's own indexed APIs and whose knowledge is the site's own page content — the same truth-telling discipline as the primitive, applied to the end user.
 
+## Receptors (external events as ligands)
+
+A pile of cells with signal propagation is still **closed** — nothing
+from outside the agent can fire it. Receptors close that loop. The
+biology equivalent is a **ligand-gated ion channel**: an external signal
+(telegram message, webhook hit, Stripe event) binds, the receptor
+depolarises, the contract iterates.
+
+**A receptor is NOT a new shape.** It is a convention layered on `cell`
+or `loop-until` — the `--action` blocks on an inbox file populated by an
+external injector. The shape-is-the-type-system rule (and contract
+`310f425f`) forbids a new `--lifetime receptor` flag; the existing
+shapes already cover one-shot (cell) and re-fire (loop-until).
+
+### Inbox layout
+
+```
+~/.contracts/inbox/
+  telegram/<chat-id>.jsonl     # one row per group message  (poller writes)
+  webhook/<source>.jsonl        # one row per signed POST    (worker writes)
+  stripe/<event-type>.jsonl     # one row per stripe event   (forwarder writes)
+```
+
+Each injector appends one JSON line per event. Files are append-only and
+agent-agnostic — same shape as `contracts.jsonl`. Row schema is free but
+should carry `id`/`message_id` + a sender/source tag + payload.
+
+### Declaring a receptor
+
+```bash
+# Receptor that fires when 'ping' appears in the telegram inbox
+contract declare "@aiko receives a ping in the group" \
+  --action 'python3 ~/.claude/skills/contract/scripts/wait-for-event.py --inbox telegram --filter ping --timeout 60'
+
+# Receptor that fires when Stripe records a checkout success
+contract declare "first paid customer" \
+  --action 'python3 ~/.claude/skills/contract/scripts/wait-for-event.py --inbox stripe --field type --equals checkout.session.completed --timeout 86400'
+
+# Re-firing receptor — every group message that contains 'redirect' triggers a wave
+contract declare "watch for redirect command in group" \
+  --action 'loop-until:python3 ~/.claude/skills/contract/scripts/wait-for-event.py --inbox telegram --filter redirect --timeout 5'
+```
+
+### `wait-for-event.py` interface
+
+```
+--inbox <channel>          # subdir under ~/.contracts/inbox/  (required)
+--filter <regex>           # match against the full JSON row
+--field <dotted.path>      # match a specific field
+--equals <string>          # exact match for --field
+--since-id <int>           # only consider rows with id > since-id
+--timeout <seconds>        # default 30
+--poll <seconds>           # default 1
+```
+
+Exits 0 on first match (PASS), 1 on timeout (FAIL), 2 on usage error.
+Prints the matched row as JSON to stdout. Never writes to the ledger —
+that is the contract CLI's job after KEY 2.
+
+### Standard injectors
+
+| Channel | Injector | Inbox file |
+|---|---|---|
+| `telegram` | bot poller daemon (long-poll `getUpdates`) | `~/.contracts/inbox/telegram/<chat-id>.jsonl` |
+| `webhook` | Cloudflare-fronted HTTPS endpoint, HMAC-verified | `~/.contracts/inbox/webhook/<source>.jsonl` |
+| `stripe` | stripe webhook → forwarder | `~/.contracts/inbox/stripe/<event-type>.jsonl` |
+
+Injectors live OUTSIDE the contract skill — they are integrations. A
+receptor depends only on the inbox schema, not on which injector wrote
+the row. New channels are new directories; no skill change required.
+
 ## Bundled scripts
 
 - `scripts/contract` — CLI front door (declare, iterate, build, spawn, solve, status, list, search, _mark)
