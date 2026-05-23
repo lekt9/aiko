@@ -46,7 +46,10 @@ import contract_core  # noqa: E402
 OUTLINE_DIR = Path.home() / ".config" / "outline"
 COLLECTION_CACHE = Path.home() / ".contracts" / "outline-collection.txt"
 COLLECTION_NAME = "Contracts"
-LEARNINGS_FALLBACK = Path.home() / ".contracts" / "learnings"
+# Global last-resort memory dir. NOT inside ~/.contracts/ — that path is
+# reserved for the literal contract ledger; memory lives under ~/.claude/.
+GLOBAL_MEMORY_FALLBACK = Path.home() / ".claude" / "memory"
+VALID_MEMORY_TYPES = {"feedback", "project", "reference", "user"}
 
 
 def _now_iso() -> str:
