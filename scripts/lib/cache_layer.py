@@ -73,26 +73,32 @@ def lookup(key: str) -> Optional[dict]:
         return None
     age = time.time() - p.stat().st_mtime
     if age > TTL_SECONDS:
-        try:
-            p.unlink()
-        except OSError:
-            pass
+        _unlink_or_warn(p, "ttl-expired-cleanup")
         return None
     try:
         data = json.loads(p.read_text())
-    except (OSError, json.JSONDecodeError):
-        try:
-            p.unlink()
-        except OSError:
-            pass
+    except (OSError, json.JSONDecodeError) as e:
+        sys.stderr.write(f"cache_layer.lookup: corrupt entry {p.name} ({e}); evicting\n")
+        _unlink_or_warn(p, "corrupt-entry-evict")
         return None
-    # touch — sliding window extends from last access
     try:
-        os.utime(p, None)
-    except OSError:
-        pass
+        os.utime(p, None)  # touch — sliding window extends from last access
+    except OSError as e:
+        sys.stderr.write(f"cache_layer.lookup: utime failed on {p.name} ({e}); window may expire early\n")
     data["_age_s"] = round(age, 3)
     return data
+
+
+def _unlink_or_warn(p: Path, ctx: str) -> None:
+    """Best-effort cache-file removal. The cache is a write-through helper —
+    if cleanup fails, the worst case is a stale file lingers until TTL evicts
+    a fresh write. Still surface the failure so silent corruption is impossible."""
+    try:
+        p.unlink()
+    except FileNotFoundError:
+        return  # already gone; not a failure
+    except OSError as e:
+        sys.stderr.write(f"cache_layer: unlink {p.name} failed during {ctx} ({e})\n")
 
 
 def write(key: str, action_exit: int, action_result: str, wave: int,
