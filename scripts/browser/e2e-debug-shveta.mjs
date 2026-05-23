@@ -39,13 +39,13 @@ await step("click Chat", () => page.click("button:has-text('Chat')"));
 await page.waitForTimeout(1500);
 await dumpText("chat-tab");
 
-await step("fill chat input", () => page.fill("input[placeholder*='contract turn']", "make 2 hailuo variants for perfect-night"));
+await step("fill chat input", () => page.fill("input[placeholder*='contract turn']", "make 1 variants for perfect-night"));
 await step("submit chat", () => page.click("form button[type=submit]"));
 await page.waitForTimeout(2500);
 await dumpText("chat-fired");
 
-console.log("\n--- waiting 180s for video URLs to land ---");
-for (let i = 0; i < 18; i++) {
+console.log("\n--- waiting 240s for video URLs to land (nano-banana ~8s + seedance ~120s + poll lag) ---");
+for (let i = 0; i < 24; i++) {
   await page.waitForTimeout(10000);
   const html = await page.content();
   const m = html.match(/(https?:\/\/[^"'<>\s]*?\.(mp4|m3u8|webm))/g);
