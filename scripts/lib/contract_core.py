@@ -240,6 +240,87 @@ def declare(plan: str, action: str, parent_id: Optional[str] = None,
     return cid
 
 
+def record_alias(canonical: str, aliases: list) -> None:
+    """Σ3: declare an identity equivalence class.
+
+    Writes one `alias` event row mapping `canonical` to every identity in
+    `aliases`. Resolution is union-find — declaring (A, B) and later (B, C)
+    yields the canonical A for all three. The 'canonical' name from the
+    most-recent row covering a group wins as the public-facing identity.
+
+    The bot's `--for foundry_aiko_bot` resolves to whatever canonical the
+    bot was aliased into (or stays itself if never aliased). Lewis's three
+    aliases (lewistham9x@gmail / lewis@getfoundry.app / lekt8) collapse to
+    one ledger-team-member after one `contract alias` call."""
+    row = {"event": "alias", "canonical": canonical, "aliases": list(aliases), "ts": _now()}
+    _append(row)
+    # Bust the caches so the next visibility query sees the new alias.
+    global _TEAM_CACHE, _ALIAS_CACHE
+    _TEAM_CACHE = None
+    _ALIAS_CACHE = None
+
+
+def _build_alias_map() -> dict:
+    """Walk every `alias` event row and union-find them into an identity →
+    canonical map. Returns a dict where every identity that has ever
+    appeared in an alias row maps to its group's canonical name.
+
+    Algorithm:
+      1. For each alias row, treat (canonical, *aliases) as a set; union
+         them all into one group.
+      2. The canonical name from the most-recent row covering the group
+         wins (later declarations supersede earlier ones for the public
+         identity, but no identity is ever lost — supersession of names
+         only, not of membership).
+    Identities not in any alias row resolve to themselves at query time
+    (handled by resolve_identity)."""
+    parent: dict = {}
+    def find(x: str) -> str:
+        # path-compression in one pass
+        root = x
+        while parent.get(root, root) != root:
+            root = parent[root]
+        while parent.get(x, x) != root:
+            nxt = parent[x]
+            parent[x] = root
+            x = nxt
+        return root
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+    declared_canon: dict = {}
+    for row in _rows():
+        if row.get("event") != "alias":
+            continue
+        canon = (row.get("canonical") or "").strip()
+        aliases = [a for a in (row.get("aliases") or []) if a]
+        if not canon:
+            continue
+        for ident in [canon, *aliases]:
+            parent.setdefault(ident, ident)
+        for a in aliases:
+            union(canon, a)
+        rep = find(canon)
+        declared_canon[rep] = canon  # latest declaration wins for the group's name
+    result: dict = {}
+    for ident in list(parent.keys()):
+        rep = find(ident)
+        result[ident] = declared_canon.get(rep, ident)
+    return result
+
+
+def resolve_identity(identity: Optional[str]) -> str:
+    """Σ3: map any identity to its canonical form via alias rows.
+    Identities not aliased return themselves. Empty/None → empty string."""
+    if not identity:
+        return ""
+    global _ALIAS_CACHE
+    if _ALIAS_CACHE is None:
+        _ALIAS_CACHE = _build_alias_map()
+    return _ALIAS_CACHE.get(identity, identity)
+
+
 def visible_to(contract_or_row: dict, viewer: Optional[str]) -> bool:
     """Σ2: is this contract/row visible to `viewer`?
 
