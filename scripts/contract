@@ -2015,6 +2015,17 @@ for fpath in sorted(glob.glob(W_DIR + '/*.json')):
     }
     with open(inbox_path, 'a') as fh:
         fh.write(json.dumps(event) + '\\n')
+    # Mail-stdin doctrine (b2d15246): stage the event at
+    # ~/.contracts/inbox-pending/<cid>.json so the iterate's _run_action
+    # pipes it to the action's stdin AND exports CONTRACT_INBOX_EVENT.
+    # _run_action removes the file after consumption (idempotent fire).
+    pending_dir = os.path.expanduser('~/.contracts/inbox-pending')
+    try:
+        os.makedirs(pending_dir, exist_ok=True)
+        with open(pending_dir + '/' + cid + '.json', 'w') as fh:
+            json.dump(event, fh)
+    except Exception:
+        pass
     # Auto-iterate. This emits the standard two-key exit; KEY 2 still belongs
     # to the agent next session. The fire is mechanical, not a verdict.
     try:
