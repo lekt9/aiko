@@ -139,7 +139,11 @@ def _enforce_layering(title, description, body, hook):
         raise ValueError(
             f"memory layering: title equals description verbatim — pick a "
             f"shorter human-readable headline. title={t!r}")
-    if d and t.lower() == d[:len(t)].lower() and len(t) > 0.6 * len(d):
+    # Same threshold as title==description: for short descriptions there's
+    # no room for the title to be tighter than a prefix.
+    if (d and t.lower() == d[:len(t)].lower()
+            and len(t) > 0.6 * len(d)
+            and len(d) > 40):
         raise ValueError(
             f"memory layering: title is a long prefix of description ("
             f"{len(t)}/{len(d)} chars = {len(t)/len(d):.0%}) — pick a "
