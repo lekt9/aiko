@@ -759,6 +759,63 @@ within a VisibilityProvider` on first paint and 404'd a baked-in
 Google Fonts woff2 URL. The agent only learned this when the user pasted
 the console log. The gate exists so this never recurs.
 
+## Empathy gate (standing default — extends served-surface)
+
+The served-surface gate catches **crashes** (console.error, pageerror, 4xx).
+It does NOT catch a worse failure mode: a page that loads, hydrates without
+throwing, and renders an **empty shell**. A skeleton with no content, an
+auth-protected route that landed an unauthed user on a blank page, an
+error-boundary that swallowed the throw and painted "Application error: a
+client-side exception has occurred" — these all pass console-error checks
+while genuinely failing for the human reading the page.
+
+`verify.mjs` is the same script for both layers. Empathy primitives:
+
+| Flag | Asserts | Default |
+|---|---|---|
+| `--wait-after-load <ms>` | hydration pause | 1500 |
+| `--wait-until <evt>` | playwright nav-complete | `domcontentloaded` (`networkidle` hangs on sites with poll loops) |
+| `--expect <substr>` | `document.body.innerText` contains the substring | (none) |
+| `--expect-not <substr>` | `document.body.innerText` does NOT contain | built-ins: `"Application error: a client-side exception"`, `"__next_error__"`, `"something went wrong"` |
+| `--min-text <N>` | `innerText.length >= N` (skeleton markup with no visible copy fails) | 0 = off |
+| `--no-default-expect-not` | drop the built-in error-boundary guards | — |
+
+The gate reads `document.body.innerText` (not `outerHTML`) — invisible
+nodes and `display:none` skeleton placeholders don't count as content. A
+real user reads visible text; the gate does the same.
+
+Worked example — gate a guest cockpit that should render `Composer` + `attach`:
+
+```bash
+SID=$(curl -sS -X POST https://my-site.example/api/start-guest \
+        -H 'content-type: application/json' -d '{}' \
+      | python3 -c 'import json,sys;print(json.load(sys.stdin)["sessionId"])')
+
+contract spawn <root> \
+  "guest cockpit renders content, not empty error boundary" \
+  --action "bash ~/.claude/skills/contract/scripts/verify-served-surface.sh \
+              \"https://my-site.example/app?guest=$SID\" \
+              --wait-after-load 5000 \
+              --min-text 300 \
+              --expect 'attach' \
+              --expect-not 'Application error' \
+              --report .scratch/empathy.json"
+```
+
+**Why two layers in one script:** the served-surface and empathy checks
+share the same headless load — running them as one walk is cheaper and
+avoids the false-confidence of "served-surface passed so we're good" when
+the empathy layer would have caught the empty page. Old `--allow` /
+`--report` semantics are unchanged; empathy flags are additive.
+
+Origin: a 2026-05-23 ship that passed the served-surface gate (no
+console.error, no pageerror, no 4xx) on `https://unreel.ai/app?guest=<sid>`
+yet rendered the Next.js error boundary instead of the cockpit, because
+the `replay.getfoundry.app/tracker.js` host was down and the React tree
+threw silently. The empathy gate would have caught it via `--expect-not
+"Application error"` AND via `--min-text 300` (the error boundary has
+~80 chars of visible text). The gate exists so this never recurs.
+
 ## Observe-original: trace before extract (standing default for any rewrite)
 
 A counterpart to the served-surface gate, run in the **opposite
