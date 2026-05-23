@@ -74,7 +74,8 @@ check "humanlike/dimensions"       python3 -c \
                                      "import sys; t=open('$SKILL_DIR/SKILL.md').read().lower(); sys.exit(0 if all(d in t for d in ['humanlike','emotion','sociology','aesthetics']) and all(g in t.lower() for g in ['ε1','ε2','σ1','α1']) else 1)"
 check "humanlike/agent-attribution" env PYTHONPATH="$SCRIPTS/lib" CONTRACTS_STORE="$(mktemp)" CONTRACT_AGENT="skill-self-test" python3 -c \
                                      "import json, os; from contract_core import declare; cid=declare('attribution row must carry agent','true'); row=json.loads(open(os.environ['CONTRACTS_STORE']).readline()); assert row['id']==cid and row.get('agent')=='skill-self-test'"
-check "humanlike/plan-quality"      env CONTRACTS_STORE="$(mktemp)" bash "$CLI" declare "fix ui" --action true --no-drive
+check "humanlike/plan-quality"      bash -c \
+                                     "CONTRACTS_STORE=\"\$(mktemp)\" bash '$CLI' declare 'fix ui' --action true --no-drive 2>&1 | grep -q 'plan text reads as a task'"
 check "humanlike/failure-streak"    bash -c \
                                      "tmp=\$(mktemp); out=\$(CONTRACTS_STORE=\"\$tmp\" bash '$CLI' declare 'failure streak probe contract' --action false --no-drive); id=\$(printf '%s\n' \"\$out\" | awk '/^declared:/ {print \$2}'); CONTRACTS_STORE=\"\$tmp\" bash '$CLI' iterate \"\$id\" >/dev/null; CONTRACTS_STORE=\"\$tmp\" bash '$CLI' iterate \"\$id\" >/dev/null; CONTRACTS_STORE=\"\$tmp\" bash '$CLI' iterate \"\$id\" 2>&1 | grep -q 'failure-streak escalation'"
 check "humanlike/over-iteration"    bash -c \
