@@ -991,6 +991,56 @@ public = {
     'blocked_by': blocked_by, 'inhibits': c.get('inhibits'),
     'pierced_layers': c.get('pierced_layers'),
 }
+
+# === DAG context (the relevant funnel/sequence/graph neighborhood) ===
+# Walk one hop in every direction so 'contract show <id> --context' surfaces
+# how this row sits inside its substrate-graph neighborhood: parent organ,
+# children, contract-refs in (who gates on us), refs out (who we gate on
+# via contract:<id> action), synapses (corroborated peers), inhibitors.
+context = None
+if os.environ.get('MH_CTX'):
+    def _node(ref_id):
+        n = get(ref_id)
+        if not n: return {'id': ref_id, 'plan': '(not in ledger)', 'status': '?', 'layer': None}
+        return {'id': ref_id, 'plan': (n.get('plan') or '')[:60],
+                'status': n.get('status','pending'),
+                'layer': n.get('layer'), 'layer_name': n.get('layer_name')}
+    # Refs OUT: who do WE point at? contract: action + parent
+    refs_out = []
+    if c.get('action','').startswith('contract:'):
+        refs_out.append(_node(c['action'].split(':',1)[1]))
+    # Refs IN: who points at us as contract:<our-id> in their action?
+    refs_in = []
+    for r in all_rows:
+        if r.get('event') != 'declared': continue
+        if r.get('id') == cid: continue
+        act = r.get('action','') or ''
+        if act == f'contract:{cid}':
+            refs_in.append(_node(r['id']))
+    # Synapses: corroborate events naming us
+    synapses = []
+    for r in all_rows:
+        if r.get('event') != 'corroborate': continue
+        if cid in (r.get('ids') or []):
+            for other in (r.get('ids') or []):
+                if other != cid: synapses.append(_node(other))
+    # Inhibitors: contracts whose 'inhibits' list contains us AND are satisfied
+    inhibitors_active = []
+    for r in all_rows:
+        if r.get('event') != 'declared': continue
+        if cid in (r.get('inhibits') or []):
+            inh_status = get(r['id']) or {}
+            if inh_status.get('status') == 'satisfied':
+                inhibitors_active.append(_node(r['id']))
+    context = {
+        'parent':   _node(c['parent_id']) if c.get('parent_id') else None,
+        'children': [_node(ch) for ch in (c.get('children') or [])],
+        'refs_out': refs_out,
+        'refs_in':  refs_in,
+        'synapses': synapses,
+        'inhibitors_active': inhibitors_active,
+    }
+
 internals = None
 if os.environ.get('MH_INT'):
     internals = {
