@@ -49,14 +49,16 @@ TC=$(echo "$OUT" | sed -nE 's/^  target_canonical:[[:space:]]+(.+)$/\1/p' | head
 [ "$TC" = "alice@example.com" ] || { echo "FAIL: target_canonical='$TC', expected alice@example.com"; exit 1; }
 
 # === Phase 3: openai-render.py lifts the block to an agent_routed tool_call ===
-SSE=$(echo "$OUT" | python3 "$RENDER" 2>&1)
-echo "$SSE" | grep -q '"agent_routed"' \
-  || { echo "FAIL: openai-render did not emit agent_routed tool_call. SSE="; echo "$SSE" | head -40; exit 1; }
+SSE_FILE="$TD/sse.txt"
+echo "$OUT" | python3 "$RENDER" > "$SSE_FILE" 2>&1
+grep -q '"agent_routed"' "$SSE_FILE" \
+  || { echo "FAIL: openai-render did not emit agent_routed tool_call. SSE="; head -40 "$SSE_FILE"; exit 1; }
 
 # Every data: chunk parses as JSON, every tool_call.arguments parses as JSON
-python3 - <<PY
-import json, sys, re
-sse = """$SSE"""
+python3 - "$SSE_FILE" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    sse = f.read()
 got_agent_routed = False
 args_parseable = False
 for line in sse.splitlines():
