@@ -4596,3 +4596,5 @@
 {"event":"iterated","id":"56cf325b","wave":1,"action_exit":0,"action_result":"PASS","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T09:54:09Z"}
 {"event":"satisfied","id":"56cf325b","wave":1,"ts":"2026-05-23T09:54:09Z"}
 {"event":"status_update","id":"56cf325b","status":"satisfied","ts":"2026-05-23T09:54:09Z"}
+{"event": "declared", "id": "20402720", "plan": "apoptosis primitive: SKILL.md documents time-bound truth as a loop-until convention (no new shape), 'contract stale' verb exists that scans satisfied rows older than --since and surfaces them, and verb-gates/stale/verify.sh proves the verb's happy path + unknown-id refusal", "action": "bash ~/.claude/skills/contract/verb-gates/stale/verify.sh", "pointer_type": "cli", "cwd": "/private/tmp", "parent_id": "082e72cd", "pointers": [], "ts": "2026-05-23T09:54:47.754733Z", "agent": "lewistham9x@gmail.com"}
+{"event": "child_added", "id": "082e72cd", "child_id": "20402720", "ts": "2026-05-23T09:54:47.766698Z", "agent": "lewistham9x@gmail.com"}
