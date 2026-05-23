@@ -4460,3 +4460,19 @@
 {"event":"revised","id":"2b073b01","new_action":"bash checks/lane-no-roster.sh","reason":"","ts":"2026-05-23T09:18:01Z"}
 {"event":"iterated","id":"72c839aa","wave":3,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T09:18:06Z"}
 {"event":"iterated","id":"2b073b01","wave":2,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T09:18:06Z"}
+{"event":"satisfied","id":"72c839aa","wave":3,"ts":"2026-05-23T09:18:28Z"}
+{"event":"status_update","id":"72c839aa","status":"satisfied","ts":"2026-05-23T09:18:28Z"}
+{"event":"satisfied","id":"73dc9224","wave":1,"ts":"2026-05-23T09:18:28Z"}
+{"event":"status_update","id":"73dc9224","status":"satisfied","ts":"2026-05-23T09:18:28Z"}
+{"event":"satisfied","id":"7e17e10f","wave":1,"ts":"2026-05-23T09:18:29Z"}
+{"event":"status_update","id":"7e17e10f","status":"satisfied","ts":"2026-05-23T09:18:29Z"}
+{"event":"satisfied","id":"eda17245","wave":1,"ts":"2026-05-23T09:18:30Z"}
+{"event":"status_update","id":"eda17245","status":"satisfied","ts":"2026-05-23T09:18:30Z"}
+{"event":"satisfied","id":"2332a67d","wave":1,"ts":"2026-05-23T09:18:31Z"}
+{"event":"status_update","id":"2332a67d","status":"satisfied","ts":"2026-05-23T09:18:31Z"}
+{"event":"satisfied","id":"a2245080","wave":1,"ts":"2026-05-23T09:18:32Z"}
+{"event":"status_update","id":"a2245080","status":"satisfied","ts":"2026-05-23T09:18:32Z"}
+{"event":"satisfied","id":"65f47965","wave":1,"ts":"2026-05-23T09:18:33Z"}
+{"event":"status_update","id":"65f47965","status":"satisfied","ts":"2026-05-23T09:18:33Z"}
+{"event":"satisfied","id":"3dbc7cbb","wave":1,"ts":"2026-05-23T09:18:34Z"}
+{"event":"status_update","id":"3dbc7cbb","status":"satisfied","ts":"2026-05-23T09:18:34Z"}
