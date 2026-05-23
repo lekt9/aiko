@@ -4938,3 +4938,8 @@
 {"event":"iterated","id":"2f0df0b8","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T11:20:51Z"}
 {"event":"satisfied","id":"6149ca86","wave":1,"ts":"2026-05-23T11:20:51Z"}
 {"event":"status_update","id":"6149ca86","status":"satisfied","ts":"2026-05-23T11:20:51Z"}
+{"event":"satisfied","id":"2f0df0b8","wave":1,"ts":"2026-05-23T11:20:52Z"}
+{"event":"status_update","id":"2f0df0b8","status":"satisfied","ts":"2026-05-23T11:20:52Z"}
+{"event":"iterated","id":"1bad6485","wave":1,"action_exit":0,"action_result":"PASS","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T11:20:53Z"}
+{"event":"satisfied","id":"1bad6485","wave":1,"ts":"2026-05-23T11:20:53Z"}
+{"event":"status_update","id":"1bad6485","status":"satisfied","ts":"2026-05-23T11:20:53Z"}
