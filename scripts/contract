@@ -3735,6 +3735,16 @@ print(f'  next: contract status {target}     # verify state preserved')
     python3 "$SELF/contract-next-of.py" "$@"
     ;;
 
+  render)
+    # Universal renderer dispatch (d26df94c, 2026-05-24). Pluggable
+    # surfaces: stdout (default), aiko-notch, merjs, video-message,
+    # tg-video, plus any new scripts/renderers/<name>.{sh,py}. Optional
+    # --humanize pipes through scripts/humanize.py (Aiko-voice strip).
+    # Φ1 openai-render is one specific renderer; this verb generalizes
+    # the family so the same substrate stdio fans out to any surface.
+    python3 "$SELF/contract-render.py" "$@"
+    ;;
+
   context)
     # Mail-stdin doctrine companion (b2d15246, 2026-05-24): emit a JSON
     # envelope describing this contract's originating context so a chained
