@@ -16,6 +16,15 @@ _py_inline() {
   PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 -c "$1"
 }
 
+# Ψ1 — layer-purity helper. Echoes its args only when CONTRACT_VERBOSE=1.
+# L0 lines (pointer-type internals, raw mechanical surface) are routed
+# through this; L2/L3 lines (result:, KEY prompts, structured ===blocks===)
+# stay always-on so the agent-UX surface is unchanged for non-verbose use.
+_l0() {
+  [ "${CONTRACT_VERBOSE:-0}" = "1" ] && echo "$@"
+  return 0
+}
+
 # --verbose: Ψ1 layer-purity binding — when set, L0 mechanical noise (raw exit codes,
 # pointer-type internals, hashes) is shown alongside L2/L3. Default OFF so L0 is hidden.
 # Origin: contract f4468b06 (gap-debt session 2026-05-23).
