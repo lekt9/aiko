@@ -75,6 +75,9 @@ let waitUntil = "domcontentloaded";
 let minText = 0;
 let useDefaultExpectNot = true;
 let keepHtml = false;
+let walk = false;
+let walkInclude = null;
+let walkExclude = null;
 
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
