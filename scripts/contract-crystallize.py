@@ -425,11 +425,9 @@ def from_contract(cid):
     plan = c.get("plan", "")
     body = _compose_body(learning, cid=cid, plan=plan)
     mtype = _infer_memory_type(learning, None)
-    hook = _hook_from_learning(learning)
-    # Title shown in MEMORY.md link text — capped human-readable phrase.
-    title = _oneline(learning)[:70].rstrip()
+    title, description, hook = _derive_layers(learning)
     mem_path, url = crystallize(
-        _slug(learning), title, learning, body,
+        _slug(title or learning), title, description, body,
         c.get("cwd"), memory_type=mtype, hook=hook)
     contract_core.record_crystallization(cid, mem_path, url)
     print(f"crystallized {cid}: memory={mem_path} outline={url or '(skipped)'}")
@@ -441,10 +439,9 @@ def learn(text, source):
     lid = contract_core.record_learning(text, source)
     body = _compose_body(text, lid=lid, source=source)
     mtype = _infer_memory_type(text, source)
-    hook = _hook_from_learning(text)
-    title = _oneline(text)[:70].rstrip()
+    title, description, hook = _derive_layers(text)
     mem_path, url = crystallize(
-        _slug(text), title, text, body,
+        _slug(title or text), title, description, body,
         os.getcwd(), memory_type=mtype, hook=hook)
     contract_core.record_crystallization(lid, mem_path, url)
     print(f"learned {lid}")
