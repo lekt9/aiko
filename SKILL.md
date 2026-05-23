@@ -1917,22 +1917,35 @@ aspiration in the same artifact.
 
 ### Aspirational gaps catalogue (residual, 2026-05-23)
 
-These claims are documented but lack a runtime binding. They are
-**named, not lied about**. Each row is a follow-on contract waiting to
-be wired:
+These claims are documented but lack a runtime binding **at the layer
+this catalogue tracks** (the `self/doctrine-binding` and verb-gates
+classes). They are **named, not lied about**:
 
-| Claim | Documented in | Why unbound today | What would bind it |
+| Claim | Documented in | Status | What would close the gap |
 |---|---|---|---|
-| Ψ1 — Layer purity (--verbose hides L0) | Psychology § | `--verbose` flag exists on no verb | add `--verbose` to `iterate`/`status`, hide L0 by default |
-| Ε1 — Failure-streak escalation | Humanlike § | no streak counter in `iterate` output | track consecutive-FAIL count per id, surface ≥3 banner |
-| Ε2 — Over-iteration warning | Humanlike § | no streak counter for consecutive PASS | track consecutive-PASS-without-mark, surface "what risk?" prompt |
-| Σ1 — Agent attribution | Humanlike § | `CONTRACT_AGENT` env var has no writer | `contract_core.declare/iterate/_mark` should record `agent` field |
-| ~38 verbs without verb-gates | Verb gates § | starter set is 5/43 | new `verb-gates/<verb>/verify.sh` per verb (same audits/ doctrine) |
+| Ψ1 — Layer purity (`--verbose` hides L0) | Psychology § | no `--verbose` flag on iterate/status | add `--verbose` and hide L0 by default |
+| ~39 verbs without dedicated verb-gates | Verb gates § | starter set is 5; rest rely on indirect coverage via shape gates + self-test verb runs | add `verb-gates/<verb>/verify.sh` per verb (same audits/ doctrine) |
 
-Each gap is a **declared truth claim** that the substrate cannot
+Already bound (was previously listed here as aspirational; corrected on
+contradiction purge):
+
+- **Σ1 agent attribution** is bound — `skill-self-test.sh`
+  `humanlike/agent-attribution` proves `CONTRACT_AGENT` env carries
+  through to ledger rows via `contract_core.declare`.
+- **Ε1 failure-streak escalation** is bound — `humanlike/failure-streak`
+  proves the iterate surface emits the streak banner after 3 consecutive
+  FAILs.
+- **Ε2 over-iteration warning** is bound — `humanlike/over-iteration`
+  proves the iterate surface emits the "what risk?" prompt after 3
+  consecutive PASSes without `_mark`.
+- **`bind_to + verify` primitive** is bound — `binding/declare-bind-to`
+  and `binding/verify-foreign` prove the field is wired through
+  `declare`/`get` and the `verify` verb exists.
+
+Each remaining gap is a declared truth claim that the substrate cannot
 mechanically prove today. The drill log records this as `verdict =
-aspirational-gap` with the residual names, so no future agent reading
-the substrate mistakes documentation for binding.
+aspirational-gap` when the gap-bound classes trip, so no future agent
+reading the substrate mistakes documentation for binding.
 
 ### Why this terminates honestly
 
