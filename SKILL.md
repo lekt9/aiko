@@ -740,6 +740,7 @@ declare time without blocking — substrate enables.
 | # | Default | Warns on |
 |---|---|---|
 | **Α1** | **Plan-text quality surfacing.** Plans shorter than 24 chars or matching generic patterns (`^do X$`, `^fix Y$`, `^build Z$`, `^implement W$`) emit a soft warning at declare: "plan text reads as a task, not a truth claim — does it name what must hold?" | wishy-washy plans that satisfy mechanically but never make a binding claim |
+| **Α2** | **Transparent, not technical or revealing.** Default human-facing report leads with L4 (what changed in plain English, what works now, what remains) and L3 (the truth claim). Suppress L0 (raw paths, hashes, full contract IDs in prose) and L1 (shape names, ledger event types) unless the user asked for them. Apply Σ2 — never surface rows or details that the audience isn't supposed to see. The rule: *the user should know what's true and what's next without having to learn the substrate's vocabulary or seeing things addressed to someone else.* | over-technical wall-of-IDs reports that obscure the actual outcome; accidental disclosure of internal state to audiences who shouldn't see it |
 
 ### Why these three and not others
 
