@@ -3042,7 +3042,9 @@ while waves < MAX:
 
     if AUTOMARK:
         print(f"  auto-marking cell leaf {leaf['id']} satisfied (KEY-2 surrogate via --auto-mark-cells)")
-        subprocess.run(["bash", SELF, "_mark", leaf["id"], "satisfied"])
+        subprocess.run(["bash", SELF, "_mark", leaf["id"], "satisfied",
+                        "--proof-skip",
+                        f"drive-watch --auto-mark-cells: mechanical cell exit 0 (wave {waves}/{MAX})"])
     else:
         print(f"\n  HALT: cell {leaf['id']} passed. Agent KEY-2: bash {SELF} _mark {leaf['id']} satisfied")
         print(f"    Then re-run: bash {SELF} drive-watch {ORGAN}  (or pass --auto-mark-cells to skip the pause)")
