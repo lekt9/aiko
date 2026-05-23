@@ -5870,3 +5870,6 @@
 {"event": "crystallized", "id": "bc6ce30d", "memory_path": "/Users/lekt9/.claude/projects/-Users-lekt9-Projects-emunah/memory/is-the-berean-reader-spine-taste-first-override-list.md", "outline_url": "", "ts": "2026-05-23T18:11:41.994484Z", "agent": "lewistham9x@gmail.com"}
 {"event": "learned", "id": "a142bfb5", "text": "brand/VOICE.md holds the prophecy-narrator persona (Werner Herzog \u00d7 Peter Cullen \u00d7 Cohen) + committed voice_id r6ZMY9G4aVgaH0o6RuOX. Every BookTok script + shorts_v3 + shorts_v4 loads this. Probe: test -s brand/VOICE.md", "ts": "2026-05-23T18:11:42.044997Z", "source": "9798feb6", "agent": "lewistham9x@gmail.com"}
 {"event": "crystallized", "id": "a142bfb5", "memory_path": "/Users/lekt9/.claude/projects/-Users-lekt9-Projects-emunah/memory/holds-the-prophecy-narrator-persona-werner-herzog-peter-cull.md", "outline_url": "", "ts": "2026-05-23T18:11:42.056142Z", "agent": "lewistham9x@gmail.com"}
+{"criteria": "M1+M2+M3+M4+M5", "event": "promoted", "id": "a4536fcc", "ts": "2026-05-23T18:12:23.714635Z", "via": "auto-promote-hook"}
+{"criteria": "M1+M2+M3+M4+M5", "event": "promoted", "id": "bbdc5bca", "ts": "2026-05-23T18:12:23.797668Z", "via": "auto-promote-hook"}
+{"criteria": "M1+M2+M3+M4+M5", "event": "promoted", "id": "9798feb6", "ts": "2026-05-23T18:12:23.880768Z", "via": "auto-promote-hook"}
