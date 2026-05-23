@@ -5779,3 +5779,5 @@
 {"event": "child_added", "id": "94fd1c46", "child_id": "db334cb3", "ts": "2026-05-23T17:41:10.407661Z", "agent": "lewistham9x@gmail.com"}
 {"event": "declared", "id": "3a038203", "plan": "Mechanical: D1 emunah.books has exactly 15 published rows (drift guard)", "action": "bash /Users/lekt9/Projects/emunah/scripts/probe-d1-book-count.sh", "pointer_type": "cli", "cwd": "/Users/lekt9/Projects/emunah", "parent_id": "94fd1c46", "pointers": [], "ts": "2026-05-23T17:41:20.343481Z", "agent": "lewistham9x@gmail.com"}
 {"event": "child_added", "id": "94fd1c46", "child_id": "3a038203", "ts": "2026-05-23T17:41:20.354513Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "81d3b8ff", "plan": "Mechanical: FAL API key authenticates against fal queue (NB-Pro pipeline gate)", "action": "bash /Users/lekt9/Projects/emunah/scripts/probe-fal-key.sh", "pointer_type": "cli", "cwd": "/Users/lekt9/Projects/emunah", "parent_id": "94fd1c46", "pointers": [], "ts": "2026-05-23T17:41:30.042918Z", "agent": "lewistham9x@gmail.com"}
+{"event": "child_added", "id": "94fd1c46", "child_id": "81d3b8ff", "ts": "2026-05-23T17:41:30.054931Z", "agent": "lewistham9x@gmail.com"}
