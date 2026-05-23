@@ -695,6 +695,102 @@ Injectors live OUTSIDE the contract skill — they are integrations. A
 receptor depends only on the inbox schema, not on which injector wrote
 the row. New channels are new directories; no skill change required.
 
+## Streams (the output side of receptors)
+
+Receptors are the contract's **stdin port** — external events drop rows
+into an inbox file, the action blocks via `wait-for-event.py`, the
+contract depolarises. The dual exists too: **streams** are the contract's
+**stdout port** — a long-running action writes progress to a conventional
+file, an observer (the agent, another contract, a `contract tail`
+follower) reads it in real time.
+
+Like receptors, streams are NOT a new shape and NOT a new ledger field.
+They're a **file convention** any action can opt into. The substrate
+exposes the path; what the action writes there is the action's business.
+
+### Stream layout
+
+```
+~/.contracts/streams/<contract-id>/
+  stdout.log    # append-only line stream — progress / logs the action prints
+  state.json    # latest structured snapshot — overwritten each tick (atomic rename)
+  stdin.fifo    # optional named pipe — for the action that wants interactive input
+```
+
+The directory is created lazily by the action that first writes to it
+(or by `contract tail` on first follow). It is **outside the ledger** —
+ephemeral, gitignored, fine to delete; the ledger row remains the
+durable record of what was iterated.
+
+### How an action opts in
+
+```bash
+#!/usr/bin/env bash
+# any-long-running-action.sh — appends progress to its contract's stream.
+# The contract id is passed via env (CONTRACT_ID); the substrate sets it
+# before invoking the action so the action knows where to write.
+STREAM_DIR="$HOME/.contracts/streams/${CONTRACT_ID}"
+mkdir -p "$STREAM_DIR"
+LOG="$STREAM_DIR/stdout.log"
+printf '%s · starting tour\n' "$(date -u +%FT%TZ)" >> "$LOG"
+# … do work …
+printf '%s · step 3/12: outlets\n' "$(date -u +%FT%TZ)" >> "$LOG"
+printf '{"step":3,"total":12,"label":"outlets"}\n' > "$STREAM_DIR/state.json"
+```
+
+No coupling to the substrate's internals. The action prints whatever it
+wants, in whatever format. Receptors and streams are pure file IPC —
+agent-agnostic, runtime-agnostic, language-agnostic. A Python action
+can feed the same stream a bash action would feed.
+
+### Observing a stream
+
+```bash
+contract tail <id>           # follow stdout.log (live)
+contract tail <id> --since-start   # also dump existing content first
+```
+
+`contract tail` is `tail -f` with a `--since-start` shortcut, scoped to
+the streams convention path so the agent doesn't have to remember it.
+When the stream file doesn't exist, the verb prints the conventional
+path so the agent knows where to wire the action's output.
+
+### Receptors ↔ streams as duals
+
+| Direction | Inbox primitive | Stream primitive |
+|---|---|---|
+| **External → contract** (stdin) | `~/.contracts/inbox/<channel>/*.jsonl` | n/a |
+| **Contract → observer** (stdout) | n/a | `~/.contracts/streams/<id>/stdout.log` |
+| **Helper** | `wait-for-event.py` (blocks until match) | `contract tail <id>` (follows with tail -f) |
+| **Lifetime** | one inbox file per channel; long-lived | one stream dir per contract; deletable after iterate completes |
+| **Substrate role** | provides the path convention + helper | provides the path convention + helper |
+| **Action's role** | reads matched event, exits | writes progress, exits |
+
+Both are **file IPC against a documented path convention** — exactly the
+same architectural shape. Both work at every contract shape and every
+DAG depth, because they're orthogonal to the shape system: any action
+(cell, judgment body, loop body, harness verify.sh) can read an inbox
+and/or write a stream.
+
+### What stays out of the substrate
+
+- **No structured-stdout schema.** The action writes whatever it wants.
+  If the agent or another contract needs to parse, that's its problem.
+- **No automatic stream → ledger mirror.** Streams are ephemeral; the
+  ledger is durable. Mixing them would re-introduce the mutation problem
+  the append-only design avoids.
+- **No required `CONTRACT_ID` env passthrough.** Actions opt in by
+  reading the env var IF they want to stream; bare cells that don't need
+  progress visibility just write to stdout normally and get captured in
+  the iterated row's `action_result`.
+
+Origin: 2026-05-23. The agent was asked "at any point is there a
+receptor stdio thing internally — an interface into any contract?" The
+honest answer was: yes for the input side (receptors), and the dual for
+output existed in latent form (any action can write a file) but was
+never NAMED. Naming it makes the symmetry visible and the convention
+discoverable. Contract `ff6e8908`.
+
 ## Bundled scripts
 
 - `scripts/contract` — CLI front door (declare, iterate, build, spawn, solve, status, list, search, _mark)
