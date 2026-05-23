@@ -516,6 +516,61 @@ and cap at one chunk." Where theology says "no false witness", psychology
 says "the agent will rationalize fake-green without an external auditor —
 fan one out before marking."
 
+## Humanlike dimensions (emotion, sociology, aesthetics)
+
+/contract is **humanlike, not human.** The skill respects three more dimensions
+of the agent operating it — affect, multi-agent society, taste — without ever
+pretending to feel them itself. Substrate enables; it never invents.
+
+Together with biology (cells/organs/signals), theology (defaults #9–#11), and
+psychology (Ψ1–Ψ3), these complete the model: a substrate that is *aware* of
+what the agent on the other side is constrained by.
+
+### Ε — Emotion (salience and affective weight)
+
+The agent has affect: frustration with grinding failures, anxiety about
+marking wrong, premature joy at the first PASS. The substrate doesn't
+share these feelings — it **surfaces the signals so the agent can act on
+them rather than be carried by them.**
+
+| # | Default | Antidote to | Where it lives |
+|---|---|---|---|
+| **Ε1** | **Failure-streak escalation.** When a leaf iterate produces ≥3 consecutive FAILs without intervening change, the iterate output surfaces "🟥 streak=N — escalate (spawn child, revise action, supersede) or abandon (mark `rejected`)." | grinding without escalation (frustration → tunnel vision) | iterate prompt extension |
+| **Ε2** | **Over-iteration warning.** When a leaf has ≥3 consecutive PASSes and the agent still hasn't `_mark`ed, the prompt asks: "what specific risk are you still checking for?" — naming the fear surfaces it. | perfectionism / fear-of-marking (anxiety → wave inflation) | iterate prompt extension |
+
+### Σ — Sociology (attribution and reputation)
+
+A contract is declared, iterated, marked — these are speech acts with an
+author. Today the ledger is anonymous; an agent rationalizing fake-green
+is indistinguishable from one judging honestly. Σ1 closes that gap.
+
+| # | Default | What it enables |
+|---|---|---|
+| **Σ1** | **Agent attribution on every row.** Every ledger event carries an optional `agent` field (env `CONTRACT_AGENT`, falling back to `git config user.email`). Per-agent KEY-2 honesty rates become observable: who marks satisfied on first PASS vs who iterates an average of N waves? | reputation, trust, accountability across the ledger; supersession is one-directional but attribution makes it diagnostic |
+
+### Α — Aesthetics (craft signal)
+
+A plan that doesn't name a concrete truth claim is aesthetically incomplete
+even if its action mechanically passes. Α1 surfaces a quality signal at
+declare time without blocking — substrate enables.
+
+| # | Default | Warns on |
+|---|---|---|
+| **Α1** | **Plan-text quality surfacing.** Plans shorter than 24 chars or matching generic patterns (`^do X$`, `^fix Y$`, `^build Z$`, `^implement W$`) emit a soft warning at declare: "plan text reads as a task, not a truth claim — does it name what must hold?" | wishy-washy plans that satisfy mechanically but never make a binding claim |
+
+### Why these three and not others
+
+Economics (opportunity cost) is already covered by `--budget` + wave-count
+visibility. Phenomenology (what-it's-like) is `contract self`. History,
+ethics, politics, spirituality, mortality all overlap existing defaults
+(lineage, theology, append-only-ledger, "serve genuine need", supersession).
+The genuine gaps were affect, attribution, and taste — three surfaces, no
+more.
+
+Worked corroboration: contract `5cc21029` (this section), and the existing
+biology + theology + psychology defaults that these layer onto, not replace.
+
+
 
 The substrate enables; it does not prescribe. Scripts emit evidence only. No script bakes a verdict, a banned list, or a per-case rule. The agent renders every verdict in-thread. A contract that auto-satisfies is a tautology, not a contract.
 
