@@ -105,8 +105,8 @@ for line in sse.splitlines():
                     if k not in parsed:
                         print(f"FAIL: inhibition_refusal args missing key '{k}'. got={list(parsed.keys())}")
                         sys.exit(1)
-                if "$I" not in parsed.get("inhibitor_ids", ""):
-                    print(f"FAIL: inhibitor_ids in args ({parsed.get('inhibitor_ids')!r}) missing $I")
+                if i_id not in parsed.get("inhibitor_ids", ""):
+                    print(f"FAIL: inhibitor_ids in args ({parsed.get('inhibitor_ids')!r}) missing {i_id}")
                     sys.exit(1)
 if not got_call:
     print("FAIL: no inhibition_refusal tool_call in SSE stream")
