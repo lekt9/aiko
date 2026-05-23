@@ -4579,3 +4579,5 @@
 {"event":"iterated","id":"64a0508b","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T09:53:52Z"}
 {"event":"iterated","id":"992507c3","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T09:53:52Z"}
 {"event":"iterated","id":"ffac843c","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T09:53:53Z"}
+{"event":"satisfied","id":"6a09c778","wave":1,"ts":"2026-05-23T09:54:03Z"}
+{"event":"status_update","id":"6a09c778","status":"satisfied","ts":"2026-05-23T09:54:03Z"}
