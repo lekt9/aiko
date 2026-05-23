@@ -1452,10 +1452,10 @@ Already in the global ledger; reference by id:
 | empathy gate | `4a055cf7` | rendered content, no error boundary |
 | observe-original gate | `f669f09c` | trace before rebuild |
 | Foundry agent organism (receptors) | `838d1447` | external events → contract iterate (inbox + injectors) |
-| R4 bot poller daemon | `bb9c351a` | long-poll getUpdates → `~/.contracts/inbox/telegram/<chat>.jsonl` |
-| R5 generic webhook receiver | `20d51ba7` | cloudflare-tunnel-fronted HMAC-SHA256 endpoint → `~/.contracts/inbox/webhook/<source>.jsonl` |
+| R4: bot poller daemon | `bb9c351a` | long-poll getUpdates → `~/.contracts/inbox/telegram/<chat>.jsonl` |
+| R5: generic webhook receiver | `20d51ba7` | cloudflare-tunnel-fronted HMAC-SHA256 endpoint → `~/.contracts/inbox/webhook/<source>.jsonl` |
 | aiko reactor v2 (humanlike) | `95509a44` | full telethon history + project brief + grounded reply |
-| Aiko bot Telegram Bot API best practices | `7cb69f94` | /commands menu + reactions + inline keyboards + HTML + 429 retry |
+| Aiko bot fully utilises Telegram Bot API best practices | `7cb69f94` | /commands menu + reactions + inline keyboards + HTML + 429 retry |
 
 Each is `agent-judges` so the project that references it binds the
 concrete URLs / floors / substrings via a wrapper action (a sibling
