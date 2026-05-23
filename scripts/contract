@@ -1547,28 +1547,13 @@ USAGE
       exit 2
     fi
     MH_JID="$JUDGE_ID" _py_inline "
-import os, json, urllib.request, urllib.error, pathlib, sys
+import os, json, urllib.request, urllib.error, pathlib, sys, shutil, subprocess, tempfile
 from contract_core import get, _resolve_ledger
 
 jid = os.environ['MH_JID']
 row = get(jid)
 if not row:
     print(f'judge: unknown id {jid}', file=sys.stderr); sys.exit(2)
-
-# Read config: env wins over file
-cfg = {}
-cfg_path = pathlib.Path.home() / '.config' / 'contract' / 'llm.json'
-if cfg_path.exists():
-    try: cfg = json.loads(cfg_path.read_text())
-    except: pass
-url   = os.environ.get('CONTRACT_LLM_URL')   or cfg.get('url')
-key   = os.environ.get('CONTRACT_LLM_KEY')   or cfg.get('key')
-model = os.environ.get('CONTRACT_LLM_MODEL') or cfg.get('model') or 'gpt-4o-mini'
-if not url or not key:
-    print('judge: missing CONTRACT_LLM_URL / CONTRACT_LLM_KEY', file=sys.stderr)
-    print(f'  config: {cfg_path} (exists={cfg_path.exists()})', file=sys.stderr)
-    print('  set env or write {url,key,model} to ~/.config/contract/llm.json', file=sys.stderr)
-    sys.exit(2)
 
 # Get the most recent iterate row's action_result for this contract by
 # reading the ledger directly — keeps the substrate's only-writer rule
@@ -1603,39 +1588,91 @@ CONTRACT
 
 VERDICT:'''
 
-body = json.dumps({
-    'model': model,
-    'messages': [{'role':'user','content':prompt}],
-    'temperature': 0,
-    'max_tokens': 120,
-}).encode()
-chat_url = url.rstrip('/') + '/chat/completions'
-req = urllib.request.Request(chat_url, data=body, method='POST', headers={
-    'Authorization': f'Bearer {key}',
-    'Content-Type': 'application/json',
-})
-try:
-    with urllib.request.urlopen(req, timeout=30) as r:
-        resp = json.loads(r.read())
-except urllib.error.HTTPError as e:
-    print(f'judge: LLM HTTP {e.code} — {e.read().decode()[:300]}', file=sys.stderr)
-    sys.exit(2)
-except Exception as e:
-    print(f'judge: LLM call failed — {e}', file=sys.stderr)
-    sys.exit(2)
+# Route preference: codex CLI (subscription-billed, default) → HTTP fallback.
+# Override with CONTRACT_LLM_VIA=http to force the OpenAI-compatible path.
+via_pref = os.environ.get('CONTRACT_LLM_VIA', '').lower()
+codex_bin = shutil.which('codex')
+use_codex = (via_pref == 'codex') or (via_pref != 'http' and codex_bin and via_pref != 'http')
+content = ''
+source = ''
 
-content = resp.get('choices',[{}])[0].get('message',{}).get('content','').strip()
-if not content:
-    print(f'judge: LLM returned empty content. raw: {json.dumps(resp)[:300]}', file=sys.stderr)
-    sys.exit(2)
+if use_codex and codex_bin:
+    # codex exec --skip-git-repo-check -s read-only --output-last-message <tmp> -
+    # reads the prompt from stdin and writes ONLY the final model message to <tmp>.
+    with tempfile.NamedTemporaryFile(mode='r', delete=False, suffix='.txt') as tf:
+        last_msg_path = tf.name
+    try:
+        cmd = [codex_bin, 'exec', '--skip-git-repo-check', '-s', 'read-only',
+               '--output-last-message', last_msg_path, '-']
+        # Optional model override
+        cmd_model = os.environ.get('CONTRACT_LLM_MODEL')
+        if cmd_model:
+            cmd = [codex_bin, 'exec', '--skip-git-repo-check', '-s', 'read-only',
+                   '-m', cmd_model, '--output-last-message', last_msg_path, '-']
+        cp = subprocess.run(cmd, input=prompt, text=True, capture_output=True, timeout=180)
+        content = open(last_msg_path).read().strip() if os.path.exists(last_msg_path) else ''
+        source = f'codex exec (model={cmd_model or \"default\"})'
+    except subprocess.TimeoutExpired:
+        print('judge: codex exec timed out (180s)', file=sys.stderr); sys.exit(2)
+    except FileNotFoundError:
+        print('judge: codex binary disappeared mid-call', file=sys.stderr); sys.exit(2)
+    finally:
+        try: os.unlink(last_msg_path)
+        except: pass
+    if not content:
+        print(f'judge: codex returned empty content', file=sys.stderr)
+        if cp.stderr: print(f'  stderr: {cp.stderr[:300]}', file=sys.stderr)
+        sys.exit(2)
+else:
+    # HTTP fallback: OpenAI-compatible /v1/chat/completions
+    cfg = {}
+    cfg_path = pathlib.Path.home() / '.config' / 'contract' / 'llm.json'
+    if cfg_path.exists():
+        try: cfg = json.loads(cfg_path.read_text())
+        except: pass
+    url   = os.environ.get('CONTRACT_LLM_URL')   or cfg.get('url')
+    key   = os.environ.get('CONTRACT_LLM_KEY')   or cfg.get('key')
+    model = os.environ.get('CONTRACT_LLM_MODEL') or cfg.get('model') or 'gpt-4o-mini'
+    if not url or not key:
+        print('judge: no judging surface available', file=sys.stderr)
+        print('  codex CLI not on PATH AND no HTTP config set', file=sys.stderr)
+        print('  options:', file=sys.stderr)
+        print('    1. install codex CLI (bun add -g @openai/codex), sign in with ChatGPT subscription', file=sys.stderr)
+        print('    2. set CONTRACT_LLM_URL + CONTRACT_LLM_KEY env, OR write ~/.config/contract/llm.json', file=sys.stderr)
+        sys.exit(2)
+    body = json.dumps({
+        'model': model,
+        'messages': [{'role':'user','content':prompt}],
+        'temperature': 0,
+        'max_tokens': 120,
+    }).encode()
+    chat_url = url.rstrip('/') + '/chat/completions'
+    req = urllib.request.Request(chat_url, data=body, method='POST', headers={
+        'Authorization': f'Bearer {key}',
+        'Content-Type': 'application/json',
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            resp = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        print(f'judge: LLM HTTP {e.code} — {e.read().decode()[:300]}', file=sys.stderr)
+        sys.exit(2)
+    except Exception as e:
+        print(f'judge: LLM call failed — {e}', file=sys.stderr)
+        sys.exit(2)
+    content = resp.get('choices',[{}])[0].get('message',{}).get('content','').strip()
+    source = f'HTTP {chat_url} (model={model})'
+    if not content:
+        print(f'judge: LLM returned empty content. raw: {json.dumps(resp)[:300]}', file=sys.stderr)
+        sys.exit(2)
 
 first_line = content.splitlines()[0].strip().upper()
 rest = '\n'.join(content.splitlines()[1:]).strip()
-print(f'=== Λ1 LLM VERDICT (model={model}) ===')
+print(f'=== Λ1 LLM VERDICT ===')
 print(f'  verdict: {first_line}')
 if rest:
     print(f'  reason:  {rest[:300]}')
-print(f'  llm:     {chat_url}')
+print(f'  via:     {source}')
 print()
 if 'PROMOTE' in first_line:
     print(f'  next: contract _mark {jid} satisfied --proof \"Λ1 LLM judge ({model}): {rest[:160]}\"')
