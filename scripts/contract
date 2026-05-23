@@ -2019,11 +2019,21 @@ print(f'=== Ψ4 WATCH TICK === polled={polled} fired={fired} skipped={skipped}')
         echo "watcher stopped: $S_ID"
         ;;
 
-      *)
-        # Fallthrough — treat $SUB as an id (default form: `contract watch <id>`)
-        # Re-dispatch by prepending `register`.
-        echo "ERROR: unknown watch subcommand '$SUB' (try: register | list | tick | stop)" >&2
-        exit 2
+      help|*)
+        cat <<'USAGE'
+contract watch — async watcher (Ψ4)
+
+  contract watch <id> [--probe "<cmd>"] [--interval <s>]   register a watcher
+  contract watch register <id> ...                          same as above (explicit)
+  contract watch list [--json]                              list registered watchers
+  contract watch tick [--verbose]                           run one poll cycle
+  contract watch stop <id>                                  remove a watcher
+
+Behaviour: one-shot. When the probe PASSes (or directly if no probe),
+the tick auto-iterates the contract, writes an inbox event, and removes
+the watcher. The auto-iterate fires the Ω1 wavefront on any dependent.
+The tick runs automatically on every iterate/_mark via internal hook.
+USAGE
         ;;
     esac
     ;;
