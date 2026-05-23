@@ -157,8 +157,9 @@ def main():
 
     if fat_doctrines:
         fails.append(
-            f"{len(fat_doctrines)} doctrine section(s) exceed {DOCTRINE_MAX_LINES}-line cap "
-            f"and should delegate to references/<slug>.md:"
+            f"{len(fat_doctrines)} doctrine section(s) exceed {DOCTRINE_MAX_LINES}-line cap. "
+            f"Shrink in-place: move prose to the standing-gate contract's plan / "
+            f"Outline appendix; SKILL.md keeps the ≤{DOCTRINE_MAX_LINES}-line summary:"
         )
         for title, size, start in fat_doctrines[:10]:
             fails.append(f"  L{start} ({size} lines): {title}")
