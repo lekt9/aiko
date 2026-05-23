@@ -4944,3 +4944,4 @@
 {"event":"satisfied","id":"1bad6485","wave":1,"ts":"2026-05-23T11:20:53Z"}
 {"event":"status_update","id":"1bad6485","status":"satisfied","ts":"2026-05-23T11:20:53Z"}
 {"event": "declared", "id": "4ce13d6a", "plan": "self-test guard for the tool-guard verify harness (39436_256000)", "action": "tool-guard:__contract_toolguard_selftest_39436_256000__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/Projects/unbrowse-ecosystem", "parent_id": null, "pointers": [], "ts": "2026-05-23T11:23:52.626913Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "4ce13d6a", "wave": 0, "ts": "2026-05-23T11:24:10.586745Z", "proof_skip_reason": "shape-gate self-test", "agent": "lewistham9x@gmail.com"}
