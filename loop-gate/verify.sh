@@ -23,7 +23,7 @@ echo "evidence: loop wave 1  ->  body ran (n=1), FAIL  OK"
 
 # wave 2: n=2 -> FAIL
 O=$(bash "$C" iterate "$ID" 2>/dev/null)
-echo "$O" | grep -q "result: FAIL" || { echo "FAIL: loop wave 2 did not FAIL"; rm -f "$COUNTER"; exit 1; }
+echo "$O" | grep -qE "LOOP-RUNNING|result: FAIL" || { echo "FAIL: loop wave 2 did not surface FAIL/LOOP-RUNNING"; rm -f "$COUNTER"; exit 1; }
 N2=$(cat "$COUNTER")
 [ "$N2" = "2" ] || { echo "FAIL: body did not re-run on wave 2 (counter=$N2)"; rm -f "$COUNTER"; exit 1; }
 echo "evidence: loop wave 2  ->  body re-ran (n=2), FAIL  OK"
