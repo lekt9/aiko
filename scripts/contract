@@ -1668,10 +1668,39 @@ else:
 
 first_line = content.splitlines()[0].strip().upper()
 rest = '\n'.join(content.splitlines()[1:]).strip()
+
+# Ω1 — parse blocker contract ids out of the verdict reason. Pattern:
+# any 8-hex id that appears alongside 'block', 'blocked', 'depends on',
+# 'gated on', 'waiting on'. Records a 'judged' ledger event with the
+# typed blocked_by list so the satisfy-wavefront can re-surface this
+# contract when the blocker satisfies. Tight regex so prose doesn't
+# leak random ids into the dependency graph.
+import re as _re
+blockers = []
+if first_line.startswith('HOLD') or first_line.startswith('REJECT'):
+    # Find 8-hex ids near blocker keywords (within ~40 chars)
+    for m in _re.finditer(r'(block|blocked|depends?|depending|gated|waiting|until|after|when)\W[^a-z0-9]{0,40}([a-f0-9]{8})\b', rest, _re.IGNORECASE):
+        bid = m.group(2)
+        if bid != jid and bid not in blockers:
+            # Confirm it's a real contract id, not random hex
+            from contract_core import get as _g
+            if _g(bid):
+                blockers.append(bid)
+
+# Record the judgment as a typed event row (Ω1) — survives session boundaries
+from contract_core import record_event as _re_event
+_re_event('judged', jid,
+          verdict=first_line.split()[0] if first_line else 'UNKNOWN',
+          blocked_by=blockers,
+          reason=rest[:500],
+          source=source)
+
 print(f'=== Λ1 LLM VERDICT ===')
 print(f'  verdict: {first_line}')
 if rest:
     print(f'  reason:  {rest[:300]}')
+if blockers:
+    print(f'  blocked_by: {\", \".join(blockers)}  (will re-surface when these satisfy)')
 print(f'  via:     {source}')
 print()
 if 'PROMOTE' in first_line:
