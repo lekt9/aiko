@@ -37,10 +37,10 @@ const UID = `e2e-mon-${Date.now()}`;
 const A = [];
 function assert(name, ok, evidence = "") { A.push({ name, ok, evidence: String(evidence).slice(0, 200) }); console.log(`  ${ok ? "✓" : "✗"} ${name}  ${evidence ? "— " + String(evidence).slice(0, 100) : ""}`); }
 
-async function stripeApi(path, params = null) {
+async function stripeApi(path, params = null, method = null) {
   const opts = { headers: { "Authorization": `Bearer ${STRIPE_SK}` } };
+  opts.method = method ?? (params ? "POST" : "GET");
   if (params) {
-    opts.method = "POST";
     opts.headers["Content-Type"] = "application/x-www-form-urlencoded";
     const u = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) u.set(k, String(v));
