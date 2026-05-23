@@ -17,7 +17,13 @@
 # A file is already a pointer (no migration needed) if it references the
 # contract ledger / carries the migrated pointer-index marker.
 is_pointerized() {
-  grep -qE 'pointer index into the contract ledger|contracts\.jsonl|ACTIVATION: invoke /contract' "$1" 2>/dev/null
+  # Require the STRUCTURAL marker — the heading that names the file as a
+  # pointer-index, not an incidental string match. Old check tripped on any
+  # mention of contracts.jsonl (e.g. a reference section happening to cite
+  # the file path); contract a499b1f3 stage C tightened this so a 1023-line
+  # prose-rule CLAUDE.md that merely names the ledger file is correctly
+  # flagged as still-needing-migration.
+  grep -qE '^#{1,3} Operating rules — pointer index into the contract ledger|ACTIVATION: invoke /contract' "$1" 2>/dev/null
 }
 
 armed=0
