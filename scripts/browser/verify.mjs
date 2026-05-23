@@ -247,12 +247,7 @@ try {
     const job = queue.shift();
     const url = job.url;
     const target = new URL(url);
-    const ctx = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
-      userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-    });
-    const page = await ctx.newPage();
+    const page = await sharedCtx.newPage();
     const errors = [];
 
     page.on("console", (msg) => {
