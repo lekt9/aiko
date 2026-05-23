@@ -93,5 +93,8 @@ declare_401=$( UNBROWSE_API_KEY="mock-token-401" "$CLI" declare \
 OUT_401=$( UNBROWSE_API_KEY="mock-token-401" "$CLI" iterate "$declare_401" 2>&1 )
 echo "$OUT_401" | grep -q "result: FAIL (HTTP 401"  || { echo "FAIL: 401 did not surface auth-required"; echo "$OUT_401" | head; exit 1; }
 echo "$OUT_401" | grep -q "UNBROWSE_API_KEY"        || { echo "FAIL: 401 missing sign-in hint"; exit 1; }
+echo "$OUT_401" | grep -q "SIGN-IN REQUIRED"        || { echo "FAIL: 401 missing SIGN-IN REQUIRED block (generative-UI handoff)"; exit 1; }
+echo "$OUT_401" | grep -q "magic-link"              || { echo "FAIL: 401 SIGN-IN block missing Telegram render hint (magic-link)"; exit 1; }
+echo "$OUT_401" | grep -q "Privy"                   || { echo "FAIL: 401 SIGN-IN block missing Panel render hint (Privy)"; exit 1; }
 
-echo "PASS: x402 gate (Π1) — 200/402/401 dispatched correctly + PAYMENT REQUIRED block carries pay_url + per-transport render hints"
+echo "PASS: x402 gate (Π1) — 200/402/401 dispatched correctly + PAYMENT REQUIRED + SIGN-IN REQUIRED blocks carry per-transport render hints"
