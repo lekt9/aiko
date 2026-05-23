@@ -628,7 +628,7 @@ digest = hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 def section(name):
     # extract '## <name>' (and its prose) up to the next H2 — non-greedy
-    m = re.search(rf'(^## {re.escape(name)}\b[^\n]*\n[\s\S]*?)(?=\n## )', text, re.MULTILINE)
+    m = re.search(rf'(^## {re.escape(name)}[^\n]*\n[\s\S]*?)(?=\n## )', text, re.MULTILINE)
     return m.group(1).rstrip() if m else ''
 
 front_door = section('When to invoke')
