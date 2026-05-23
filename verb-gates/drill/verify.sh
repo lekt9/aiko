@@ -9,6 +9,7 @@
 #   5. drill on a pending-only id (no LLM, no auto-mark) leaves it pending and exits 1
 set -uo pipefail
 C="$HOME/.claude/skills/contract/scripts/contract"
+LIB="$HOME/.claude/skills/contract/scripts/lib"   # capture BEFORE HOME swap
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
