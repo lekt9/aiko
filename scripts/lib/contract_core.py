@@ -403,11 +403,12 @@ def _team_cache() -> set:
 
 
 def is_team_member(viewer: str) -> bool:
-    """True iff viewer has ever declared a contract in this ledger.
-    The bot is NOT a team member unless it appears in the agent column."""
+    """True iff viewer's canonical identity (Σ3 alias-resolved) has ever
+    declared a contract in this ledger. The bot is NOT a team member unless
+    its identity (or one of its aliases) appears in the agent column."""
     if not viewer:
         return False
-    return viewer in _team_cache()
+    return resolve_identity(viewer) in _team_cache()
 
 
 def active_inhibitors(target_id: str) -> list[str]:
