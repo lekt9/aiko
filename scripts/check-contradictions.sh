@@ -29,21 +29,20 @@ import re, sys
 doc = open(sys.argv[1]).read().split('\n')
 prev_h2 = None
 prev_line = 0
-n = 0
 for i, line in enumerate(doc, 1):
     m = re.match(r'^##\s+(.+?)\s*$', line)
     if m:
         h = m.group(1)
         if prev_h2 == h:
             print(f"  CONTRADICTION: duplicate ## header '{h}' at lines {prev_line} and {i}")
-            n += 1
         prev_h2 = h
         prev_line = i
-sys.exit(n)
 PY
 )
-[ -n "$out" ] && echo "$out"
-n=$?; fail=$((fail + n))
+if [ -n "$out" ]; then
+  echo "$out"
+  fail=$((fail + $(echo "$out" | grep -c CONTRADICTION)))
+fi
 
 # B. CLI verb count
 live_count=$(bash "$CLI" self 2>/dev/null | grep -oE 'verbs \(([0-9]+)\)' | grep -oE '[0-9]+' | head -1)
@@ -53,24 +52,22 @@ out=$(python3 - "$DOC" "$live_count" <<'PY'
 import re, sys
 doc = open(sys.argv[1]).read()
 live = int(sys.argv[2])
-n = 0
 for m in re.finditer(r'verb list \((\d+)\+?\)', doc):
     cited = int(m.group(1))
     line = doc[:m.start()].count('\n') + 1
     if cited > live or live - cited > 5:
         print(f"  CONTRADICTION: stale verb count — line {line}: cites {cited}+ verbs, live is {live}")
-        n += 1
 for m in re.finditer(r'the (\d+) (?:surface )?verbs', doc):
     cited = int(m.group(1))
     line = doc[:m.start()].count('\n') + 1
     if cited != live:
         print(f"  CONTRADICTION: stale verb count — line {line}: cites {cited} surface verbs, live is {live}")
-        n += 1
-sys.exit(n)
 PY
 )
-[ -n "$out" ] && echo "$out"
-n=$?; fail=$((fail + n))
+if [ -n "$out" ]; then
+  echo "$out"
+  fail=$((fail + $(echo "$out" | grep -c CONTRADICTION)))
+fi
 
 # C. L1 architecture verb list (subset masquerading as complete)
 l1_line=$(grep -nE '\*\*L1 .*CLI\*\*.*verb surface' "$DOC" | head -1 | cut -d: -f1)
