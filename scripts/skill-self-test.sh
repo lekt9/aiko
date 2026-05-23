@@ -91,6 +91,7 @@ check "self/standing-gate-ids"     env CONTRACTS_STORE="$HOME/.contracts/contrac
 check "self/empathy-flags-wired"   python3 "$SCRIPTS/check-empathy-flags-wired.py"
 check "self/shape-catalog"         python3 "$SCRIPTS/check-shape-catalog.py"
 check "self/graph-depth"           bash "$SCRIPTS/check-graph-depth.sh"
+check "self/streams-convention"    bash "$SCRIPTS/check-streams-convention.sh"
 # ── Shape gates (regression harnesses for each contract shape) ────────────────
 # Each gate's verify.sh proves one shape behaves correctly. They honor an
 # external CONTRACTS_STORE, so we run them with a tmpdir ledger to avoid
