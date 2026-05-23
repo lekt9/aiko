@@ -69,6 +69,9 @@ sys.exit(0 if len(data) <= 8 else 1)
 # Ψ1 abstraction layers named explicitly in SKILL.md
 check "psych/abstraction-layers"   python3 -c \
                                      "import sys; t=open('$SKILL_DIR/SKILL.md').read(); sys.exit(0 if all(L in t for L in ['L0','L1','L2','L3','L4']) and 'abstraction layers' in t.lower() else 1)"
+# Humanlike (Ε/Σ/Α) — emotion, sociology, aesthetics dimensions in SKILL.md (contract 5cc21029)
+check "humanlike/dimensions"       python3 -c \
+                                     "import sys; t=open('$SKILL_DIR/SKILL.md').read().lower(); sys.exit(0 if all(d in t for d in ['humanlike','emotion','sociology','aesthetics']) and all(g in t.lower() for g in ['ε1','ε2','σ1','α1']) else 1)"
 check "self/no-drift"              env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" python3 -c \
                                      "import json, subprocess, sys; r=subprocess.run(['bash','$CLI','self','--json'],capture_output=True,text=True); d=json.loads(r.stdout); sys.exit(0 if d['drift']==[] else 1)"
 # ── Shape gates (regression harnesses for each contract shape) ────────────────
