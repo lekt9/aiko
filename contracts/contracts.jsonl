@@ -5087,3 +5087,4 @@
 {"event":"iterated","id":"c83f5c5e","wave":1,"action_exit":127,"action_result":"fail","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T11:53:20Z"}
 {"event":"satisfied","id":"c83f5c5e","wave":1,"ts":"2026-05-23T11:53:21Z"}
 {"event":"status_update","id":"c83f5c5e","status":"satisfied","ts":"2026-05-23T11:53:21Z"}
+{"event": "satisfied", "id": "e458520c", "wave": 0, "ts": "2026-05-23T11:53:39.694743Z", "proof_skip_reason": "shape-gate self-test", "agent": "lewistham9x@gmail.com"}
