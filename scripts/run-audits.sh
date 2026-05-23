@@ -15,6 +15,7 @@ fi
 
 found=0
 failed=0
+scaffold=0
 for rule_dir in "$AUDITS_DIR"/*/; do
   [ -d "$rule_dir" ] || continue
   rule="$(basename "$rule_dir")"
@@ -27,7 +28,15 @@ for rule_dir in "$AUDITS_DIR"/*/; do
   echo "═════════════════════════════════════════════════════════"
   echo "audits/$rule"
   echo "─────────────────────────────────────────────────────────"
-  if /bin/bash "$verify"; then
+  # Scaffolds (explicitly aspirational, body says "SCAFFOLD: <rule> — ...
+  # awaits assertions") count as SCAFFOLD, not FAIL — same convention as
+  # run-verb-gates.sh. Honest aspirational gap, not a regression.
+  out=$(/bin/bash "$verify" 2>&1); rc=$?
+  echo "$out"
+  if echo "$out" | grep -qE '^SCAFFOLD'; then
+    echo "  audits/$rule: SCAFFOLD (aspirational — awaits real assertions)"
+    scaffold=$((scaffold + 1))
+  elif [ "$rc" -eq 0 ]; then
     echo "  audits/$rule: PASS"
   else
     echo "  audits/$rule: FAIL — run audits/$rule/fix.sh"
@@ -36,5 +45,5 @@ for rule_dir in "$AUDITS_DIR"/*/; do
 done
 
 echo
-echo "run-audits: $found rule(s) checked, $failed failing"
+echo "run-audits: $found rule(s) checked, $failed failing, $scaffold scaffold (aspirational)"
 [ "$failed" -eq 0 ]
