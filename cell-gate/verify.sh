@@ -22,7 +22,7 @@ echo "$O" | grep -q "result: FAIL" || { echo "FAIL: red cell did not FAIL"; echo
 echo "evidence: cell --action false  ->  result: FAIL  OK"
 
 # 3. _mark satisfied appends a satisfied row (substrate principle: only agent satisfies)
-bash "$C" _mark "$GREEN" satisfied --proof-skip "shape-gate self-test" >/dev/null 2> satisfied >/dev/null 2>&11
+bash "$C" _mark "$GREEN" satisfied --proof-skip "shape-gate self-test" >/dev/null 2>&1
 grep -c "\"event\": *\"satisfied\".*\"id\": *\"$GREEN\"\|\"id\": *\"$GREEN\".*\"event\": *\"satisfied\"" "$CONTRACTS_STORE" \
   | grep -qE '^[1-9]' || { echo "FAIL: no satisfied row for $GREEN"; exit 1; }
 echo "evidence: _mark satisfied  ->  ledger row written  OK"
