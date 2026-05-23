@@ -56,6 +56,24 @@ check "binding/get-surfaces-it"    env PYTHONPATH="$SCRIPTS/lib" python3 -c \
                                      "from contract_core import get; import inspect; src = inspect.getsource(get); assert 'bind_to' in src"
 check "binding/verify-foreign"     env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" verify __nonexistent_surface_xyz__
 
+check "binding/declare-bind-to"    env PYTHONPATH="$SCRIPTS/lib" python3 -c \
+                                     "from contract_core import declare; import inspect; assert 'bind_to' in inspect.signature(declare).parameters"
+check "binding/get-surfaces-it"    env PYTHONPATH="$SCRIPTS/lib" python3 -c \
+                                     "from contract_core import get; import inspect; src = inspect.getsource(get); assert 'bind_to' in src"
+check "binding/verify-foreign"     env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" verify __nonexistent_surface_xyz__
+
+# ── Shape gates (regression harnesses for each contract shape) ────────────────
+# Each gate's verify.sh proves one shape behaves correctly. They honor an
+# external CONTRACTS_STORE, so we run them with a tmpdir ledger to avoid
+# polluting the real one. Promoted from orphaned 2026-05-23 (contract 2927a44e).
+GATE_TMP=$(mktemp -d)
+for gate in audit bm25 budget lifecycle propagation quorum sequence; do
+  gate_path="$SKILL_DIR/$gate-gate/verify.sh"
+  [ -f "$gate_path" ] && \
+    check "gate/$gate"               env CONTRACTS_STORE="$GATE_TMP/$gate.jsonl" bash "$gate_path"
+done
+rm -rf "$GATE_TMP"
+
 if [ $fail -gt 0 ]; then
   printf "\nSKILL-SELF-TEST: %d FAIL(S)\n" "$fail" >&2
   exit 1
