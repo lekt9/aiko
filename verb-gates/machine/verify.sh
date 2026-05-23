@@ -68,9 +68,9 @@ echo "{\"map-test-bin\":\"$TD/marked-true.sh\"}" > "$TD/.config/contract/machine
 
 CID_MAP=$("$CLI" declare "machine map override" --action "machine:map-test-bin" --no-drive 2>&1 \
   | grep -oE "declared: [a-f0-9]{8}" | awk '{print $2}' | head -1)
-OUT_MAP=$("$CLI" iterate "$CID_MAP" 2>&1)
+OUT_MAP=$("$CLI" iterate "$CID_MAP" --verbose 2>&1)
 echo "$OUT_MAP" | grep -q "MARKED-BY-MAP-ed3a" || { echo "FAIL: map override didn't execute mapped binary. OUT=$OUT_MAP"; exit 1; }
-echo "$OUT_MAP" | grep -q "$TD/marked-true.sh"   || { echo "FAIL: pointer(machine): line doesn't show mapped path. OUT=$OUT_MAP"; exit 1; }
+echo "$OUT_MAP" | grep -q "$TD/marked-true.sh"   || { echo "FAIL: pointer(machine): line (--verbose) doesn't show mapped path. OUT=$OUT_MAP"; exit 1; }
 echo "$OUT_MAP" | grep -q "result: PASS"         || { echo "FAIL: map override didn't PASS"; exit 1; }
 
 # === Phase 6: stale map entry (file removed) falls through to PATH ===
