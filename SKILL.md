@@ -841,7 +841,7 @@ REQUIRED blocks (presence + at least two per-transport render hints).
 Future requirement-block additions (`ROUTED`, `INHIBITION REFUSAL`) get
 their own gate rows when added.
 
-Origin: contract `97e90e21`, 2026-05-23. Lewis's request: "when things are
+Origin: contract `74392a21`, 2026-05-23. Lewis's request: "when things are
 required — credentials or x402 payments — allow generative UI via /contract
 building appropriately based on the context of the client being used."
 The block-shape was already in latent form for `PAYMENT REQUIRED`; naming
