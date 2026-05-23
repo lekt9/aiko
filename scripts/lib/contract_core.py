@@ -19,6 +19,7 @@ from typing import Optional
 _WARNED_LINES: set = set()
 _AGENT_CACHE: Optional[str] = None
 _TEAM_CACHE: Optional[set] = None  # Σ2 team set, derived from agent column
+_ALIAS_CACHE: Optional[dict] = None  # Σ3 identity → canonical map, derived from alias rows
 
 
 def _resolve_ledger() -> Path:
