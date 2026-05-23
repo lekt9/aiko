@@ -35,17 +35,20 @@ export HOME="$TD"
 export CONTRACTS_STORE="$TD/contracts.jsonl"
 
 # === Phase 1: layer inference for all 7 mapped pointer types ===
-declare -A EXPECT_LAYER=(
-  ["agent:alice@example.com"]=6
-  ["x402:https://example.com/charge"]=5
-  ["python3 $REAL_HOME/.claude/skills/contract/scripts/wait-for-event.py --inbox tg"]=4
-  ["funnel"]=3
-  ["agent-judges"]=3
-  ["true"]=2
-  ["machine:graff --status"]=1
+# Parallel arrays (colon-containing keys + bash set -u + assoc array don't mix)
+ACTIONS=(
+  "agent:alice@example.com"
+  "x402:https://example.com/charge"
+  "python3 $REAL_HOME/.claude/skills/contract/scripts/wait-for-event.py --inbox tg"
+  "funnel"
+  "agent-judges"
+  "true"
+  "machine:graff --status"
 )
-for ACTION in "${!EXPECT_LAYER[@]}"; do
-  EXP="${EXPECT_LAYER[$ACTION]}"
+EXPECTED=(6 5 4 3 3 2 1)
+for i in "${!ACTIONS[@]}"; do
+  ACTION="${ACTIONS[$i]}"
+  EXP="${EXPECTED[$i]}"
   CID=$("$CLI" declare "infer test L$EXP" --action "$ACTION" --no-drive 2>&1 \
     | grep -oE "declared: [a-f0-9]{8}" | awk '{print $2}' | head -1)
   GOT=$(REAL_LIB="$REAL_LIB" CS="$CONTRACTS_STORE" CID="$CID" python3 -c "
