@@ -1679,7 +1679,7 @@ import re as _re
 blockers = []
 if first_line.startswith('HOLD') or first_line.startswith('REJECT'):
     # Find 8-hex ids near blocker keywords (within ~40 chars)
-    for m in _re.finditer(r'(block|blocked|depends?|depending|gated|waiting|until|after|when)\W[^a-z0-9]{0,40}([a-f0-9]{8})\b', rest, _re.IGNORECASE):
+    for m in _re.finditer(r'(block|blocked|depends?|depending|gated|waiting|until|after|when).{0,60}?\b([a-f0-9]{8})\b', rest, _re.IGNORECASE):
         bid = m.group(2)
         if bid != jid and bid not in blockers:
             # Confirm it's a real contract id, not random hex
