@@ -57,9 +57,20 @@ check "binding/get-surfaces-it"    env PYTHONPATH="$SCRIPTS/lib" python3 -c \
 check "binding/verify-foreign"     env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" verify __nonexistent_surface_xyz__
 
 # Self-awareness: SKILL.md matches live state (no drift). Contract 5d2ad5a5.
+# Ψ2 working-memory cap: 'When to invoke' table ≤ 8 data rows (Miller's 7±2 upper edge)
+check "psych/working-memory-cap"   python3 -c "
+import re, sys
+t = open('$SKILL_DIR/SKILL.md').read()
+m = re.search(r'## When to invoke\s*\n+\| Trigger.*?\n((?:\|.*\n)+)', t)
+rows = [r for r in m.group(1).strip().split('\n') if r.startswith('|') and not r.startswith('|---')]
+data = [r for r in rows if not r.lstrip('|').strip().startswith('Trigger')]
+sys.exit(0 if len(data) <= 8 else 1)
+"
+# Ψ1 abstraction layers named explicitly in SKILL.md
+check "psych/abstraction-layers"   python3 -c \
+                                     "import sys; t=open('$SKILL_DIR/SKILL.md').read(); sys.exit(0 if all(L in t for L in ['L0','L1','L2','L3','L4']) and 'abstraction layers' in t.lower() else 1)"
 check "self/no-drift"              env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" python3 -c \
                                      "import json, subprocess, sys; r=subprocess.run(['bash','$CLI','self','--json'],capture_output=True,text=True); d=json.loads(r.stdout); sys.exit(0 if d['drift']==[] else 1)"
-
 # ── Shape gates (regression harnesses for each contract shape) ────────────────
 # Each gate's verify.sh proves one shape behaves correctly. They honor an
 # external CONTRACTS_STORE, so we run them with a tmpdir ledger to avoid
