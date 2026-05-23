@@ -475,7 +475,46 @@ a nervous system that fires, not a filing cabinet that is walked by hand.
 - Auto-satisfy when the action exits 0. Agent is the second key.
 - Maintain a separate principle store. `~/.contracts/contracts.jsonl` is the single store.
 - Prescribe plan text format. The declarant authors it.
-## Substrate principle (inherited, invariant)
+## Psychology (the layer biology doesn't reach)
+
+Biology gives us cells, organs, signals, selection. Psychology adds **what
+the agent can hold and act on**. /contract is a substrate at **layer L2**;
+its outputs default to L2 + L3 because that's where the agent operates.
+Bleed across layers is cognitive noise that erodes attention.
+
+### The five abstraction layers
+
+| Layer | Speaks in | Examples | Default visibility |
+|---|---|---|---|
+| **L0 — mechanical** | exit codes, hashes, raw paths | `action_exit=1`, `id=905c1a3a`, `pointer(cli): python3 -c "..."` | `--verbose` / `--debug` only |
+| **L1 — substrate** | shape names, ledger events | `cell`, `funnel`, `iterated`, `merged` | `--verbose` |
+| **L2 — agent-UX** | next action, wave count, navigation | "iterate → judge → mark", "wave 2/5" | **default ON** |
+| **L3 — truth-claim** | the plan, PASS/FAIL, KEY-2 verdict | "plan: …", "result: PASS", "is this genuinely satisfied?" | **default ON** |
+| **L4 — user-intent** | plain-English meaning, business goal | "frontend is now a banger", "the fix landed" | agent translates upward; skill doesn't emit |
+
+**Rule:** every emitted line belongs to exactly one layer. Mixed-layer output
+is a defect. If a layer above L3 needs to be spoken, that's the agent's job
+(it has theory of mind for the user; the skill does not).
+
+Worked corroboration: contract `900af694` (output at correct abstraction
+layer), `ed084986` (layers named explicitly), `cdb648fc` (final message
+/humanizer-translated).
+
+### Three psychology defaults (genuinely distinct from biology/theology)
+
+| # | Default | Antidote to | Where it lives |
+|---|---|---|---|
+| **Ψ1** | **Layer purity.** Output one layer at a time; L0 noise is hidden by default. | layer-bleed cognitive load | this section + `--verbose` flag on noisy verbs |
+| **Ψ2** | **Working-memory cap (Miller's 7±2).** The "When to invoke" front-door table caps at ≤8 load-bearing rows. Long-tail verbs are discoverable via `contract self`, not crammed into entry. | front-door overflow | self-test invariant `psych/working-memory-cap` |
+| **Ψ3** | **Confirmation-bias antidote.** For any organ with **≥3 children**, run `contract audit <id>` before `_mark satisfied` — N cold falsifiers try to break it. The substrate surfaces the prompt; the agent judges whether to honor it. | motivated reasoning / fake-green | propagation block after every funnel iterate that surfaces "audit recommended (N children)" |
+
+These do not replace the engineering/theology defaults — they layer on top.
+Where biology says "an organism is satisfied when all children fire", psychology
+says "the agent reading that result is constrained — render it at L3, not L0,
+and cap at one chunk." Where theology says "no false witness", psychology
+says "the agent will rationalize fake-green without an external auditor —
+fan one out before marking."
+
 
 The substrate enables; it does not prescribe. Scripts emit evidence only. No script bakes a verdict, a banned list, or a per-case rule. The agent renders every verdict in-thread. A contract that auto-satisfies is a tautology, not a contract.
 
