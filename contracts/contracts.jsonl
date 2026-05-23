@@ -3345,3 +3345,4 @@
 {"event":"status_update","id":"217840b8","status":"satisfied","ts":"2026-05-23T03:24:37Z"}
 {"event":"merged","id":"e8b97a6e","merged_into":"217840b8","reason":"","ts":"2026-05-23T03:24:38Z"}
 {"event": "iterated", "id": "abce81d6", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T03:25:49.416160Z"}
+{"event": "satisfied", "id": "abce81d6", "wave": 0, "ts": "2026-05-23T03:25:57.031863Z"}
