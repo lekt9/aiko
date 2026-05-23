@@ -259,6 +259,16 @@ else:
 
 _two_key_exit() {
   local id="$1" action_rc="$2" action="${3:-}"
+  local humanlike_signals=""
+  humanlike_signals=$(MH_ID="$id" _py_inline "
+import os; from contract_core import humanlike_iterate_warnings
+print('\\n'.join(humanlike_iterate_warnings(os.environ['MH_ID'])))
+")
+  if [ -n "$humanlike_signals" ]; then
+    echo
+    echo "=== HUMANLIKE SIGNALS ==="
+    echo "$humanlike_signals" | sed 's/^/  /'
+  fi
   echo
   echo "=== TWO-KEY EXIT ==="
   [ "$action_rc" -eq 0 ] && echo "  KEY 1 (machine): PASS" || echo "  KEY 1 (machine): FAIL"
