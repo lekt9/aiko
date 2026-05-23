@@ -1016,6 +1016,44 @@ print(f'  source: {src}')
 "
     ;;
 
+  alias)
+    # Σ3 — declare one identity equivalence class. Every alias resolves to
+    # the canonical for visibility checks (visible_to), team membership
+    # (is_team_member), and downstream gates that consult identity.
+    CANONICAL="${1:-}"; shift || true
+    if [ -z "$CANONICAL" ] || [ $# -lt 1 ]; then
+      cat >&2 <<'USAGE'
+usage: contract alias <canonical> <alias1> [<alias2> ...]
+
+Σ3 identity alias — declare an equivalence class. The canonical is the
+public-facing identity; the aliases all resolve to it.
+
+  # Example: Lewis has three identities across transports
+  contract alias lewis@getfoundry.app lewistham9x@gmail.com lekt8
+
+  # Result: contract list --for lekt8  ←→  resolves to lewis@getfoundry.app
+  # Both is_team_member and visible_to use the canonical form.
+
+Multiple alias rows merge transitively. Declaring (A, B) and later (B, C)
+unifies all three under the latest-declared canonical name.
+USAGE
+      exit 2
+    fi
+    ALIASES_JSON=$(printf '%s\n' "$@" | python3 -c "import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))")
+    MH_CANONICAL="$CANONICAL" MH_ALIASES="$ALIASES_JSON" _py_inline "
+import os, json; from contract_core import record_alias, resolve_identity
+aliases = json.loads(os.environ['MH_ALIASES'])
+canon = os.environ['MH_CANONICAL']
+record_alias(canon, aliases)
+print(f'aliased: {canon}')
+for a in aliases:
+    print(f'  ← {a} (resolves to: {resolve_identity(a)})')
+print()
+print(f'  use:  contract list --for <any-of-these>')
+print(f'        is_team_member({aliases[0] if aliases else canon!r}) now returns whatever {canon!r} returns')
+"
+    ;;
+
   list)
     SHOW_MERGED=""
     VIEWER=""
