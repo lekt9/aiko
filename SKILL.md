@@ -706,6 +706,7 @@ the row. New channels are new directories; no skill change required.
 - `~/.contracts/hooks/crystallize-learning.py` — internal hook: on every `mark` event, crystallizes a satisfied learning-bearing contract
 - `scripts/wait-for-event.py` — receptor helper: blocks until an event row matching a filter appears in `~/.contracts/inbox/<channel>/*.jsonl`. PASS on match, FAIL on timeout. Never writes to the ledger.
 - `scripts/verify-served-surface.sh` — **served-surface gate** (see below) — bun/npm-bootstrapped Playwright wrapper that loads a list of URLs in headless Chromium and fails the action on console.error / pageerror / same-origin 4xx. The script `scripts/browser/verify.mjs` is the Node program; the bundled `package.json` pins Playwright.
+- `scripts/observe-original.sh` — **API-trace / UX-flow recorder** (see below) — drives a *real* site through a scripted tour with a headless browser, captures per-screen network requests with headers + payload + status + clipped response, and emits a markdown `screen-flow.md` report. Use this BEFORE rebuilding any existing site. Implementation: `scripts/browser/observe.mjs`. Shares the same `scripts/browser/` playwright install as the served-surface gate.
 - `~/.contracts/contracts.jsonl` — the single append-only store (agent-agnostic)
 - `~/.contracts/inbox/<channel>/*.jsonl` — append-only event inboxes that injectors write and receptors poll (telegram, webhook, stripe, …)
 
