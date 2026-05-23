@@ -1,0 +1,5 @@
+# Corpus this rule applies to: any data/ directory under ~/Projects that
+# holds JSONL training data ≥1000 rows. The audit walks every match and
+# checks for stub-shape patterns documented in README.md.
+~/Projects/*/data
+~/Projects/*/data/*
