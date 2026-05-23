@@ -4350,3 +4350,4 @@
 {"event": "iterated", "id": "26f45e30", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T08:47:17.393923Z", "agent": "lewistham9x@gmail.com"}
 {"event": "iterated", "id": "019cbee8", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T08:47:40.421863Z", "agent": "lewistham9x@gmail.com"}
 {"event": "iterated", "id": "8a1187b4", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T08:47:41.569690Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "26f45e30", "wave": 0, "ts": "2026-05-23T08:47:56.307585Z", "proof": "agent-browser navigated /app, finalUrl after redirect = /, telegram OAuth iframe verified at oauth.telegram.org/embed/foundry_aiko_bot", "agent": "lewistham9x@gmail.com"}
