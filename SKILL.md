@@ -522,8 +522,7 @@ Rules:
 | Tongues doctrine | Implementation |
 |---|---|
 | `CONTRACTING_IS_LEARNING` — contracts encode lessons | The ledger IS memory. Failed waves are `learn_from_execution`. |
-| `AUTO_CONTRACT_HABIT_DETECTION` — patterns surface as candidates | `contract search` surfaces; agent declares. |
-| `DAEMON_INTERFACE` — substrate watches and routes | `contract search` is the conscious surface of passive observation. |
+| `AUTO_CONTRACT_HABIT_DETECTION` / `DAEMON_INTERFACE` — patterns surface as candidates; substrate watches and routes | `contract search` surfaces; agent declares. |
 | `self_grow` — spawn children | `contract spawn` is this primitive made real. |
 
 From `principles-as-harnesses.md`: a principle with `--action` IS a contract. From `dag-schema.md`: the graph is the single substrate. These are not external dependencies; they are the concept lineage this primitive implements directly.
