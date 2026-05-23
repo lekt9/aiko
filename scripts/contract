@@ -14,6 +14,20 @@ _py() {
 
 _py_inline() {
   PYTHONPATH="$CONTRACT_LIB:${PYTHONPATH:-}" python3 -c "$1"
+# --verbose: Ψ1 layer-purity binding
+
+# --verbose: Ψ1 layer-purity binding — when set, L0 mechanical noise (raw exit codes,
+# pointer-type internals, hashes) is shown alongside L2/L3. Default OFF so L0 is hidden.
+# Origin: contract f4468b06 (gap-debt session 2026-05-23).
+CONTRACT_VERBOSE=0
+for _arg in "$@"; do
+  case "$_arg" in
+    --verbose) CONTRACT_VERBOSE=1 ;;
+    --no-verbose) CONTRACT_VERBOSE=0 ;;
+  esac
+done
+export CONTRACT_VERBOSE
+
 }
 
 # Internal hook system — agent-agnostic, fires from within the CLI itself.
