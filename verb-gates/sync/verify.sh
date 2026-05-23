@@ -94,8 +94,6 @@ grep -q "no GITEA_TOKEN" "$TD/push-out.txt" || grep -q "PUSH FAILED\|no gitea re
 OTHER="$TD/other"
 mkdir -p "$OTHER"
 git -C "$OTHER" init -q
-git -C "$OTHER" config user.email "gate@example.com"
-git -C "$OTHER" config user.name  "sync-gate"
 echo "z" > "$OTHER/z.txt"
 cd "$TD"  # PWD elsewhere
 OUT_DIR=$("$CLI" sync "$OTHER" --no-push --message "via positional" 2>&1)
