@@ -5909,3 +5909,6 @@
 {"event":"status_update","id":"d00c0364","status":"satisfied","ts":"2026-05-23T18:16:04Z"}
 {"event":"satisfied","id":"55135f34","wave":1,"ts":"2026-05-23T18:16:04Z"}
 {"event":"status_update","id":"55135f34","status":"satisfied","ts":"2026-05-23T18:16:04Z"}
+{"event": "satisfied", "id": "5d61252d", "wave": 0, "ts": "2026-05-23T18:17:14.030012Z", "proof": "scripts/check_no_retired_slop.sh exits 0; no live references to Qa332X/hailuo/stock-cover slop in content-factory or scripts", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "d00c0364", "wave": 0, "ts": "2026-05-23T18:17:44.590162Z", "proof": "scripts/probe-image-model.sh exits 0; nano-banana-pro wired; no SD/flux/dalle/MJ/seedance-t2v in content-factory", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "55135f34", "wave": 0, "ts": "2026-05-23T18:18:15.775166Z", "proof": "scripts/probe-script-cells.sh exits 0; 1/1 v4-genz script (the-beasts-mark) carries valid psych_hook+marketing_primitive+genz_lever cells", "agent": "lewistham9x@gmail.com"}
