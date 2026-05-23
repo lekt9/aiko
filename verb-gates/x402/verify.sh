@@ -25,8 +25,9 @@ CLI="$HOME/.claude/skills/contract/scripts/contract"
 PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()")
 MOCK="$TD/mock.py"
 cat > "$MOCK" <<EOF
-import sys, json
+import sys, json, os
 from http.server import BaseHTTPRequestHandler, HTTPServer
+PAID_FLAG = "$TD/paid.flag"
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a, **k): pass
     def _send(self, code, body):
@@ -48,6 +49,22 @@ class H(BaseHTTPRequestHandler):
                 "amount":"\$1.00",
                 "asset":"USDC",
             }))
+        elif self.path.endswith("/402-ap"):
+            # Stateful: 402 until /v1/billing/autopay/charge flips PAID_FLAG, then 200
+            if os.path.exists(PAID_FLAG):
+                self._send(200, json.dumps({"ok":True,"settled_via":"autopay","balance_uc":100}))
+            else:
+                self._send(402, json.dumps({
+                    "error":"insufficient_balance",
+                    "balance_uc":0,
+                    "pay_url":"https://beta-api.unbrowse.ai/v1/billing/checkout?reason=mock-ap",
+                    "amount":"\$0.10",
+                    "asset":"USDC",
+                }))
+        elif self.path == "/v1/billing/autopay/charge":
+            # Π2 — server-side autopay. Settles from the user's account, sets flag.
+            open(PAID_FLAG, "w").write("paid")
+            self._send(200, json.dumps({"paid": True, "amount_uc": 10000, "method":"stripe_card_on_file"}))
         elif self.path.endswith("/401"):
             self._send(401, json.dumps({"error":"missing or invalid bearer"}))
         else:
