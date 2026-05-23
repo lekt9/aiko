@@ -70,10 +70,10 @@ grep -qE "contract:[a-f0-9]|contract:<id>" "$CORE" "$CLI" 2>/dev/null || {
   echo "FAIL: 'contract:<id>' pointer named in unified-model section but no resolver in CLI/core" >&2
   fail=$((fail+1))
 }
-
-# Cross-table: no action shape appears in the composition table (or vice versa)
-# Extract the action shapes table and composition shapes table separately, check no overlap.
-PY_BLOCK=$(cat <<'PY'
+# Action layer table
+m_a = re.search(r"### The action layer[\s\S]*?\| Surface \|[\s\S]*?\n((?:\|[^\n]*\n)+)", text)
+# Composition layer table
+m_c = re.search(r"### The composition layer[\s\S]*?\| Shape \|[\s\S]*?\n((?:\|[^\n]*\n)+)", text)
 import re, sys
 text = open("/Users/lekt9/.claude/skills/contract/SKILL.md").read()
 # Action layer table
