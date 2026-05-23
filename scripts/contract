@@ -550,7 +550,6 @@ pr(t) if t else print('  contract not found')
 "
     fi
     ;;
-    ;;
 
   graph)
     # contract graph <id> — render the gate graph centered on <id>:
