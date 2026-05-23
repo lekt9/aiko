@@ -102,6 +102,8 @@ def _infer_pointer_type(action: str) -> str:
         return "harness"
     if action.startswith("tool-guard:"):
         return "tool-guard"
+    if action.startswith("x402:"):
+        return "x402"
     if action.startswith(("curl ", "http://", "https://", "wget ")):
         return "api"
     return "cli"
