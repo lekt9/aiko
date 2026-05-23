@@ -151,10 +151,16 @@ def main() -> int:
     else:
         order = list(DEFAULT_ORDER)
 
+    # Read stdin first if relevant — and if --from-stdin was passed, hoist
+    # stdin to the front of the order. Without that hoist, the orchestrator
+    # would prefer hint-emitting sources (e.g. deepwiki) over the user's
+    # explicit paste.
     stdin_data = None
     if args.from_stdin or "stdin" in order:
         if not sys.stdin.isatty():
             stdin_data = sys.stdin.read()
+    if args.from_stdin and stdin_data:
+        order = ["stdin"] + [s for s in order if s != "stdin"]
 
     tried = []
     for name in order:
