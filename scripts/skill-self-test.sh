@@ -87,7 +87,7 @@ check "self/no-drift"              env CONTRACTS_STORE="$HOME/.contracts/contrac
 # external CONTRACTS_STORE, so we run them with a tmpdir ledger to avoid
 # polluting the real one. Promoted from orphaned 2026-05-23 (contract 2927a44e).
 GATE_TMP=$(mktemp -d)
-for gate in audit bm25 budget lifecycle propagation quorum sequence; do
+for gate in audit bm25 budget cell judgment funnel funnel-first loop harness lifecycle propagation quorum sequence tool-guard; do
   gate_path="$SKILL_DIR/$gate-gate/verify.sh"
   [ -f "$gate_path" ] && \
     check "gate/$gate"               env CONTRACTS_STORE="$GATE_TMP/$gate.jsonl" bash "$gate_path"
