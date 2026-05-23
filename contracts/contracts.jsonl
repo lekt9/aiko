@@ -3656,3 +3656,7 @@
 {"event": "satisfied", "id": "40375ac5", "wave": 0, "ts": "2026-05-23T05:18:09.361890Z", "agent": "lewistham9x@gmail.com"}
 {"event": "iterated", "id": "f5156c77", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T05:19:19.505046Z", "agent": "lewistham9x@gmail.com"}
 {"event": "satisfied", "id": "f5156c77", "wave": 0, "ts": "2026-05-23T05:19:23.814263Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "5db0cd5c", "plan": "self-test guard for the tool-guard verify harness", "action": "tool-guard:__contract_toolguard_selftest__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": null, "pointers": [], "ts": "2026-05-23T05:21:56.055325Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "5db0cd5c", "wave": 0, "ts": "2026-05-23T05:21:59.243861Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "b3547b47", "plan": "self-test guard for the tool-guard verify harness", "action": "tool-guard:__contract_toolguard_selftest__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": null, "pointers": [], "ts": "2026-05-23T05:24:00.396406Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "b3547b47", "wave": 0, "ts": "2026-05-23T05:24:03.399990Z", "agent": "lewistham9x@gmail.com"}
