@@ -120,6 +120,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--walk-exclude") walkExclude = new RegExp(args[++i]);
   else if (a === "--prelude") preludePath = args[++i];
   else if (a === "--env-from") envFrom = args[++i];
+  else if (a === "--no-raw-json") noRawJson = true;
   else urls.push(a);
 }
 
