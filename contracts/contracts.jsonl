@@ -4784,3 +4784,5 @@
 {"event":"iterated","id":"b3171edc","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T10:33:03Z"}
 {"event":"iterated","id":"60b64dbc","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T10:33:04Z"}
 {"event":"iterated","id":"aa6cbb82","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T10:33:04Z"}
+{"event":"satisfied","id":"e53202a5","wave":1,"ts":"2026-05-23T10:33:12Z"}
+{"event":"status_update","id":"e53202a5","status":"satisfied","ts":"2026-05-23T10:33:12Z"}
