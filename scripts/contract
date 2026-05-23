@@ -1511,6 +1511,137 @@ USAGE
     esac
     ;;
 
+  judge)
+    # Λ1 — runtime-agnostic KEY 2. Reads a contract's most recent iterate
+    # output from the ledger and asks a configured OpenAI-compatible LLM
+    # endpoint for a structured verdict (PROMOTE / HOLD / REJECT + proof).
+    # Closes the loop opened by Φ1: where Φ1 streams substrate output to an
+    # OpenAI client, Λ1 calls an OpenAI endpoint to serve KEY 2 in-thread.
+    # The substrate becomes truly runtime-agnostic — any LLM that speaks
+    # /v1/chat/completions can be the judge (Venice, OpenAI, Anthropic,
+    # local llama.cpp, anything).
+    #
+    # Config (first hit wins):
+    #   env: CONTRACT_LLM_URL / CONTRACT_LLM_KEY / CONTRACT_LLM_MODEL
+    #   file: ~/.config/contract/llm.json {"url":"...","key":"...","model":"..."}
+    JUDGE_ID="${1:-}"
+    if [ -z "$JUDGE_ID" ]; then
+      cat >&2 <<'USAGE'
+usage: contract judge <id>
+
+Λ1 — ask a configured LLM for KEY 2. Reads the latest iterate output for
+<id> and POSTs to <CONTRACT_LLM_URL>/chat/completions asking for a
+structured PROMOTE / HOLD / REJECT verdict.
+
+Config (env overrides file):
+  CONTRACT_LLM_URL    e.g. https://api.venice.ai/api/v1
+  CONTRACT_LLM_KEY    bearer token for the endpoint
+  CONTRACT_LLM_MODEL  e.g. venice-uncensored / gpt-4o-mini / claude-haiku-4-5
+  ~/.config/contract/llm.json  {"url":"...","key":"...","model":"..."}
+
+Exit codes:
+  0  — LLM returned PROMOTE
+  1  — LLM returned HOLD or REJECT (with reason printed)
+  2  — config missing OR LLM call failed (raw response shown)
+USAGE
+      exit 2
+    fi
+    MH_JID="$JUDGE_ID" _py_inline "
+import os, json, urllib.request, urllib.error, pathlib, sys
+from contract_core import get, _load
+
+jid = os.environ['MH_JID']
+row = get(jid)
+if not row:
+    print(f'judge: unknown id {jid}', file=sys.stderr); sys.exit(2)
+
+# Read config: env wins over file
+cfg = {}
+cfg_path = pathlib.Path.home() / '.config' / 'contract' / 'llm.json'
+if cfg_path.exists():
+    try: cfg = json.loads(cfg_path.read_text())
+    except: pass
+url   = os.environ.get('CONTRACT_LLM_URL')   or cfg.get('url')
+key   = os.environ.get('CONTRACT_LLM_KEY')   or cfg.get('key')
+model = os.environ.get('CONTRACT_LLM_MODEL') or cfg.get('model') or 'gpt-4o-mini'
+if not url or not key:
+    print('judge: missing CONTRACT_LLM_URL / CONTRACT_LLM_KEY', file=sys.stderr)
+    print(f'  config: {cfg_path} (exists={cfg_path.exists()})', file=sys.stderr)
+    print('  set env or write {url,key,model} to ~/.config/contract/llm.json', file=sys.stderr)
+    sys.exit(2)
+
+# Get the most recent iterate row's action_result for this contract
+recent = ''
+for r in _load():
+    if r.get('event') == 'iterated' and r.get('id') == jid:
+        recent = r.get('action_result') or recent
+plan = row.get('plan', '')
+action = row.get('action', '')
+
+prompt = f'''You are KEY 2 — the agent-judgment layer of the /contract substrate. Given a contract's plan, action, and the most recent mechanical run output, return ONE of three verdicts as a single token on the first line:
+
+  PROMOTE   — the result is genuinely satisfied; the plan held
+  HOLD      — the result looks passing but you suspect fake-green; iterate again
+  REJECT    — the action passed for the wrong reason; supersede or revise
+
+After the verdict token, write one short line of justification.
+
+CONTRACT
+  plan:   {plan}
+  action: {action}
+  latest_result: {recent}
+
+VERDICT:'''
+
+body = json.dumps({
+    'model': model,
+    'messages': [{'role':'user','content':prompt}],
+    'temperature': 0,
+    'max_tokens': 120,
+}).encode()
+chat_url = url.rstrip('/') + '/chat/completions'
+req = urllib.request.Request(chat_url, data=body, method='POST', headers={
+    'Authorization': f'Bearer {key}',
+    'Content-Type': 'application/json',
+})
+try:
+    with urllib.request.urlopen(req, timeout=30) as r:
+        resp = json.loads(r.read())
+except urllib.error.HTTPError as e:
+    print(f'judge: LLM HTTP {e.code} — {e.read().decode()[:300]}', file=sys.stderr)
+    sys.exit(2)
+except Exception as e:
+    print(f'judge: LLM call failed — {e}', file=sys.stderr)
+    sys.exit(2)
+
+content = resp.get('choices',[{}])[0].get('message',{}).get('content','').strip()
+if not content:
+    print(f'judge: LLM returned empty content. raw: {json.dumps(resp)[:300]}', file=sys.stderr)
+    sys.exit(2)
+
+first_line = content.splitlines()[0].strip().upper()
+rest = '\n'.join(content.splitlines()[1:]).strip()
+print(f'=== Λ1 LLM VERDICT (model={model}) ===')
+print(f'  verdict: {first_line}')
+if rest:
+    print(f'  reason:  {rest[:300]}')
+print(f'  llm:     {chat_url}')
+print()
+if 'PROMOTE' in first_line:
+    print(f'  next: contract _mark {jid} satisfied --proof \"Λ1 LLM judge ({model}): {rest[:160]}\"')
+    sys.exit(0)
+elif 'HOLD' in first_line:
+    print(f'  next: contract iterate {jid}  # judge says fake-green or unconvinced')
+    sys.exit(1)
+elif 'REJECT' in first_line:
+    print(f'  next: contract supersede {jid} <winner>  OR  contract revise {jid} <new-action>')
+    sys.exit(1)
+else:
+    print(f'  unrecognized verdict token (expected PROMOTE/HOLD/REJECT)', file=sys.stderr)
+    sys.exit(2)
+"
+    ;;
+
   list)
     SHOW_MERGED=""
     VIEWER=""
