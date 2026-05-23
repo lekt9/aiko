@@ -57,7 +57,18 @@ fix_orphan_citation() {
 }
 
 run_selftest_capture() {
-  bash "$SELFTEST" 2>&1
+  if [ "$SCOPE" = "all" ]; then
+    bash "$SELFTEST" 2>&1
+  else
+    # Fast subset: run only the 4 self-binding gates (this wave's scope)
+    for g in origin-citations bundled-scripts doctrine-binding default-contracts; do
+      if bash "$SKILL/scripts/check-$g.sh" >/dev/null 2>&1; then
+        echo "PASS  self/$g"
+      else
+        echo "FAIL  self/$g"
+      fi
+    done
+  fi
 }
 
 round=0
