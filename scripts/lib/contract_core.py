@@ -430,13 +430,21 @@ def get_tree(id: str, depth: int = 0) -> Optional[dict]:
     return c
 
 
-def list_all(show_merged: bool = False) -> list[dict]:
+def list_all(show_merged: bool = False, viewer: Optional[str] = None) -> list[dict]:
+    """Return every declared contract (most recent state per id).
+
+    viewer (Σ2): optional viewer identity. When set, rows are filtered
+    via `visible_to(row, viewer)` — public rows pass through, audience-tagged
+    rows pass only when viewer is in the audience list. None means no
+    filter (default — same as before the audience gate landed)."""
     seen, result = set(), []
     for row in _rows():
         if row.get("event") == "declared" and row["id"] not in seen:
             seen.add(row["id"])
             c = get(row["id"])
             if c and (show_merged or c.get("status") != "merged"):
+                if viewer and not visible_to(c, viewer):
+                    continue
                 result.append(c)
     return result
 def children_satisfy(id: str) -> bool:
