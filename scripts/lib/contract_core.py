@@ -397,11 +397,14 @@ def _team_cache() -> set:
             agent = (row.get("agent") or "").strip()
             if agent:
                 members.add(resolve_identity(agent))
-    # Always include the current agent — the human running the CLI is
-    # implicitly a team member of their own ledger even on their first run.
-    me = current_agent()
-    if me:
-        members.add(resolve_identity(me))
+    # NOTE: previously also auto-added current_agent() here so first-time
+    # callers were implicitly team. That created a Σ5 security hole — any
+    # stranger could set CONTRACT_AGENT and invite themselves into the
+    # allowlist on first run. The team set is now strictly the agent
+    # column (people who have actually declared a contract) UNION the
+    # invitee set (people an existing team member explicitly invited via
+    # `contract invite`). Bootstrap path: declare your first contract to
+    # join the column; thereafter you're team.
     _TEAM_CACHE = members
     return members
 
