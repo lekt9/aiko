@@ -1567,7 +1567,7 @@ gate-directory mismatches. Those became the `self/*` pre-flight checks.
 
 Shape gates cover the **nine shapes** — the firing rules of the substrate.
 They catch a `funnel` that resolves on partial children, a `loop-until`
-that doesn't re-fire, etc. They do **not** cover the 43 surface verbs that
+that doesn't re-fire, etc. They do **not** cover the 44+ CLI verbs (see `contract self`) that
 land on `~/.claude/skills/contract/scripts/contract`. A regression in
 `promote` or `supersede` could ship undetected — the shape semantics
 still pass; the verb just does the wrong thing.
@@ -1598,7 +1598,7 @@ It was the natural-sounding alternative. It loses on three grounds:
    it's a permanent ugliness in the substrate.
 2. **Hot-path cost.** Every CLI invocation would look up its verb's
    contract before dispatch. The bash dispatcher costs ~0; the contract
-   resolver costs a ledger read. Multiplied by 43 verbs ✕ every call,
+   resolver costs a ledger read. Multiplied by every verb ✕ every call,
    that's measurable.
 3. **Layer confusion.** A verb is a primitive of the substrate's
    *language*. A contract is a primitive of the substrate's *claims*. A
@@ -1647,7 +1647,7 @@ required, no new shape.
 6. `exit 0` if every assertion holds; `exit 1` with `FAIL: <what>` otherwise.
 
 Origin: contract `2db87011`, 2026-05-23. The skill had 14 shape gates + 5
-self-checks + 1 audit but **zero** behavioural coverage for the 43 verbs.
+self-checks + 1 audit but **zero** behavioural coverage for the 44+ CLI verbs.
 The first wave of 5 verb-gates immediately found a substrate-principle
 violation (`_mark` silently fabricated rows for unknown ids), proving the
 pattern's value on day one. Contract `0167e892` is the SKILL.md doc gate;
@@ -1732,7 +1732,7 @@ that the satisfied row is NOT written.
 ## Self-organism (the wrap)
 
 Every section above documents a claim /contract makes about itself:
-"nine shapes", "Eleven principles", "43 verbs", "every Origin: cites a real
+"nine shapes", "Eleven principles", "44+ verbs", "every Origin: cites a real
 contract", "every bundled script exists". The **self-organism** root
 `b77ad5d1` is the single funnel that pointer-gates on every one of those
 layer-claims. Iterating it walks every binding gate the substrate has,
