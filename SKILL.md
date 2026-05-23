@@ -903,3 +903,98 @@ endpoint URLs out of `main.js` and guessed at headers/methods, hitting
 frontend first would have produced the headers, payload shapes, and
 screen-to-endpoint mapping for free. The recorder exists so this never
 recurs.
+
+## Multi-dimensional gates (the graph the substrate already gives you)
+
+A contract whose `--action` is `contract:<id>` is a **gate by index** —
+it resolves to satisfied iff the referenced contract is satisfied, with
+no knowledge of how that other contract checks itself. Compose N such
+pointer-gated children under one funnel and you have **pointer-gated children
+that compose N gates from N independent dimensions** before the parent
+resolves. The graph is decoupled by index; the substrate's nine shapes
+already express it; **no new abstraction is required**.
+
+This is the agent-facing recipe for "promotion through multiple layers
+of dimensions before resolving." Each pointer is a dimension; each child
+is one dimension's gate; the funnel/quorum/sequence over them is the
+promotion logic.
+
+### The pattern
+
+```bash
+# A deploy-shaped organ that must clear THREE independent gates before resolving:
+#   - served-surface (no console.error / pageerror / 4xx)
+#   - empathy (real content, no error boundary)
+#   - observe-original (only if this is a rewrite — references the trace gate)
+contract declare "<deploy north star>" --action funnel
+# returns <root>
+
+# Reference each standing gate as a pointer-gated child:
+contract declare "served-surface holds for this deploy" \
+  --action contract:27125bd7 \
+  --parent <root>
+
+contract declare "empathy holds for this deploy" \
+  --action contract:4a055cf7 \
+  --parent <root>
+
+# Plus your domain-specific gate(s):
+contract declare "the actual feature works end-to-end" \
+  --action 'bash my/feature-verify.sh' \
+  --parent <root>
+```
+
+`contract:<id>` reads the referenced contract's status from the ledger;
+it does **not** re-run the other contract's action. Each dimension owns
+its own iterate cycle and its own evidence. The parent's iterate becomes
+"check every dimensional pointer". The agent judging KEY 2 at the parent
+sees the graph composed and either marks satisfied (when every gate
+genuinely fires) or spawns a child to close the missing dimension.
+
+### Standing gate IDs (canonical pointers)
+
+Already in the global ledger; reference by id:
+
+| Standing gate | Ledger id | Dimension |
+|---|---|---|
+| served-surface gate | `27125bd7` | console / network crashes on first paint |
+| empathy gate | `4a055cf7` | rendered content, no error boundary |
+| observe-original gate | `f669f09c` | trace before rebuild |
+
+Each is `agent-judges` so the project that references it binds the
+concrete URLs / floors / substrings via a wrapper action (a sibling
+contract whose mechanical action runs the actual `verify-served-surface.sh`
+/ `observe-original.sh` call). The standing gate carries the **truth claim**;
+the wrapper carries the **bound check**. This is the pointer-not-payload
+discipline applied to gates.
+
+### Viewing the graph
+
+`contract graph <id>` renders the topology centered on a node — parents
+(one level up), children (one level down with edge type annotation:
+`└─ child`, `└─ contract-ref →<other-id>`, `└─ corroborate ↔<other-id>`),
+and the `merged_into` lineage when present. Run it to see what
+dimensions are wired into an organ before marking it satisfied.
+
+```
+$ contract graph <root>
+[parents]
+  ← <organ-above>  "<plan…>"  (sequence, pending)
+[node]
+  ● <root>  "deploy north star"  (funnel, active)
+[children]
+  ├ contract-ref → 27125bd7  "served-surface gate (standing)"   [satisfied]
+  ├ contract-ref → 4a055cf7  "empathy gate (standing)"          [active]
+  └ <id-of-domain-gate>      "the actual feature works…"        [pending]
+```
+
+### Why this is in /contract itself, not a project doc
+
+The graph is universal — every organ benefits from naming its dimensions
+explicitly and pointing at standing gates by id. Promoting it into the
+skill means every future agent reaches for this composition without
+re-discovering it. Origin: 2026-05-23, the agent shipped served-surface
++ empathy as documented patterns but the deploy organs didn't reference
+them as children — the gates were aspirational documentation rather
+than load-bearing graph nodes. Naming the pattern + giving the gates
+canonical IDs closes that loop.
