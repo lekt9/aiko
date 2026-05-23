@@ -3579,3 +3579,13 @@
 {"event": "child_added", "id": "d901c3b1", "child_id": "2dd6f5f2", "ts": "2026-05-23T04:52:08.706378Z", "agent": "lewistham9x@gmail.com"}
 {"event": "declared", "id": "dd487167", "plan": "funnelfirstgate_selftest_76188 funnel-first child 2", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": "d901c3b1", "pointers": [], "ts": "2026-05-23T04:52:12.628316Z", "agent": "lewistham9x@gmail.com"}
 {"event": "child_added", "id": "d901c3b1", "child_id": "dd487167", "ts": "2026-05-23T04:52:12.638371Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "be60afd9", "plan": "funnelfirstgate_selftest_76188 funnel-first child 3", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": "d901c3b1", "pointers": [], "ts": "2026-05-23T04:52:16.471482Z", "agent": "lewistham9x@gmail.com"}
+{"event": "child_added", "id": "d901c3b1", "child_id": "be60afd9", "ts": "2026-05-23T04:52:16.480698Z", "agent": "lewistham9x@gmail.com"}
+{"event": "iterated", "id": "d901c3b1", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T04:52:20.442948Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "dd487167", "wave": 0, "ts": "2026-05-23T04:52:20.555900Z", "agent": "lewistham9x@gmail.com"}
+{"event": "iterated", "id": "d901c3b1", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T04:52:20.870064Z", "agent": "lewistham9x@gmail.com"}
+{"event": "iterated", "id": "94a79a02", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T04:52:20.978209Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "94a79a02", "wave": 0, "ts": "2026-05-23T04:52:21.090702Z", "agent": "lewistham9x@gmail.com"}
+{"event": "iterated", "id": "ebee7b64", "wave": 1, "action_exit": 1, "action_result": "fail", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T04:52:21.605008Z", "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "ebee7b64", "wave": 0, "ts": "2026-05-23T04:52:21.715550Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "0a363fdd", "plan": "harnessgate_selftest_76628 harness probe", "action": "harness:/var/folders/rj/rv6x757s1dbdb5fzb0b40l5h0000gn/T/tmp.s9Lc4rsGC4", "pointer_type": "harness", "cwd": "/Users/lekt9/Projects/unreel", "parent_id": null, "pointers": [], "ts": "2026-05-23T04:52:22.228793Z", "agent": "lewistham9x@gmail.com"}

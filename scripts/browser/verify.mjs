@@ -35,6 +35,16 @@
 //     [--min-text <N>]                assert innerText length >= N chars
 //                                     (default 0 = off)
 //     [--no-default-expect-not]       drop the built-in error-boundary guards
+//     [--no-raw-json]                 EMPATHY hardening: fail when the
+//                                     visible text contains a JSON dump.
+//                                     A "JSON dump" is a contiguous run of
+//                                     lines that look like serialized JSON
+//                                     (3+ "key": properties, or any line
+//                                     starting with { or [ and ending with
+//                                     } or ]). A page that renders
+//                                     `JSON.stringify(...)` to give up on
+//                                     real UI is honest-but-bad UX; this
+//                                     gate refuses to promote it.
 //     [--walk]                        WALK layer: after each URL, harvest
 //                                     every same-origin <a href> on the
 //                                     page and verify each link too. Catches
