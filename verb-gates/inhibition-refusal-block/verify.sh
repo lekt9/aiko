@@ -66,13 +66,16 @@ CID=$(echo "$OUT" | sed -nE 's/^  contract_id:[[:space:]]+(.+)$/\1/p' | head -1)
 [ "$CID" = "$T" ] || { echo "FAIL: contract_id='$CID', expected $T"; exit 1; }
 
 # === Phase 3: openai-render.py lifts the block to inhibition_refusal tool_call ===
-SSE=$(echo "$OUT" | python3 "$RENDER" 2>&1)
-echo "$SSE" | grep -q '"inhibition_refusal"' \
-  || { echo "FAIL: openai-render did not emit inhibition_refusal tool_call. SSE="; echo "$SSE" | head -40; exit 1; }
+SSE_FILE="$TD/sse.txt"
+echo "$OUT" | python3 "$RENDER" > "$SSE_FILE" 2>&1
+grep -q '"inhibition_refusal"' "$SSE_FILE" \
+  || { echo "FAIL: openai-render did not emit inhibition_refusal tool_call. SSE="; head -40 "$SSE_FILE"; exit 1; }
 
-python3 - <<PY
+python3 - "$SSE_FILE" "$I" <<'PY'
 import json, sys
-sse = """$SSE"""
+with open(sys.argv[1]) as f:
+    sse = f.read()
+i_id = sys.argv[2]
 got_call = False
 for line in sse.splitlines():
     line = line.strip()
