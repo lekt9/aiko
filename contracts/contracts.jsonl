@@ -3725,3 +3725,5 @@
 {"event": "satisfied", "id": "47b07178", "wave": 0, "ts": "2026-05-23T05:49:57.993546Z", "agent": "lewistham9x@gmail.com"}
 {"event": "satisfied", "id": "dbef99a8", "wave": 0, "ts": "2026-05-23T05:50:06.290930Z", "agent": "lewistham9x@gmail.com"}
 {"event": "satisfied", "id": "eddb9089", "wave": 0, "ts": "2026-05-23T05:50:06.758932Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "45cb71f3", "plan": "self-test guard for the tool-guard verify harness", "action": "tool-guard:__contract_toolguard_selftest__*", "pointer_type": "tool-guard", "cwd": "/Users/lekt9/Projects/unbrowse-ecosystem/unbrowse/frontend", "parent_id": null, "pointers": [], "ts": "2026-05-23T05:50:59.194602Z", "agent": "foundry@getfoundry.app"}
+{"event": "satisfied", "id": "45cb71f3", "wave": 0, "ts": "2026-05-23T05:51:00.952132Z", "agent": "foundry@getfoundry.app"}
