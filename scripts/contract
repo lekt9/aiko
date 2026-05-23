@@ -1382,13 +1382,14 @@ EOF
       fi
     fi
 
-    # Launch — fully detached, stdout+stderr → log, command line baked into pidfile
+    # Launch — fully detached, stdout+stderr → log, command line baked into pidfile.
+    # The `_` placeholder is the script-name ($0); BG_CMD lands at $1+ so
+    # `exec "$@"` runs the user's command, not the first arg as bash.
     TS=$(date -u +%FT%TZ)
-    # Use setsid where available so the child doesn't die with this shell
     if command -v setsid >/dev/null 2>&1; then
-      setsid bash -c 'exec "$@" >> "'"$LOG"'" 2>&1' "${BG_CMD[@]}" </dev/null &
+      setsid bash -c 'exec "$@" >> "'"$LOG"'" 2>&1' _ "${BG_CMD[@]}" </dev/null &
     else
-      nohup bash -c 'exec "$@" >> "'"$LOG"'" 2>&1' "${BG_CMD[@]}" </dev/null >/dev/null 2>&1 &
+      nohup bash -c 'exec "$@" >> "'"$LOG"'" 2>&1' _ "${BG_CMD[@]}" </dev/null >/dev/null 2>&1 &
     fi
     NEW_PID=$!
     disown 2>/dev/null || true
