@@ -14,8 +14,12 @@ set -uo pipefail
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACT="$SELF_DIR/contract"
-LEDGER="$HOME/.contracts/contracts.jsonl"
 GATE_CONTRACT="971e1917"
+# Resolve the ledger the contract CLI will actually write to (env > project > global).
+LEDGER=$(PYTHONPATH="$SELF_DIR/lib:${PYTHONPATH:-}" python3 -c "
+from contract_core import _resolve_ledger
+print(_resolve_ledger())
+")
 
 PASS=0
 FAIL=0
