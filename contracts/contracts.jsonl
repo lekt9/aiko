@@ -3334,3 +3334,4 @@
 {"event": "iterated", "id": "ffdf4eac", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T03:16:30.748571Z"}
 {"event": "satisfied", "id": "ffdf4eac", "wave": 0, "ts": "2026-05-23T03:16:30.815643Z"}
 {"event": "crystallized", "id": "ffdf4eac", "memory_path": "/Users/lekt9/.claude/projects/-Users-lekt9-Projects/memory/every-code-changing-contract-turn-commits-pushes-before-yiel.md", "outline_url": "https://docs.getfoundry.app/doc/every-code-changing-contract-turn-commits-pushes-before-yielding-c-9rwrUqMoOp", "ts": "2026-05-23T03:16:31.130100Z"}
+{"event": "declared", "id": "47080ee3", "plan": "TEST: throwaway parent for verb self-test 1779506362", "action": "agent-judges", "pointer_type": "agent-judges", "cwd": "/Users/lekt9/.agent-skills/contract", "parent_id": null, "pointers": [], "ts": "2026-05-23T03:19:22.201611Z"}
