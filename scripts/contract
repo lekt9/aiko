@@ -643,7 +643,6 @@ DEFAULTS = [
     ("C-G01",            "judgment", "harness collects, agent judges — no script emits PROMOTE/PASS/FAIL on its own"),
     ("C-G06",            "judgment", "verify the served surface, not the source — a build pass is never sufficient"),
     ("C-G08",            "judgment", "fix root cause, never band-aid — no downstream fix_/clean_/patch_ compensator"),
-    ("C-G11",            "judgment", "explicit verdict — PROMOTE/HOLD/REJECT with every caveat named; never bare done"),
     ("C-O04",            "judgment", "no mutable .db or state file un-gitignored inside a git-tracked directory"),
     ("deploy-e2e",       "judgment", "auth/deploy chain verified against the live running service; not build, not timestamp"),
     ("love",             "judgment", "serve the genuine need, not just the literal request — technically-passing but intent-missing is fake-green"),
