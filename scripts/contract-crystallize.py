@@ -145,11 +145,22 @@ def _enforce_layering(title, description, body, hook):
             f"memory layering: description {len(d)} chars > "
             f"{DESCRIPTION_MAX_CHARS} cap: {d[:60]!r}…")
     if d and b_oneline:
-        # description must not be equal to body or be a prefix of body
-        if d == b_oneline[:len(d)] or d == b_oneline:
+        # description must not BE the body. Being a short prefix is OK —
+        # the body extends and structures the gist with Why/How sections.
+        # The violation is "description == body verbatim" (no extension).
+        if d.lower() == b_oneline.lower():
             raise ValueError(
-                "memory layering: description duplicates body verbatim — "
-                "description is a one-sentence GIST, not the body itself")
+                "memory layering: description equals body verbatim — the "
+                "body should ADD structure (Why:/How to apply:) not just "
+                "restate the description")
+        # If body is also short and the description is identical to the
+        # first line of body, that's the duplication smell too.
+        body_first_line = (body or "").strip().split("\n", 1)[0]
+        if d.strip() == body_first_line.strip() and len(body_first_line) > 0.9 * len(b_oneline):
+            raise ValueError(
+                "memory layering: description equals the body's only line — "
+                "the body should ADD structure (Why:/How to apply:) not just "
+                "restate the description")
     if len(h) > HOOK_MAX_CHARS:
         raise ValueError(
             f"memory layering: hook {len(h)} chars > {HOOK_MAX_CHARS} cap")
