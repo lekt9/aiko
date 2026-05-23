@@ -1377,7 +1377,20 @@ PY
     ;;
   _mark)
     ID="${1:-}"; STATUS="${2:-}"
-    [ -z "$ID" ] || [ -z "$STATUS" ] && { echo "usage: contract _mark <id> <status>" >&2; exit 2; }
+    [ -z "$ID" ] || [ -z "$STATUS" ] && { echo "usage: contract _mark <id> <status> [--proof <text> | --proof-skip <reason>]" >&2; exit 2; }
+    shift 2 || true
+    # Parse --proof / --proof-skip. Bare 'satisfied' mark is refused unless
+    # one is provided — plan-fulfillment binding: every satisfied row carries
+    # a recorded artifact, not just in-thread agent judgment. Origin: 173c8819.
+    PROOF=""
+    PROOF_SKIP=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --proof) PROOF="${2:-}"; shift 2 ;;
+        --proof-skip) PROOF_SKIP="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
     # HARD-BREAK on resolution cycle: if this contract participates in a
     # contract:<id> cycle, refuse to satisfy. A cycle means satisfaction
     # would propagate falsely (Y depends on X depends on Y). Substrate
@@ -1394,11 +1407,34 @@ PY
         echo "  break the cycle first (revise an action / supersede one side / declare a non-pointer leaf)."
         exit 1
       fi
+      # PROOF REQUIRED: bare mark refused. Surface the plan as the rule the
+      # agent must self-judge against. Origin: 173c8819.
+      if [ -z "$PROOF" ] && [ -z "$PROOF_SKIP" ]; then
+        PLAN_TEXT=$(MH_ID="$ID" _py_inline "
+import os
+from contract_core import get
+c = get(os.environ['MH_ID'])
+print(c['plan'] if c else '(unknown)')
+" 2>/dev/null)
+        echo "=== PROOF REQUIRED (plan-fulfillment binding) ===" >&2
+        echo "  contract: $ID" >&2
+        echo "  plan:     $PLAN_TEXT" >&2
+        echo "" >&2
+        echo "  Bare _mark satisfied is refused. The plan IS the rule;" >&2
+        echo "  satisfaction needs a recorded proof on the ledger row." >&2
+        echo "" >&2
+        echo "  Pick one:" >&2
+        echo "    contract _mark $ID satisfied --proof \"<one-line evidence the plan held>\"" >&2
+        echo "    contract _mark $ID satisfied --proof-skip \"<why the in-thread KEY 2 is sufficient here>\"" >&2
+        exit 2
+      fi
     fi
-    MH_ID="$ID" MH_STATUS="$STATUS" _py_inline "
+    MH_ID="$ID" MH_STATUS="$STATUS" MH_PROOF="$PROOF" MH_PROOF_SKIP="$PROOF_SKIP" _py_inline "
 import os, sys
 from contract_core import mark_satisfied, mark_status, get
 id=os.environ['MH_ID']; st=os.environ['MH_STATUS']
+proof = os.environ.get('MH_PROOF') or None
+skip = os.environ.get('MH_PROOF_SKIP') or None
 # Substrate principle: never silently fabricate a row for an unknown id.
 # verb-gate _mark caught this — marking a nonexistent id silently appended
 # a satisfied row, which violates default #11 (every verification result
@@ -1408,8 +1444,8 @@ if get(id) is None:
     sys.exit(1)
 if st=='satisfied':
     # Honest mark: write only the satisfied event. The agent's KEY-2 verdict
-    # this explicit mark IS the verdict — no in-thread promise tag required.
-    mark_satisfied(id, 0)
+    # this explicit mark IS the verdict — proof / skip captured on the row.
+    mark_satisfied(id, 0, proof=proof, proof_skip_reason=skip)
 else:
     mark_status(id, st)
 print(f'  {id} -> {st}')
