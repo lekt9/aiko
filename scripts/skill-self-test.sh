@@ -56,6 +56,10 @@ check "binding/get-surfaces-it"    env PYTHONPATH="$SCRIPTS/lib" python3 -c \
                                      "from contract_core import get; import inspect; src = inspect.getsource(get); assert 'bind_to' in src"
 check "binding/verify-foreign"     env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash "$CLI" verify __nonexistent_surface_xyz__
 
+# Self-awareness: SKILL.md matches live state (no drift). Contract 5d2ad5a5.
+check "self/no-drift"              env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" bash -c \
+                                     "out=\$($CLI self --json) && python3 -c \"import json,sys; d=json.loads(sys.stdin.read()); sys.exit(0 if d['drift']==[] else 1)\" <<<\"\$out\""
+
 
 # ── Shape gates (regression harnesses for each contract shape) ────────────────
 # Each gate's verify.sh proves one shape behaves correctly. They honor an
