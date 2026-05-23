@@ -50,7 +50,8 @@ DECL=$("$CLI" declare "context bind for prior-source-test" --action "true" --bin
 PRIOR_CID=$(printf '%s' "$DECL" | grep -oE '^declared: [0-9a-f]+' | head -1 | awk '{print $2}')
 [ -n "$PRIOR_CID" ] || { echo "FAIL(5a): could not declare prior contract"; echo "$DECL"; exit 1; }
 OUT=$("$CLI" context-of 'prior/topic-ccc' --source prior --refresh </dev/null 2>&1)
-EXPECTED_CID="$PRIOR_CID" echo "$OUT" | python3 -c '
+export EXPECTED_CID="$PRIOR_CID"
+echo "$OUT" | python3 -c '
 import json,sys,os
 d = json.loads(sys.stdin.read())
 expected = os.environ.get("EXPECTED_CID","")
