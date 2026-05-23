@@ -3615,3 +3615,5 @@
 {"event":"child_added","id":"bad003d5","child_id":"7fa27416","ts":"2026-05-23T05:01:04Z"}
 {"event":"declared","id":"a34cba58","plan":"live omni curl witness: the user's exact tokenfactory + Nemotron-3-Nano-Omni curl returns a non-empty chat completion every time","action":"bash checks/omni-curl-live.sh","pointer_type":"cli","parent_id":"bad003d5","pointers":[],"blocked_by":[],"ui_spec_url":null,"ts":"2026-05-23T05:01:04Z"}
 {"event":"child_added","id":"bad003d5","child_id":"a34cba58","ts":"2026-05-23T05:01:04Z"}
+{"event":"iterated","id":"7fa27416","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T05:01:07Z"}
+{"event":"iterated","id":"a34cba58","wave":1,"action_exit":0,"action_result":"pass","agent_verdict":null,"children_spawned":[],"log_path":"","ts":"2026-05-23T05:01:08Z"}
