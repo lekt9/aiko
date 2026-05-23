@@ -193,16 +193,23 @@ def plan_quality_warning(plan: str) -> str:
 
 
 def humanlike_iterate_warnings(id: str) -> list[str]:
-    """Ε1/Ε2 salience signals derived from the latest iterate streak."""
+    """Ε1/Ε2 salience signals derived from the latest evaluation streak.
+
+    An *evaluation* is either an `iterated` event (the action actually fired)
+    or a `cached` event (the 10s sliding-window cache returned a prior wave's
+    result for the same key). Cache hits carry `action_exit` copied from the
+    source wave, so they continue the streak with the same exit polarity —
+    treating them as virtual iterations preserves Ε1/Ε2 semantics under the
+    cache layer (contract 3c2deda3)."""
     rows = [r for r in _rows() if r.get("id") == id]
     if any(r.get("event") == "satisfied" for r in rows):
         return []
-    iter_rows = [r for r in rows if r.get("event") == "iterated"]
-    if not iter_rows:
+    eval_rows = [r for r in rows if r.get("event") in ("iterated", "cached")]
+    if not eval_rows:
         return []
-    last_pass = int(iter_rows[-1].get("action_exit", 1)) == 0
+    last_pass = int(eval_rows[-1].get("action_exit", 1)) == 0
     streak = 0
-    for r in reversed(iter_rows):
+    for r in reversed(eval_rows):
         is_pass = int(r.get("action_exit", 1)) == 0
         if is_pass != last_pass:
             break
