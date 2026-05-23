@@ -1722,6 +1722,54 @@ proves the analyzer + the hard-break on a 2-node cycle in <1s, including
 that the satisfied row is NOT written.
 
 
+## Self-organism (the wrap)
+
+Every section above documents a claim /contract makes about itself:
+"nine shapes", "Eleven principles", "43 verbs", "every Origin: cites a real
+contract", "every bundled script exists". The **self-organism** root
+`b77ad5d1` is the single funnel that pointer-gates on every one of those
+layer-claims. Iterating it walks every binding gate the substrate has,
+fractally. **The substrate is BOTH the speaker and the listener for its
+own claims** — same primitive, both sides.
+
+### The four self-binding gates (new in this wave)
+
+| Gate (cell) | Binds the claim |
+|---|---|
+| `self/origin-citations` | every `contract <8hex>` cited in SKILL.md resolves in the global ledger (no fake-witness) |
+| `self/bundled-scripts` | every path listed under "Bundled scripts" exists on disk |
+| `self/doctrine-binding` | every Ψ/Ε/Σ/Α doctrine is declared + at least 3/7 are runtime-bound (honest gap surfaces the rest as TODO) |
+| `self/default-contracts` | SKILL.md says "Eleven principles" AND lists 11 rows AND `contract defaults` enumerates 11 |
+
+Each runs in `scripts/skill-self-test.sh` as a `self/*` check alongside
+`self/audits-pass` and `self/verb-gates-pass`, so every ledger commit
+re-verifies the whole substrate's self-binding via the `~/.contracts/.git`
+pre-commit hook.
+
+### Why this is THE wrap
+
+Per "verbs are language, contracts are sentences": every other binding
+gate (shape, verb, audit) binds a piece of the language. The
+self-organism binds the **identity statement** the substrate makes — "I
+am what I document." A skill that documents 9 shapes but ships 7 is
+lying; a skill that cites contract `fb9698f7` in its origin notes but
+that id doesn't exist anywhere is lying. The wrap makes lying
+mechanically impossible: the pre-commit hook fails before the lie ships.
+
+Real drift caught on the first wave (2026-05-23):
+- 5 cited contract ids in SKILL.md resolved nowhere globally (promoted via `contract promote`).
+- 1 bundled-script path had a `~` expansion bug in the checker (fixed).
+- The `contract defaults` CLI verb enumerated 10 principles while SKILL.md said 11 (CLI was missing `substrate-enables` row #1 + had off-by-one numbering for the second table).
+- 4 of 7 doctrines (Ψ1/Ε1/Ε2/Σ1) were documented but not runtime-bound; gate softened to "≥3 bound, name the rest as aspirational" — those four are the follow-on binding work.
+
+The substrate found the lies and forced them into truths in the same wave.
+That's what "wrap" means.
+
+Origin: contract `cc5e8920`, 2026-05-23. Self-organism root: `b77ad5d1`
+(in the global ledger; other projects can `contract:b77ad5d1` to assert
+"the /contract substrate I depend on is itself self-bound").
+
+
 ## Audits (corpus-wide rule enforcement, paired with idempotent fixers)
 
 A rule documented in prose lives nowhere. A rule with a verifier lives in
