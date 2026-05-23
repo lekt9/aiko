@@ -36,11 +36,11 @@ fail=0; total=0
 while IFS= read -r p; do
   [ -z "$p" ] && continue
   total=$((total + 1))
-  # Resolve ~ → $HOME if present
-  abs="$p"
-  case "$p" in
-    "~/"*) abs="$HOME/${p#~/}" ;;
-    "scripts/"*|"audits/"*|"verb-gates/"*|"<shape>-gate/"*|"references/"*) abs="$SKILL/$p" ;;
+  # Resolve ~ → $HOME if present, else skill-relative
+  abs="${p/#\~/$HOME}"
+  case "$abs" in
+    /*) ;;  # already absolute
+    *) abs="$SKILL/$p" ;;
   esac
   # Glob patterns (contain *, <)  → just check the parent directory exists
   case "$abs" in
