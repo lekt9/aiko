@@ -64,7 +64,7 @@
 // machine-side signal, not the verdict.
 
 import { chromium } from "playwright";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 const args = process.argv.slice(2);
