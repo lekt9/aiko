@@ -3326,3 +3326,4 @@
 {"event": "iterated", "id": "bc2b1a18", "wave": 2, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T03:05:04.266694Z"}
 {"event": "satisfied", "id": "bc2b1a18", "wave": 0, "ts": "2026-05-23T03:05:04.372286Z"}
 {"event": "iterated", "id": "abce81d6", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-23T03:07:30.615100Z"}
+{"event": "pre-mortem", "id": "5d11bdeb", "ts": "2026-05-23T03:07:59.005277Z", "voices": 3, "horizon": "6m"}
