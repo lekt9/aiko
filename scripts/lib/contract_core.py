@@ -355,12 +355,20 @@ def visible_to(contract_or_row: dict, viewer: Optional[str]) -> bool:
     audience = contract_or_row.get("audience") or ["team"]
     if "public" in audience:
         return True
-    declarer = contract_or_row.get("agent") or ""
-    if "private" in audience and viewer == declarer:
+    # Σ3 alias resolution: compare canonical forms so a viewer that goes
+    # by lekt8 still matches a row declared by lewis@getfoundry.app once
+    # `contract alias` has linked them.
+    canon_viewer = resolve_identity(viewer)
+    canon_declarer = resolve_identity(contract_or_row.get("agent") or "")
+    if "private" in audience and canon_viewer == canon_declarer and canon_viewer:
         return True
     if "team" in audience and is_team_member(viewer):
         return True
-    return viewer in audience
+    # Explicit identity audience: try both canonical and raw forms so
+    # legacy explicit-id audiences (declared before aliasing) still resolve.
+    if canon_viewer in audience or viewer in audience:
+        return True
+    return False
 
 
 def _team_cache() -> set:
