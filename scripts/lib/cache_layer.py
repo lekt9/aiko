@@ -116,14 +116,17 @@ def write(key: str, action_exit: int, action_result: str, wave: int,
 
 
 def record_hit(contract_id: str, source_wave: int, cache_age_s: float,
-               user: str, key: str) -> None:
+               user: str, key: str, action_exit: int) -> None:
     """Append a `cached` event row to the ledger. Wave is NOT incremented —
-    cache hits don't count as new iterations. The row is purely audit."""
+    cache hits don't count as new iterations. The row carries action_exit so
+    downstream detectors (Ε1 failure-streak, Ε2 over-iteration) can treat
+    cached + iterated events as one merged evaluation stream."""
     import contract_core  # local import; bash side guarantees PYTHONPATH
     contract_core._append({
         "event": "cached",
         "id": contract_id,
         "source_wave": source_wave,
+        "action_exit": action_exit,
         "cache_age_s": round(cache_age_s, 3),
         "cache_key": key,
         "user": user,
