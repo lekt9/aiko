@@ -272,8 +272,7 @@ _two_key_exit() {
     echo "  KEY 2 (agent):   JUDGE — is this GENUINELY satisfied, or fake-green?"
     echo
     if [ "$action_rc" -eq 0 ]; then
-      echo "  If genuine → emit: <promise>CONTRACT_SATISFIED:$id</promise>"
-      echo "              then:  contract _mark $id satisfied"
+      echo "  If genuine → run: contract _mark $id satisfied"
     else
       echo "  Fix the target, then: contract iterate $id"
     fi
