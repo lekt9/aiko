@@ -72,6 +72,8 @@ _run_action() {
     ptype="quorum"
   elif [[ "$action" == contract:* ]]; then
     ptype="contract-ref"
+  elif [[ "$action" == x402:* ]]; then
+    ptype="x402"
   elif [[ "$action" == curl\ * || "$action" == http://* || "$action" == https://* || "$action" == wget\ * ]]; then
     ptype="api"
   else
