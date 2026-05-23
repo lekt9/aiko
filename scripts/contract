@@ -2987,20 +2987,24 @@ if os.environ.get('MH_JSON'):
     print(json.dumps({'window_seconds': window, 'threshold': thresh,
                       'count': len(candidates), 'candidates': candidates}, indent=2))
 else:
-    print(f'=== CONTRACT SYNAPSE (Hebbian co-iteration scan) ===')
-    print(f'  window: {window}s    threshold: {thresh} co-iterations')
+    print('=== CONTRACT SYNAPSE (Hebbian co-iteration scan) ===')
+    print('  window: %ds    threshold: %d co-iterations' % (window, thresh))
     if not candidates:
         print('  no co-iteration pairs above threshold (no existing-corroboration overlap).')
         print()
         print('  Hebbian principle: cells that fire together wire together.')
         print('  raise --window or lower --threshold to surface weaker correlations.')
     else:
-        print(f'  {len(candidates)} candidate synapse(s) — pairs co-iterated together but not yet corroborated:')
+        print('  %d candidate synapse(s) — pairs co-iterated together but not yet corroborated:' % len(candidates))
         for c in candidates:
-            print(f'  [{c[\"co_iterations\"]}x]  {c[\"a\"]} <-> {c[\"b\"]}')
-            print(f'         {c[\"a\"]}: {c[\"plan_a\"][:60]}   [{c[\"status_a\"]}]')
-            print(f'         {c[\"b\"]}: {c[\"plan_b\"][:60]}   [{c[\"status_b\"]}]')
-            print(f'         -> contract corroborate {c[\"a\"]} {c[\"b\"]}  # if behaviorally related')
+            aid = c['a']; bid = c['b']
+            a_plan = c['plan_a'][:60]; b_plan = c['plan_b'][:60]
+            a_st = c['status_a']; b_st = c['status_b']
+            n_co = c['co_iterations']
+            print('  [%dx]  %s <-> %s' % (n_co, aid, bid))
+            print('         %s: %s   [%s]' % (aid, a_plan, a_st))
+            print('         %s: %s   [%s]' % (bid, b_plan, b_st))
+            print('         -> contract corroborate %s %s  # if behaviorally related' % (aid, bid))
         print()
         print('  substrate surfaces; agent decides. corroborate is the synapse — never auto-fired.')
 "
