@@ -5871,26 +5871,80 @@ dag(json_output=bool(os.environ.get('MH_JSON')))
 
   discover)
     SCOPE="all"
+    SELF_MODE=0
     while [ $# -gt 0 ]; do
       case "$1" in
         --scope) SCOPE="${2:-all}"; shift 2 ;;
+        --self) SELF_MODE=1; shift ;;
         *) shift ;;
       esac
     done
-    if [[ "$SCOPE" != "project" && "$SCOPE" != "global" && "$SCOPE" != "all" ]]; then
-      echo "ERROR: --scope must be project, global, or all" >&2; exit 2
+    if [ "$SELF_MODE" = "1" ]; then
+      # Δ1 self-discovery: /contract discovers itself programmatically by
+      # walking verbs (CLI surface) + shapes (data model) + gates (binding
+      # layer) + doctrine refs (standing-gate ids cited in SKILL.md) AS a
+      # composed organism. Each dimension is a sub-claim with a count and
+      # the iterate hint to re-fire it. The substrate enables; the agent
+      # judges KEY 2 on the composed surface.
+      MH_SKILL="$SELF/.." _py_inline "
+import os, json, subprocess, pathlib, re
+skill = pathlib.Path(os.environ['MH_SKILL']).resolve()
+self_out = subprocess.run([str(skill/'scripts/contract'), 'self', '--json'], capture_output=True, text=True, timeout=10)
+try: meta = json.loads(self_out.stdout)
+except Exception: meta = {}
+verbs = meta.get('verbs', [])
+shapes = meta.get('shapes', [])
+gates_dir = skill / 'verb-gates'
+gate_dirs = sorted([d.name for d in gates_dir.iterdir() if d.is_dir() and (d/'verify.sh').exists()]) if gates_dir.exists() else []
+shape_gates = sorted([d for d in (skill).iterdir() if d.is_dir() and d.name.endswith('-gate') and (d/'verify.sh').exists()]) if skill.exists() else []
+skill_md = (skill/'SKILL.md').read_text() if (skill/'SKILL.md').exists() else ''
+doctrine_ids = sorted(set(re.findall(r'\\bcontract:?([0-9a-f]{8})\\b', skill_md) + re.findall(r'standing-gate[: ]+\\\`?([0-9a-f]{8})\\\`?', skill_md)))
+print()
+print('=== Δ1 SELF-DISCOVERY (programmatic) ===')
+print('  /contract is composed of FOUR dimensions; each is a re-fireable sub-claim:')
+print()
+print(f'  [1] verbs ({len(verbs)}): the CLI surface')
+print(f'      -> contract self                       # re-introspect verbs')
+print(f'      -> contract self-test --layer verbs    # bind verb-language coverage')
+print()
+print(f'  [2] shapes ({len(shapes)}): the data model — {\", \".join(shapes)}')
+print(f'      -> contract self                       # re-introspect shapes')
+print(f'      -> bash {skill}/cell-gate/verify.sh    # bind any one shape')
+print()
+print(f'  [3] verb-gates ({len(gate_dirs)}): binding regression checks')
+for g in gate_dirs[:6]:
+    print(f'      · {g}')
+if len(gate_dirs) > 6:
+    print(f'      · ... ({len(gate_dirs) - 6} more)')
+print(f'      -> bash {skill}/scripts/skill-self-test.sh   # fire all gates')
+print()
+print(f'  [4] doctrine refs ({len(doctrine_ids)} standing-gate ids in SKILL.md):')
+for did in doctrine_ids[:8]:
+    print(f'      · contract:{did}')
+if len(doctrine_ids) > 8:
+    print(f'      · ... ({len(doctrine_ids) - 8} more)')
+print(f'      -> contract status <id>                # resolve any doctrine narrative')
+print()
+print('  composed-organism iterate:')
+print('      -> bash ' + str(skill) + '/scripts/skill-self-test.sh   # fires all 4 dimensions')
+print('  Substrate surfaces dimensions; KEY 2 stays with the agent on the composed mark.')
+"
+      exit 0
     fi
-    MH_SCOPE="$SCOPE" _py_inline "
+    if [[ \"\$SCOPE\" != \"project\" && \"\$SCOPE\" != \"global\" && \"\$SCOPE\" != \"all\" ]]; then
+      echo \"ERROR: --scope must be project, global, or all\" >&2; exit 2
+    fi
+    MH_SCOPE=\"\$SCOPE\" _py_inline \"
 import os; from contract_core import discover
 results = discover(os.environ.get('MH_SCOPE', 'all'))
 if not results:
     print('no contracts in scope')
 else:
     for r in results:
-        label = f\"[{r['scope']}]\"
+        label = f\\\"[{r['scope']}]\\\"
         plan_trunc = r['plan'][:60] + ('...' if len(r['plan']) > 60 else '')
-        print(f\"{label:<10} {r['id']} ({r['shape']}/{r['status']}) — \\\"{plan_trunc}\\\"\")
-"
+        print(f\\\"{label:<10} {r['id']} ({r['shape']}/{r['status']}) — \\\\\\\"{plan_trunc}\\\\\\\"\\\")
+\"
     ;;
 
   drive)
