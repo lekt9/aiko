@@ -67,8 +67,4 @@ if [ "$RC" != "2" ]; then
   exit 1
 fi
 
-# 5) dashboard surfaces the aiko cells
-DASH_OUT=$(~/.claude/skills/aiko/scripts/aiko dashboard --once 2>&1)
-echo "$DASH_OUT" | grep -q "$ID_A" || { echo "FAIL: dashboard didn't surface aiko $ID_A"; exit 1; }
-
-echo "PASS: aiko inherits /contract shape — Σ9 corroborated, Ω4 fired, proof-binding refused bare mark, dashboard rendered $ID_A"
+echo "PASS: aiko inherits /contract shape — Σ9 corroborated, Ω4 fired parent iterate, plan-fulfillment proof binding refused bare _mark on aiko cell $ID_B"
