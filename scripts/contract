@@ -4480,7 +4480,9 @@ except ImportError:
 op = os.environ["PR_OP"]; req_id = os.environ["PR_REQ_ID"]
 reason = os.environ.get("PR_REASON", "")
 resolver = (current_agent() or "anonymous").strip()
-req_root = os.path.expanduser("~/.contracts/inbox/permission-request")
+try: from contract_core import inbox_root as _iroot_r
+except ImportError: _iroot_r = lambda: __import__('pathlib').Path(os.path.expanduser("~/.contracts/inbox"))
+req_root = str(_iroot_r() / "permission-request")
 match = None
 if os.path.isdir(req_root):
     for fname in os.listdir(req_root):
