@@ -3038,30 +3038,82 @@ USAGE
   list)
     SHOW_MERGED=""
     VIEWER=""
+    SINCE=""
+    STATUS_FILTER=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --show-merged) SHOW_MERGED="1"; shift ;;
         --for)         VIEWER="${2:-}"; shift 2 ;;
+        --since)       SINCE="${2:-}"; shift 2 ;;
+        --status)      STATUS_FILTER="${2:-}"; shift 2 ;;
+        --pending)     STATUS_FILTER="pending,active,declared"; shift ;;
         *) shift ;;
       esac
     done
-    MH_SHOW_MERGED="${SHOW_MERGED:-}" MH_VIEWER="${VIEWER:-}" _py_inline "
-import os; from contract_core import list_all
+    MH_SHOW_MERGED="${SHOW_MERGED:-}" MH_VIEWER="${VIEWER:-}" MH_SINCE="${SINCE:-}" MH_STATUS="${STATUS_FILTER:-}" _py_inline "
+import os, json, time, re, pathlib
+from contract_core import list_all
 show = bool(os.environ.get('MH_SHOW_MERGED'))
 viewer = os.environ.get('MH_VIEWER') or None
+since = os.environ.get('MH_SINCE') or ''
+status_filter = os.environ.get('MH_STATUS') or ''
+status_set = set(s.strip() for s in status_filter.split(',') if s.strip()) if status_filter else None
+
+# Parse --since duration: '1d', '24h', '30m', '60s', or plain seconds
+cutoff_ts = None
+if since:
+    m = re.match(r'^(\d+)([smhd]?)\$', since.strip())
+    if not m:
+        print(f'  ERROR: --since must be like 24h, 7d, 30m, 60s (got: {since!r})'); raise SystemExit(2)
+    n = int(m.group(1)); unit = m.group(2) or 's'
+    mult = {'s':1, 'm':60, 'h':3600, 'd':86400}[unit]
+    cutoff_ts = time.time() - (n * mult)
+
+# Build a last-ts map by walking the ledger once (covers iterate + mark + judged + cached etc — any event with this id)
+last_ts_by_id = {}
+if cutoff_ts is not None:
+    ledger = pathlib.Path(os.environ.get('CONTRACTS_STORE') or os.path.expanduser('~/.contracts/contracts.jsonl'))
+    if ledger.exists():
+        for line in ledger.read_text().splitlines():
+            if not line.strip(): continue
+            try: row = json.loads(line)
+            except Exception: continue
+            cid = row.get('id'); ts = row.get('ts')
+            if not cid or not ts: continue
+            try:
+                # ts is ISO 8601 (e.g. '2026-05-24T03:42:00Z') — parse via time.strptime fallback to fromisoformat
+                from datetime import datetime
+                ts_f = datetime.fromisoformat(ts.replace('Z','+00:00')).timestamp()
+            except Exception:
+                continue
+            if cid not in last_ts_by_id or ts_f > last_ts_by_id[cid]:
+                last_ts_by_id[cid] = ts_f
+
 cs=list_all(show_merged=show, viewer=viewer)
-if not cs:
-    if viewer:
-        print(f'  (no contracts visible to {viewer!r})')
-    else:
-        print('  (no contracts)')
+shown = 0
 for c in cs:
+    if status_set is not None and c['status'] not in status_set: continue
+    if cutoff_ts is not None:
+        last_ts = last_ts_by_id.get(c['id'])
+        if last_ts is None or last_ts < cutoff_ts: continue
     shape='funnel' if (c.get('children') or c['action'] in ('children-satisfy','funnel')) else 'funnel-first' if c['action']=='funnel-first' else 'judgment' if c['action']=='agent-judges' else 'loop' if (c['action'].startswith('loop-until:') or c['action']=='loop') else 'harness' if c['action'].startswith('harness:') else 'cell'
     merged_note = f\" -> {c['merged_into']}\" if c.get('merged_into') else ''
     revised_note = ' [revised]' if c.get('original_action') else ''
     aud_note = f\" audience={','.join(c['audience'])}\" if c.get('audience') else ''
-    print(f\"[{c['status']}] {c['id']} ({shape}) w={c['wave']}{merged_note}{revised_note}{aud_note}\")
+    age_note = ''
+    if cutoff_ts is not None and c['id'] in last_ts_by_id:
+        age_s = time.time() - last_ts_by_id[c['id']]
+        age_h = age_s / 3600
+        age_note = f' ({age_h:.1f}h ago)' if age_h < 48 else f' ({age_s/86400:.1f}d ago)'
+    print(f\"[{c['status']}] {c['id']} ({shape}) w={c['wave']}{merged_note}{revised_note}{aud_note}{age_note}\")
     print(f\"  {c['plan'][:80]}\")
+    shown += 1
+if shown == 0:
+    filters = []
+    if status_set: filters.append(f'status in {sorted(status_set)}')
+    if cutoff_ts is not None: filters.append(f'last touched within --since {since}')
+    if viewer: filters.append(f'visible to {viewer!r}')
+    print(f'  (no contracts match: {\" + \".join(filters) if filters else \"<all>\"})')
 "
     ;;
 
