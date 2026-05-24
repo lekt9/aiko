@@ -112,6 +112,14 @@ def _infer_pointer_type(action: str) -> str:
         return "sandbox"
     if action.startswith("runpod:"):
         return "runpod"
+    if action.startswith("bun:"):
+        return "bun"
+    if action.startswith("macos-sandbox:"):
+        return "macos-sandbox"
+    if action.startswith("deepwiki:"):
+        return "deepwiki"
+    if action.startswith("findskills:"):
+        return "findskills"
     if action.startswith(("curl ", "http://", "https://", "wget ")):
         return "api"
     return "cli"
