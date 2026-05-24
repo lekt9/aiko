@@ -7479,6 +7479,29 @@ PY
     # === ROUTED === requirement-block + an inbox row at
     # ~/.contracts/inbox/agent/<id>.jsonl. Audience is "public" so the row
     # speaks Aiko's voice on every transport that renders it.
+    # --help short-circuit before any arg parsing so 'contract summon --help'
+    # doesn't accidentally summon Aiko with "--help" as her message.
+    if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+      cat >&2 <<'USAGE'
+contract summon "<message>" [--to <identity>] [--reason <context>]
+
+Aiko self-instantiation. Declares a public-audience contract row routed
+to a named identity via Σ4; transports tailing that identity's inbox
+render Aiko at that point in their flow.
+
+Examples:
+  contract summon "I noticed the deploy succeeded — want me to push docs?"
+  contract summon "Login flow broke at the redirect step" --to lewis@getfoundry.app
+  contract summon "Daily summary ready" --reason "scheduled morning cadence"
+
+Outputs:
+  - one declared contract row with --audience public + --action agent:<to>
+  - one inbox row at ~/.contracts/inbox/agent/<to>.jsonl (Σ4 fan-out)
+  - the contract id (stdout) — transport adapters use this to reference
+    the conversation point Aiko just appeared at
+USAGE
+      exit 0
+    fi
     MSG="${1:-}"
     shift || true
     TO="${CONTRACT_AGENT:-$(git config user.email 2>/dev/null || echo lewis@getfoundry.app)}"
