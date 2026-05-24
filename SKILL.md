@@ -899,6 +899,12 @@ A `contract judge` HOLD/REJECT verdict scans its reason text for `<8hex>` contra
 
 **Ω6** (`dc13b225`) — `contract face` emits identity+personality manifest JSON (Aiko public face, Σ1 attribution, 7 voice load-bearing rules, humanlike Ε/Σ/Α dimensions, layer_routing by audience tier, standing-gate refs). Transports and Λ1 attach as system prompt so every LLM call carries the agent's face. Gate: `verb-gates/face/`.
 
+**Φ5** (`da364b6e`) — emergentDB DAG IS the /contract graph; not two structures. Aiko cells live as `kind=aiko_cell` rows on `~/.contracts/contracts.jsonl` per Φ3 (`cd241a16`); Π4 (`397bc7bd`) mirrors to unbrowse-side when shipped. Every aiko relation is a /contract edge — `parent_id`, `contract:<id>`, `corroborate`, `supersede`. The graph IS the contracts.
+
+**aiko perpetual** (`f075d0a8`) — `aiko perpetual [--transport --client-id --no-drive --once]` binds a process as one of Aiko's environments: Σ6 presence + Π6 env-bind + declare self-organ aiko cell + drive arm. Aiko is alive in any env that runs the verb; self-iterates perpetually. Gate: `verb-gates/aiko-perpetual/`.
+
+**aiko broadcast-update** (`55c818e0`) — `aiko broadcast-update <update> [--kind --canonical --dry-run]` writes one `broadcast_update` row to `~/.contracts/inbox/agent/<canonical>.jsonl` for every active Σ6 session. Each env tails this inbox; agent judges KEY 2 on whether to act. UTC TTL via `calendar.timegm`. Gate: `verb-gates/aiko-broadcast/`.
+
 ## Ψ4 — async watcher (programmatic wait for external state)
 
 `contract watch <id> [--probe "<cmd>"] [--interval <s>]` registers a periodic poller at `~/.contracts/watchers/<id>.json`. `contract watch tick` runs one cycle: probe-FAIL keeps watching; probe-PASS (or no-probe) writes to `~/.contracts/inbox/watcher/<id>.jsonl`, auto-iterates the contract, removes the watcher (one-shot, like apoptosis). Internal hook `~/.contracts/hooks/watch-tick.sh` fires on every iterate/_mark, advancing pending watchers without a cron. Composes with Ω1: external-state flips wake the dependency graph automatically. Standing-gate: `21f1d851`. Verb-gate: `verb-gates/watch/verify.sh`.
