@@ -8,6 +8,12 @@ Store resolution (first match wins):
   2. <cwd>/.claude/contracts.jsonl  — if <cwd>/.claude/ directory exists (project scope)
   3. ~/.contracts/contracts.jsonl   — global fallback
 """
+# PEP 563 forward-eval: lets `str | None` and friends parse on Python 3.9
+# (where they would otherwise TypeError at module import). The substrate
+# must work on whichever python3 is first on PATH; users can have 3.9
+# (macOS system) or 3.12+ (homebrew).
+from __future__ import annotations
+
 import json, os, subprocess, sys, uuid
 from datetime import datetime, timezone
 from pathlib import Path
