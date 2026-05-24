@@ -4529,6 +4529,346 @@ IBUSAGE
         exit 2 ;;
     esac
     ;;
+  aiko)
+    # contract aiko {spawn|list|tree|status|fund|issues}
+    # Each aiko = Σ1 identity tied to a Solana Ed25519 keypair. spawn writes
+    # an aiko_spawned ledger row with parent_pubkey for lineage walking;
+    # storage at ~/.contracts/aikos/<short-id>/. Custody field on row
+    # (self|privy|lobster) — only `self` (local encrypted JSON) ships today;
+    # privy/lobster are honest-gap until creds wired. fund emits TRANSFER
+    # REQUIRED requirement block (transport signs on-chain; substrate just
+    # names the intent + lineage).
+    AK_CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    AK_SUB="${1:-}"; shift || true
+    case "$AK_SUB" in
+      spawn)
+        AK_PARENT=""; AK_HANDLE=""; AK_CUSTODY="self"
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --parent) shift; AK_PARENT="${1:-}"; shift ;;
+            --handle) shift; AK_HANDLE="${1:-}"; shift ;;
+            --custody) shift; AK_CUSTODY="${1:-}"; shift ;;
+            *) echo "ERROR: unknown arg '$1'" >&2; exit 2 ;;
+          esac
+        done
+        AK_PARENT="$AK_PARENT" AK_HANDLE="$AK_HANDLE" AK_CUSTODY="$AK_CUSTODY" AK_CLI_DIR="$AK_CLI_DIR" python3 <<'AK_SPAWN_PY'
+import datetime, json, os, sys
+sys.path.insert(0, os.path.join(os.environ["AK_CLI_DIR"], "lib"))
+try:
+    from contract_core import _append, current_agent
+except ImportError:
+    print("FATAL: contract_core not importable", file=sys.stderr); sys.exit(3)
+try:
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    from cryptography.hazmat.primitives import serialization
+except ImportError:
+    print("ERROR: install cryptography (`pip3 install cryptography`)", file=sys.stderr); sys.exit(2)
+try:
+    import base58
+except ImportError:
+    print("ERROR: install base58 (`pip3 install base58`)", file=sys.stderr); sys.exit(2)
+
+custody = os.environ["AK_CUSTODY"]
+if custody not in ("self", "privy", "lobster"):
+    print(f"ERROR: --custody must be self|privy|lobster (got '{custody}')", file=sys.stderr); sys.exit(2)
+if custody in ("privy", "lobster"):
+    # Honest-gap: name the choice on the row, but key material is generated locally
+    # until the transport-side custody wiring lands. This matches Π4's deferred pattern.
+    print(f"  ⚠  custody='{custody}' is recorded on the row but external custody is not yet wired", file=sys.stderr)
+    print(f"      key material is generated locally; migrate later via 'contract aiko migrate-custody'", file=sys.stderr)
+
+private_key = ed25519.Ed25519PrivateKey.generate()
+priv_bytes = private_key.private_bytes(
+    encoding=serialization.Encoding.Raw,
+    format=serialization.PrivateFormat.Raw,
+    encryption_algorithm=serialization.NoEncryption(),
+)
+pub_bytes = private_key.public_key().public_bytes(
+    encoding=serialization.Encoding.Raw,
+    format=serialization.PublicFormat.Raw,
+)
+# Solana keypair = 64 bytes (private || public), base58 = display
+pubkey_b58 = base58.b58encode(pub_bytes).decode()
+keypair_bytes = priv_bytes + pub_bytes
+short_id = pubkey_b58[:8]  # use first 8 chars of base58 pubkey as terse id
+
+parent_pubkey = os.environ.get("AK_PARENT", "").strip() or None
+# Resolve parent's lineage to walk-and-extend
+lineage = []
+if parent_pubkey:
+    # Walk ledger for parent's aiko_spawned row to read its lineage
+    try:
+        from contract_core import _rows
+        for r in _rows():
+            if r.get("event") == "aiko_spawned" and r.get("pubkey", "").startswith(parent_pubkey):
+                lineage = list(r.get("lineage", [])) + [r.get("pubkey")]
+                parent_pubkey = r.get("pubkey")  # canonicalize to full pubkey
+                break
+        else:
+            print(f"  ⚠  parent '{parent_pubkey}' has no aiko_spawned row — lineage will be [parent_pubkey] only", file=sys.stderr)
+            lineage = [parent_pubkey]
+    except Exception as e:
+        print(f"  ⚠  could not resolve parent lineage: {e}", file=sys.stderr)
+        lineage = [parent_pubkey]
+
+# Store keypair on disk. Path: ~/.contracts/aikos/<short-id>/keypair.json
+# For Σ2-style segregation: if CONTRACTS_AIKO_ROOT env set use that root.
+aikos_root = os.environ.get("CONTRACTS_AIKO_ROOT") or os.path.expanduser("~/.contracts/aikos")
+aiko_dir = os.path.join(aikos_root, short_id)
+os.makedirs(aiko_dir, exist_ok=True)
+# Solana convention: byte array of len 64
+keypair_path = os.path.join(aiko_dir, "keypair.json")
+with open(keypair_path, "w") as f:
+    json.dump(list(keypair_bytes), f)
+os.chmod(keypair_path, 0o600)  # owner-read-only
+# Public surface (safe to share): pubkey.txt
+with open(os.path.join(aiko_dir, "pubkey.txt"), "w") as f:
+    f.write(pubkey_b58 + "\n")
+
+ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+agent = (current_agent() or "anonymous").strip()
+handle = os.environ.get("AK_HANDLE", "").strip() or None
+row = {
+    "event": "aiko_spawned",
+    "id": f"aiko-{short_id}",
+    "pubkey": pubkey_b58,
+    "short_id": short_id,
+    "parent_pubkey": parent_pubkey,
+    "lineage": lineage,  # ordered list of ancestor pubkeys
+    "depth": len(lineage),
+    "custody": custody,
+    "keypair_path": keypair_path,
+    "handle": handle,
+    "spawned_by": agent,
+    "ts": ts,
+}
+_append(row)
+print(f"  aiko_id:        {short_id}  (full pubkey: {pubkey_b58})")
+print(f"  handle:         {handle or '(unnamed)'}")
+print(f"  parent_pubkey:  {parent_pubkey or '(root)'}")
+print(f"  lineage_depth:  {len(lineage)}")
+if lineage:
+    print(f"  lineage:        {' → '.join(p[:8] for p in lineage)} → {short_id}")
+print(f"  custody:        {custody}")
+print(f"  keypair_path:   {keypair_path}  (chmod 600)")
+print(f"  spawned_by:     {agent}")
+print(f"  result:         PASS (aiko_spawned row + keypair persisted)")
+print()
+print(f"  next steps:")
+print(f"    contract aiko tree {short_id}")
+print(f"    contract aiko spawn --parent {pubkey_b58}  (spawn a child aiko)")
+print(f"    contract aiko fund {short_id} --from <parent-pubkey> --amount-sol 0.01")
+AK_SPAWN_PY
+        ;;
+      list)
+        AK_FILTER=""
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --root-only) AK_FILTER="root"; shift ;;
+            --handle) shift; AK_FILTER="handle:${1:-}"; shift ;;
+            *) shift ;;
+          esac
+        done
+        AK_FILTER="$AK_FILTER" AK_CLI_DIR="$AK_CLI_DIR" python3 <<'AK_LIST_PY'
+import os, sys
+sys.path.insert(0, os.path.join(os.environ["AK_CLI_DIR"], "lib"))
+from contract_core import _rows
+aikos = []
+for r in _rows():
+    if r.get("event") == "aiko_spawned":
+        aikos.append(r)
+filt = os.environ.get("AK_FILTER", "")
+if filt == "root":
+    aikos = [a for a in aikos if not a.get("parent_pubkey")]
+elif filt.startswith("handle:"):
+    h = filt[7:]
+    aikos = [a for a in aikos if (a.get("handle") or "") == h]
+print(f"=== AIKO ROSTER ({len(aikos)} aikos) ===")
+if not aikos:
+    print("  no aikos yet — try: contract aiko spawn --handle root-aiko")
+for a in sorted(aikos, key=lambda x: (x.get("depth", 0), x.get("ts", ""))):
+    indent = "  " * (a.get("depth", 0))
+    short = a.get("short_id", "?")
+    pub = a.get("pubkey", "?")
+    handle = a.get("handle") or "(unnamed)"
+    custody = a.get("custody", "?")
+    parent = a.get("parent_pubkey")
+    parent_short = (parent or "")[:8] if parent else "ROOT"
+    print(f"  {indent}{short}  handle={handle:<20s} custody={custody:<8s} parent={parent_short}")
+    print(f"  {indent}  pubkey: {pub}")
+AK_LIST_PY
+        ;;
+      tree)
+        AK_TARGET="${1:-}"
+        [ -z "$AK_TARGET" ] && { echo "usage: contract aiko tree <aiko-id-or-pubkey>" >&2; exit 2; }
+        AK_TARGET="$AK_TARGET" AK_CLI_DIR="$AK_CLI_DIR" python3 <<'AK_TREE_PY'
+import os, sys
+sys.path.insert(0, os.path.join(os.environ["AK_CLI_DIR"], "lib"))
+from contract_core import _rows
+target = os.environ["AK_TARGET"]
+aikos = [r for r in _rows() if r.get("event") == "aiko_spawned"]
+match = None
+for a in aikos:
+    if a.get("short_id") == target or a.get("pubkey", "").startswith(target):
+        match = a; break
+if not match:
+    print(f"  ERROR: no aiko with id/pubkey '{target}'", file=sys.stderr); sys.exit(1)
+print(f"=== AIKO LINEAGE: {match['short_id']} ===")
+print(f"  handle:    {match.get('handle') or '(unnamed)'}")
+print(f"  pubkey:    {match['pubkey']}")
+print(f"  custody:   {match.get('custody', '?')}")
+print()
+print(f"  ancestors ({len(match.get('lineage', []))} hops up to root):")
+for i, anc in enumerate(match.get("lineage", [])):
+    anc_row = next((a for a in aikos if a["pubkey"] == anc), None)
+    anc_handle = (anc_row.get("handle") if anc_row else None) or "(unnamed)"
+    print(f"    {'  ' * i}↑ {anc[:8]}  {anc_handle}")
+print(f"    {'  ' * len(match.get('lineage', []))}● {match['short_id']}  {match.get('handle') or '(unnamed)'}  ← THIS aiko")
+descendants = [a for a in aikos if match["pubkey"] in a.get("lineage", [])]
+print()
+print(f"  descendants ({len(descendants)} spawned from this aiko):")
+for d in sorted(descendants, key=lambda x: x.get("depth", 0)):
+    rel_depth = d.get("depth", 0) - match.get("depth", 0)
+    print(f"    {'  ' * rel_depth}↓ {d['short_id']}  {d.get('handle') or '(unnamed)'}  custody={d.get('custody','?')}")
+if not descendants:
+    print(f"    (none — this is a leaf aiko)")
+AK_TREE_PY
+        ;;
+      fund)
+        AK_TARGET="${1:-}"; shift || true
+        AK_FROM=""; AK_AMOUNT=""; AK_NOTE=""
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --from) shift; AK_FROM="${1:-}"; shift ;;
+            --amount-sol) shift; AK_AMOUNT="${1:-}"; shift ;;
+            --note) shift; AK_NOTE="${1:-}"; shift ;;
+            *) echo "ERROR: unknown arg '$1'" >&2; exit 2 ;;
+          esac
+        done
+        [ -z "$AK_TARGET" ] || [ -z "$AK_FROM" ] || [ -z "$AK_AMOUNT" ] && { echo "usage: contract aiko fund <child-id> --from <parent-pubkey> --amount-sol <n> [--note <text>]" >&2; exit 2; }
+        AK_TARGET="$AK_TARGET" AK_FROM="$AK_FROM" AK_AMOUNT="$AK_AMOUNT" AK_NOTE="$AK_NOTE" AK_CLI_DIR="$AK_CLI_DIR" python3 <<'AK_FUND_PY'
+import datetime, json, os, sys
+sys.path.insert(0, os.path.join(os.environ["AK_CLI_DIR"], "lib"))
+from contract_core import _rows, _append, current_agent
+target = os.environ["AK_TARGET"]
+from_pubkey = os.environ["AK_FROM"]
+amount = os.environ["AK_AMOUNT"]
+note = os.environ.get("AK_NOTE", "")
+aikos = [r for r in _rows() if r.get("event") == "aiko_spawned"]
+target_row = next((a for a in aikos if a.get("short_id") == target or a.get("pubkey", "").startswith(target)), None)
+if not target_row:
+    print(f"  ERROR: no aiko found for '{target}'", file=sys.stderr); sys.exit(1)
+from_row = next((a for a in aikos if a.get("pubkey", "").startswith(from_pubkey)), None)
+if not from_row:
+    print(f"  ERROR: --from pubkey '{from_pubkey}' is not a known aiko (run 'contract aiko list' to see)", file=sys.stderr); sys.exit(1)
+# Lineage check: --from MUST be in target's lineage (no random funder)
+if from_row["pubkey"] not in target_row.get("lineage", []) and from_row["pubkey"] != target_row.get("parent_pubkey"):
+    print(f"  ERROR: '{from_pubkey[:8]}' is not an ancestor of '{target}' — only lineage ancestors can fund (prevents cross-tree drains)", file=sys.stderr); sys.exit(1)
+ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+agent = (current_agent() or "anonymous").strip()
+_append({
+    "event": "aiko_fund_requested",
+    "id": f"aiko-fund-{target_row['short_id']}-{int(datetime.datetime.now().timestamp())}",
+    "from_pubkey": from_row["pubkey"],
+    "to_pubkey": target_row["pubkey"],
+    "amount_sol": amount,
+    "note": note,
+    "requested_by": agent,
+    "ts": ts,
+})
+# Emit TRANSFER REQUIRED block — substrate names intent, transport signs
+print(f"=== TRANSFER REQUIRED ===")
+print(f"  kind:         aiko_fund")
+print(f"  from:         {from_row['pubkey']}  ({from_row.get('handle') or 'parent'})")
+print(f"  to:           {target_row['pubkey']}  ({target_row.get('handle') or 'child'})")
+print(f"  amount_sol:   {amount}")
+print(f"  note:         {note or '(none)'}")
+print(f"  custody:      {from_row.get('custody', '?')}  (transport renders the signing UI)")
+print()
+print(f"  render hints (transport picks one):")
+print(f"    privy:      open privy embedded-wallet, populate amount, ask for confirm")
+print(f"    lobster:    POST /v1/transfer with {{from, to, amount_sol, note}}, await signed tx")
+print(f"    self:       prompt user to run 'solana transfer {target_row['pubkey']} {amount} --keypair {from_row.get('keypair_path','<path>')}'")
+print(f"    cli:        emit the solana-cli command above")
+print()
+print(f"  audit row appended (event=aiko_fund_requested)")
+print(f"  result:       INTENT_RECORDED (no on-chain signature until transport confirms)")
+AK_FUND_PY
+        ;;
+      issues)
+        AK_CLI_DIR="$AK_CLI_DIR" python3 <<'AK_ISSUES_PY'
+import os, sys
+sys.path.insert(0, os.path.join(os.environ["AK_CLI_DIR"], "lib"))
+from contract_core import _rows
+rows = list(_rows())
+aikos = [r for r in rows if r.get("event") == "aiko_spawned"]
+print(f"=== AIKO MANAGEMENT VIEW ({len(aikos)} aikos) ===")
+# Mailboxes in flight: mail_sent without final mail_step_complete on every step
+mail_open = {}  # mail_id -> {sent, completed, total}
+for r in rows:
+    if r.get("event") == "mail_sent":
+        mid = r.get("mail_id")
+        if mid: mail_open[mid] = {"sent": r, "completed": 0, "total": r.get("total_steps", 1)}
+    elif r.get("event") == "mail_step_complete":
+        mid = r.get("mail_id")
+        if mid in mail_open: mail_open[mid]["completed"] += 1
+open_mail = {mid: m for mid, m in mail_open.items() if m["completed"] < m["total"]}
+# Deferred contracts (Β1)
+deferred = [r for r in rows if r.get("event") == "declared" and (r.get("plan") or "").startswith("DEFERRED")]
+deferred_open = []
+for d in deferred:
+    cid = d.get("id")
+    if not any(r.get("event") == "satisfied" and r.get("id") == cid for r in rows):
+        deferred_open.append(d)
+# Pending permission requests
+perm_pending = {}
+for r in rows:
+    if r.get("event") == "permission_request": perm_pending[r.get("req_id")] = r
+    elif r.get("event") == "permission_resolve":
+        perm_pending.pop(r.get("req_id"), None)
+print(f"\n  📬 OPEN MAILBOXES ({len(open_mail)}):")
+if not open_mail: print("    (none — all mail completed)")
+for mid, m in list(open_mail.items())[:10]:
+    s = m["sent"]
+    print(f"    {mid}  {s.get('from','?'):<25s} → {s.get('to','?'):<25s}  step {m['completed']}/{m['total']}  brief: {(s.get('brief') or '')[:50]}")
+print(f"\n  🕒 DEFERRED CONTRACTS ({len(deferred_open)}):")
+if not deferred_open: print("    (none open)")
+for d in deferred_open[:10]:
+    plan = (d.get("plan") or "")[:80]
+    print(f"    {d.get('id')}  {plan}")
+print(f"\n  🔐 PENDING PERMISSION REQUESTS ({len(perm_pending)}):")
+if not perm_pending: print("    (none pending)")
+for rid, r in list(perm_pending.items())[:10]:
+    print(f"    {rid}  {r.get('requester','?'):<25s} asks {r.get('target','?'):<25s} for: {r.get('action','?')}")
+# Aiko summary
+roots = [a for a in aikos if not a.get("parent_pubkey")]
+print(f"\n  🤖 AIKO ROSTER:")
+print(f"    roots:        {len(roots)}")
+print(f"    total aikos:  {len(aikos)}")
+print(f"    max depth:    {max((a.get('depth', 0) for a in aikos), default=0)}")
+custodies = {}
+for a in aikos:
+    c = a.get("custody", "?"); custodies[c] = custodies.get(c, 0) + 1
+print(f"    by custody:   {', '.join(f'{c}={n}' for c, n in custodies.items())}")
+AK_ISSUES_PY
+        ;;
+      *)
+        cat >&2 <<'AKUSAGE'
+usage: contract aiko spawn [--parent <pubkey>] [--handle <name>] [--custody self|privy|lobster]
+       contract aiko list   [--root-only] [--handle <name>]
+       contract aiko tree   <aiko-id-or-pubkey>
+       contract aiko fund   <child-id> --from <parent-pubkey> --amount-sol <n> [--note <text>]
+       contract aiko issues
+
+each aiko = Σ1 identity tied to a Solana Ed25519 keypair. Lineage walks via
+parent_pubkey chain in aiko_spawned rows. fund emits TRANSFER REQUIRED block
+(transport signs on-chain; substrate just records intent + lineage).
+custody=privy|lobster are honest-gap (key generated locally, custody field
+recorded; external custody integration deferred).
+AKUSAGE
+        exit 2 ;;
+    esac
+    ;;
   permission)
     # contract permission {request|grant|deny|show}
     #
