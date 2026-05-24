@@ -513,6 +513,77 @@ except Exception:
     return $sandbox_exit
   fi
 
+  # bun: pointer-type — plank 7 of 386497eb (TS-native execution at L1).
+  if [[ "$action" == bun:* ]]; then
+    local bun_spec="${action#bun:}"
+    if [ -z "$bun_spec" ]; then
+      echo "  result: ERROR — bun: action needs spec (e.g. bun:run script.ts, bun:-e 'console.log(1)')"
+      return 1
+    fi
+    local _cli_dir_bun
+    _cli_dir_bun="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    python3 "$_cli_dir_bun/lib/bun_layer.py" "$bun_spec"
+    return $?
+  fi
+
+  # macos-sandbox: pointer-type — OS-native isolation tier.
+  if [[ "$action" == macos-sandbox:* ]]; then
+    local macsb_spec="${action#macos-sandbox:}"
+    local macsb_profile="${macsb_spec%%:*}"
+    local macsb_cmd="${macsb_spec#*:}"
+    if [ -z "$macsb_profile" ] || [ "$macsb_profile" = "$macsb_spec" ] || [ -z "$macsb_cmd" ]; then
+      echo "  result: ERROR — macos-sandbox: action must be 'macos-sandbox:<profile>:<cmd>' (profiles: no-network, read-only, pure-compute, custom)"
+      return 1
+    fi
+    local _cli_dir_msb
+    _cli_dir_msb="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    python3 "$_cli_dir_msb/lib/macos_sandbox_layer.py" "$macsb_profile" "$macsb_cmd"
+    return $?
+  fi
+
+  # deepwiki: + findskills: pointer-types — plank 8/9, requirement-block emitters.
+  # Substrate names the requirement + payload; agent calls the MCP tool / Skill tool
+  # in the next turn. Returns FAIL until the agent satisfies via mcp__deepwiki__ask_question
+  # / Skill tool, then re-iterates with the result captured in a satisfied row.
+  if [[ "$action" == deepwiki:* ]]; then
+    local dw_spec="${action#deepwiki:}"
+    local dw_repo="${dw_spec%%:*}"
+    local dw_q="${dw_spec#*:}"
+    if [ -z "$dw_repo" ] || [ "$dw_repo" = "$dw_spec" ] || [ -z "$dw_q" ]; then
+      echo "  result: ERROR — deepwiki: action must be 'deepwiki:<owner/repo>:<question>'"
+      return 1
+    fi
+    echo ""
+    echo "  === DEEPWIKI REQUIRED ==="
+    echo "  kind:        deepwiki_query"
+    echo "  repo:        $dw_repo"
+    echo "  question:    $dw_q"
+    echo "  tool:        mcp__deepwiki__ask_question"
+    echo "  args:        {repoName: \"$dw_repo\", question: \"$dw_q\"}"
+    echo ""
+    echo "  Agent: call mcp__deepwiki__ask_question, summarise the answer as the iterate proof, then _mark satisfied with --proof citing the answer."
+    echo "  result: FAIL (awaiting deepwiki agent-side resolution)"
+    return 1
+  fi
+  if [[ "$action" == findskills:* ]]; then
+    local fs_context="${action#findskills:}"
+    if [ -z "$fs_context" ]; then
+      echo "  result: ERROR — findskills: action needs context (e.g. findskills:landing-page-audit)"
+      return 1
+    fi
+    echo ""
+    echo "  === FIND-SKILLS REQUIRED ==="
+    echo "  kind:        skill_lookup"
+    echo "  context:     $fs_context"
+    echo "  tool:        Skill (or /find-skills if available)"
+    echo "  hint:        invoke the Skill tool with the most-specialised skill name matching the context;"
+    echo "               if none clearly fits, fall back to general-purpose Agent + named context"
+    echo ""
+    echo "  Agent: pick the right skill, invoke it, then _mark satisfied with --proof naming the skill used."
+    echo "  result: FAIL (awaiting find-skills agent-side resolution)"
+    return 1
+  fi
+
   # runpod: pointer (alternative-backend serverless execution).
   # Plank 1 of DEFERRED-MEGA-VISION 386497eb. Same lifecycle shape as sandbox:
   # (auth → POST → result → return code), different upstream — RunPod serverless
