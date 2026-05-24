@@ -2480,6 +2480,23 @@ use_codex = (via_pref == 'codex') or (via_pref != 'http' and codex_bin and via_p
 content = ''
 source = ''
 
+# ε3 EMPATHY-PRESENCE (doctrine 34fa1097): the LLM judge call is the known-slow
+# substrate operation. Emit a structured PRESENCE block so transports tailing
+# iterate output (Telegram bot, web app, Panel, terminal) can render native
+# typing/thinking feedback while we wait on the model.
+from contract_core import emit_presence as _emit_presence
+_emit_presence(
+    'thinking',
+    f'running LLM judge against contract {jid}',
+    eta_seconds=15,
+    transport_hints={
+        'telegram': 'sendChatAction(action=typing)',
+        'web':      'thinking-dots cursor with label "judging"',
+        'panel':    'presence_card(state=thinking, label="judging")',
+        'terminal': 'stderr line "judging..."',
+    },
+)
+
 if use_codex and codex_bin:
     # codex exec --skip-git-repo-check -s read-only --output-last-message <tmp> -
     # reads the prompt from stdin and writes ONLY the final model message to <tmp>.
