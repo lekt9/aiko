@@ -1133,6 +1133,37 @@ def record_event(event: str, id: str, **fields) -> None:
     _append(row)
 
 
+def record_tokens(ref_id: Optional[str], model: str, in_tokens: int, out_tokens: int,
+                  source: str, cost_usd: Optional[float] = None,
+                  agent: Optional[str] = None, task_kind: Optional[str] = None) -> None:
+    """ε7 TOKEN-COST-TRACE (doctrine 42592320): record one LLM-call cost row.
+
+    ref_id     — the contract id this call was made FOR (judge target, etc.)
+                  or None for free-standing calls (chat, search, etc.)
+    model      — vendor id, e.g. 'gpt-5', 'claude-opus-4-7', 'gpt-5-codex'
+    in_tokens  — prompt tokens
+    out_tokens — completion tokens
+    source     — codex|http|subagent|claude-code|other
+    cost_usd   — when known from pricing table or vendor response; None = unmapped
+    agent      — Σ1 attribution; defaults to current_agent()
+    task_kind  — optional category (judge|chat|search|...) for finer rollup
+
+    Rolls up via Σ3 aliases in `contract cost`. Substrate stores; agent reads.
+    """
+    fields = {
+        "model": model,
+        "in_tokens": int(in_tokens),
+        "out_tokens": int(out_tokens),
+        "source": source,
+        "agent": agent or current_agent(),
+    }
+    if cost_usd is not None:
+        fields["cost_usd"] = float(cost_usd)
+    if task_kind:
+        fields["task_kind"] = task_kind
+    record_event("tokens", ref_id or "_", **fields)
+
+
 def mark_satisfied(id: str, wave: int, proof: str | None = None, proof_skip_reason: str | None = None) -> None:
     """Append a satisfied row. One of `proof` (plan-fulfillment evidence)
     or `proof_skip_reason` (explicit opt-out) should be present; both None
