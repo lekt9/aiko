@@ -905,6 +905,8 @@ A `contract judge` HOLD/REJECT verdict scans its reason text for `<8hex>` contra
 
 **aiko broadcast-update** (`55c818e0`) — `aiko broadcast-update <update> [--kind --canonical --dry-run]` writes one `broadcast_update` row to `~/.contracts/inbox/agent/<canonical>.jsonl` for every active Σ6 session. Each env tails this inbox; agent judges KEY 2 on whether to act. UTC TTL via `calendar.timegm`. Gate: `verb-gates/aiko-broadcast/`.
 
+**Σ11 verbs-are-contracts** (`af9c06a5`) — every non-bootstrap CLI verb IS a contract row at `verb:<name>` whose plan governs the verb. Bootstrap floor `{declare, iterate, _mark, self}` MUST stay built-in by necessity (you can't declare without declare). Migration path: each verb gets a `verb:<name>` declared row + optional move to `~/.contracts/lib/verbs/<name>` plugin. Supersedes 2db87011 on principle ("non /contract is antipattern"). Migrated proofs so far: `verb:layer` (`c285e418`), `verb:face` (`c99e0100`). 79 hardcoded verbs remain as Β1 backlog — each gets a row when touched. Gate: `verb-gates/sigma11-verbs-are-contracts/`.
+
 ## Ψ4 — async watcher (programmatic wait for external state)
 
 `contract watch <id> [--probe "<cmd>"] [--interval <s>]` registers a periodic poller at `~/.contracts/watchers/<id>.json`. `contract watch tick` runs one cycle: probe-FAIL keeps watching; probe-PASS (or no-probe) writes to `~/.contracts/inbox/watcher/<id>.jsonl`, auto-iterates the contract, removes the watcher (one-shot, like apoptosis). Internal hook `~/.contracts/hooks/watch-tick.sh` fires on every iterate/_mark, advancing pending watchers without a cron. Composes with Ω1: external-state flips wake the dependency graph automatically. Standing-gate: `21f1d851`. Verb-gate: `verb-gates/watch/verify.sh`.
