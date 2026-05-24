@@ -42,7 +42,16 @@ for (const p of paths) {
   const consoleErrors = [];
   page.on("pageerror", (e) => consoleErrors.push(`pageerror: ${e.message}`));
   page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(`console.error: ${m.text()}`); });
-  await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 25000 });
+    await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+  } catch (e) {
+    console.error(`${p}: goto failed - ${e.message}`);
+    out.paths[p] = { url, error: e.message };
+    exitCode = 1;
+    await page.close();
+    continue;
+  }
   // Let scroll-reveal trigger by scrolling through the page so every
   // chapter actually paints in its revealed state.
   await page.evaluate(async () => {
