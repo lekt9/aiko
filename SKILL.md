@@ -2491,6 +2491,86 @@ answer was "already references — and here's why that's load-bearing,
 not arbitrary." This section names the design so future agents see the
 answer in the doc, not after re-deriving it from the row schema.
 
+## Locality (the four-scope metasuperpattern)
+
+/contract is **location-invariant at the row level, location-dependent
+at the discovery level**. One primitive runs at four scopes; the
+substrate's existing discovery algorithm plus the Σ-stack already cover
+the mechanics. This section names the unified model so future agents
+reach for one mental shape, not four.
+
+### The four scopes (one algorithm, four files)
+
+| Scope | Ledger location | Identity | Use |
+|---|---|---|---|
+| **project** | `<project>/.claude/contracts.jsonl` | per-project | project-local gates, deploy verifications, feature claims; same id in two projects is independent |
+| **global** | `~/.contracts/contracts.jsonl` | per-user host-wide | standing gates (`contract promote <id>`), identity catalogs (`~/.contracts/people/`), reusable verifiers |
+| **container** | `/opt/.contracts/contracts.jsonl` inside a docker container | per-tenant | hardware-enforced privacy (OS layer enforces what Σ2 enforces in software); the deferred C1 silo work (`731af006` → `b61a83be`) IS this scope's binding gate |
+| **account** | `~/.contracts/contracts.jsonl` of a remote user account, reached via SSH | per-OS-user | `ssh user@host -- contract iterate <id> --stdin` is faithful at-a-distance iterate; CONTRACT_USER=`$(whoami)` makes the SSH'd-into account the requesting identity |
+
+### The discovery algorithm (one walk, four scopes)
+
+`contract_core._ledger()`:
+- `CONTRACTS_STORE` env wins (any override)
+- else walk up from cwd looking for `.claude/contracts.jsonl` (project)
+- else fall back to `~/.contracts/contracts.jsonl` (global / account / container — whichever home the process is rooted in)
+
+That's it. Same code resolves project, global, container, and account
+scopes correctly because the file location IS the scope.
+
+### What already works across scopes (no new code)
+
+- **Row schema is identical at every scope.** Declared/iterated/satisfied/cached JSONL rows have the same shape whether the file lives in a project, in `~/.contracts/`, in a container, or in an SSH'd-into account.
+- **The nine shapes work identically.** A funnel in a project ledger composes the same as a funnel in a container ledger.
+- **The three keys fire identically.** KEY 1 machine, KEY 2 agent, KEY 3 refractory — no scope shortcuts.
+- **Σ3 identity aliases** — same human across hosts/containers/accounts after one `contract alias` call.
+- **Σ4 `agent:<id>` routing** — inbox writes when iterator-identity differs from action-target; works identically inside a container, over SSH, on the host.
+- **Σ6 session register/list/claim** — multi-client coordination; `client_id` can be `tg-phone`, `ssh-tencent`, `docker-cayden-sandbox`; same arbitration logic.
+- **Π3 `machine:<binary>`** — per-host resolution map means the same contract row resolves binaries correctly on every host/container.
+- **inbox shared volumes** — `~/.contracts/inbox/` is plain JSONL; mount it as a docker volume and containers share the bus.
+- **`contract promote`** — project→global upgrade path; container→host is the same row-copy with a different source path.
+- **SSH-triggered iterate** — no new code needed; bash dispatch + stdio is already the cache-layer's stdin path; CONTRACT_USER derives from `$USER` on the remote shell.
+
+### Wavefront and cycles across scopes
+
+The wavefront (parent / referrer / synapse / Ω1 unblock-rewake)
+propagates **within** the ledger being iterated. Cross-scope
+propagation is **deliberate**, not implicit:
+
+- `contract promote <id>` (project → global) — explicit row copy; the promoted row IS the canonical thereafter
+- Σ4 inbox writes (any scope → named-agent's home scope) — explicit by `agent:<id>` action
+
+Because every cross-scope reference goes through `promote` or Σ4, the
+substrate cannot form a cross-scope `contract:<id>` cycle: the
+referenced id resolves to the local ledger only, and the cycle detector
+(`contract depth --strict-cycles`) is sufficient at single-scope scope.
+
+### What's deliberately NOT shipped under this doctrine
+
+- **A `scope` field on rows beyond `0661a665`.** Scope IS the file location, not a row-level tag; over-tagging would force two sources of truth.
+- **Automatic cross-scope sync.** Promotion is a verb (deliberate human/agent action), not a hook. The Π4 unbrowse marketplace mirror is the eventual horizontal-sync layer but lives at unbrowse, not /contract.
+- **Container / account scope verb-gates.** The discovery algorithm is shape-agnostic; existing `cell-gate` + `verb-gates/promote` already prove the same primitive at every scope. Adding `iterate-from-container` or `iterate-via-ssh` verb-gates would be testing the OS, not the substrate.
+
+### The fractal claim, refined (one more axis)
+
+Previously: every contract is simultaneously a funnel + loop + harness
+at every depth. **Now also: every contract operates identically at
+every scope** — project, global, container, account. The four scopes
+are the same primitive expressed at different OS/network locality
+scales; the substrate is invariant under translation across them.
+
+Origin: contract `79c2d656`, 2026-05-24. Lewis's framing: "/contract
+can be project level or global level /contract and even exist in
+different docker containers for /contract isolation of things or even
+/contract for user account level where even ssh into the account and
+cli stdio via ssh triggers the /contract — write the meta super
+/contract metasuperpattern". The doctrine composes existing pieces
+(`0661a665` scope-tag, `3b1d1cca` promote-discipline, `731af006` /
+`b61a83be` docker silo, Σ3/Σ4/Σ6 stack) into one unified model. The
+genuinely new claim is the SSH-as-substrate-entry-point binding — a
+remote shell carries stdio faithfully, so `ssh user@host -- contract
+iterate <id> --stdin` is the same primitive as a local iterate.
+
 ## Self-modeling (biology turned inward)
 
 
