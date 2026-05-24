@@ -4805,100 +4805,31 @@ print(f"  result:       INTENT_RECORDED (no on-chain signature until transport c
 if os.environ.get("AK_SIGN") == "1":
     if from_row.get("custody") != "self":
         print(f"  ERROR: --sign requires custody='self' on the FROM aiko (got '{from_row.get('custody')}')", file=sys.stderr); sys.exit(1)
-    try:
-        from solders.keypair import Keypair
-        from solders.pubkey import Pubkey
-        from solders.system_program import transfer, TransferParams
-        from solders.transaction import Transaction
-        from solders.hash import Hash
-        from solders.message import Message
-    except ImportError:
-        print(f"  ERROR: --sign needs solders (`pip3 install solders`). DEFERRED rows e8cedf82/08197b29 cover privy/lobster custodial paths.", file=sys.stderr); sys.exit(1)
-    import urllib.request, urllib.error
-    rpc = os.environ.get("AK_RPC") or "https://api.devnet.solana.com"
-    # Load keypair from file (Solana convention: 64-byte array [priv32||pub32])
-    try:
-        with open(from_row["keypair_path"]) as f:
-            keypair_bytes = bytes(json.load(f))
-        if len(keypair_bytes) != 64:
-            print(f"  ERROR: keypair file must be 64 bytes (got {len(keypair_bytes)})", file=sys.stderr); sys.exit(1)
-        signer = Keypair.from_bytes(keypair_bytes)
-    except Exception as e:
-        print(f"  ERROR: could not load keypair from {from_row['keypair_path']}: {e}", file=sys.stderr); sys.exit(1)
-    # Confirm signer's pubkey matches the row (sanity)
-    if str(signer.pubkey()) != from_row["pubkey"]:
-        print(f"  ERROR: keypair pubkey mismatch — file says {signer.pubkey()}, row says {from_row['pubkey']}", file=sys.stderr); sys.exit(1)
-    to_pubkey = Pubkey.from_string(target_row["pubkey"])
-    lamports = int(float(amount) * 1_000_000_000)  # 1 SOL = 1e9 lamports
-    # Fetch a recent blockhash from RPC
-    try:
-        req_body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getLatestBlockhash"}).encode()
-        req = urllib.request.Request(rpc, data=req_body, headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            bh_data = json.loads(resp.read().decode())
-        if "error" in bh_data:
-            print(f"  ERROR: RPC error from {rpc}: {bh_data['error']}", file=sys.stderr); sys.exit(1)
-        blockhash_str = bh_data["result"]["value"]["blockhash"]
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
-        print(f"  ERROR: RPC unreachable at {rpc}: {e}", file=sys.stderr); sys.exit(1)
-    # Build + sign tx
-    instruction = transfer(TransferParams(
-        from_pubkey=signer.pubkey(),
-        to_pubkey=to_pubkey,
-        lamports=lamports,
-    ))
-    message = Message.new_with_blockhash([instruction], signer.pubkey(), Hash.from_string(blockhash_str))
-    tx = Transaction([signer], message, Hash.from_string(blockhash_str))
-    serialized = bytes(tx)
-    import base64
-    tx_b64 = base64.b64encode(serialized).decode()
-    # Submit
-    try:
-        req_body = json.dumps({
-            "jsonrpc": "2.0", "id": 2, "method": "sendTransaction",
-            "params": [tx_b64, {"encoding": "base64", "skipPreflight": False}]
-        }).encode()
-        req = urllib.request.Request(rpc, data=req_body, headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            sub_data = json.loads(resp.read().decode())
-        if "error" in sub_data:
-            # Honest surface: the chain rejected us (often: from-account has 0 lamports)
-            err = sub_data["error"]
-            _append({
-                "event": "aiko_fund_failed", "id": f"aiko-fund-fail-{target_row['short_id']}-{int(datetime.datetime.now().timestamp())}",
-                "from_pubkey": from_row["pubkey"], "to_pubkey": target_row["pubkey"],
-                "amount_sol": amount, "rpc": rpc, "error": str(err), "ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
-            })
-            print(f"\n  === SIGN FAILED ===", file=sys.stderr)
-            print(f"    rpc:        {rpc}", file=sys.stderr)
-            print(f"    error:      {err.get('message', err) if isinstance(err, dict) else err}", file=sys.stderr)
-            if isinstance(err, dict) and "logs" in (err.get("data") or {}):
-                for line in err["data"]["logs"][:5]:
-                    print(f"    log:        {line}", file=sys.stderr)
-            print(f"    hint:       most common cause = from-account has 0 SOL. Fund it first via faucet (devnet: `solana airdrop 1 {from_row['pubkey']} --url {rpc}`)", file=sys.stderr)
-            print(f"    audit row:  aiko_fund_failed appended to ledger", file=sys.stderr)
-            sys.exit(1)
-        signature = sub_data["result"]
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
-        print(f"  ERROR: RPC submit failed: {e}", file=sys.stderr); sys.exit(1)
-    _append({
-        "event": "aiko_fund_signed",
-        "id": f"aiko-fund-signed-{target_row['short_id']}-{int(datetime.datetime.now().timestamp())}",
-        "from_pubkey": from_row["pubkey"], "to_pubkey": target_row["pubkey"],
-        "amount_sol": amount, "lamports": lamports,
-        "signature": signature, "rpc": rpc,
-        "signed_by_agent": agent, "ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
-    })
-    print()
-    print(f"  === SIGNED + SUBMITTED ===")
-    print(f"  signature:    {signature}")
-    print(f"  amount:       {amount} SOL ({lamports} lamports)")
-    print(f"  rpc:          {rpc}")
-    # Explorer link hint
-    cluster = "devnet" if "devnet" in rpc else ("testnet" if "testnet" in rpc else "mainnet-beta")
-    print(f"  explorer:     https://explorer.solana.com/tx/{signature}?cluster={cluster}")
-    print(f"  audit row:    aiko_fund_signed appended to ledger")
-    print(f"  result:       PASS (self-custody signing succeeded)")
+    import shutil as _shutil, subprocess as _sub
+    helper = os.path.join(os.environ["AK_CLI_DIR"], "aiko-sign.py")
+    if not os.path.isfile(helper):
+        print(f"  ERROR: signing helper missing at {helper}", file=sys.stderr); sys.exit(1)
+    sub_env = os.environ.copy()
+    sub_env["AK_SIGN_FROM_KEYPAIR"] = from_row["keypair_path"]
+    sub_env["AK_SIGN_FROM_PUBKEY"] = from_row["pubkey"]
+    sub_env["AK_SIGN_TO_PUBKEY"] = target_row["pubkey"]
+    sub_env["AK_SIGN_AMOUNT"] = amount
+    sub_env["AK_SIGN_RPC"] = os.environ.get("AK_RPC") or "https://api.devnet.solana.com"
+    sub_env["AK_SIGN_NOTE"] = note
+    sub_env["AK_SIGN_AGENT"] = agent
+    sub_env["AK_SIGN_TARGET_SHORT"] = target_row["short_id"]
+    # Try python3 first, then python3.12 fallback (python3.14 + solders binary wheels often fail)
+    candidates = [_shutil.which("python3"), _shutil.which("python3.12"), "/Users/lekt9/.local/bin/python3.12"]
+    tried = []
+    for py in candidates:
+        if not py or not os.path.isfile(py) or py in tried: continue
+        tried.append(py)
+        check = _sub.run([py, "-c", "import solders"], capture_output=True)
+        if check.returncode == 0:
+            rc = _sub.call([py, helper], env=sub_env)
+            sys.exit(rc)
+    print(f"  ERROR: no python with solders found (tried: {tried}). Install via `python3.12 -m pip install --break-system-packages solders`. DEFERRED rows e8cedf82/08197b29 cover privy/lobster custody.", file=sys.stderr)
+    sys.exit(1)
 AK_FUND_PY
         ;;
       issues)
