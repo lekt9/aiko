@@ -6051,3 +6051,103 @@
 {"event": "satisfied", "id": "b7aa01d6", "wave": 0, "ts": "2026-05-24T07:05:34.541809Z", "proof": "Registry merge wired: emit_context_orientation reads ~/.config/contract/context-channels.json when present and applies same-label overrides + new-label appends. Live probe demonstrated: 'docs/repos' line replaced by client override, 'my-custom-channel' appended after canonical six, '(merged from ...)' footer surfaces when registry was loaded. Absent file = canonical six unchanged (backward-compatible). Gate passes with heredoc-written probe registry.", "agent": "lewistham9x@gmail.com"}
 {"event": "declared", "id": "b6a5fd7c", "plan": "Programmatic loop-until-truth, no-option: every /contract invocation that has work uses contract solve or build, which auto-arms self-drive on the top-level row. The loop runs in-thread: iterate→judge→mark→propagate per the invocation-organism doctrine 55e60ce8. The ONLY legitimate break conditions are (a) PROMOTE: _mark satisfied --proof '<real evidence>' (the substrate is now the truth claim is real); (b) HOLD: judge HOLD with blocker named in blocked_by — Ω1 bcd1a371 will re-surface when blocker satisfies (truth NOT YET); (c) REJECT/supersede: claim unfit, fossilize via contract supersede (truth WILL NEVER be); (d) genuine credential/irreversible-action blocker → contract disarm + name. No fifth escape exists. Refusal of fake-green is mechanical: KEY 3 refractory 0bc383d0 + plan-fulfillment proof 173c8819 + Β2 drill-binding 10572c91 + funnel AND-gate semantics + cycle hard-break fb9698f7 collectively make bailing-without-truth impossible at the substrate level. The composition IS the doctrine; no new shape/verb/field needed. Smoke contract: 142f1c13 (bare loop until BREAK). Per 310f425f discovery-is-a-fix: this standing-gate is the canonical pointer for the loop-until-truth pattern; ship the simplification rather than invent new doctrine.", "action": "agent-judges", "pointer_type": "agent-judges", "layer": 3, "cwd": "/Users/lekt9/Projects/caydenmodel", "parent_id": null, "pointers": [], "ts": "2026-05-24T07:07:10.694035Z", "agent": "lewistham9x@gmail.com"}
 {"event": "satisfied", "id": "b6a5fd7c", "wave": 0, "ts": "2026-05-24T07:07:22.076239Z", "proof": "All 6 composing primitives already shipped and verified: solve+self-drive (31a7612c standing-gate), drill 7af4e88b, loop-until shape, proof-binding 173c8819, KEY 3 refractory 0bc383d0, Β2 drill-binding 10572c91, Ω1 unblock-rewake bcd1a371, cycle hard-break fb9698f7. Smoke contract 142f1c13 exists active in ledger. The composition mechanically prevents any non-truth break: bare _mark refused (PROOF REQUIRED), funnel AND-gate refuses until every child satisfies, Β2 refuses organ-mark with pending Β1 children unless blockers named in proof, cycles hard-block satisfy, fake-green proof caught by self/no-contradictions audit. No new code, no new shape, no new doctrine — this is recognition of what's already true.", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "55e60ce8", "plan": "THE INVOCATION ORGANISM — every /contract invocation IS itself a contract, mechanically wrapped as funnel + loop + harness in three orthogonal dimensions. The fractal claim ('every contract is funnel + loop + harness at every depth') was previously a property of the row; this doctrine binds it as the load-bearing INVOCATION PATTERN. The user types /contract once; the substrate captures the trigger, runs the work to completion programmatically, and stores the output — all typed as ledger events on the invocation-contract.
+
+THE THREE DIMENSIONS (declarative, orthogonal):
+
+1. FUNNEL dimension (composition) — the invocation root is declared as a sequence/funnel/quorum shape. The work decomposes into N children via spawn/fan-out. The root resolves only when its children resolve (AND-gate for funnel, ordered for sequence, K-of-N for quorum). The composition shape IS the declarative work-decomposition.
+
+2. LOOP dimension (programmatic while-until-completion) — the existing drive/drill machinery IS this dimension. 'contract drive <root>' arms the async sentinel-based loop that re-fires across turns via Stop/SessionStart hooks. 'contract drill <id1> <id2>...' is the synchronous in-thread sibling that loops across N targets until each settles or the outer-round budget is exhausted. self-drive is the default on top-level declare/solve/build, so the loop is armed by mechanically just by declaring. Together: every invocation auto-loops until satisfaction is reached or a genuine HOLD is named.
+
+3. HARNESS dimension (verification gate) — the invocation root's action can be 'harness:<path>' delegating KEY 1 to <path>/verify.sh, OR a sequence-shape gating on N pointer-gated children (multi-dimensional gates pattern), OR an explicit verify call as the final stage. The harness dimension makes the satisfaction VERIFIABLE, not just claimed.
+
+WHAT GETS TYPED ON THE CONTRACT (already existing event rows, named here as load-bearing types):
+
+| Trigger | Carried on row | Captured by |
+|---|---|---|
+| user prompt that fired /contract | declared.plan field | one declare per invocation |
+| every action that ran | iterated.action_result + iterated.action_exit | one iterated row per wave |
+| every cache reuse | cached.action_exit + cached.source_wave + cached.user | one cached row per HIT |
+| every child spawned | spawned.parent_id + spawned.plan | one spawned row per child |
+| LLM verdict on a HOLD with blockers | judged.verdict + judged.blocked_by + judged.reason | one judged row per Λ1 call |
+| the agent's response / final verdict | satisfied.proof OR satisfied.proof_skip_reason | one satisfied row per organ-mark |
+
+Every one of those is ALREADY a typed ledger event. The doctrine doesn't add new types; it binds the discipline that says EVERY /contract invocation walks this loop and produces this event trail.
+
+PROGRAMMATIC LOOP SEMANTICS (already shipped, named here as the binding):
+  - 'contract solve <plan> --action <cmd>' = declare + first iterate (auto-arms self-drive on the root)
+  - 'contract drive <root>' = explicit arm (async loop across turn boundaries via Stop/SessionStart hooks)
+  - 'contract drill <ids>' = synchronous in-thread loop across N targets (the while-until-completion primitive Lewis asked for, already shipped)
+  - drive-watch (called by drill) walks tree leaf-first, iterates the next pending leaf, halts on KEY 2
+  - 'contract _mark <id> satisfied --proof <text>' = explicit promotion; the proof IS the typed output
+  - the propagation wavefront + Ω1 unblock-rewake + Ψ4 async watcher together close the convergence loop
+
+DISCIPLINE BINDING (the mechanical promise):
+Every /contract invocation in this skill's runtime should follow:
+  1. SEARCH first (the existing UserPromptSubmit hook surfaces related contracts before the agent acts)
+  2. DECLARE the invocation root with the user's prompt as plan and a real --action as the harness gate
+  3. SPAWN N children for the work (the funnel dimension); fan-out for parallel-independent, sequence for ordered
+  4. DRIVE the loop programmatically (self-drive auto-arms on top-level; drill for synchronous in-thread completion)
+  5. ITERATE every leaf to KEY 1 PASS; agent judges KEY 2 in-thread; _mark with proof; KEY 3 refractory check
+  6. PROPAGATE the wavefront; Ω1 re-surfaces HOLD'd dependents; Ψ4 fires watchers
+  7. ROOT _mark satisfied with --proof carrying the final response summary (the typed output)
+  8. RETURN to the user only when the root organ is satisfied OR a genuine HOLD is named with the blocker
+
+The user types /contract once. The substrate types-onto-the-ledger the trigger, every wave, every child, every cache hit, every judgment, every propagation, every refractory check, and the final proof. The full lifecycle is auditable from the ledger row alone, no conversation required.
+
+WHAT'S DELIBERATELY NOT ADDED:
+  - A new 'invoked' or 'responded' event type — declared.plan IS the trigger, satisfied.proof IS the response, both already typed. Over-typing would force two sources of truth (the prompt would live on both invoked.text AND declared.plan).
+  - A new 'invocation' shape — every existing shape can be the invocation root; sequence/funnel/quorum are the natural choices for multi-stage invocations, cell/judgment for one-shot.
+  - Auto-wrapping every /contract slash command call into a declare — the agent is the one with theory-of-mind about what the user meant; mechanical wrapping would force every invocation through declare even when the user just wants 'contract list' or 'contract status'. The discipline applies to BUILD/SOLVE-shaped invocations (work to do), not READ-shaped ones (query existing state).
+
+THE FRACTAL CLAIM, REFINED (one more axis):
+Previously: every contract is simultaneously funnel + loop + harness at every depth (composition recursion).
+Previously: every contract operates identically at every scope — project, global, container, account (locality invariance, 79c2d656).
+Now also: every /contract INVOCATION mechanically wraps itself as funnel + loop + harness in three declarative dimensions, with trigger and output typed onto the ledger as the canonical audit trail.
+
+Origin: 2026-05-24, Lewis: 'so this is how callign /contract shoudl always be done mechanically in the skill - its a funnel loop and a harness, that is declarative in different dimensions - figure out how to make /contract so banger by /contract triggers and outputs as part of the contract typed to always happen forever where the loop is /contract ed to always be while until completion PROGRAMMATICALY'.
+
+Composed from existing primitives: drive doctrine (Drive mode §), drill doctrine (Drill §, 2026-05-24), self-drive default (How to actually use this §, point 7), the three keys (KEY 1/2/3), wavefront propagation, Ω1 unblock-rewake (bcd1a371), Ψ4 async watcher (21f1d851), plan-fulfillment proof binding (173c8819), the multi-dimensional gates pattern, the fractal funnel-loop-harness claim. The genuinely new piece is naming all of these as ONE invocation-pattern doctrine so every future /contract invocation reaches for the same mechanical wrapping by default.", "action": "grep -q '^## The invocation organism' $HOME/.claude/skills/contract/SKILL.md && grep -q 'funnel + loop + harness in three orthogonal dimensions' $HOME/.claude/skills/contract/SKILL.md && grep -q '79c2d656' $HOME/.claude/skills/contract/SKILL.md", "pointer_type": "cli", "layer": 2, "cwd": "/Users/lekt9/Projects/unreel/unreel-api", "parent_id": null, "pointers": [], "ts": "2026-05-24T02:01:30.652136Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "id": "79c2d656", "plan": "LOCALITY METASUPERPATTERN — /contract is location-invariant at the row level, location-dependent at the discovery level. One primitive runs at four scopes; the substrate's existing discovery algorithm + Σ-stack (Σ2 audience / Σ3 identity / Σ4 routing / Σ6 multi-client) + inbox file-IPC already cover the mechanics. This contract names the unified model so future agents reach for one mental shape, not four.
+
+THE FOUR SCOPES (one algorithm, four files):
+1. project   — <project>/.claude/contracts.jsonl    — auto-discovered via .claude/ walk-up from cwd; same id in two projects = independent rows; gitignored or committed per team norms; use for project-local gates and deploy verifications
+2. global    — ~/.contracts/contracts.jsonl         — per-user host-wide; standing gates promoted from project ledgers via 'contract promote <id>'; identity catalogs (~/.contracts/people/), reusable verifiers
+3. container — /opt/.contracts/contracts.jsonl      — inside a docker container, ledger lives at a known mount; each container = its own audience tier (Σ2); per-tenant isolation via dockered-CONTRACT_AGENT (the OS layer enforces what Σ2 enforces in software); the deferred C1 silo work (b61a83be, 731af006) IS this scope's binding gate
+4. account   — ~/.contracts/contracts.jsonl OF a remote user account — SSH carries stdin/stdout/exit code so 'ssh user@host -- contract iterate <id> --stdin' is faithful at-a-distance iterate; the remote shell IS a substrate entry point; CONTRACT_USER=$(whoami) makes the SSH'd-into account the requesting identity; account-isolation = OS-user-isolation
+
+THE UNIFYING PRIMITIVE (already exists, just unnamed):
+
+Discovery algorithm — contract_core._ledger():
+  CONTRACTS_STORE env wins → cwd-walk for .claude/contracts.jsonl → fallback ~/.contracts/contracts.jsonl
+  One walk, all scopes resolved deterministically.
+
+Cross-scope mechanics — already shipped:
+  • Σ3 identity aliases — same human across hosts/containers/accounts after one 'contract alias' call
+  • Σ4 agent:<id> routing — inbox writes when iterator-identity differs from action-target; works identically inside a container, over SSH, on the host
+  • Σ6 session register/list/claim — multi-client coordination; client_id can be 'tg-phone', 'ssh-tencent', 'docker-cayden-sandbox', etc; same arbitration logic
+  • Π3 machine:<binary> — per-host resolution map means the same contract row resolves binaries correctly on every host
+  • inbox shared volumes — ~/.contracts/inbox/ is plain JSONL; mount it as a docker volume and containers share the bus
+  • 'contract promote' — project→global upgrade path; container→host promote is a sync-hook with the same row shape
+  • SSH-triggered iterate — no new code needed; bash dispatch + stdio is already the cache layer's stdin path; CONTRACT_USER derives from $USER on the remote shell
+
+WHAT THE SUBSTRATE GUARANTEES ACROSS SCOPES:
+  • row schema is identical at every scope (declared/iterated/satisfied JSONL)
+  • the nine shapes work identically — funnel in a project ledger composes the same as a funnel in a container ledger
+  • the three keys fire identically — KEY 1 machine, KEY 2 agent, KEY 3 refractory; no scope shortcuts
+  • the wavefront propagates within a scope; cross-scope propagation goes through promote (deliberate) or Σ4 inbox (async)
+  • cycle detection (contract depth --strict-cycles) is scoped to the ledger being iterated; cross-scope cycles are not possible because cross-scope references go through promote (the promoted row IS the canonical, the source becomes a satisfied attestation)
+
+WHAT'S DELIBERATELY NOT SHIPPED HERE:
+  • a 'scope' field on rows beyond what 0661a665 already binds — scope IS the file location, not a row-level tag; over-tagging would force two sources of truth
+  • automatic cross-scope sync — promotion is a verb (deliberate human/agent action), not a hook; the Π4 unbrowse marketplace mirror is the eventual horizontal-sync layer but lives at unbrowse, not /contract
+  • container/account scope verb-gates — the discovery algorithm is shape-agnostic; existing cell-gate + verb-gates/promote prove the same primitive at every scope; adding 'iterate-from-container' or 'iterate-via-ssh' verb-gates would be testing the OS, not the substrate
+
+THE FRACTAL CLAIM REFINED (one more axis):
+Previously: every contract is simultaneously a funnel + loop + harness at every depth.
+Now also: every contract operates identically at every scope — project, global, container, account.
+The four scopes are the same primitive expressed at different OS/network locality scales; the substrate is invariant under translation across them.
+
+Origin: 2026-05-24, Lewis: '/contract can be project level or global level /contract and even exist in different docker containers for /contract isolation of things or even /contract for user account level where even ssh into the account and cli stdio via ssh triggers the /contract - write the meta super /contract metasuperpattern'.
+
+Predecessors composed into this doctrine: 0661a665 (scope tag), 3b1d1cca (project→global promote discipline), 731af006 + b61a83be (DEFERRED docker silo C1), c00f242b (super-pattern extraction default), Σ-stack contracts (Σ3 aliases, Σ4 routing, Σ6 multi-client).", "action": "grep -q '## Locality (the four-scope metasuperpattern)' $HOME/.claude/skills/contract/SKILL.md && grep -q 'metasuperpattern' $HOME/.claude/skills/contract/SKILL.md", "pointer_type": "cli", "layer": 2, "cwd": "/Users/lekt9/Projects/unreel/unreel-api", "parent_id": null, "pointers": [], "ts": "2026-05-24T01:57:21.838561Z", "agent": "lewistham9x@gmail.com"}
