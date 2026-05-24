@@ -5340,7 +5340,7 @@ print(s.get('status', ''))
         PLAN="FEATURE-TOGGLE $FEATURE — on. The satisfied status of this contract IS the on-flag for the $FEATURE hook. Toggle off via 'contract toggle $FEATURE off'."
         NEW_ID=$(CONTRACTS_STORE="$GLOBAL_STORE" CONTRACT_AGENT="${CONTRACT_AGENT:-$(git config user.email 2>/dev/null || echo unknown)}" \
           bash "$0" declare "$PLAN" --action "agent-judges" --no-drive --audience team 2>&1 | \
-          grep -oE "id=[0-9a-f]{8}" | head -1 | cut -d= -f2)
+          grep -oE "^declared: [0-9a-f]{8}" | head -1 | awk "{print \$2}")
         if [ -z "$NEW_ID" ]; then
           echo "ERROR: failed to declare toggle contract for $FEATURE" >&2
           exit 1
@@ -5373,7 +5373,7 @@ print(s.get('status', ''))
           OFF_PLAN="FEATURE-TOGGLE $FEATURE — off (supersedes $EXISTING_ID). The hook is now disabled. Re-enable via 'contract toggle $FEATURE on' (declares a fresh toggle contract)."
           OFF_ID=$(CONTRACTS_STORE="$GLOBAL_STORE" CONTRACT_AGENT="${CONTRACT_AGENT:-$(git config user.email 2>/dev/null || echo unknown)}" \
             bash "$0" declare "$OFF_PLAN" --action "agent-judges" --no-drive --audience team 2>&1 | \
-            grep -oE "id=[0-9a-f]{8}" | head -1 | cut -d= -f2)
+            grep -oE "^declared: [0-9a-f]{8}" | head -1 | awk "{print \$2}")
           if [ -n "$OFF_ID" ]; then
             CONTRACTS_STORE="$GLOBAL_STORE" CONTRACT_AGENT="${CONTRACT_AGENT:-$(git config user.email 2>/dev/null || echo unknown)}" \
               bash "$0" supersede "$EXISTING_ID" "$OFF_ID" --reason "feature toggle $FEATURE OFF via 'contract toggle' verb at $(date -u +%FT%TZ)" >/dev/null 2>&1 || true
