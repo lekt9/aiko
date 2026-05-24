@@ -4177,7 +4177,9 @@ row = {
     "assigned_agent": None, "state": "pending",
     "for_contract": os.environ.get("MA_FOR_ID", ""), "ts": ts,
 }
-inbox = os.path.expanduser(f"~/.contracts/inbox/mail/{to}.jsonl")
+try: from contract_core import inbox_path as _ipath
+except ImportError: _ipath = lambda c, n: os.path.expanduser(f"~/.contracts/inbox/{c}/{n}.jsonl")
+inbox = str(_ipath("mail", to))
 os.makedirs(os.path.dirname(inbox), exist_ok=True)
 with open(inbox, "a") as f: f.write(json.dumps(row) + "\n")
 _append(row)
