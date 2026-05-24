@@ -110,6 +110,8 @@ def _infer_pointer_type(action: str) -> str:
         return "machine"
     if action.startswith("sandbox:"):
         return "sandbox"
+    if action.startswith("runpod:"):
+        return "runpod"
     if action.startswith(("curl ", "http://", "https://", "wget ")):
         return "api"
     return "cli"
