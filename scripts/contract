@@ -314,6 +314,24 @@ print(c['status'] if c else 'not-found')
         echo "  upstream: $x402_url"
         echo "  status:   402"
         echo "  body:     $x402_body"
+        # Plank 11 of 386497eb: surface chain_id + required_chain when the 402 body
+        # names a target chain (x402 spec field 'chain' or 'network'). Lets transports
+        # render a chain-switch prompt when the user's bound wallet is on a different
+        # chain (e.g. wallet on Solana, payment requires Base). Best-effort jq parse;
+        # silently skipped when body isn't JSON / fields absent.
+        x402_chain=""
+        x402_req_chain=""
+        if command -v jq >/dev/null 2>&1; then
+          x402_chain=$(printf '%s' "$x402_body" | jq -r '.chain // .network // .chain_id // empty' 2>/dev/null)
+          x402_req_chain=$(printf '%s' "$x402_body" | jq -r '.required_chain // .target_chain // empty' 2>/dev/null)
+        fi
+        if [ -n "$x402_chain" ]; then
+          echo "  chain_id: $x402_chain"
+        fi
+        if [ -n "$x402_req_chain" ] && [ "$x402_req_chain" != "$x402_chain" ]; then
+          echo "  required_chain: $x402_req_chain"
+          echo "  wallet_action:  user's bound wallet may be on wrong chain — transport should prompt for chain-switch before pay"
+        fi
         if [ -n "$ap_reason" ]; then
           echo "  autopay_attempted: $ap_reason"
           echo "  autopay_body:      $(printf '%s' "$ap_body" | head -c 200)"
@@ -323,7 +341,9 @@ print(c['status'] if c else 'not-found')
         echo ""
         echo "  Render this block per transport:"
         echo "    Telegram → sendInvoice (XTR Stars or Stripe-via-Telegram) using body.pay_url + amount"
+        echo "                IF chain_id+required_chain mismatch → inline keyboard 'Switch to <required_chain>' first"
         echo "    Web      → wallet payment prompt (Flex facilitator → USDC tx)"
+        echo "                IF chain mismatch → wallet.switchChain(required_chain) before tx"
         echo "    Panel    → embed checkout button (unbrowse Stripe hosted page)"
         echo "    Terminal → user opens pay_url in browser, retries iterate after settle"
         echo "  result: FAIL (402 — payment required; user pays via transport, then re-iterate)"
