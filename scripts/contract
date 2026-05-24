@@ -4898,12 +4898,134 @@ for a in aikos:
 print(f"    by custody:   {', '.join(f'{c}={n}' for c, n in custodies.items())}")
 AK_ISSUES_PY
         ;;
+      setup)
+        # contract aiko setup [<cwd>]
+        # Programmatically binds the aiko substrate to a cwd's native surfaces.
+        # Detects: native binary (graff | ~/.cargo/bin/contract | forge_contract),
+        # native app (AikoNotch / Aiko.app), spawn endpoint, chat endpoint.
+        # Writes one aiko_cwd_bound ledger row per cwd; re-run is idempotent
+        # (existing row found → reports, no duplicate write).
+        # Substrate enables: surfaces what was detected; never auto-decides
+        # whether the binding is "ready". KEY 2 lives with the agent.
+        AK_TARGET_CWD="${1:-$PWD}"
+        if [ ! -d "$AK_TARGET_CWD" ]; then
+          echo "ERROR: cwd '$AK_TARGET_CWD' does not exist" >&2; exit 2
+        fi
+        AK_TARGET_CWD="$(cd "$AK_TARGET_CWD" && pwd)"
+        AK_TARGET_CWD="$AK_TARGET_CWD" AK_CLI_DIR="$AK_CLI_DIR" python3 <<'AK_SETUP_PY'
+import datetime, json, os, sys
+sys.path.insert(0, os.path.join(os.environ["AK_CLI_DIR"], "lib"))
+try:
+    from contract_core import _append, _rows, current_agent
+except ImportError:
+    print("FATAL: contract_core not importable", file=sys.stderr); sys.exit(3)
+
+cwd = os.environ["AK_TARGET_CWD"]
+
+# Idempotency: scan for an existing aiko_cwd_bound row on this cwd
+existing = None
+for r in _rows():
+    if r.get("event") == "aiko_cwd_bound" and r.get("cwd") == cwd:
+        existing = r  # last one wins (re-bind keeps latest)
+
+# Detect native binary — resolution order from unbrowse-setup-cli doc
+import shutil, subprocess
+native_bin = None
+native_bin_kind = None
+graff_bin = shutil.which("graff")
+if graff_bin:
+    native_bin = graff_bin; native_bin_kind = "graff"
+elif os.path.isfile(os.path.expanduser("~/.cargo/bin/contract")):
+    native_bin = os.path.expanduser("~/.cargo/bin/contract"); native_bin_kind = "rust-cargo"
+elif os.path.isdir(os.path.join(cwd, "crates", "forge_contract")):
+    native_bin = os.path.join(cwd, "crates", "forge_contract"); native_bin_kind = "rust-crate-source"
+
+# Detect native app
+native_app = None
+for cand in ("native/AikoNotch", "native/Aiko", "AikoNotch", "Aiko.app"):
+    p = os.path.join(cwd, cand)
+    if os.path.exists(p):
+        native_app = p; break
+
+# Detect spawn endpoint (web/functions/api/spawn.ts or similar)
+spawn_endpoint = None
+for cand in ("web/functions/api/spawn.ts", "web/functions/api/spawn.js",
+             "functions/api/spawn.ts", "api/spawn.ts"):
+    p = os.path.join(cwd, cand)
+    if os.path.isfile(p):
+        spawn_endpoint = p; break
+
+# Detect chat endpoint
+chat_endpoint = None
+for cand in ("web/functions/api/chat.ts", "web/functions/api/chat.js",
+             "functions/api/chat.ts", "api/chat.ts"):
+    p = os.path.join(cwd, cand)
+    if os.path.isfile(p):
+        chat_endpoint = p; break
+
+# Detect AikoChatPreview frontend (per dd7b4984 H3+H4)
+chat_frontend = None
+for cand in ("web/src/components/AikoChatPreview.tsx",
+             "web/components/AikoChatPreview.tsx",
+             "src/components/AikoChatPreview.tsx"):
+    p = os.path.join(cwd, cand)
+    if os.path.isfile(p):
+        chat_frontend = p; break
+
+surfaces = {
+    "native_bin": native_bin,
+    "native_bin_kind": native_bin_kind,
+    "native_app": native_app,
+    "spawn_endpoint": spawn_endpoint,
+    "chat_endpoint": chat_endpoint,
+    "chat_frontend": chat_frontend,
+}
+gaps = [k for k, v in surfaces.items() if v is None]
+
+if existing and existing.get("surfaces") == surfaces:
+    print(f"=== AIKO CWD BIND (already bound, no change) ===")
+    print(f"  cwd:       {cwd}")
+    print(f"  bound_at:  {existing.get('ts')}")
+    print(f"  agent:     {existing.get('agent', '?')}")
+else:
+    ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    agent = (current_agent() or "anonymous").strip()
+    row = {
+        "event": "aiko_cwd_bound",
+        "cwd": cwd,
+        "surfaces": surfaces,
+        "honest_gaps": gaps,
+        "ts": ts,
+        "agent": agent,
+    }
+    _append(row)
+    label = "re-bound" if existing else "bound"
+    print(f"=== AIKO CWD BIND ({label}) ===")
+    print(f"  cwd:       {cwd}")
+    print(f"  ts:        {ts}")
+
+print(f"  graff:          {native_bin or '(not found)'}  [{native_bin_kind or '-'}]")
+print(f"  native_app:     {native_app or '(not found)'}")
+print(f"  spawn_endpoint: {spawn_endpoint or '(not found)'}")
+print(f"  chat_endpoint:  {chat_endpoint or '(not found)'}")
+print(f"  chat_frontend:  {chat_frontend or '(not found)'}")
+if gaps:
+    print(f"  honest_gaps:    {', '.join(gaps)}  (KEY 2 judges whether to spawn child contracts)")
+else:
+    print(f"  honest_gaps:    none — every surface present")
+print()
+print(f"NEXT:")
+print(f"  contract aiko spawn --handle <name>          # spawn an aiko on this cwd's binding")
+print(f"  contract status                              # see the aiko_cwd_bound row")
+AK_SETUP_PY
+        ;;
       *)
         cat >&2 <<'AKUSAGE'
 usage: contract aiko spawn [--parent <pubkey>] [--handle <name>] [--custody self|privy|lobster]
        contract aiko list   [--root-only] [--handle <name>]
        contract aiko tree   <aiko-id-or-pubkey>
        contract aiko fund   <child-id> --from <parent-pubkey> --amount-sol <n> [--note <text>]
+       contract aiko setup  [<cwd>]
        contract aiko issues
 
 each aiko = Σ1 identity tied to a Solana Ed25519 keypair. Lineage walks via
@@ -4911,6 +5033,12 @@ parent_pubkey chain in aiko_spawned rows. fund emits TRANSFER REQUIRED block
 (transport signs on-chain; substrate just records intent + lineage).
 custody=privy|lobster are honest-gap (key generated locally, custody field
 recorded; external custody integration deferred).
+
+setup binds the substrate to a cwd's native surfaces (graff binary, AikoNotch
+native app, spawn + chat endpoints). Idempotent — re-running reports the
+existing aiko_cwd_bound row when surfaces are unchanged. Honest gaps are
+surfaced as evidence; KEY 2 judges whether to spawn child contracts to close
+them.
 AKUSAGE
         exit 2 ;;
     esac
