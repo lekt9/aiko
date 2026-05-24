@@ -504,7 +504,11 @@ except Exception:
       echo "  result: ERROR — sandbox: action must be 'sandbox:<image>:<intent>' (got: $action)"
       return 1
     fi
-    python3 "$HOME/.claude/skills/contract/scripts/lib/sandbox_layer.py" "$sandbox_image" "$sandbox_intent"
+    # Resolve script-relative path so the dispatch works when HOME is sandboxed
+    # (verb-gates redirect HOME — must not depend on it for skill-internal scripts).
+    local _cli_dir
+    _cli_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    python3 "$_cli_dir/lib/sandbox_layer.py" "$sandbox_image" "$sandbox_intent"
     local sandbox_exit=$?
     return $sandbox_exit
   fi
