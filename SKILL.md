@@ -2551,14 +2551,6 @@ referenced id resolves to the local ledger only, and the cycle detector
 - **Automatic cross-scope sync.** Promotion is a verb (deliberate human/agent action), not a hook. The Π4 unbrowse marketplace mirror is the eventual horizontal-sync layer but lives at unbrowse, not /contract.
 - **Container / account scope verb-gates.** The discovery algorithm is shape-agnostic; existing `cell-gate` + `verb-gates/promote` already prove the same primitive at every scope. Adding `iterate-from-container` or `iterate-via-ssh` verb-gates would be testing the OS, not the substrate.
 
-### The fractal claim, refined (one more axis)
-
-Previously: every contract is simultaneously a funnel + loop + harness
-at every depth. **Now also: every contract operates identically at
-every scope** — project, global, container, account. The four scopes
-are the same primitive expressed at different OS/network locality
-scales; the substrate is invariant under translation across them.
-
 Origin: contract `79c2d656`, 2026-05-24. Lewis's framing: "/contract
 can be project level or global level /contract and even exist in
 different docker containers for /contract isolation of things or even
