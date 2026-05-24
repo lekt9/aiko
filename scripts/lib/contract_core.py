@@ -243,19 +243,31 @@ def detect_environment() -> dict:
                     for line in f:
                         try:
                             row = _json.loads(line)
-                        except Exception:
+                        except Exception as e:
+                            # Bad row; skip + surface (no silent fallback).
+                            import sys as _sys
+                            print(f"contract_core.context_of: bad session row in {fname}: {e}",
+                                  file=_sys.stderr)
                             continue
                         ts = row.get("ts", "")
                         try:
                             import datetime as _dt
                             row_t = _dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
-                        except Exception:
+                        except Exception as e:
+                            # Bad ts; skip + surface.
+                            import sys as _sys
+                            print(f"contract_core.context_of: bad ts in {fname}: {e}",
+                                  file=_sys.stderr)
                             continue
                         if row_t > cutoff:
                             cid = row.get("client_id")
                             if cid and cid not in active_sessions:
                                 active_sessions.append(cid)
-            except Exception:
+            except Exception as e:
+                # Session file unreadable; surface + continue.
+                import sys as _sys
+                print(f"contract_core.context_of: session file unreadable {fname}: {e}",
+                      file=_sys.stderr)
                 continue
 
     runtime_hints = {}
