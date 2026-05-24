@@ -10,21 +10,31 @@ export CLAUDE_CODE_SESSION_ID="aiko-shape-gate-$$"
 AIKO=~/.claude/skills/aiko/scripts/aiko
 CLI=~/.claude/skills/contract/scripts/contract
 
-# 1) aiko declare writes a contract row that is discoverable by `contract get`
-OUT_A=$($AIKO declare "aiko-shape A" --no-drive 2>&1)
-ID_A=$(echo "$OUT_A" | grep -Eo 'aiko_[a-f0-9]{8}' | head -1)
-[ -n "$ID_A" ] || { echo "FAIL: aiko declare didn't return aiko_ id"; echo "$OUT_A"; exit 1; }
+# extract the underlying /contract row id for the most-recent declared row matching plan substr
+last_contract_id_for() {
+  local needle="$1"
+  python3 -c "
+import json, sys, os
+for line in reversed(open(os.environ['CONTRACTS_STORE']).readlines()):
+    try: r = json.loads(line)
+    except: continue
+    if r.get('event') == 'declared' and '$needle' in (r.get('plan') or ''):
+        print(r['id']); break
+"
+}
 
-# verify it's in the ledger as a declared row
-grep -q "\"id\": \"$ID_A\"" "$CONTRACTS_STORE" || {
-  echo "FAIL: aiko declare didn't append a declared row for $ID_A"
-  cat "$CONTRACTS_STORE"
-  exit 1
+# 1) aiko declare writes a contract row carrying the aiko_cell plan prefix
+$AIKO declare "aiko-shape A" --no-drive >/dev/null 2>&1
+ID_A=$(last_contract_id_for "aiko-shape A")
+[ -n "$ID_A" ] || { echo "FAIL: aiko declare didn't append a declared row"; cat "$CONTRACTS_STORE"; exit 1; }
+# verify it's tagged as an aiko cell on the plan
+grep -q "\"id\": \"$ID_A\"" "$CONTRACTS_STORE" && grep "\"id\": \"$ID_A\"" "$CONTRACTS_STORE" | grep -q "aiko_cell" || {
+  echo "FAIL: aiko declare $ID_A row missing aiko_cell prefix"; exit 1;
 }
 
 # 2) Σ9 fires for aiko: a SECOND aiko declare in the same thread corroborates with the first
-OUT_B=$($AIKO declare "aiko-shape B" --no-drive 2>&1)
-ID_B=$(echo "$OUT_B" | grep -Eo 'aiko_[a-f0-9]{8}' | head -1)
+$AIKO declare "aiko-shape B" --no-drive >/dev/null 2>&1
+ID_B=$(last_contract_id_for "aiko-shape B")
 sleep 2
 LINKED=$(grep "corroborated" "$CONTRACTS_STORE" 2>/dev/null | grep "$ID_A" | grep "$ID_B" | wc -l | tr -d ' ')
 if [ "$LINKED" -lt 1 ]; then
