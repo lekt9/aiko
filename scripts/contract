@@ -5434,21 +5434,31 @@ print(s.get('status', ''))
     [ "$STATUS" = "satisfied" ] && exit 0 || exit 1
     ;;
 
-  plan)
-    # contract plan "<prompt>" — decompose a multi-claim prompt via Lambda1
-    # into a proposed organ structure (root + children + dep edges), emit a
-    # PLAN PROPOSAL block. Agent reads, judges, runs the suggested commands.
+  decompose)
+    # contract decompose "<prompt>" — Lambda1-driven decomposition of a
+    # multi-claim prompt into a proposed organ structure (root + children +
+    # dependency edges). Complements the existing `plan` verb: `plan` is
+    # Step-0 discovery (related-contracts + skill matches via BM25/embed);
+    # `decompose` is the spawn-children layer (LLM reads the prompt, names
+    # independent vs dependent sub-claims, suggests fan-out for parallel
+    # + sequence for serial). Agent reads the PROPOSAL block, judges, runs
+    # the suggested declare/fan-out commands.
     PROMPT="${1:-}"
     if [ -z "$PROMPT" ]; then
       cat >&2 <<'USAGE'
-contract plan "<prompt>"
+contract decompose "<prompt>"
 
-Decompose a multi-claim prompt via Lambda1 (codex CLI preferred, HTTP fallback).
-Emits a PLAN PROPOSAL block: root + N children + dependency levels.
+Lambda1-driven decomposition of a multi-claim prompt into a proposed organ
+structure: root + N children + dependency levels. Emits a PLAN PROPOSAL block.
 Agent confirms; declared root + spawn/fan-out commands are surfaced.
 
+Pair with `contract plan` (discovery-first) to do the full genesis arc:
+  contract plan "<prompt>"        # step 0: discover related contracts + skills
+  contract decompose "<prompt>"   # spawn-children: parallel/serial layout
+  # then run the suggested commands to declare + dispatch
+
 Example:
-  contract plan "ship the dashboard, update the docs, push to gitea after both"
+  contract decompose "ship the dashboard, update the docs, push to gitea after both"
 USAGE
       exit 2
     fi
