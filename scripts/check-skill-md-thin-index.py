@@ -57,7 +57,6 @@ OPERATIONAL_CORE = {
     "Pointer principle",
     "What this skill does NOT do",
     "Bundled scripts",
-    "Concept lineage (genesis .tongues)",
     "Doctrine delegation (the thin-index discipline)",  # Β4 itself
 }
 
