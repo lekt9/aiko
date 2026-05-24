@@ -8645,7 +8645,7 @@ cli_dir = os.environ["EM_CLI_DIR"]
 sys.path.insert(0, os.path.join(cli_dir, "lib"))
 try:
     from contract_core import _ledger as _resolve_ledger
-    ledger_path = _resolve_ledger()
+    ledger_path = str(_resolve_ledger())
 except Exception:
     ledger_path = os.path.expanduser("~/.contracts/contracts.jsonl")
 global_ledger = os.path.expanduser("~/.contracts/contracts.jsonl")
