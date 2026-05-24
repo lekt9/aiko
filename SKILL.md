@@ -2571,6 +2571,88 @@ genuinely new claim is the SSH-as-substrate-entry-point binding — a
 remote shell carries stdio faithfully, so `ssh user@host -- contract
 iterate <id> --stdin` is the same primitive as a local iterate.
 
+## The invocation organism (every /contract is itself a contract)
+
+The fractal claim said: every contract is simultaneously **funnel + loop
++ harness** at every depth. The Locality doctrine said: that's also
+true at every scope. This doctrine binds it as the **invocation
+pattern**: every /contract call mechanically wraps as funnel + loop +
+harness in three orthogonal dimensions, with the user's prompt typed
+onto the declared row and the response typed onto the satisfied row.
+
+### Three orthogonal dimensions (declarative composition)
+
+| Dimension | What it does | Bound by |
+|---|---|---|
+| **FUNNEL** (composition) | invocation root is `sequence` / `funnel` / `quorum`; work decomposes into N children via `spawn` / `fan-out`; root resolves when children resolve | the nine shapes (already documented) |
+| **LOOP** (programmatic while-until-completion) | `solve` declares + first-iterates with self-drive auto-armed on the root; `drive` arms async across turn boundaries; `drill` runs synchronous in-thread loop across N targets until each settles or budget exhausts | Drive mode + Drill (already documented) |
+| **HARNESS** (verification gate) | root action can be `harness:<path>`, OR a sequence gating on N `contract:<id>` pointer-gated children, OR a final-stage verify call | multi-dimensional gates + harness shape |
+
+The three are composed on every invocation, not picked one at a time. A
+healthy invocation has all three: a funnel that names the work, a loop
+that drives it to completion, a harness that proves the satisfaction.
+
+### What gets typed on the contract (no new event types)
+
+Every dimension surfaces as already-existing ledger events. The
+discipline doesn't add new types; it binds that EVERY invocation
+produces this audit trail:
+
+| Lifecycle moment | Ledger event row | Field |
+|---|---|---|
+| user's prompt fired /contract | `declared` | `plan` |
+| every wave the action ran | `iterated` | `action_result` + `action_exit` |
+| every 10s sliding cache reuse | `cached` | `action_exit` + `source_wave` + `user` |
+| every child spawned | `spawned` | `parent_id` + `plan` |
+| Λ1 HOLD with named blocker | `judged` | `verdict` + `blocked_by` + `reason` |
+| agent's final response / verdict | `satisfied` | `proof` OR `proof_skip_reason` |
+
+`contract status <root>` shows the full invocation lifecycle from one
+row's perspective. No conversation required to audit what happened.
+
+### The mechanical promise (every /contract invocation walks this)
+
+1. **SEARCH** — the UserPromptSubmit hook surfaces related contracts before the agent acts (already wired)
+2. **DECLARE** — invocation root with the user's prompt as `plan` and a real `--action` as the harness gate
+3. **SPAWN** — N children for the work (funnel dimension); fan-out for parallel-independent, sequence for ordered
+4. **DRIVE** — self-drive auto-arms on top-level declare; `drill` for synchronous in-thread completion of N pendings
+5. **ITERATE** — every leaf to KEY 1 PASS; agent judges KEY 2 in-thread; `_mark` with proof; KEY 3 refractory check
+6. **PROPAGATE** — wavefront fires; Ω1 re-surfaces HOLD'd dependents; Ψ4 watchers wake from external state
+7. **ROOT MARK** — `_mark <root> satisfied --proof "<final response summary>"` (the typed output)
+8. **RETURN** to user only when root organ is satisfied OR genuine HOLD is named with the blocker
+
+The user types /contract once. The substrate types-onto-the-ledger the
+trigger, every wave, every child, every cache hit, every judgment,
+every propagation, every refractory check, and the final proof.
+
+### What's deliberately NOT shipped
+
+- **New `invoked` / `responded` event types.** `declared.plan` IS the trigger, `satisfied.proof` IS the response, both already typed. Over-typing would force two sources of truth.
+- **A new `invocation` shape.** Every existing shape can be the invocation root; sequence/funnel/quorum for multi-stage, cell/judgment for one-shot.
+- **Auto-wrapping every slash-command call.** The discipline applies to BUILD/SOLVE-shaped invocations (work to do), not READ-shaped (`contract list`, `contract status`). The agent has theory-of-mind about which is which; mechanical wrapping would over-fire.
+
+### The fractal claim, refined (one more axis)
+
+| Axis | Claim |
+|---|---|
+| **depth** | every contract is funnel + loop + harness at every depth (composition recursion) |
+| **scope** | every contract operates identically at project / global / container / account (locality invariance, `79c2d656`) |
+| **invocation** | every /contract invocation mechanically wraps as funnel + loop + harness in three declarative dimensions, with trigger and output typed onto ledger events |
+
+Origin: contract `55e60ce8`, 2026-05-24. Lewis's framing: "so this is
+how calling /contract should always be done mechanically in the
+skill — it's a funnel loop and a harness, that is declarative in
+different dimensions — figure out how to make /contract so banger by
+/contract triggers and outputs as part of the contract typed to
+always happen forever where the loop is /contract'ed to always be
+while until completion programmatically". Composes existing primitives
+(Drive mode, Drill, self-drive default, three keys, plan-fulfillment
+proof binding `173c8819`, Ω1 `bcd1a371`, Ψ4 `21f1d851`, the
+multi-dimensional gates pattern) into one invocation-pattern doctrine.
+The genuinely new claim is naming all of them as ONE mechanical
+wrapping so every future /contract invocation reaches for the same
+shape by default.
+
 ## Self-modeling (biology turned inward)
 
 
