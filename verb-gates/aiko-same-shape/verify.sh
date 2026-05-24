@@ -43,9 +43,9 @@ if [ "$LINKED" -lt 1 ]; then
 fi
 
 # 3) Ω4 fires for aiko: spawn a child, mark child, parent gets iterated
-OUT_CHILD=$($AIKO spawn "$ID_A" "aiko-shape child" --action "true" 2>&1)
-ID_C=$(echo "$OUT_CHILD" | grep -Eo 'aiko_[a-f0-9]{8}' | head -1)
-[ -n "$ID_C" ] || { echo "FAIL: aiko spawn didn't return child id"; echo "$OUT_CHILD"; exit 1; }
+$AIKO spawn "$ID_A" "aiko-shape child" --action "true" >/dev/null 2>&1
+ID_C=$(last_contract_id_for "aiko-shape child")
+[ -n "$ID_C" ] || { echo "FAIL: aiko spawn didn't append a row"; exit 1; }
 $CLI iterate "$ID_C" >/dev/null 2>&1
 count_parent_iterates() {
   grep "\"id\": \"$ID_A\"" "$CONTRACTS_STORE" 2>/dev/null | grep -c "\"event\": \"iterated\"" || true
