@@ -6212,6 +6212,24 @@ sys.exit(0)
 PY
     ;;
 
+  drill)
+    # Σ12 drill-is-default: the standalone drill verb is superseded.
+    # Drill semantics (loop-until-settle across N targets) are now the default
+    # behavior of iterate + drive-mode + Ω4 auto-iterate-parent composed.
+    # Doctrine: supersedes 7af4e88b.
+    echo "=== DRILL IS DEFAULT (Σ12) ===" >&2
+    echo "  contract drill is removed: drill is built into iterate now." >&2
+    echo "  for a single target:  contract iterate <id>   # Ω4 chains to parent automatically" >&2
+    echo "  for N targets:        contract drive <root>   # arms perpetual loop across the tree" >&2
+    echo "  Σ11 + Σ12: verbs are gone; drill is a behavior, not a verb." >&2
+    [ $# -eq 0 ] && exit 2
+    # backward-compat: route to iterate for each id (the chain handles the rest)
+    for id in "$@"; do
+      case "$id" in --*) continue ;; esac
+      bash "$0" iterate "$id" || true
+    done
+    _fire_contract_hooks "verb" "drill" "0"
+    ;;
 
   disarm)
     # Per-contract disarm: with an id, clears that one folder's drive.json.
