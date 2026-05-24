@@ -9166,6 +9166,17 @@ else:
       _fire_contract_hooks "verb" "$cmd" "0"
       exec "$plugin" "$@"
     fi
+    # Λ-verbless invocation: when $cmd is not a known verb / plugin AND looks like
+    # plan text (length > 12 chars AND contains whitespace), treat the whole arg
+    # as the plan and chain to `solve`, which declares + first-iterates with
+    # self-drive auto-armed (Ω3/Ω4 perpetuate across sessions until satisfied).
+    # /contract IS one primitive; the bare invocation triggers completion. CLI is
+    # one transport; the same plan-text input works identically through MCP, the
+    # OpenAI-front (Φ1), or any other Π6-bound environment.
+    if [ ${#cmd} -gt 12 ] && [[ "$cmd" == *" "* ]]; then
+      _fire_contract_hooks "verb" "verbless" "0"
+      exec bash "$0" solve "$cmd" "$@"
+    fi
     echo "unknown subcommand: $cmd" >&2
     bash "$0" help >&2
     exit 2
