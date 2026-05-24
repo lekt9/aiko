@@ -9218,6 +9218,57 @@ print(json.dumps(face, indent=2))
     _fire_contract_hooks "verb" "face" "0"
     ;;
 
+  gap)
+    # Β1 shorthand: declare one DEFERRED-* row with agent-judges + --no-drive
+    # so the gap is captured on the ledger before the turn yields. Replaces the
+    # antipattern of naming gaps in prose-summaries that don't survive sessions.
+    SCOPE="${1:-DEFERRED}"; shift || true
+    PLAN="${*:-}"
+    [ -z "$PLAN" ] && { echo "usage: contract gap <scope> \"<plan>\"" >&2; exit 2; }
+    bash "$0" declare "DEFERRED-${SCOPE}: ${PLAN}" --action agent-judges --no-drive
+    _fire_contract_hooks "verb" "gap" "0"
+    ;;
+
+  gaps)
+    # Β1 surface: list every DEFERRED-* row (pending/active) on the ledger.
+    # Substrate enables; agent picks which to iterate/judge/supersede next.
+    _py_inline "
+import os, sys, json, pathlib
+sys.path.insert(0, '$CONTRACT_LIB')
+from contract_core import _rows, get
+seen = {}
+for r in _rows():
+    if r.get('event') != 'declared': continue
+    plan = r.get('plan') or ''
+    if not plan.startswith('DEFERRED-'): continue
+    cid = r.get('id')
+    seen[cid] = r
+# filter to non-satisfied
+open_gaps = []
+for cid, r in seen.items():
+    c = get(cid)
+    if c and c.get('status') not in ('satisfied', 'merged', 'rejected'):
+        open_gaps.append((cid, r.get('plan', '')))
+print()
+print('=== Β1 OPEN GAPS ===')
+if not open_gaps:
+    print('  no open DEFERRED-* rows — every named gap has a satisfied/merged terminal row')
+else:
+    print(f'  {len(open_gaps)} open DEFERRED-* row(s):')
+    for cid, plan in sorted(open_gaps, key=lambda x: x[1])[:50]:
+        scope = plan.split(':', 1)[0].replace('DEFERRED-', '')
+        rest = (plan.split(':', 1)[1].strip() if ':' in plan else '')[:90]
+        print(f'  · {cid}  [{scope}]  {rest}')
+    if len(open_gaps) > 50:
+        print(f'  · ... {len(open_gaps) - 50} more')
+    print()
+    print('  iterate one: contract iterate <id>')
+    print('  judge one:   contract judge <id>')
+    print('  abandon one: contract supersede <id> <winner-id> --reason \"<why fitter>\"')
+"
+    _fire_contract_hooks "verb" "gaps" "0"
+    ;;
+
   *)
     # plugin fallthrough — if ~/.contracts/lib/verbs/$cmd is executable, exec it.
     # This is the convention: substrate-level helpers ship as plugin verbs in the
