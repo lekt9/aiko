@@ -4496,7 +4496,9 @@ if not match:
     sys.exit(1)
 target = match["target"]
 ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
-resolve_inbox = os.path.expanduser(f"~/.contracts/inbox/permission-resolve/{target}.jsonl")
+try: from contract_core import inbox_path as _ipath2
+except ImportError: _ipath2 = lambda c, n: os.path.expanduser(f"~/.contracts/inbox/{c}/{n}.jsonl")
+resolve_inbox = str(_ipath2("permission-resolve", target))
 os.makedirs(os.path.dirname(resolve_inbox), exist_ok=True)
 resolve_row = {
     "event": "permission_resolve", "req_id": req_id, "target": target,
