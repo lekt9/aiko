@@ -9175,7 +9175,16 @@ else:
     # OpenAI-front (Φ1), or any other Π6-bound environment.
     if [ ${#cmd} -gt 12 ] && [[ "$cmd" == *" "* ]]; then
       _fire_contract_hooks "verb" "verbless" "0"
-      exec bash "$0" solve "$cmd" "$@"
+      # Default --action agent-judges: the plan text IS the truth claim, the
+      # agent (in-thread) IS the KEY 2 judge. Caller can still override by
+      # passing --action explicitly after the bare-plan arg.
+      has_action=""
+      for a in "$@"; do [ "$a" = "--action" ] && has_action="1" && break; done
+      if [ -z "$has_action" ]; then
+        exec bash "$0" solve "$cmd" --action agent-judges "$@"
+      else
+        exec bash "$0" solve "$cmd" "$@"
+      fi
     fi
     echo "unknown subcommand: $cmd" >&2
     bash "$0" help >&2
