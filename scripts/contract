@@ -8177,6 +8177,97 @@ elif chain:
 PY
     ;;
 
+  cost)
+    # ε7 TOKEN-COST-TRACE (doctrine 42592320): aggregate `tokens` rows.
+    # Σ3-alias-aware --for filter; missing cost_usd = token-only count.
+    if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+      cat >&2 <<'USAGE'
+contract cost [--since N[s|m|h|d]] [--by agent|model|task|source]
+              [--for <identity>] [--ref <contract-id>] [--json]
+
+Aggregate tokens rows recorded across the substrate. Defaults: --by agent.
+USAGE
+      exit 0
+    fi
+    SINCE="" BY="agent" FOR_ID="" REF_ID="" JSON_OUT=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --since) SINCE="$2"; shift 2 ;;
+        --by)    BY="$2"; shift 2 ;;
+        --for)   FOR_ID="$2"; shift 2 ;;
+        --ref)   REF_ID="$2"; shift 2 ;;
+        --json)  JSON_OUT="1"; shift ;;
+        *) shift ;;
+      esac
+    done
+    MH_SINCE="$SINCE" MH_BY="$BY" MH_FOR="$FOR_ID" MH_REF="$REF_ID" MH_JSON="$JSON_OUT" _py_inline "
+import os, sys, json, datetime as _dt
+from contract_core import _rows, resolve_identity
+
+by = os.environ.get('MH_BY', 'agent')
+if by not in ('agent', 'model', 'task', 'source'):
+    print(f'unknown --by key: {by}', file=sys.stderr); sys.exit(2)
+field = {'agent':'agent','model':'model','task':'task_kind','source':'source'}[by]
+
+since = os.environ.get('MH_SINCE', '').strip()
+cutoff = None
+if since:
+    n = int(since[:-1]); unit = since[-1]
+    mult = {'s':1,'m':60,'h':3600,'d':86400}.get(unit, 0)
+    if not mult:
+        print(f'--since needs N[s|m|h|d], got: {since}', file=sys.stderr); sys.exit(2)
+    cutoff = _dt.datetime.now(_dt.timezone.utc).timestamp() - n * mult
+
+for_id_raw = os.environ.get('MH_FOR','').strip()
+for_canon = resolve_identity(for_id_raw) if for_id_raw else None
+ref_id = os.environ.get('MH_REF','').strip() or None
+
+filtered = []
+for r in _rows():
+    if r.get('event') != 'tokens': continue
+    if cutoff is not None:
+        try:
+            t = _dt.datetime.fromisoformat(r.get('ts','').replace('Z','+00:00')).timestamp()
+            if t < cutoff: continue
+        except Exception: continue
+    if ref_id and r.get('id') != ref_id: continue
+    if for_canon and resolve_identity(r.get('agent') or '') != for_canon: continue
+    filtered.append(r)
+
+agg = {}
+for r in filtered:
+    k = r.get(field) or '(none)'
+    a = agg.setdefault(k, {'in':0,'out':0,'usd':0.0,'count':0,'usd_known':0})
+    a['in']    += int(r.get('in_tokens') or 0)
+    a['out']   += int(r.get('out_tokens') or 0)
+    a['count'] += 1
+    if 'cost_usd' in r:
+        a['usd'] += float(r['cost_usd']); a['usd_known'] += 1
+
+if os.environ.get('MH_JSON') == '1':
+    print(json.dumps(agg, indent=2)); sys.exit(0)
+if not agg:
+    win = f' (last {since})' if since else ''
+    who = f' for {for_id_raw} (canon {for_canon})' if for_id_raw else ''
+    refstr = f' --ref {ref_id}' if ref_id else ''
+    print(f'no tokens rows{win}{who}{refstr}'); sys.exit(0)
+
+label = {'agent':'AGENT','model':'MODEL','task':'TASK','source':'SOURCE'}[by]
+print(f'=== TOKEN COST (by {by}' + (f', since {since}' if since else '') + ') ===')
+header = f'{label:32s} {\"COUNT\":>7} {\"IN\":>10} {\"OUT\":>10} {\"TOTAL\":>10} {\"USD\":>10}  KNOWN/N'
+print(header); print('-' * len(header))
+ti=to=tc=tk=0; tu=0.0
+for k in sorted(agg.keys(), key=lambda x: -(agg[x]['in']+agg[x]['out'])):
+    a = agg[k]; tot = a['in']+a['out']
+    ti += a['in']; to += a['out']; tu += a['usd']; tc += a['count']; tk += a['usd_known']
+    print(f'{(str(k)[:32]):32s} {a[\"count\"]:>7} {a[\"in\"]:>10} {a[\"out\"]:>10} {tot:>10} {a[\"usd\"]:>10.4f}  {a[\"usd_known\"]}/{a[\"count\"]}')
+print('-' * len(header))
+print(f'{\"TOTAL\":32s} {tc:>7} {ti:>10} {to:>10} {ti+to:>10} {tu:>10.4f}  {tk}/{tc}')
+if tk < tc:
+    print(f'  ({tc-tk} row(s) had no cost_usd; configure ~/.config/contract/llm-prices.json to enrich at write time)')
+"
+    ;;
+
   *)
     echo "unknown subcommand: $cmd" >&2
     bash "$0" help >&2
