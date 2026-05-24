@@ -3580,6 +3580,115 @@ ROUTEUSAGE
     echo "  result: FAIL (no backend available — route organ $ROUTE_ORGAN_ID)"
     exit 1
     ;;
+  bind-script)
+    # contract bind-script <contract-id> <local-script-path>
+    #
+    # Plank 10 of DEFERRED-MEGA-VISION 386497eb (generated-code KV cache).
+    # Scripts are NOT the source of truth — contracts are; scripts are cached
+    # artifacts. This verb pushes a script's body into the ledger as a
+    # `script_bound` event (SHA-256 content-hashed, base64-encoded inline body)
+    # and the existing unbrowse-mirror hook auto-mirrors that row to the
+    # unbrowse KV per Π4. The local file is now hydratable from anywhere the
+    # ledger reaches — fresh clone, container, ssh'd account.
+    BS_ID="${1:-}"
+    BS_PATH="${2:-}"
+    if [ -z "$BS_ID" ] || [ -z "$BS_PATH" ]; then
+      echo "usage: contract bind-script <contract-id> <local-script-path>" >&2
+      echo "  Appends a script_bound event carrying the file's body (b64) + SHA-256." >&2
+      echo "  Mirrors via unbrowse-mirror hook to the KV cache for cross-host hydrate." >&2
+      exit 2
+    fi
+    [ -f "$BS_PATH" ] || { echo "ERROR: file not found: $BS_PATH" >&2; exit 2; }
+    BS_ID="$BS_ID" BS_PATH="$BS_PATH" python3 <<'BIND_PY'
+import sys, os, base64, hashlib, datetime
+sys.path.insert(0, os.path.expanduser("~/.claude/skills/contract/scripts/lib"))
+from contract_core import _append, get
+cid = os.environ["BS_ID"]
+path = os.environ["BS_PATH"]
+c = get(cid)
+if not c:
+    print(f"ERROR: contract {cid} not found in this scope's ledger", file=sys.stderr)
+    sys.exit(1)
+body = open(path, "rb").read()
+sha = hashlib.sha256(body).hexdigest()[:16]
+abs_path = os.path.abspath(path)
+ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+row = {
+    "event": "script_bound",
+    "id": cid,
+    "ts": ts,
+    "code_path": abs_path,
+    "code_hash": sha,
+    "code_size": len(body),
+    "code_body_b64": base64.b64encode(body).decode("ascii"),
+}
+_append(row)
+print(f"  bound: cid={cid} sha={sha} size={len(body)}B path={abs_path}")
+print(f"  hydrate: contract hydrate-script {cid}")
+BIND_PY
+    ;;
+  hydrate-script)
+    # contract hydrate-script <contract-id> [--to <override-path>]
+    #
+    # Reconstructs a script from the latest `script_bound` event for the
+    # given contract. Decodes body, verifies SHA matches stored hash, writes
+    # to code_path (or --to override). When the local ledger is fresh-clone /
+    # container / ssh'd account, the script_bound row reached here via the
+    # unbrowse-mirror sync — Π4 transport doing what it was built for.
+    HS_ID="${1:-}"; shift || true
+    HS_TO=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --to) shift; HS_TO="${1:-}"; shift ;;
+        *) echo "ERROR: unknown arg to hydrate-script: '$1'" >&2; exit 2 ;;
+      esac
+    done
+    [ -z "$HS_ID" ] && { echo "usage: contract hydrate-script <contract-id> [--to <override-path>]" >&2; exit 2; }
+    HS_ID="$HS_ID" HS_TO="$HS_TO" python3 <<'HYD_PY'
+import sys, os, base64, hashlib
+sys.path.insert(0, os.path.expanduser("~/.claude/skills/contract/scripts/lib"))
+from contract_core import _rows, get
+cid = os.environ["HS_ID"]
+override = os.environ.get("HS_TO", "")
+bound_rows = [r for r in _rows() if r.get("id") == cid and r.get("event") == "script_bound"]
+if not bound_rows:
+    sys.stdout.write("\n  === SCRIPT MISSING ===\n")
+    sys.stdout.write(f"  reason:  no script_bound row found for contract {cid} in this ledger\n")
+    sys.stdout.write(f"  fix:     contract bind-script {cid} <local-path>\n")
+    sys.stdout.write(f"           (or sync the unbrowse mirror via the unbrowse-mirror hook —\n")
+    sys.stdout.write(f"            requires UNBROWSE_API_KEY + UNBROWSE_BASE)\n\n")
+    print(f"  result: FAIL (no script_bound row for {cid})")
+    sys.exit(1)
+row = bound_rows[-1]  # latest wins
+try:
+    body = base64.b64decode(row["code_body_b64"])
+except Exception as e:
+    print(f"  result: FAIL (script_bound row body unparseable: {e})")
+    sys.exit(1)
+sha_actual = hashlib.sha256(body).hexdigest()[:16]
+sha_stored = row.get("code_hash", "")
+if sha_actual != sha_stored:
+    print(f"  result: FAIL — sha mismatch: stored={sha_stored} actual={sha_actual}")
+    sys.exit(1)
+target = override or row.get("code_path")
+if not target:
+    print(f"  result: FAIL (no code_path on row and no --to override)")
+    sys.exit(1)
+parent = os.path.dirname(target)
+if parent:
+    os.makedirs(parent, exist_ok=True)
+with open(target, "wb") as f:
+    f.write(body)
+# Preserve exec bit if it was a script-shaped path (heuristic: extensions or shebang)
+head = body[:64]
+if target.endswith((".sh", ".py")) or head.startswith(b"#!"):
+    try:
+        os.chmod(target, 0o755)
+    except OSError:
+        pass
+print(f"  hydrated: cid={cid} sha={sha_actual} size={len(body)}B path={target}")
+HYD_PY
+    ;;
   scan)
     PARENT="${1:-}"; shift || true
     GENERATOR="${1:-}"; shift || true
