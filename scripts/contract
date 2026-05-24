@@ -7483,54 +7483,46 @@ PY
     # doesn't accidentally summon Aiko with "--help" as her message.
     if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
       cat >&2 <<'USAGE'
-contract summon "<message>" [--to <identity>] [--reason <context>]
+contract summon "<message>" [--to <id>] [--reason <ctx>] [--parent <id>] [--no-parent]
 
-Aiko self-instantiation. Declares a public-audience contract row routed
-to a named identity via Σ4; transports tailing that identity's inbox
-render Aiko at that point in their flow.
+Aiko self-instantiation, lineage-aware. Every summoned Aiko is a CHILD of
+the contract context that triggered her (parent_id + summoned_by triple
+on both the ledger row and the Σ4 inbox row). Use `contract lineage <id>`
+to walk the chain back to origin.
+
+Parent resolution (first match wins):
+  1. --parent <id>       explicit override
+  2. .drive_active       if a drive sentinel is armed, that organ is parent
+  3. (no parent)         standalone summon — root of its own lineage
 
 Examples:
-  contract summon "I noticed the deploy succeeded — want me to push docs?"
-  contract summon "Login flow broke at the redirect step" --to lewis@getfoundry.app
-  contract summon "Daily summary ready" --reason "scheduled morning cadence"
+  contract summon "deploy landed, push docs?"               # auto-parent if drive armed
+  contract summon "blocked on X" --parent abc12345          # explicit parent
+  contract summon "ad-hoc note" --no-parent                 # opt out of auto-parent
 
 Outputs:
   - one declared contract row with --audience public + --action agent:<to>
-  - one inbox row at ~/.contracts/inbox/agent/<to>.jsonl (Σ4 fan-out)
-  - the contract id (stdout) — transport adapters use this to reference
-    the conversation point Aiko just appeared at
+    + parent_id (when present) + summoned_by metadata on the row
+  - one inbox row at ~/.contracts/inbox/agent/<to>.jsonl carrying the
+    lineage triple (parent_contract, summoner_agent, origin_contract)
+  - the contract id (stdout) — transport adapters reference it
 USAGE
       exit 0
     fi
     MSG="${1:-}"
     shift || true
     TO="${CONTRACT_AGENT:-$(git config user.email 2>/dev/null || echo lewis@getfoundry.app)}"
+    SUMMONER="${CONTRACT_AGENT:-$(git config user.email 2>/dev/null || echo unknown)}"
     REASON=""
+    PARENT=""
+    NO_PARENT=0
     while [ $# -gt 0 ]; do
       case "$1" in
-        --to)     TO="${2:-$TO}"; shift 2 ;;
-        --reason) REASON="${2:-}"; shift 2 ;;
-        --help|-h)
-          cat >&2 <<'USAGE'
-contract summon "<message>" [--to <identity>] [--reason <context>]
-
-Aiko self-instantiation. Declares a public-audience contract row routed
-to a named identity via Σ4; transports tailing that identity's inbox
-render Aiko at that point in their flow.
-
-Examples:
-  contract summon "I noticed the deploy succeeded — want me to push docs?"
-  contract summon "Login flow broke at the redirect step" --to lewis@getfoundry.app
-  contract summon "Daily summary ready" --reason "scheduled morning cadence"
-
-Outputs:
-  - one declared contract row with --audience public + --action agent:<to>
-  - one inbox row at ~/.contracts/inbox/agent/<to>.jsonl (Σ4 fan-out)
-  - the contract id (stdout) — transport adapters use this to reference
-    the conversation point Aiko just appeared at
-USAGE
-          exit 0
-          ;;
+        --to)        TO="${2:-$TO}"; shift 2 ;;
+        --reason)    REASON="${2:-}"; shift 2 ;;
+        --parent)    PARENT="${2:-}"; shift 2 ;;
+        --no-parent) NO_PARENT=1; shift ;;
+        --help|-h)   bash "$0" summon --help; exit 0 ;;
         *) echo "ERROR: unknown summon flag: $1" >&2; exit 2 ;;
       esac
     done
@@ -7539,33 +7531,63 @@ USAGE
       echo "  See: contract summon --help" >&2
       exit 2
     fi
-    # Construct the plan text. Aiko speaks first-person; the reason (if
-    # given) is a substrate-internal annotation for the audit trail.
+    # Auto-resolve parent from .drive_active sentinel if --parent not given
+    # and --no-parent not requested. The drive sentinel names the organ
+    # currently being converged; an Aiko summoned mid-drive is by intent
+    # a child of that organ.
+    if [ -z "$PARENT" ] && [ "$NO_PARENT" = "0" ] && [ -f "$HOME/.contracts/.drive_active" ]; then
+      PARENT=$(cat "$HOME/.contracts/.drive_active" 2>/dev/null | tr -d ' \n')
+    fi
+
+    # Construct plan text. Aiko speaks first-person; reason is internal annotation.
     PLAN="$MSG"
     [ -n "$REASON" ] && PLAN="${PLAN}
 
 (summon context: ${REASON})"
 
-    NEW_ID=$(CONTRACT_AGENT="$TO" bash "$0" declare "$PLAN" \
-      --action "agent:$TO" \
-      --audience public \
-      --no-drive 2>&1 | grep -oE "^declared: [0-9a-f]{8}" | head -1 | awk '{print $2}')
+    # Resolve origin: walk parent chain to root via contract_core.get.
+    # ORIGIN = the contract at the top of the lineage that contains this summon.
+    ORIGIN=""
+    if [ -n "$PARENT" ]; then
+      ORIGIN=$(PARENT_ARG="$PARENT" python3 <<'PY' 2>/dev/null
+import os, sys
+sys.path.insert(0, os.path.expanduser('~/.claude/skills/contract/scripts/lib'))
+from contract_core import get
+cid = os.environ.get('PARENT_ARG', '')
+seen = set()
+while cid and cid not in seen:
+    seen.add(cid)
+    state = get(cid) or {}
+    pid = state.get('parent_id')
+    if not pid:
+        print(cid)
+        sys.exit(0)
+    cid = pid
+print(cid or '')
+PY
+)
+    fi
+
+    # Declare the summoned contract. Pass --parent to root it under the
+    # spawning context; the resulting ledger row carries parent_id natively.
+    DECLARE_ARGS=(--action "agent:$TO" --audience public --no-drive)
+    [ -n "$PARENT" ] && DECLARE_ARGS+=(--parent "$PARENT")
+    NEW_ID=$(CONTRACT_AGENT="$TO" bash "$0" declare "$PLAN" "${DECLARE_ARGS[@]}" 2>&1 | grep -oE "^declared: [0-9a-f]{8}" | head -1 | awk '{print $2}')
 
     if [ -z "$NEW_ID" ]; then
       echo "ERROR: failed to declare summon contract" >&2
       exit 1
     fi
 
-    # Σ4 inbox write: this is what transports tail to render Aiko at the
-    # right moment. The agent:<id> action handler already does this on
-    # iterate, but for the summon UX we want the inbox row at DECLARE time
-    # so transports see Aiko's appearance before any iterate happens.
+    # Σ4 inbox write with lineage triple. Transports + unbrowse-mirror both
+    # see (parent_contract, summoner_agent, origin_contract) so a leaf-Aiko
+    # is always traceable back to the originating contract + identity.
     INBOX_DIR="$HOME/.contracts/inbox/agent"
     mkdir -p "$INBOX_DIR"
     INBOX_FILE="$INBOX_DIR/${TO}.jsonl"
     TS=$(date -u +%FT%TZ)
-    # Use python for safe JSON serialization of the message (handles quotes/newlines).
-    PLAN="$PLAN" TO="$TO" NEW_ID="$NEW_ID" REASON="$REASON" TS="$TS" python3 <<'PY' >> "$INBOX_FILE"
+    PLAN="$PLAN" TO="$TO" NEW_ID="$NEW_ID" REASON="$REASON" TS="$TS" \
+      PARENT="$PARENT" ORIGIN="$ORIGIN" SUMMONER="$SUMMONER" python3 <<'PY' >> "$INBOX_FILE"
 import json, os
 row = {
     "event": "summoned",
@@ -7575,6 +7597,12 @@ row = {
     "audience": "public",
     "voice": "aiko",
     "summon_reason": os.environ.get("REASON", ""),
+    # Lineage triple — the substrate-side trace identity-chain. Same
+    # fields land in unbrowse contractEvents.row jsonb via the mirror
+    # hook, so the chain is queryable cross-scope.
+    "parent_contract": os.environ.get("PARENT", "") or None,
+    "summoner_agent": os.environ.get("SUMMONER", ""),
+    "origin_contract": os.environ.get("ORIGIN", "") or None,
     "ts": os.environ["TS"],
 }
 print(json.dumps(row))
