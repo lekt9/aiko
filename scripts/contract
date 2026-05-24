@@ -4525,12 +4525,13 @@ PR_RESOLVE_PY
 import json, os, sys
 sys.path.insert(0, os.path.join(os.environ["PR_CLI_DIR"], "lib"))
 try:
-    from contract_core import resolve_identity
+    from contract_core import resolve_identity, inbox_root as _iroot
 except ImportError:
     resolve_identity = lambda x: x
+    _iroot = lambda: __import__('pathlib').Path(os.path.expanduser("~/.contracts/inbox"))
 raw = os.environ.get("PR_TARGET", "")
-req_root = os.path.expanduser("~/.contracts/inbox/permission-request")
-resolved_root = os.path.expanduser("~/.contracts/inbox/permission-resolve")
+req_root = str(_iroot() / "permission-request")
+resolved_root = str(_iroot() / "permission-resolve")
 resolved_ids = set()
 if os.path.isdir(resolved_root):
     for fname in os.listdir(resolved_root):
