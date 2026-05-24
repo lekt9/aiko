@@ -291,6 +291,67 @@ def detect_environment() -> dict:
     }
 
 
+def get_identity_preferences(identity_or_alias: Optional[str]) -> dict:
+    """ε4 EMPATHY-PREFERENCE (doctrine fcebf0b1): return the preferences dict
+    for a canonical identity, resolved through Σ3 aliases. Empty dict on
+    missing file or absent preferences block; never throws.
+
+    Lookup path:
+      1. resolve_identity(input)  → canonical
+      2. read ~/.contracts/people/<canonical>.json
+      3. return parsed["preferences"] or {}
+
+    The substrate just reads + returns; downstream emitters merge the dict
+    into requirement blocks so transports can pick the per-identity render.
+    """
+    if not identity_or_alias:
+        return {}
+    try:
+        canonical = resolve_identity(identity_or_alias) or identity_or_alias
+    except Exception:
+        canonical = identity_or_alias
+    # The people/ folder keys files by canonical id, not email. Try both the
+    # raw canonical AND a sanitized lookup so 'lewis@getfoundry.app' and
+    # 'lewis' both resolve to lewis.json when present.
+    people_dir = os.path.expanduser("~/.contracts/people")
+    candidates = [canonical]
+    if "@" in canonical:
+        candidates.append(canonical.split("@", 1)[0])
+    for cand in candidates:
+        path = os.path.join(people_dir, f"{cand}.json")
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            prefs = data.get("preferences")
+            if isinstance(prefs, dict):
+                return prefs
+            return {}
+        except Exception:
+            return {}
+    return {}
+
+
+def preferred_approval_channel(identity_or_alias: Optional[str], intent_kind: str) -> str:
+    """ε4 lookup: return the channel this identity prefers for the given intent.
+
+    Fallback chain (no script bakes a verdict — these are explicit preferences
+    the human declared in their people file; falling back to tg_approval is a
+    safe default because every team member has a Telegram identity by Σ3):
+      preferences.approval_channel.<intent_kind> →
+      preferences.approval_channel.default      →
+      'tg_approval'
+    """
+    prefs = get_identity_preferences(identity_or_alias)
+    channels = prefs.get("approval_channel") or {}
+    if intent_kind in channels:
+        return channels[intent_kind]
+    if "default" in channels:
+        return channels["default"]
+    return "tg_approval"
+
+
 def emit_context_orientation(plan: str, env_dict: Optional[dict] = None) -> None:
     """Substrate enables context loading (doctrine 91e64e17): at declare time,
     write a === CONTEXT ORIENTATION (advisory) === block to stderr naming the
