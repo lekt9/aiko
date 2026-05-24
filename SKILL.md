@@ -944,6 +944,8 @@ A `contract judge` HOLD/REJECT verdict scans its reason text for `<8hex>` contra
 
 **Φ5** (`da364b6e`) — emergentDB DAG IS the /contract graph; not two structures. Aiko cells live as `kind=aiko_cell` rows on `~/.contracts/contracts.jsonl` per Φ3 (`cd241a16`); Π4 (`397bc7bd`) mirrors to unbrowse-side when shipped. Every aiko relation is a /contract edge — `parent_id`, `contract:<id>`, `corroborate`, `supersede`. The graph IS the contracts.
 
+**Φ6+Φ7** (`5ecf433c`) — every /contract IS an aiko cell by default (kind=aiko_cell unless explicitly tagged); mirror payload to unbrowse carries `{silo: Σ3 canonical, kind, node: {id,plan,action,status,pointer_type,agent,ts}, edges: {parent_id, refs[], corroborates[], supersedes}}`. Identity-siloed per-user partition; explicit graph node+edge shape. Two paths: hooks/mirror-to-unbrowse.sh + aiko-sync-to-emergentdb. Gate: `verb-gates/phi6-aiko-is-default-kind/`.
+
 **aiko perpetual** (`f075d0a8`) — `aiko perpetual [--transport --client-id --no-drive --once]` binds a process as one of Aiko's environments: Σ6 presence + Π6 env-bind + declare self-organ aiko cell + drive arm. Aiko is alive in any env that runs the verb; self-iterates perpetually. Gate: `verb-gates/aiko-perpetual/`.
 
 **aiko broadcast-update** (`55c818e0`) — `aiko broadcast-update <update> [--kind --canonical --dry-run]` writes one `broadcast_update` row to `~/.contracts/inbox/agent/<canonical>.jsonl` for every active Σ6 session. Each env tails this inbox; agent judges KEY 2 on whether to act. UTC TTL via `calendar.timegm`. Gate: `verb-gates/aiko-broadcast/`.
