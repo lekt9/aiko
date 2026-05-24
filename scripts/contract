@@ -3465,6 +3465,121 @@ CHILD
     echo "  When all $N satisfy, re-verify organ: contract iterate $PARENT"
     echo
     ;;
+  route)
+    # contract route "<plan>" --try <spec> [--try <spec> ...] [--parent <pid>]
+    #
+    # Backend-selection IS a /contract, not an agent decision baked into an
+    # action. This verb constructs a funnel-first organ where each --try
+    # spec becomes a real child cell with its own pointer-type (machine:,
+    # sandbox:, runpod:, tool-guard:, …). Children are iterated in declared
+    # order until ONE PASSes (first-available wins, OR-gate semantics). The
+    # full routing graph is visible in `contract status <organ>` — no hidden
+    # logic, no agent guessing which backend; the substrate composes.
+    #
+    # Origin: contract `386497eb` plank 2 (layer-router auto-pick). Realised
+    # via existing primitives — no new pointer-type, no _run_action branch.
+    ROUTE_PLAN="${1:-}"; shift || true
+    ROUTE_PARENT=""
+    declare -a ROUTE_TRIES
+    ROUTE_TRIES=()
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --try)
+          shift
+          [ -z "${1:-}" ] && { echo "ERROR: --try needs a spec" >&2; exit 2; }
+          ROUTE_TRIES+=("$1"); shift ;;
+        --parent)
+          shift; ROUTE_PARENT="${1:-}"; shift ;;
+        *)
+          echo "ERROR: unknown arg to route: '$1'" >&2; exit 2 ;;
+      esac
+    done
+    if [ -z "$ROUTE_PLAN" ] || [ "${#ROUTE_TRIES[@]}" -eq 0 ]; then
+      cat >&2 <<'ROUTEUSAGE'
+usage: contract route "<plan>" --try <spec> [--try <spec> ...] [--parent <pid>]
+
+Each <spec> is the action-text for a candidate backend. Examples:
+  --try "machine:python3 -c 'print(1)'"
+  --try "sandbox:python:python3 -c 'print(1)'"
+  --try "runpod:abc123:python3 -c 'print(1)'"
+  --try "true"                              # any cli action also works
+
+Children iterate in declared order; first PASS wins. All FAIL → ROUTE FAILED.
+ROUTEUSAGE
+      exit 2
+    fi
+    # Self-locate the CLI so recursive calls survive cwd / PATH ambiguity.
+    ROUTE_CLI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    # 1) Declare the funnel-first organ.
+    declare -a ROUTE_DECL_ARGS
+    ROUTE_DECL_ARGS=(declare "$ROUTE_PLAN" --action funnel-first --no-drive)
+    [ -n "$ROUTE_PARENT" ] && ROUTE_DECL_ARGS+=(--parent "$ROUTE_PARENT")
+    ROUTE_ORGAN_OUT=$("$ROUTE_CLI" "${ROUTE_DECL_ARGS[@]}" 2>&1)
+    ROUTE_ORGAN_ID=$(printf '%s\n' "$ROUTE_ORGAN_OUT" | grep -oE 'declared: [a-f0-9]{8}' | awk '{print $2}' | head -1)
+    if [ -z "$ROUTE_ORGAN_ID" ]; then
+      echo "ERROR: failed to declare route organ" >&2
+      printf '%s\n' "$ROUTE_ORGAN_OUT" >&2
+      exit 1
+    fi
+    # 2) Spawn one cell per --try.
+    declare -a ROUTE_CHILD_IDS
+    ROUTE_CHILD_IDS=()
+    for _i in "${!ROUTE_TRIES[@]}"; do
+      _spec="${ROUTE_TRIES[$_i]}"
+      _child_plan="route candidate $((_i+1))/${#ROUTE_TRIES[@]}: ${_spec:0:80}"
+      _child_out=$("$ROUTE_CLI" declare "$_child_plan" --action "$_spec" --parent "$ROUTE_ORGAN_ID" --no-drive 2>&1)
+      _child_id=$(printf '%s\n' "$_child_out" | grep -oE 'declared: [a-f0-9]{8}' | awk '{print $2}' | head -1)
+      if [ -z "$_child_id" ]; then
+        echo "ERROR: failed to spawn route child for spec '$_spec'" >&2
+        printf '%s\n' "$_child_out" >&2
+        exit 1
+      fi
+      ROUTE_CHILD_IDS+=("$_child_id")
+    done
+    # 3) Iterate children in declared order until one PASSes.
+    echo
+    echo "=== CONTRACT ROUTE — organ $ROUTE_ORGAN_ID, ${#ROUTE_TRIES[@]} candidate(s) ==="
+    _winner_id=""
+    _winner_spec=""
+    declare -a _failures
+    _failures=()
+    for _i in "${!ROUTE_CHILD_IDS[@]}"; do
+      _cid="${ROUTE_CHILD_IDS[$_i]}"
+      _spec="${ROUTE_TRIES[$_i]}"
+      echo "  candidate $((_i+1))/${#ROUTE_CHILD_IDS[@]}: $_spec"
+      _iter_out=$("$ROUTE_CLI" iterate "$_cid" 2>&1)
+      if printf '%s\n' "$_iter_out" | grep -q "result: PASS"; then
+        "$ROUTE_CLI" _mark "$_cid" satisfied \
+          --proof "contract route — candidate $((_i+1))/${#ROUTE_CHILD_IDS[@]} PASSed (spec: $_spec)" > /dev/null 2>&1 || true
+        _winner_id="$_cid"
+        _winner_spec="$_spec"
+        echo "  → PASS (winner)"
+        break
+      else
+        _reason=$(printf '%s\n' "$_iter_out" | grep -E "result: FAIL|MISSING|UNAVAILABLE|exit=" | head -2 | tr '\n' ' ' | sed 's/  */ /g')
+        _failures+=("$_spec  ::  ${_reason:-no failure detail}")
+        echo "  → FAIL"
+      fi
+    done
+    echo
+    if [ -n "$_winner_id" ]; then
+      "$ROUTE_CLI" _mark "$ROUTE_ORGAN_ID" satisfied \
+        --proof "contract route resolved via candidate: $_winner_spec (child $_winner_id)" > /dev/null 2>&1 || true
+      echo "  result: PASS (organ=$ROUTE_ORGAN_ID winner_child=$_winner_id backend=$_winner_spec)"
+      exit 0
+    fi
+    echo "  === ROUTE FAILED ==="
+    echo "  organ:     $ROUTE_ORGAN_ID"
+    echo "  attempted: ${#ROUTE_TRIES[@]} backend(s), none available on this machine"
+    for _f in "${_failures[@]}"; do
+      echo "  - $_f"
+    done
+    echo
+    echo "  Fix: provide an additional --try spec for a backend that IS available,"
+    echo "  OR install / configure one of the attempted backends, then re-iterate $ROUTE_ORGAN_ID"
+    echo "  result: FAIL (no backend available — route organ $ROUTE_ORGAN_ID)"
+    exit 1
+    ;;
   scan)
     PARENT="${1:-}"; shift || true
     GENERATOR="${1:-}"; shift || true
