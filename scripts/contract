@@ -4107,6 +4107,256 @@ print(f"  ttl_until: {new_resolved['ttl_until']}")
 print(f"  result:    PASS (resolved, cached locally + audit row appended)")
 IDENTIFY_PY
     ;;
+  mail)
+    # contract mail {send|list|read|step-complete|step-next}
+    #
+    # Mailbox-with-dated-history + explicit step-detach. Fixes the
+    # Eugene+Manus context-reset bug: agent moved to step 6 without
+    # detaching → context wiped → next agent doesn't know the brief.
+    # Mail is persistent state across context-resets: the next-step agent
+    # reads brief + completed_steps cold from the mailbox.
+    MA_SUB="${1:-}"; shift || true
+    MA_CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    case "$MA_SUB" in
+      send)
+        MA_TO="${1:-}"; shift || true
+        MA_BRIEF=""; MA_STEPS=1; MA_FOR_ID=""
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --brief) shift; MA_BRIEF="${1:-}"; shift ;;
+            --steps) shift; MA_STEPS="${1:-1}"; shift ;;
+            --for-id) shift; MA_FOR_ID="${1:-}"; shift ;;
+            *) echo "ERROR: unknown arg '$1'" >&2; exit 2 ;;
+          esac
+        done
+        [ -z "$MA_TO" ] || [ -z "$MA_BRIEF" ] && { echo "usage: contract mail send <to> --brief <text> [--steps N] [--for-id C]" >&2; exit 2; }
+        MA_TO="$MA_TO" MA_BRIEF="$MA_BRIEF" MA_STEPS="$MA_STEPS" MA_FOR_ID="$MA_FOR_ID" \
+        MA_CLI_DIR="$MA_CLI_DIR" python3 <<'MA_SEND_PY'
+import datetime, json, os, secrets, sys
+sys.path.insert(0, os.path.join(os.environ["MA_CLI_DIR"], "lib"))
+try:
+    from contract_core import resolve_identity, current_agent, _append
+except ImportError:
+    resolve_identity = lambda x: x; current_agent = lambda: ""; _append = lambda r: None
+to = resolve_identity(os.environ["MA_TO"]) or os.environ["MA_TO"]
+sender = (current_agent() or "anonymous").strip()
+mail_id = secrets.token_hex(4)
+total = max(1, int(os.environ.get("MA_STEPS", "1")))
+ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+row = {
+    "event": "mail_sent", "id": f"mail-{mail_id}", "mail_id": mail_id,
+    "from": sender, "to": to,
+    "brief": os.environ["MA_BRIEF"],
+    "total_steps": total, "current_step": 0, "completed_steps": [],
+    "assigned_agent": None, "state": "pending",
+    "for_contract": os.environ.get("MA_FOR_ID", ""), "ts": ts,
+}
+inbox = os.path.expanduser(f"~/.contracts/inbox/mail/{to}.jsonl")
+os.makedirs(os.path.dirname(inbox), exist_ok=True)
+with open(inbox, "a") as f: f.write(json.dumps(row) + "\n")
+_append(row)
+print(f"  mail_id:     {mail_id}")
+print(f"  from:        {sender}")
+print(f"  to:          {to}")
+print(f"  brief:       {os.environ['MA_BRIEF'][:120]}")
+print(f"  steps:       0/{total}")
+if os.environ.get("MA_FOR_ID"):
+    print(f"  for_contract: {os.environ['MA_FOR_ID']}")
+print(f"  inbox:       {inbox}")
+print(f"  next:        contract mail step-next {mail_id}   (recipient/bot assigns + starts step 1)")
+print(f"  result:      PASS (mail sent + audit row appended)")
+MA_SEND_PY
+        ;;
+      list|show)
+        MA_TO="${1:-}"
+        MA_TO="$MA_TO" MA_CLI_DIR="$MA_CLI_DIR" python3 <<'MA_LIST_PY'
+import json, os, sys
+sys.path.insert(0, os.path.join(os.environ["MA_CLI_DIR"], "lib"))
+try: from contract_core import resolve_identity, _rows
+except ImportError:
+    resolve_identity = lambda x: x; _rows = lambda: []
+target_filter = os.environ.get("MA_TO", "")
+if target_filter:
+    target_filter = resolve_identity(target_filter) or target_filter
+# Reconstruct each mail's current state from event stream
+rows = _rows()
+mails = {}
+for r in rows:
+    mid = r.get("mail_id")
+    if not mid: continue
+    if r["event"] == "mail_sent":
+        mails[mid] = dict(r)
+    elif mid in mails and r["event"] in ("mail_step_complete", "mail_step_assigned"):
+        m = mails[mid]
+        if r["event"] == "mail_step_assigned":
+            m["assigned_agent"] = r.get("agent")
+            m["current_step"] = r.get("step", m.get("current_step", 0))
+            m["state"] = "in_progress"
+        elif r["event"] == "mail_step_complete":
+            m["completed_steps"] = (m.get("completed_steps") or []) + [
+                {"step": r.get("step"), "proof": r.get("proof", ""),
+                 "by_agent": r.get("agent"), "ts": r.get("ts", "")}
+            ]
+            m["assigned_agent"] = None  # DETACH
+            m["state"] = "awaiting_next" if r.get("step", 0) < m.get("total_steps", 0) else "completed"
+shown = 0
+for mid, m in sorted(mails.items(), key=lambda kv: kv[1].get("ts", ""), reverse=True):
+    if target_filter and m.get("to") != target_filter: continue
+    shown += 1
+    print(f"  mail_id={mid}  to={m.get('to')}  state={m.get('state')}  step={len(m.get('completed_steps',[]))}/{m.get('total_steps')}  ts={m.get('ts','?')[:19]}")
+    print(f"    brief: {(m.get('brief') or '')[:120]}")
+    if m.get("assigned_agent"):
+        print(f"    assigned: {m['assigned_agent']}")
+print(f"  ({shown} mail(s))")
+MA_LIST_PY
+        ;;
+      read)
+        MA_ID="${1:-}"
+        [ -z "$MA_ID" ] && { echo "usage: contract mail read <mail-id>" >&2; exit 2; }
+        MA_ID="$MA_ID" MA_CLI_DIR="$MA_CLI_DIR" python3 <<'MA_READ_PY'
+import json, os, sys
+sys.path.insert(0, os.path.join(os.environ["MA_CLI_DIR"], "lib"))
+try: from contract_core import _rows
+except ImportError: _rows = lambda: []
+mid = os.environ["MA_ID"]
+sent = None; steps = []; assigns = []
+for r in _rows():
+    if r.get("mail_id") != mid: continue
+    if r["event"] == "mail_sent": sent = r
+    elif r["event"] == "mail_step_complete": steps.append(r)
+    elif r["event"] == "mail_step_assigned": assigns.append(r)
+if not sent:
+    print(f"  no mail with id {mid}", file=sys.stderr); sys.exit(1)
+current_assignee = None
+if assigns and (not steps or assigns[-1]["ts"] > steps[-1]["ts"]):
+    current_assignee = assigns[-1].get("agent")
+state = "pending" if not assigns else ("completed" if len(steps) >= sent.get("total_steps", 1) else ("in_progress" if current_assignee else "awaiting_next"))
+print(f"  mail_id:      {mid}")
+print(f"  from:         {sent.get('from')}")
+print(f"  to:           {sent.get('to')}")
+print(f"  ts:           {sent.get('ts')}")
+print(f"  state:        {state}")
+print(f"  brief:")
+print(f"    {sent.get('brief','')}")
+print(f"  progress:     {len(steps)}/{sent.get('total_steps')}")
+if current_assignee:
+    print(f"  assigned_to:  {current_assignee}  (current step in progress)")
+if steps:
+    print(f"  history:")
+    for s in steps:
+        print(f"    step {s.get('step')}: {(s.get('proof') or '')[:120]}")
+        print(f"      by {s.get('agent','?')}  at {s.get('ts','?')}")
+if sent.get("for_contract"):
+    print(f"  for_contract: {sent['for_contract']}")
+print(f"  result:       PASS (mailbox read — agent should now act on brief + history)")
+MA_READ_PY
+        ;;
+      step-complete)
+        MA_ID="${1:-}"; shift || true
+        MA_PROOF=""
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --proof) shift; MA_PROOF="${1:-}"; shift ;;
+            *) echo "ERROR: unknown arg '$1'" >&2; exit 2 ;;
+          esac
+        done
+        [ -z "$MA_ID" ] || [ -z "$MA_PROOF" ] && { echo "usage: contract mail step-complete <mail-id> --proof <evidence>" >&2; exit 2; }
+        MA_ID="$MA_ID" MA_PROOF="$MA_PROOF" MA_CLI_DIR="$MA_CLI_DIR" python3 <<'MA_DONE_PY'
+import datetime, json, os, sys
+sys.path.insert(0, os.path.join(os.environ["MA_CLI_DIR"], "lib"))
+try: from contract_core import current_agent, _append, _rows
+except ImportError:
+    current_agent = lambda: ""; _append = lambda r: None; _rows = lambda: []
+mid = os.environ["MA_ID"]
+agent = (current_agent() or "anonymous").strip()
+ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+sent = None; completed = 0; assigned = None
+for r in _rows():
+    if r.get("mail_id") != mid: continue
+    if r["event"] == "mail_sent": sent = r
+    elif r["event"] == "mail_step_complete": completed += 1
+    elif r["event"] == "mail_step_assigned": assigned = r.get("agent")
+if not sent:
+    print(f"  ERROR: no mail with id {mid}", file=sys.stderr); sys.exit(1)
+if not assigned:
+    print(f"  ERROR: no current assignment for mail {mid} — run 'contract mail step-next {mid}' first to attach an agent", file=sys.stderr)
+    sys.exit(1)
+step_num = completed + 1
+total = sent.get("total_steps", 1)
+_append({
+    "event": "mail_step_complete", "id": f"mail-{mid}-step-{step_num}",
+    "mail_id": mid, "step": step_num, "proof": os.environ["MA_PROOF"],
+    "agent": agent, "ts": ts,
+})
+print(f"  mail_id:      {mid}")
+print(f"  step:         {step_num}/{total}  COMPLETE")
+print(f"  proof:        {os.environ['MA_PROOF'][:120]}")
+print(f"  by_agent:     {agent}")
+print(f"  detached:     YES (assigned_agent cleared — next agent attaches via step-next + reads mailbox cold)")
+if step_num >= total:
+    print(f"  state:        COMPLETED (all {total} steps done)")
+else:
+    print(f"  next:         contract mail step-next {mid}   (assigns step {step_num+1})")
+print(f"  result:       PASS")
+MA_DONE_PY
+        ;;
+      step-next)
+        MA_ID="${1:-}"
+        [ -z "$MA_ID" ] && { echo "usage: contract mail step-next <mail-id>" >&2; exit 2; }
+        MA_ID="$MA_ID" MA_CLI_DIR="$MA_CLI_DIR" python3 <<'MA_NEXT_PY'
+import datetime, json, os, sys
+sys.path.insert(0, os.path.join(os.environ["MA_CLI_DIR"], "lib"))
+try: from contract_core import current_agent, _append, _rows
+except ImportError:
+    current_agent = lambda: ""; _append = lambda r: None; _rows = lambda: []
+mid = os.environ["MA_ID"]
+agent = (current_agent() or "anonymous").strip()
+ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+sent = None; completed = 0; last_assign = None; last_complete_ts = ""
+for r in _rows():
+    if r.get("mail_id") != mid: continue
+    if r["event"] == "mail_sent": sent = r
+    elif r["event"] == "mail_step_complete":
+        completed += 1
+        last_complete_ts = r.get("ts", "")
+    elif r["event"] == "mail_step_assigned":
+        last_assign = r
+if not sent:
+    print(f"  ERROR: no mail with id {mid}", file=sys.stderr); sys.exit(1)
+if completed >= sent.get("total_steps", 1):
+    print(f"  ERROR: mail {mid} already at completion ({completed}/{sent.get('total_steps')})", file=sys.stderr); sys.exit(1)
+if last_assign and last_assign.get("ts", "") > last_complete_ts:
+    print(f"  ERROR: mail {mid} still assigned to {last_assign.get('agent')} (step {last_assign.get('step')} not complete) — finish detach via 'mail step-complete {mid} --proof' first", file=sys.stderr); sys.exit(1)
+next_step = completed + 1
+_append({
+    "event": "mail_step_assigned", "id": f"mail-{mid}-assign-{next_step}",
+    "mail_id": mid, "step": next_step, "agent": agent, "ts": ts,
+})
+print(f"  mail_id:      {mid}")
+print(f"  step:         {next_step}/{sent.get('total_steps')}  ASSIGNED")
+print(f"  assigned_to:  {agent}")
+print(f"  brief (cold read):")
+print(f"    {sent.get('brief','')}")
+if completed:
+    print(f"  history ({completed} prior steps — agent reads this BEFORE acting):")
+    for r in _rows():
+        if r.get("mail_id") == mid and r["event"] == "mail_step_complete":
+            print(f"    step {r.get('step')}: {(r.get('proof') or '')[:100]}")
+print(f"  next:         do step {next_step}, then 'contract mail step-complete {mid} --proof <evidence>'")
+print(f"  result:       PASS (attached + cold-read brief surfaced)")
+MA_NEXT_PY
+        ;;
+      ""|*)
+        cat >&2 <<'MAUSAGE'
+usage: contract mail send <to> --brief <text> [--steps N] [--for-id C]
+       contract mail list [<to>]
+       contract mail read <mail-id>
+       contract mail step-complete <mail-id> --proof <evidence>
+       contract mail step-next <mail-id>
+MAUSAGE
+        exit 2 ;;
+    esac
+    ;;
   permission)
     # contract permission {request|grant|deny|show}
     #
