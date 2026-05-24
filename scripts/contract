@@ -794,6 +794,26 @@ case "$cmd" in
     done
     [ -z "$PLAN" ]   && { echo "usage: contract declare \"<plan>\" --action \"<cmd>\" [--parent <id>] [--pointer-to <tag>] [--learning \"<why>\"]..." >&2; exit 2; }
     [ -z "$ACTION" ] && { echo "ERROR: --action is required. A contract without a check is a wish." >&2; exit 2; }
+
+    # ε5 EMPATHY-DEFAULT-AUDIENCE (doctrine 74996ac4): when --audience is
+    # omitted, apply CONTRACT_AGENT's preferences.default_audience as the
+    # implicit tag. Explicit --audience always wins. AUDIENCE_FROM_PREF flag
+    # lets the declared block surface "from preferences" so the agent sees
+    # which tier got applied and why.
+    AUDIENCE_FROM_PREF=""
+    if [ -z "$AUDIENCE" ]; then
+      AUDIENCE_FROM_PREF=$(_py_inline "
+import os
+from contract_core import get_default_audience
+agent = os.environ.get('CONTRACT_AGENT') or ''
+val = get_default_audience(agent) if agent else None
+print(val or '')
+")
+      if [ -n "$AUDIENCE_FROM_PREF" ]; then
+        AUDIENCE="$AUDIENCE_FROM_PREF"
+      fi
+    fi
+
     PLAN_WARN=$(MH_PLAN="$PLAN" _py_inline "
 import os; from contract_core import plan_quality_warning
 print(plan_quality_warning(os.environ['MH_PLAN']))
