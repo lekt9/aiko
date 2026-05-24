@@ -1357,13 +1357,32 @@ def quorum_satisfied(id: str, k: int) -> bool:
     return n_sat >= k
 
 
+def invocation_root(id: str) -> str | None:
+    """Walk parent_id chain to the topmost ancestor — the original /contract
+    invocation root. Returns None if id is unknown; returns id itself when
+    the contract has no parent (it IS a root). Cycle-guarded by visited set."""
+    seen = set()
+    cur = id
+    while cur and cur not in seen:
+        seen.add(cur)
+        c = get(cur)
+        if not c:
+            return None
+        pid = c.get("parent_id")
+        if not pid:
+            return cur
+        cur = pid
+    return cur
+
+
 def wavefront(id: str) -> dict:
     """The signal a state change at `id` propagates. Returns the contracts a
     change at `id` should re-evaluate: the parent organ, every contract:<id>
-    referrer, and corroborated synapses. Surfaces the wavefront only — it
-    satisfies nothing; KEY 2 stays with the agent."""
+    referrer, corroborated synapses, AND the invocation root (Ω3 root-rewake)
+    when root is not self and not yet satisfied. Surfaces only — KEY 2 stays
+    with the agent."""
     me = get(id)
-    out = {"parent": None, "referrers": [], "synapses": []}
+    out = {"parent": None, "referrers": [], "synapses": [], "root": None}
     if not me:
         return out
     out["parent"] = me.get("parent_id")
@@ -1372,6 +1391,11 @@ def wavefront(id: str) -> dict:
         if r.get("event") == "declared" and r.get("action") == ref:
             out["referrers"].append(r["id"])
     out["synapses"] = get_corroborations(id)
+    root = invocation_root(id)
+    if root and root != id:
+        rc = get(root)
+        if rc and rc.get("status") != "satisfied":
+            out["root"] = root
     return out
 def dag(json_output: bool = False):
     """Build a DAG from all contracts in the active ledger."""
