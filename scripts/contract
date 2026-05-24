@@ -5263,6 +5263,312 @@ sys.exit(asyncio.run(main()) or 0)
 PY
     ;;
 
+  toggle)
+    # contract toggle <feature> on|off|status — substrate-as-config primitive.
+    #
+    # Replaces env-var hook opt-ins (CONTRACT_GIT_SYNC, CONTRACT_OUTLINE_SYNC,
+    # etc.) with standing-gate contracts whose status==satisfied IS the on-flag.
+    # The hook reads ~/.contracts/feature-toggles/<feature>.txt → contract id →
+    # status to decide whether to fire.
+    #
+    # On: declare a fresh toggle contract (if no file or current is superseded),
+    #     mark it satisfied. Write the id to the toggle file.
+    # Off: supersede the current toggle into a fresh OFF fossil; delete the file.
+    # Status: print on/off/absent and the contract id (if any).
+    FEATURE="${1:-}"
+    ACTION="${2:-status}"
+    if [ -z "$FEATURE" ]; then
+      cat >&2 <<'USAGE'
+contract toggle <feature> [on|off|status]
+
+Substrate-as-config: replace env-var opt-ins with standing-gate contracts
+whose status==satisfied IS the on-flag. Toggle state lives at
+~/.contracts/feature-toggles/<feature>.txt -> contract id -> ledger status.
+
+Examples:
+  contract toggle git-sync on            # enable commit auto-sync on satisfy
+  contract toggle git-sync-push on       # enable push (separate toggle)
+  contract toggle outline-sync on        # enable doc upsert
+  contract toggle outline-sync-force on  # bypass audience filter on doc sync
+  contract toggle git-sync off           # disable; supersedes the toggle contract
+  contract toggle git-sync status        # report on/off/absent + contract id
+USAGE
+      exit 2
+    fi
+    TOG_DIR="$HOME/.contracts/feature-toggles"
+    mkdir -p "$TOG_DIR"
+    TOG_FILE="$TOG_DIR/${FEATURE}.txt"
+    GLOBAL_STORE="$HOME/.contracts/contracts.jsonl"
+
+    case "$ACTION" in
+      on)
+        EXISTING_ID=""
+        [ -f "$TOG_FILE" ] && EXISTING_ID="$(cat "$TOG_FILE" 2>/dev/null | tr -d ' \n')"
+        if [ -n "$EXISTING_ID" ]; then
+          STATUS=$(CONTRACTS_STORE="$GLOBAL_STORE" python3 -c "
+import sys, os
+sys.path.insert(0, os.path.expanduser('~/.claude/skills/contract/scripts/lib'))
+from contract_core import get
+s = get('$EXISTING_ID') or {}
+print(s.get('status', ''))
+" 2>/dev/null)
+          if [ "$STATUS" = "satisfied" ]; then
+            echo "  $FEATURE is already on (contract $EXISTING_ID satisfied)"
+            exit 0
+          fi
+        fi
+        PLAN="FEATURE-TOGGLE $FEATURE — on. The satisfied status of this contract IS the on-flag for the $FEATURE hook. Toggle off via 'contract toggle $FEATURE off'."
+        NEW_ID=$(CONTRACTS_STORE="$GLOBAL_STORE" CONTRACT_AGENT="${CONTRACT_AGENT:-$(git config user.email 2>/dev/null || echo unknown)}" \
+          bash "$0" declare "$PLAN" --action "agent-judges" --no-drive --audience team 2>&1 | \
+          grep -oE "id=[0-9a-f]{8}" | head -1 | cut -d= -f2)
+        if [ -z "$NEW_ID" ]; then
+          echo "ERROR: failed to declare toggle contract for $FEATURE" >&2
+          exit 1
+        fi
+        CONTRACTS_STORE="$GLOBAL_STORE" CONTRACT_AGENT="${CONTRACT_AGENT:-$(git config user.email 2>/dev/null || echo unknown)}" \
+          bash "$0" _mark "$NEW_ID" satisfied --proof "feature toggle $FEATURE ON via 'contract toggle' verb at $(date -u +%FT%TZ); state file: $TOG_FILE" >/dev/null 2>&1
+        echo "$NEW_ID" > "$TOG_FILE"
+        echo "  $FEATURE turned ON (contract $NEW_ID satisfied, recorded at $TOG_FILE)"
+        ;;
+
+      off)
+        if [ ! -f "$TOG_FILE" ]; then
+          echo "  $FEATURE is already off (no toggle file at $TOG_FILE)"
+          exit 0
+        fi
+        EXISTING_ID="$(cat "$TOG_FILE" 2>/dev/null | tr -d ' \n')"
+        if [ -z "$EXISTING_ID" ]; then
+          rm -f "$TOG_FILE"
+          echo "  $FEATURE turned off (toggle file was empty, removed)"
+          exit 0
+        fi
+        STATUS=$(CONTRACTS_STORE="$GLOBAL_STORE" python3 -c "
+import sys, os
+sys.path.insert(0, os.path.expanduser('~/.claude/skills/contract/scripts/lib'))
+from contract_core import get
+s = get('$EXISTING_ID') or {}
+print(s.get('status', ''))
+" 2>/dev/null)
+        if [ "$STATUS" = "satisfied" ]; then
+          OFF_PLAN="FEATURE-TOGGLE $FEATURE — off (supersedes $EXISTING_ID). The hook is now disabled. Re-enable via 'contract toggle $FEATURE on' (declares a fresh toggle contract)."
+          OFF_ID=$(CONTRACTS_STORE="$GLOBAL_STORE" CONTRACT_AGENT="${CONTRACT_AGENT:-$(git config user.email 2>/dev/null || echo unknown)}" \
+            bash "$0" declare "$OFF_PLAN" --action "agent-judges" --no-drive --audience team 2>&1 | \
+            grep -oE "id=[0-9a-f]{8}" | head -1 | cut -d= -f2)
+          if [ -n "$OFF_ID" ]; then
+            CONTRACTS_STORE="$GLOBAL_STORE" CONTRACT_AGENT="${CONTRACT_AGENT:-$(git config user.email 2>/dev/null || echo unknown)}" \
+              bash "$0" supersede "$EXISTING_ID" "$OFF_ID" --reason "feature toggle $FEATURE OFF via 'contract toggle' verb at $(date -u +%FT%TZ)" >/dev/null 2>&1 || true
+          fi
+        fi
+        rm -f "$TOG_FILE"
+        echo "  $FEATURE turned OFF (removed $TOG_FILE; previous toggle $EXISTING_ID was status=$STATUS)"
+        ;;
+
+      status|"")
+        if [ ! -f "$TOG_FILE" ]; then
+          echo "  $FEATURE: absent (no toggle file at $TOG_FILE)"
+          exit 0
+        fi
+        EXISTING_ID="$(cat "$TOG_FILE" 2>/dev/null | tr -d ' \n')"
+        if [ -z "$EXISTING_ID" ]; then
+          echo "  $FEATURE: off (toggle file empty)"
+          exit 0
+        fi
+        STATUS=$(CONTRACTS_STORE="$GLOBAL_STORE" python3 -c "
+import sys, os
+sys.path.insert(0, os.path.expanduser('~/.claude/skills/contract/scripts/lib'))
+from contract_core import get
+s = get('$EXISTING_ID') or {}
+print(s.get('status', 'unknown'))
+" 2>/dev/null)
+        if [ "$STATUS" = "satisfied" ]; then
+          echo "  $FEATURE: ON  (contract $EXISTING_ID satisfied)"
+        else
+          echo "  $FEATURE: off (contract $EXISTING_ID status=$STATUS)"
+        fi
+        ;;
+
+      *)
+        echo "ERROR: unknown toggle action: $ACTION (expected on|off|status)" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+
+  feature-status)
+    # contract feature-status <feature> — internal helper for hooks.
+    # Exits 0 if the feature is ON (toggle contract satisfied), 1 otherwise.
+    # Hooks call this instead of reading env vars: a single source of truth.
+    FEATURE="${1:-}"
+    [ -z "$FEATURE" ] && { echo "usage: contract feature-status <feature>" >&2; exit 2; }
+    TOG_FILE="$HOME/.contracts/feature-toggles/${FEATURE}.txt"
+    [ -f "$TOG_FILE" ] || exit 1
+    CID="$(cat "$TOG_FILE" 2>/dev/null | tr -d ' \n')"
+    [ -z "$CID" ] && exit 1
+    STATUS=$(CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" python3 -c "
+import sys, os
+sys.path.insert(0, os.path.expanduser('~/.claude/skills/contract/scripts/lib'))
+from contract_core import get
+s = get('$CID') or {}
+print(s.get('status', ''))
+" 2>/dev/null)
+    [ "$STATUS" = "satisfied" ] && exit 0 || exit 1
+    ;;
+
+  plan)
+    # contract plan "<prompt>" — decompose a multi-claim prompt via Lambda1
+    # into a proposed organ structure (root + children + dep edges), emit a
+    # PLAN PROPOSAL block. Agent reads, judges, runs the suggested commands.
+    PROMPT="${1:-}"
+    if [ -z "$PROMPT" ]; then
+      cat >&2 <<'USAGE'
+contract plan "<prompt>"
+
+Decompose a multi-claim prompt via Lambda1 (codex CLI preferred, HTTP fallback).
+Emits a PLAN PROPOSAL block: root + N children + dependency levels.
+Agent confirms; declared root + spawn/fan-out commands are surfaced.
+
+Example:
+  contract plan "ship the dashboard, update the docs, push to gitea after both"
+USAGE
+      exit 2
+    fi
+    export CONTRACT_PLAN_PROMPT="$PROMPT"
+    python3 <<'PY'
+import json, os, pathlib, re, shutil, subprocess, sys, tempfile, urllib.request, urllib.error
+
+user_prompt = os.environ.get('CONTRACT_PLAN_PROMPT', '').strip()
+if not user_prompt:
+    print('plan: empty prompt', file=sys.stderr); sys.exit(2)
+
+llm_prompt = '''You are the planning layer of the /contract substrate. Read the USER PROMPT below and decompose it into a structured plan the substrate will declare + dispatch through its existing fan-out and sequence primitives.
+
+Return a single JSON object on the LAST line of your response, shape:
+
+{"root_plan":"<one-sentence truth-claim naming the whole organ>","root_shape":"funnel"|"sequence","children":[{"plan":"<one-sentence claim>","deps":[<indices of children this depends on>]}]}
+
+Use "sequence" when children must run in declared order; "funnel" when independent (AND-gate at root).
+Set deps:[] for children with no upstream; deps:[0,1] for a child depending on children 0 AND 1.
+Minimize children — only split when the user's prompt names distinct sub-claims.
+
+USER PROMPT:
+''' + user_prompt + '''
+
+JSON:'''
+
+via_pref = os.environ.get('CONTRACT_LLM_VIA', '').lower()
+codex_bin = shutil.which('codex')
+use_codex = via_pref == 'codex' or (via_pref != 'http' and codex_bin)
+content = ''
+
+if use_codex and codex_bin:
+    with tempfile.NamedTemporaryFile(mode='r', delete=False, suffix='.txt') as tf:
+        last_msg_path = tf.name
+    try:
+        cmd = [codex_bin, 'exec', '--skip-git-repo-check', '-s', 'read-only',
+               '--output-last-message', last_msg_path, '-']
+        cmd_model = os.environ.get('CONTRACT_LLM_MODEL')
+        if cmd_model:
+            cmd[4:4] = ['-m', cmd_model]
+        cp = subprocess.run(cmd, input=llm_prompt, text=True, capture_output=True, timeout=180)
+        if os.path.exists(last_msg_path):
+            content = pathlib.Path(last_msg_path).read_text().strip()
+    except subprocess.TimeoutExpired:
+        print('plan: codex exec timed out (180s)', file=sys.stderr); sys.exit(2)
+    finally:
+        try: os.unlink(last_msg_path)
+        except: pass
+else:
+    cfg = {}
+    cfg_path = pathlib.Path.home() / '.config' / 'contract' / 'llm.json'
+    if cfg_path.exists():
+        try: cfg = json.loads(cfg_path.read_text())
+        except: pass
+    url = os.environ.get('CONTRACT_LLM_URL') or cfg.get('url')
+    key = os.environ.get('CONTRACT_LLM_KEY') or cfg.get('key')
+    model = os.environ.get('CONTRACT_LLM_MODEL') or cfg.get('model') or 'gpt-4o-mini'
+    if not url or not key:
+        print('plan: no Lambda1 surface available (codex on PATH or CONTRACT_LLM_URL+KEY env)', file=sys.stderr)
+        sys.exit(2)
+    body = json.dumps({'model': model, 'messages': [{'role':'user','content':llm_prompt}]}).encode()
+    req = urllib.request.Request(f'{url}/chat/completions', data=body,
+                                  headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'},
+                                  method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            res = json.loads(resp.read().decode())
+            content = res.get('choices', [{}])[0].get('message', {}).get('content', '')
+    except (urllib.error.HTTPError, urllib.error.URLError) as e:
+        print(f'plan: LLM call failed: {e}', file=sys.stderr); sys.exit(2)
+
+if not content:
+    print('plan: LLM returned empty content', file=sys.stderr); sys.exit(2)
+
+last_open = content.rfind('{')
+last_close = content.rfind('}')
+if last_open < 0 or last_close <= last_open:
+    print(f'plan: could not locate JSON in LLM response:\n{content[:500]}', file=sys.stderr)
+    sys.exit(2)
+candidate = content[last_open:last_close+1]
+
+try:
+    plan_obj = json.loads(candidate)
+except json.JSONDecodeError as e:
+    print(f'plan: JSON parse failed: {e}\nCANDIDATE: {candidate[:500]}', file=sys.stderr)
+    sys.exit(2)
+
+root_plan = plan_obj.get('root_plan', '(unspecified)')
+root_shape = plan_obj.get('root_shape', 'funnel')
+children = plan_obj.get('children', []) or []
+
+# Topo-sort by dependency depth → parallel levels.
+levels = []
+remaining = list(range(len(children)))
+done = set()
+for _ in range(100):
+    if not remaining: break
+    this_level = [ix for ix in remaining if all(d in done for d in (children[ix].get('deps') or []))]
+    if not this_level:
+        print(f'plan: dependency graph has a cycle or invalid index — remaining={remaining}', file=sys.stderr)
+        break
+    levels.append(this_level)
+    for ix in this_level:
+        remaining.remove(ix); done.add(ix)
+
+print('=== PLAN PROPOSAL ===')
+print(f'  Root ({root_shape}): {root_plan}')
+print(f'  Children: {len(children)} item(s) in {len(levels)} dependency level(s)')
+print()
+for level_ix, level in enumerate(levels):
+    if len(level) == 1:
+        ix = level[0]
+        c = children[ix]
+        deps = c.get('deps', []) or []
+        dep_note = f'after [{",".join(str(d) for d in deps)}]' if deps else 'independent'
+        print(f'  Level {level_ix} (serial)  : [{ix}] {c.get("plan", "?")[:80]}  ({dep_note})')
+    else:
+        print(f'  Level {level_ix} (parallel fan-out):')
+        for ix in level:
+            c = children[ix]
+            print(f'      [{ix}] {c.get("plan", "?")[:80]}')
+print()
+print('Suggested dispatch:')
+shape_arg = root_shape if root_shape in ('funnel','sequence','quorum','funnel-first') else 'funnel'
+print(f'  contract declare "{root_plan}" --action {shape_arg}')
+print('  # capture <root-id>')
+for level_ix, level in enumerate(levels):
+    if len(level) == 1:
+        ix = level[0]
+        c = children[ix]
+        print(f'  contract spawn <root-id> "{c.get("plan", "")}" --no-drive')
+    else:
+        plans = [children[ix].get("plan", "") for ix in level]
+        fan = ' \\\n    '.join(f'"{p}|agent-judges"' for p in plans)
+        print(f'  contract fan-out <root-id> \\\n    {fan}')
+print()
+print('KEY 2 (agent): is the decomposition genuine? Run the commands above OR supersede + re-plan.')
+PY
+    ;;
+
   *)
     echo "unknown subcommand: $cmd" >&2
     bash "$0" help >&2
