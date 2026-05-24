@@ -867,6 +867,34 @@ record_iteration(os.environ['MH_ID'], int(os.environ['MH_WAVE']),
       _fire_contract_hooks "iterate" "$ID" "$ACTION_RC"
       _two_key_exit "$ID" "$ACTION_RC" "$ACTION"
     fi
+    # Γ1 — proactive goal-chain anchor (contract 6aaf78cb).
+    # Walk parent_id ↑ from this leaf to the root organ and surface the END GOAL so
+    # KEY 2 is judged against whether the iterate advances the root truth claim,
+    # not just whether the leaf's local action passed. Substrate surfaces; agent decides.
+    MH_ID="$ID" _py_inline "
+import os; from contract_core import get
+cur = get(os.environ['MH_ID'])
+if cur and cur.get('parent_id'):
+    chain = [cur]
+    seen = {cur['id']}
+    while chain[-1].get('parent_id') and chain[-1]['parent_id'] not in seen:
+        p = get(chain[-1]['parent_id'])
+        if not p: break
+        seen.add(p['id'])
+        chain.append(p)
+    if len(chain) > 1:
+        root = chain[-1]
+        print()
+        print('=== GOAL CHAIN (proactive anchor) ===')
+        print(f\"  END GOAL ({root['id']}, status={root['status']}): {root['plan'][:90]}\")
+        if len(chain) > 2:
+            mid_count = len(chain) - 2
+            print(f\"  (...{mid_count} intermediate stage{'s' if mid_count!=1 else ''} up the chain...)\" )
+        print(f\"  THIS LEAF ({cur['id']}): {cur['plan'][:90]}\")
+        print(f\"  KEY 2 anchor: does this iterate ADVANCE the end goal, or just pass locally?\")
+        print(f\"    if off-axis → spawn corrective child / supersede / revise before _mark satisfied\")
+        print(f\"    -> contract status {root['id']}   # see the full organ tree\")
+"
     # Synaptic firing: surface corroborated contracts so related truths are re-checked
     MH_ID="$ID" _py_inline "
 import os; from contract_core import get_corroborations, get
