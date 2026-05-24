@@ -3645,9 +3645,10 @@ BIND_PY
       esac
     done
     [ -z "$HS_ID" ] && { echo "usage: contract hydrate-script <contract-id> [--to <override-path>]" >&2; exit 2; }
+    HS_CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" \
     HS_ID="$HS_ID" HS_TO="$HS_TO" python3 <<'HYD_PY'
 import sys, os, base64, hashlib
-sys.path.insert(0, os.path.expanduser("~/.claude/skills/contract/scripts/lib"))
+sys.path.insert(0, os.path.join(os.environ["HS_CLI_DIR"], "lib"))
 from contract_core import _rows, get
 cid = os.environ["HS_ID"]
 override = os.environ.get("HS_TO", "")
