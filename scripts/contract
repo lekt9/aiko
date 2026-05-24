@@ -3831,6 +3831,161 @@ else:
     print(f"  result: PASS (capabilities probed, {len(avail_bins)} binaries + {len(avail_be)} backends available)")
 CAP_PY
     ;;
+  eq)
+    # contract eq <identity> [--json]
+    #
+    # The EQ gate — gather the person's domain understanding programmatically
+    # and return the abstraction layer + voice the agent should emit at.
+    # Reads ~/.contracts/identities/<canonical>.json; honors Σ3 alias resolution;
+    # defaults to L3/substrate when profile absent.
+    EQ_ID="${1:-}"; EQ_JSON=""
+    [ "${2:-}" = "--json" ] && EQ_JSON=1
+    [ -z "$EQ_ID" ] && { echo "usage: contract eq <identity> [--json]" >&2; exit 2; }
+    EQ_ID="$EQ_ID" EQ_JSON="$EQ_JSON" \
+    EQ_CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" \
+    python3 <<'EQ_PY'
+import json, os, sys
+sys.path.insert(0, os.path.join(os.environ["EQ_CLI_DIR"], "lib"))
+try:
+    from contract_core import resolve_identity
+except ImportError:
+    resolve_identity = lambda x: x
+raw = os.environ["EQ_ID"]
+canonical = resolve_identity(raw) or raw
+profile_path = os.path.expanduser(f"~/.contracts/identities/{canonical}.json")
+profile = {"layer": 3, "voice": "substrate", "domain": [], "source": "default"}
+if os.path.isfile(profile_path):
+    try:
+        loaded = json.loads(open(profile_path).read())
+        if isinstance(loaded.get("layer"), int) and 0 <= loaded["layer"] <= 4:
+            profile["layer"] = loaded["layer"]
+        if loaded.get("voice") in ("substrate", "aiko"):
+            profile["voice"] = loaded["voice"]
+        dom = loaded.get("domain") or []
+        if isinstance(dom, list):
+            profile["domain"] = [str(d) for d in dom]
+        profile["source"] = "profile"
+    except (json.JSONDecodeError, OSError) as e:
+        sys.stderr.write(f"eq: profile parse failed for {canonical}: {e}\n")
+profile["identity"] = canonical
+if raw != canonical:
+    profile["alias_resolved_from"] = raw
+if os.environ.get("EQ_JSON"):
+    print(json.dumps(profile))
+else:
+    print(f"  identity:  {canonical}" + (f"  (alias of {raw})" if raw != canonical else ""))
+    print(f"  layer:     L{profile['layer']}")
+    print(f"  voice:     {profile['voice']}")
+    print(f"  domain:    {', '.join(profile['domain']) if profile['domain'] else '(none)'}")
+    print(f"  source:    {profile['source']}")
+    print(f"")
+    print(f"  result: PASS (eq layer={profile['layer']} voice={profile['voice']} source={profile['source']})")
+EQ_PY
+    ;;
+  identity)
+    # contract identity set <id> [--domain D]... [--layer N] [--voice V]
+    # contract identity show <id>
+    ID_SUB="${1:-}"; shift || true
+    case "$ID_SUB" in
+      set)
+        ID_TARGET="${1:-}"; shift || true
+        [ -z "$ID_TARGET" ] && { echo "usage: contract identity set <id> [--domain D]... [--layer N] [--voice V]" >&2; exit 2; }
+        declare -a ID_DOMAINS; ID_DOMAINS=()
+        ID_LAYER=""; ID_VOICE=""
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --domain) shift; ID_DOMAINS+=("${1:-}"); shift ;;
+            --layer)  shift; ID_LAYER="${1:-}"; shift ;;
+            --voice)  shift; ID_VOICE="${1:-}"; shift ;;
+            *) echo "ERROR: unknown arg '$1'" >&2; exit 2 ;;
+          esac
+        done
+        ID_TARGET="$ID_TARGET" ID_LAYER="$ID_LAYER" ID_VOICE="$ID_VOICE" \
+        ID_DOMAINS_JOIN="$(IFS=$'\x1f'; echo "${ID_DOMAINS[*]:-}")" \
+        ID_CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" \
+        python3 <<'ID_SET_PY'
+import datetime, json, os, sys
+sys.path.insert(0, os.path.join(os.environ["ID_CLI_DIR"], "lib"))
+try:
+    from contract_core import resolve_identity, _append
+except ImportError:
+    print("ERROR: contract_core not importable from CLI dir", file=sys.stderr)
+    sys.exit(1)
+raw = os.environ["ID_TARGET"]
+canonical = resolve_identity(raw) or raw
+profile_dir = os.path.expanduser("~/.contracts/identities")
+os.makedirs(profile_dir, exist_ok=True)
+path = os.path.join(profile_dir, f"{canonical}.json")
+existing = {}
+if os.path.isfile(path):
+    try: existing = json.loads(open(path).read())
+    except (json.JSONDecodeError, OSError): existing = {}
+profile = dict(existing)
+domains = [d for d in (os.environ.get("ID_DOMAINS_JOIN", "") or "").split("\x1f") if d]
+if domains:
+    profile["domain"] = domains
+layer = os.environ.get("ID_LAYER", "").strip()
+if layer:
+    try:
+        n = int(layer)
+        if not (0 <= n <= 4):
+            print(f"ERROR: --layer must be 0..4 (got {n})", file=sys.stderr); sys.exit(2)
+        profile["layer"] = n
+    except ValueError:
+        print(f"ERROR: --layer must be int (got {layer})", file=sys.stderr); sys.exit(2)
+voice = os.environ.get("ID_VOICE", "").strip()
+if voice:
+    if voice not in ("substrate", "aiko"):
+        print(f"ERROR: --voice must be substrate|aiko (got {voice})", file=sys.stderr); sys.exit(2)
+    profile["voice"] = voice
+profile["identity"] = canonical
+profile["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+with open(path, "w") as f:
+    json.dump(profile, f, indent=2)
+_append({
+    "event": "identity_profile",
+    "id": canonical,
+    "ts": profile["updated_at"],
+    "profile": profile,
+})
+print(f"  identity:  {canonical}" + (f"  (alias of {raw})" if raw != canonical else ""))
+print(f"  layer:     L{profile.get('layer', 3)}")
+print(f"  voice:     {profile.get('voice', 'substrate')}")
+print(f"  domain:    {', '.join(profile.get('domain', [])) or '(none)'}")
+print(f"  path:      {path}")
+print(f"  audit_row: identity_profile appended to ledger")
+ID_SET_PY
+        ;;
+      show)
+        ID_TARGET="${1:-}"
+        [ -z "$ID_TARGET" ] && { echo "usage: contract identity show <id>" >&2; exit 2; }
+        ID_TARGET="$ID_TARGET" \
+        ID_CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" \
+        python3 <<'ID_SHOW_PY'
+import json, os, sys
+sys.path.insert(0, os.path.join(os.environ["ID_CLI_DIR"], "lib"))
+try:
+    from contract_core import resolve_identity
+except ImportError:
+    resolve_identity = lambda x: x
+raw = os.environ["ID_TARGET"]
+canonical = resolve_identity(raw) or raw
+path = os.path.expanduser(f"~/.contracts/identities/{canonical}.json")
+if not os.path.isfile(path):
+    print(f"  no profile at {path}")
+    print(f"  result: ABSENT (defaults to L3 substrate)")
+    sys.exit(1)
+print(open(path).read())
+ID_SHOW_PY
+        ;;
+      ""|*)
+        cat >&2 <<'IDUSAGE'
+usage: contract identity set <id> [--domain D]... [--layer 0..4] [--voice substrate|aiko]
+       contract identity show <id>
+IDUSAGE
+        exit 2 ;;
+    esac
+    ;;
   organism)
     # contract organism "<plan>" [--action <a>] [--child "plan|action"]... [--parent <pid>]
     #
