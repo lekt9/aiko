@@ -54,7 +54,11 @@ def _load_rows(path: Path) -> list[dict[str, Any]]:
                 continue
             try:
                 rows.append(json.loads(line))
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                # Corrupt ledger line — skip it and surface to stderr.
+                # Silent skip is forbidden (check-no-silent-fallback.py).
+                print(f"lambda2-extract-corpus: skipping bad line in {path}: {e}",
+                      file=sys.stderr)
                 continue
     return rows
 
