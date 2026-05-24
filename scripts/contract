@@ -3599,9 +3599,10 @@ ROUTEUSAGE
       exit 2
     fi
     [ -f "$BS_PATH" ] || { echo "ERROR: file not found: $BS_PATH" >&2; exit 2; }
+    BS_CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" \
     BS_ID="$BS_ID" BS_PATH="$BS_PATH" python3 <<'BIND_PY'
 import sys, os, base64, hashlib, datetime
-sys.path.insert(0, os.path.expanduser("~/.claude/skills/contract/scripts/lib"))
+sys.path.insert(0, os.path.join(os.environ["BS_CLI_DIR"], "lib"))
 from contract_core import _append, get
 cid = os.environ["BS_ID"]
 path = os.environ["BS_PATH"]
