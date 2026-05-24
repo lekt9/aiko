@@ -12,10 +12,20 @@ fail=0
 
 check() {
   local name="$1"; shift
-  if "$@" >/tmp/_sst_out 2>&1; then
+  # Per-gate hard timeout (default 60s). A gate that hangs longer than
+  # this is treated as a TIMEOUT failure with the gate name visible —
+  # was previously opaque because the wrapper timed out generically.
+  # Override per-run: SST_GATE_TIMEOUT_SECS=N bash skill-self-test.sh
+  local timeout_secs="${SST_GATE_TIMEOUT_SECS:-60}"
+  if timeout "$timeout_secs" "$@" >/tmp/_sst_out 2>&1; then
     printf "PASS  %s\n" "$name"
   else
-    printf "FAIL  %s\n" "$name"
+    local rc=$?
+    if [ "$rc" = "124" ]; then
+      printf "TIMEOUT  %s (>${timeout_secs}s)\n" "$name"
+    else
+      printf "FAIL  %s\n" "$name"
+    fi
     sed 's/^/      | /' /tmp/_sst_out | head -5
     fail=$((fail + 1))
   fi
