@@ -152,6 +152,7 @@ def _infer_layer(action: str) -> int:
         "loop":          2,
         "tool-guard":    2,
         "machine":       1,  # system — host binary
+        "sandbox":       1,  # system — remote container binary (Χ6)
     }.get(pt, 2)
 
 
