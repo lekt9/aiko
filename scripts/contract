@@ -965,6 +965,19 @@ emit_context_orientation(os.environ.get('MH_PLAN_CO',''))
     if [ -z "$NO_DRIVE" ] && [ -z "$PARENT" ] && [ ! -f "$HOME/.contracts/.drive_active" ]; then
       bash "$0" drive "$ID"
     fi
+    # 2026-05-25 (contract d3241099): /contract should always execute itself
+    # upon creation. Top-level declare (no --parent) auto-iterates the first
+    # wave INLINE — realizes 'declare-then-drill' (fdb8899c) at substrate
+    # level instead of relying on agent KEY 2 to reach for drill. Drive arm
+    # above + Stop-hook re-fire still handles subsequent waves; this just
+    # guarantees wave-1 happens in the same call, not deferred. Opt out via
+    # CONTRACT_DECLARE_NO_AUTO_ITERATE=1 for mass-import / dry-run scripts.
+    # Children (--parent set) skip — parent iterate already evaluates them.
+    if [ -z "$PARENT" ] && [ -z "${CONTRACT_DECLARE_NO_AUTO_ITERATE:-}" ]; then
+      echo ""
+      echo "=== DECLARE→ITERATE (auto, doctrine d3241099) ==="
+      bash "$0" iterate "$ID"
+    fi
     ;;
 
   iterate)
