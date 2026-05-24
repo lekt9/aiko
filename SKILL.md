@@ -907,6 +907,19 @@ Per Β4 thin-index: full prose lives on standing-gate contracts; this section is
 
 Run `contract status ff6e8908` for full narrative + worked examples + the layer-diagram.
 
+## Π6 — Environment binding (the outward interface · self-wires new environments)
+
+Receptors are how the substrate consumes external events. **Π6 is the inverse**: how a new environment (native app, MCP host, bot, web client, fresh project) consumes the substrate. Two verbs implement it; one ledger event records each binding.
+
+| Surface | What it does |
+|---|---|
+| `contract env-manifest` | Prints substrate's outward stdio interface as JSON: `ledger_path`, `global_ledger`, `inbox_dir`, `stream_dir`, `watcher_dir`, `hooks_dir`, `aikos_dir`, `cli_path`, `skill_dir`, `row_schema`, `inbox_channels`, `verbs`, `doctrine_refs`. An environment reads this once to know what to tail, write to, or shell out to. |
+| `contract env-bind <cwd> [--name <env>]` | Auto-detects a cwd's surfaces (native binary via `command -v graff` then `~/.cargo/bin/contract` then `crates/forge_contract`; native app at `native/AikoNotch` etc.; spawn/chat HTTP endpoints; frontend component; project ledger; inbox dir). Optionally reads declared surfaces from `<cwd>/.claude/contract-env.json` if present (declared values win). Writes one `environment_bound` ledger event with `surfaces` + `honest_gaps`. Idempotent: re-run reports "already bound, no change" when surfaces unchanged. |
+
+The pattern: **substrate publishes via `env-manifest`, environment binds via `env-bind`**. The AikoNotch native app (worked example, ref `98006be6`) already consumes the substrate by tailing `.claude/contracts.jsonl` and shelling to `graff`; Π6 generalizes that pattern so any new env (Telegram bot, web client, fresh CLI tool, MCP host) self-wires with the same two-verb handshake instead of artisanal client code.
+
+Composes with existing doctrines: locality (`79c2d656`) makes the bind work identically at project/global/container/account scope; stdio model (`ff6e8908`) names the read/write channels Π6 publishes; thin-native-client (`98006be6`) is the canonical consumer pattern. Supersedes the earlier project-specific `aiko setup` subverb. Standing-gate: `81f9268f`.
+
 ## Bundled scripts
 
 - `scripts/contract` — CLI front door (declare, iterate, build, spawn, solve, status, list, search, _mark)
