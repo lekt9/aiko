@@ -8630,6 +8630,223 @@ print('')
 "
     ;;
 
+  env-manifest)
+    # Π6 — Environment binding (the outward stdio interface).
+    # Prints the substrate's own read/write surfaces as JSON so a new
+    # environment (native app, MCP host, bot, web client) can plug in
+    # without re-discovering the convention. Inverse of receptors:
+    # receptors are how the substrate consumes external events; the
+    # manifest is what an environment consumes to wire substrate input.
+    # Standing-gate: 81f9268f.
+    EM_CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    EM_CLI_DIR="$EM_CLI_DIR" python3 <<'EM_PY'
+import json, os, sys, subprocess
+cli_dir = os.environ["EM_CLI_DIR"]
+sys.path.insert(0, os.path.join(cli_dir, "lib"))
+try:
+    from contract_core import _ledger as _resolve_ledger
+    ledger_path = _resolve_ledger()
+except Exception:
+    ledger_path = os.path.expanduser("~/.contracts/contracts.jsonl")
+global_ledger = os.path.expanduser("~/.contracts/contracts.jsonl")
+home_contracts = os.path.expanduser("~/.contracts")
+manifest = {
+    "ledger_path": ledger_path,
+    "global_ledger": global_ledger,
+    "inbox_dir": os.path.join(home_contracts, "inbox"),
+    "stream_dir": os.path.join(home_contracts, "streams"),
+    "watcher_dir": os.path.join(home_contracts, "watchers"),
+    "hooks_dir": os.path.join(home_contracts, "hooks"),
+    "aikos_dir": os.path.join(home_contracts, "aikos"),
+    "cli_path": os.path.join(cli_dir, "contract"),
+    "skill_dir": os.path.dirname(cli_dir),
+    "row_schema": {
+        "declared": ["event", "id", "plan", "action", "cwd", "parent_id", "ts", "agent"],
+        "iterated": ["event", "id", "wave", "action_exit", "action_result", "ts"],
+        "satisfied": ["event", "id", "wave", "ts", "proof", "proof_skip_reason"],
+    },
+    "inbox_channels": ["mail", "agent", "watcher", "telegram", "webhook", "claims", "sessions"],
+    "verbs": [],
+    "doctrine_refs": {
+        "stdio_model": "ff6e8908",
+        "env_binding": "81f9268f",
+        "thin_native_client": "98006be6",
+        "locality_4scope": "79c2d656",
+    },
+}
+# Enumerate verbs from `contract self`
+try:
+    r = subprocess.run([os.path.join(cli_dir, "contract"), "self"],
+                       capture_output=True, text=True, timeout=5)
+    verbs = []
+    for line in r.stdout.splitlines() + r.stderr.splitlines():
+        line = line.strip()
+        # Lines like "    declare  iterate  build  ..." — split on whitespace
+        if line and not line.startswith("=") and not line.startswith("#") and len(line.split()) <= 12:
+            for tok in line.split():
+                tok = tok.strip(",")
+                if tok.replace("-", "").replace("_", "").isalpha() and len(tok) >= 2:
+                    verbs.append(tok)
+    # Dedupe + keep only known-looking verbs (lowercase, no punct except - _)
+    seen = set(); verbs2 = []
+    for v in verbs:
+        if v not in seen and v.islower() and len(v) <= 30:
+            seen.add(v); verbs2.append(v)
+    manifest["verbs"] = verbs2
+except Exception as e:
+    manifest["verbs_error"] = str(e)
+print(json.dumps(manifest, indent=2))
+EM_PY
+    ;;
+
+  env-bind)
+    # Π6 — Environment binding inverse. Wires any cwd to the substrate
+    # by detecting its outward surfaces (native binary, native app,
+    # spawn/chat HTTP endpoints, frontend component, optional manifest
+    # file at <cwd>/.claude/contract-env.json) and writing one
+    # environment_bound ledger event. Idempotent on re-run when surfaces
+    # are unchanged. Generalizes the earlier 'aiko setup' verb so any
+    # environment (not just aiko-shaped projects) self-wires the same way.
+    # Standing-gate: 81f9268f.
+    EB_CWD=""
+    EB_NAME=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --name) shift; EB_NAME="${1:-}"; shift ;;
+        --*) echo "ERROR: unknown flag '$1'" >&2; exit 2 ;;
+        *) [ -z "$EB_CWD" ] && EB_CWD="$1" || { echo "ERROR: extra positional '$1'" >&2; exit 2; }; shift ;;
+      esac
+    done
+    EB_CWD="${EB_CWD:-$PWD}"
+    if [ ! -d "$EB_CWD" ]; then
+      echo "ERROR: cwd '$EB_CWD' does not exist" >&2; exit 2
+    fi
+    EB_CWD="$(cd "$EB_CWD" && pwd)"
+    EB_CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    EB_CWD="$EB_CWD" EB_NAME="$EB_NAME" EB_CLI_DIR="$EB_CLI_DIR" python3 <<'EB_PY'
+import datetime, json, os, shutil, sys
+sys.path.insert(0, os.path.join(os.environ["EB_CLI_DIR"], "lib"))
+try:
+    from contract_core import _append, _rows, current_agent
+except ImportError:
+    print("FATAL: contract_core not importable", file=sys.stderr); sys.exit(3)
+
+cwd = os.environ["EB_CWD"]
+env_name = (os.environ.get("EB_NAME") or os.path.basename(cwd)) or "unnamed"
+
+# Optional declarative manifest from the cwd itself
+manifest_file = os.path.join(cwd, ".claude", "contract-env.json")
+declared_surfaces = {}
+if os.path.isfile(manifest_file):
+    try:
+        with open(manifest_file) as f:
+            declared_surfaces = json.load(f) or {}
+    except Exception as e:
+        print(f"  warn: {manifest_file} unreadable ({e}) — falling back to auto-detect", file=sys.stderr)
+
+# Auto-detect — declared values win when present
+def detect_native_bin():
+    g = shutil.which("graff")
+    if g: return (g, "graff")
+    cargo = os.path.expanduser("~/.cargo/bin/contract")
+    if os.path.isfile(cargo): return (cargo, "rust-cargo")
+    rust = os.path.join(cwd, "crates", "forge_contract")
+    if os.path.isdir(rust): return (rust, "rust-crate-source")
+    return (None, None)
+
+native_bin, native_bin_kind = (declared_surfaces.get("native_bin"),
+                               declared_surfaces.get("native_bin_kind"))
+if not native_bin:
+    native_bin, native_bin_kind = detect_native_bin()
+
+def first_exists(candidates):
+    for c in candidates:
+        p = os.path.join(cwd, c) if not os.path.isabs(c) else c
+        if os.path.exists(p):
+            return p
+    return None
+
+native_app = declared_surfaces.get("native_app") or first_exists([
+    "native/AikoNotch", "native/Aiko", "AikoNotch", "Aiko.app", "native/app"
+])
+spawn_endpoint = declared_surfaces.get("spawn_endpoint") or first_exists([
+    "web/functions/api/spawn.ts", "web/functions/api/spawn.js",
+    "functions/api/spawn.ts", "api/spawn.ts"
+])
+chat_endpoint = declared_surfaces.get("chat_endpoint") or first_exists([
+    "web/functions/api/chat.ts", "web/functions/api/chat.js",
+    "functions/api/chat.ts", "api/chat.ts"
+])
+chat_frontend = declared_surfaces.get("chat_frontend") or first_exists([
+    "web/src/components/AikoChatPreview.tsx",
+    "web/components/AikoChatPreview.tsx",
+    "src/components/AikoChatPreview.tsx"
+])
+project_ledger = first_exists([".claude/contracts.jsonl"])
+inbox_dir = first_exists([".claude/inbox"])
+
+surfaces = {
+    "native_bin": native_bin,
+    "native_bin_kind": native_bin_kind,
+    "native_app": native_app,
+    "spawn_endpoint": spawn_endpoint,
+    "chat_endpoint": chat_endpoint,
+    "chat_frontend": chat_frontend,
+    "project_ledger": project_ledger,
+    "inbox_dir": inbox_dir,
+}
+gaps = [k for k, v in surfaces.items() if v is None]
+
+# Idempotency check
+existing = None
+for r in _rows():
+    if r.get("event") == "environment_bound" and r.get("cwd") == cwd:
+        existing = r
+
+if existing and existing.get("surfaces") == surfaces:
+    print(f"=== ENVIRONMENT BIND (already bound, no change) ===")
+    print(f"  cwd:       {cwd}")
+    print(f"  name:      {existing.get('env_name', env_name)}")
+    print(f"  bound_at:  {existing.get('ts')}")
+else:
+    ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    agent = (current_agent() or "anonymous").strip()
+    row = {
+        "event": "environment_bound",
+        "cwd": cwd,
+        "env_name": env_name,
+        "surfaces": surfaces,
+        "honest_gaps": gaps,
+        "from_manifest": bool(declared_surfaces),
+        "ts": ts,
+        "agent": agent,
+    }
+    _append(row)
+    label = "re-bound" if existing else "bound"
+    print(f"=== ENVIRONMENT BIND ({label}) ===")
+    print(f"  cwd:       {cwd}")
+    print(f"  name:      {env_name}")
+    print(f"  ts:        {ts}")
+    print(f"  from_manifest: {bool(declared_surfaces)}")
+
+print(f"  native_bin:     {native_bin or '(not found)'}  [{native_bin_kind or '-'}]")
+print(f"  native_app:     {native_app or '(not found)'}")
+print(f"  spawn_endpoint: {spawn_endpoint or '(not found)'}")
+print(f"  chat_endpoint:  {chat_endpoint or '(not found)'}")
+print(f"  chat_frontend:  {chat_frontend or '(not found)'}")
+print(f"  project_ledger: {project_ledger or '(not found)'}")
+print(f"  inbox_dir:      {inbox_dir or '(not found)'}")
+if gaps:
+    print(f"  honest_gaps:    {', '.join(gaps)}")
+else:
+    print(f"  honest_gaps:    none — every surface present")
+print()
+print(f"NEXT (the environment is now wired; consume via):")
+print(f"  contract env-manifest                          # print substrate's outward interface (JSON)")
+print(f"  contract iterate <id>                          # any contract action runs under cwd={cwd}")
+EB_PY
+    ;;
+
   *)
     # plugin fallthrough — if ~/.contracts/lib/verbs/$cmd is executable, exec it.
     # This is the convention: substrate-level helpers ship as plugin verbs in the
