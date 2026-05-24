@@ -42,6 +42,78 @@ def _ledger() -> Path:
     return _resolve_ledger()
 
 
+# ── Inbox locality (per Locality doctrine 79c2d656) ────────────────────────
+# Inboxes follow the same scope ladder as the ledger: a write from inside a
+# project lands in <project>/.claude/inbox/, a write from a container lands
+# in that container's HOME, a write over SSH lands in the SSH'd account's
+# HOME. Reading a different scope's inbox requires explicit naming via the
+# `contract inbox` verb (which writes an audit row). No row-level scope tag —
+# scope IS the file location, per the doctrine.
+def _resolve_inbox_root() -> Path:
+    """Resolve inbox root: env override > project .claude/inbox/ > global fallback."""
+    if env := os.environ.get("CONTRACTS_INBOX_ROOT"):
+        return Path(env)
+    project_dir = Path.cwd() / ".claude"
+    if project_dir.is_dir():
+        return project_dir / "inbox"
+    return Path.home() / ".contracts" / "inbox"
+
+
+def inbox_root() -> Path:
+    return _resolve_inbox_root()
+
+
+def inbox_path(channel: str, name: str, *, scope: Optional[str] = None) -> Path:
+    """Resolve <inbox_root>/<channel>/<name>.jsonl for the current scope.
+
+    If `scope` is named explicitly, override the auto-resolution:
+      - "project" — force <cwd>/.claude/inbox/...
+      - "global"  — force ~/.contracts/inbox/... (the user's home, regardless of cwd)
+      - "env"     — force $CONTRACTS_INBOX_ROOT
+      - any absolute path string — treat as root
+    Otherwise follow _resolve_inbox_root().
+    """
+    if "/" in channel or ".." in channel:
+        raise ValueError(f"invalid channel: {channel!r}")
+    if "/" in name or ".." in name:
+        # mail recipients are emails which contain '@' but never '/'; defend.
+        raise ValueError(f"invalid inbox name: {name!r}")
+    if scope is None:
+        root = _resolve_inbox_root()
+    elif scope == "project":
+        root = Path.cwd() / ".claude" / "inbox"
+    elif scope == "global":
+        root = Path.home() / ".contracts" / "inbox"
+    elif scope == "env":
+        if not (env := os.environ.get("CONTRACTS_INBOX_ROOT")):
+            raise ValueError("scope=env but CONTRACTS_INBOX_ROOT is unset")
+        root = Path(env)
+    elif scope.startswith("/"):
+        root = Path(scope)
+    else:
+        raise ValueError(f"unknown scope: {scope!r}")
+    return root / channel / f"{name}.jsonl"
+
+
+def inbox_scopes_available() -> list[dict]:
+    """Enumerate the inbox scopes resolvable from this process's vantage point.
+
+    Returns one dict per detected scope, in resolution-precedence order:
+    [{kind, root, active, source}, ...]. `active=True` for the scope
+    _resolve_inbox_root() would pick right now.
+    """
+    active = _resolve_inbox_root()
+    out: list[dict] = []
+    if env := os.environ.get("CONTRACTS_INBOX_ROOT"):
+        out.append({"kind": "env", "root": str(env), "source": "CONTRACTS_INBOX_ROOT", "active": Path(env) == active})
+    proj = Path.cwd() / ".claude" / "inbox"
+    if (Path.cwd() / ".claude").is_dir():
+        out.append({"kind": "project", "root": str(proj), "source": str(Path.cwd() / ".claude"), "active": proj == active})
+    glob = Path.home() / ".contracts" / "inbox"
+    out.append({"kind": "global", "root": str(glob), "source": str(Path.home() / ".contracts"), "active": glob == active})
+    return out
+
+
 # ── Per-contract folder substrate ─────────────────────────────────────────────
 # Each contract has a folder at ~/.contracts/contracts.d/<id>/ that holds
 # mutable state co-located with the contract: drive.json (replaces the four
