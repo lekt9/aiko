@@ -228,7 +228,7 @@ def detect_environment() -> dict:
     elif _sys.stdin.isatty():
         transport = "terminal"
 
-    agent = env.get("CONTRACT_AGENT") or _agent_attribution()
+    agent = env.get("CONTRACT_AGENT") or current_agent()
     in_tty = bool(_sys.stdin.isatty())
 
     active_sessions = []
