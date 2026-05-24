@@ -44,7 +44,7 @@ ORGAN_P1=$(echo "$OUT_MID" | grep -oE "organ=[a-f0-9]{8}" | head -1 | cut -d= -f
 
 # === Phase 2: organ pointer_type IS funnel-first + 3 children exist ===
 STATUS_P1=$("$CLI" status "$ORGAN_P1" 2>&1)
-echo "$STATUS_P1" | grep -q "(funnel-first)"        || { echo "FAIL P2: organ pointer_type not funnel-first. STATUS=$STATUS_P1"; exit 1; }
+echo "$STATUS_P1" | grep -qE "action: funnel-first" || { echo "FAIL P2: organ action not funnel-first. STATUS=$STATUS_P1"; exit 1; }
 CHILD_COUNT=$(echo "$STATUS_P1" | grep -cE "^\s*\[(pending|satisfied|active)\] [a-f0-9]{8} \(cell\)")
 [ "$CHILD_COUNT" = "3" ] || { echo "FAIL P2: expected 3 child cells in status, got $CHILD_COUNT. STATUS=$STATUS_P1"; exit 1; }
 
