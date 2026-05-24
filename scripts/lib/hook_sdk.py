@@ -118,8 +118,13 @@ def record(
             else:
                 row[k] = str(v)[:200]
         _append(row)
-    except Exception:  # noqa: BLE001 — never escalate from a hook
-        pass
+    except Exception as e:  # noqa: BLE001 — never escalate from a hook
+        # Hooks MUST NOT escalate; but the silent-fallback gate forbids
+        # bare `except: pass`. Log to stderr (visible to anyone reading
+        # hook logs) without raising.
+        import sys as _sys
+        print(f"hook_sdk.record: append failed (hook-safe swallow): {e}",
+              file=_sys.stderr)
 
 
 __all__ = ["should_fire", "record"]
