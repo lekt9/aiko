@@ -205,6 +205,45 @@ Drill semantics (loop-until-settle across N targets) are the **default** of `ite
 
 Every skill-code change either fully removes a surface OR fully implements it. No backward-compat redirects, no deprecation banners in code, no `# TODO` / `# stub` / `raise NotImplementedError` without a captured `DEFERRED-*` row. `scripts/check-no-stubs.sh` scans `scripts/contract` + `~/.claude/skills/aiko/scripts/` + `~/.contracts/hooks/` for stub patterns; exits 1 with offender list if found. Verb-gate: `verb-gates/gamma1-no-stubs/`. Composes with Β6 (`cdecbe9b`): gaps are rows, not code stubs.
 
+## Empathy gate primitives (verify.mjs flags)
+
+The empathy gate (`4a055cf7`) is implemented by `scripts/browser/verify.mjs`; every flag in this table is parsed by that script (drift caught by `self/empathy-flags-wired`).
+
+| Flag | What it catches |
+|---|---|
+| `--wait-after-load` | hydration pause before innerText check |
+| `--expect` | required substring in innerText |
+| `--expect-not` | forbidden substring; defaults include `Application error`, `__next_error__` |
+| `--no-default-expect-not` | drops the built-in expect-not list |
+| `--min-text` | innerText must be ≥ N chars |
+| `--no-raw-json` | fails on JSON-dump body text |
+| `--walk` | follows every same-origin `<a href>` |
+| `--walk-include` | regex filter for walked URLs |
+| `--walk-exclude` | regex filter for skipped URLs |
+| `--prelude` | JSON tour run before URL checks |
+| `--env-from` | load env vars from .env file for prelude |
+| `--report` | write JSON report to path |
+| `--keep-html` | keep snapshot HTML on disk |
+| `--timeout` | per-URL navigation timeout (ms) |
+| `--wait-until` | playwright lifecycle event |
+| `--allow` | additional same-origin host whitelist |
+
+### The shape gates
+
+Mirror of the 9 shapes — each has a dedicated `<shape>-gate/verify.sh` exercising its semantic claim. Drift caught by `self/shape-catalog`.
+
+| Shape | Gate proves |
+|---|---|
+| `cell` | mechanical action gates satisfaction |
+| `judgment` | agent-judges leaves KEY 2 explicit |
+| `funnel` | AND-gate: all children satisfied |
+| `funnel-first` | OR-gate: any child satisfied |
+| `sequence` | ordered funnel: iterate names next unsatisfied stage |
+| `quorum` | K-of-N integrate-and-fire neuron |
+| `loop` | body re-runs each iterate |
+| `harness` | delegates verify to a path |
+| `tool-guard` | PreToolUse hook blocks until satisfied |
+
 ## Crystallizing learnings (memory + Outline)
 
 A contract is a unit of learning (`CONTRACTING_IS_LEARNING`). When a learning
