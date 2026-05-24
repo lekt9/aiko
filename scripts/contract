@@ -4737,17 +4737,19 @@ AK_TREE_PY
         ;;
       fund)
         AK_TARGET="${1:-}"; shift || true
-        AK_FROM=""; AK_AMOUNT=""; AK_NOTE=""
+        AK_FROM=""; AK_AMOUNT=""; AK_NOTE=""; AK_SIGN=""; AK_RPC=""
         while [ "$#" -gt 0 ]; do
           case "$1" in
             --from) shift; AK_FROM="${1:-}"; shift ;;
             --amount-sol) shift; AK_AMOUNT="${1:-}"; shift ;;
             --note) shift; AK_NOTE="${1:-}"; shift ;;
+            --sign) AK_SIGN="1"; shift ;;
+            --rpc) shift; AK_RPC="${1:-}"; shift ;;
             *) echo "ERROR: unknown arg '$1'" >&2; exit 2 ;;
           esac
         done
-        [ -z "$AK_TARGET" ] || [ -z "$AK_FROM" ] || [ -z "$AK_AMOUNT" ] && { echo "usage: contract aiko fund <child-id> --from <parent-pubkey> --amount-sol <n> [--note <text>]" >&2; exit 2; }
-        AK_TARGET="$AK_TARGET" AK_FROM="$AK_FROM" AK_AMOUNT="$AK_AMOUNT" AK_NOTE="$AK_NOTE" AK_CLI_DIR="$AK_CLI_DIR" python3 <<'AK_FUND_PY'
+        [ -z "$AK_TARGET" ] || [ -z "$AK_FROM" ] || [ -z "$AK_AMOUNT" ] && { echo "usage: contract aiko fund <child-id> --from <parent-pubkey> --amount-sol <n> [--note <text>] [--sign] [--rpc <url>]" >&2; exit 2; }
+        AK_TARGET="$AK_TARGET" AK_FROM="$AK_FROM" AK_AMOUNT="$AK_AMOUNT" AK_NOTE="$AK_NOTE" AK_SIGN="$AK_SIGN" AK_RPC="$AK_RPC" AK_CLI_DIR="$AK_CLI_DIR" python3 <<'AK_FUND_PY'
 import datetime, json, os, sys
 sys.path.insert(0, os.path.join(os.environ["AK_CLI_DIR"], "lib"))
 from contract_core import _rows, _append, current_agent
