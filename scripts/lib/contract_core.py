@@ -165,6 +165,10 @@ def _infer_layer(action: str) -> int:
         "machine":       1,  # system — host binary
         "sandbox":       1,  # system — remote container binary (Χ6)
         "runpod":        1,  # system — RunPod serverless (plank 1 of 386497eb)
+        "bun":           1,  # system — bun runtime (plank 7)
+        "macos-sandbox": 1,  # system — macOS sandbox-exec (OS-native isolation)
+        "deepwiki":      6,  # operator — agent-side MCP delegation (plank 8)
+        "findskills":    6,  # operator — agent-side skill delegation (plank 9)
     }.get(pt, 2)
 
 
