@@ -2576,8 +2576,7 @@ iterate <id> --stdin` is the same primitive as a local iterate.
 The fractal claim said: every contract is simultaneously **funnel + loop
 + harness** at every depth. The Locality doctrine said: that's also
 true at every scope. This doctrine binds it as the **invocation
-pattern**: every /contract call mechanically wraps as funnel + loop +
-harness in three orthogonal dimensions, with the user's prompt typed
+pattern**: every /contract call mechanically wraps as **funnel + loop + harness in three orthogonal dimensions**, with the user's prompt typed
 onto the declared row and the response typed onto the satisfied row.
 
 ### Three orthogonal dimensions (declarative composition)
