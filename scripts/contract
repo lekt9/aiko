@@ -4393,6 +4393,142 @@ MAUSAGE
         exit 2 ;;
     esac
     ;;
+  inbox)
+    # contract inbox {scopes|locate|list|tail} — inspect the locality-tagged
+    # inbox (Locality doctrine 79c2d656). Inboxes follow the same scope walk
+    # as the ledger: env > <cwd>/.claude/inbox/ > ~/.contracts/inbox/.
+    # Reading a different scope's inbox requires --scope <kind> and writes
+    # an inbox_cross_scope_read audit row to the ledger.
+    IB_CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    IB_SUB="${1:-}"; shift || true
+    case "$IB_SUB" in
+      scopes)
+        IB_CLI_DIR="$IB_CLI_DIR" python3 <<'IB_SCOPES_PY'
+import json, os, sys
+sys.path.insert(0, os.path.join(os.environ["IB_CLI_DIR"], "lib"))
+from contract_core import inbox_scopes_available
+print("=== INBOX SCOPES (resolution-precedence order) ===")
+for s in inbox_scopes_available():
+    mark = "● ACTIVE" if s["active"] else "  available"
+    print(f"  {mark}  kind={s['kind']:<8}  root={s['root']}")
+    print(f"                source: {s['source']}")
+print()
+print("  the ACTIVE scope is where 'contract mailbox send', 'permission request',")
+print("  and other inbox writers will route by default. Use --scope <kind> on")
+print("  read commands ('inbox list', 'inbox tail') to peek a different scope.")
+IB_SCOPES_PY
+        ;;
+      locate)
+        IB_CHANNEL="${1:-}"
+        IB_NAME="${2:-}"
+        IB_SCOPE=""
+        shift 2 2>/dev/null || true
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --scope) shift; IB_SCOPE="${1:-}"; shift ;;
+            *) echo "ERROR: unknown arg '$1'" >&2; exit 2 ;;
+          esac
+        done
+        [ -z "$IB_CHANNEL" ] || [ -z "$IB_NAME" ] && { echo "usage: contract inbox locate <channel> <name> [--scope <kind>]" >&2; exit 2; }
+        IB_CHANNEL="$IB_CHANNEL" IB_NAME="$IB_NAME" IB_SCOPE="$IB_SCOPE" IB_CLI_DIR="$IB_CLI_DIR" python3 <<'IB_LOCATE_PY'
+import os, sys
+sys.path.insert(0, os.path.join(os.environ["IB_CLI_DIR"], "lib"))
+from contract_core import inbox_path
+scope = os.environ.get("IB_SCOPE") or None
+try:
+    p = inbox_path(os.environ["IB_CHANNEL"], os.environ["IB_NAME"], scope=scope)
+except ValueError as e:
+    print(f"  ERROR: {e}", file=sys.stderr); sys.exit(2)
+print(f"  channel:  {os.environ['IB_CHANNEL']}")
+print(f"  name:     {os.environ['IB_NAME']}")
+print(f"  scope:    {scope or 'auto'}")
+print(f"  path:     {p}")
+print(f"  exists:   {'yes' if p.exists() else 'no'}")
+print(f"  rows:     {sum(1 for _ in open(p)) if p.exists() else 0}")
+IB_LOCATE_PY
+        ;;
+      list|tail)
+        IB_CHANNEL="${1:-}"
+        IB_NAME="${2:-}"
+        IB_SCOPE=""
+        IB_LIMIT="10"
+        shift 2 2>/dev/null || true
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --scope) shift; IB_SCOPE="${1:-}"; shift ;;
+            --limit) shift; IB_LIMIT="${1:-10}"; shift ;;
+            *) echo "ERROR: unknown arg '$1'" >&2; exit 2 ;;
+          esac
+        done
+        [ -z "$IB_CHANNEL" ] || [ -z "$IB_NAME" ] && { echo "usage: contract inbox $IB_SUB <channel> <name> [--scope <kind>] [--limit N]" >&2; exit 2; }
+        IB_CHANNEL="$IB_CHANNEL" IB_NAME="$IB_NAME" IB_SCOPE="$IB_SCOPE" IB_LIMIT="$IB_LIMIT" IB_SUB="$IB_SUB" IB_CLI_DIR="$IB_CLI_DIR" python3 <<'IB_READ_PY'
+import datetime, json, os, sys
+sys.path.insert(0, os.path.join(os.environ["IB_CLI_DIR"], "lib"))
+from contract_core import inbox_path, inbox_root, current_agent, _append
+channel = os.environ["IB_CHANNEL"]; name = os.environ["IB_NAME"]
+scope = os.environ.get("IB_SCOPE") or None
+limit = int(os.environ.get("IB_LIMIT", "10"))
+# Cross-scope guard: --scope explicitly different from active root requires audit row
+active_root = str(inbox_root())
+try:
+    requested_path = inbox_path(channel, name, scope=scope)
+except ValueError as e:
+    print(f"  ERROR: {e}", file=sys.stderr); sys.exit(2)
+cross_scope = scope is not None and not str(requested_path).startswith(active_root)
+if cross_scope:
+    # Audit the cross-scope read so the ledger has it
+    ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    _append({
+        "event": "inbox_cross_scope_read",
+        "id": f"inbox-xread-{channel}-{name}",
+        "channel": channel, "name": name,
+        "active_root": active_root, "requested_path": str(requested_path),
+        "scope_kind": scope, "agent": (current_agent() or "anonymous").strip(),
+        "ts": ts,
+    })
+    print(f"  ⚠  CROSS-SCOPE READ — active={active_root}  requested={requested_path}")
+    print(f"     audit row appended (event=inbox_cross_scope_read)")
+if not requested_path.exists():
+    print(f"  inbox empty (no file at {requested_path})")
+    sys.exit(0)
+rows = []
+with open(requested_path) as f:
+    for line in f:
+        try: rows.append(json.loads(line))
+        except json.JSONDecodeError: continue
+if os.environ["IB_SUB"] == "tail":
+    rows = rows[-limit:]
+else:
+    rows = rows[:limit]
+print(f"  channel:  {channel}")
+print(f"  name:     {name}")
+print(f"  path:     {requested_path}")
+print(f"  showing:  {len(rows)} of {sum(1 for _ in open(requested_path))} rows")
+print()
+for r in rows:
+    ev = r.get("event") or "?"
+    ts = r.get("ts", "")[:19]
+    summary_parts = []
+    for k in ("from", "to", "requester", "target", "step", "verdict", "brief", "action"):
+        if k in r and r[k]:
+            v = str(r[k])[:60]
+            summary_parts.append(f"{k}={v}")
+    print(f"  [{ts}]  {ev}  {'  '.join(summary_parts)}")
+IB_READ_PY
+        ;;
+      *)
+        cat >&2 <<'IBUSAGE'
+usage: contract inbox scopes
+       contract inbox locate <channel> <name> [--scope <kind>]
+       contract inbox list   <channel> <name> [--scope <kind>] [--limit N]
+       contract inbox tail   <channel> <name> [--scope <kind>] [--limit N]
+
+scope kinds: auto (default) | project | global | env | <absolute-path>
+cross-scope reads append an inbox_cross_scope_read audit row to the ledger.
+IBUSAGE
+        exit 2 ;;
+    esac
+    ;;
   permission)
     # contract permission {request|grant|deny|show}
     #
