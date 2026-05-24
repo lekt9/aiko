@@ -4270,16 +4270,24 @@ except ImportError:
 mid = os.environ["MA_ID"]
 agent = (current_agent() or "anonymous").strip()
 ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
-sent = None; completed = 0; assigned = None
+sent = None; completed = 0; assigned = None; last_step_event = None
 for r in _rows():
     if r.get("mail_id") != mid: continue
     if r["event"] == "mail_sent": sent = r
-    elif r["event"] == "mail_step_complete": completed += 1
-    elif r["event"] == "mail_step_assigned": assigned = r.get("agent")
+    elif r["event"] == "mail_step_complete":
+        completed += 1
+        last_step_event = "complete"
+        assigned = None  # detach on every complete
+    elif r["event"] == "mail_step_assigned":
+        assigned = r.get("agent")
+        last_step_event = "assigned"
 if not sent:
     print(f"  ERROR: no mail with id {mid}", file=sys.stderr); sys.exit(1)
-if not assigned:
-    print(f"  ERROR: no current assignment for mail {mid} — run 'contract mail step-next {mid}' first to attach an agent", file=sys.stderr)
+if not assigned or last_step_event != "assigned":
+    print(f"  ERROR: no current assignment for mail {mid} — run 'contract mailbox step-next {mid}' first to attach an agent", file=sys.stderr)
+    sys.exit(1)
+if assigned != agent:
+    print(f"  ERROR: mail {mid} is assigned to '{assigned}' but caller is '{agent}' — only the assigned agent can step-complete (prevents rogue advance)", file=sys.stderr)
     sys.exit(1)
 step_num = completed + 1
 total = sent.get("total_steps", 1)
