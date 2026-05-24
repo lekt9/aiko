@@ -5931,20 +5931,20 @@ print('  Substrate surfaces dimensions; KEY 2 stays with the agent on the compos
 "
       exit 0
     fi
-    if [[ \"\$SCOPE\" != \"project\" && \"\$SCOPE\" != \"global\" && \"\$SCOPE\" != \"all\" ]]; then
-      echo \"ERROR: --scope must be project, global, or all\" >&2; exit 2
+    if [[ "$SCOPE" != "project" && "$SCOPE" != "global" && "$SCOPE" != "all" ]]; then
+      echo "ERROR: --scope must be project, global, or all" >&2; exit 2
     fi
-    MH_SCOPE=\"\$SCOPE\" _py_inline \"
+    MH_SCOPE="$SCOPE" _py_inline "
 import os; from contract_core import discover
 results = discover(os.environ.get('MH_SCOPE', 'all'))
 if not results:
     print('no contracts in scope')
 else:
     for r in results:
-        label = f\\\"[{r['scope']}]\\\"
+        label = f\"[{r['scope']}]\"
         plan_trunc = r['plan'][:60] + ('...' if len(r['plan']) > 60 else '')
-        print(f\\\"{label:<10} {r['id']} ({r['shape']}/{r['status']}) — \\\\\\\"{plan_trunc}\\\\\\\"\\\")
-\"
+        print(f\"{label:<10} {r['id']} ({r['shape']}/{r['status']}) — \\\"{plan_trunc}\\\"\")
+"
     ;;
 
   drive)
