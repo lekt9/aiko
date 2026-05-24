@@ -10,6 +10,18 @@ HOOK_DIR="${HOOK_DIR:-$HOME/.contracts/hooks}"
 CLI="$SCRIPTS/contract"
 fail=0
 
+# Self-test hermetic environment: disable all hooks that fire side effects on
+# every iterate / _mark. Otherwise each shape-gate that declares + marks a
+# few contracts triggers git-sync, outline-doc-sync, and unbrowse-mirror
+# fires — each adding seconds to wall time and producing real-world side
+# effects (commits, doc upserts) that pollute the live state.
+# These kill switches are read by their respective hooks at fire time.
+export CONTRACT_NO_GIT_SYNC=1
+export CONTRACT_NO_OUTLINE_SYNC=1
+export CONTRACT_NO_UNBROWSE_MIRROR=1
+# Also clear toggle env (otherwise CONTRACT_NO_* loses to toggle-on contract).
+unset CONTRACT_GIT_SYNC CONTRACT_OUTLINE_SYNC CONTRACT_UNBROWSE_MIRROR
+
 check() {
   local name="$1"; shift
   # Per-gate hard timeout (default 60s). A gate that hangs longer than
