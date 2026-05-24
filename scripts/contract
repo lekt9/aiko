@@ -902,6 +902,19 @@ print(_infer_pointer_type(os.environ['MH_ACTION']))
       echo "  literal text. Composes with default contract #9 (serve genuine need)."
     fi
 
+    # ── CONTEXT ORIENTATION (advisory; doctrine 91e64e17) ──
+    # Substrate detects environment + surfaces canonical context channels so the
+    # agent orients BEFORE iterating. Channels are CANONICAL (always listed; no
+    # plan-matching per 0e707b01). Quiet under CONTRACT_QUIET_CONTEXT=1 for
+    # noisy automation paths.
+    if [ "${CONTRACT_QUIET_CONTEXT:-0}" != "1" ]; then
+      MH_PLAN_CO="$PLAN" _py_inline "
+import os
+from contract_core import emit_context_orientation
+emit_context_orientation(os.environ.get('MH_PLAN_CO',''))
+" 2>&1 1>&2 || true
+    fi
+
     # ── lifecycle / natural-selection check ──
     # Surface past contracts this new one may CONTRADICT or duplicate. The
     # substrate surfaces; the agent judges the contradiction in-thread. On a
