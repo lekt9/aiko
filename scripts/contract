@@ -4433,7 +4433,9 @@ action = os.environ["PR_ACTION"]
 requester = (os.environ.get("PR_REQUESTER") or current_agent() or "anonymous").strip()
 req_id = secrets.token_hex(4)
 ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
-inbox = os.path.expanduser(f"~/.contracts/inbox/permission-request/{target}.jsonl")
+try: from contract_core import inbox_path as _ipath
+except ImportError: _ipath = lambda c, n: os.path.expanduser(f"~/.contracts/inbox/{c}/{n}.jsonl")
+inbox = str(_ipath("permission-request", target))
 os.makedirs(os.path.dirname(inbox), exist_ok=True)
 row = {
     "event": "permission_request", "req_id": req_id, "target": target,
