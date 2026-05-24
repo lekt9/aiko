@@ -333,6 +333,22 @@ def get_identity_preferences(identity_or_alias: Optional[str]) -> dict:
     return {}
 
 
+def get_default_audience(identity_or_alias: Optional[str]) -> Optional[str]:
+    """ε5 EMPATHY-DEFAULT-AUDIENCE (doctrine 74996ac4): return the default
+    audience tier for an identity, read from preferences.default_audience in
+    the per-canonical people file. None means no preference declared (caller
+    falls back to existing Σ2 default of 'team').
+
+    The substrate reads + returns; declare applies. Per-call --audience always
+    wins; this preference fires only when the flag is absent.
+    """
+    prefs = get_identity_preferences(identity_or_alias)
+    val = prefs.get("default_audience")
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return None
+
+
 def preferred_approval_channel(identity_or_alias: Optional[str], intent_kind: str) -> str:
     """ε4 lookup: return the channel this identity prefers for the given intent.
 
