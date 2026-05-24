@@ -1519,6 +1519,94 @@ USAGE
     fi
     ;;
 
+  mail)
+    # contract mail <canonical> [--last N] [--since <ISO>] [--related <text>]
+    #
+    # Σ7 — per-user append-only context queue reader. Reads
+    # ~/.contracts/inbox/mail/<canonical>.jsonl (auto-populated by
+    # ~/.contracts/hooks/mail-write.py on every iterate/_mark event with an
+    # agent field). Designed for stateless bootstrap: pass the block to any new
+    # /contract invocation so the new instance reconstructs the user's chain.
+    CANONICAL="${1:-}"; shift || true
+    LAST_N=""
+    SINCE_ISO=""
+    RELATED=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --last)    LAST_N="${2:-}"; shift 2 ;;
+        --since)   SINCE_ISO="${2:-}"; shift 2 ;;
+        --related) RELATED="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "$CANONICAL" ] && { echo "usage: contract mail <canonical> [--last N] [--since <ISO>] [--related <text>]" >&2; exit 2; }
+    MH_CANON="$CANONICAL" MH_LAST="$LAST_N" MH_SINCE="$SINCE_ISO" MH_RELATED="$RELATED" _py_inline "
+import os, re, json
+from pathlib import Path
+try:
+    from contract_core import resolve_identity
+except Exception:
+    resolve_identity = lambda s: s
+
+canon = os.environ['MH_CANON']
+resolved = resolve_identity(canon) or canon
+safe = re.sub(r'[^A-Za-z0-9_.@-]', '_', resolved)
+mail_file = Path.home() / '.contracts' / 'inbox' / 'mail' / f'{safe}.jsonl'
+
+if not mail_file.exists():
+    print(f'=====MAIL CONTEXT===== ({resolved})')
+    print(f'  no mail for this identity yet (canonical-resolved from {canon!r})')
+    print(f'  (mail populates as ledger events with agent={resolved!r} fire; verify Sigma1 attribution is set)')
+    raise SystemExit(0)
+
+rows = []
+for line in mail_file.read_text().splitlines():
+    if not line.strip(): continue
+    try: rows.append(json.loads(line))
+    except: continue
+
+since = os.environ.get('MH_SINCE') or ''
+if since:
+    rows = [r for r in rows if (r.get('ts') or '') >= since]
+related = os.environ.get('MH_RELATED') or ''
+if related:
+    rel_low = related.lower()
+    rows = [r for r in rows if rel_low in (r.get('plan') or '').lower()]
+
+last_n_str = os.environ.get('MH_LAST') or ''
+if last_n_str:
+    try:
+        n = int(last_n_str)
+        rows = rows[-n:]
+    except ValueError:
+        pass
+
+print(f'=====MAIL CONTEXT===== ({resolved})')
+print(f'  source: {mail_file}')
+filters_note = (f'  (since {since})' if since else '') + (f'  (related to: {related!r})' if related else '')
+print(f'  events: {len(rows)}{filters_note}')
+print()
+if not rows:
+    print('  (no events match the filters)')
+    raise SystemExit(0)
+
+for r in rows:
+    kind = r.get('kind', '?')
+    ts = r.get('ts', '')
+    cid = r.get('contract_id', '????????')
+    status = r.get('status') or '-'
+    plan = (r.get('plan') or '')[:140]
+    print(f'  [{ts}] {kind:6} {cid[:8]} [{status:9}] {plan}')
+    if r.get('proof'):
+        print(f'    proof: {r[\"proof\"][:200]}')
+    elif r.get('proof_skip_reason'):
+        print(f'    proof-skip: {r[\"proof_skip_reason\"][:200]}')
+print()
+print(f'  bootstrap hint: any new /contract invocation by {resolved} can read this with')
+print(f'    contract mail {resolved} --last 20    # full chain context')
+"
+    ;;
+
   listen)
     # contract listen <plan> --inbox <channel> [--filter <regex>] [--field <f> --equals <v>] [--timeout <s>] [--parent <id>]
     #
