@@ -330,6 +330,25 @@ def get_identity_preferences(identity_or_alias: Optional[str]) -> dict:
             return {}
         except Exception:
             return {}
+    # Direct-name miss. Reverse-lookup over people/*.json: match the input
+    # against each file's emails[] and telegram.username. The people/ folder
+    # IS the global identity catalog, so this closes the gap when Σ3 alias
+    # rows live in a different ledger scope than the iterate caller.
+    if os.path.isdir(people_dir):
+        needle = identity_or_alias.strip().lower()
+        for fname in os.listdir(people_dir):
+            if not fname.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(people_dir, fname)) as f:
+                    data = json.load(f)
+                emails = [e.lower() for e in (data.get("emails") or []) if isinstance(e, str)]
+                tg_user = (data.get("telegram") or {}).get("username", "")
+                if needle in emails or (tg_user and needle == tg_user.lower()):
+                    prefs = data.get("preferences")
+                    return prefs if isinstance(prefs, dict) else {}
+            except Exception:
+                continue
     return {}
 
 
