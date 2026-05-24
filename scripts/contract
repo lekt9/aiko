@@ -8419,13 +8419,41 @@ if prefs:
         print(f'    drafts_inbox:      {prefs[\"drafts_inbox\"]}')
 
 print('')
-print(f'  ACTIVE WORK (top {limit} by recency)')
+print(f'  ACTIVE WORK (top {limit} by recency · lineage shows parent chain + each step\\'s creator)')
 if not active:
     print(f'    (no active contracts attributed to {target})')
 else:
+    # Build an id→declared-row index for O(1) parent lookup.
+    declared_by_id = {r['id']: r for r in all_rows if r.get('event') == 'declared'}
     for cid, r in active:
         plan = r.get('plan','')[:80]
+        creator = _canon(r.get('agent') or '') or '(unknown)'
+        creator_short = creator.split('@')[0] if '@' in creator else creator
         print(f'    [{cid}] {plan}')
+        # Walk parent chain. Cap at 6 hops to keep output bounded.
+        chain = []
+        cur_id = r.get('parent_id')
+        hops = 0
+        seen = {cid}
+        while cur_id and hops < 6 and cur_id not in seen:
+            seen.add(cur_id)
+            pr = declared_by_id.get(cur_id)
+            if not pr: break
+            p_creator = _canon(pr.get('agent') or '') or '(unknown)'
+            p_creator_short = p_creator.split('@')[0] if '@' in p_creator else p_creator
+            p_plan = (pr.get('plan','') or '')[:50]
+            chain.append((cur_id, p_creator_short, p_plan))
+            cur_id = pr.get('parent_id')
+            hops += 1
+        if chain:
+            for i, (pid, pcr, pp) in enumerate(chain):
+                prefix = '      ' + ('└─ ' if i == len(chain) - 1 else '├─ ')
+                print(f'{prefix}{pid}  by {pcr:18s}  {pp}')
+        elif r.get('parent_id'):
+            print(f'      └─ parent {r.get(\"parent_id\")} not in ledger (orphan or different scope)')
+        # Creator shown on the leaf line for transparency when ≠ target.
+        if creator != target:
+            print(f'      created by: {creator_short}  (≠ {target})')
 
 if unblocked_ready:
     print('')
