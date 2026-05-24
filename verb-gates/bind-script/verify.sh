@@ -128,7 +128,7 @@ ORIG_RESTORED_SHA=$(shasum -a 256 "$ORIG" | awk '{print substr($1,1,16)}')
 # === Phase 6: missing args / unknown contract → exit 2 / 1 with clear errors ===
 set +e
 OUT_USAGE=$("$CLI" bind-script 2>&1); RC_U=$?
-OUT_NOCID=$("$CLI" bind-script nonexistent_cid /etc/hostname 2>&1); RC_N=$?
+OUT_NOCID=$("$CLI" bind-script nonexistent_cid "$SRC_SH" 2>&1); RC_N=$?
 OUT_NOPATH=$("$CLI" bind-script "$CID_SH" /nonexistent/path 2>&1); RC_P=$?
 set -e
 [ "$RC_U" = "2" ]                                   || { echo "FAIL P6a: empty bind-script didn't exit 2 (got $RC_U)"; exit 1; }
