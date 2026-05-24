@@ -9127,12 +9127,106 @@ CHUSAGE
     esac
     ;;
 
+  layer)
+    # Ω5 layer-identify: classify a request at L0..L4 (Psychology doctrine,
+    # 5 abstraction layers) so the agent knows which layer to resolve FIRST.
+    # Heuristic — substrate surfaces, agent judges. Human-replicating order:
+    # L4 (intent) → L3 (truth-claim) → L2 (next-action) → L1 (substrate) → L0 (mechanical).
+    INPUT="${1:-}"
+    if [ -z "$INPUT" ]; then
+      echo "usage: contract layer \"<request text>\"" >&2; exit 2
+    fi
+    MH_TXT="$INPUT" _py_inline "
+import os, re
+t = os.environ['MH_TXT']
+tl = t.lower()
+hits = {'L0': 0, 'L1': 0, 'L2': 0, 'L3': 0, 'L4': 0}
+# L0 — mechanical (exit codes, hashes, paths)
+if re.search(r'\\b(exit|errno|hash|sha|path|byte|stderr|stdout|pid|cwd)\\b', tl): hits['L0'] += 2
+if re.search(r'/[a-z_-]+/[a-z_-]+|[0-9a-f]{8,}|\\\$[A-Z_]+', t): hits['L0'] += 1
+# L1 — substrate (shape names, ledger events)
+if re.search(r'\\b(cell|funnel|sequence|quorum|harness|iterate|mark|ledger|hook|verb)\\b', tl): hits['L1'] += 2
+# L2 — agent-UX (next action, navigation)
+if re.search(r'\\b(next|then|after|advance|drive|drill|wave)\\b', tl): hits['L2'] += 1
+# L3 — truth-claim (must hold, PASS/FAIL)
+if re.search(r'\\b(must|always|hold|pass|fail|true|verify|prove|claim)\\b', tl): hits['L3'] += 2
+# L4 — user-intent (business goal, plain English)
+if re.search(r'\\b(want|need|user|ship|launch|reflect|identity|personality|face|human|why)\\b', tl): hits['L4'] += 2
+order = sorted(hits.items(), key=lambda x: -x[1])
+top = order[0][0]
+print('=== Ω5 LAYER IDENTIFY ===')
+print(f'  request: {t[:80]}')
+print(f'  scored:  ' + '  '.join(f'{k}={v}' for k, v in sorted(hits.items())))
+print(f'  primary: {top}')
+print()
+print('  human-replicating resolution order (resolve FIRST at the highest non-zero layer above primary):')
+ladder = ['L4', 'L3', 'L2', 'L1', 'L0']
+start_idx = ladder.index(top)
+for L in ladder[max(0,start_idx-2):]:
+    score = hits[L]
+    if score > 0 or L == top:
+        print(f'    {L} ({score})  -> agent renders at this layer before descending')
+print()
+print('  Substrate surfaces; agent judges. Wrong layer is the most common defect (Ψ1 layer purity).')
+"
+    _fire_contract_hooks "verb" "layer" "0"
+    ;;
+
+  face)
+    # Ω6 face: emit identity+personality manifest carried on every LLM call.
+    # Composes Σ1 attribution (CONTRACT_AGENT/git email), Σ3 alias canonical,
+    # Identity doctrine (1bed8068, Aiko voice), Humanlike Σ/Ε/Α dimensions.
+    # JSON to stdout; substrate enables, transports/LLM-judge read.
+    _py_inline "
+import os, json, subprocess, pathlib
+agent = os.environ.get('CONTRACT_AGENT') or subprocess.run(['git','config','user.email'], capture_output=True, text=True).stdout.strip() or 'unknown'
+aiko_skill = pathlib.Path.home() / '.claude/skills/aiko-voice/SKILL.md'
+voice_excerpt = ''
+if aiko_skill.exists():
+    voice_excerpt = aiko_skill.read_text()[:600]
+face = {
+    'identity': {
+        'public_face': 'Aiko',
+        'voice_rules_ref': 'contract:1bed8068',
+        'voice_skill': str(aiko_skill),
+        'agent_attribution': agent,
+        'sigma3_canonical': agent,
+    },
+    'personality': {
+        'humanlike_dims': ['Ε emotion (failure-streak, over-iteration)', 'Σ sociology (attribution, audience, identity, routing, sessions)', 'Α aesthetics (plan quality, L4-leading reports)'],
+        'voice_load_bearing': [
+            'employee-not-tool',
+            'first-person feminine',
+            'no substrate jargon in public rows',
+            'asks before irreversible',
+            'no AI-slop adjectives',
+            'by tomorrow up to speed',
+            'no em dashes',
+        ],
+    },
+    'layer_routing': {
+        'public_default': 'L4 → L3 (Aiko voice, business outcome)',
+        'team_default': 'L3 → L2 (truth claim + next action)',
+        'private_default': 'L1 + L2 (substrate vocabulary OK)',
+    },
+    'standing_gates': ['1bed8068', '5cc21029', '0bc383d0', '173c8819'],
+    'voice_excerpt': voice_excerpt,
+}
+print(json.dumps(face, indent=2))
+"
+    _fire_contract_hooks "verb" "face" "0"
+    ;;
+
   *)
     # plugin fallthrough — if ~/.contracts/lib/verbs/$cmd is executable, exec it.
     # This is the convention: substrate-level helpers ship as plugin verbs in the
     # global ~/.contracts/lib/verbs/ directory (distributed via Π5 upgrade channel).
     plugin="$HOME/.contracts/lib/verbs/$cmd"
     if [ -x "$plugin" ]; then
+      # Σ10 universal verb-trigger: fire hook bus before plugin exec so substrate
+      # goes deep into itself — every verb (not just iterate/_mark/declare) joins
+      # the bus. Hooks self-guard against recursion via per-event env flags.
+      _fire_contract_hooks "verb" "$cmd" "0"
       exec "$plugin" "$@"
     fi
     echo "unknown subcommand: $cmd" >&2
@@ -9140,3 +9234,11 @@ CHUSAGE
     exit 2
     ;;
 esac
+
+# Σ10 universal verb-trigger (post-dispatch): every CLI verb invocation fires
+# the hook bus with event="verb" + verb name so the substrate goes deep into
+# itself recursively. Already-fired events (iterate/mark/declare) carry their
+# own typed event; this is the catch-all for the long-tail verbs (list, status,
+# search, alias, audit, watch, channel, env-bind, etc.) so they too participate
+# in the substrate's reactive nervous system.
+_fire_contract_hooks "verb" "$cmd" "0"
