@@ -2454,6 +2454,17 @@ prompt = f'''You are KEY 2 — the agent-judgment layer of the /contract substra
 
 After the verdict token, write one short line of justification.
 
+If verdict is HOLD or REJECT AND the reason is that this contract is gated on
+ONE OR MORE OTHER CONTRACTS being satisfied first, add a line in EXACTLY this
+format on its own line (the substrate parses this format literally — no prose,
+no markdown, no parentheses, just comma-separated 8-hex contract ids):
+
+  BLOCKED_BY: abc12345, def67890
+
+Only include ids the user/agent has already declared as separate contracts.
+Do NOT invent ids; do NOT include ids from prose hints. Omit the line if there
+are no concrete blockers.
+
 CONTRACT
   plan:   {plan}
   action: {action}
