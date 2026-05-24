@@ -201,6 +201,111 @@ def current_agent() -> str:
     return _AGENT_CACHE
 
 
+def detect_environment() -> dict:
+    """Environment detection (doctrine 91e64e17): inspect process env + recent
+    Sigma6 session presence rows to return the runtime context the agent is
+    invoking from. Structural detection only — env-var presence and file mtimes,
+    no regex over prose.
+
+    Keys returned:
+      transport       — claude-code | codex | terminal | telegram | web | panel | unknown
+      agent           — Sigma1 attribution (CONTRACT_AGENT env or git config)
+      in_tty          — sys.stdin.isatty()
+      active_sessions — list of Sigma6 client_ids registered in last 300s for
+                        the canonical identity (empty if no inbox)
+      runtime_hints   — dict naming detected client capabilities (MCP servers,
+                        bot pollers, panel daemons) for downstream rendering
+    """
+    import sys as _sys, os as _os, time as _time, json as _json
+    env = _os.environ
+    transport = "unknown"
+    if env.get("CLAUDECODE") or env.get("CLAUDE_CODE_SESSION_ID") or env.get("CLAUDE_CODE_ENTRYPOINT"):
+        transport = "claude-code"
+    elif env.get("CODEX_HOME") or env.get("CODEX_SANDBOX") or env.get("CODEX_RUN_ID"):
+        transport = "codex"
+    elif env.get("CONTRACT_TRANSPORT"):
+        transport = env["CONTRACT_TRANSPORT"]
+    elif _sys.stdin.isatty():
+        transport = "terminal"
+
+    agent = env.get("CONTRACT_AGENT") or _agent_attribution()
+    in_tty = bool(_sys.stdin.isatty())
+
+    active_sessions = []
+    sessions_dir = _os.path.expanduser("~/.contracts/inbox/sessions")
+    if agent and _os.path.isdir(sessions_dir):
+        cutoff = _time.time() - 300
+        for fname in _os.listdir(sessions_dir):
+            if not fname.endswith(".jsonl"):
+                continue
+            try:
+                with open(_os.path.join(sessions_dir, fname)) as f:
+                    for line in f:
+                        try:
+                            row = _json.loads(line)
+                        except Exception:
+                            continue
+                        ts = row.get("ts", "")
+                        try:
+                            import datetime as _dt
+                            row_t = _dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+                        except Exception:
+                            continue
+                        if row_t > cutoff:
+                            cid = row.get("client_id")
+                            if cid and cid not in active_sessions:
+                                active_sessions.append(cid)
+            except Exception:
+                continue
+
+    runtime_hints = {}
+    if env.get("MCP_SERVERS") or env.get("CLAUDE_CODE_MCP"):
+        runtime_hints["mcp_servers_visible"] = True
+    if env.get("OPENAI_API_KEY") or env.get("ANTHROPIC_API_KEY"):
+        runtime_hints["llm_keys_present"] = True
+
+    return {
+        "transport": transport,
+        "agent": agent or None,
+        "in_tty": in_tty,
+        "active_sessions": active_sessions,
+        "runtime_hints": runtime_hints,
+    }
+
+
+def emit_context_orientation(plan: str, env_dict: Optional[dict] = None) -> None:
+    """Substrate enables context loading (doctrine 91e64e17): at declare time,
+    write a === CONTEXT ORIENTATION (advisory) === block to stderr naming the
+    detected environment and the six canonical context channels available.
+
+    Channels are CANONICAL (always listed; never plan-matched per 0e707b01).
+    Agent reads plan, picks the channels that fit, runs them before iterating.
+    """
+    import sys as _sys
+    env = env_dict if env_dict is not None else detect_environment()
+    print("", file=_sys.stderr)
+    print("=== CONTEXT ORIENTATION (advisory) ===", file=_sys.stderr)
+    print(f"  detected environment:", file=_sys.stderr)
+    print(f"    transport:       {env.get('transport', 'unknown')}", file=_sys.stderr)
+    print(f"    agent:           {env.get('agent') or '(not attributed)'}", file=_sys.stderr)
+    print(f"    in_tty:          {env.get('in_tty', False)}", file=_sys.stderr)
+    sessions = env.get("active_sessions") or []
+    if sessions:
+        print(f"    active_clients:  {', '.join(sessions)}", file=_sys.stderr)
+    hints = env.get("runtime_hints") or {}
+    if hints:
+        print(f"    runtime_hints:   {hints}", file=_sys.stderr)
+    print("  canonical context channels (pick what fits the plan, orient BEFORE iterating):", file=_sys.stderr)
+    print("    docs/repos:      mcp__deepwiki__ask_question  (libraries, frameworks, SDKs)", file=_sys.stderr)
+    print("    skills:          /find-skills                  (tools, integrations already shipped)", file=_sys.stderr)
+    print("    web destination: mcp__unbrowse__unbrowse_resolve (any URL or intent → cached endpoint)", file=_sys.stderr)
+    print("    codebase:        codedb_* MCP                  (cross-project code search when available)", file=_sys.stderr)
+    print("    novel concepts:  WebSearch / WebFetch          (recent info, papers, blog posts)", file=_sys.stderr)
+    print("    arxiv papers:    /chat-with-arxiv              (structured retrieval over papers)", file=_sys.stderr)
+    print("  composes with: aa44e148 (orient-before-research rule, this is its mechanic)", file=_sys.stderr)
+    print("", file=_sys.stderr)
+
+
 def emit_presence(kind: str, reason: str, eta_seconds: Optional[int] = None,
                   transport_hints: Optional[dict] = None) -> None:
     """ε3 EMPATHY-PRESENCE (doctrine 34fa1097): emit a structured === PRESENCE ===
