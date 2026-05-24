@@ -8223,6 +8223,238 @@ if tk < tc:
 "
     ;;
 
+  context)
+    # ε8 CONTEXT-AGGREGATOR (doctrine 4add9fac): one verb that pulls
+    # everything the substrate knows about a canonical identity into one
+    # structured report. Read-only, no ledger writes. Σ3-canonicalize
+    # with people-file emails[] reverse-lookup (same trick as cost --for).
+    if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+      cat >&2 <<'USAGE'
+contract context [<identity>] [--limit N] [--json]
+
+Aggregate everything the substrate knows about a canonical identity
+(defaults to CONTRACT_AGENT or current_agent()).
+
+Sections: identity · preferences · active work · unblocked · drives ·
+tokens · sessions. Composes existing surfaces; no new state.
+USAGE
+      exit 0
+    fi
+    TARGET_RAW="${1:-}"
+    LIMIT="${LIMIT:-15}"
+    JSON_OUT=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --limit) LIMIT="$2"; shift 2 ;;
+        --json)  JSON_OUT="1"; shift ;;
+        --*)     shift 2 ;;
+        *)       [ -z "$TARGET_RAW" ] && TARGET_RAW="$1"; shift ;;
+      esac
+    done
+    MH_TARGET="$TARGET_RAW" MH_LIMIT="$LIMIT" MH_JSON="$JSON_OUT" _py_inline "
+import os, sys, json, datetime as _dt
+from contract_core import _rows, resolve_identity, current_agent, get_identity_preferences
+
+def _canon(s):
+    if not s: return ''
+    r = resolve_identity(s)
+    if r and r != s: return r
+    needle = s.strip().lower()
+    pd = os.path.expanduser('~/.contracts/people')
+    if not os.path.isdir(pd): return r or s
+    for fn in os.listdir(pd):
+        if not fn.endswith('.json'): continue
+        try:
+            with open(os.path.join(pd, fn)) as f: d = json.load(f)
+            emails = [e.lower() for e in (d.get('emails') or []) if isinstance(e, str)]
+            tg = (d.get('telegram') or {}).get('username','').lower()
+            cid = d.get('id') or fn[:-5]
+            if needle == cid.lower() or needle in emails or (tg and needle == tg):
+                return cid
+        except Exception: continue
+    return r or s
+
+target_raw = os.environ.get('MH_TARGET','').strip() or current_agent() or 'unknown'
+target = _canon(target_raw)
+limit = int(os.environ.get('MH_LIMIT', '15') or 15)
+
+# Load people file for the canonical id (may be absent).
+people_file = os.path.expanduser(f'~/.contracts/people/{target}.json')
+people_data = {}
+if os.path.isfile(people_file):
+    try:
+        with open(people_file) as f: people_data = json.load(f)
+    except Exception: people_data = {}
+prefs = people_data.get('preferences', {}) or {}
+emails = people_data.get('emails', []) or []
+tg_meta = people_data.get('telegram', {}) or {}
+aliases = sorted(set(emails + ([tg_meta.get('username')] if tg_meta.get('username') else [])))
+
+all_rows = list(_rows())
+
+def belongs_to_target(row):
+    a = row.get('agent') or ''
+    if not a: return False
+    return _canon(a) == target
+
+# Active work: declared rows still pending/active (no satisfied/merged/rejected row matches).
+declared = {r['id']: r for r in all_rows if r.get('event') == 'declared' and belongs_to_target(r)}
+terminated = set()
+for r in all_rows:
+    if r.get('event') in ('satisfied', 'merged', 'rejected'):
+        terminated.add(r.get('id'))
+active = [(r['id'], r) for r in declared.values() if r['id'] not in terminated]
+active.sort(key=lambda x: x[1].get('ts',''), reverse=True)
+active = active[:limit]
+
+# Unblocked: rows judged HOLD with blocked_by, where every blocker is now satisfied.
+satisfied_ids = {r.get('id') for r in all_rows if r.get('event') == 'satisfied'}
+latest_judged = {}
+for r in all_rows:
+    if r.get('event') == 'judged':
+        latest_judged[r.get('id')] = r
+unblocked_ready = []
+for cid, jr in latest_judged.items():
+    if jr.get('verdict') not in ('HOLD', 'REJECT'): continue
+    if cid in satisfied_ids: continue
+    blockers = jr.get('blocked_by') or []
+    if not blockers: continue
+    if all(b in satisfied_ids for b in blockers):
+        # Get plan from declared row
+        d = declared.get(cid) or next((r for r in all_rows if r.get('event')=='declared' and r.get('id')==cid), None)
+        if d and belongs_to_target(d):
+            unblocked_ready.append((cid, d.get('plan','')))
+
+# Drives: armed drive state files + ownership inference.
+drive_active_path = os.path.expanduser('~/.contracts/.drive_active')
+armed_drives = []
+if os.path.isfile(drive_active_path):
+    try:
+        with open(drive_active_path) as f:
+            for line in f:
+                oid = line.strip()
+                if oid:
+                    d = next((r for r in all_rows if r.get('event')=='declared' and r.get('id')==oid), None)
+                    if d:
+                        owner_canon = _canon(d.get('agent') or '')
+                        armed_drives.append((oid, d.get('plan',''), owner_canon, owner_canon == target))
+    except Exception: pass
+
+# Sessions: Σ6 presence rows younger than TTL.
+sessions_dir = os.path.expanduser('~/.contracts/inbox/sessions')
+session_path = os.path.join(sessions_dir, f'{target}.jsonl')
+active_sessions = []
+if os.path.isfile(session_path):
+    import time as _t
+    cutoff = _t.time() - 300
+    try:
+        with open(session_path) as f:
+            for line in f:
+                try: row = json.loads(line)
+                except Exception: continue
+                ts = row.get('ts','')
+                try:
+                    rt = _dt.datetime.fromisoformat(ts.replace('Z','+00:00')).timestamp()
+                except Exception: continue
+                if rt > cutoff:
+                    cid = row.get('client_id')
+                    if cid and cid not in [s['client_id'] for s in active_sessions]:
+                        active_sessions.append({'client_id': cid, 'transport': row.get('transport',''), 'ts': ts})
+    except Exception: pass
+
+# Tokens: sum windows.
+def token_window(seconds):
+    cutoff = _dt.datetime.now(_dt.timezone.utc).timestamp() - seconds
+    tin = tout = tcnt = 0; tusd = 0.0
+    for r in all_rows:
+        if r.get('event') != 'tokens': continue
+        if _canon(r.get('agent') or '') != target: continue
+        try:
+            rt = _dt.datetime.fromisoformat(r.get('ts','').replace('Z','+00:00')).timestamp()
+        except Exception: continue
+        if rt < cutoff: continue
+        tin += int(r.get('in_tokens') or 0); tout += int(r.get('out_tokens') or 0); tcnt += 1
+        if 'cost_usd' in r: tusd += float(r['cost_usd'])
+    return tcnt, tin+tout, tusd
+tok_24h = token_window(86400)
+tok_7d  = token_window(86400 * 7)
+
+if os.environ.get('MH_JSON') == '1':
+    out = {
+        'identity': {'canonical': target, 'input': target_raw, 'aliases': aliases, 'emails': emails, 'telegram': tg_meta},
+        'preferences': prefs,
+        'active_work': [{'id': cid, 'plan': r.get('plan',''), 'ts': r.get('ts','')} for cid, r in active],
+        'unblocked_ready': [{'id': cid, 'plan': p} for cid, p in unblocked_ready],
+        'drives': [{'id': oid, 'plan': p, 'owner': o, 'is_yours': mine} for oid, p, o, mine in armed_drives],
+        'tokens': {'24h': {'count': tok_24h[0], 'total_tokens': tok_24h[1], 'usd': tok_24h[2]},
+                   '7d':  {'count': tok_7d[0],  'total_tokens': tok_7d[1],  'usd': tok_7d[2]}},
+        'active_sessions': active_sessions,
+    }
+    print(json.dumps(out, indent=2))
+    sys.exit(0)
+
+# Render. Substrate-jargon-OK (this is a team-shape verb, agent reads).
+print(f'=== CONTEXT for {target}' + (f' (input: {target_raw})' if target != target_raw else '') + ' ===')
+print('')
+print(f'  IDENTITY')
+print(f'    canonical: {target}')
+if emails: print(f'    emails:    {\", \".join(emails)}')
+if tg_meta.get('username'): print(f'    telegram:  @{tg_meta[\"username\"]}' + (f' (id {tg_meta[\"user_id\"]})' if tg_meta.get('user_id') else ''))
+if not people_data:
+    print(f'    (no people file at ~/.contracts/people/{target}.json — declare one for prefs + aliases)')
+
+if prefs:
+    print('')
+    print(f'  PREFERENCES')
+    ac = prefs.get('approval_channel') or {}
+    if ac:
+        print(f'    approval_channel:')
+        for k in sorted(ac): print(f'      {k:15s} -> {ac[k]}')
+    if 'default_audience' in prefs:
+        print(f'    default_audience:  {prefs[\"default_audience\"]}')
+    if 'drafts_inbox' in prefs:
+        print(f'    drafts_inbox:      {prefs[\"drafts_inbox\"]}')
+
+print('')
+print(f'  ACTIVE WORK (top {limit} by recency)')
+if not active:
+    print(f'    (no active contracts attributed to {target})')
+else:
+    for cid, r in active:
+        plan = r.get('plan','')[:80]
+        print(f'    [{cid}] {plan}')
+
+if unblocked_ready:
+    print('')
+    print(f'  UNBLOCKED (Ω1: dependent contracts whose blockers all satisfied — re-judge or iterate)')
+    for cid, plan in unblocked_ready[:limit]:
+        print(f'    [{cid}] {plan[:80]}')
+
+if armed_drives:
+    yours = [d for d in armed_drives if d[3]]
+    other = [d for d in armed_drives if not d[3]]
+    print('')
+    print(f'  DRIVES (armed, total {len(armed_drives)} — {len(yours)} yours)')
+    for oid, p, o, mine in armed_drives:
+        flag = '  YOURS' if mine else f'  ({o})'
+        print(f'    [{oid}] {p[:60]}{flag}')
+
+print('')
+print(f'  TOKENS')
+print(f'    last 24h: {tok_24h[0]:>4} calls  {tok_24h[1]:>10,} tok  \${tok_24h[2]:>8.4f}')
+print(f'    last 7d:  {tok_7d[0]:>4} calls  {tok_7d[1]:>10,} tok  \${tok_7d[2]:>8.4f}')
+
+print('')
+print(f'  SESSIONS (Σ6, registered in last 5min)')
+if not active_sessions:
+    print(f'    (no active clients registered for {target})')
+else:
+    for s in active_sessions:
+        print(f'    {s[\"transport\"]:10s}  {s[\"client_id\"]:30s}  @ {s[\"ts\"]}')
+print('')
+"
+    ;;
+
   *)
     echo "unknown subcommand: $cmd" >&2
     bash "$0" help >&2
