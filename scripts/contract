@@ -4643,7 +4643,8 @@ row = {
     "ts": ts,
 }
 _append(row)
-print(f"  aiko_id:        {short_id}  (full pubkey: {pubkey_b58})")
+print(f"  aiko_id:        {short_id}")
+print(f"  pubkey:         {pubkey_b58}")
 print(f"  handle:         {handle or '(unnamed)'}")
 print(f"  parent_pubkey:  {parent_pubkey or '(root)'}")
 print(f"  lineage_depth:  {len(lineage)}")
