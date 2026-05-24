@@ -64,10 +64,30 @@ for (const p of paths) {
   });
   await page.waitForTimeout(400);
   const findings = await page.evaluate(() => {
+    // Use a 1x1 canvas to normalize ANY CSS color (rgb, rgba, oklch, lab,
+    // hex, named) into rgba — Chromium's computed style now serializes
+    // OKLCH as the literal "oklch(...)" string which a regex on rgba()
+    // would miss. Canvas always returns the actual rendered pixel.
+    const _normCanvas = document.createElement("canvas");
+    _normCanvas.width = 1; _normCanvas.height = 1;
+    const _normCtx = _normCanvas.getContext("2d", { willReadFrequently: true });
     function rgbaOf(s) {
-      const m = s.match(/rgba?\(\s*(\d+(?:\.\d+)?)[ ,]\s*(\d+(?:\.\d+)?)[ ,]\s*(\d+(?:\.\d+)?)(?:[ ,/]+\s*(\d+(?:\.\d+)?))?\s*\)/);
-      if (!m) return null;
-      return { r: +m[1], g: +m[2], b: +m[3], a: m[4] != null ? +m[4] : 1 };
+      if (!s) return null;
+      try {
+        _normCtx.clearRect(0, 0, 1, 1);
+        _normCtx.fillStyle = "rgba(0,0,0,0)";
+        _normCtx.fillStyle = s;
+        // If canvas refused to parse, fillStyle reverts to last value;
+        // sanity-check by reading it back.
+        const set = _normCtx.fillStyle;
+        if (!set || set === "rgba(0, 0, 0, 0)") {
+          // Could legitimately be transparent; try a fresh canvas fill
+          // and inspect pixel.
+        }
+        _normCtx.fillRect(0, 0, 1, 1);
+        const [r, g, b, a8] = _normCtx.getImageData(0, 0, 1, 1).data;
+        return { r, g, b, a: a8 / 255 };
+      } catch { return null; }
     }
     function blend(fg, bg) {
       const a = fg.a;
