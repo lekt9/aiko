@@ -201,6 +201,43 @@ def current_agent() -> str:
     return _AGENT_CACHE
 
 
+def emit_presence(kind: str, reason: str, eta_seconds: Optional[int] = None,
+                  transport_hints: Optional[dict] = None) -> None:
+    """ε3 EMPATHY-PRESENCE (doctrine 34fa1097): emit a structured === PRESENCE ===
+    block to stderr before a known-slow substrate operation begins. Transports
+    tail iterate output and render NATIVELY using whatever affordance their
+    environment offers (Telegram sendChatAction, web typing dots, Panel card,
+    terminal stderr line).
+
+    Same convention as requirement blocks (PAYMENT/SIGN-IN REQUIRED) but
+    non-blocking — substrate is working, not waiting on the human. The
+    substrate names the kind; the transport picks the render.
+
+    kind: one of typing|thinking|spinning|uploading
+    reason: one-line human description of what is happening
+    eta_seconds: when known (default None — transport renders without eta)
+    transport_hints: optional dict {telegram, web, panel, terminal} of render
+                     suggestions; each transport may ignore or override
+    """
+    import sys as _sys
+    print("", file=_sys.stderr)
+    print("=== PRESENCE ===", file=_sys.stderr)
+    print(f"  kind:    {kind}", file=_sys.stderr)
+    print(f"  reason:  {reason}", file=_sys.stderr)
+    if eta_seconds is not None:
+        print(f"  eta_seconds: {eta_seconds}", file=_sys.stderr)
+    hints = transport_hints or {}
+    if hints:
+        print("  transport_hints:", file=_sys.stderr)
+        for tname in ("telegram", "web", "panel", "terminal"):
+            if tname in hints:
+                print(f"    {tname}: {hints[tname]}", file=_sys.stderr)
+        for tname, hval in hints.items():
+            if tname not in ("telegram", "web", "panel", "terminal"):
+                print(f"    {tname}: {hval}", file=_sys.stderr)
+    print("", file=_sys.stderr)
+
+
 def plan_quality_warning(plan: str) -> str:
     """Α1: surface plans that are mechanically too short to be a truth claim.
 
