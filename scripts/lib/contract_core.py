@@ -202,13 +202,18 @@ def current_agent() -> str:
 
 
 def plan_quality_warning(plan: str) -> str:
-    """Α1: surface task-shaped plans that do not name a truth claim."""
-    import re
+    """Α1: surface plans that are mechanically too short to be a truth claim.
+
+    Structural check ONLY (length-based): a plan shorter than 24 chars cannot
+    encode a claim with subject + predicate + condition. Verb-prefix regex
+    was removed under doctrine 0e707b01 (NO-REGEX-AS-VERDICT) — pattern-matching
+    'do/fix/build/implement' to decide 'task vs truth claim' was the substrate
+    deciding what the agent should decide; META-INTENT advisory (9328a165) now
+    handles the spirit of that nudge by asking the agent to name the meta-principle.
+    """
     p = " ".join((plan or "").strip().split())
     if len(p) < 24:
-        return "plan text reads as a task, not a truth claim — does it name what must hold?"
-    if re.match(r"^(do|fix|build|implement)\s+\S.{0,80}$", p, re.I):
-        return "plan text reads as a task, not a truth claim — does it name what must hold?"
+        return "plan text is mechanically too short to encode a truth claim — does it name what must hold?"
     return ""
 
 
