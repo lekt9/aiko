@@ -8454,6 +8454,13 @@ else:
         # Creator shown on the leaf line for transparency when ≠ target.
         if creator != target:
             print(f'      created by: {creator_short}  (≠ {target})')
+        # ε9 VERB-COMPOSITION (doctrine fa801cd4): cite next-action verbs
+        # inline with substituted ids so the agent never has to recall
+        # what to run next. One copy-paste-executable menu per row.
+        print(f'      → contract status {cid}      # tree view + state')
+        print(f'      → contract iterate {cid}     # advance the wave')
+        print(f'      → contract graph {cid}       # parent + child + corroborate edges')
+        print(f'      → contract cost --ref {cid}  # token spend on this contract')
 
 if unblocked_ready:
     print('')
