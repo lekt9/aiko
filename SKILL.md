@@ -881,13 +881,11 @@ Run `contract status <id>` for full narrative on any of the four.
 
 A `contract judge` HOLD/REJECT verdict scans its reason text for `<8hex>` contract ids adjacent to blocker keywords (`block`/`blocked`/`depends`/`gated`/`waiting`/`until`/`after`/`when`); matched ids become `blocked_by: [ids]` on a typed `judged` ledger event. When any blocker `_mark satisfied` fires, the propagation wavefront emits `=== Ω1 UNBLOCK-REWAKE ===` listing every now-resolvable dependent with its `contract judge <id>` re-fire command. `contract unblocked` is the standing query (READY + WAITING lists). Recursive convergence: transitive blocker chains drain in one mark. Standing-gate: `bcd1a371`. Verb-gate: `verb-gates/unblocked/verify.sh`.
 
-## Ω3 — root-anchored rewake (hooks chain back to original until it resolves)
+## Ω3 — root-anchored rewake · Δ1 — self-discovery via /contract
 
-Every `_mark satisfied` walks the `parent_id` chain to the topmost ancestor (the original /contract invocation root) and surfaces `=== Ω3 ROOT REWAKE ===` whenever root != self AND root is not yet satisfied. Where Ω1 fires on judge-HOLD dependents and the existing wavefront fires one parent level + referrers + synapses, Ω3 binds the doctrine that **every /contract invocation chains hooks back to its original /contract until the original resolves**. A deep tree (R → O1 → O2 → L) marking L now re-surfaces R with `contract iterate R`, so the agent cannot leave the invocation root pending while children fire green. Code: `invocation_root()` in `contract_core.py` walks `parent_id` (cycle-guarded); `wavefront()` returns `{parent, referrers, synapses, root}`; mark_satisfied surface emits the Ω3 block when `wf.get('root')` is set. Standing-gate: `69d06a4c`. Verb-gate: `verb-gates/root-rewake/verify.sh`.
+**Ω3** (`69d06a4c`) — every `_mark satisfied` walks `parent_id` to the topmost ancestor and surfaces `=== Ω3 ROOT REWAKE ===` while root != self AND root pending. Binds: hooks chain back to original /contract until original resolves. Code: `invocation_root()` + `wavefront().root`. Verb-gate: `verb-gates/root-rewake/verify.sh`.
 
-## Δ1 — self-discovery via /contract (discover /contract with /contract)
-
-`contract discover --self` walks the substrate's own surface as a composed organism: **verbs** (CLI surface, live from `contract self`), **shapes** (data model, the 9), **verb-gates** (binding regression checks, one per verb), and **doctrine refs** (standing-gate ids cited in SKILL.md). Each dimension surfaces with a count + per-dimension iterate hint + a composed-organism iterate that fires `skill-self-test.sh` across all four. Binds the doctrine that **/contract discovers itself programmatically** — the introspection IS a contract-shaped output, not just a print-script. Composes with `b77ad5d1` self-organism (the funnel that pointer-gates on every layer-claim). Standing-gate: `d2f9a604`. Verb-gate: `verb-gates/discover-self/verify.sh`.
+**Δ1** (`d2f9a604`) — `contract discover --self` walks verbs + shapes + verb-gates + doctrine refs as one composed organism with per-dimension iterate hints. Binds: /contract discovers itself programmatically. Verb-gate: `verb-gates/discover-self/verify.sh`.
 
 ## Ψ4 — async watcher (programmatic wait for external state)
 
