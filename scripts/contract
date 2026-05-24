@@ -8204,6 +8204,30 @@ USAGE
 import os, sys, json, datetime as _dt
 from contract_core import _rows, resolve_identity
 
+# Σ3-with-people-file fallback. resolve_identity walks the alias rows of
+# the CURRENT ledger; when those rows live in a different scope (global
+# vs project), the alias misses. Falling back to the people/ folder lets
+# 'lewis' and 'lewistham9x@gmail.com' both collapse to the same canonical
+# at query time, mirroring the get_identity_preferences fix.
+def _canon(s):
+    if not s: return ''
+    r = resolve_identity(s)
+    if r and r != s: return r
+    needle = s.strip().lower()
+    pd = os.path.expanduser('~/.contracts/people')
+    if not os.path.isdir(pd): return r or s
+    for fn in os.listdir(pd):
+        if not fn.endswith('.json'): continue
+        try:
+            with open(os.path.join(pd, fn)) as f: d = json.load(f)
+            emails = [e.lower() for e in (d.get('emails') or []) if isinstance(e, str)]
+            tg = (d.get('telegram') or {}).get('username','').lower()
+            cid = d.get('id') or fn[:-5]
+            if needle == cid.lower() or needle in emails or (tg and needle == tg):
+                return cid
+        except Exception: continue
+    return r or s
+
 by = os.environ.get('MH_BY', 'agent')
 if by not in ('agent', 'model', 'task', 'source'):
     print(f'unknown --by key: {by}', file=sys.stderr); sys.exit(2)
