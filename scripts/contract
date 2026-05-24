@@ -1306,6 +1306,102 @@ USAGE
     fi
     ;;
 
+  listen)
+    # contract listen <plan> --inbox <channel> [--filter <regex>] [--field <f> --equals <v>] [--timeout <s>] [--parent <id>]
+    #
+    # Pi5 — the conversation primitive. Declare a receptor contract whose
+    # plan is prefixed `LISTEN[<channel>:<filter>]:` so the rearm-receptor
+    # hook auto-spawns a successor on satisfy. Input -> output -> next-ear.
+    #
+    # The substrate handles the channel-continuation mechanically: agent
+    # iterates -> wait-for-event matches a row -> agent reads + does work
+    # + marks satisfied -> hook declares a FRESH receptor with --since-id
+    # advanced past the inbox's current max -> next event auto-iterates
+    # the new receptor, and so on. Telethon DMs, group messages, webhooks,
+    # stripe events all use this single primitive.
+    LP_INBOX=""
+    LP_FIELD=""
+    LP_EQUALS=""
+    LP_FILTER=""
+    LP_TIMEOUT="604800"
+    LP_PARENT=""
+    LP_PLAN=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --inbox)   LP_INBOX="${2:-}"; shift 2 ;;
+        --field)   LP_FIELD="${2:-}"; shift 2 ;;
+        --equals)  LP_EQUALS="${2:-}"; shift 2 ;;
+        --filter)  LP_FILTER="${2:-}"; shift 2 ;;
+        --timeout) LP_TIMEOUT="${2:-604800}"; shift 2 ;;
+        --parent)  LP_PARENT="${2:-}"; shift 2 ;;
+        --help|-h)
+          cat >&2 <<'USAGE'
+contract listen <plan> --inbox <channel> [--filter <regex>] [--field <f> --equals <v>] [--timeout <s>] [--parent <id>]
+
+Declare a self-replicating receptor on a channel. On satisfy, an internal
+hook (rearm-receptor) auto-spawns the next receptor with --since-id
+advanced past the inbox's current max id. The conversation continues
+forever without manual re-declaration.
+
+Examples:
+  contract listen "respond to Cayden" --inbox telegram --field chat_id --equals 1313681228
+  contract listen "watch for redirect in group" --inbox telegram --filter redirect
+  contract listen "first paid customer" --inbox stripe --field type --equals checkout.session.completed
+USAGE
+          exit 0 ;;
+        *)
+          if [ -z "$LP_PLAN" ]; then LP_PLAN="$1"; else LP_PLAN="$LP_PLAN $1"; fi
+          shift ;;
+      esac
+    done
+    if [ -z "$LP_PLAN" ] || [ -z "$LP_INBOX" ]; then
+      echo "Usage: contract listen <plan> --inbox <channel> [...]" >&2
+      exit 2
+    fi
+    # Resolve current max id in the inbox so the first receptor blocks on the NEXT event
+    LP_MAX=$(LP_INBOX="$LP_INBOX" python3 -c '
+import os, json, glob
+from pathlib import Path
+d = Path.home() / ".contracts" / "inbox" / os.environ["LP_INBOX"]
+m = 0
+if d.exists():
+    for f in d.glob("*.jsonl"):
+        try:
+            with f.open() as fh:
+                for ln in fh:
+                    if not ln.strip(): continue
+                    try: r = json.loads(ln)
+                    except: continue
+                    rid = r.get("id") or r.get("message_id")
+                    if isinstance(rid,(int,float)) and int(rid) > m: m = int(rid)
+        except: pass
+print(m)
+')
+    # Build action
+    LP_ACTION="python3 $HOME/.claude/skills/contract/scripts/wait-for-event.py --inbox $LP_INBOX --since-id $LP_MAX --timeout $LP_TIMEOUT"
+    [ -n "$LP_FIELD" ]  && LP_ACTION="$LP_ACTION --field $LP_FIELD"
+    [ -n "$LP_EQUALS" ] && LP_ACTION="$LP_ACTION --equals $(printf %q "$LP_EQUALS")"
+    [ -n "$LP_FILTER" ] && LP_ACTION="$LP_ACTION --filter $(printf %q "$LP_FILTER")"
+    LP_TAG="$LP_FILTER"
+    [ -z "$LP_TAG" ] && LP_TAG="${LP_FIELD:-}=${LP_EQUALS:-}"
+    [ "$LP_TAG" = "=" ] && LP_TAG="-"
+    LP_FULL_PLAN="LISTEN[${LP_INBOX}:${LP_TAG}]: ${LP_PLAN}"
+    # Delegate to declare
+    DECLARE_CMD=("$0" declare "$LP_FULL_PLAN" --action "$LP_ACTION" --no-drive)
+    [ -n "$LP_PARENT" ] && DECLARE_CMD+=("--parent" "$LP_PARENT")
+    cat <<EOF
+=== CONTRACT LISTEN (channel-continuation receptor) ===
+  channel: $LP_INBOX
+  filter:  $LP_TAG
+  since:   $LP_MAX (next event > $LP_MAX wakes this contract)
+  timeout: ${LP_TIMEOUT}s
+  plan:    $LP_PLAN
+
+On satisfy, rearm-receptor auto-spawns the next ear in this channel.
+EOF
+    bash "${DECLARE_CMD[@]}"
+    ;;
+
   bg)
     # contract bg <id> [--lock <path>] [--restart] -- <cmd...>
     #
