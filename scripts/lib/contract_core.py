@@ -124,7 +124,8 @@ def _infer_layer(action: str) -> int:
       L4 transport  — wait-for-event.py over inbox/* (receptors)
       L3 graph      — composition + judgments + contract-ref (substrate-internal)
       L2 cell       — cli/api/harness/loop-until/tool-guard (mechanical checks)
-      L1 system     — machine:<bin> (host-local binaries — system-level access)
+      L1 system     — machine:<bin> (host-local binaries) · sandbox:<image>:<intent>
+                      (remote-container binaries — same role, off-host execution)
 
     Pointer-types map deterministically. The substrate layers fall out of
     pointer-types that already exist; Π5 doesn't add seams, it names them.
