@@ -915,6 +915,10 @@ A `contract judge` HOLD/REJECT verdict scans its reason text for `<8hex>` contra
 
 Every named-but-deferred follow-on in a /contract response gets a declared row before the turn yields: `contract declare "DEFERRED-<scope>: <plan>" --action "agent-judges" --no-drive`. The ledger holds the list, not the conversation; `contract search --context "DEFERRED"` re-surfaces them across sessions. Composes with Β2 (drill-binding `10572c91`) which refuses fake-green organ marks while Β1 children are pending, and Β5 (parallel-fan-out `3a67d08d`) which dispatches them in parallel when safe. Standing-gate: `c64b17e0`. Worked-example: 12 items captured under root organ on 2026-05-23.
 
+## Β6 — gap-capture-is-mandatory (one-keystroke Β1)
+
+`contract gap <scope> "<plan>"` is a one-keystroke shorthand for `contract declare "DEFERRED-<scope>: <plan>" --action agent-judges --no-drive`. `contract gaps` lists every open DEFERRED-* row (pending/active, satisfied dropped) with iterate/judge/supersede hints. Substrate enables; agent names. The antipattern of leaving gaps in prose-summaries that vanish at session-end is now structurally avoidable. Standing-gate: `cdecbe9b`. Verb-gate: `verb-gates/gaps/`.
+
 ## The stdio model (receptors · streams · ledger as trunk)
 
 Per Β4 thin-index: full prose lives on standing-gate contracts; this section is the pointer.
