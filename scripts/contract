@@ -3682,6 +3682,21 @@ else:
         print('  ' + label + ' ' + cid + '  \"' + plan + '\"')
         print('    -> contract iterate ' + cid)
 
+# Ω3 — ROOT REWAKE: the wavefront walks up the parent chain to the original
+# /contract invocation root. While the root is still pending, every leaf/organ
+# satisfaction re-surfaces the root with an iterate hint, binding the doctrine
+# "hooks chain back to the original /contract until the original resolves."
+# The substrate surfaces; KEY 2 stays with the agent on the root mark.
+if wf.get('root'):
+    rid = wf['root']
+    rc = get(rid)
+    rplan = (rc['plan'][:60] if rc else '?')
+    print()
+    print('=== Ω3 ROOT REWAKE ===')
+    print('  ' + os.environ['MH_ID'] + ' satisfied. Invocation root still pending — chain back:')
+    print('  ↑ ' + rid + '  \"' + rplan + '\"')
+    print('    -> contract iterate ' + rid + '  # the original /contract still owes its mark')
+
 # Ω1 — unblock-rewake: scan judged-HOLD rows whose blocked_by includes this id.
 # When the blocker satisfies, surface the dependent HOLD'd contract as
 # 'now re-judgeable' so the agent doesn't have to remember to re-fire it.
