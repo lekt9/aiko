@@ -19,7 +19,8 @@ MOCK="$REAL_HOME/.claude/skills/contract/verb-gates/sandbox/mock-turbobox.py"
 [ -f "$MOCK" ] || { echo "FAIL: cannot locate mock turbobox at $MOCK"; exit 1; }
 
 TD=$(mktemp -d)
-trap 'kill $MOCK_PID 2>/dev/null || true; rm -rf "$TD"' EXIT
+MOCK_PID=""
+trap 'if [ -n "$MOCK_PID" ]; then kill "$MOCK_PID" 2>/dev/null || true; fi; rm -rf "$TD"' EXIT
 export HOME="$TD"
 export CONTRACTS_STORE="$TD/contracts.jsonl"
 
