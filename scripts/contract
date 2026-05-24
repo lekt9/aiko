@@ -5533,12 +5533,42 @@ else:
 if not content:
     print('plan: LLM returned empty content', file=sys.stderr); sys.exit(2)
 
-last_open = content.rfind('{')
-last_close = content.rfind('}')
-if last_open < 0 or last_close <= last_open:
-    print(f'plan: could not locate JSON in LLM response:\n{content[:500]}', file=sys.stderr)
+# Bracket-depth-tracking JSON extractor — finds the OUTER balanced object
+# anywhere in the response. Robust to LLM responses that include narrative
+# before/after the JSON or wrap it in ```json fences.
+def _find_balanced_json(text: str):
+    """Return the first balanced top-level JSON object substring, or None."""
+    for i, ch in enumerate(text):
+        if ch != '{':
+            continue
+        depth = 0
+        in_str = False
+        esc = False
+        for j in range(i, len(text)):
+            c = text[j]
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == '\\':
+                    esc = True
+                elif c == '"':
+                    in_str = False
+                continue
+            if c == '"':
+                in_str = True
+            elif c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0:
+                    return text[i:j+1]
+        return None
+    return None
+
+candidate = _find_balanced_json(content)
+if not candidate:
+    print(f'plan: could not locate balanced JSON in LLM response:\n{content[:500]}', file=sys.stderr)
     sys.exit(2)
-candidate = content[last_open:last_close+1]
 
 try:
     plan_obj = json.loads(candidate)
