@@ -571,7 +571,7 @@ def plan_quality_warning(plan: str) -> str:
     """
     p = " ".join((plan or "").strip().split())
     if len(p) < 24:
-        return "plan text is mechanically too short to encode a truth claim — does it name what must hold?"
+        return "plan text reads as a task, not a truth claim — does it name what must hold?"
     return ""
 
 
