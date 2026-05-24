@@ -8631,6 +8631,13 @@ print('')
     ;;
 
   *)
+    # plugin fallthrough — if ~/.contracts/lib/verbs/$cmd is executable, exec it.
+    # This is the convention: substrate-level helpers ship as plugin verbs in the
+    # global ~/.contracts/lib/verbs/ directory (distributed via Π5 upgrade channel).
+    plugin="$HOME/.contracts/lib/verbs/$cmd"
+    if [ -x "$plugin" ]; then
+      exec "$plugin" "$@"
+    fi
     echo "unknown subcommand: $cmd" >&2
     bash "$0" help >&2
     exit 2
