@@ -307,9 +307,9 @@ def emit_context_orientation(plan: str, env_dict: Optional[dict] = None) -> None
         ("novel concepts",  "WebSearch / WebFetch          (recent info, papers, blog posts)"),
         ("arxiv papers",    "/chat-with-arxiv              (structured retrieval over papers)"),
     ]
-    registry_path = _os.path.expanduser("~/.config/contract/context-channels.json")
+    registry_path = os.path.expanduser("~/.config/contract/context-channels.json")
     registry_loaded = False
-    if _os.path.isfile(registry_path):
+    if os.path.isfile(registry_path):
         try:
             import json as _json2
             with open(registry_path) as _rf:
