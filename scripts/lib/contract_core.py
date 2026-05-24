@@ -427,6 +427,14 @@ def declare(plan: str, action: str, parent_id: Optional[str] = None,
         # Empty list means "audience field intentionally omitted = public".
         # A list with one or more identities restricts visibility to those.
         row["audience"] = list(audience)
+    # Meta-intent binding (doctrine 9328a165): plan says WHAT must hold;
+    # intent says WHY this contract was declared (the meta-principle above
+    # the literal request). Mirrors the proof-binding pattern (173c8819):
+    # in-thread agent judgment crystallized to a ledger field.
+    if intent:
+        row["intent"] = intent
+    if intent_skip_reason:
+        row["intent_skip_reason"] = intent_skip_reason
     _append(row)
     if parent_id:
         _append({"event": "child_added", "id": parent_id, "child_id": cid, "ts": _now()})
