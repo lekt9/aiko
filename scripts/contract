@@ -771,7 +771,7 @@ print('\\n'.join(humanlike_iterate_warnings(os.environ['MH_ID'])))
 case "$cmd" in
   declare)
     PLAN="${1:-}"; shift || true
-    ACTION="" PARENT="" POINTERS="" NO_DRIVE="" LEARNING="" BIND_TO="" INHIBITS="" AUDIENCE="" LAYER="" PIERCE=""
+    ACTION="" PARENT="" POINTERS="" NO_DRIVE="" LEARNING="" BIND_TO="" INHIBITS="" AUDIENCE="" LAYER="" PIERCE="" INTENT="" INTENT_SKIP=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --action)      ACTION="${2:-}";   shift 2 ;;
@@ -787,6 +787,8 @@ case "$cmd" in
         --audience)    AUDIENCE="${AUDIENCE:+$AUDIENCE,}${2:-}"; shift 2 ;;
         --layer)       LAYER="${2:-}"; shift 2 ;;
         --pierce)      PIERCE="${PIERCE:+$PIERCE,}${2:-}"; shift 2 ;;
+        --intent)      INTENT="${2:-}"; shift 2 ;;
+        --intent-skip) INTENT_SKIP="${2:-}"; shift 2 ;;
         *) shift ;;
       esac
     done
