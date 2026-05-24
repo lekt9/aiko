@@ -4,7 +4,10 @@
 # Every contract is a funnel + feedback loop + harness.
 set -uo pipefail
 
-SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 2026-05-25 (contract 396f5327 root-cause fix): resolve symlinks so SELF
+# points to the real skill dir, not the symlink dir. Prevents CONTRACT_LIB
+# from resolving to /usr/local/bin/lib when CLI invoked via symlink.
+SELF="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd)"
 export CONTRACT_LIB="$SELF/lib"
 
 # All python calls use env vars to avoid quoting hell
