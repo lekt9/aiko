@@ -479,6 +479,36 @@ except Exception:
     return $machine_exit
   fi
 
+  # Χ6 — sandbox: pointer (turbobox remote container execution).
+  # --action "sandbox:<image>:<intent>" runs the intent inside a fresh
+  # turbobox container (image ∈ {alpine,python,node,dev,debian}), then
+  # destroys the box. This is the load-bearing surface for Λ1 codegen
+  # ("code generated on the fly, never stored") and Π3's portability claim
+  # taken to its limit — the binary doesn't exist locally OR on this host;
+  # it exists inside the named image.
+  #
+  # Today the intent is the literal exec command (no codegen).
+  # Tomorrow (Χ6+Λ1 wave): the intent is a natural-language goal and Λ1
+  # writes the bash that runs against the image's binaries.
+  #
+  # Config (env): TURBOBOX_URL (default https://sandbox.trilok.ai),
+  # TURBOBOX_API_KEY (required), TURBOBOX_CPU, TURBOBOX_MEMORY.
+  # On missing auth OR upstream unreachable: emits === SANDBOX UNAVAILABLE ===
+  # with how-to-fix, returns FAIL — never silent-fallback-locally (would
+  # break Locality 79c2d656 by smuggling host execution into a sandboxed claim).
+  if [[ "$action" == sandbox:* ]]; then
+    local sandbox_spec="${action#sandbox:}"
+    local sandbox_image="${sandbox_spec%%:*}"
+    local sandbox_intent="${sandbox_spec#*:}"
+    if [ -z "$sandbox_image" ] || [ "$sandbox_image" = "$sandbox_spec" ] || [ -z "$sandbox_intent" ]; then
+      echo "  result: ERROR — sandbox: action must be 'sandbox:<image>:<intent>' (got: $action)"
+      return 1
+    fi
+    python3 "$HOME/.claude/skills/contract/scripts/lib/sandbox_layer.py" "$sandbox_image" "$sandbox_intent"
+    local sandbox_exit=$?
+    return $sandbox_exit
+  fi
+
   # sequence: an ORDERED funnel. Satisfied when every child is satisfied
   # (same AND-gate as funnel), but iterate names the first unsatisfied child
   # in declared order as the current stage — the Genesis-days arc. Ordering
