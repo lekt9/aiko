@@ -4348,11 +4348,11 @@ MA_NEXT_PY
         ;;
       ""|*)
         cat >&2 <<'MAUSAGE'
-usage: contract mail send <to> --brief <text> [--steps N] [--for-id C]
-       contract mail list [<to>]
-       contract mail read <mail-id>
-       contract mail step-complete <mail-id> --proof <evidence>
-       contract mail step-next <mail-id>
+usage: contract mailbox send <to> --brief <text> [--steps N] [--for-id C]
+       contract mailbox list [<to>]
+       contract mailbox read <mail-id>
+       contract mailbox step-complete <mail-id> --proof <evidence>
+       contract mailbox step-next <mail-id>
 MAUSAGE
         exit 2 ;;
     esac
