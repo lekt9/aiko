@@ -881,11 +881,17 @@ Run `contract status <id>` for full narrative on any of the four.
 
 A `contract judge` HOLD/REJECT verdict scans its reason text for `<8hex>` contract ids adjacent to blocker keywords (`block`/`blocked`/`depends`/`gated`/`waiting`/`until`/`after`/`when`); matched ids become `blocked_by: [ids]` on a typed `judged` ledger event. When any blocker `_mark satisfied` fires, the propagation wavefront emits `=== Ω1 UNBLOCK-REWAKE ===` listing every now-resolvable dependent with its `contract judge <id>` re-fire command. `contract unblocked` is the standing query (READY + WAITING lists). Recursive convergence: transitive blocker chains drain in one mark. Standing-gate: `bcd1a371`. Verb-gate: `verb-gates/unblocked/verify.sh`.
 
-## Ω3 — root-anchored rewake · Δ1 — self-discovery via /contract
+## Ω3 / Ω4 root-chain · Σ9 thread-chain · Δ1 self-discovery · Φ4 aiko-inherits
 
-**Ω3** (`69d06a4c`) — every `_mark satisfied` walks `parent_id` to the topmost ancestor and surfaces `=== Ω3 ROOT REWAKE ===` while root != self AND root pending. Binds: hooks chain back to original /contract until original resolves. Code: `invocation_root()` + `wavefront().root`. Verb-gate: `verb-gates/root-rewake/verify.sh`.
+**Ω3** (`69d06a4c`) — `_mark satisfied` walks `parent_id` to topmost ancestor and surfaces `=== Ω3 ROOT REWAKE ===` while root pending. Code: `invocation_root()` + `wavefront().root`. Gate: `verb-gates/root-rewake/`.
 
-**Δ1** (`d2f9a604`) — `contract discover --self` walks verbs + shapes + verb-gates + doctrine refs as one composed organism with per-dimension iterate hints. Binds: /contract discovers itself programmatically. Verb-gate: `verb-gates/discover-self/verify.sh`.
+**Ω4** (`f3ef32ad`) — `~/.contracts/hooks/auto-iterate-parent.sh` fires on mark; if parent pending, programmatically runs `contract iterate <parent>` in background. Chain to root is mechanical, not surface-only. Logs to `~/.contracts/inbox/omega4-chain/`. KEY 2 stays with agent (iterate prints two-key exit; only `_mark` satisfies). Gate: `verb-gates/omega4-auto-parent/`.
+
+**Σ9** (`5a15f390`) — `~/.contracts/hooks/thread-chain.sh` fires on `declare` (new hook bus event); same-thread declares (CLAUDE_CODE_SESSION_ID / CODEX_SESSION_ID / TTY+ppid fallback) auto-`corroborate` as Hebbian synapses. State at `~/.contracts/threads/<id>.jsonl`. No manual `contract corroborate` needed per turn. Gate: `verb-gates/sigma9-thread-chain/`.
+
+**Δ1** (`d2f9a604`) — `contract discover --self` walks verbs + shapes + verb-gates + doctrine refs as composed organism. Gate: `verb-gates/discover-self/`.
+
+**Φ4** (`a301cb7c`) — aiko cells inherit Ω4 + Σ9 by Φ3 (`cd241a16`): same ledger, same hook bus, no separate aiko-hook needed. Binds: aiko follows /contract chain behavior via shape identity, not duplicated code.
 
 ## Ψ4 — async watcher (programmatic wait for external state)
 
