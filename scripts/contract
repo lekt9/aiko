@@ -3831,6 +3831,303 @@ else:
     print(f"  result: PASS (capabilities probed, {len(avail_bins)} binaries + {len(avail_be)} backends available)")
 CAP_PY
     ;;
+  identify)
+    # contract identify <handle> [--refresh] [--from-stub <path>]
+    #
+    # Enrich any internet identifier (email, @handle, did:lens:..., 0x..., ens.eth)
+    # via external resolvers, cache the resolved record into the profile JSON.
+    # Look-aside cache: local cache HIT (and not --refresh) avoids any network.
+    # Stub path injects a fixture JSON for tests instead of probing.
+    #
+    # Resolvers (best-effort, never raise):
+    #   email like name@domain    → gravatar (md5 hash → URL pattern)
+    #   @handle                   → github API (rate-limited public path)
+    #   *.eth / 0x... / did:*     → marker only (no provider this turn — captured
+    #                                as a deferred enrichment plank)
+    #
+    # Cache: writes resolved={kind, sources, profile_url?, avatar_url?, ts_resolved,
+    # ttl_until} alongside the existing profile fields. Appends identity_resolved
+    # ledger row on every refresh.
+    ID_HANDLE="${1:-}"; shift || true
+    ID_REFRESH=""; ID_STUB=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --refresh) ID_REFRESH=1; shift ;;
+        --from-stub) shift; ID_STUB="${1:-}"; shift ;;
+        *) echo "ERROR: unknown arg '$1'" >&2; exit 2 ;;
+      esac
+    done
+    [ -z "$ID_HANDLE" ] && { echo "usage: contract identify <handle> [--refresh] [--from-stub <path>]" >&2; exit 2; }
+    ID_HANDLE="$ID_HANDLE" ID_REFRESH="$ID_REFRESH" ID_STUB="$ID_STUB" \
+    ID_CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" \
+    python3 <<'IDENTIFY_PY'
+import datetime, hashlib, json, os, sys, urllib.request, urllib.error
+sys.path.insert(0, os.path.join(os.environ["ID_CLI_DIR"], "lib"))
+try:
+    from contract_core import resolve_identity, _append
+except ImportError:
+    resolve_identity = lambda x: x
+    _append = lambda r: None
+DEFAULT_TTL_SECONDS = 86400  # 24h
+raw = os.environ["ID_HANDLE"]
+canonical = resolve_identity(raw) or raw
+profile_dir = os.path.expanduser("~/.contracts/identities")
+os.makedirs(profile_dir, exist_ok=True)
+path = os.path.join(profile_dir, f"{canonical}.json")
+existing = {}
+if os.path.isfile(path):
+    try: existing = json.loads(open(path).read())
+    except (json.JSONDecodeError, OSError): existing = {}
+now = datetime.datetime.now(datetime.timezone.utc)
+now_iso = now.isoformat().replace("+00:00", "Z")
+# Cache check (local-first)
+resolved = existing.get("resolved", {})
+ttl_until_str = resolved.get("ttl_until")
+fresh = False
+if ttl_until_str and not os.environ.get("ID_REFRESH"):
+    try:
+        ttl_until = datetime.datetime.fromisoformat(ttl_until_str.replace("Z", "+00:00"))
+        if now < ttl_until:
+            fresh = True
+    except ValueError:
+        pass
+def _kind_of(h):
+    if "@" in h and "." in h.split("@", 1)[1]:
+        return "email"
+    if h.startswith("@") or h.lower().endswith(".eth") or h.startswith("0x") or h.startswith("did:"):
+        if h.startswith("@"): return "handle"
+        if h.lower().endswith(".eth"): return "ens"
+        if h.startswith("0x"): return "wallet"
+        if h.startswith("did:"): return "did"
+    return "opaque"
+if fresh and not os.environ.get("ID_STUB"):
+    print(f"  identity:  {canonical}")
+    print(f"  resolved:  cache HIT (ttl_until={resolved.get('ttl_until')})")
+    print(f"  kind:      {resolved.get('kind', '?')}")
+    if resolved.get("avatar_url"):
+        print(f"  avatar:    {resolved['avatar_url']}")
+    if resolved.get("profile_url"):
+        print(f"  profile:   {resolved['profile_url']}")
+    print(f"  result:    PASS (cached, no network)")
+    sys.exit(0)
+# Enrich
+sources = []
+kind = _kind_of(canonical)
+avatar_url = profile_url = None
+if os.environ.get("ID_STUB"):
+    try:
+        stub = json.loads(open(os.environ["ID_STUB"]).read())
+        kind = stub.get("kind", kind)
+        avatar_url = stub.get("avatar_url")
+        profile_url = stub.get("profile_url")
+        sources = stub.get("sources", ["stub"])
+    except (OSError, json.JSONDecodeError) as e:
+        sys.stderr.write(f"identify: stub parse failed: {e}\n")
+else:
+    if kind == "email":
+        md5 = hashlib.md5(canonical.strip().lower().encode()).hexdigest()
+        avatar_url = f"https://www.gravatar.com/avatar/{md5}?d=mp"
+        sources.append("gravatar")
+    elif kind == "handle":
+        handle = canonical.lstrip("@")
+        gh_url = f"https://api.github.com/users/{handle}"
+        try:
+            with urllib.request.urlopen(gh_url, timeout=4) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode())
+                    avatar_url = data.get("avatar_url")
+                    profile_url = data.get("html_url")
+                    sources.append("github")
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
+            pass  # silent — best-effort
+new_resolved = {
+    "kind": kind,
+    "sources": sources,
+    "ts_resolved": now_iso,
+    "ttl_until": (now + datetime.timedelta(seconds=DEFAULT_TTL_SECONDS)).isoformat().replace("+00:00", "Z"),
+}
+if avatar_url:  new_resolved["avatar_url"] = avatar_url
+if profile_url: new_resolved["profile_url"] = profile_url
+existing["identity"] = canonical
+existing["resolved"] = new_resolved
+existing["updated_at"] = now_iso
+with open(path, "w") as f:
+    json.dump(existing, f, indent=2)
+_append({
+    "event": "identity_resolved", "id": canonical, "ts": now_iso,
+    "kind": kind, "sources": sources, "from_stub": bool(os.environ.get("ID_STUB")),
+})
+print(f"  identity:  {canonical}" + (f"  (alias of {raw})" if raw != canonical else ""))
+print(f"  resolved:  {'STUB' if os.environ.get('ID_STUB') else 'NETWORK'}")
+print(f"  kind:      {kind}")
+print(f"  sources:   {', '.join(sources) if sources else '(none — no resolver matched)'}")
+if avatar_url:  print(f"  avatar:    {avatar_url}")
+if profile_url: print(f"  profile:   {profile_url}")
+print(f"  ttl_until: {new_resolved['ttl_until']}")
+print(f"  result:    PASS (resolved, cached locally + audit row appended)")
+IDENTIFY_PY
+    ;;
+  rbac)
+    # contract rbac check <identity> <action>
+    # contract rbac grant <role> <action> [<action>...]
+    # contract rbac revoke <role> <action> [<action>...]
+    # contract rbac show [<role>]
+    # contract rbac assign <identity> <role>
+    #
+    # Role-based access control via /contract. Role map at
+    # ~/.contracts/rbac/roles.json; identity carries 'role' on its profile.
+    # check exits 0 if allowed, 1 + RBAC DENIED block on deny.
+    RB_SUB="${1:-}"; shift || true
+    RB_CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    case "$RB_SUB" in
+      check)
+        RB_ID="${1:-}"; RB_ACT="${2:-}"
+        [ -z "$RB_ID" ] || [ -z "$RB_ACT" ] && { echo "usage: contract rbac check <identity> <action>" >&2; exit 2; }
+        RB_ID="$RB_ID" RB_ACT="$RB_ACT" RB_CLI_DIR="$RB_CLI_DIR" python3 <<'RB_CHECK_PY'
+import json, os, sys
+sys.path.insert(0, os.path.join(os.environ["RB_CLI_DIR"], "lib"))
+try:
+    from contract_core import resolve_identity
+except ImportError:
+    resolve_identity = lambda x: x
+raw = os.environ["RB_ID"]
+action = os.environ["RB_ACT"]
+canonical = resolve_identity(raw) or raw
+profile_path = os.path.expanduser(f"~/.contracts/identities/{canonical}.json")
+roles_path = os.path.expanduser("~/.contracts/rbac/roles.json")
+role = None
+if os.path.isfile(profile_path):
+    try:
+        prof = json.loads(open(profile_path).read())
+        role = prof.get("role")
+    except (OSError, json.JSONDecodeError):
+        pass
+roles_map = {}
+if os.path.isfile(roles_path):
+    try: roles_map = json.loads(open(roles_path).read())
+    except (OSError, json.JSONDecodeError): roles_map = {}
+allowed_actions = roles_map.get(role or "", []) if role else []
+if action in allowed_actions or "*" in allowed_actions:
+    print(f"  identity:  {canonical}")
+    print(f"  role:      {role}")
+    print(f"  action:    {action}")
+    print(f"  result:    PASS (allowed)")
+    sys.exit(0)
+sys.stdout.write("\n  === RBAC DENIED ===\n")
+sys.stdout.write(f"  identity:  {canonical}\n")
+sys.stdout.write(f"  role:      {role or '(no role assigned)'}\n")
+sys.stdout.write(f"  action:    {action}\n")
+sys.stdout.write(f"  granted:   {', '.join(allowed_actions) if allowed_actions else '(none)'}\n")
+if not role:
+    sys.stdout.write(f"  fix:       contract rbac assign {canonical} <role>\n")
+elif role not in roles_map:
+    sys.stdout.write(f"  fix:       contract rbac grant {role} {action}  (role has no grants yet)\n")
+else:
+    sys.stdout.write(f"  fix:       contract rbac grant {role} {action}  OR assign a role with this action\n")
+sys.stdout.write(f"\n  result: FAIL (rbac denied)\n")
+sys.exit(1)
+RB_CHECK_PY
+        ;;
+      grant|revoke)
+        RB_ROLE="${1:-}"; shift || true
+        [ -z "$RB_ROLE" ] || [ "$#" -eq 0 ] && { echo "usage: contract rbac $RB_SUB <role> <action> [<action>...]" >&2; exit 2; }
+        RB_OP="$RB_SUB" RB_ROLE="$RB_ROLE" \
+        RB_ACTIONS_JOIN="$(IFS=$'\x1f'; echo "$*")" \
+        RB_CLI_DIR="$RB_CLI_DIR" python3 <<'RB_GRANT_PY'
+import datetime, json, os, sys
+sys.path.insert(0, os.path.join(os.environ["RB_CLI_DIR"], "lib"))
+try:
+    from contract_core import _append
+except ImportError:
+    _append = lambda r: None
+roles_dir = os.path.expanduser("~/.contracts/rbac")
+os.makedirs(roles_dir, exist_ok=True)
+path = os.path.join(roles_dir, "roles.json")
+roles = {}
+if os.path.isfile(path):
+    try: roles = json.loads(open(path).read())
+    except (OSError, json.JSONDecodeError): roles = {}
+role = os.environ["RB_ROLE"]
+op = os.environ["RB_OP"]
+actions = [a for a in os.environ["RB_ACTIONS_JOIN"].split("\x1f") if a]
+current = set(roles.get(role, []))
+if op == "grant":
+    current.update(actions)
+else:  # revoke
+    current.difference_update(actions)
+roles[role] = sorted(current)
+with open(path, "w") as f:
+    json.dump(roles, f, indent=2)
+now = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+_append({
+    "event": f"rbac_{op}", "id": role, "ts": now,
+    "actions": actions, "role_total_grants": len(current),
+})
+print(f"  role:      {role}")
+print(f"  {op}ed:   {', '.join(actions)}")
+print(f"  now has:   {', '.join(roles[role]) or '(none)'}")
+print(f"  result:    PASS")
+RB_GRANT_PY
+        ;;
+      show)
+        RB_ROLE="${1:-}"
+        RB_ROLE="$RB_ROLE" RB_CLI_DIR="$RB_CLI_DIR" python3 <<'RB_SHOW_PY'
+import json, os
+path = os.path.expanduser("~/.contracts/rbac/roles.json")
+roles = {}
+if os.path.isfile(path):
+    try: roles = json.loads(open(path).read())
+    except (OSError, json.JSONDecodeError): roles = {}
+target = os.environ.get("RB_ROLE", "")
+if target:
+    print(json.dumps({target: roles.get(target, [])}, indent=2))
+else:
+    print(json.dumps(roles, indent=2))
+RB_SHOW_PY
+        ;;
+      assign)
+        RB_ID="${1:-}"; RB_ROLE="${2:-}"
+        [ -z "$RB_ID" ] || [ -z "$RB_ROLE" ] && { echo "usage: contract rbac assign <identity> <role>" >&2; exit 2; }
+        RB_ID="$RB_ID" RB_ROLE="$RB_ROLE" RB_CLI_DIR="$RB_CLI_DIR" python3 <<'RB_ASSIGN_PY'
+import datetime, json, os, sys
+sys.path.insert(0, os.path.join(os.environ["RB_CLI_DIR"], "lib"))
+try:
+    from contract_core import resolve_identity, _append
+except ImportError:
+    resolve_identity = lambda x: x
+    _append = lambda r: None
+raw = os.environ["RB_ID"]
+role = os.environ["RB_ROLE"]
+canonical = resolve_identity(raw) or raw
+profile_dir = os.path.expanduser("~/.contracts/identities")
+os.makedirs(profile_dir, exist_ok=True)
+path = os.path.join(profile_dir, f"{canonical}.json")
+profile = {}
+if os.path.isfile(path):
+    try: profile = json.loads(open(path).read())
+    except (OSError, json.JSONDecodeError): profile = {}
+profile["identity"] = canonical
+profile["role"] = role
+profile["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+with open(path, "w") as f:
+    json.dump(profile, f, indent=2)
+_append({"event": "rbac_assign", "id": canonical, "role": role, "ts": profile["updated_at"]})
+print(f"  identity:  {canonical}")
+print(f"  role:      {role}")
+print(f"  result:    PASS (assigned + audit row appended)")
+RB_ASSIGN_PY
+        ;;
+      ""|*)
+        cat >&2 <<'RBUSAGE'
+usage: contract rbac check <identity> <action>
+       contract rbac grant <role> <action> [<action>...]
+       contract rbac revoke <role> <action> [<action>...]
+       contract rbac assign <identity> <role>
+       contract rbac show [<role>]
+RBUSAGE
+        exit 2 ;;
+    esac
+    ;;
   eq)
     # contract eq <identity> [--json]
     #
