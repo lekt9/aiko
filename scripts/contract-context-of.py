@@ -129,8 +129,11 @@ def main() -> int:
             cached["_cache_hit"] = True
             print(json.dumps(cached, indent=2))
             return 0
-        except json.JSONDecodeError:
-            pass  # fall through; refetch
+        except json.JSONDecodeError as e:
+            # Cache corrupt; fall through to refetch. Log to stderr — silent
+            # fallback is forbidden (check-no-silent-fallback.py rule).
+            print(f"contract-context-of: cache decode failed ({cf}): {e}; refetching",
+                  file=sys.stderr)
 
     if args.cache_only:
         sys.stderr.write(f"  cache miss for slug {slug!r} and --cache-only; no fetch attempted\n")
