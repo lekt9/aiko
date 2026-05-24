@@ -962,6 +962,10 @@ Every named-but-deferred follow-on in a /contract response gets a declared row b
 
 `contract gap <scope> "<plan>"` is a one-keystroke shorthand for `contract declare "DEFERRED-<scope>: <plan>" --action agent-judges --no-drive`. `contract gaps` lists every open DEFERRED-* row (pending/active, satisfied dropped) with iterate/judge/supersede hints. Substrate enables; agent names. The antipattern of leaving gaps in prose-summaries that vanish at session-end is now structurally avoidable. Standing-gate: `cdecbe9b`. Verb-gate: `verb-gates/gaps/`.
 
+## Β7 — every-/contract-drills-gaps (gaps stop being optional)
+
+On every `mark` of an organ-root contract (parent_id None, RC=0), `~/.contracts/hooks/auto-drill-gaps.sh` fires via the existing hook bus and runs `aiko drill-gaps --max N` (default 3) — spawning one `kind=aiko_cell` DRILL child per open `DEFERRED-*` row that doesn't have one. Calling /contract programmatically drills gaps no matter what; passive backlog isn't an option. Guards: organ-root only, `CONTRACT_AUTODRILL_FIRED` re-entry env, MAX cap, backgrounded. Composes with Β6 + Ω4 (drill marks chain back to gap-row parent) + Σ11/Σ12 (drill is a behavior, not a verb). Verb-gate: `verb-gates/beta7-auto-drill/`.
+
 ## The stdio model (receptors · streams · ledger as trunk)
 
 Per Β4 thin-index: full prose lives on standing-gate contracts; this section is the pointer.
