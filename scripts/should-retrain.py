@@ -109,7 +109,11 @@ def walk_ledger() -> tuple[int, int, datetime | None]:
                 continue
             try:
                 r = json.loads(line)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                # Corrupt ledger line — skip + surface to stderr.
+                # Silent skip forbidden (check-no-silent-fallback.py).
+                print(f"should-retrain: skipping bad line in {LEDGER}: {e}",
+                      file=sys.stderr)
                 continue
             rows.append(r)
             if r.get("event") == "learned" and has_tag(r, "lambda2-promote"):
