@@ -334,8 +334,15 @@ def _cloud_mirror(row: dict) -> None:
                     "id": row.get("id"),
                     "error": str(exc)[:200],
                 }) + "\n")
-        except Exception:
-            pass  # last-resort silent failure — never block the local write
+        except Exception as ee:
+            # Last-resort: even the error-log write failed (disk full,
+            # permission denied). Surface to stderr so it's not silent —
+            # the local ledger write already succeeded; this is the
+            # secondary mirror-error log. Silent fallback forbidden
+            # (check-no-silent-fallback.py rule).
+            import sys as _sys
+            print(f"contract_core._cloud_mirror: error-log write failed "
+                  f"({err_file}): {ee}", file=_sys.stderr)
 
 
 def _append(row: dict) -> None:
