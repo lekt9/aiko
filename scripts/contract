@@ -877,7 +877,30 @@ print(_infer_pointer_type(os.environ['MH_ACTION']))
     [ -n "$PARENT" ]   && echo "  parent:      $PARENT"
     [ -n "$POINTERS" ] && echo "  pointers:    $POINTERS"
     [ -n "$LEARNING" ] && echo "  learning:    $LEARNING"
+    [ -n "$INTENT" ]   && echo "  intent:      $INTENT"
+    [ -n "$INTENT_SKIP" ] && echo "  intent_skip: $INTENT_SKIP"
     echo "  next:        contract iterate $ID"
+
+    # ── META-INTENT (advisory) ──
+    # Doctrine 9328a165: every contract's plan says WHAT must hold; --intent
+    # says WHY (the meta-principle above the literal request). When neither
+    # --intent nor --intent-skip is provided, surface a non-blocking advisory
+    # so the agent has a structured prompt to name the meta-principle (or
+    # explicitly skip with a reason). Mirrors the proof-binding pattern:
+    # in-thread judgment crystallized to a ledger field.
+    if [ -z "$INTENT" ] && [ -z "$INTENT_SKIP" ]; then
+      echo ""
+      echo "=== META-INTENT (advisory) ==="
+      echo "  Plan text says WHAT must hold. The meta-principle above the literal"
+      echo "  request is unnamed. Re-declare or amend with one of:"
+      echo ""
+      echo "    contract declare \"<plan>\" --action \"<cmd>\" --intent \"<one-line meta-principle the user was actually pointing at>\""
+      echo "    contract declare \"<plan>\" --action \"<cmd>\" --intent-skip \"<why naming the meta-principle adds nothing here>\""
+      echo ""
+      echo "  Why this matters: the ledger row crystallizes intent so future search,"
+      echo "  lifecycle check, and audit can see the meta-principle, not just the"
+      echo "  literal text. Composes with default contract #9 (serve genuine need)."
+    fi
 
     # ── lifecycle / natural-selection check ──
     # Surface past contracts this new one may CONTRADICT or duplicate. The
