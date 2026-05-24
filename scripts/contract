@@ -4107,8 +4107,8 @@ print(f"  ttl_until: {new_resolved['ttl_until']}")
 print(f"  result:    PASS (resolved, cached locally + audit row appended)")
 IDENTIFY_PY
     ;;
-  mail)
-    # contract mail {send|list|read|step-complete|step-next}
+  mailbox)
+    # contract mailbox {send|list|read|step-complete|step-next}
     #
     # Mailbox-with-dated-history + explicit step-detach. Fixes the
     # Eugene+Manus context-reset bug: agent moved to step 6 without
