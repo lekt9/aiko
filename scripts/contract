@@ -8223,14 +8223,17 @@ if tk < tc:
 "
     ;;
 
-  context)
+  whoami)
     # ε8 CONTEXT-AGGREGATOR (doctrine 4add9fac): one verb that pulls
     # everything the substrate knows about a canonical identity into one
     # structured report. Read-only, no ledger writes. Σ3-canonicalize
     # with people-file emails[] reverse-lookup (same trick as cost --for).
+    # NOTE: `contract context <id>` is the contract-id-scoped envelope
+    # verb (b2d15246, different purpose); `contract whoami [<identity>]`
+    # is this identity-scoped aggregator.
     if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
       cat >&2 <<'USAGE'
-contract context [<identity>] [--limit N] [--json]
+contract whoami [<identity>] [--limit N] [--json]
 
 Aggregate everything the substrate knows about a canonical identity
 (defaults to CONTRACT_AGENT or current_agent()).
