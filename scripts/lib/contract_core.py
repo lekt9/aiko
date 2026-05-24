@@ -156,6 +156,7 @@ def _infer_layer(action: str) -> int:
         "tool-guard":    2,
         "machine":       1,  # system — host binary
         "sandbox":       1,  # system — remote container binary (Χ6)
+        "runpod":        1,  # system — RunPod serverless (plank 1 of 386497eb)
     }.get(pt, 2)
 
 
