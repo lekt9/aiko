@@ -3580,6 +3580,95 @@ ROUTEUSAGE
     echo "  result: FAIL (no backend available — route organ $ROUTE_ORGAN_ID)"
     exit 1
     ;;
+  capabilities)
+    # contract capabilities [--refresh] [--json]
+    #
+    # Plank 3+4 of 386497eb (machine-capabilities auto-probe + package-manager detection).
+    # Probes the iterate-time machine for binaries, package managers, and L1 backends.
+    # Caches at ~/.config/contract/machine-capabilities.json so the route verb can
+    # surface candidate specs without re-probing every iterate. The 'install' verb
+    # (and future docs/skills delegation) reads this cache to know what's available
+    # vs what needs install/fallback.
+    CAP_REFRESH=""
+    CAP_JSON=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --refresh) CAP_REFRESH=1; shift ;;
+        --json) CAP_JSON=1; shift ;;
+        *) echo "ERROR: unknown arg: '$1'" >&2; exit 2 ;;
+      esac
+    done
+    CAP_REFRESH="$CAP_REFRESH" CAP_JSON="$CAP_JSON" python3 <<'CAP_PY'
+import json, os, platform, shutil, subprocess, sys
+from pathlib import Path
+
+CACHE = Path.home() / ".config" / "contract" / "machine-capabilities.json"
+CACHE.parent.mkdir(parents=True, exist_ok=True)
+
+# Binaries we care about for L1 backend dispatch + cli composition + install path.
+BINARIES = [
+    "python3", "node", "bun", "deno",        # runtimes
+    "gh", "git",                              # github + vcs
+    "brew", "apt", "apt-get", "nix", "pacman",  # package managers
+    "nanobrew",                                # justrach/nanobrew (gap-filler)
+    "sandbox-exec",                            # macOS native sandbox
+    "docker", "podman",                        # container runtimes
+    "ssh", "curl", "wget",                    # transport
+    "jq", "rg", "fd", "fzf",                  # search/parse helpers
+]
+PKG_MGRS = ["brew", "apt-get", "apt", "nix", "pacman", "nanobrew"]
+# L1 backend tiers (pointer_type → availability check)
+BACKENDS = {
+    "machine":       lambda: True,                                  # always — falls back to PATH
+    "sandbox":       lambda: bool(os.environ.get("TURBOBOX_API_KEY")),
+    "runpod":        lambda: bool(os.environ.get("RUNPOD_API_KEY")),
+    "bun":           lambda: bool(shutil.which("bun")),
+    "macos-sandbox": lambda: platform.system() == "Darwin" and bool(shutil.which("sandbox-exec")),
+    "docker":        lambda: bool(shutil.which("docker")),
+}
+
+refresh = bool(os.environ.get("CAP_REFRESH"))
+emit_json = bool(os.environ.get("CAP_JSON"))
+
+if CACHE.exists() and not refresh:
+    cap = json.loads(CACHE.read_text())
+else:
+    bins = {}
+    for b in BINARIES:
+        p = shutil.which(b)
+        bins[b] = p if p else None
+    pkg_mgr = next((m for m in PKG_MGRS if bins.get(m)), None)
+    backends = {name: probe() for name, probe in BACKENDS.items()}
+    cap = {
+        "host":            platform.node(),
+        "os":              platform.system(),
+        "arch":            platform.machine(),
+        "binaries":        bins,
+        "package_manager": pkg_mgr,
+        "backends":        backends,
+        "ts":              __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    CACHE.write_text(json.dumps(cap, indent=2))
+
+if emit_json:
+    print(json.dumps(cap, indent=2))
+else:
+    print(f"  host:    {cap['host']} ({cap['os']}/{cap['arch']})")
+    print(f"  cache:   {CACHE}")
+    print(f"  ts:      {cap['ts']}")
+    avail_bins = sorted(k for k, v in cap["binaries"].items() if v)
+    missing_bins = sorted(k for k, v in cap["binaries"].items() if not v)
+    print(f"  binaries (present, {len(avail_bins)}): {', '.join(avail_bins) if avail_bins else '(none)'}")
+    print(f"  binaries (missing, {len(missing_bins)}): {', '.join(missing_bins) if missing_bins else '(none)'}")
+    print(f"  package_manager: {cap['package_manager'] or '(none detected)'}")
+    avail_be = sorted(k for k, v in cap["backends"].items() if v)
+    miss_be = sorted(k for k, v in cap["backends"].items() if not v)
+    print(f"  backends (available, {len(avail_be)}): {', '.join(avail_be) if avail_be else '(none)'}")
+    print(f"  backends (unavailable, {len(miss_be)}): {', '.join(miss_be) if miss_be else '(none)'}")
+    print(f"")
+    print(f"  result: PASS (capabilities probed, {len(avail_bins)} binaries + {len(avail_be)} backends available)")
+CAP_PY
+    ;;
   bind-script)
     # contract bind-script <contract-id> <local-script-path>
     #
