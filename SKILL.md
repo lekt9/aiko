@@ -1133,6 +1133,26 @@ contract-ref binds one specific dependency; a receptor turns external events
 into actions. There is no fourth channel waiting to be invented — these
 three exhaust the space.
 
+**Channels are fractal contracts (NOT a fourth channel — internal structure
+of the third).** Each named receptor channel (`telegram`, `webhook`,
+`stripe`, `mail`, `agent`, `claims`, `sessions`, `watcher`, …) is itself a
+/contract whose row carries its source-of-truth pointer. External channels
+bind to upstream API docs URLs; internal channels bind to existing
+substrate doctrine rows via `contract:<id>`. The agent reads the source,
+judges KEY 2 on whether the actual injector and inbox-row shape match.
+
+| Verb | Effect |
+|---|---|
+| `contract channel declare <name> --source <url\|contract:id> [--kind external\|internal]` | Writes one `channel_bound` ledger event; idempotent on unchanged surfaces. |
+| `contract channel list` | Lists bound channels with row counts; surfaces unbound filesystem inboxes as candidates with the `declare` hint. |
+| `contract channel inspect <name> [limit]` | Shows the binding (source, kind, doctrine ref, inbox path) and tails the latest N rows from `~/.contracts/inbox/<name>/*.jsonl`. |
+
+Canonical bindings (declared 2026-05-24): `telegram → bb9c351a`,
+`webhook → 20d51ba7`, `stripe → https://stripe.com/docs/api/events`,
+`mail → c64b17e0`, `agent → 805f25a9`, `watcher → 21f1d851`. Substrate
+enables — emits the pointer; never auto-generates injector code (substrate
+enables, never prescribes). Standing-gate: `bc04b571`.
+
 ### What's deliberately NOT in the substrate
 
 - **A "contains" relation on a row.** Children are flat rows with
