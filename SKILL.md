@@ -197,9 +197,13 @@ contract learn "<insight>" [--source <ref>]
 
 `contract drive <organ-id>` arms an internal sentinel + Stop/SessionStart hook bus so the loop re-fires across turns without human prompts. State at `~/.contracts/{.drive_active, drive_next.txt}`; survives runtime restarts. Disarms on `contract disarm` or organ completion. KEY 2 stays agent-judged — drive removes the pause, not the judgment. Standing-gate: `31a7612c`.
 
-## Σ12 — drill-is-default (drill removed as a verb)
+## Σ12 — drill-is-default (drill removed)
 
-Drill semantics (loop-until-settle across N targets) are the **default** of `iterate` + drive-mode (`31a7612c`) + Ω4 auto-iterate-parent (`f3ef32ad`) + plan-fulfillment proof (`173c8819`). No standalone `drill` verb — `contract drill <id>` redirects to `contract iterate <id>` per id with a Σ12 deprecation banner. Composes with Σ11 (`af9c06a5`): verbs are all gone because they're /contract; drill was a verb pretending to be a behavior. Standing-gate: `86fea3e9` (supersedes `7af4e88b` in intent — cross-store edge not bound).
+Drill semantics (loop-until-settle across N targets) are the **default** of `iterate` + drive-mode (`31a7612c`) + Ω4 auto-iterate-parent (`f3ef32ad`) + plan-fulfillment proof (`173c8819`). The standalone `drill` verb is fully removed; `contract drill` returns `unknown subcommand`. Composes with Σ11 (`af9c06a5`): verbs are gone because they're /contract; with Γ1 (`<this-turn>`): no stub redirects. Standing-gate: `86fea3e9`.
+
+## Γ1 — never-leave-stubs
+
+Every skill-code change either fully removes a surface OR fully implements it. No backward-compat redirects, no deprecation banners in code, no `# TODO` / `# stub` / `raise NotImplementedError` without a captured `DEFERRED-*` row. `scripts/check-no-stubs.sh` scans `scripts/contract` + `~/.claude/skills/aiko/scripts/` + `~/.contracts/hooks/` for stub patterns; exits 1 with offender list if found. Verb-gate: `verb-gates/gamma1-no-stubs/`. Composes with Β6 (`cdecbe9b`): gaps are rows, not code stubs.
 
 ## Crystallizing learnings (memory + Outline)
 
