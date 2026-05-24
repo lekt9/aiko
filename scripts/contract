@@ -8243,7 +8243,7 @@ if since:
     cutoff = _dt.datetime.now(_dt.timezone.utc).timestamp() - n * mult
 
 for_id_raw = os.environ.get('MH_FOR','').strip()
-for_canon = resolve_identity(for_id_raw) if for_id_raw else None
+for_canon = _canon(for_id_raw) if for_id_raw else None
 ref_id = os.environ.get('MH_REF','').strip() or None
 
 filtered = []
