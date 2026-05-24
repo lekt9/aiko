@@ -47,7 +47,7 @@ REFUSE_ERR=$(bash "$CLI" aiko fund "$CHILDP_ID" --from "$PRIVY_PUB" --amount-sol
 REFUSE_RC=$?
 set -e
 [ "$REFUSE_RC" = "1" ]                                            || { echo "FAIL P1: privy custody --sign exited $REFUSE_RC, expected 1"; exit 1; }
-echo "$REFUSE_ERR" | grep -qF "--sign requires custody='self'"    || { echo "FAIL P1: no custody refusal. ERR=$REFUSE_ERR"; exit 1; }
+echo "$REFUSE_ERR" | grep -qF -- "--sign requires custody='self'" || { echo "FAIL P1: no custody refusal. ERR=$REFUSE_ERR"; exit 1; }
 
 # === Phase 2: signing helper env propagation — all 8 load-bearing keys land ===
 # Spy on the helper by replacing it temporarily with one that prints env keys
