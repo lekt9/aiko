@@ -3687,6 +3687,7 @@ else:
 # satisfaction re-surfaces the root with an iterate hint, binding the doctrine
 # "hooks chain back to the original /contract until the original resolves."
 # The substrate surfaces; KEY 2 stays with the agent on the root mark.
+print('DBG-OMEGA3', wf.get('root'))
 if wf.get('root'):
     rid = wf['root']
     rc = get(rid)
