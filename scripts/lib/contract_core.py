@@ -295,13 +295,39 @@ def emit_context_orientation(plan: str, env_dict: Optional[dict] = None) -> None
     hints = env.get("runtime_hints") or {}
     if hints:
         print(f"    runtime_hints:   {hints}", file=_sys.stderr)
+    # Canonical defaults (label-ordered). Client registry at
+    # ~/.config/contract/context-channels.json (doctrine 91e64e17 / C3 f4806700)
+    # overrides labels of the same name and APPENDS new labels after the canonical
+    # set — absent file = canonical six only.
+    channels = [
+        ("docs/repos",      "mcp__deepwiki__ask_question  (libraries, frameworks, SDKs)"),
+        ("skills",          "/find-skills                  (tools, integrations already shipped)"),
+        ("web destination", "mcp__unbrowse__unbrowse_resolve (any URL or intent → cached endpoint)"),
+        ("codebase",        "codedb_* MCP                  (cross-project code search when available)"),
+        ("novel concepts",  "WebSearch / WebFetch          (recent info, papers, blog posts)"),
+        ("arxiv papers",    "/chat-with-arxiv              (structured retrieval over papers)"),
+    ]
+    registry_path = _os.path.expanduser("~/.config/contract/context-channels.json")
+    registry_loaded = False
+    if _os.path.isfile(registry_path):
+        try:
+            import json as _json2
+            with open(registry_path) as _rf:
+                client_reg = _json2.load(_rf)
+            if isinstance(client_reg, dict):
+                canonical_labels = {lbl for lbl, _ in channels}
+                overrides = {k: v for k, v in client_reg.items() if k in canonical_labels}
+                appends = [(k, v) for k, v in client_reg.items() if k not in canonical_labels]
+                channels = [(lbl, overrides.get(lbl, hint)) for lbl, hint in channels] + appends
+                registry_loaded = True
+        except Exception:
+            registry_loaded = False
     print("  canonical context channels (pick what fits the plan, orient BEFORE iterating):", file=_sys.stderr)
-    print("    docs/repos:      mcp__deepwiki__ask_question  (libraries, frameworks, SDKs)", file=_sys.stderr)
-    print("    skills:          /find-skills                  (tools, integrations already shipped)", file=_sys.stderr)
-    print("    web destination: mcp__unbrowse__unbrowse_resolve (any URL or intent → cached endpoint)", file=_sys.stderr)
-    print("    codebase:        codedb_* MCP                  (cross-project code search when available)", file=_sys.stderr)
-    print("    novel concepts:  WebSearch / WebFetch          (recent info, papers, blog posts)", file=_sys.stderr)
-    print("    arxiv papers:    /chat-with-arxiv              (structured retrieval over papers)", file=_sys.stderr)
+    label_width = max((len(lbl) for lbl, _ in channels), default=10) + 2
+    for lbl, hint in channels:
+        print(f"    {lbl + ':':<{label_width + 1}} {hint}", file=_sys.stderr)
+    if registry_loaded:
+        print(f"  (merged from ~/.config/contract/context-channels.json — client self-declared)", file=_sys.stderr)
     print("  composes with: aa44e148 (orient-before-research rule, this is its mechanic)", file=_sys.stderr)
     print("", file=_sys.stderr)
 
