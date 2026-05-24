@@ -7624,7 +7624,111 @@ Next:
   - other contracts can reference it via 'contract:$NEW_ID'
 
 The substrate's public face is Aiko; the contract id is the conversation point.
+
+Lineage:
+  parent_contract:  ${PARENT:-(none — root of this lineage)}
+  summoner_agent:   ${SUMMONER}
+  origin_contract:  ${ORIGIN:-(self)}
+  walk the chain:   contract lineage $NEW_ID
 EOF
+    ;;
+
+  lineage)
+    # contract lineage <id> — walk the parent_id chain from <id> back to
+    # the origin (root with no parent), showing every contract in the
+    # chain + every summon-by-agent annotation found in inbox rows. The
+    # mechanical trace from leaf-Aiko to originating contract + identity.
+    if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ] || [ -z "${1:-}" ]; then
+      cat >&2 <<'USAGE'
+contract lineage <id>
+
+Walk parent_id chain from <id> to root. Surfaces every contract in the
+chain + every summon annotation (parent_contract, summoner_agent,
+origin_contract) found in the Σ4 agent inbox for matching contract_ids.
+
+Use to trace a summoned-Aiko leaf back to the originating contract +
+identity that spawned her.
+
+Outputs a typed chain (newest → oldest) with each row's audience, voice,
+and summon metadata when present.
+USAGE
+      exit 2
+    fi
+    TARGET="$1"
+    TARGET_ARG="$TARGET" python3 <<'PY'
+import json, os, sys
+sys.path.insert(0, os.path.expanduser('~/.claude/skills/contract/scripts/lib'))
+from contract_core import get
+from pathlib import Path
+
+target = os.environ['TARGET_ARG']
+# Build inbox index: contract_id → summon row (so we can decorate the chain).
+inbox_dir = Path.home() / '.contracts' / 'inbox' / 'agent'
+inbox_index = {}
+if inbox_dir.exists():
+    for f in inbox_dir.glob('*.jsonl'):
+        try:
+            for line in f.read_text().splitlines():
+                line = line.strip()
+                if not line: continue
+                try: row = json.loads(line)
+                except json.JSONDecodeError: continue
+                cid = row.get('contract_id')
+                if cid and row.get('event') == 'summoned':
+                    inbox_index[cid] = row
+        except OSError:
+            pass
+
+# Walk parent_id chain.
+chain = []
+cid = target
+seen = set()
+while cid and cid not in seen:
+    seen.add(cid)
+    state = get(cid) or {}
+    if not state:
+        chain.append({'id': cid, 'missing': True})
+        break
+    chain.append({
+        'id': cid,
+        'plan_first_line': (state.get('plan') or '').split('\n')[0][:80],
+        'status': state.get('status', '?'),
+        'audience': state.get('audience') or 'team',
+        'agent': state.get('agent') or '(unknown)',
+        'parent_id': state.get('parent_id'),
+        'summon_row': inbox_index.get(cid),
+    })
+    cid = state.get('parent_id')
+
+print('=== LINEAGE (leaf → origin) ===')
+print(f'  walking from: {target}')
+print(f'  depth: {len(chain)} contract(s)')
+print()
+for ix, r in enumerate(chain):
+    indent = '  ' + '  ' * ix
+    if r.get('missing'):
+        print(f'{indent}? {r["id"]}  (MISSING — id resolves nowhere in this ledger)')
+        continue
+    voice_tag = ''
+    if r['audience'] == 'public':
+        voice_tag = '  [aiko-voice]'
+    summon = r.get('summon_row')
+    summon_tag = ''
+    if summon:
+        smn = summon.get('summoner_agent', '?')
+        summon_tag = f'  [summoned-by: {smn}]'
+    arrow = '↑' if ix < len(chain) - 1 else '●'
+    print(f'{indent}{arrow} {r["id"]}  [{r["status"]}]  audience={r["audience"]}  agent={r["agent"]}{voice_tag}{summon_tag}')
+    print(f'{indent}    plan: {r["plan_first_line"]}')
+
+if chain and not chain[-1].get('missing') and not chain[-1].get('parent_id'):
+    origin = chain[-1]['id']
+    print()
+    print(f'  origin: {origin}  (root of this lineage)')
+elif chain:
+    print()
+    print(f'  truncated: chain stopped at {chain[-1]["id"]}')
+PY
     ;;
 
   *)
