@@ -9152,7 +9152,8 @@ if re.search(r'\\b(next|then|after|advance|drive|drill|wave)\\b', tl): hits['L2'
 if re.search(r'\\b(must|always|hold|pass|fail|true|verify|prove|claim)\\b', tl): hits['L3'] += 2
 # L4 — user-intent (business goal, plain English)
 if re.search(r'\\b(want|need|user|ship|launch|reflect|identity|personality|face|human|why)\\b', tl): hits['L4'] += 2
-order = sorted(hits.items(), key=lambda x: -x[1])
+ladder_order = {'L4': 0, 'L3': 1, 'L2': 2, 'L1': 3, 'L0': 4}
+order = sorted(hits.items(), key=lambda x: (-x[1], ladder_order[x[0]]))
 top = order[0][0]
 print('=== Ω5 LAYER IDENTIFY ===')
 print(f'  request: {t[:80]}')
