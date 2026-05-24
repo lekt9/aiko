@@ -968,6 +968,10 @@ Every named-but-deferred follow-on in a /contract response gets a declared row b
 
 On every `mark` of an organ-root contract (parent_id None, RC=0), `~/.contracts/hooks/auto-drill-gaps.sh` fires via the existing hook bus and runs `aiko drill-gaps --max N` (default 3) — spawning one `kind=aiko_cell` DRILL child per open `DEFERRED-*` row that doesn't have one. Calling /contract programmatically drills gaps no matter what; passive backlog isn't an option. Guards: organ-root only, `CONTRACT_AUTODRILL_FIRED` re-entry env, MAX cap, backgrounded. Composes with Β6 + Ω4 (drill marks chain back to gap-row parent) + Σ11/Σ12 (drill is a behavior, not a verb). Verb-gate: `verb-gates/beta7-auto-drill/`.
 
+## Β8 — close-gaps-in-parallel-always (Β7 + Β5 composed)
+
+When Β7 autodrill fires N drill children per organ-root mark, dispatch them in **parallel** via the Agent fan-out pattern (Β5 `3a67d08d`) rather than one-at-a-time. Substrate spawns rows serially (one declare per gap); the agent dispatches the actual work as ONE message with N Agent tool calls. Standing-gate: `087bbca1`. Composes Β5 + Β7 — every /contract turn drills the open backlog with N concurrent sub-agents.
+
 ## The stdio model (receptors · streams · ledger as trunk)
 
 Per Β4 thin-index: full prose lives on standing-gate contracts; this section is the pointer.
