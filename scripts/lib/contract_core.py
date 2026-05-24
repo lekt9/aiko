@@ -419,7 +419,11 @@ def get_identity_preferences(identity_or_alias: Optional[str]) -> dict:
                 if needle in emails or (tg_user and needle == tg_user.lower()):
                     prefs = data.get("preferences")
                     return prefs if isinstance(prefs, dict) else {}
-            except Exception:
+            except Exception as _people_file_err:
+                # corrupt or partially-written people/<n>.json: skip this row,
+                # try the next. The cumulative scan is best-effort; a single
+                # bad file must not break preference resolution for the rest.
+                _ = _people_file_err
                 continue
     return {}
 
