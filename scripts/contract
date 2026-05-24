@@ -4055,6 +4055,177 @@ print(f"  ttl_until: {new_resolved['ttl_until']}")
 print(f"  result:    PASS (resolved, cached locally + audit row appended)")
 IDENTIFY_PY
     ;;
+  permission)
+    # contract permission {request|grant|deny|show}
+    #
+    # The "Eugene-got-stuck" fix: when a chat hits an action requiring a
+    # higher role, the bot doesn't dead-end. It writes a permission_request
+    # row to target's inbox + returns PERMISSION REQUESTED block; target
+    # runs grant/deny which writes to permission-resolve inbox; Ψ4 watcher
+    # in the bot wakes Eugene's parent contract.
+    PR_SUB="${1:-}"; shift || true
+    PR_CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    case "$PR_SUB" in
+      request)
+        PR_TARGET="${1:-}"; PR_ACTION="${2:-}"; shift 2 || true
+        PR_CONTEXT=""; PR_FOR_ID=""; PR_REQUESTER=""
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --context) shift; PR_CONTEXT="${1:-}"; shift ;;
+            --for-id) shift; PR_FOR_ID="${1:-}"; shift ;;
+            --requester) shift; PR_REQUESTER="${1:-}"; shift ;;
+            *) echo "ERROR: unknown arg '$1'" >&2; exit 2 ;;
+          esac
+        done
+        [ -z "$PR_TARGET" ] || [ -z "$PR_ACTION" ] && { echo "usage: contract permission request <target> <action> [--context T] [--for-id C] [--requester R]" >&2; exit 2; }
+        PR_TARGET="$PR_TARGET" PR_ACTION="$PR_ACTION" PR_CONTEXT="$PR_CONTEXT" \
+        PR_FOR_ID="$PR_FOR_ID" PR_REQUESTER="$PR_REQUESTER" PR_CLI_DIR="$PR_CLI_DIR" \
+        python3 <<'PR_REQ_PY'
+import datetime, json, os, secrets, sys
+sys.path.insert(0, os.path.join(os.environ["PR_CLI_DIR"], "lib"))
+try:
+    from contract_core import resolve_identity, current_agent, _append
+except ImportError:
+    resolve_identity = lambda x: x
+    current_agent = lambda: ""
+    _append = lambda r: None
+raw_target = os.environ["PR_TARGET"]
+target = resolve_identity(raw_target) or raw_target
+action = os.environ["PR_ACTION"]
+requester = (os.environ.get("PR_REQUESTER") or current_agent() or "anonymous").strip()
+req_id = secrets.token_hex(4)
+ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+inbox = os.path.expanduser(f"~/.contracts/inbox/permission-request/{target}.jsonl")
+os.makedirs(os.path.dirname(inbox), exist_ok=True)
+row = {
+    "event": "permission_request", "req_id": req_id, "target": target,
+    "action": action, "context": os.environ.get("PR_CONTEXT", ""),
+    "requester": requester, "for_contract": os.environ.get("PR_FOR_ID", ""), "ts": ts,
+}
+with open(inbox, "a") as f:
+    f.write(json.dumps(row) + "\n")
+_append({**row, "id": f"permission-request-{req_id}"})
+print(f"")
+print(f"  === PERMISSION REQUESTED ===")
+print(f"  kind:        permission_request")
+print(f"  target:      {target}")
+print(f"  action:      {action}")
+print(f"  req_id:      {req_id}")
+print(f"  requester:   {requester}")
+if os.environ.get("PR_CONTEXT"):
+    print(f"  context:     {os.environ['PR_CONTEXT'][:200]}")
+if os.environ.get("PR_FOR_ID"):
+    print(f"  for_contract: {os.environ['PR_FOR_ID']}")
+print(f"  inbox:       {inbox}")
+print(f"  resolve:     contract permission grant {req_id}   (or: deny)")
+print(f"  wait_cmd:    python3 ~/.claude/skills/contract/scripts/wait-for-event.py --inbox permission-resolve --field req_id --equals {req_id} --timeout 0")
+print(f"")
+print(f"  Agent (Aiko voice for Eugene): 'I asked {target} to approve {action}. I'll finish when they say yes.'")
+print(f"  result: FAIL (awaiting permission grant)")
+sys.exit(1)
+PR_REQ_PY
+        ;;
+      grant|deny)
+        PR_REQ_ID="${1:-}"; PR_REASON="${2:-}"
+        [ -z "$PR_REQ_ID" ] && { echo "usage: contract permission $PR_SUB <req_id> [<reason>]" >&2; exit 2; }
+        PR_OP="$PR_SUB" PR_REQ_ID="$PR_REQ_ID" PR_REASON="$PR_REASON" PR_CLI_DIR="$PR_CLI_DIR" \
+        python3 <<'PR_RESOLVE_PY'
+import datetime, json, os, sys
+sys.path.insert(0, os.path.join(os.environ["PR_CLI_DIR"], "lib"))
+try:
+    from contract_core import current_agent, _append
+except ImportError:
+    current_agent = lambda: ""
+    _append = lambda r: None
+op = os.environ["PR_OP"]; req_id = os.environ["PR_REQ_ID"]
+reason = os.environ.get("PR_REASON", "")
+resolver = (current_agent() or "anonymous").strip()
+req_root = os.path.expanduser("~/.contracts/inbox/permission-request")
+match = None
+if os.path.isdir(req_root):
+    for fname in os.listdir(req_root):
+        try:
+            for line in open(os.path.join(req_root, fname)):
+                row = json.loads(line)
+                if row.get("req_id") == req_id:
+                    match = row; break
+        except (OSError, json.JSONDecodeError): pass
+        if match: break
+if not match:
+    print(f"  ERROR: no permission_request found with req_id={req_id}", file=sys.stderr)
+    sys.exit(1)
+target = match["target"]
+ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+resolve_inbox = os.path.expanduser(f"~/.contracts/inbox/permission-resolve/{target}.jsonl")
+os.makedirs(os.path.dirname(resolve_inbox), exist_ok=True)
+resolve_row = {
+    "event": "permission_resolve", "req_id": req_id, "target": target,
+    "action": match["action"], "verdict": op, "reason": reason,
+    "resolver": resolver, "for_contract": match.get("for_contract", ""), "ts": ts,
+}
+with open(resolve_inbox, "a") as f:
+    f.write(json.dumps(resolve_row) + "\n")
+_append({**resolve_row, "id": f"permission-resolve-{req_id}"})
+print(f"  req_id:    {req_id}")
+print(f"  target:    {target}")
+print(f"  action:    {match['action']}")
+print(f"  verdict:   {op.upper()}")
+print(f"  resolver:  {resolver}")
+if reason: print(f"  reason:    {reason}")
+if match.get("for_contract"):
+    print(f"  Ω1 hint:   bot should re-iterate contract {match['for_contract']} now")
+print(f"  result:    PASS ({op}ed)")
+PR_RESOLVE_PY
+        ;;
+      show)
+        PR_TARGET="${1:-}"
+        PR_TARGET="$PR_TARGET" PR_CLI_DIR="$PR_CLI_DIR" python3 <<'PR_SHOW_PY'
+import json, os, sys
+sys.path.insert(0, os.path.join(os.environ["PR_CLI_DIR"], "lib"))
+try:
+    from contract_core import resolve_identity
+except ImportError:
+    resolve_identity = lambda x: x
+raw = os.environ.get("PR_TARGET", "")
+req_root = os.path.expanduser("~/.contracts/inbox/permission-request")
+resolved_root = os.path.expanduser("~/.contracts/inbox/permission-resolve")
+resolved_ids = set()
+if os.path.isdir(resolved_root):
+    for fname in os.listdir(resolved_root):
+        try:
+            for line in open(os.path.join(resolved_root, fname)):
+                row = json.loads(line)
+                resolved_ids.add(row.get("req_id"))
+        except (OSError, json.JSONDecodeError): pass
+pending = []
+if os.path.isdir(req_root):
+    files = [os.path.join(req_root, f) for f in os.listdir(req_root)]
+    if raw:
+        target = resolve_identity(raw) or raw
+        files = [f for f in files if os.path.basename(f) == f"{target}.jsonl"]
+    for path in files:
+        try:
+            for line in open(path):
+                row = json.loads(line)
+                if row.get("req_id") not in resolved_ids:
+                    pending.append(row)
+        except (OSError, json.JSONDecodeError): pass
+print(f"  pending permission requests: {len(pending)}")
+for p in pending:
+    print(f"    {p['req_id']}  target={p['target']}  action={p['action']}  requester={p.get('requester','?')}  ts={p.get('ts','?')}")
+    if p.get("context"): print(f"       context: {p['context'][:120]}")
+PR_SHOW_PY
+        ;;
+      ""|*)
+        cat >&2 <<'PRUSAGE'
+usage: contract permission request <target> <action> [--context T] [--for-id C] [--requester R]
+       contract permission grant <req_id> [<reason>]
+       contract permission deny  <req_id> [<reason>]
+       contract permission show  [<target>]
+PRUSAGE
+        exit 2 ;;
+    esac
+    ;;
   rbac)
     # contract rbac check <identity> <action>
     # contract rbac grant <role> <action> [<action>...]
