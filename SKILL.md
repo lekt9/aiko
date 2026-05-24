@@ -197,9 +197,9 @@ contract learn "<insight>" [--source <ref>]
 
 `contract drive <organ-id>` arms an internal sentinel + Stop/SessionStart hook bus so the loop re-fires across turns without human prompts. State at `~/.contracts/{.drive_active, drive_next.txt}`; survives runtime restarts. Disarms on `contract disarm` or organ completion. KEY 2 stays agent-judged — drive removes the pause, not the judgment. Standing-gate: `31a7612c`.
 
-## Drill (synchronous in-thread while-loop over N targets)
+## Σ12 — drill-is-default (drill removed as a verb)
 
-`contract drill <id> [<id>...] [--auto-mark-cells] [--auto-judge] [--max-waves N] [--outer-rounds N]` blocks in-thread and loops across N targets until each settles (`satisfied`/`merged`/`rejected`) or budget exhausts. Already-settled targets are no-ops. `--auto-mark-cells` auto-marks mechanical cells exit-0 with `--proof-skip`. `--auto-judge` delegates KEY 2 to Λ1. Plan-fulfillment proof preserved; bare marks still refused. Ω1 unblock-rewake fires across outer rounds. Standing-gate: `7af4e88b`. Verb-gate: `verb-gates/drill/verify.sh`.
+Drill semantics (loop-until-settle across N targets) are the **default** of `iterate` + drive-mode (`31a7612c`) + Ω4 auto-iterate-parent (`f3ef32ad`) + plan-fulfillment proof (`173c8819`). No standalone `drill` verb — `contract drill <id>` redirects to `contract iterate <id>` per id with a Σ12 deprecation banner. Composes with Σ11 (`af9c06a5`): verbs are all gone because they're /contract; drill was a verb pretending to be a behavior. Standing-gate: `86fea3e9` (supersedes `7af4e88b` in intent — cross-store edge not bound).
 
 ## Crystallizing learnings (memory + Outline)
 
