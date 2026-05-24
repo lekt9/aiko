@@ -8255,7 +8255,7 @@ for r in _rows():
             if t < cutoff: continue
         except Exception: continue
     if ref_id and r.get('id') != ref_id: continue
-    if for_canon and resolve_identity(r.get('agent') or '') != for_canon: continue
+    if for_canon and _canon(r.get('agent') or '') != for_canon: continue
     filtered.append(r)
 
 agg = {}
