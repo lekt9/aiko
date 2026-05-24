@@ -893,6 +893,12 @@ A `contract judge` HOLD/REJECT verdict scans its reason text for `<8hex>` contra
 
 **Φ4** (`a301cb7c`) — aiko cells inherit Ω4 + Σ9 by Φ3 (`cd241a16`): same ledger, same hook bus, no separate aiko-hook needed. Binds: aiko follows /contract chain behavior via shape identity, not duplicated code.
 
+**Σ10** (`117928f7`) — every CLI verb (not just iterate/mark/declare) fires `_fire_contract_hooks "verb" <cmd>` so the substrate goes deep into itself recursively. Long-tail verbs (list/status/search/alias/audit/watch/channel/env-bind/…) and plugin fallthrough verbs all join the bus. Gate: `verb-gates/sigma10-universal-verb/`.
+
+**Ω5** (`78d43337`) — `contract layer "<text>"` classifies a request at L0/L1/L2/L3/L4 with tiebreak preferring higher ladder layer; surfaces human-replicating resolution order (L4→L3→L2→L1→L0). Substrate surfaces, agent judges — no script bakes the verdict. Gate: `verb-gates/layer/`.
+
+**Ω6** (`dc13b225`) — `contract face` emits identity+personality manifest JSON (Aiko public face, Σ1 attribution, 7 voice load-bearing rules, humanlike Ε/Σ/Α dimensions, layer_routing by audience tier, standing-gate refs). Transports and Λ1 attach as system prompt so every LLM call carries the agent's face. Gate: `verb-gates/face/`.
+
 ## Ψ4 — async watcher (programmatic wait for external state)
 
 `contract watch <id> [--probe "<cmd>"] [--interval <s>]` registers a periodic poller at `~/.contracts/watchers/<id>.json`. `contract watch tick` runs one cycle: probe-FAIL keeps watching; probe-PASS (or no-probe) writes to `~/.contracts/inbox/watcher/<id>.jsonl`, auto-iterates the contract, removes the watcher (one-shot, like apoptosis). Internal hook `~/.contracts/hooks/watch-tick.sh` fires on every iterate/_mark, advancing pending watchers without a cron. Composes with Ω1: external-state flips wake the dependency graph automatically. Standing-gate: `21f1d851`. Verb-gate: `verb-gates/watch/verify.sh`.
