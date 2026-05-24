@@ -8847,6 +8847,218 @@ print(f"  contract iterate <id>                          # any contract action r
 EB_PY
     ;;
 
+  channel)
+    # Channels-as-fractal-contracts (extends "Three event channels"):
+    # each named receptor channel is itself a /contract whose row carries
+    # its source-of-truth pointer. External channels (telegram, stripe,
+    # github-webhook) bind to upstream API docs URLs. Internal channels
+    # (mail, agent, claims, sessions, watcher) bind to existing substrate
+    # doctrine rows via contract:<id>. Substrate enables — surfaces the
+    # source pointer + inbox row count; never auto-generates injector code.
+    # Standing-gate: bc04b571.
+    CH_SUB="${1:-}"; shift || true
+    CH_CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    case "$CH_SUB" in
+      declare)
+        CH_NAME="${1:-}"; shift || true
+        CH_SOURCE=""; CH_KIND=""
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --source) shift; CH_SOURCE="${1:-}"; shift ;;
+            --kind) shift; CH_KIND="${1:-}"; shift ;;
+            *) echo "ERROR: unknown arg '$1'" >&2; exit 2 ;;
+          esac
+        done
+        if [ -z "$CH_NAME" ] || [ -z "$CH_SOURCE" ]; then
+          echo "usage: contract channel declare <name> --source <url|contract:id> [--kind external|internal]" >&2
+          exit 2
+        fi
+        CH_NAME="$CH_NAME" CH_SOURCE="$CH_SOURCE" CH_KIND="$CH_KIND" CH_CLI_DIR="$CH_CLI_DIR" python3 <<'CH_DECL_PY'
+import datetime, json, os, sys
+sys.path.insert(0, os.path.join(os.environ["CH_CLI_DIR"], "lib"))
+try:
+    from contract_core import _append, _rows, current_agent
+except ImportError:
+    print("FATAL: contract_core not importable", file=sys.stderr); sys.exit(3)
+
+name = os.environ["CH_NAME"]
+source = os.environ["CH_SOURCE"]
+kind = os.environ["CH_KIND"]
+# Infer kind from source shape if not given
+if not kind:
+    kind = "internal" if source.startswith("contract:") else "external"
+if kind not in ("internal", "external"):
+    print(f"ERROR: --kind must be internal|external (got '{kind}')", file=sys.stderr); sys.exit(2)
+# Resolve internal doctrine refs — strip the contract: prefix for the row, keep the raw too
+doctrine_ref = source[len("contract:"):] if source.startswith("contract:") else None
+inbox_path = os.path.expanduser(f"~/.contracts/inbox/{name}")
+
+# Idempotency: scan for an existing channel_bound row on this name
+existing = None
+for r in _rows():
+    if r.get("event") == "channel_bound" and r.get("name") == name:
+        existing = r
+
+surfaces = {"source": source, "kind": kind, "doctrine_ref": doctrine_ref, "inbox_path": inbox_path}
+
+if existing and {k: existing.get(k) for k in surfaces} == surfaces:
+    print(f"=== CHANNEL BIND (already bound, no change) ===")
+    print(f"  name:        {name}")
+    print(f"  bound_at:    {existing.get('ts')}")
+else:
+    ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    agent = (current_agent() or "anonymous").strip()
+    row = {
+        "event": "channel_bound", "name": name,
+        "source": source, "kind": kind, "doctrine_ref": doctrine_ref,
+        "inbox_path": inbox_path, "ts": ts, "agent": agent,
+    }
+    _append(row)
+    label = "re-bound" if existing else "bound"
+    print(f"=== CHANNEL BIND ({label}) ===")
+    print(f"  name:        {name}")
+    print(f"  ts:          {ts}")
+
+print(f"  kind:        {kind}")
+print(f"  source:      {source}")
+if doctrine_ref:
+    print(f"  doctrine:    contract:{doctrine_ref}   (run 'contract status {doctrine_ref}' for full prose)")
+print(f"  inbox_path:  {inbox_path}")
+print()
+print(f"NEXT:")
+print(f"  contract channel inspect {name}    # see binding + tail latest inbox rows")
+print(f"  contract channel list              # see all bound channels")
+CH_DECL_PY
+        ;;
+      list)
+        CH_CLI_DIR="$CH_CLI_DIR" python3 <<'CH_LIST_PY'
+import json, os, sys
+sys.path.insert(0, os.path.join(os.environ["CH_CLI_DIR"], "lib"))
+try:
+    from contract_core import _rows
+except ImportError:
+    _rows = lambda: []
+
+# Last channel_bound row per name (idempotent re-binds use latest state)
+bound = {}
+for r in _rows():
+    if r.get("event") == "channel_bound" and r.get("name"):
+        bound[r["name"]] = r
+
+inbox_root = os.path.expanduser("~/.contracts/inbox")
+# Also surface unbound inbox dirs (filesystem channels with no contract row)
+unbound = []
+if os.path.isdir(inbox_root):
+    for entry in sorted(os.listdir(inbox_root)):
+        full = os.path.join(inbox_root, entry)
+        if os.path.isdir(full) and entry not in bound:
+            unbound.append(entry)
+
+def count_rows(inbox_path):
+    if not os.path.isdir(inbox_path): return 0
+    n = 0
+    for f in os.listdir(inbox_path):
+        if f.endswith(".jsonl"):
+            try:
+                with open(os.path.join(inbox_path, f)) as h:
+                    n += sum(1 for _ in h)
+            except: pass
+    return n
+
+print(f"=== CHANNEL LIST ({len(bound)} bound, {len(unbound)} unbound) ===")
+print()
+for name in sorted(bound.keys()):
+    r = bound[name]
+    rows_n = count_rows(r.get("inbox_path", os.path.join(inbox_root, name)))
+    src = r.get("source", "?")
+    src_short = src[:60] + "…" if len(src) > 60 else src
+    print(f"  {name:20s}  kind={r.get('kind','?'):8s}  rows={rows_n:>5}  source={src_short}")
+if unbound:
+    print()
+    print(f"UNBOUND (filesystem inbox exists, no contract row):")
+    for name in unbound:
+        rows_n = count_rows(os.path.join(inbox_root, name))
+        print(f"  {name:20s}  rows={rows_n:>5}   → contract channel declare {name} --source <url|contract:id>")
+CH_LIST_PY
+        ;;
+      inspect)
+        CH_NAME="${1:-}"; CH_LIMIT="${2:-5}"
+        if [ -z "$CH_NAME" ]; then
+          echo "usage: contract channel inspect <name> [limit=5]" >&2; exit 2
+        fi
+        CH_NAME="$CH_NAME" CH_LIMIT="$CH_LIMIT" CH_CLI_DIR="$CH_CLI_DIR" python3 <<'CH_INSP_PY'
+import json, os, sys
+sys.path.insert(0, os.path.join(os.environ["CH_CLI_DIR"], "lib"))
+try:
+    from contract_core import _rows
+except ImportError:
+    _rows = lambda: []
+name = os.environ["CH_NAME"]
+limit = int(os.environ.get("CH_LIMIT", "5"))
+
+# Latest binding row
+binding = None
+for r in _rows():
+    if r.get("event") == "channel_bound" and r.get("name") == name:
+        binding = r
+
+inbox_path = (binding or {}).get("inbox_path") or os.path.expanduser(f"~/.contracts/inbox/{name}")
+
+print(f"=== CHANNEL INSPECT: {name} ===")
+if binding:
+    print(f"  bound_at:    {binding.get('ts')}")
+    print(f"  kind:        {binding.get('kind','?')}")
+    print(f"  source:      {binding.get('source','?')}")
+    if binding.get("doctrine_ref"):
+        print(f"  doctrine:    contract:{binding['doctrine_ref']}")
+    print(f"  agent:       {binding.get('agent','?')}")
+else:
+    print(f"  (no channel_bound row found — filesystem-only channel)")
+    print(f"  → contract channel declare {name} --source <url|contract:id>")
+print(f"  inbox_path:  {inbox_path}")
+
+# Tail latest N rows across all .jsonl files in the inbox
+rows = []
+if os.path.isdir(inbox_path):
+    for f in sorted(os.listdir(inbox_path)):
+        if not f.endswith(".jsonl"): continue
+        try:
+            with open(os.path.join(inbox_path, f)) as h:
+                for line in h:
+                    try:
+                        rows.append((f, json.loads(line)))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+print()
+print(f"  TAIL (last {min(limit, len(rows))} of {len(rows)} rows):")
+if not rows:
+    print(f"    (no rows in any .jsonl under {inbox_path})")
+else:
+    for src, r in rows[-limit:]:
+        keys = sorted(r.keys())
+        head = ", ".join(f"{k}={str(r[k])[:30]}" for k in keys[:4])
+        print(f"    [{src}]  {head}")
+CH_INSP_PY
+        ;;
+      *)
+        cat >&2 <<'CHUSAGE'
+usage: contract channel declare <name> --source <url|contract:id> [--kind external|internal]
+       contract channel list
+       contract channel inspect <name> [limit=5]
+
+Channels are receptors with internal structure: each named inbox channel is
+a contract carrying its source-of-truth pointer. External channels bind to
+upstream API docs URLs; internal channels bind to substrate doctrine rows
+via contract:<id>. Substrate emits the pointer; agent reads the docs.
+Standing-gate: bc04b571.
+CHUSAGE
+        exit 2 ;;
+    esac
+    ;;
+
   *)
     # plugin fallthrough — if ~/.contracts/lib/verbs/$cmd is executable, exec it.
     # This is the convention: substrate-level helpers ship as plugin verbs in the
