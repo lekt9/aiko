@@ -1202,6 +1202,15 @@ def pr(node, depth=0):
 t=get_tree(os.environ['MH_ID'])
 pr(t) if t else print('  contract not found')
 "
+      # ε9 VERB-COMPOSITION (doctrine fa801cd4): cite next-action verbs
+      # the agent can run on this contract id without recall.
+      echo ""
+      echo "=== RELATED VERBS ==="
+      echo "  → contract iterate $ID         # advance / re-verify"
+      echo "  → contract cost --ref $ID      # tokens spent on this contract"
+      echo "  → contract lineage $ID         # parent_id chain to root"
+      echo "  → contract graph $ID           # parents + children + corroborate edges"
+      echo "  → contract context $ID         # JSON envelope (upstream chain + last iterations)"
     fi
     ;;
 
