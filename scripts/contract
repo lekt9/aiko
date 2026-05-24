@@ -513,6 +513,26 @@ except Exception:
     return $sandbox_exit
   fi
 
+  # runpod: pointer (alternative-backend serverless execution).
+  # Plank 1 of DEFERRED-MEGA-VISION 386497eb. Same lifecycle shape as sandbox:
+  # (auth → POST → result → return code), different upstream — RunPod serverless
+  # /v2/<endpoint_id>/runsync. The endpoint is preconfigured by the user at
+  # runpod.io/console/serverless; this pointer dispatches an intent to it.
+  if [[ "$action" == runpod:* ]]; then
+    local runpod_spec="${action#runpod:}"
+    local runpod_endpoint="${runpod_spec%%:*}"
+    local runpod_intent="${runpod_spec#*:}"
+    if [ -z "$runpod_endpoint" ] || [ "$runpod_endpoint" = "$runpod_spec" ] || [ -z "$runpod_intent" ]; then
+      echo "  result: ERROR — runpod: action must be 'runpod:<endpoint_id>:<intent>' (got: $action)"
+      return 1
+    fi
+    local _cli_dir_rp
+    _cli_dir_rp="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    python3 "$_cli_dir_rp/lib/runpod_layer.py" "$runpod_endpoint" "$runpod_intent"
+    local runpod_exit=$?
+    return $runpod_exit
+  fi
+
   # sequence: an ORDERED funnel. Satisfied when every child is satisfied
   # (same AND-gate as funnel), but iterate names the first unsatisfied child
   # in declared order as the current stage — the Genesis-days arc. Ordering
