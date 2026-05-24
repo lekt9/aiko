@@ -7456,6 +7456,126 @@ print('KEY 2 (agent): is the decomposition genuine? Run the commands above OR su
 PY
     ;;
 
+  summon|aiko)
+    # contract summon "<message>" [--to <identity>] [--reason <context>]
+    # — Aiko self-instantiation primitive. Wraps the existing Σ2 (audience)
+    # + Σ4 (agent:<id>) + inbox-write primitives into one call so the
+    # substrate's public persona can appear at any point in any flow
+    # without the agent manually composing 4 declare flags + an inbox-write.
+    #
+    # The substrate doctrine "public face IS Aiko" (contract 1bed8068) makes
+    # every public-audience contract row Aiko-voiced. `summon` is the verb
+    # that creates such rows on demand: a transport (telegram bot, web app,
+    # panel) tailing the routed identity's inbox sees the new row + renders
+    # Aiko in client-native generative-UI on that surface.
+    #
+    # Defaults:
+    #   --to       canonical identity to route to (default: $CONTRACT_AGENT
+    #              or git config user.email — the "ambient user")
+    #   --reason   one-line context for KEY 2 readers
+    #
+    # The action is "agent:<identity>" — Σ4 routes the action; the named
+    # agent (Σ3-canonical match) iterates in-thread; everyone else sees the
+    # === ROUTED === requirement-block + an inbox row at
+    # ~/.contracts/inbox/agent/<id>.jsonl. Audience is "public" so the row
+    # speaks Aiko's voice on every transport that renders it.
+    MSG="${1:-}"
+    shift || true
+    TO="${CONTRACT_AGENT:-$(git config user.email 2>/dev/null || echo lewis@getfoundry.app)}"
+    REASON=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --to)     TO="${2:-$TO}"; shift 2 ;;
+        --reason) REASON="${2:-}"; shift 2 ;;
+        --help|-h)
+          cat >&2 <<'USAGE'
+contract summon "<message>" [--to <identity>] [--reason <context>]
+
+Aiko self-instantiation. Declares a public-audience contract row routed
+to a named identity via Σ4; transports tailing that identity's inbox
+render Aiko at that point in their flow.
+
+Examples:
+  contract summon "I noticed the deploy succeeded — want me to push docs?"
+  contract summon "Login flow broke at the redirect step" --to lewis@getfoundry.app
+  contract summon "Daily summary ready" --reason "scheduled morning cadence"
+
+Outputs:
+  - one declared contract row with --audience public + --action agent:<to>
+  - one inbox row at ~/.contracts/inbox/agent/<to>.jsonl (Σ4 fan-out)
+  - the contract id (stdout) — transport adapters use this to reference
+    the conversation point Aiko just appeared at
+USAGE
+          exit 0
+          ;;
+        *) echo "ERROR: unknown summon flag: $1" >&2; exit 2 ;;
+      esac
+    done
+    if [ -z "$MSG" ]; then
+      echo "ERROR: contract summon requires a <message> as positional arg" >&2
+      echo "  See: contract summon --help" >&2
+      exit 2
+    fi
+    # Construct the plan text. Aiko speaks first-person; the reason (if
+    # given) is a substrate-internal annotation for the audit trail.
+    PLAN="$MSG"
+    [ -n "$REASON" ] && PLAN="${PLAN}
+
+(summon context: ${REASON})"
+
+    NEW_ID=$(CONTRACT_AGENT="$TO" bash "$0" declare "$PLAN" \
+      --action "agent:$TO" \
+      --audience public \
+      --no-drive 2>&1 | grep -oE "^declared: [0-9a-f]{8}" | head -1 | awk '{print $2}')
+
+    if [ -z "$NEW_ID" ]; then
+      echo "ERROR: failed to declare summon contract" >&2
+      exit 1
+    fi
+
+    # Σ4 inbox write: this is what transports tail to render Aiko at the
+    # right moment. The agent:<id> action handler already does this on
+    # iterate, but for the summon UX we want the inbox row at DECLARE time
+    # so transports see Aiko's appearance before any iterate happens.
+    INBOX_DIR="$HOME/.contracts/inbox/agent"
+    mkdir -p "$INBOX_DIR"
+    INBOX_FILE="$INBOX_DIR/${TO}.jsonl"
+    TS=$(date -u +%FT%TZ)
+    # Use python for safe JSON serialization of the message (handles quotes/newlines).
+    PLAN="$PLAN" TO="$TO" NEW_ID="$NEW_ID" REASON="$REASON" TS="$TS" python3 <<'PY' >> "$INBOX_FILE"
+import json, os
+row = {
+    "event": "summoned",
+    "target_canonical": os.environ["TO"],
+    "contract_id": os.environ["NEW_ID"],
+    "plan": os.environ["PLAN"],
+    "audience": "public",
+    "voice": "aiko",
+    "summon_reason": os.environ.get("REASON", ""),
+    "ts": os.environ["TS"],
+}
+print(json.dumps(row))
+PY
+
+    cat <<EOF
+=== AIKO SUMMONED ===
+  contract id:  $NEW_ID
+  routed to:    $TO
+  audience:     public  (Aiko voice — first-person feminine, no jargon)
+  inbox:        $INBOX_FILE
+
+Aiko-voice prose (transport renders this to the user-facing surface):
+  "$MSG"
+
+Next:
+  - transport adapter tailing the inbox renders this turn in Aiko's voice
+  - iterating the contract (when the named agent acts on it) marks it satisfied
+  - other contracts can reference it via 'contract:$NEW_ID'
+
+The substrate's public face is Aiko; the contract id is the conversation point.
+EOF
+    ;;
+
   *)
     echo "unknown subcommand: $cmd" >&2
     bash "$0" help >&2
