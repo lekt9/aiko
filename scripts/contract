@@ -4163,7 +4163,7 @@ print(f"  steps:       0/{total}")
 if os.environ.get("MA_FOR_ID"):
     print(f"  for_contract: {os.environ['MA_FOR_ID']}")
 print(f"  inbox:       {inbox}")
-print(f"  next:        contract mail step-next {mail_id}   (recipient/bot assigns + starts step 1)")
+print(f"  next:        contract mailbox step-next {mail_id}   (recipient/bot assigns + starts step 1)")
 print(f"  result:      PASS (mail sent + audit row appended)")
 MA_SEND_PY
         ;;
@@ -4260,7 +4260,7 @@ MA_READ_PY
             *) echo "ERROR: unknown arg '$1'" >&2; exit 2 ;;
           esac
         done
-        [ -z "$MA_ID" ] || [ -z "$MA_PROOF" ] && { echo "usage: contract mail step-complete <mail-id> --proof <evidence>" >&2; exit 2; }
+        [ -z "$MA_ID" ] || [ -z "$MA_PROOF" ] && { echo "usage: contract mailbox step-complete <mail-id> --proof <evidence>" >&2; exit 2; }
         MA_ID="$MA_ID" MA_PROOF="$MA_PROOF" MA_CLI_DIR="$MA_CLI_DIR" python3 <<'MA_DONE_PY'
 import datetime, json, os, sys
 sys.path.insert(0, os.path.join(os.environ["MA_CLI_DIR"], "lib"))
@@ -4304,13 +4304,13 @@ print(f"  detached:     YES (assigned_agent cleared — next agent attaches via 
 if step_num >= total:
     print(f"  state:        COMPLETED (all {total} steps done)")
 else:
-    print(f"  next:         contract mail step-next {mid}   (assigns step {step_num+1})")
+    print(f"  next:         contract mailbox step-next {mid}   (assigns step {step_num+1})")
 print(f"  result:       PASS")
 MA_DONE_PY
         ;;
       step-next)
         MA_ID="${1:-}"
-        [ -z "$MA_ID" ] && { echo "usage: contract mail step-next <mail-id>" >&2; exit 2; }
+        [ -z "$MA_ID" ] && { echo "usage: contract mailbox step-next <mail-id>" >&2; exit 2; }
         MA_ID="$MA_ID" MA_CLI_DIR="$MA_CLI_DIR" python3 <<'MA_NEXT_PY'
 import datetime, json, os, sys
 sys.path.insert(0, os.path.join(os.environ["MA_CLI_DIR"], "lib"))
@@ -4334,7 +4334,7 @@ if not sent:
 if completed >= sent.get("total_steps", 1):
     print(f"  ERROR: mail {mid} already at completion ({completed}/{sent.get('total_steps')})", file=sys.stderr); sys.exit(1)
 if last_assign and last_assign.get("ts", "") > last_complete_ts:
-    print(f"  ERROR: mail {mid} still assigned to {last_assign.get('agent')} (step {last_assign.get('step')} not complete) — finish detach via 'mail step-complete {mid} --proof' first", file=sys.stderr); sys.exit(1)
+    print(f"  ERROR: mail {mid} still assigned to {last_assign.get('agent')} (step {last_assign.get('step')} not complete) — finish detach via 'mailbox step-complete {mid} --proof' first", file=sys.stderr); sys.exit(1)
 next_step = completed + 1
 _append({
     "event": "mail_step_assigned", "id": f"mail-{mid}-assign-{next_step}",
@@ -4350,7 +4350,7 @@ if completed:
     for r in _rows():
         if r.get("mail_id") == mid and r["event"] == "mail_step_complete":
             print(f"    step {r.get('step')}: {(r.get('proof') or '')[:100]}")
-print(f"  next:         do step {next_step}, then 'contract mail step-complete {mid} --proof <evidence>'")
+print(f"  next:         do step {next_step}, then 'contract mailbox step-complete {mid} --proof <evidence>'")
 print(f"  result:       PASS (attached + cold-read brief surfaced)")
 MA_NEXT_PY
         ;;
