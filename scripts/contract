@@ -3682,12 +3682,9 @@ else:
         print('  ' + label + ' ' + cid + '  \"' + plan + '\"')
         print('    -> contract iterate ' + cid)
 
-# Ω3 — ROOT REWAKE: the wavefront walks up the parent chain to the original
-# /contract invocation root. While the root is still pending, every leaf/organ
-# satisfaction re-surfaces the root with an iterate hint, binding the doctrine
-# "hooks chain back to the original /contract until the original resolves."
-# The substrate surfaces; KEY 2 stays with the agent on the root mark.
-print('DBG-OMEGA3', wf.get('root'))
+# Ω3 ROOT REWAKE: walk parent chain to original /contract invocation root.
+# While root pending, every satisfaction re-surfaces it with iterate hint.
+# Binds doctrine: chain hooks back to original until original resolves.
 if wf.get('root'):
     rid = wf['root']
     rc = get(rid)
