@@ -1,0 +1,6 @@
+# scope.txt — corpora that the hook-binding audit applies to.
+# One path per line. Globs are expanded; comments (#) and blank lines ignored.
+# The audit walks every *.py and *.sh in each path.
+
+# The single hook directory — substrate-wide.
+~/.contracts/hooks
