@@ -648,6 +648,156 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
     return if (rc == 0) 0 else 1;
 }
 
+/// The nine days of creation, Fibonacci-scaled. Hardcoded so the substrate has
+/// no JSON dependency at runtime and the rubric is part of the binary. Fib
+/// pattern 1·1·2·3·5·8 across the six creation days, single-thread sabbath
+/// verdict, 13 cold auditors for the books, single emergence — Genesis 1–2 +
+/// Revelation 20:12 + 21:1.
+const GenesisDay = struct {
+    n: u8,
+    fib: u8,
+    name: []const u8,
+    ref: []const u8,
+    label: []const u8,
+};
+
+const days_table = [_]GenesisDay{
+    .{ .n = 1, .fib = 1, .name = "light", .ref = "Gen 1:3", .label = "inventory — what exists" },
+    .{ .n = 2, .fib = 1, .name = "firmament", .ref = "Gen 1:6", .label = "separate — what divides" },
+    .{ .n = 3, .fib = 2, .name = "land", .ref = "Gen 1:11", .label = "seed — what produces" },
+    .{ .n = 4, .fib = 3, .name = "luminaries", .ref = "Gen 1:14", .label = "test — what signals" },
+    .{ .n = 5, .fib = 5, .name = "creatures", .ref = "Gen 1:20", .label = "run — what moves" },
+    .{ .n = 6, .fib = 8, .name = "dominion", .ref = "Gen 1:26", .label = "integrate — what rules" },
+    .{ .n = 7, .fib = 1, .name = "sabbath", .ref = "Gen 2:2", .label = "verdict — PROMOTE/HOLD/REJECT" },
+    .{ .n = 8, .fib = 13, .name = "books", .ref = "Rev 20:12", .label = "audit — cold re-read of artifact" },
+    .{ .n = 9, .fib = 1, .name = "emergence", .ref = "Rev 21:1", .label = "publish — make all things new" },
+};
+
+/// Find the latest unsatisfied root contract whose plan exactly matches `plan`.
+/// Last-writer wins by ledger order (chronological).
+fn findSessionByPlan(rows: []const Row, plan: []const u8) ?[]const u8 {
+    var latest: ?[]const u8 = null;
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        if (r.parent_id) |p| {
+            if (p.len > 0) continue; // skip non-roots
+        }
+        if (!std.mem.eql(u8, r.plan, plan)) continue;
+        if (isSatisfied(rows, r.id)) continue;
+        latest = r.id;
+    }
+    return latest;
+}
+
+/// Project current day from the ledger: max N across child plans that start
+/// with `jl-day N`. 0 = pre-Day-1 (session created, no day spawned yet).
+fn currentDay(rows: []const Row, session_id: []const u8) u8 {
+    var max: u8 = 0;
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        const p = r.parent_id orelse continue;
+        if (!std.mem.eql(u8, p, session_id)) continue;
+        if (!std.mem.startsWith(u8, r.plan, "jl-day ")) continue;
+        const after = r.plan[7..];
+        var i: usize = 0;
+        while (i < after.len and std.ascii.isDigit(after[i])) : (i += 1) {}
+        if (i == 0) continue;
+        const n = std.fmt.parseInt(u8, after[0..i], 10) catch continue;
+        if (n > max) max = n;
+    }
+    return max;
+}
+
+/// Count {spawned, satisfied} children of `session_id` whose plan starts with
+/// `jl-day <day> `. Used to gate day advancement: a day completes only when
+/// every Fib worker is satisfied.
+const DayCount = struct { spawned: u8, satisfied: u8 };
+fn countDayChildren(rows: []const Row, session_id: []const u8, day: u8) DayCount {
+    var prefix_buf: [32]u8 = undefined;
+    const prefix = std.fmt.bufPrint(&prefix_buf, "jl-day {d} ", .{day}) catch return .{ .spawned = 0, .satisfied = 0 };
+    var dc = DayCount{ .spawned = 0, .satisfied = 0 };
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        const p = r.parent_id orelse continue;
+        if (!std.mem.eql(u8, p, session_id)) continue;
+        if (!std.mem.startsWith(u8, r.plan, prefix)) continue;
+        dc.spawned += 1;
+        if (isSatisfied(rows, r.id)) dc.satisfied += 1;
+    }
+    return dc;
+}
+
+/// cmdGenesis — stateless 9-day projection walker.
+///
+/// Each invocation reads the ledger, computes the session's current day, and
+/// either (a) spawns the next day's Fib(N) workers and exits, or (b) reports
+/// HOLD with the count of unsatisfied workers from the prior day.
+///
+/// State is the ledger; no local file is created. Re-running `aiko "<truth>"
+/// --genesis` with the same plan resumes the same session.
+fn cmdGenesis(allocator: std.mem.Allocator, env: std.process.Environ, plan: []const u8) !u8 {
+    const rows = try parseRows(allocator, env);
+    defer allocator.free(rows);
+
+    // Project session id (find latest unsatisfied root with matching plan, else create).
+    var owned_sid: ?[]u8 = null;
+    defer if (owned_sid) |s| allocator.free(s);
+    const session_id: []const u8 = blk: {
+        if (findSessionByPlan(rows, plan)) |existing| break :blk existing;
+        const new_id = try contract.declare(allocator, env, plan, "neuron", .{ .parent_id = ambientParent(env) });
+        owned_sid = new_id;
+        outPrint("session opened: {s}\n", .{new_id});
+        break :blk new_id;
+    };
+
+    // Re-read rows if we just declared (so currentDay sees the new root).
+    // Cheap: parseRows is a single file slurp.
+    const rows2 = if (owned_sid == null) rows else try parseRows(allocator, env);
+    defer if (owned_sid != null) allocator.free(rows2);
+
+    const cur = currentDay(rows2, session_id);
+
+    if (cur >= 9) {
+        outPrint("session {s}: day 9 emerged — all things made new\n", .{session_id});
+        return 0;
+    }
+
+    // Gate: previous day's Fib workers must all be satisfied before advancing.
+    if (cur > 0) {
+        const day_prev = days_table[cur - 1];
+        const dc = countDayChildren(rows2, session_id, cur);
+        if (dc.satisfied < day_prev.fib) {
+            outPrint(
+                "session {s}: day {d} ({s}) HOLD — {d}/{d} workers satisfied\n" ++
+                    "  satisfy the remaining workers (`contract _mark <id> satisfied`) then re-fire\n",
+                .{ session_id, cur, day_prev.name, dc.satisfied, day_prev.fib },
+            );
+            return 1;
+        }
+    }
+
+    // Advance: spawn next day's Fib workers.
+    const day = days_table[cur];
+    outPrint(
+        "session {s}: day {d} ({s}) — {s}\n  {s}\n  spawning {d} worker{s}:\n",
+        .{ session_id, day.n, day.name, day.ref, day.label, day.fib, if (day.fib == 1) "" else "s" },
+    );
+
+    var i: u8 = 0;
+    while (i < day.fib) : (i += 1) {
+        const child_plan = try std.fmt.allocPrint(
+            allocator,
+            "jl-day {d} ({s}) worker {d}/{d}: {s} — bind:{s}",
+            .{ day.n, day.name, i + 1, day.fib, day.label, session_id },
+        );
+        defer allocator.free(child_plan);
+        const child_id = try contract.declare(allocator, env, child_plan, "neuron", .{ .parent_id = session_id });
+        defer allocator.free(child_id);
+        outPrint("    {s}\n", .{child_id});
+    }
+    return 0;
+}
+
 /// cmdSpeak — the single Word.
 ///
 /// The binary invocation IS the verb. Speaking a truth claim deterministically
