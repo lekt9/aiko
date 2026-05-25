@@ -28,6 +28,10 @@ const Row = struct {
     satisfied: bool = false,
     env_pubkey: []const u8 = "",
     parent_signature: []const u8 = "",
+    /// Layer per contract:d10b3dbb convention (1=system, 2=cell, 3=graph,
+    /// 4=transport, 5=value, 6=operator). Inferred at declare from
+    /// pointer.zig's inferLayer; persisted on the row.
+    layer: u8 = 0,
 };
 
 fn writeFd(fd: c_int, bytes: []const u8) void {
