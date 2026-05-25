@@ -269,6 +269,62 @@ fn runShell(allocator: std.mem.Allocator, action: []const u8, cwd: []const u8) !
     return 1;
 }
 
+/// Run a shell command and capture combined stdout+stderr as a string, plus
+/// the exit code. Used by neuron resolvers so the parent neuron's `result`
+/// field carries the actual body output, not just a status label — that's
+/// the recursive context-aggregation channel.
+const ShellOutput = struct { rc: i32, output: []u8 };
+
+fn runShellCapture(allocator: std.mem.Allocator, action: []const u8, cwd: []const u8) !ShellOutput {
+    var argv = [_][]const u8{ "/bin/sh", "-c", action };
+    var child = std.process.Child.init(&argv, allocator);
+    if (cwd.len > 0) child.cwd = cwd;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+    var stdout_buf: std.ArrayList(u8) = .empty;
+    var stderr_buf: std.ArrayList(u8) = .empty;
+    defer stdout_buf.deinit(allocator);
+    defer stderr_buf.deinit(allocator);
+    try child.collectOutput(allocator, &stdout_buf, &stderr_buf, 64 * 1024);
+    const term = try child.wait();
+    var combined: std.ArrayList(u8) = .empty;
+    try combined.appendSlice(allocator, stdout_buf.items);
+    if (stderr_buf.items.len > 0) {
+        if (combined.items.len > 0) try combined.append(allocator, '\n');
+        try combined.appendSlice(allocator, stderr_buf.items);
+    }
+    const rc: i32 = switch (term) {
+        .Exited => |c| @intCast(c),
+        .Signal, .Stopped, .Unknown => 1,
+    };
+    return .{ .rc = rc, .output = try combined.toOwnedSlice(allocator) };
+}
+
+/// Gather the latest `result` text of each direct child of `parent_id` and
+/// concatenate them, prefixed by child id. This becomes the parent's evidence
+/// when its neuron-aggregator fires — children's stdout flows up the tree.
+fn aggregateChildOutputs(allocator: std.mem.Allocator, rows: []const Row, parent_id: []const u8) ![]u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    const ids = try childIds(allocator, rows, parent_id);
+    defer allocator.free(ids);
+    for (ids) |cid| {
+        // Find latest iteration row with a result for this child.
+        var i: usize = rows.len;
+        while (i > 0) : (i -= 1) {
+            const r = rows[i - 1];
+            if (!std.mem.eql(u8, r.id, cid)) continue;
+            if (r.result.len == 0) continue;
+            const line = try std.fmt.allocPrint(allocator, "[{s}] {s}\n", .{ cid, r.result });
+            defer allocator.free(line);
+            try buf.appendSlice(allocator, line);
+            break;
+        }
+    }
+    return try buf.toOwnedSlice(allocator);
+}
+
 fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []const Row, r: Row) !struct { rc: i32, result: []const u8 } {
     _ = env;
     const action = r.action;
