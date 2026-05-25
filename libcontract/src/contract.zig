@@ -552,6 +552,68 @@ pub fn appendBreakAboveRow(
     allocator.free(path);
 }
 
+/// Append an `invitation` event row — external aiko (by pubkey) joins
+/// the inviter's network with typed role grants.
+pub fn appendInvitationRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    inviter_id: []const u8,
+    invitee_pubkey: []const u8,
+    roles: []const u8,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    const agent = try getAgent(allocator, env);
+    defer allocator.free(agent);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "{\"event\": \"invitation\", \"id\": ");
+    try writeJsonString(&buf, allocator, inviter_id);
+    try buf.appendSlice(allocator, ", \"invitee_pubkey\": ");
+    try writeJsonString(&buf, allocator, invitee_pubkey);
+    try buf.appendSlice(allocator, ", \"roles\": ");
+    try writeJsonString(&buf, allocator, roles);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
+/// Append a `grant` event row — single (actor_pubkey, role, scope) tuple.
+pub fn appendGrantRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    granter_id: []const u8,
+    actor_pubkey: []const u8,
+    role: []const u8,
+    scope: []const u8,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    const agent = try getAgent(allocator, env);
+    defer allocator.free(agent);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "{\"event\": \"grant\", \"id\": ");
+    try writeJsonString(&buf, allocator, granter_id);
+    try buf.appendSlice(allocator, ", \"actor_pubkey\": ");
+    try writeJsonString(&buf, allocator, actor_pubkey);
+    try buf.appendSlice(allocator, ", \"role\": ");
+    try writeJsonString(&buf, allocator, role);
+    try buf.appendSlice(allocator, ", \"scope\": ");
+    try writeJsonString(&buf, allocator, scope);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
 /// Append a `pattern` ledger event row — the reusable lesson distilled
 /// from a satisfied contract. Append-only (not a declared row), so it
 /// doesn't trigger its own resolution cycle. Future aikos contract-search
