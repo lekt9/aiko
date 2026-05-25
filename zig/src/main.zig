@@ -522,7 +522,6 @@ fn aggregateChildOutputs(allocator: std.mem.Allocator, rows: []const Row, parent
 }
 
 fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []const Row, r: Row) !struct { rc: i32, result: []const u8 } {
-    _ = env;
     const action = r.action;
     const ptype = pointer.inferPointerType(action);
 
