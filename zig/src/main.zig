@@ -305,6 +305,86 @@ fn latestActionResult(rows: []const Row, cid: []const u8) ?[]const u8 {
     return null;
 }
 
+/// Content-addressed input hash for a contract row: blake2s(
+///   plan || NUL || action || NUL || child_id_sorted || child_hash || ...
+/// ). Recursive — a child's contribution is its own current input_hash,
+/// so any change to a leaf invalidates every ancestor automatically.
+/// This is the Bazel/Nix-style propagation key: when this hash differs
+/// from the input_hash recorded on the latest `iterated` row, the cache
+/// is stale and the resolver re-runs.
+const Blake2s256 = std.crypto.hash.blake2.Blake2s256;
+const INPUT_HASH_HEX_LEN: usize = 64;
+
+fn lastInputHash(rows: []const Row, cid: []const u8) ?[]const u8 {
+    var i: usize = rows.len;
+    while (i > 0) : (i -= 1) {
+        const r = rows[i - 1];
+        if (!std.mem.eql(u8, r.id, cid)) continue;
+        if (!std.mem.eql(u8, r.event, "iterated")) continue;
+        if (r.input_hash.len == 0) continue;
+        return r.input_hash;
+    }
+    return null;
+}
+
+fn declaredRow(rows: []const Row, cid: []const u8) ?Row {
+    var i: usize = rows.len;
+    while (i > 0) : (i -= 1) {
+        const r = rows[i - 1];
+        if (!std.mem.eql(u8, r.id, cid)) continue;
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        return r;
+    }
+    return null;
+}
+
+fn computeInputHash(allocator: std.mem.Allocator, rows: []const Row, cid: []const u8, depth: u8) ![INPUT_HASH_HEX_LEN]u8 {
+    var out_hex: [INPUT_HASH_HEX_LEN]u8 = undefined;
+    if (depth > 32) {
+        // Cycle guard. Hash just the id deterministically.
+        var h: [32]u8 = undefined;
+        Blake2s256.hash(cid, &h, .{});
+        lineage_lib.bytesToHex(&h, &out_hex);
+        return out_hex;
+    }
+    var hasher = Blake2s256.init(.{});
+    const r = declaredRow(rows, cid) orelse {
+        // Unknown contract — hash the bare id; treat it as a stable leaf.
+        var h: [32]u8 = undefined;
+        Blake2s256.hash(cid, &h, .{});
+        lineage_lib.bytesToHex(&h, &out_hex);
+        return out_hex;
+    };
+    hasher.update(r.plan);
+    hasher.update(&.{0});
+    hasher.update(r.action);
+    hasher.update(&.{0});
+
+    // Collect direct child ids, sort them so the hash is determinate
+    // regardless of declaration order.
+    const child_ids = try childIds(allocator, rows, cid);
+    defer allocator.free(child_ids);
+    var sorted = try allocator.alloc([]const u8, child_ids.len);
+    defer allocator.free(sorted);
+    for (child_ids, 0..) |c, i| sorted[i] = c;
+    std.mem.sort([]const u8, sorted, {}, struct {
+        fn lt(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.order(u8, a, b) == .lt;
+        }
+    }.lt);
+    for (sorted) |child| {
+        const child_hex = try computeInputHash(allocator, rows, child, depth + 1);
+        hasher.update(child);
+        hasher.update(&.{0});
+        hasher.update(&child_hex);
+        hasher.update(&.{0});
+    }
+    var digest: [32]u8 = undefined;
+    hasher.final(&digest);
+    lineage_lib.bytesToHex(&digest, &out_hex);
+    return out_hex;
+}
+
 /// Check if `cid` appears anywhere in the local ledger as a declared row.
 /// Used to decide whether a posthook target is local (env+popen path) or
 /// remote (lineage-mesh encrypted hook envelope path).
