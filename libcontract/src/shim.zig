@@ -157,6 +157,85 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         };
         stdoutWrite("guards-ok\n");
         return 0;
+    } else if (std.mem.eql(u8, verb, "mode")) {
+        // Σ28 mode detection — same binary, two modes.
+        if (client.isRemoteMode(init.environ)) {
+            stdoutWrite("thin-client (Σ28)\n");
+            if (client.baseUrl(init.environ)) |b| {
+                stdoutWrite("UNBROWSE_BASE=");
+                stdoutWrite(b);
+                stdoutWrite("\n");
+            }
+            if (client.bearerToken(init.environ)) |_| {
+                stdoutWrite("UNBROWSE_API_KEY=<set>\n");
+            } else {
+                stdoutWrite("UNBROWSE_API_KEY=<unset>\n");
+            }
+        } else {
+            stdoutWrite("local (offline cache; Σ28 transient-cache fallback)\n");
+        }
+        return 0;
+    } else if (std.mem.eql(u8, verb, "remote-declare")) {
+        // Σ28 — POST {plan, action, parent_id?} to unbrowse, return server response.
+        if (rest.len < 2) {
+            usage();
+            return 2;
+        }
+        if (!client.isRemoteMode(init.environ)) {
+            stderrWrite("remote-declare requires UNBROWSE_BASE env\n");
+            return 2;
+        }
+        const plan = rest[0];
+        const action = rest[1];
+        const parent: ?[]const u8 = if (rest.len >= 3 and rest[2].len > 0) rest[2] else null;
+        const body = client.declareRemote(allocator, init.environ, plan, action, parent, null) catch |err| {
+            stderrWrite("remote-declare failed: ");
+            stderrWrite(@errorName(err));
+            stderrWrite("\n");
+            return 2;
+        };
+        defer allocator.free(body);
+        stdoutWrite(body);
+        stdoutWrite("\n");
+        return 0;
+    } else if (std.mem.eql(u8, verb, "remote-iterate")) {
+        if (rest.len < 1) {
+            usage();
+            return 2;
+        }
+        if (!client.isRemoteMode(init.environ)) {
+            stderrWrite("remote-iterate requires UNBROWSE_BASE env\n");
+            return 2;
+        }
+        const body = client.iterateRemote(allocator, init.environ, rest[0], null) catch |err| {
+            stderrWrite("remote-iterate failed: ");
+            stderrWrite(@errorName(err));
+            stderrWrite("\n");
+            return 2;
+        };
+        defer allocator.free(body);
+        stdoutWrite(body);
+        stdoutWrite("\n");
+        return 0;
+    } else if (std.mem.eql(u8, verb, "remote-mark")) {
+        if (rest.len < 2) {
+            usage();
+            return 2;
+        }
+        if (!client.isRemoteMode(init.environ)) {
+            stderrWrite("remote-mark requires UNBROWSE_BASE env\n");
+            return 2;
+        }
+        const body = client.markSatisfiedRemote(allocator, init.environ, rest[0], rest[1]) catch |err| {
+            stderrWrite("remote-mark failed: ");
+            stderrWrite(@errorName(err));
+            stderrWrite("\n");
+            return 2;
+        };
+        defer allocator.free(body);
+        stdoutWrite(body);
+        stdoutWrite("\n");
+        return 0;
     } else {
         stderrWrite("contract-lib-shim: unknown verb\n");
         usage();
