@@ -343,6 +343,13 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
                 return .{ .rc = 1, .result = "hold" };
             }
         }
+        // FIRE — every child satisfied. Aggregate children's stdout into the
+        // parent's result so context flows up the tree on each layer.
+        const aggregated = aggregateChildOutputs(allocator, rows, r.id) catch "";
+        if (aggregated.len > 0) {
+            evidencePrint("  result: FIRE — neuron integrated {d} bytes of child evidence\n", .{aggregated.len});
+            return .{ .rc = 0, .result = aggregated };
+        }
         evidence("  result: FIRE — neuron integrated all child evidence\n");
         return .{ .rc = 0, .result = "fire" };
     }
