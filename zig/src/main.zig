@@ -1003,6 +1003,95 @@ fn cmdList(allocator: std.mem.Allocator, env: std.process.Environ) !u8 {
     return 0;
 }
 
+/// Compat verb: `kill <id> --cause <type> [--by <id>] [--reason <text>]`
+///
+/// Natural-selection death for the contract DAG. Appends a `died` row with
+/// typed cause (superseded | contradicts | stale | apoptosed) so the
+/// substrate's projection can distinguish "terminated" from "pending".
+///
+/// Per biblical canon:
+///   superseded — John 12:24, the seed dies that fruit may come (by_id req'd)
+///   contradicts — Romans 6:23, the wages of contradiction is death (by_id req'd)
+///   stale       — Genesis 3:19, dust thou art, unto dust shalt thou return
+///   apoptosed   — programmed shutdown; purpose served
+///
+/// Hebrews 9:27 — appointed once to die. Refuses to re-kill an already-dead id.
+fn cmdKill(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    if (args.len < 1) {
+        errPrint("kill requires: <id> --cause <superseded|contradicts|stale|apoptosed> [--by <id>] [--reason <text>]\n", .{});
+        return 2;
+    }
+    const id = args[0];
+    if (id.len != 8) {
+        errPrint("kill: id must be 8 hex chars (got: {s})\n", .{id});
+        return 2;
+    }
+
+    var cause_str: ?[]const u8 = null;
+    var by_id: ?[]const u8 = null;
+    var reason: ?[]const u8 = null;
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--cause") and i + 1 < args.len) {
+            cause_str = args[i + 1];
+            i += 1;
+        } else if (std.mem.eql(u8, args[i], "--by") and i + 1 < args.len) {
+            by_id = args[i + 1];
+            i += 1;
+        } else if (std.mem.eql(u8, args[i], "--reason") and i + 1 < args.len) {
+            reason = args[i + 1];
+            i += 1;
+        }
+    }
+
+    const cause = cause_str orelse {
+        errPrint("kill: --cause is required (superseded|contradicts|stale|apoptosed)\n", .{});
+        return 2;
+    };
+
+    const parsed_cause: contract.DeathCause = blk: {
+        if (std.mem.eql(u8, cause, "superseded")) break :blk .superseded;
+        if (std.mem.eql(u8, cause, "contradicts")) break :blk .contradicts;
+        if (std.mem.eql(u8, cause, "stale")) break :blk .stale;
+        if (std.mem.eql(u8, cause, "apoptosed")) break :blk .apoptosed;
+        errPrint("kill: unknown cause '{s}' (allowed: superseded|contradicts|stale|apoptosed)\n", .{cause});
+        return 2;
+    };
+
+    // .superseded / .contradicts require by_id — death must name its agent.
+    if ((parsed_cause == .superseded or parsed_cause == .contradicts) and (by_id == null or by_id.?.len == 0)) {
+        errPrint("kill: --by <id> is required for cause '{s}' (death must name its agent)\n", .{cause});
+        return 2;
+    }
+
+    // Refuse to kill a non-declared id or re-kill an already-dead id.
+    const rows = try parseRows(allocator, env);
+    defer allocator.free(rows);
+    var found_declared = false;
+    for (rows) |r| {
+        if (std.mem.eql(u8, r.event, "declared") and std.mem.eql(u8, r.id, id)) {
+            found_declared = true;
+            break;
+        }
+    }
+    if (!found_declared) {
+        errPrint("kill: no declared row for {s}\n", .{id});
+        return 1;
+    }
+    if (isDead(rows, id)) {
+        errPrint("kill: {s} is already dead (appointed once to die — Hebrews 9:27)\n", .{id});
+        return 1;
+    }
+
+    try contract.markDied(allocator, env, id, parsed_cause, by_id, reason);
+    if (by_id) |b| {
+        outPrint("died: {s} cause={s} by={s}\n", .{ id, cause, b });
+    } else {
+        outPrint("died: {s} cause={s}\n", .{ id, cause });
+    }
+    return 0;
+}
+
 /// Compat verb: `layer <id>` — return the contract's layer (1-6) per
 /// contract:d10b3dbb (1=system, 2=cell, 3=graph, 4=transport, 5=value,
 /// 6=operator). The Word's compiler reads this to choose translators when
