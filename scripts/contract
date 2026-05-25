@@ -87,6 +87,8 @@ _run_action() {
     ptype="contract-ref"
   elif [[ "$action" == x402:* ]]; then
     ptype="x402"
+  elif [[ "$action" == bridge:* ]]; then
+    ptype="bridge"
   elif [[ "$action" == agent:* ]]; then
     ptype="agent"
   elif [[ "$action" == curl\ * || "$action" == http://* || "$action" == https://* || "$action" == wget\ * ]]; then
