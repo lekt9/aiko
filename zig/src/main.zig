@@ -459,6 +459,57 @@ const ShellOutput = struct { rc: i32, output: []u8 };
 /// of the declared body. The default is OFF for back-compat — existing
 /// contracts intentionally compose with `;` / `&&` / `|`. When enabled this
 /// gate fails closed with a NAMED cause; it never silently drops execution.
+/// Drill B — wallet permission gate. The 32-byte root secret at
+/// ~/.contracts/root.key must not be group/world-readable. If the file
+/// exists and st_mode & 077 != 0 we refuse with a NAMED cause; cleaning up
+/// is a manual step (chmod 600). Honored in strict mode by default, and
+/// always when CONTRACT_WALLET_STRICT=1.
+fn walletPermissionReject(allocator: std.mem.Allocator, env: std.process.Environ) ?[]const u8 {
+    const strict = blk: {
+        const f = env.getPosix("CONTRACT_WALLET_STRICT") orelse break :blk true;
+        break :blk std.mem.eql(u8, f, "1") or std.mem.eql(u8, f, "on");
+    };
+    if (!strict) return null;
+    const home = env.getPosix("HOME") orelse return null;
+    const path = std.fs.path.join(allocator, &.{ home, ".contracts", "root.key" }) catch return null;
+    defer allocator.free(path);
+    const path_z = allocator.dupeZ(u8, path) catch return null;
+    defer allocator.free(path_z);
+    var st: std.c.Stat = undefined;
+    if (std.c.stat(path_z.ptr, &st) != 0) return null; // missing is fine; loadOrInitRootKey will create
+    const mode = st.mode;
+    if ((mode & 0o077) != 0) {
+        const msg = std.fmt.allocPrint(allocator, "wallet-strict: ~/.contracts/root.key mode 0{o} is group/world-readable; chmod 600", .{mode & 0o777}) catch return "wallet-strict: root.key permissions too open";
+        return msg;
+    }
+    return null;
+}
+
+/// Drill C — runtime self-attest before ledger mutation. When
+/// CONTRACT_REQUIRE_SIGNED=1 (opt-in for now; will flip default later) every
+/// declare verifies the running binary's own SHA-256 against the lineage
+/// signing key before any ledger row is appended. Tampered binaries are
+/// refused with a NAMED cause; without the env var we emit an evidence
+/// line only.
+fn binaryAttestReject(allocator: std.mem.Allocator, env: std.process.Environ) ?[]const u8 {
+    var require = false;
+    if (env.getPosix("CONTRACT_REQUIRE_SIGNED")) |f| {
+        if (std.mem.eql(u8, f, "1") or std.mem.eql(u8, f, "on")) require = true;
+    }
+    const root = lineage_lib.loadOrInitRootKey(allocator, env) catch return null;
+    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const exe_path = std.fs.selfExePath(&exe_buf) catch return null;
+    lineage_lib.verifyBinary(allocator, root, exe_path) catch |e| {
+        if (require) {
+            const msg = std.fmt.allocPrint(allocator, "binary-attest: self-verify failed ({s}); refusing declare", .{@errorName(e)}) catch return "binary-attest: self-verify failed";
+            return msg;
+        }
+        evidencePrint("binary-attest: WARN self-verify failed ({s}); set CONTRACT_REQUIRE_SIGNED=1 to enforce\n", .{@errorName(e)});
+        return null;
+    };
+    return null;
+}
+
 fn shellStrictReject(action: []const u8, env: std.process.Environ) ?[]const u8 {
     const flag = env.getPosix("CONTRACT_SHELL_STRICT") orelse return null;
     if (!std.mem.eql(u8, flag, "1") and !std.mem.eql(u8, flag, "on")) return null;
