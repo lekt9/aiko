@@ -354,7 +354,7 @@ fn meshEncryptHook(allocator: std.mem.Allocator, local_priv: [32]u8, peer_pub: [
     const prk = HkdfSha256.extract(&[_]u8{}, &shared);
     HkdfSha256.expand(&sym, info, prk);
     var nonce: [ChaCha20Poly1305.nonce_length]u8 = undefined;
-    std.crypto.random.bytes(&nonce);
+    if (getentropy(&nonce, nonce.len) != 0) return error.RandomFailed;
     const ct = try allocator.alloc(u8, payload.len);
     var tag: [ChaCha20Poly1305.tag_length]u8 = undefined;
     ChaCha20Poly1305.encrypt(ct, &tag, payload, &[_]u8{}, nonce, sym);
