@@ -2103,7 +2103,6 @@ const cmdAikoGoal = cmdSpeak;
 fn cmdOpenAi(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
     _ = args;
 
-    // 1. Read all of stdin (HTTP body) into a buffer. fread on libc stdin.
     var stdin_buf: std.ArrayList(u8) = .empty;
     defer stdin_buf.deinit(allocator);
     var chunk: [16384]u8 = undefined;
@@ -2111,12 +2110,15 @@ fn cmdOpenAi(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
         const n = std.c.read(std.c.STDIN_FILENO, &chunk, chunk.len);
         if (n <= 0) break;
         try stdin_buf.appendSlice(allocator, chunk[0..@intCast(n)]);
-        if (stdin_buf.items.len > 1024 * 1024) break; // cap at 1MB
+        if (stdin_buf.items.len > 1024 * 1024) break;
     }
     const body = stdin_buf.items;
 
-    // 2. Pull the last user message content. Minimal JSON extraction:
-    //    find the last "\"role\":\"user\"" and capture its "content" field.
+    // Detect stream=true in body; if so emit SSE chunks instead of one
+    // ChatCompletion object. Python http_shim picks the marker line up.
+    const wants_stream = std.mem.indexOf(u8, body, "\"stream\":true") != null or
+        std.mem.indexOf(u8, body, "\"stream\": true") != null;
+
     const user_content = extractLastUserContent(body) orelse "";
     if (user_content.len == 0) {
         try writeOpenAiError("no user message in request");
