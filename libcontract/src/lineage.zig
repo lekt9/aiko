@@ -111,6 +111,107 @@ pub fn verifyDigest(
     try sig.verify(&digest, pk);
 }
 
+/// Salt used when deriving the binary-signing key from the root secret.
+/// Distinct from the lineage signing salt so binary integrity and contract
+/// lineage are cryptographically independent.
+pub const BINARY_SIGNING_SALT: []const u8 = "aiko-binary-signing-v1";
+
+/// Derive the keypair used to sign aiko binaries themselves.
+pub fn deriveBinarySigningKeyPair(root: [32]u8) !ed.KeyPair {
+    const prk = hkdf.extract(BINARY_SIGNING_SALT, &root);
+    var seed: [32]u8 = undefined;
+    hkdf.expand(&seed, "binary", prk);
+    return try ed.KeyPair.generateDeterministic(seed);
+}
+
+/// SHA-256 a file at `path`. Returns the 32-byte digest. Caller-provided.
+pub fn fileSha256(allocator: std.mem.Allocator, path: []const u8, out: *[32]u8) !void {
+    const path_z = try allocator.dupeZ(u8, path);
+    defer allocator.free(path_z);
+
+    var flags: std.c.O = .{};
+    flags.ACCMODE = .RDONLY;
+    const fd: c_int = std.c.open(path_z.ptr, flags, @as(c_uint, 0));
+    if (fd < 0) return error.FileNotFound;
+    defer _ = std.c.close(fd);
+
+    var hasher = sha256.init(.{});
+    var chunk: [16384]u8 = undefined;
+    while (true) {
+        const n = std.c.read(fd, &chunk, chunk.len);
+        if (n <= 0) break;
+        hasher.update(chunk[0..@intCast(n)]);
+    }
+    hasher.final(out);
+}
+
+/// Sign the contents of `binary_path`: compute SHA-256, sign the digest with
+/// the binary-signing keypair, write `<binary_path>.sig` as 128-char hex.
+pub fn signBinary(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    binary_path: []const u8,
+) !void {
+    const root = try loadOrInitRootKey(allocator, env);
+    const kp = try deriveBinarySigningKeyPair(root);
+    var digest: [32]u8 = undefined;
+    try fileSha256(allocator, binary_path, &digest);
+    var sig_hex: [SIG_HEX_LEN]u8 = undefined;
+    try signDigest(kp, digest, &sig_hex);
+
+    const sig_path = try std.fmt.allocPrint(allocator, "{s}.sig", .{binary_path});
+    defer allocator.free(sig_path);
+    const sig_path_z = try allocator.dupeZ(u8, sig_path);
+    defer allocator.free(sig_path_z);
+
+    var flags: std.c.O = .{};
+    flags.ACCMODE = .WRONLY;
+    flags.CREAT = true;
+    flags.TRUNC = true;
+    const fd: c_int = std.c.open(sig_path_z.ptr, flags, @as(c_uint, 0o644));
+    if (fd < 0) return error.OpenFailed;
+    defer _ = std.c.close(fd);
+
+    var with_nl: [SIG_HEX_LEN + 1]u8 = undefined;
+    @memcpy(with_nl[0..SIG_HEX_LEN], &sig_hex);
+    with_nl[SIG_HEX_LEN] = '\n';
+    const n = std.c.write(fd, &with_nl, with_nl.len);
+    if (n < @as(isize, with_nl.len)) return error.WriteFailed;
+}
+
+/// Verify the binary at `binary_path` against `<binary_path>.sig` using the
+/// binary-signing key derived from the root secret. Returns void on success,
+/// errors on any mismatch / missing input.
+pub fn verifyBinary(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    binary_path: []const u8,
+) !void {
+    const root = try loadOrInitRootKey(allocator, env);
+    const kp = try deriveBinarySigningKeyPair(root);
+    var pubkey_hex: [PUBKEY_HEX_LEN]u8 = undefined;
+    bytesToHex(&kp.public_key.bytes, &pubkey_hex);
+
+    var digest: [32]u8 = undefined;
+    try fileSha256(allocator, binary_path, &digest);
+
+    const sig_path = try std.fmt.allocPrint(allocator, "{s}.sig", .{binary_path});
+    defer allocator.free(sig_path);
+
+    const sig_path_z = try allocator.dupeZ(u8, sig_path);
+    defer allocator.free(sig_path_z);
+    var flags: std.c.O = .{};
+    flags.ACCMODE = .RDONLY;
+    const fd: c_int = std.c.open(sig_path_z.ptr, flags, @as(c_uint, 0));
+    if (fd < 0) return error.SignatureMissing;
+    defer _ = std.c.close(fd);
+
+    var buf: [SIG_HEX_LEN + 8]u8 = undefined;
+    const n = std.c.read(fd, &buf, buf.len);
+    if (n < @as(isize, SIG_HEX_LEN)) return error.SignatureTruncated;
+    try verifyDigest(buf[0..SIG_HEX_LEN], &pubkey_hex, digest);
+}
+
 pub fn bytesToHex(in: []const u8, out: []u8) void {
     const alpha = "0123456789abcdef";
     var i: usize = 0;
