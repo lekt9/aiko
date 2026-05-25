@@ -178,7 +178,9 @@ test "fingerprint surfaces nothing for an empty dir" {
     const allocator = std.testing.allocator;
     // Use /tmp/empty-fp; create + cleanup.
     var tmp_buf: [256]u8 = undefined;
-    const tmp = try std.fmt.bufPrint(&tmp_buf, "/tmp/aiko-fp-test-empty-{d}", .{std.time.milliTimestamp()});
+    // Use process id for uniqueness; no chrono surface needed in test.
+    const pid = std.c.getpid();
+    const tmp = try std.fmt.bufPrint(&tmp_buf, "/tmp/aiko-fp-test-empty-{d}", .{pid});
     const tmp_z = try allocator.dupeZ(u8, tmp);
     defer allocator.free(tmp_z);
     _ = c.mkdir(tmp_z.ptr, 0o755);
