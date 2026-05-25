@@ -1543,6 +1543,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     if (std.mem.eql(u8, verb, "verify-self")) return try cmdVerifySelf(allocator, init.environ);
     if (std.mem.eql(u8, verb, "verify-binary")) return try cmdVerifyBinary(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "layer")) return try cmdLayer(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "kill")) return try cmdKill(allocator, init.environ, rest);
 
     errPrint("unknown native verb: {s}\n", .{verb});
     usage();
