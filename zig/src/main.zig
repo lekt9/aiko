@@ -668,7 +668,7 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
             return 2;
         };
         defer allocator.free(safe_plan);
-        const body = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, adapter, adapter_kind, event_bus, pretool_event, event_kind, null) catch |e| {
+        const body = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, adapter, adapter_kind, event_bus, pretool_event, event_kind, null, null) catch |e| {
             errPrint("aiko declare failed against Unbrowse: {s}\n", .{@errorName(e)});
             return 2;
         };
