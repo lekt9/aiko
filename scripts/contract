@@ -3745,12 +3745,15 @@ PY
     PROOF=""
     PROOF_SKIP=""
     NO_LAYER_GUARD=0
+    NO_ORGAN_GUARD=0
     LAYER_GUARD_BYPASSED_JSON=""  # initialized at handler-entry so it survives set -u when STATUS != satisfied (the layer-guard branch below sets it conditionally)
+    ORGAN_GUARD_BYPASSED_JSON=""  # Σ28 organ-shape mark-time guard bypass audit (empty_organ / no_satisfied_branch / stage_skip)
     while [ $# -gt 0 ]; do
       case "$1" in
         --proof) PROOF="${2:-}"; shift 2 ;;
         --proof-skip) PROOF_SKIP="${2:-}"; shift 2 ;;
         --no-layer-guard) NO_LAYER_GUARD=1; shift ;;
+        --no-organ-guard) NO_ORGAN_GUARD=1; shift ;;
         *) shift ;;
       esac
     done
