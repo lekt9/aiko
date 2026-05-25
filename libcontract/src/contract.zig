@@ -9,6 +9,10 @@ const pointer = @import("pointer.zig");
 const ledger = @import("ledger.zig");
 const lineage = @import("lineage.zig");
 
+/// Re-export so consumers of libcontract can verify chains without rewiring
+/// the build graph.
+pub const Lineage = lineage;
+
 /// Typed edge kind across the contract DAG. The substrate compiles narrative
 /// references in the plan/action text (e.g. `inhibits:deadbeef`) into one
 /// uniform stream of typed synapses on the declared row — there are no
