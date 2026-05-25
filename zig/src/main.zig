@@ -392,6 +392,106 @@ fn bioPainSignaled(rows: []const Row, cid: []const u8) bool {
     return false;
 }
 
+/// MATERIALIZATION — every contract can spawn its own signed binary at a
+/// declared target. The act of declaring becomes the act of deploying:
+/// the running aiko copies itself to the target path, signs it with the
+/// existing binary-signing key, derives a per-contract wallet via
+/// deriveKeyPair(root, cid), and writes a `materialized` ledger row.
+/// Target taxonomy:
+///   local:<path>         — write to local filesystem path
+///   (future) ssh://      — server-side adapter contract handles transport
+///   (future) docker://   — server-side adapter
+/// Env: CONTRACT_BINARY_TARGET=<target> triggers materialization on declare.
+fn bioMaterializeBinary(allocator: std.mem.Allocator, env: std.process.Environ, cid: []const u8) !void {
+    const target = env.getPosix("CONTRACT_BINARY_TARGET") orelse return;
+    if (target.len == 0) return;
+    if (!std.mem.startsWith(u8, target, "local:")) {
+        evidencePrint("materialize: scheme not local — declaring server-side adapter contract for {s}\n", .{target});
+        return;
+    }
+    const path = target["local:".len..];
+    if (path.len == 0) return error.EmptyTargetPath;
+
+    var self_buf: [4096]u8 = undefined;
+    var self_size: u32 = self_buf.len;
+    if (_NSGetExecutablePath(&self_buf, &self_size) != 0) return error.SelfPathTooLong;
+    const self_len = std.mem.indexOfScalar(u8, &self_buf, 0) orelse self_buf.len;
+    const self_path = self_buf[0..self_len];
+    const self_path_z = try allocator.dupeZ(u8, self_path);
+    defer allocator.free(self_path_z);
+
+    const path_z = try allocator.dupeZ(u8, path);
+    defer allocator.free(path_z);
+    if (std.fs.path.dirname(path)) |dir| {
+        var mkdir_cmd: [4096]u8 = undefined;
+        const mkdir = try std.fmt.bufPrintZ(&mkdir_cmd, "mkdir -p \"{s}\"", .{dir});
+        _ = system(mkdir.ptr);
+    }
+
+    var src_flags: std.c.O = .{};
+    src_flags.ACCMODE = .RDONLY;
+    const src_fd = std.c.open(self_path_z.ptr, src_flags, @as(c_uint, 0));
+    if (src_fd < 0) return error.SelfOpenFailed;
+    defer _ = std.c.close(src_fd);
+
+    var dst_flags: std.c.O = .{};
+    dst_flags.ACCMODE = .WRONLY;
+    dst_flags.CREAT = true;
+    dst_flags.TRUNC = true;
+    const dst_fd = std.c.open(path_z.ptr, dst_flags, @as(c_uint, 0o755));
+    if (dst_fd < 0) return error.TargetOpenFailed;
+    defer _ = std.c.close(dst_fd);
+
+    var copy_buf: [65536]u8 = undefined;
+    while (true) {
+        const n = std.c.read(src_fd, &copy_buf, copy_buf.len);
+        if (n <= 0) break;
+        const w = std.c.write(dst_fd, &copy_buf, @intCast(n));
+        if (w < 0) return error.WriteFailed;
+    }
+    _ = std.c.fchmod(dst_fd, 0o755);
+
+    lineage_lib.signBinary(allocator, env, path) catch |e| {
+        evidencePrint("materialize: signBinary failed: {s}\n", .{@errorName(e)});
+    };
+
+    var wallet_hex: [64]u8 = .{'0'} ** 64;
+    if (lineage_lib.loadOrInitRootKey(allocator, env)) |seed| {
+        if (lineage_lib.deriveKeyPair(seed, cid)) |k| {
+            lineage_lib.bytesToHex(&k.public_key.bytes, &wallet_hex);
+            const home = env.getPosix("HOME") orelse "";
+            if (home.len > 0) {
+                var dir_buf: [4096]u8 = undefined;
+                if (std.fmt.bufPrintZ(&dir_buf, "{s}/.contracts/aikos/{s}", .{ home, cid })) |d| {
+                    var mkdir_cmd2: [4096]u8 = undefined;
+                    if (std.fmt.bufPrintZ(&mkdir_cmd2, "mkdir -p \"{s}\"", .{d})) |m| _ = system(m.ptr) else |_| {}
+                    var file_buf: [4096]u8 = undefined;
+                    if (std.fmt.bufPrintZ(&file_buf, "{s}/pubkey.txt", .{d})) |wf| {
+                        var write_flags: std.c.O = .{};
+                        write_flags.ACCMODE = .WRONLY;
+                        write_flags.CREAT = true;
+                        write_flags.TRUNC = true;
+                        const wfd = std.c.open(wf.ptr, write_flags, @as(c_uint, 0o600));
+                        if (wfd >= 0) {
+                            _ = std.c.write(wfd, &wallet_hex, wallet_hex.len);
+                            _ = std.c.write(wfd, "\n", 1);
+                            _ = std.c.close(wfd);
+                        }
+                    } else |_| {}
+                } else |_| {}
+            }
+        } else |_| {}
+    } else |_| {}
+
+    var digest: [32]u8 = undefined;
+    lineage_lib.fileSha256(allocator, path, &digest) catch return error.HashFailed;
+    var sha_hex: [64]u8 = undefined;
+    lineage_lib.bytesToHex(&digest, &sha_hex);
+
+    try contract.appendMaterializedRow(allocator, env, cid, path, &sha_hex, &wallet_hex);
+    evidencePrint("materialize: {s} -> {s} sha256={s} wallet={s}\n", .{ cid, path, sha_hex[0..16], wallet_hex[0..16] });
+}
+
 /// 7. NEUROMODULATION — broadcast field. Bias child selection / urgency
 ///    by reading CONTRACT_MOD_MODE (exploration|exploitation),
 ///    CONTRACT_MOD_URGENCY (0..100), CONTRACT_MOD_CONFIDENCE (0..100).
