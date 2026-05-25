@@ -47,7 +47,7 @@ pub fn postJson(
     var tmp_buf: [256]u8 = undefined;
     const tmp_path = std.fmt.bufPrintZ(&tmp_buf, "/tmp/contract-http-{d}.json", .{std.c.getpid()}) catch return HttpError.OutOfMemory;
     {
-        const fd = std.c.open(tmp_path.ptr, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, 0o600);
+        const fd = std.c.open(tmp_path.ptr, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(std.c.mode_t, 0o600));
         if (fd < 0) return HttpError.CurlFailed;
         defer _ = std.c.close(fd);
         var written: usize = 0;
