@@ -49,9 +49,10 @@ pub fn loadOrInitRootKey(allocator: std.mem.Allocator, env: std.process.Environ)
         if (err != error.FileNotFound) return err;
     }
 
-    // Generate + persist. Use OS entropy via std.crypto.random.
+    // Generate + persist. Use libc CSPRNG (arc4random_buf on Apple platforms
+    // is /dev/urandom-backed and always seeded).
     var fresh: [32]u8 = undefined;
-    std.crypto.random.bytes(&fresh);
+    arc4random_buf(&fresh, fresh.len);
     try writeHexFile(allocator, path, &fresh);
     return fresh;
 }
