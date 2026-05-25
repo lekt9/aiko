@@ -25,6 +25,7 @@ pub const GuardKind = enum {
     layer_unsatisfied,
     thin_proof,
     audience_jargon,
+    destructive_without_consent,
 };
 
 pub const GuardError = error{
@@ -34,6 +35,7 @@ pub const GuardError = error{
     LayerUnsatisfied,
     ProofTooThin,
     AudienceJargonLeak,
+    DestructiveWithoutConsent,
 };
 
 /// Σ24 pointer-only: a `proof` or other free-text field must either be
