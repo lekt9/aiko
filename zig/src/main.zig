@@ -2282,6 +2282,8 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
             defer allocator.free(mod);
             evidencePrint("modulator: {s}\n", .{mod});
         } else |_| {}
+        // First-run wallet guidance — shown once, then silent forever.
+        bioFirstRunWalletGuidance(allocator, env);
         // Environment fingerprint — listen to the host's tongue before
         // declaring anything. Pentecost shape.
         if (bioEnvironmentFingerprint(allocator, env)) |fp| {
@@ -2740,6 +2742,8 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             defer allocator.free(mod);
             evidencePrint("modulator: {s}\n", .{mod});
         } else |_| {}
+        // First-run wallet guidance — shown once, then silent forever.
+        bioFirstRunWalletGuidance(allocator, env);
         // Environment fingerprint — listen to the host's tongue before
         // declaring anything. Pentecost shape.
         if (bioEnvironmentFingerprint(allocator, env)) |fp| {
