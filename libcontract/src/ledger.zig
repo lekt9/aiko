@@ -149,6 +149,49 @@ pub fn releaseExclusive(fd: c_int) void {
     _ = c.close(fd);
 }
 
+/// Scan the resolved ledger for a `declared` row with the given contract id
+/// and return that row's `inputs_hash` (owned slice; caller frees). Returns
+/// null if no row found or no inputs_hash field present (v1 rows had no
+/// inputs_hash before contract 27a39635).
+///
+/// Used by contract.declare() to fold parent.inputs_hash into the child's
+/// v2 hash — Docker-layer behavior: when the parent's content changes, the
+/// child's cache key invalidates transitively. The lookup is O(ledger
+/// rows); for large ledgers (>10k rows) this is the hot path of cache
+/// computation, but still well under a millisecond on disk-cached files.
+pub fn findInputsHashForId(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+) !?[]u8 {
+    const body = readAll(allocator, env) catch return null;
+    defer allocator.free(body);
+    var iter = std.mem.tokenizeAny(u8, body, "\n");
+    while (iter.next()) |line| {
+        if (line.len < 2) continue;
+        if (std.mem.indexOf(u8, line, "\"event\": \"declared\"") == null and
+            std.mem.indexOf(u8, line, "\"event\":\"declared\"") == null) continue;
+        // Match the target id.
+        var id_needle_buf: [128]u8 = undefined;
+        const id_needle = std.fmt.bufPrint(&id_needle_buf, "\"id\": \"{s}\"", .{id}) catch continue;
+        if (std.mem.indexOf(u8, line, id_needle) == null) {
+            const id_needle2 = std.fmt.bufPrint(&id_needle_buf, "\"id\":\"{s}\"", .{id}) catch continue;
+            if (std.mem.indexOf(u8, line, id_needle2) == null) continue;
+        }
+        // Extract the inputs_hash field value.
+        const ih_marker = "\"inputs_hash\": \"";
+        const ih_marker2 = "\"inputs_hash\":\"";
+        const ih_start = blk: {
+            if (std.mem.indexOf(u8, line, ih_marker)) |p| break :blk p + ih_marker.len;
+            if (std.mem.indexOf(u8, line, ih_marker2)) |p| break :blk p + ih_marker2.len;
+            return null; // Found declared row but no inputs_hash (v1 row).
+        };
+        const ih_end = std.mem.indexOfScalarPos(u8, line, ih_start, '"') orelse return null;
+        return try allocator.dupe(u8, line[ih_start..ih_end]);
+    }
+    return null;
+}
+
 /// Slurp the entire resolved ledger file. Returns an owned []u8 (empty when
 /// the file doesn't exist). 16 MiB cap is way above the largest ledger ever
 /// observed (the global ledger is ~3 MB after months of use).
