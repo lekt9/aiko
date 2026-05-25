@@ -33,6 +33,7 @@ pub const DEFAULT_UNBROWSE_BASE = UNBROWSE_BASE;
 pub const ClientError = error{
     NoUnbrowseBase,
     RequestFailed,
+    PaymentRequired,
     OutOfMemory,
     BadResponse,
 };
