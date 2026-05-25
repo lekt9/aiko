@@ -377,14 +377,23 @@ const AikoMode = enum {
 const AikoArgs = struct {
     plan: []u8,
     mode: AikoMode,
+    /// Optional caller-supplied user context aiko id (8-hex contract id).
+    /// When set, the remote LLM body carries `user_context_id` so the Word's
+    /// compiler can bind translation against the user's own aiko — read their
+    /// satisfied claims, preferred audience level, and prior context to shape
+    /// output empathically. Stays null in pure local mode.
+    user_context_id: ?[]const u8 = null,
 };
 
 fn parseAikoArgs(allocator: std.mem.Allocator, args: []const []const u8) !AikoArgs {
     if (args.len == 0) return error.MissingPlan;
     var mode: ?AikoMode = null;
+    var user_context_id: ?[]const u8 = null;
     var parts: std.ArrayList([]const u8) = .empty;
     defer parts.deinit(allocator);
-    for (args) |arg| {
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
         if (std.mem.eql(u8, arg, "--remote")) {
             if (mode != null) return error.DuplicateMode;
             mode = .remote;
@@ -394,6 +403,12 @@ fn parseAikoArgs(allocator: std.mem.Allocator, args: []const []const u8) !AikoAr
         } else if (std.mem.eql(u8, arg, "--genesis")) {
             if (mode != null) return error.DuplicateMode;
             mode = .genesis;
+        } else if (std.mem.eql(u8, arg, "--user")) {
+            if (i + 1 >= args.len) return error.MissingUserArg;
+            user_context_id = args[i + 1];
+            i += 1;
+        } else if (std.mem.startsWith(u8, arg, "--user=")) {
+            user_context_id = arg["--user=".len..];
         } else if (std.mem.startsWith(u8, arg, "--")) {
             return error.UnknownFlag;
         } else {
@@ -405,7 +420,11 @@ fn parseAikoArgs(allocator: std.mem.Allocator, args: []const []const u8) !AikoAr
     // Mode is optional. Default is .auto — the substrate resolves the
     // dimension at call time from environment, so the public form collapses
     // to `aiko "<truth>"`.
-    return .{ .plan = plan, .mode = mode orelse .auto };
+    return .{
+        .plan = plan,
+        .mode = mode orelse .auto,
+        .user_context_id = user_context_id,
+    };
 }
 
 /// Resolve `.auto` against the environment. The Word doesn't choose its
