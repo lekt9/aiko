@@ -1582,6 +1582,73 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         evidencePrint("  result: FAIL (python exit {d})\n", .{out_capture.rc});
         return .{ .rc = out_capture.rc, .result = if (out_capture.output.len > 0) out_capture.output else "fail" };
     }
+    // flex:budget:<lamports>:<mint> — declare an expected spend ceiling
+    // for this contract's resolution. Fractal: every layer can carry its
+    // own budget; the cloud compiler enforces that child budgets sum
+    // <= parent's remaining authorization. Bare-bones implementation
+    // emits a typed `budget_estimate` called row that the cloud reads.
+    if (std.mem.startsWith(u8, action, "flex:budget:")) {
+        const rest = action["flex:budget:".len..];
+        const sep = std.mem.indexOfScalar(u8, rest, ':') orelse rest.len;
+        const budget_lamports = rest[0..sep];
+        const mint = if (sep < rest.len) rest[sep + 1 ..] else USDC_SOL_MINT;
+        const target = try std.fmt.allocPrint(allocator, "flex:budget:lamports={s}:mint={s}", .{ budget_lamports, mint });
+        defer allocator.free(target);
+        contract.appendCalledRow(allocator, env, r.id, target, "budget-estimate") catch {};
+        const msg = try std.fmt.allocPrint(allocator, "budget: max={s} lamports of {s}", .{ budget_lamports, mint });
+        evidencePrint("  result: PASS — {s}\n", .{msg});
+        return .{ .rc = 0, .result = msg };
+    }
+
+    // flex:hold:<max_lamports>[:mint] — declare a Faremeter Flex hold
+    // request. Auto-includes the FOUNDRY_CUT_BPS=5000 (50%) split to
+    // FOUNDRY_CUT_ADDRESS first; client destination fills remaining
+    // 5000 bps. Authorization_id is generated from time(null) + cid.
+    if (std.mem.startsWith(u8, action, "flex:hold:")) {
+        const rest = action["flex:hold:".len..];
+        const sep = std.mem.indexOfScalar(u8, rest, ':') orelse rest.len;
+        const max_str = rest[0..sep];
+        const mint = if (sep < rest.len) rest[sep + 1 ..] else USDC_SOL_MINT;
+        const max_amount = std.fmt.parseInt(u64, max_str, 10) catch {
+            evidence("  result: FAIL — flex:hold parse\n");
+            return .{ .rc = 1, .result = "flex-hold-parse-fail" };
+        };
+        // Derive client destination from current identity's Solana addr.
+        const root = lineage_lib.loadOrInitRootKey(allocator, env) catch return .{ .rc = 1, .result = "no-root-key" };
+        const identity = env.getPosix("CONTRACT_INSTANCE_ID") orelse r.id;
+        const kp = lineage_lib.deriveKeyPair(root, identity) catch return .{ .rc = 1, .result = "derive-failed" };
+        var client_b58: [64]u8 = undefined;
+        const client_n = b58encode(&kp.public_key.bytes, &client_b58);
+        // authorization_id = <unix_secs>-<cid_first_8>
+        const auth_id = try std.fmt.allocPrint(allocator, "{d}-{s}", .{ time(null), r.id });
+        defer allocator.free(auth_id);
+        // splits: 5000 bps to Foundry, 5000 bps to client destination
+        const splits_json = try std.fmt.allocPrint(allocator,
+            "[{{\"recipient\":\"{s}\",\"bps\":{d}}},{{\"recipient\":\"{s}\",\"bps\":{d}}}]",
+            .{ FOUNDRY_CUT_ADDRESS, FOUNDRY_CUT_BPS, client_b58[0..client_n], 10000 - FOUNDRY_CUT_BPS },
+        );
+        defer allocator.free(splits_json);
+        const expires: u64 = 0; // facilitator clamps to <= refund_timeout_slots
+        contract.appendFlexHoldRow(allocator, env, r.id, max_amount, mint, auth_id, expires, splits_json) catch return .{ .rc = 1, .result = "flex-hold-append-fail" };
+        const msg = try std.fmt.allocPrint(allocator, "flex_hold: max={d} mint={s} auth_id={s} cut=50%->{s}", .{ max_amount, mint, auth_id, FOUNDRY_CUT_ADDRESS });
+        evidencePrint("  result: PASS — {s}\n", .{msg});
+        return .{ .rc = 0, .result = msg };
+    }
+
+    // flex:settle:<authorization_id>:<actual_lamports> — convert hold
+    // to pending on-chain settlement at actual consumption.
+    if (std.mem.startsWith(u8, action, "flex:settle:")) {
+        const rest = action["flex:settle:".len..];
+        const sep = std.mem.indexOfScalar(u8, rest, ':') orelse return .{ .rc = 1, .result = "flex-settle-parse-fail" };
+        const auth_id = rest[0..sep];
+        const amt_str = rest[sep + 1 ..];
+        const settle_amount = std.fmt.parseInt(u64, amt_str, 10) catch return .{ .rc = 1, .result = "flex-settle-parse-fail" };
+        contract.appendFlexSettleRow(allocator, env, r.id, auth_id, settle_amount) catch return .{ .rc = 1, .result = "flex-settle-append-fail" };
+        const msg = try std.fmt.allocPrint(allocator, "flex_settle: auth_id={s} actual={d}", .{ auth_id, settle_amount });
+        evidencePrint("  result: PASS — {s}\n", .{msg});
+        return .{ .rc = 0, .result = msg };
+    }
+
     // wallet:address — emit CAIP-10 addresses for every chain the
     // substrate derives. Same root_seed → ed25519 (Solana family) +
     // secp256k1 (EVM family). The 402 envelope's `network` field picks
