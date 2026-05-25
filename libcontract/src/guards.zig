@@ -52,9 +52,9 @@ pub fn pointerOnly(field_name: []const u8, value: []const u8) GuardError!void {
     if (value.len < 500) return;
     // Long values must lead with a pointer prefix.
     const prefixes = [_][]const u8{
-        "file:",     "contract:", "url:",   "http://", "https://",
-        "machine:",  "sha256:",   "agent:", "x402:",   "bridge:",
-        "pointer:",  "ssh://",    "git+",   "ipfs://",
+        "file:",    "contract:", "url:",   "http://", "https://",
+        "machine:", "sha256:",   "agent:", "x402:",   "bridge:",
+        "pointer:", "ssh://",    "git+",   "ipfs://",
     };
     for (prefixes) |p| {
         if (std.mem.startsWith(u8, value, p)) return;
@@ -68,16 +68,21 @@ pub fn pointerOnly(field_name: []const u8, value: []const u8) GuardError!void {
 pub fn credEntropy(value: []const u8) GuardError!void {
     if (value.len == 0) return;
     const sentinels = [_][]const u8{
-        "sk-",       // OpenAI / Anthropic style
-        "eyJ",       // JWT header base64 start
-        "AKIA",      // AWS access key
-        "ASIA",      // AWS session key
-        "github_pat_", "ghp_", "gho_", "ghu_", "ghs_", "ghr_",
-        "xoxb-",     // Slack bot
-        "xoxp-",     // Slack user
-        "AIza",      // Google API key
-        "v0.",       // Anthropic API key family
-        "v1.",       // Anthropic API key family
+        "sk-", // OpenAI / Anthropic style
+        "eyJ", // JWT header base64 start
+        "AKIA", // AWS access key
+        "ASIA", // AWS session key
+        "github_pat_",
+        "ghp_",
+        "gho_",
+        "ghu_",
+        "ghs_",
+        "ghr_",
+        "xoxb-", // Slack bot
+        "xoxp-", // Slack user
+        "AIza", // Google API key
+        "v0.", // Anthropic API key family
+        "v1.", // Anthropic API key family
         "-----BEGIN", // PEM cert/key
     };
     for (sentinels) |s| {
@@ -104,7 +109,7 @@ pub fn envGuard(ptype_str: []const u8, has_remote_env: bool) GuardError!void {
 /// verify referenced layers); false when no layer claims in the plan.
 pub fn hasLayerClaims(plan: []const u8) bool {
     const keywords = [_][]const u8{
-        "deploy", "render", "sign", "RBAC", "payment",
+        "deploy", "render",  "sign",   "RBAC", "payment",
         "LLM",    "lineage", "mirror",
     };
     for (keywords) |kw| {
@@ -127,9 +132,9 @@ pub fn thinProof(value: []const u8) GuardError!void {
     if (value.len == 0) return;
     // Pointer-prefixed proofs accepted at any length — the pointer IS the evidence.
     const prefixes = [_][]const u8{
-        "file:",     "contract:", "url:",   "http://", "https://",
-        "machine:",  "sha256:",   "agent:", "x402:",   "bridge:",
-        "pointer:",  "ssh://",    "git+",   "ipfs://",
+        "file:",    "contract:", "url:",   "http://", "https://",
+        "machine:", "sha256:",   "agent:", "x402:",   "bridge:",
+        "pointer:", "ssh://",    "git+",   "ipfs://",
     };
     for (prefixes) |p| {
         if (std.mem.startsWith(u8, value, p)) return;
@@ -148,8 +153,8 @@ pub fn audienceJargon(content: []const u8, audience: ?[]const u8) GuardError!voi
     if (!std.mem.eql(u8, tier, "public")) return;
     if (content.len == 0) return;
     const jargon = [_][]const u8{
-        "cell-gate", "funnel-gate", "iterate ",  "_mark ",     "KEY 1", "KEY 2",
-        "KEY 3",     "quorum:",     "wavefront", "refractory", " supersede ", "agent-judges",
+        "cell-gate",    "funnel-gate", "iterate ",  "_mark ",     "KEY 1",       "KEY 2",
+        "KEY 3",        "quorum:",     "wavefront", "refractory", " supersede ", "agent-judges",
         "funnel-first",
     };
     for (jargon) |kw| {
