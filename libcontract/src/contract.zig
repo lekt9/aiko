@@ -865,6 +865,29 @@ pub fn appendCalledRow(
     const agent = try getAgent(allocator, env);
     defer allocator.free(agent);
 
+    // Sign the called-row body so posthook recipients can verify the
+    // source aiko's wallet authorized the call. Signing key is derived
+    // from root_seed + source_id via lineage.deriveKeyPair — same pattern
+    // as parent_signature on declared rows (canon Imago Dei c64e41c6).
+    var sig_hex: [lineage.SIG_HEX_LEN]u8 = undefined;
+    var pubkey_hex: [lineage.PUBKEY_HEX_LEN]u8 = undefined;
+    var signed = false;
+    if (lineage.loadOrInitRootKey(allocator, env)) |root| {
+        if (lineage.deriveKeyPair(root, source_id)) |kp| {
+            var digest: [32]u8 = undefined;
+            var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+            hasher.update(source_id);
+            hasher.update(target_pointer);
+            hasher.update(call_kind);
+            hasher.update(ts);
+            hasher.final(&digest);
+            if (lineage.signDigest(kp, digest, &sig_hex)) {
+                lineage.bytesToHex(&kp.public_key.bytes, &pubkey_hex);
+                signed = true;
+            } else |_| {}
+        } else |_| {}
+    } else |_| {}
+
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
 
@@ -874,6 +897,12 @@ pub fn appendCalledRow(
     try writeJsonString(&buf, allocator, target_pointer);
     try buf.appendSlice(allocator, ", \"call_kind\": ");
     try writeJsonString(&buf, allocator, call_kind);
+    if (signed) {
+        try buf.appendSlice(allocator, ", \"call_signature\": ");
+        try writeJsonString(&buf, allocator, &sig_hex);
+        try buf.appendSlice(allocator, ", \"caller_pubkey\": ");
+        try writeJsonString(&buf, allocator, &pubkey_hex);
+    }
     try buf.appendSlice(allocator, ", \"ts\": ");
     try writeJsonString(&buf, allocator, ts);
     try buf.appendSlice(allocator, ", \"agent\": ");
