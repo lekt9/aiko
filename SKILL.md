@@ -179,6 +179,14 @@ prompts in the same JSON tree. The client still sends only one sanitized goal. E
 spawned node is a server-side `neuron` row with a `parent_id` edge, not a local
 `spawn` verb.
 
+**LLM use is `aiko` spawn.** Any code path that calls a model provider
+directly (vendor SDK, raw `/v1/chat/completions`, model-router HTTP) is
+a backwards-compat hack. The canonical LLM entry is `aiko "<prompt>"
+--remote`; the cloud aiko's compiler spawns child aikos recursively
+for actual model invocation (each model becomes a child neuron, not a
+hardcoded provider id). Code that wants an LLM call goes through aiko
+or it's not on the substrate.
+
 Aiko truth is metric-gated. A node resolves true only when the declared goal is
 true against evaluator aikos bound to external metrics, ledger metrics, or API
 metrics. Evaluators are ordinary aiko contracts with typed metric pointers. When
