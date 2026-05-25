@@ -15,6 +15,28 @@ pub const DeclareOptions = struct {
     agent: ?[]const u8 = null,
     /// Optional cwd override; null = libc getcwd().
     cwd: ?[]const u8 = null,
+    // ---- Merged neural-substrate fields (composes contract:d10b3dbb,
+    // contract:f93f7205, contract:495babae, contract:15b7a67c). All optional;
+    // emitted only when set so legacy callers stay unaffected.
+    /// Aiko role on the stateless compiler graph: "goal" | "eval" |
+    /// "posthook" | "optimizer".
+    aiko_role: ?[]const u8 = null,
+    /// "all" | "any" | "quorum:n" | "weighted_sum:t" — promotion aggregator.
+    aggregation: ?[]const u8 = null,
+    /// "private" | "team" | "public" — projects to graph_namespaces.
+    audience: ?[]const u8 = null,
+    /// Wallet identity that owns this contract environment.
+    wallet_identity: ?[]const u8 = null,
+    /// Wallet identity inherited from parent — used for posthook signing.
+    parent_wallet_identity: ?[]const u8 = null,
+    /// Source contract id this row replicates from (paid out-of-lineage copy).
+    replicated_from_contract_id: ?[]const u8 = null,
+    /// `embedding:<id>` pointer — vector lives in pgvector, ledger holds pointer.
+    embedding_pointer: ?[]const u8 = null,
+    /// For eval-role rows: external metric assertion.
+    metric_source: ?[]const u8 = null,
+    metric_pointer: ?[]const u8 = null,
+    metric_assertion: ?[]const u8 = null,
 };
 
 extern fn popen(cmd: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
