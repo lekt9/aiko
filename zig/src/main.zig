@@ -1076,7 +1076,9 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
     if (env.getPosix("CONTRACT_EXEC_BINARY")) |peer_bin| {
         if (peer_bin.len > 0) {
             const peer_mode = env.getPosix("CONTRACT_EXEC_MODE") orelse "--local";
-            const cmd_text = try std.fmt.allocPrint(allocator, "\"{s}\" {s} \"{s}\"", .{ peer_bin, peer_mode, r.plan });
+            // env -u CONTRACT_EXEC_BINARY breaks the recursion: the
+            // child won't see the variable and won't re-fork itself.
+            const cmd_text = try std.fmt.allocPrint(allocator, "env -u CONTRACT_EXEC_BINARY -u CONTRACT_EXEC_MODE \"{s}\" {s} \"{s}\"", .{ peer_bin, peer_mode, r.plan });
             defer allocator.free(cmd_text);
             evidencePrint("  exec-binary: {s} {s}\n", .{ peer_bin, peer_mode });
             const peer_out = try runShellCapture(allocator, cmd_text, r.cwd);
