@@ -82,22 +82,31 @@ async function main() {
   const escrowPda = escrowIx.accounts[1].address;
   console.log(`escrow PDA  : ${escrowPda}`);
 
-  // 2) Deposit initial USDC. depositor signs, escrow + mint are addresses.
+  // 2) Deposit initial USDC. depositor's source ATA must be computed
+  // explicitly — Flex's deposit instruction expects it as an account.
   const depositLamports = BigInt(Math.floor(depositUsdc * 1_000_000));
+  const sourceAta = getAssociatedTokenAddressSync(
+    new PublicKey(USDC_MINT),
+    new PublicKey(owner.address),
+  );
   const depositIx = await getDepositInstructionAsync({
     depositor: owner,
     escrow: escrowPda,
     mint: address(USDC_MINT),
+    source: address(sourceAta.toBase58()),
     amount: depositLamports,
   });
 
   // 3) Register the owner's pubkey as session key for simplicity. For
   // higher security split into a separate session key — see README.
+  // revocationGracePeriodSlots = ~2 min so in-flight authorizations
+  // can settle after a key revoke.
   const sessionKeyIx = await getRegisterSessionKeyInstructionAsync({
     owner,
     escrow: escrowPda,
     sessionKey: owner.address,
-    expiresAtSlot: some(0n),  // 0 = no expiry per program semantics
+    expiresAtSlot: some(0n),
+    revocationGracePeriodSlots: 256n,
   });
 
   // Build, sign, send.
