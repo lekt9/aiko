@@ -2163,8 +2163,9 @@ fn extractLastUserContent(body: []const u8) ?[]const u8 {
     // arrays-as-content (vision style) but that's a follow-up.
     var i: usize = body.len;
     var found_user: ?usize = null;
+    const tag = "\"role\":\"user\"";
     while (i > 0) : (i -= 1) {
-        if (i >= 14 and std.mem.eql(u8, body[i - 14 .. i], "\"role\":\"user\"")) {
+        if (i >= tag.len and std.mem.eql(u8, body[i - tag.len .. i], tag)) {
             found_user = i;
             break;
         }
