@@ -1374,6 +1374,8 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     if (std.mem.eql(u8, verb, "self")) return cmdSelf(rest);
     if (std.mem.eql(u8, verb, "_mark")) return try cmdMark(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "verify-lineage")) return try cmdVerifyLineage(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "sign-binary")) return try cmdSignBinary(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "verify-self")) return try cmdVerifySelf(allocator, init.environ);
 
     errPrint("unknown native verb: {s}\n", .{verb});
     usage();
