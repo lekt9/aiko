@@ -173,6 +173,28 @@ pub fn declare(
     action: []const u8,
     opts: DeclareOptions,
 ) ![]u8 {
+    // Cache check FIRST (per AUTO-INVALIDATION-VIA-INPUT-POINTER-HASH —
+    // contract 27a39635 + Lewis 2026-05-26 "always fires, checks cache
+    // before doing anything else"). Compute inputs_hash over plan text and
+    // scan the ledger for an existing declared row whose inputs_hash
+    // matches. On cache hit, return that id and skip re-append; cache
+    // miss proceeds to declare-and-append. Plan-text collision-resistance
+    // is sha256, so equal hash ↔ equal plan ↔ same truth claim.
+    {
+        const sha256_mod = std.crypto.hash.sha2.Sha256;
+        var plan_digest: [32]u8 = undefined;
+        sha256_mod.hash(plan, &plan_digest, .{});
+        var plan_hex_buf: [64]u8 = undefined;
+        const hex_chars = "0123456789abcdef";
+        for (plan_digest, 0..) |b, i| {
+            plan_hex_buf[i * 2] = hex_chars[b >> 4];
+            plan_hex_buf[i * 2 + 1] = hex_chars[b & 0x0F];
+        }
+        if (try findCachedDeclared(allocator, env, &plan_hex_buf)) |cached_id| {
+            return cached_id;
+        }
+    }
+
     const cid = try id_mod.generateId(allocator);
     errdefer allocator.free(cid);
 
