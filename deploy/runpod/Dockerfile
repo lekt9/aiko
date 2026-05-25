@@ -29,16 +29,25 @@ RUN ls -la zig-out/bin && file zig-out/bin/aiko
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl && \
+        ca-certificates curl python3 && \
     rm -rf /var/lib/apt/lists/*
 RUN useradd -m -u 10001 -s /bin/bash aiko
 WORKDIR /opt/aiko
 COPY --from=builder /src/zig/zig-out/bin/aiko /usr/local/bin/aiko
 COPY --from=builder /src/zig/zig-out/bin/contract-zig /usr/local/bin/contract
 COPY deploy/runpod/entrypoint.sh /opt/aiko/entrypoint.sh
-RUN chmod 755 /usr/local/bin/aiko /usr/local/bin/contract /opt/aiko/entrypoint.sh
+COPY deploy/runpod/http_shim.py /opt/aiko/http_shim.py
+RUN chmod 755 /usr/local/bin/aiko /usr/local/bin/contract \
+              /opt/aiko/entrypoint.sh /opt/aiko/http_shim.py
 USER aiko
+EXPOSE 8080
 ENV HOME=/home/aiko \
+    PORT=8080 \
     UNBROWSE_BASE=https://beta-api.unbrowse.ai \
-    CONTRACT_BACKFILL_BUDGET=64
+    CONTRACT_BACKFILL_BUDGET=64 \
+    AIKO_BIN=/usr/local/bin/aiko
+# Two run modes:
+#   SERVER (default): http_shim.py exposes OpenAI-compatible /v1/chat/completions
+#   ONESHOT: entrypoint.sh handles a single RunPod serverless job from env+stdin
+# Switch via AIKO_RUN_MODE=server|oneshot. Default = server.
 ENTRYPOINT ["/opt/aiko/entrypoint.sh"]
