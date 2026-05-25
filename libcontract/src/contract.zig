@@ -177,22 +177,31 @@ pub fn declare(
         break :blk owned_agent.?;
     };
 
-    const refs = try pointer.extractContractRefs(allocator, action);
+    // Refs may be named in either the action (machine-typed) or the plan
+    // (user-narrated). Concatenate so extractors see both surfaces.
+    var scan_buf: std.ArrayList(u8) = .empty;
+    defer scan_buf.deinit(allocator);
+    try scan_buf.appendSlice(allocator, action);
+    try scan_buf.append(allocator, ' ');
+    try scan_buf.appendSlice(allocator, plan);
+    const scan_text = scan_buf.items;
+
+    const refs = try pointer.extractContractRefs(allocator, scan_text);
     defer {
         for (refs) |r| allocator.free(r);
         allocator.free(refs);
     }
-    const inhibits = try pointer.extractTypedRefs(allocator, action, "inhibits:");
+    const inhibits = try pointer.extractTypedRefs(allocator, scan_text, "inhibits:");
     defer {
         for (inhibits) |r| allocator.free(r);
         allocator.free(inhibits);
     }
-    const bind_to = try pointer.extractTypedRefs(allocator, action, "bind:");
+    const bind_to = try pointer.extractTypedRefs(allocator, scan_text, "bind:");
     defer {
         for (bind_to) |r| allocator.free(r);
         allocator.free(bind_to);
     }
-    const blocked_by = try pointer.extractTypedRefs(allocator, action, "blocked_by:");
+    const blocked_by = try pointer.extractTypedRefs(allocator, scan_text, "blocked_by:");
     defer {
         for (blocked_by) |r| allocator.free(r);
         allocator.free(blocked_by);
