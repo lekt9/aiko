@@ -28,7 +28,8 @@ import { address as solAddress } from "@solana/kit";
 
 export interface Env {
   AIKO_FAUCET_KV: KVNamespace;
-  FAUCET_PRIVATE_KEY: string;     // base58 Solana keypair (64 bytes)
+  FAUCET_PRIVATE_KEY: string;     // base58 Solana keypair (64 bytes) — owner + session key
+  FLEX_ESCROW_ADDRESS: string;    // PDA from scripts/setup-flex-escrow.ts
   UPSTREAM_BASE: string;
   DAILY_LIMIT_USDC: string;
   USDC_MINT: string;
