@@ -23,6 +23,8 @@ pub const GuardKind = enum {
     cred_entropy,
     env_mismatch,
     layer_unsatisfied,
+    thin_proof,
+    audience_jargon,
 };
 
 pub const GuardError = error{
@@ -30,6 +32,8 @@ pub const GuardError = error{
     CredentialDetected,
     EnvMismatch,
     LayerUnsatisfied,
+    ProofTooThin,
+    AudienceJargonLeak,
 };
 
 /// Σ24 pointer-only: a `proof` or other free-text field must either be
