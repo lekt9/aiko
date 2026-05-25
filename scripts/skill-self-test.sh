@@ -157,6 +157,33 @@ check "self/proof-binding"         bash "$SCRIPTS/check-proof-binding.sh"
 [ -x "$SCRIPTS/check-identity-binding.sh" ] && \
   check "self/identity-binding"      bash "$SCRIPTS/check-identity-binding.sh"
 
+# ── Hook invariants ─────────────────────────────────────────────────────────
+# Φ9 entrypoint-hints hook (~/.contracts/hooks/phi9-entrypoint-hints.sh): on a
+# declare event with a resource keyword (telegram, email, slack, rss, http,
+# websocket, github, calendar, drive, file-tail), substrate emits an
+# `=== ENTRYPOINT HINTS ===` stderr block with a paste-ready
+# `contract declare ... --resource <type> --parent <id>` line. On a plan with
+# no resource keyword the hook is a no-op (no noise). Substrate emits hints;
+# agent judges KEY 2. Binds gap 6ce032a1 LAMBDA-CHANNELS-PHI9-AUTOENTRY.
+[ -x "$HOOK_DIR/phi9-entrypoint-hints.sh" ] && \
+  check "hooks/phi9-entrypoint-hints" bash -c "
+    set -u
+    tmpd=\$(mktemp -d)
+    export CONTRACTS_STORE=\"\$tmpd/contracts.jsonl\"
+    # case 1: plan with telegram keyword → hints emitted on stderr
+    err1=\$(bash '$CLI' declare 'chat with Lewis on Telegram daily' --action agent-judges 2>&1 >/dev/null) || { echo 'declare(telegram) failed'; rm -rf \"\$tmpd\"; exit 1; }
+    printf '%s' \"\$err1\" | grep -q '=== ENTRYPOINT HINTS ===' || { echo 'missing ENTRYPOINT HINTS block on telegram plan'; printf '%s\n' \"\$err1\" | head -20; rm -rf \"\$tmpd\"; exit 1; }
+    printf '%s' \"\$err1\" | grep -q -- '--resource telegram' || { echo 'missing --resource telegram hint'; printf '%s\n' \"\$err1\" | head -20; rm -rf \"\$tmpd\"; exit 1; }
+    # case 2: plan with no resource keyword → no ENTRYPOINT HINTS block
+    err2=\$(bash '$CLI' declare 'update the readme' --action agent-judges 2>&1 >/dev/null) || { echo 'declare(noop) failed'; rm -rf \"\$tmpd\"; exit 1; }
+    if printf '%s' \"\$err2\" | grep -q '=== ENTRYPOINT HINTS ==='; then
+      echo 'noop plan emitted ENTRYPOINT HINTS (should be silent)'
+      printf '%s\n' \"\$err2\" | head -20
+      rm -rf \"\$tmpd\"; exit 1
+    fi
+    rm -rf \"\$tmpd\"
+  "
+
 # ── Corpus audits (rule-bound checks across all affected artifacts) ──────────
 # Every audits/<rule>/verify.sh is a corpus-wide check for one rule. The
 # runner walks them all. A failure here means the rule's audits/*/fix.sh
