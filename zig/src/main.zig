@@ -2137,7 +2137,8 @@ fn extractFileRefsAndHash(
         // dots inside the token: src/foo.ts must survive).
         var tok = raw_tok;
         while (tok.len > 0 and (tok[tok.len - 1] == ':' or tok[tok.len - 1] == ',' or
-            tok[tok.len - 1] == '.' or tok[tok.len - 1] == ';' or tok[tok.len - 1] == ')')) {
+            tok[tok.len - 1] == '.' or tok[tok.len - 1] == ';' or tok[tok.len - 1] == ')'))
+        {
             tok = tok[0 .. tok.len - 1];
         }
         if (tok.len < 2) continue;
