@@ -1,0 +1,37 @@
+name = "aiko-faucet"
+main = "src/worker.ts"
+compatibility_date = "2025-01-15"
+node_compat = true
+
+# IP-rate-limited USDC faucet that auto-pays x402 envelopes on behalf of
+# callers within their daily allowance.
+#
+# Pattern: Manna (Exodus 16:4). One source (the heavens / FAUCET_PRIVATE_KEY),
+# daily omer per Israelite (per-IP allowance), no hoarding (KV TTL = 24h),
+# enough for each according to need.
+#
+# Setup:
+#   1. Create KV namespace:
+#        wrangler kv:namespace create AIKO_FAUCET_KV
+#      Paste returned id below.
+#   2. Set source wallet secret:
+#        wrangler secret put FAUCET_PRIVATE_KEY  # base58 Solana keypair
+#   3. Deploy: wrangler deploy
+#
+# Endpoints:
+#   POST /v1/faucet/claim       — request daily allowance (returns x402 receipt)
+#   GET  /v1/faucet/balance     — see how much faucet allowance is left for this IP
+#   POST /v1/contract/declare   — proxies to Unbrowse, auto-injects x402 if IP has allowance
+
+[vars]
+UPSTREAM_BASE = "https://beta-api.unbrowse.ai"
+DAILY_LIMIT_USDC = "50"
+USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+SOLANA_RPC = "https://api.mainnet-beta.solana.com"
+
+# Hard 24h TTL on per-IP allowance. Manna: overnight it rots.
+TTL_SECONDS = "86400"
+
+[[kv_namespaces]]
+binding = "AIKO_FAUCET_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
