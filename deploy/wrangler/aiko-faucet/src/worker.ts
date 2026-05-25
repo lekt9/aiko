@@ -149,15 +149,48 @@ async function handleBalance(env: Env, ip: string): Promise<Response> {
   });
 }
 
-// POST /v1/contract/declare — proxy to Unbrowse; if 402 and the IP has
-// a faucet claim with remaining allowance, sign an x402 envelope on the
-// caller's behalf and retry. Doctrine: the manna gathered yesterday is
-// already inside you; the x402 envelope is just the morsel you swallow.
+// Sliding-window rate limit per IP. Stores hit-timestamps in KV under
+// `rate:ip:<ip>` as a JSON array; on each call, prunes timestamps older
+// than WINDOW_SECONDS and rejects if the remaining count >= HOURLY_LIMIT.
+async function checkRateLimit(env: Env, ip: string): Promise<{ ok: boolean; remaining: number; reset_in_seconds: number }> {
+  const key = `rate:ip:${ip}`;
+  const windowSecs = parseInt(env.WINDOW_SECONDS || "3600", 10);
+  const limit = parseInt(env.HOURLY_LIMIT || "10", 10);
+  const nowSecs = Math.floor(Date.now() / 1000);
+  const cutoff = nowSecs - windowSecs;
+  const raw = await env.AIKO_FAUCET_KV.get(key);
+  const hits: number[] = raw ? JSON.parse(raw) : [];
+  const recent = hits.filter((t) => t >= cutoff);
+  if (recent.length >= limit) {
+    const oldest = recent[0];
+    return { ok: false, remaining: 0, reset_in_seconds: oldest + windowSecs - nowSecs };
+  }
+  recent.push(nowSecs);
+  await env.AIKO_FAUCET_KV.put(key, JSON.stringify(recent), { expirationTtl: windowSecs * 2 });
+  return { ok: true, remaining: limit - recent.length, reset_in_seconds: windowSecs };
+}
+
+// POST /v1/contract/declare — proxy to Unbrowse with IP-rate-limit + auto
+// x402 signing. Local aikos that hit a 402 chain here transparently;
+// each IP gets HOURLY_LIMIT calls per WINDOW_SECONDS (default 10/hour).
+// Doctrine: Manna gathered just-in-time, not stockpiled.
 async function handleDeclare(req: Request, env: Env, ip: string): Promise<Response> {
+  // 1. Rate-limit by IP first — cheapest gate, no upstream cost on reject.
+  const gate = await checkRateLimit(env, ip);
+  if (!gate.ok) {
+    return Response.json({
+      error: "rate_limit_exceeded",
+      remaining: 0,
+      reset_in_seconds: gate.reset_in_seconds,
+      doctrine: "Manna — gather only your omer; tomorrow comes fresh.",
+    }, { status: 429, headers: { "Retry-After": String(gate.reset_in_seconds) } });
+  }
   const upstream = `${env.UPSTREAM_BASE}/v1/contract/declare`;
   const body = await req.arrayBuffer();
   const headers = new Headers(req.headers);
   headers.set("x-client", "aiko");
+  headers.set("x-faucet-ip", ip);
+  headers.set("x-faucet-remaining", String(gate.remaining));
 
   let resp = await fetch(upstream, { method: "POST", headers, body });
   if (resp.status !== 402) return resp;
