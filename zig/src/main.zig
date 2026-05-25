@@ -351,6 +351,10 @@ fn parseDeclare(args: []const []const u8) !DeclareArgs {
 const AikoMode = enum {
     remote,
     local,
+    /// 9-day Fib-shaped walk over the ledger. Each invocation projects current
+    /// day from the ledger (no local state), advances if previous day's
+    /// Fibonacci workers all satisfied, spawns next day's children.
+    genesis,
 };
 
 const AikoArgs = struct {
@@ -370,6 +374,9 @@ fn parseAikoArgs(allocator: std.mem.Allocator, args: []const []const u8) !AikoAr
         } else if (std.mem.eql(u8, arg, "--local")) {
             if (mode != null) return error.DuplicateMode;
             mode = .local;
+        } else if (std.mem.eql(u8, arg, "--genesis")) {
+            if (mode != null) return error.DuplicateMode;
+            mode = .genesis;
         } else if (std.mem.startsWith(u8, arg, "--")) {
             return error.UnknownFlag;
         } else {
