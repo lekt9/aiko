@@ -119,9 +119,9 @@ async function main() {
   );
   const tx = await signTransactionMessageWithSigners(msg);
   const send = sendAndConfirmTransactionFactory({ rpc, rpcSubscriptions: subs });
-  // sendAndConfirmTransactionFactory's send takes (tx, config). Config
-  // requires commitment per @solana/kit types.
-  await send(tx, { commitment: "confirmed" });
+  // @solana/kit infers a union lifetime; narrow to blockhash-mode for send.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await send(tx as any, { commitment: "confirmed" });
   const sig = getSignatureFromTransaction(tx);
   console.log(`signature   : ${sig}`);
 
