@@ -280,29 +280,28 @@ fn runShell(allocator: std.mem.Allocator, action: []const u8, cwd: []const u8) !
 const ShellOutput = struct { rc: i32, output: []u8 };
 
 fn runShellCapture(allocator: std.mem.Allocator, action: []const u8, cwd: []const u8) !ShellOutput {
-    var argv = [_][]const u8{ "/bin/sh", "-c", action };
-    var child = std.process.Child.init(&argv, allocator);
-    if (cwd.len > 0) child.cwd = cwd;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-    var stdout_buf: std.ArrayList(u8) = .empty;
-    var stderr_buf: std.ArrayList(u8) = .empty;
-    defer stdout_buf.deinit(allocator);
-    defer stderr_buf.deinit(allocator);
-    try child.collectOutput(allocator, &stdout_buf, &stderr_buf, 64 * 1024);
-    const term = try child.wait();
-    var combined: std.ArrayList(u8) = .empty;
-    try combined.appendSlice(allocator, stdout_buf.items);
-    if (stderr_buf.items.len > 0) {
-        if (combined.items.len > 0) try combined.append(allocator, '\n');
-        try combined.appendSlice(allocator, stderr_buf.items);
+    // Build "cd <cwd> && <action> 2>&1" so combined stdout+stderr are captured.
+    const cmd_plain = if (cwd.len > 0)
+        try std.fmt.allocPrint(allocator, "cd \"{s}\" && {s} 2>&1", .{ cwd, action })
+    else
+        try std.fmt.allocPrint(allocator, "{s} 2>&1", .{action});
+    defer allocator.free(cmd_plain);
+    const cmd = try allocator.dupeZ(u8, cmd_plain);
+    defer allocator.free(cmd);
+    const mode: [*:0]const u8 = "r";
+    const fp = popen(cmd.ptr, mode) orelse return .{ .rc = 127, .output = try allocator.dupe(u8, "") };
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    var chunk: [4096]u8 = undefined;
+    while (true) {
+        const n = fread(&chunk, 1, chunk.len, fp);
+        if (n == 0) break;
+        try buf.appendSlice(allocator, chunk[0..n]);
+        if (buf.items.len > 64 * 1024) break; // cap evidence at 64KB
     }
-    const rc: i32 = switch (term) {
-        .Exited => |c| @intCast(c),
-        .Signal, .Stopped, .Unknown => 1,
-    };
-    return .{ .rc = rc, .output = try combined.toOwnedSlice(allocator) };
+    const status = pclose(fp);
+    const rc: i32 = if (status == -1) 127 else if ((status & 0xff) == 0) @intCast((status >> 8) & 0xff) else 1;
+    return .{ .rc = rc, .output = try buf.toOwnedSlice(allocator) };
 }
 
 /// Gather the latest `result` text of each direct child of `parent_id` and
