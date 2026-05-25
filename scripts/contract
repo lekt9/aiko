@@ -830,6 +830,12 @@ else:
   # Also expose CONTRACT_ID so the action can call `contract context $CONTRACT_ID`.
   local _inbox_pending="$HOME/.contracts/inbox-pending/$id.json"
   local _rc
+  # Σ21 — propagate caller chain to any sub-`contract` invocation the action
+  # spawns. The child sees CONTRACT_CALLER_CHAIN=<this-id>,<prior-chain>.
+  local _prior_chain="${CONTRACT_CALLER_CHAIN:-}"
+  local _next_chain
+  _next_chain=$(_caller_chain_prepend "$id")
+  export CONTRACT_CALLER_CHAIN="$_next_chain"
   if [ -f "$_inbox_pending" ]; then
     export CONTRACT_INBOX_EVENT
     CONTRACT_INBOX_EVENT=$(cat "$_inbox_pending")
@@ -843,6 +849,12 @@ else:
     ( cd "$_rundir" && eval "$action" ) >/tmp/contract-action-out 2>&1
     _rc=$?
     unset CONTRACT_ID
+  fi
+  # Restore (don't leak prepended chain into outer-scope verbs).
+  if [ -z "$_prior_chain" ]; then
+    unset CONTRACT_CALLER_CHAIN
+  else
+    export CONTRACT_CALLER_CHAIN="$_prior_chain"
   fi
   if [ "$_rc" -eq 0 ]; then
     echo "  result: PASS (exit 0)"
