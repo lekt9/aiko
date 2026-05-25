@@ -1210,6 +1210,36 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
     if (std.mem.eql(u8, ptype, "contract-ref")) {
         const ref = action["contract:".len..];
         const target = if (ref.len >= 8) ref[0..8] else ref;
+        // Hebbian counter: record this use; if target is a pattern row
+        // and use-count crosses CONTRACT_PRIMITIVE_THRESHOLD (default 7,
+        // Sabbath-shape: seven invocations to sanctify), promote it.
+        const target_is_pattern = blk: {
+            for (rows) |row| {
+                if (std.mem.eql(u8, row.event, "pattern") and std.mem.eql(u8, row.id, target)) break :blk true;
+            }
+            break :blk false;
+        };
+        if (target_is_pattern) {
+            contract.appendPatternUseRow(allocator, env, target, r.id) catch {};
+            var use_count: u32 = 1; // counting this very use
+            for (rows) |row| {
+                if (std.mem.eql(u8, row.event, "pattern_use") and std.mem.eql(u8, row.id, target)) use_count += 1;
+            }
+            var threshold: u32 = 7;
+            if (env.getPosix("CONTRACT_PRIMITIVE_THRESHOLD")) |s| {
+                threshold = std.fmt.parseInt(u32, s, 10) catch 7;
+            }
+            const already_primitive = blk2: {
+                for (rows) |row| {
+                    if (std.mem.eql(u8, row.event, "primitive") and std.mem.eql(u8, row.id, target)) break :blk2 true;
+                }
+                break :blk2 false;
+            };
+            if (use_count >= threshold and !already_primitive) {
+                contract.appendPrimitiveRow(allocator, env, target, use_count) catch {};
+                evidencePrint("  hebbian-promotion: pattern:{s} use_count={d} >= threshold={d} -> baked as primitive\n", .{ target, use_count, threshold });
+            }
+        }
         if (isSatisfied(rows, target)) {
             evidencePrint("  result: PASS — contract:{s} satisfied\n", .{target});
             return .{ .rc = 0, .result = "pass" };
