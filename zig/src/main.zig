@@ -209,6 +209,7 @@ fn parseRows(allocator: std.mem.Allocator, env: std.process.Environ) ![]Row {
         r.env_pubkey = jsonString(line, "env_pubkey") orelse "";
         r.input_hash = jsonString(line, "input_hash") orelse "";
         r.source_id = jsonString(line, "source_id") orelse "";
+        r.ts = jsonString(line, "ts") orelse "";
         r.parent_signature = jsonString(line, "parent_signature") orelse "";
         r.layer = @intCast(jsonInt(line, "layer") orelse 0);
         try rows.append(allocator, r);
