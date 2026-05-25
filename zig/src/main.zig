@@ -838,6 +838,11 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     const event_kind = ambientEventKind(env);
 
     switch (parsed.mode) {
+        .genesis => {
+            // Stateless 9-day Fib walker — projects state from the ledger,
+            // spawns next day's workers, exits. Re-fire to advance.
+            return try cmdGenesis(allocator, env, safe_plan);
+        },
         .remote => {
             // Remote target: Unbrowse compiles all seven days server-side.
             const body = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, adapter, adapter_kind, event_bus, pretool_event, event_kind, null) catch |e| {
