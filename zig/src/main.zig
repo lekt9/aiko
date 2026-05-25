@@ -1240,6 +1240,22 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
                 evidencePrint("  hebbian-promotion: pattern:{s} use_count={d} >= threshold={d} -> baked as primitive\n", .{ target, use_count, threshold });
             }
         }
+        // BAKED-PRIMITIVE FAST PATH — if target was promoted to primitive
+        // (Hebbian threshold crossed), return its cached action_result
+        // directly without re-walking the subgraph. The reused pathway is
+        // now a reflex arc; same shape as biology's LTP-strengthened synapse.
+        const is_primitive_target = blk3: {
+            for (rows) |row| {
+                if (std.mem.eql(u8, row.event, "primitive") and std.mem.eql(u8, row.id, target)) break :blk3 true;
+            }
+            break :blk3 false;
+        };
+        if (is_primitive_target) {
+            if (latestActionResult(rows, target)) |cached| {
+                evidencePrint("  result: PASS — contract:{s} primitive cache hit\n", .{target});
+                return .{ .rc = 0, .result = try allocator.dupe(u8, cached) };
+            }
+        }
         if (isSatisfied(rows, target)) {
             evidencePrint("  result: PASS — contract:{s} satisfied\n", .{target});
             return .{ .rc = 0, .result = "pass" };
