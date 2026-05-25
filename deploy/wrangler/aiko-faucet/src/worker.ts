@@ -234,8 +234,13 @@ async function signFaremeterEnvelope(env: Env, accepts: any, amount: bigint): Pr
 
   // Parse Flex requirements from the 402 envelope. accepts.extra carries
   // facilitator + escrow per FlexPaymentRequirementsExtra.
+  // Prefer the operator-configured escrow PDA over the 402 advertisement —
+  // env.FLEX_ESCROW_ADDRESS is the escrow our session key is registered on.
   const extra = accepts.extra || {};
-  const escrow = extra.escrow || accepts.payTo; // fallback to payTo if escrow not advertised
+  const escrow = env.FLEX_ESCROW_ADDRESS || extra.escrow || accepts.payTo;
+  if (!env.FLEX_ESCROW_ADDRESS) {
+    console.warn("FLEX_ESCROW_ADDRESS not set; falling back to 402 advertisement — run setup-flex-escrow.ts");
+  }
   const mint = accepts.asset;
   const splitsAdvertised = extra.splits || [];
 
