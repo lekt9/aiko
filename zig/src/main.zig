@@ -2150,13 +2150,86 @@ fn cmdOpenAi(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
     };
     defer allocator.free(result_text);
 
-    // 5. Humanize: prefix the persona signature, strip any contract: leakage.
     const humanized = try humanizePersona(allocator, result_text);
     defer allocator.free(humanized);
 
-    // 6. Write OpenAI ChatCompletion JSON to stdout.
-    try writeOpenAiCompletion(allocator, humanized);
+    if (wants_stream) {
+        try writeOpenAiStream(allocator, humanized);
+    } else {
+        try writeOpenAiCompletion(allocator, humanized);
+    }
     return 0;
+}
+
+/// SSE-shaped chunked emission. Each chunk is one line "data: {json}\n\n"
+/// (the python shim adds the surrounding HTTP framing). Final marker is
+/// "data: [DONE]\n\n". Currently chunks by word boundary; future hook into
+/// real upstream streaming when the cloud aiko exposes it.
+fn writeOpenAiStream(allocator: std.mem.Allocator, content: []const u8) !void {
+    const ts: i64 = time(null);
+    const stream_id = try std.fmt.allocPrint(allocator, "chatcmpl-aiko-{d}", .{ts});
+    defer allocator.free(stream_id);
+
+    // First chunk: role=assistant, no content yet (OpenAI convention).
+    {
+        const first = try std.fmt.allocPrint(allocator,
+            \\data: {{"id":"{s}","object":"chat.completion.chunk","created":{d},"model":"{s}","persona":"{s}","ca":"{s}","choices":[{{"index":0,"delta":{{"role":"assistant"}},"finish_reason":null}}]}}
+            \\
+            \\
+        , .{ stream_id, ts, AIKO_PERSONA_MODEL_ID, AIKO_PERSONA_NAME, AIKO_PERSONA_CA });
+        defer allocator.free(first);
+        out(first);
+    }
+
+    // Body chunks — split by space so each token-ish piece streams. Real
+    // upstream streaming would replace this loop with a pump from the
+    // cloud compiler's SSE response.
+    var i: usize = 0;
+    while (i < content.len) {
+        var j = i;
+        while (j < content.len and (j - i) < 64) : (j += 1) {
+            if (content[j] == ' ') {
+                j += 1;
+                break;
+            }
+        }
+        const piece = content[i..j];
+        i = j;
+
+        var esc: std.ArrayList(u8) = .empty;
+        defer esc.deinit(allocator);
+        for (piece) |c| switch (c) {
+            '"' => try esc.appendSlice(allocator, "\\\""),
+            '\\' => try esc.appendSlice(allocator, "\\\\"),
+            '\n' => try esc.appendSlice(allocator, "\\n"),
+            '\r' => try esc.appendSlice(allocator, "\\r"),
+            '\t' => try esc.appendSlice(allocator, "\\t"),
+            0...8, 11, 12, 14...31 => {
+                var hex: [7]u8 = undefined;
+                const x = try std.fmt.bufPrint(&hex, "\\u{x:0>4}", .{c});
+                try esc.appendSlice(allocator, x);
+            },
+            else => try esc.append(allocator, c),
+        };
+        const ch = try std.fmt.allocPrint(allocator,
+            \\data: {{"id":"{s}","object":"chat.completion.chunk","created":{d},"model":"{s}","choices":[{{"index":0,"delta":{{"content":"{s}"}},"finish_reason":null}}]}}
+            \\
+            \\
+        , .{ stream_id, ts, AIKO_PERSONA_MODEL_ID, esc.items });
+        defer allocator.free(ch);
+        out(ch);
+    }
+
+    // Final chunk: empty delta + finish_reason=stop, then [DONE] marker.
+    const final = try std.fmt.allocPrint(allocator,
+        \\data: {{"id":"{s}","object":"chat.completion.chunk","created":{d},"model":"{s}","choices":[{{"index":0,"delta":{{}},"finish_reason":"stop"}}]}}
+        \\
+        \\data: [DONE]
+        \\
+        \\
+    , .{ stream_id, ts, AIKO_PERSONA_MODEL_ID });
+    defer allocator.free(final);
+    out(final);
 }
 
 fn extractLastUserContent(body: []const u8) ?[]const u8 {
