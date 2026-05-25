@@ -139,6 +139,37 @@ test "inferPointerType exposes only native shapes plus cell/api" {
     try std.testing.expectEqualStrings("cli", inferPointerType("loop"));
     try std.testing.expectEqualStrings("api", inferPointerType("https://example.com"));
     try std.testing.expectEqualStrings("cli", inferPointerType("ls -la"));
+    try std.testing.expectEqualStrings("webhook", inferPointerType("webhook:https://hooks.local/x"));
+    try std.testing.expectEqualStrings("wallet", inferPointerType("wallet:abc"));
+    try std.testing.expectEqualStrings("embedding", inferPointerType("embedding:deadbeef"));
+    try std.testing.expectEqualStrings("tunnel", inferPointerType("tunnel:wg0"));
+    try std.testing.expectEqualStrings("x402", inferPointerType("x402:/v1/credits/debit"));
+    try std.testing.expectEqualStrings("agent", inferPointerType("agent:lewis"));
+    try std.testing.expectEqualStrings("machine", inferPointerType("machine:mlx"));
+    try std.testing.expectEqualStrings("inhibits", inferPointerType("inhibits:deadbeef"));
+    try std.testing.expectEqualStrings("bind", inferPointerType("bind:deadbeef"));
+}
+
+test "inferLayer matches contract d10b3dbb convention" {
+    try std.testing.expectEqual(@as(i32, 3), inferLayer("neuron"));
+    try std.testing.expectEqual(@as(i32, 3), inferLayer("contract:deadbeef"));
+    try std.testing.expectEqual(@as(i32, 3), inferLayer("inhibits:deadbeef"));
+    try std.testing.expectEqual(@as(i32, 4), inferLayer("webhook:https://x"));
+    try std.testing.expectEqual(@as(i32, 5), inferLayer("wallet:abc"));
+    try std.testing.expectEqual(@as(i32, 1), inferLayer("machine:mlx"));
+    try std.testing.expectEqual(@as(i32, 6), inferLayer("agent:lewis"));
+}
+
+test "extractTypedRefs picks ids by prefix" {
+    const allocator = std.testing.allocator;
+    const refs = try extractTypedRefs(allocator, "inhibits:deadbeef and inhibits:c0ffee99 plus contract:f00dbabe", "inhibits:");
+    defer {
+        for (refs) |r| allocator.free(r);
+        allocator.free(refs);
+    }
+    try std.testing.expectEqual(@as(usize, 2), refs.len);
+    try std.testing.expectEqualStrings("deadbeef", refs[0]);
+    try std.testing.expectEqualStrings("c0ffee99", refs[1]);
 }
 
 test "extractContractRefs picks ids" {
