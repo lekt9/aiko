@@ -2002,6 +2002,120 @@ fn cmdGenesis(allocator: std.mem.Allocator, env: std.process.Environ, plan: []co
 ///   Day 7  Sabbath   — `called` rows per `posthook:` synapse — the word
 ///                      propagates and the wavefront seals.
 ///
+/// Walk the raw (pre-scrub) plan for path-like tokens. For each token that
+/// resolves to a readable regular file under the current working directory,
+/// fold (path-relative-to-cwd, sha256(content)) into a rolling sha256.
+/// Returns the hex digest as an owned slice, or null if no file refs found.
+///
+/// This is the v2 cache key's "content layer" (Docker-style): when one of
+/// the referenced files changes byte-for-byte, the rolling sha256 flips, the
+/// inputs_hash flips, and the cache invalidates → next declare with the same
+/// plan in the same cwd against different file content gets a fresh id.
+///
+/// Privacy: only the digest survives in the row; the path strings get
+/// scrubbed by `redactAikoPlan` before this function's result is even
+/// referenced. The digest itself is collision-resistant sha256 — it does
+/// NOT leak filenames or file content.
+///
+/// Heuristic (no regex in stdlib): split raw plan on ASCII whitespace +
+/// quote chars, then for each token check:
+///   - contains '/' (path-shaped) OR starts with './' or '../'
+///   - resolves (relative to cwd) to a regular file
+///   - file size ≤ 4 MiB (the cap on what we'll hash; oversized files
+///     still contribute their path + size, not full content)
+/// Anything that doesn't resolve is silently skipped — caller may
+/// reference files that don't exist yet (declared truth claim about
+/// future state).
+fn extractFileRefsAndHash(
+    allocator: std.mem.Allocator,
+    raw_plan: []const u8,
+) !?[]u8 {
+    var cwd_buf: [4096]u8 = undefined;
+    const cwd_ptr = std.c.getcwd(&cwd_buf, cwd_buf.len);
+    if (cwd_ptr == null) return null;
+    const cwd: []const u8 = std.mem.span(@as([*:0]const u8, @ptrCast(cwd_ptr.?)));
+
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    var any_found: bool = false;
+
+    // Tokenize on whitespace + common quote chars; ignore the leading
+    // backtick/punctuation so `src/foo.ts` and "src/foo.ts" both yield
+    // src/foo.ts.
+    const delims = " \t\n\r\"'`(),;<>";
+    var iter = std.mem.tokenizeAny(u8, raw_plan, delims);
+    while (iter.next()) |raw_tok| {
+        // Strip trailing punctuation like ':', '.', etc. (one pass — keep
+        // dots inside the token: src/foo.ts must survive).
+        var tok = raw_tok;
+        while (tok.len > 0 and (tok[tok.len - 1] == ':' or tok[tok.len - 1] == ',' or
+            tok[tok.len - 1] == '.' or tok[tok.len - 1] == ';' or tok[tok.len - 1] == ')')) {
+            tok = tok[0 .. tok.len - 1];
+        }
+        if (tok.len < 2) continue;
+        // Heuristic: must contain '/' (path shape).
+        if (std.mem.indexOfScalar(u8, tok, '/') == null) continue;
+        // Reject obvious URLs (cache key shouldn't depend on URLs because
+        // they're network state, not source state).
+        if (std.mem.indexOf(u8, tok, "://") != null) continue;
+
+        // Resolve to absolute path.
+        var path_buf: [8192]u8 = undefined;
+        const abs_path: []const u8 = blk: {
+            if (tok[0] == '/') {
+                if (tok.len >= path_buf.len) continue;
+                break :blk tok;
+            }
+            // Relative — join under cwd.
+            const joined = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ cwd, tok }) catch continue;
+            break :blk joined;
+        };
+
+        // Open + check it's a regular file (skip directories).
+        const path_z = allocator.dupeZ(u8, abs_path) catch continue;
+        defer allocator.free(path_z);
+        const fd = std.c.open(path_z.ptr, .{ .ACCMODE = .RDONLY }, @as(c_uint, 0));
+        if (fd < 0) continue;
+        defer _ = std.c.close(fd);
+
+        // Hash up to 4 MiB of content.
+        const cap: usize = 4 * 1024 * 1024;
+        var chunk: [8192]u8 = undefined;
+        var total: usize = 0;
+        var file_hasher = std.crypto.hash.sha2.Sha256.init(.{});
+        while (total < cap) {
+            const want = if (cap - total < chunk.len) cap - total else chunk.len;
+            const n = std.c.read(fd, &chunk, want);
+            if (n <= 0) break;
+            const got: usize = @intCast(n);
+            file_hasher.update(chunk[0..got]);
+            total += got;
+        }
+        var file_digest: [32]u8 = undefined;
+        file_hasher.final(&file_digest);
+
+        // Fold (token-as-cited, file-content-digest) into the outer hash.
+        // Use the token-as-cited (not the resolved abs path) so two callers
+        // in the same cwd citing the same relative path collide cleanly.
+        hasher.update(tok);
+        hasher.update("=");
+        hasher.update(&file_digest);
+        hasher.update("\n");
+        any_found = true;
+    }
+
+    if (!any_found) return null;
+
+    var outer_digest: [32]u8 = undefined;
+    hasher.final(&outer_digest);
+    const hex_chars = "0123456789abcdef";
+    var hex_buf: [64]u8 = undefined;
+    for (outer_digest, 0..) |b, i| {
+        hex_buf[i * 2] = hex_chars[b >> 4];
+        hex_buf[i * 2 + 1] = hex_chars[b & 0x0F];
+    }
+    return try allocator.dupe(u8, &hex_buf);
+}
+
 /// Days 1-3 always fire. Days 4-7 are conditional on truth holding. A held day
 /// returns exit 1; the row stays pending until a future speech ratifies it.
 fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
