@@ -11,7 +11,7 @@ const pointer = @import("pointer.zig");
 const ledger = @import("ledger.zig");
 
 const VERSION = "0.4.0-guarded-native-shape";
-const lineage_lib = @import("contract").lineage;
+const lineage_lib = @import("contract").Lineage;
 const HkdfSha256 = std.crypto.kdf.hkdf.HkdfSha256;
 const X25519 = std.crypto.dh.X25519;
 const ChaCha20Poly1305 = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
