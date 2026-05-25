@@ -41,6 +41,77 @@ for _arg in "$@"; do
 done
 export CONTRACT_VERBOSE
 
+# ── Σ21 call-lineage-as-attention (doctrine ac4bb115) ────────────────────────
+# Every /contract invocation records the caller chain on iterated/satisfied
+# rows so KEY 2 has attention context for "why this contract is being touched
+# in this turn". Propagation:
+#   CONTRACT_CALLER_CHAIN — comma-separated 8hex ids, root-toward-tail. The
+#                            current invocation's id is PREPENDED (chain grows
+#                            toward root: [caller, caller's-caller, ...]).
+#   CONTRACT_MAX_CHAIN_DEPTH — bound, default 32.
+# Cycle: if the id being acted on already appears in the chain → refuse with
+# === CALL CYCLE DETECTED === block + exit 2. Surfaced via `contract status
+# <id>` (walks the most recent iterated/satisfied row's caller_chain).
+CONTRACT_MAX_CHAIN_DEPTH="${CONTRACT_MAX_CHAIN_DEPTH:-32}"
+export CONTRACT_MAX_CHAIN_DEPTH
+
+# _caller_chain_get — emit the current chain (comma-joined 8hex), or empty.
+_caller_chain_get() {
+  printf '%s' "${CONTRACT_CALLER_CHAIN:-}"
+}
+
+# _caller_chain_contains <id> — exit 0 iff id is already in the chain.
+_caller_chain_contains() {
+  local needle="$1"
+  local chain="${CONTRACT_CALLER_CHAIN:-}"
+  [ -z "$chain" ] && return 1
+  case ",$chain," in
+    *",$needle,"*) return 0 ;;
+    *)             return 1 ;;
+  esac
+}
+
+# _caller_chain_prepend <id> — echo the chain that should be exported to a
+# child invocation: <id>,<existing-chain>. Respects MAX depth (trims tail).
+_caller_chain_prepend() {
+  local newid="$1"
+  local existing="${CONTRACT_CALLER_CHAIN:-}"
+  local combined
+  if [ -z "$existing" ]; then
+    combined="$newid"
+  else
+    combined="$newid,$existing"
+  fi
+  # Trim to CONTRACT_MAX_CHAIN_DEPTH entries.
+  printf '%s' "$combined" | awk -v max="$CONTRACT_MAX_CHAIN_DEPTH" -F, '{
+    out=""
+    for (i=1; i<=NF && i<=max; i++) {
+      out = out (i>1 ? "," : "") $i
+    }
+    printf "%s", out
+  }'
+}
+
+# _caller_chain_emit_cycle <id> — print the structured cycle-detected block
+# to stderr and return. Caller decides exit code (typically 2).
+_caller_chain_emit_cycle() {
+  local cyc_id="$1"
+  echo "=== CALL CYCLE DETECTED ===" >&2
+  echo "  contract_id:  $cyc_id" >&2
+  echo "  chain:        ${CONTRACT_CALLER_CHAIN:-}" >&2
+  echo "  reason:       $cyc_id already in CONTRACT_CALLER_CHAIN — would re-recurse" >&2
+  echo "  remediation:  break the cycle (revise an action / supersede / spawn a non-recursive leaf)" >&2
+}
+
+# _caller_chain_check_cycle <id> — if cyc, emit block + return 1; else 0.
+_caller_chain_check_cycle() {
+  if _caller_chain_contains "$1"; then
+    _caller_chain_emit_cycle "$1"
+    return 1
+  fi
+  return 0
+}
+
 # Internal hook system — agent-agnostic, fires from within the CLI itself.
 # Hooks live at ~/.contracts/hooks/ and are plain shell scripts.
 # They receive: event, contract_id, exit_code (as $1 $2 $3).
