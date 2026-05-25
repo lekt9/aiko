@@ -454,6 +454,24 @@ fn runShell(allocator: std.mem.Allocator, action: []const u8, cwd: []const u8) !
 /// the recursive context-aggregation channel.
 const ShellOutput = struct { rc: i32, output: []u8 };
 
+/// In strict mode (CONTRACT_SHELL_STRICT=1) reject actions containing the
+/// metacharacters that enable command chaining, substitution, or piping out
+/// of the declared body. The default is OFF for back-compat — existing
+/// contracts intentionally compose with `;` / `&&` / `|`. When enabled this
+/// gate fails closed with a NAMED cause; it never silently drops execution.
+fn shellStrictReject(action: []const u8, env: std.process.Environ) ?[]const u8 {
+    const flag = env.getPosix("CONTRACT_SHELL_STRICT") orelse return null;
+    if (!std.mem.eql(u8, flag, "1") and !std.mem.eql(u8, flag, "on")) return null;
+    // Conservative blocklist: shell metacharacters that change control flow.
+    for (action) |c| switch (c) {
+        ';', '|', '&', '`', '$', '<', '>' => return "shell-strict: action contains metacharacter (; | & ` $ < >)",
+        else => {},
+    };
+    if (std.mem.indexOf(u8, action, "$(") != null) return "shell-strict: action contains $( command substitution)";
+    if (std.mem.indexOf(u8, action, "${") != null) return "shell-strict: action contains ${ var expansion}";
+    return null;
+}
+
 fn runShellCapture(allocator: std.mem.Allocator, action: []const u8, cwd: []const u8) !ShellOutput {
     // Build "cd <cwd> && <action> 2>&1" so combined stdout+stderr are captured.
     const cmd_plain = if (cwd.len > 0)
