@@ -1318,7 +1318,9 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         wflags.TRUNC = true;
         const fd = std.c.open(tmp_z.ptr, wflags, @as(c_uint, 0o600));
         if (fd < 0) return .{ .rc = 1, .result = "bun: temp open failed" };
-        _ = std.c.write(fd, code.ptr, code.len);
+        const unesc = codeUnescape(allocator, code) catch code;
+        defer if (unesc.ptr != code.ptr) allocator.free(unesc);
+        _ = std.c.write(fd, unesc.ptr, unesc.len);
         _ = std.c.close(fd);
         const cmd_text = try std.fmt.allocPrint(allocator, "bun run {s}", .{tmp});
         defer allocator.free(cmd_text);
@@ -1343,7 +1345,9 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         wflags.TRUNC = true;
         const fd = std.c.open(tmp_z.ptr, wflags, @as(c_uint, 0o600));
         if (fd < 0) return .{ .rc = 1, .result = "python: temp open failed" };
-        _ = std.c.write(fd, code.ptr, code.len);
+        const unesc = codeUnescape(allocator, code) catch code;
+        defer if (unesc.ptr != code.ptr) allocator.free(unesc);
+        _ = std.c.write(fd, unesc.ptr, unesc.len);
         _ = std.c.close(fd);
         const cmd_text = try std.fmt.allocPrint(allocator, "python3 {s}", .{tmp});
         defer allocator.free(cmd_text);
