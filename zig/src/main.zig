@@ -2726,10 +2726,17 @@ fn writeOpenAiCompletionExt(allocator: std.mem.Allocator, content: []const u8, t
         else => try content_escaped.append(allocator, c),
     };
     const ts: i64 = time(null);
-    const out_json = try std.fmt.allocPrint(allocator,
-        \\{{"id":"chatcmpl-aiko-{d}","object":"chat.completion","created":{d},"model":"{s}","persona":"{s}","ca":"{s}","choices":[{{"index":0,"message":{{"role":"assistant","content":"{s}"}},"finish_reason":"stop"}}],"usage":{{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}}}
-        \\
-    , .{ ts, ts, AIKO_PERSONA_MODEL_ID, AIKO_PERSONA_NAME, AIKO_PERSONA_CA, content_escaped.items });
+    const finish_reason: []const u8 = if (tool_calls_json != null) "tool_calls" else "stop";
+    const out_json = if (tool_calls_json) |tc|
+        try std.fmt.allocPrint(allocator,
+            \\{{"id":"chatcmpl-aiko-{d}","object":"chat.completion","created":{d},"model":"{s}","persona":"{s}","ca":"{s}","choices":[{{"index":0,"message":{{"role":"assistant","content":"{s}","tool_calls":{s}}},"finish_reason":"{s}"}}],"usage":{{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}}}
+            \\
+        , .{ ts, ts, AIKO_PERSONA_MODEL_ID, AIKO_PERSONA_NAME, AIKO_PERSONA_CA, content_escaped.items, tc, finish_reason })
+    else
+        try std.fmt.allocPrint(allocator,
+            \\{{"id":"chatcmpl-aiko-{d}","object":"chat.completion","created":{d},"model":"{s}","persona":"{s}","ca":"{s}","choices":[{{"index":0,"message":{{"role":"assistant","content":"{s}"}},"finish_reason":"{s}"}}],"usage":{{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}}}
+            \\
+        , .{ ts, ts, AIKO_PERSONA_MODEL_ID, AIKO_PERSONA_NAME, AIKO_PERSONA_CA, content_escaped.items, finish_reason });
     defer allocator.free(out_json);
     out(out_json);
 }
