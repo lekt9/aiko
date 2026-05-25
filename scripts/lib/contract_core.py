@@ -231,6 +231,7 @@ def _infer_layer(action: str) -> int:
     return {
         "agent":         6,  # operator
         "x402":          5,  # value
+        "bridge":        5,  # value — Π10 cross-silo contract reference (RBAC + x402-gated)
         "agent-judges":  3,  # graph (composition's bottom — agent KEY 2)
         "funnel":        3,
         "funnel-first":  3,
