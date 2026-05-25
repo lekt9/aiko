@@ -1273,11 +1273,25 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
     // for package install (https://github.com/justrach/nanobrew). The
     // local binary trusts the named runtime is on PATH (baked at build
     // time per Dockerfile). Same capture + budget semantics as runShell.
+    // Code prefixes write the body to a temp file (avoids shell-quote hell
+    // with nested " ' \ in the source) and exec the runtime against it.
     if (std.mem.startsWith(u8, action, "bun:")) {
         const code = action["bun:".len..];
-        const cmd_text = try std.fmt.allocPrint(allocator, "bun -e \"{s}\"", .{code});
+        const tmp = try std.fmt.allocPrint(allocator, "/tmp/aiko-bun-{d}.ts", .{time(null)});
+        defer allocator.free(tmp);
+        const tmp_z = try allocator.dupeZ(u8, tmp);
+        defer allocator.free(tmp_z);
+        var wflags: std.c.O = .{};
+        wflags.ACCMODE = .WRONLY;
+        wflags.CREAT = true;
+        wflags.TRUNC = true;
+        const fd = std.c.open(tmp_z.ptr, wflags, @as(c_uint, 0o600));
+        if (fd < 0) return .{ .rc = 1, .result = "bun: temp open failed" };
+        _ = std.c.write(fd, code.ptr, code.len);
+        _ = std.c.close(fd);
+        const cmd_text = try std.fmt.allocPrint(allocator, "bun run {s}", .{tmp});
         defer allocator.free(cmd_text);
-        evidencePrint("  exec: bun ({d} chars)\n", .{code.len});
+        evidencePrint("  exec: bun {s} ({d} chars)\n", .{ tmp, code.len });
         const out_capture = try runShellCapture(allocator, cmd_text, r.cwd);
         if (out_capture.rc == 0) {
             evidence("  result: PASS (bun)\n");
@@ -1288,9 +1302,21 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
     }
     if (std.mem.startsWith(u8, action, "python:")) {
         const code = action["python:".len..];
-        const cmd_text = try std.fmt.allocPrint(allocator, "python3 -c \"{s}\"", .{code});
+        const tmp = try std.fmt.allocPrint(allocator, "/tmp/aiko-py-{d}.py", .{time(null)});
+        defer allocator.free(tmp);
+        const tmp_z = try allocator.dupeZ(u8, tmp);
+        defer allocator.free(tmp_z);
+        var wflags: std.c.O = .{};
+        wflags.ACCMODE = .WRONLY;
+        wflags.CREAT = true;
+        wflags.TRUNC = true;
+        const fd = std.c.open(tmp_z.ptr, wflags, @as(c_uint, 0o600));
+        if (fd < 0) return .{ .rc = 1, .result = "python: temp open failed" };
+        _ = std.c.write(fd, code.ptr, code.len);
+        _ = std.c.close(fd);
+        const cmd_text = try std.fmt.allocPrint(allocator, "python3 {s}", .{tmp});
         defer allocator.free(cmd_text);
-        evidencePrint("  exec: python3 ({d} chars)\n", .{code.len});
+        evidencePrint("  exec: python3 {s} ({d} chars)\n", .{ tmp, code.len });
         const out_capture = try runShellCapture(allocator, cmd_text, r.cwd);
         if (out_capture.rc == 0) {
             evidence("  result: PASS (python)\n");
