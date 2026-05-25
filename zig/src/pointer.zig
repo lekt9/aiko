@@ -1,0 +1,122 @@
+//! Pointer-type inference + contract:<id> ref extraction.
+//!
+//! Mirrors contract_core._infer_pointer_type() byte-for-byte (line ~164 in
+//! ~/.claude/skills/contract/scripts/lib/contract_core.py).
+const std = @import("std");
+
+/// Infer the pointer_type from an action string. Mirrors Python order +
+/// returned constants. Caller does NOT free — the returned slice is a
+/// compile-time string literal.
+pub fn inferPointerType(action: []const u8) []const u8 {
+    if (std.mem.eql(u8, action, "agent-judges")) return "agent-judges";
+    if (std.mem.eql(u8, action, "children-satisfy") or std.mem.eql(u8, action, "funnel")) return "funnel";
+    if (std.mem.eql(u8, action, "funnel-first")) return "funnel-first";
+    if (std.mem.eql(u8, action, "sequence")) return "sequence";
+    if (std.mem.startsWith(u8, action, "quorum:")) return "quorum";
+    if (std.mem.startsWith(u8, action, "contract:")) return "contract-ref";
+    if (std.mem.startsWith(u8, action, "loop-until:") or std.mem.eql(u8, action, "loop")) return "loop";
+    if (std.mem.startsWith(u8, action, "harness:")) return "harness";
+    if (std.mem.startsWith(u8, action, "tool-guard:")) return "tool-guard";
+    if (std.mem.startsWith(u8, action, "x402:")) return "x402";
+    if (std.mem.startsWith(u8, action, "bridge:")) return "bridge";
+    if (std.mem.startsWith(u8, action, "agent:")) return "agent";
+    if (std.mem.startsWith(u8, action, "machine:")) return "machine";
+    if (std.mem.startsWith(u8, action, "sandbox:")) return "sandbox";
+    if (std.mem.startsWith(u8, action, "runpod:")) return "runpod";
+    if (std.mem.startsWith(u8, action, "bun:")) return "bun";
+    if (std.mem.startsWith(u8, action, "macos-sandbox:")) return "macos-sandbox";
+    if (std.mem.startsWith(u8, action, "deepwiki:")) return "deepwiki";
+    if (std.mem.startsWith(u8, action, "findskills:")) return "findskills";
+    if (std.mem.startsWith(u8, action, "curl ") or
+        std.mem.startsWith(u8, action, "http://") or
+        std.mem.startsWith(u8, action, "https://") or
+        std.mem.startsWith(u8, action, "wget ")) return "api";
+    return "cli";
+}
+
+/// Π5 layer inference, mirroring contract_core._infer_layer().
+pub fn inferLayer(action: []const u8) i32 {
+    const pt = inferPointerType(action);
+    if (std.mem.eql(u8, pt, "cli") and std.mem.indexOf(u8, action, "wait-for-event") != null) return 4;
+    if (std.mem.eql(u8, pt, "agent")) return 6;
+    if (std.mem.eql(u8, pt, "x402")) return 5;
+    if (std.mem.eql(u8, pt, "bridge")) return 5;
+    if (std.mem.eql(u8, pt, "agent-judges")) return 3;
+    if (std.mem.eql(u8, pt, "funnel")) return 3;
+    if (std.mem.eql(u8, pt, "funnel-first")) return 3;
+    if (std.mem.eql(u8, pt, "sequence")) return 3;
+    if (std.mem.eql(u8, pt, "quorum")) return 3;
+    if (std.mem.eql(u8, pt, "contract-ref")) return 3;
+    if (std.mem.eql(u8, pt, "cli")) return 2;
+    if (std.mem.eql(u8, pt, "api")) return 2;
+    if (std.mem.eql(u8, pt, "harness")) return 2;
+    if (std.mem.eql(u8, pt, "loop")) return 2;
+    if (std.mem.eql(u8, pt, "tool-guard")) return 2;
+    if (std.mem.eql(u8, pt, "machine")) return 1;
+    if (std.mem.eql(u8, pt, "sandbox")) return 1;
+    if (std.mem.eql(u8, pt, "runpod")) return 1;
+    if (std.mem.eql(u8, pt, "bun")) return 1;
+    if (std.mem.eql(u8, pt, "macos-sandbox")) return 1;
+    if (std.mem.eql(u8, pt, "deepwiki")) return 6;
+    if (std.mem.eql(u8, pt, "findskills")) return 6;
+    return 2;
+}
+
+/// Extract every `contract:<8hex>` reference id from `action`. Returns a list
+/// of owned slices (each 8 chars). Caller owns the outer slice and each
+/// inner slice — free each then free the slice.
+pub fn extractContractRefs(allocator: std.mem.Allocator, action: []const u8) ![][]u8 {
+    var refs: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (refs.items) |r| allocator.free(r);
+        refs.deinit(allocator);
+    }
+    const needle = "contract:";
+    var i: usize = 0;
+    while (i + needle.len <= action.len) {
+        if (std.mem.startsWith(u8, action[i..], needle)) {
+            const start = i + needle.len;
+            if (start + 8 <= action.len) {
+                const candidate = action[start .. start + 8];
+                var ok = true;
+                for (candidate) |c| {
+                    const is_hex = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+                    if (!is_hex) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok) {
+                    const copy = try allocator.dupe(u8, candidate);
+                    try refs.append(allocator, copy);
+                    i = start + 8;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    return try refs.toOwnedSlice(allocator);
+}
+
+test "inferPointerType matches python rules" {
+    try std.testing.expectEqualStrings("agent-judges", inferPointerType("agent-judges"));
+    try std.testing.expectEqualStrings("funnel", inferPointerType("funnel"));
+    try std.testing.expectEqualStrings("funnel", inferPointerType("children-satisfy"));
+    try std.testing.expectEqualStrings("contract-ref", inferPointerType("contract:deadbeef"));
+    try std.testing.expectEqualStrings("quorum", inferPointerType("quorum:foo"));
+    try std.testing.expectEqualStrings("api", inferPointerType("https://example.com"));
+    try std.testing.expectEqualStrings("cli", inferPointerType("ls -la"));
+}
+
+test "extractContractRefs picks ids" {
+    const allocator = std.testing.allocator;
+    const refs = try extractContractRefs(allocator, "see contract:deadbeef and contract:c0ffee99");
+    defer {
+        for (refs) |r| allocator.free(r);
+        allocator.free(refs);
+    }
+    try std.testing.expectEqual(@as(usize, 2), refs.len);
+    try std.testing.expectEqualStrings("deadbeef", refs[0]);
+    try std.testing.expectEqualStrings("c0ffee99", refs[1]);
+}
