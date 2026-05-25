@@ -1197,7 +1197,7 @@ def record_tokens(ref_id: Optional[str], model: str, in_tokens: int, out_tokens:
     record_event("tokens", ref_id or "_", **fields)
 
 
-def mark_satisfied(id: str, wave: int, proof: str | None = None, proof_skip_reason: str | None = None, layer_guard_bypassed: list | None = None) -> None:
+def mark_satisfied(id: str, wave: int, proof: str | None = None, proof_skip_reason: str | None = None, layer_guard_bypassed: list | None = None, caller_chain: Optional[list] = None) -> None:
     """Append a satisfied row. One of `proof` (plan-fulfillment evidence)
     or `proof_skip_reason` (explicit opt-out) should be present; both None
     is permitted for callers that handle the requirement at the CLI layer
@@ -1206,7 +1206,11 @@ def mark_satisfied(id: str, wave: int, proof: str | None = None, proof_skip_reas
     `layer_guard_bypassed` (Σ20 doctrine row 92d756ea): list of standing-gate
     ids the agent acknowledged were unmet but consciously bypassed via the
     --no-layer-guard flag. Honest audit trail — silent bypass is never
-    permitted; every bypass writes the unmet gate ids onto the row."""
+    permitted; every bypass writes the unmet gate ids onto the row.
+
+    `caller_chain` (Σ21 doctrine row ac4bb115): list of 8hex caller ids,
+    root-toward-tail, captured from CONTRACT_CALLER_CHAIN at mark time. Empty
+    list when this is a top-level mark; absent on rows predating doctrine."""
     row = {"event": "satisfied", "id": id, "wave": wave, "ts": _now()}
     if proof is not None:
         row["proof"] = proof
@@ -1214,6 +1218,8 @@ def mark_satisfied(id: str, wave: int, proof: str | None = None, proof_skip_reas
         row["proof_skip_reason"] = proof_skip_reason
     if layer_guard_bypassed:
         row["layer_guard_bypassed"] = list(layer_guard_bypassed)
+    if caller_chain is not None:
+        row["caller_chain"] = list(caller_chain)
     _append(row)
 
 
