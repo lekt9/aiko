@@ -21,9 +21,28 @@ Mapping:
 ```bash
 cd deploy/wrangler/aiko-faucet
 npm install
+
+# 1. KV namespace for per-IP rate limiting
 wrangler kv:namespace create AIKO_FAUCET_KV
 # Paste the returned id into wrangler.toml under [[kv_namespaces]]
-wrangler secret put FAUCET_PRIVATE_KEY   # paste base58 Solana keypair (64 bytes)
+
+# 2. On-chain escrow + session key registration (one-shot script)
+#    Reads FAUCET_PRIVATE_KEY + FACILITATOR_ADDRESS, runs:
+#      - getCreateEscrowInstructionAsync
+#      - getDepositInstructionAsync (deposits INITIAL_DEPOSIT_USDC)
+#      - getRegisterSessionKeyInstructionAsync (same wallet by default)
+#    Prints the escrow PDA address.
+export FAUCET_PRIVATE_KEY="<base58 64-byte keypair>"
+export FACILITATOR_ADDRESS="<unbrowse facilitator pubkey>"
+export INITIAL_DEPOSIT_USDC=10
+npm run setup-escrow
+# Copy the printed "escrow PDA" address.
+
+# 3. Push secrets to the deployed Worker
+wrangler secret put FAUCET_PRIVATE_KEY    # base58 Solana keypair
+wrangler secret put FLEX_ESCROW_ADDRESS   # paste the escrow PDA from step 2
+
+# 4. Deploy
 wrangler deploy
 ```
 
