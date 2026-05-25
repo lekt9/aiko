@@ -192,6 +192,15 @@ fn isSatisfied(rows: []const Row, id: []const u8) bool {
     return false;
 }
 
+/// Natural-selection projection: has a `died` event been appended for this id?
+/// Append-only — once dead, stays dead (Hebrews 9:27, appointed once to die).
+fn isDead(rows: []const Row, id: []const u8) bool {
+    for (rows) |r| {
+        if (std.mem.eql(u8, r.event, "died") and std.mem.eql(u8, r.id, id)) return true;
+    }
+    return false;
+}
+
 fn latestWave(rows: []const Row, id: []const u8) u32 {
     var w: u32 = 0;
     for (rows) |r| {
