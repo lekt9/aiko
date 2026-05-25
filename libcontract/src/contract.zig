@@ -7,6 +7,7 @@ const std = @import("std");
 const id_mod = @import("id.zig");
 const pointer = @import("pointer.zig");
 const ledger = @import("ledger.zig");
+const lineage = @import("lineage.zig");
 
 /// Typed edge kind across the contract DAG. The substrate compiles narrative
 /// references in the plan/action text (e.g. `inhibits:deadbeef`) into one
