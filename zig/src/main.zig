@@ -1147,6 +1147,70 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         return .{ .rc = 1, .result = "fail" };
     }
 
+    // kill-lineage:<root_id> — walk descendants of root_id, mark each as
+    // apoptosed with reason "kill-lineage". The killing contract itself
+    // satisfies on the count of killed descendants.
+    if (std.mem.startsWith(u8, action, "kill-lineage:")) {
+        const root = action["kill-lineage:".len..];
+        var killed: u32 = 0;
+        for (rows) |row| {
+            if (!std.mem.eql(u8, row.event, "declared")) continue;
+            if (row.parent_id == null) continue;
+            // Walk up the parent chain; if root is an ancestor, kill this row.
+            var cur: ?[]const u8 = row.parent_id;
+            var depth: u8 = 0;
+            while (cur != null and depth < 32) : (depth += 1) {
+                if (std.mem.eql(u8, cur.?, root)) {
+                    if (!isDead(rows, row.id) and !isSatisfied(rows, row.id)) {
+                        contract.markDied(allocator, env, row.id, .apoptosed, null, "kill-lineage") catch continue;
+                        killed += 1;
+                    }
+                    break;
+                }
+                cur = declaredParentOf(rows, cur.?);
+            }
+        }
+        const msg = try std.fmt.allocPrint(allocator, "kill-lineage: {d} descendant(s) of {s} marked apoptosed", .{ killed, root });
+        evidencePrint("  result: PASS — {s}\n", .{msg});
+        return .{ .rc = 0, .result = msg };
+    }
+
+    // invite:<pubkey_hex>:<role,role,...> — external aiko by pubkey joins
+    // the inviter's network with role grants. Inviter = this row's id.
+    if (std.mem.startsWith(u8, action, "invite:")) {
+        const rest = action["invite:".len..];
+        const sep = std.mem.indexOfScalar(u8, rest, ':') orelse rest.len;
+        const pubkey = rest[0..sep];
+        const roles = if (sep < rest.len) rest[sep + 1 ..] else "read";
+        try contract.appendInvitationRow(allocator, env, r.id, pubkey, roles);
+        // Auto-emit one grant per role.
+        var role_iter = std.mem.splitScalar(u8, roles, ',');
+        var n: u32 = 0;
+        while (role_iter.next()) |role| {
+            if (role.len == 0) continue;
+            try contract.appendGrantRow(allocator, env, r.id, pubkey, role, r.id);
+            n += 1;
+        }
+        const msg = try std.fmt.allocPrint(allocator, "invite: pubkey={s} roles={s} grants_emitted={d}", .{ pubkey[0..@min(pubkey.len, 16)], roles, n });
+        evidencePrint("  result: PASS — {s}\n", .{msg});
+        return .{ .rc = 0, .result = msg };
+    }
+
+    // grant:<pubkey_hex>:<role>:<scope_id> — delegate one (actor, role,
+    // scope) tuple. Granter = this row's id; chained grants follow lineage.
+    if (std.mem.startsWith(u8, action, "grant:")) {
+        const rest = action["grant:".len..];
+        const s1 = std.mem.indexOfScalar(u8, rest, ':') orelse return .{ .rc = 1, .result = "grant: missing role" };
+        const s2 = std.mem.indexOfScalarPos(u8, rest, s1 + 1, ':') orelse rest.len;
+        const pubkey = rest[0..s1];
+        const role = rest[s1 + 1 .. s2];
+        const scope = if (s2 < rest.len) rest[s2 + 1 ..] else r.id;
+        try contract.appendGrantRow(allocator, env, r.id, pubkey, role, scope);
+        const msg = try std.fmt.allocPrint(allocator, "grant: pubkey={s} role={s} scope={s}", .{ pubkey[0..@min(pubkey.len, 16)], role, scope });
+        evidencePrint("  result: PASS — {s}\n", .{msg});
+        return .{ .rc = 0, .result = msg };
+    }
+
     var body = action;
     if (std.mem.startsWith(u8, action, "loop-until:")) body = action["loop-until:".len..];
     if (std.mem.startsWith(u8, action, "harness:")) {
