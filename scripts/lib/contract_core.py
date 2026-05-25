@@ -771,12 +771,25 @@ def declare(plan: str, action: str, parent_id: Optional[str] = None,
     # Pierced layers (the agent's explicit cross-layer authorizations) are
     # stored on the row so iterate-time enforcement can consult them.
     resolved_layer = int(layer) if layer is not None else _infer_layer(action)
+    resolved_ptype = _infer_pointer_type(action)
     row = {"event": "declared", "id": cid, "plan": plan, "action": action,
-           "pointer_type": _infer_pointer_type(action),
+           "pointer_type": resolved_ptype,
            "layer": resolved_layer,
            "cwd": os.getcwd(),
            "parent_id": parent_id, "pointers": pointers or [],
            "ts": _now()}
+    # Π10 — bridge: contract:<foreign-id>@<owner-canonical>?cost=<usdc> — parse
+    # the three components at declare-time and crystallize onto the row so the
+    # iterate handler doesn't re-parse and so list/render verbs can surface
+    # the bridge target without re-running the regex. Honest gap: Σ17 + Π8
+    # not yet implemented, so iterate refuses (Γ1 no-stubs).
+    if resolved_ptype == "bridge":
+        import re as _re
+        m = _re.match(r'^bridge:contract:([0-9a-f]{8})@([^?]+)\?cost=([0-9]+(?:\.[0-9]+)?)$', action)
+        if m:
+            row["bridge_foreign_id"] = m.group(1)
+            row["bridge_owner_canonical"] = m.group(2)
+            row["bridge_cost_usdc"] = m.group(3)
     if pierced_layers:
         row["pierced_layers"] = [int(L) for L in pierced_layers]
     if learning:
