@@ -155,16 +155,20 @@ fn computeInputsHashV2(
 const synapse_table = [_]struct {
     prefix: []const u8,
     kind: SynapseKind,
+    freeform: bool,
 }{
-    .{ .prefix = "contract:", .kind = .pointer },
-    .{ .prefix = "inhibits:", .kind = .inhibits },
-    .{ .prefix = "bind:", .kind = .bind },
-    .{ .prefix = "blocked_by:", .kind = .blocked_by },
-    .{ .prefix = "posthook:", .kind = .posthook },
-    .{ .prefix = "prehook:", .kind = .prehook },
-    .{ .prefix = "modality:", .kind = .modality },
-    .{ .prefix = "at:", .kind = .at },
-    .{ .prefix = "repeat:", .kind = .repeat },
+    // freeform=true means the suffix is consumed verbatim until the next
+    // whitespace/quote — used for at:<RFC3339> + repeat:<cron-expr> where
+    // the payload isn't an 8-hex id.
+    .{ .prefix = "contract:", .kind = .pointer, .freeform = false },
+    .{ .prefix = "inhibits:", .kind = .inhibits, .freeform = false },
+    .{ .prefix = "bind:", .kind = .bind, .freeform = false },
+    .{ .prefix = "blocked_by:", .kind = .blocked_by, .freeform = false },
+    .{ .prefix = "posthook:", .kind = .posthook, .freeform = false },
+    .{ .prefix = "prehook:", .kind = .prehook, .freeform = false },
+    .{ .prefix = "modality:", .kind = .modality, .freeform = false },
+    .{ .prefix = "at:", .kind = .at, .freeform = true },
+    .{ .prefix = "repeat:", .kind = .repeat, .freeform = true },
 };
 
 extern fn popen(cmd: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
@@ -366,7 +370,10 @@ pub fn declare(
         synapses.deinit(allocator);
     }
     for (synapse_table) |entry| {
-        const ids = try pointer.extractTypedRefs(allocator, scan_text, entry.prefix);
+        const ids = if (entry.freeform)
+            try pointer.extractFreeformRefs(allocator, scan_text, entry.prefix)
+        else
+            try pointer.extractTypedRefs(allocator, scan_text, entry.prefix);
         defer allocator.free(ids); // inner-string ownership transfers to synapses[].to
         for (ids) |id| try synapses.append(allocator, .{ .to = id, .kind = entry.kind });
     }

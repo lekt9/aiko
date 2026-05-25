@@ -137,6 +137,64 @@ pub fn extractTypedRefs(allocator: std.mem.Allocator, text: []const u8, prefix: 
     return try refs.toOwnedSlice(allocator);
 }
 
+/// Extract synapse suffixes where the suffix is NOT an 8-hex id but a
+/// free-form opaque token consumed verbatim until the next whitespace,
+/// quote, or closing bracket. Used for the `at:` (RFC3339 timestamps) and
+/// `repeat:` (cron expressions) synapse kinds — both carry payloads whose
+/// shape is structurally a string, not an id.
+///
+/// Matches the same prefix-anchored pattern as extractTypedRefs, then
+/// scans forward consuming non-terminator characters. The terminator set
+/// is whitespace + JSON-shape closers + comma, so embedded RFC3339
+/// timestamps like "2026-05-26T08:00:00Z" or cron expressions like
+/// "0 9 * * *" are captured as a single token (cron spaces ARE
+/// terminators — callers should quote multi-word cron expressions or
+/// pre-canonicalize them, e.g. "every-day-9am" → "0_9_*_*_*").
+pub fn extractFreeformRefs(allocator: std.mem.Allocator, text: []const u8, prefix: []const u8) ![][]u8 {
+    var refs: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (refs.items) |r| allocator.free(r);
+        refs.deinit(allocator);
+    }
+    var i: usize = 0;
+    while (i + prefix.len <= text.len) {
+        if (std.mem.startsWith(u8, text[i..], prefix)) {
+            // Word boundary: previous char must be whitespace / quote / line-
+            // start. Otherwise prefixes embed in substrings — `repeat:` would
+            // match the `at:` extractor on its trailing "at:..." segment.
+            const at_boundary = i == 0 or blk: {
+                const prev = text[i - 1];
+                break :blk prev == ' ' or prev == '\t' or prev == '\n' or
+                    prev == '\r' or prev == '"' or prev == '\'' or
+                    prev == ',' or prev == '[' or prev == '(';
+            };
+            if (!at_boundary) {
+                i += 1;
+                continue;
+            }
+            const start = i + prefix.len;
+            var end = start;
+            while (end < text.len) {
+                const c = text[end];
+                if (c == ' ' or c == '\t' or c == '\n' or c == '\r' or
+                    c == '"' or c == '\'' or c == ',' or c == ']' or c == ')')
+                {
+                    break;
+                }
+                end += 1;
+            }
+            if (end > start) {
+                const copy = try allocator.dupe(u8, text[start..end]);
+                try refs.append(allocator, copy);
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    return try refs.toOwnedSlice(allocator);
+}
+
 test "inferPointerType exposes only native shapes plus cell/api" {
     try std.testing.expectEqualStrings("funnel", inferPointerType("funnel"));
     try std.testing.expectEqualStrings("neuron", inferPointerType("neuron"));
