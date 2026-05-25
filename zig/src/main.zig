@@ -7,9 +7,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 /// Portable self-executable path. Darwin uses _NSGetExecutablePath; Linux
-/// readlinks /proc/self/exe. Caller-provided buf is filled, returns the
-/// path slice (no null terminator), or an error.
-extern fn readlink_libc(path: [*:0]const u8, buf: [*]u8, bufsize: usize) isize;
+/// readlinks /proc/self/exe. Returns a slice into the caller-provided buf
+/// (no null terminator) or an error.
 fn selfExePathPortable(buf: []u8) ![]const u8 {
     switch (builtin.os.tag) {
         .macos => {
@@ -19,8 +18,7 @@ fn selfExePathPortable(buf: []u8) ![]const u8 {
             return buf[0..len];
         },
         .linux => {
-            const proc: [*:0]const u8 = "/proc/self/exe";
-            const n = readlink_libc(proc, buf.ptr, buf.len);
+            const n = std.c.readlink("/proc/self/exe", buf.ptr, buf.len);
             if (n <= 0) return error.SelfPathTooLong;
             return buf[0..@intCast(n)];
         },
