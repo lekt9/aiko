@@ -2173,7 +2173,7 @@ fn extractLastUserContent(body: []const u8) ?[]const u8 {
     const region = body[found_user.?..];
     const key = "\"content\":\"";
     const k = std.mem.indexOf(u8, region, key) orelse return null;
-    var start = k + key.len;
+    const start = k + key.len;
     var end = start;
     while (end < region.len) : (end += 1) {
         if (region[end] == '\\') {
