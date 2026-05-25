@@ -46,6 +46,9 @@ pub fn inferLayer(action: []const u8) i32 {
     if (std.mem.eql(u8, pt, "contract-ref")) return 3;
     if (std.mem.eql(u8, pt, "inhibits")) return 3;
     if (std.mem.eql(u8, pt, "bind")) return 3;
+    if (std.mem.eql(u8, pt, "blocked_by")) return 3;
+    if (std.mem.eql(u8, pt, "posthook")) return 4;
+    if (std.mem.eql(u8, pt, "prehook")) return 4;
     if (std.mem.eql(u8, pt, "embedding")) return 3;
     if (std.mem.eql(u8, pt, "webhook")) return 4;
     if (std.mem.eql(u8, pt, "tunnel")) return 4;
