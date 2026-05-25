@@ -1,7 +1,7 @@
 name = "aiko-faucet"
 main = "src/worker.ts"
 compatibility_date = "2025-01-15"
-node_compat = true
+compatibility_flags = ["nodejs_compat"]
 
 # IP-rate-limited USDC faucet that auto-pays x402 envelopes on behalf of
 # callers within their daily allowance.
