@@ -254,6 +254,10 @@ fn hookId(env: std.process.Environ, primary: []const u8, secondary: []const u8) 
 }
 
 extern fn system(command: [*:0]const u8) c_int;
+extern fn popen(command: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
+extern fn pclose(stream: *anyopaque) c_int;
+extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: *anyopaque) usize;
+extern fn feof(stream: *anyopaque) c_int;
 
 fn runShell(allocator: std.mem.Allocator, action: []const u8, cwd: []const u8) !i32 {
     const cmd_plain = if (cwd.len > 0)
