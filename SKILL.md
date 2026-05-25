@@ -6,17 +6,11 @@ user-invocable: true
 
 # /aiko
 
-`aiko` and `contract` are the same substrate. `aiko` is the one public binary
-name; `contract` is the row/type name and compatibility alias used by older
-activation flows. Do not design separate aiko-vs-contract surfaces.
+`aiko` is the substrate. There is no other surface — no second CLI, no
+verb dispatch, no migration alias. `contract` is the ledger row/type name
+only; the binary you call is always `aiko`.
 
 Local code is only the environment executor for the server-spawned aiko context.
-
-Before legacy contract-skill work, load active context:
-
-```bash
-~/.claude/skills/contract/scripts/contract discover --scope all
-```
 
 ## Public Shape
 
@@ -27,15 +21,20 @@ aiko "<goal>" --remote
 aiko "<goal>" --local
 ```
 
-The older `contract` binary remains only as a compatibility/context entrypoint
-for existing activation and migration flows. It must behave as an alias over the
-same aiko shape, not a second language.
+No verbs. There is no `declare`, `iterate`, `_mark`, `status`, `list`,
+`dag`, `spawn`, `solve`, `corroborate`, `drive`, or any other subcommand
+the caller can reach for. The substrate is stateless — state lives in
+the append-only ledger, not in a CLI surface — so a "compatibility verb"
+is meaningless. If a caller needs to *read* substrate state, it parses
+the canonical ledger file directly (Foundation, not subprocess); if it
+needs to *write*, it spawns `aiko "<goal>" --mode`. That is the entire
+write API.
 
-`aiko` is the Zig neuron substrate with the smallest local surface. It does not
-expose context verbs locally. It accepts one goal and one mode. `--remote`
-routes to the Unbrowse contract ledger, defaulting to
-`https://beta-api.unbrowse.ai` when `UNBROWSE_BASE` is not set. `--local` uses
-the same neuron shape against the local scoped ledger.
+`aiko` is the Zig neuron substrate with the smallest local surface. It
+accepts one goal and one mode. `--remote` routes to the Unbrowse contract
+ledger, defaulting to `https://beta-api.unbrowse.ai` when `UNBROWSE_BASE`
+is not set. `--local` uses the same neuron shape against the local
+scoped ledger.
 
 `aiko` is x402-native. It marks contract declarations as Corbits/Faremeter Flex
 requests and sends a signed payment header from the caller environment when
