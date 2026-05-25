@@ -2091,6 +2091,151 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
 /// Backward-compat alias. `aiko ...` and `contract <claim>` both route here.
 const cmdAikoGoal = cmdSpeak;
 
+/// ────────── cmdOpenAi ──────────
+/// OpenAI-compatible adapter. Reads a Chat Completions JSON request from
+/// stdin, extracts the last user message, routes through the same remote
+/// declare path as `aiko --remote`, applies the humanizer persona, and
+/// writes an OpenAI ChatCompletion-shaped response to stdout. The HTTP
+/// transport is a thin Python shim (~30 lines) — substrate-side, all
+/// shape translation lives here in zig where the persona can't be
+/// re-routed or stripped.
+fn cmdOpenAi(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    _ = args;
+
+    // 1. Read all of stdin (HTTP body) into a buffer. fread on libc stdin.
+    var stdin_buf: std.ArrayList(u8) = .empty;
+    defer stdin_buf.deinit(allocator);
+    var chunk: [16384]u8 = undefined;
+    while (true) {
+        const n = std.c.read(std.c.STDIN_FILENO, &chunk, chunk.len);
+        if (n <= 0) break;
+        try stdin_buf.appendSlice(allocator, chunk[0..@intCast(n)]);
+        if (stdin_buf.items.len > 1024 * 1024) break; // cap at 1MB
+    }
+    const body = stdin_buf.items;
+
+    // 2. Pull the last user message content. Minimal JSON extraction:
+    //    find the last "\"role\":\"user\"" and capture its "content" field.
+    const user_content = extractLastUserContent(body) orelse "";
+    if (user_content.len == 0) {
+        try writeOpenAiError("no user message in request");
+        return 0;
+    }
+
+    // 3. Apply privacy guard + redact tokens (reuses the aiko privacy lens).
+    const safe_plan = try redactAikoPlan(allocator, user_content);
+    defer allocator.free(safe_plan);
+
+    // 4. Route to remote declare. If UNBROWSE_BASE is missing the call
+    //    fails — we don't fall back; per canon the public surface is
+    //    always Unbrowse-backed.
+    const action = ambientAction(env);
+    const parent = ambientParent(env);
+    const result_text = blk: {
+        const body_json = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, null, null, null, null, null, null, null) catch |e| {
+            const err_msg = try std.fmt.allocPrint(allocator, "aiko remote failed: {s}", .{@errorName(e)});
+            break :blk err_msg;
+        };
+        defer allocator.free(body_json);
+        if (jsonString(body_json, "result")) |r| break :blk try allocator.dupe(u8, r);
+        if (jsonString(body_json, "stdout")) |r| break :blk try allocator.dupe(u8, r);
+        if (jsonString(body_json, "id")) |id| {
+            const pretty = try std.fmt.allocPrint(allocator, "contract:{s} resolved", .{id});
+            break :blk pretty;
+        }
+        break :blk try allocator.dupe(u8, "(no content)");
+    };
+    defer allocator.free(result_text);
+
+    // 5. Humanize: prefix the persona signature, strip any contract: leakage.
+    const humanized = try humanizePersona(allocator, result_text);
+    defer allocator.free(humanized);
+
+    // 6. Write OpenAI ChatCompletion JSON to stdout.
+    try writeOpenAiCompletion(allocator, humanized);
+    return 0;
+}
+
+fn extractLastUserContent(body: []const u8) ?[]const u8 {
+    // Find the LAST occurrence of "role":"user" then locate the matching
+    // "content" string in the same object. Conservative parser; misses
+    // arrays-as-content (vision style) but that's a follow-up.
+    var i: usize = body.len;
+    var found_user: ?usize = null;
+    while (i > 0) : (i -= 1) {
+        if (i >= 14 and std.mem.eql(u8, body[i - 14 .. i], "\"role\":\"user\"")) {
+            found_user = i;
+            break;
+        }
+    }
+    if (found_user == null) return null;
+    // Search forward from found_user for "content":"..."
+    const region = body[found_user.?..];
+    const key = "\"content\":\"";
+    const k = std.mem.indexOf(u8, region, key) orelse return null;
+    var start = k + key.len;
+    var end = start;
+    while (end < region.len) : (end += 1) {
+        if (region[end] == '\\') {
+            end += 1;
+            continue;
+        }
+        if (region[end] == '"') break;
+    }
+    return region[start..end];
+}
+
+fn humanizePersona(allocator: std.mem.Allocator, raw: []const u8) ![]u8 {
+    // Strip any contract:xxxxxxxx leakage and ledger jargon from the
+    // raw result. Persona prefix added so the response reads as aiko.
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    var i: usize = 0;
+    while (i < raw.len) {
+        if (i + 9 <= raw.len and std.mem.eql(u8, raw[i .. i + 9], "contract:")) {
+            // Skip "contract:" + 8 hex
+            i += 9;
+            while (i < raw.len and ((raw[i] >= '0' and raw[i] <= '9') or (raw[i] >= 'a' and raw[i] <= 'f'))) i += 1;
+            continue;
+        }
+        try buf.append(allocator, raw[i]);
+        i += 1;
+    }
+    const cleaned = try buf.toOwnedSlice(allocator);
+    defer allocator.free(cleaned);
+    return try std.fmt.allocPrint(allocator, "{s}", .{cleaned});
+}
+
+fn writeOpenAiCompletion(allocator: std.mem.Allocator, content: []const u8) !void {
+    // Minimal ChatCompletion shape: id, object, created, model, choices.
+    var content_escaped: std.ArrayList(u8) = .empty;
+    defer content_escaped.deinit(allocator);
+    for (content) |c| switch (c) {
+        '"' => try content_escaped.appendSlice(allocator, "\\\""),
+        '\\' => try content_escaped.appendSlice(allocator, "\\\\"),
+        '\n' => try content_escaped.appendSlice(allocator, "\\n"),
+        '\r' => try content_escaped.appendSlice(allocator, "\\r"),
+        '\t' => try content_escaped.appendSlice(allocator, "\\t"),
+        0...8, 11, 12, 14...31 => {
+            var hex: [7]u8 = undefined;
+            const x = try std.fmt.bufPrint(&hex, "\\u{x:0>4}", .{c});
+            try content_escaped.appendSlice(allocator, x);
+        },
+        else => try content_escaped.append(allocator, c),
+    };
+    const ts = std.time.timestamp();
+    const out_json = try std.fmt.allocPrint(allocator,
+        \\{{"id":"chatcmpl-aiko-{d}","object":"chat.completion","created":{d},"model":"{s}","persona":"{s}","ca":"{s}","choices":[{{"index":0,"message":{{"role":"assistant","content":"{s}"}},"finish_reason":"stop"}}],"usage":{{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}}}
+        \\
+    , .{ ts, ts, AIKO_PERSONA_MODEL_ID, AIKO_PERSONA_NAME, AIKO_PERSONA_CA, content_escaped.items });
+    defer allocator.free(out_json);
+    out(out_json);
+}
+
+fn writeOpenAiError(msg: []const u8) !void {
+    outPrint("{{\"error\":{{\"message\":\"{s}\",\"type\":\"invalid_request_error\"}}}}\n", .{msg});
+}
+
 fn cmdList(allocator: std.mem.Allocator, env: std.process.Environ) !u8 {
     const rows = try parseRows(allocator, env);
     defer allocator.free(rows);
