@@ -150,6 +150,21 @@ pub fn declare(
         for (refs) |r| allocator.free(r);
         allocator.free(refs);
     }
+    const inhibits = try pointer.extractTypedRefs(allocator, action, "inhibits:");
+    defer {
+        for (inhibits) |r| allocator.free(r);
+        allocator.free(inhibits);
+    }
+    const bind_to = try pointer.extractTypedRefs(allocator, action, "bind:");
+    defer {
+        for (bind_to) |r| allocator.free(r);
+        allocator.free(bind_to);
+    }
+    const blocked_by = try pointer.extractTypedRefs(allocator, action, "blocked_by:");
+    defer {
+        for (blocked_by) |r| allocator.free(r);
+        allocator.free(blocked_by);
+    }
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
@@ -179,7 +194,21 @@ pub fn declare(
         if (idx > 0) try buf.appendSlice(allocator, ", ");
         try writeJsonString(&buf, allocator, r);
     }
-    try buf.appendSlice(allocator, "], \"ts\": ");
+    try buf.append(allocator, ']');
+    try writeOptionalStringField(&buf, allocator, "aiko_role", opts.aiko_role);
+    try writeOptionalStringField(&buf, allocator, "aggregation", opts.aggregation);
+    try writeOptionalStringField(&buf, allocator, "audience", opts.audience);
+    try writeOptionalStringField(&buf, allocator, "wallet_identity", opts.wallet_identity);
+    try writeOptionalStringField(&buf, allocator, "parent_wallet_identity", opts.parent_wallet_identity);
+    try writeOptionalStringField(&buf, allocator, "replicated_from_contract_id", opts.replicated_from_contract_id);
+    try writeOptionalStringField(&buf, allocator, "embedding_pointer", opts.embedding_pointer);
+    try writeOptionalStringField(&buf, allocator, "metric_source", opts.metric_source);
+    try writeOptionalStringField(&buf, allocator, "metric_pointer", opts.metric_pointer);
+    try writeOptionalStringField(&buf, allocator, "metric_assertion", opts.metric_assertion);
+    try writeArrayFieldIfNonEmpty(&buf, allocator, "inhibits", inhibits);
+    try writeArrayFieldIfNonEmpty(&buf, allocator, "bind_to", bind_to);
+    try writeArrayFieldIfNonEmpty(&buf, allocator, "blocked_by", blocked_by);
+    try buf.appendSlice(allocator, ", \"ts\": ");
     try writeJsonString(&buf, allocator, ts);
     try buf.appendSlice(allocator, ", \"agent\": ");
     try writeJsonString(&buf, allocator, agent);
