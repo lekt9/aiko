@@ -683,15 +683,9 @@ fn bioCheckGrant(rows: []const Row, actor_pubkey: []const u8, role: []const u8, 
     while (i > 0) : (i -= 1) {
         const r = rows[i - 1];
         if (!std.mem.eql(u8, r.event, "grant")) continue;
-        // Match by best-effort string fields; not all are typed yet.
-        const has_pk = std.mem.indexOf(u8, r.action_result, actor_pubkey) != null or
-            std.mem.eql(u8, r.source_id, actor_pubkey);
-        _ = has_pk;
-        _ = scope;
-        _ = role;
-        // The grant row stores its tuple in fields we don't currently
-        // surface through Row; treat any matching grant as sufficient
-        // until the typed reader extracts them. Conservative pass-through.
+        if (!std.mem.eql(u8, r.actor_pubkey, actor_pubkey)) continue;
+        if (!std.mem.eql(u8, r.role, role)) continue;
+        if (scope.len > 0 and !std.mem.eql(u8, r.scope, scope)) continue;
         return true;
     }
     return false;
