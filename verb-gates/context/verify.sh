@@ -18,10 +18,9 @@ CHANDIR="$HOME/.contracts/channels/$CHAN"
 cleanup() { rm -rf "$CHANDIR"; }
 trap cleanup EXIT
 
-assert_shape() {
-  local phase="$1" expected_count="$2" expected_first_seq="$3" expected_last_seq="$4" json="$5"
-  CHANNEL_ID="$CHAN" EXP_COUNT="$expected_count" EXP_FIRST="$expected_first_seq" EXP_LAST="$expected_last_seq" \
-    python3 - <<'PY' <<<"$json"
+ASSERT_PY="$(mktemp)"
+trap 'rm -f "$ASSERT_PY"; cleanup' EXIT
+cat > "$ASSERT_PY" <<'PY'
 import json, os, sys
 d = json.loads(sys.stdin.read())
 chan = os.environ["CHANNEL_ID"]
@@ -39,8 +38,14 @@ else:
     got_last  = d["events"][-1].get("seq")
     assert str(got_first) == exp_first, f"first.seq mismatch: got {got_first!r}, expected {exp_first!r}"
     assert str(got_last)  == exp_last,  f"last.seq mismatch: got {got_last!r}, expected {exp_last!r}"
-print("OK", flush=True)
+print("OK")
 PY
+
+assert_shape() {
+  local phase="$1" expected_count="$2" expected_first_seq="$3" expected_last_seq="$4" json="$5"
+  printf '%s' "$json" | CHANNEL_ID="$CHAN" EXP_COUNT="$expected_count" \
+    EXP_FIRST="$expected_first_seq" EXP_LAST="$expected_last_seq" \
+    python3 "$ASSERT_PY"
 }
 
 # Phase A — missing channel returns count=0, empty events, no error
