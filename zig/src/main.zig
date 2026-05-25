@@ -1044,6 +1044,10 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
                     _ = try resolveLineage(allocator, env, posthook);
                 }
             }
+            // Backfill: sweep un-resolved tail every time the Word is spoken locally.
+            backfillUnresolved(allocator, env, cid) catch |e| {
+                errPrint("backfill skipped: {s}\n", .{@errorName(e)});
+            };
             return if (rc == 0) 0 else 1;
         },
     }
