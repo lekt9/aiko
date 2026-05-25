@@ -956,7 +956,8 @@ fn aggregateChildOutputs(allocator: std.mem.Allocator, rows: []const Row, parent
         if (!std.mem.eql(u8, r.event, "break_above")) continue;
         if (!std.mem.eql(u8, r.id, parent_id)) continue;
         if (r.action_result.len == 0) continue;
-        const line = try std.fmt.allocPrint(allocator, "[↑{s}] {s}\n", .{ r.id, r.action_result });
+        const src = if (r.source_id.len > 0) r.source_id else r.id;
+        const line = try std.fmt.allocPrint(allocator, "[↑{s}] {s}\n", .{ src, r.action_result });
         defer allocator.free(line);
         try buf.appendSlice(allocator, line);
     }
