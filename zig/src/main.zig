@@ -2136,7 +2136,13 @@ fn cmdOpenAi(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
     const parent = ambientParent(env);
     const result_text = blk: {
         const body_json = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, null, null, null, null, null, null, null) catch |e| {
-            const err_msg = try std.fmt.allocPrint(allocator, "aiko remote failed: {s}", .{@errorName(e)});
+            const msg = switch (e) {
+                error.PaymentRequired => "i'm gated by an x402 paywall right now — set AIKO_X_PAYMENT (signed Solana x402 envelope) or route through a wrangler proxy that injects it",
+                error.NoUnbrowseBase => "no UNBROWSE_BASE configured — point me at an aiko-compatible upstream",
+                error.RequestFailed => "the upstream is unreachable or returned a non-2xx status — check the diagnostic line above for the actual HTTP code",
+                else => @errorName(e),
+            };
+            const err_msg = try std.fmt.allocPrint(allocator, "{s}", .{msg});
             break :blk err_msg;
         };
         defer allocator.free(body_json);
