@@ -92,3 +92,35 @@ pub fn appendRow(allocator: std.mem.Allocator, env: std.process.Environ, row_jso
 
     return path;
 }
+
+/// Slurp the entire resolved ledger file. Returns an owned []u8 (empty when
+/// the file doesn't exist). 16 MiB cap is way above the largest ledger ever
+/// observed (the global ledger is ~3 MB after months of use).
+pub fn readAll(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
+    const path = try resolvePath(allocator, env);
+    defer allocator.free(path);
+
+    const path_z = try allocator.dupeZ(u8, path);
+    defer allocator.free(path_z);
+
+    var flags: c.O = .{};
+    flags.ACCMODE = .RDONLY;
+    const fd: c_int = c.open(path_z.ptr, flags, @as(c_uint, 0));
+    if (fd < 0) {
+        // Missing ledger is a normal bootstrap state — return empty.
+        return try allocator.alloc(u8, 0);
+    }
+    defer _ = c.close(fd);
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    var chunk: [8192]u8 = undefined;
+    while (true) {
+        const n = c.read(fd, &chunk, chunk.len);
+        if (n <= 0) break;
+        try out.appendSlice(allocator, chunk[0..@intCast(n)]);
+        if (out.items.len > 16 * 1024 * 1024) return error.LedgerTooLarge;
+    }
+    return try out.toOwnedSlice(allocator);
+}
