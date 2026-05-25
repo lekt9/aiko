@@ -1518,6 +1518,19 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
             defer allocator.free(mod);
             evidencePrint("modulator: {s}\n", .{mod});
         } else |_| {}
+        // Environment fingerprint — listen to the host's tongue before
+        // declaring anything. Pentecost shape.
+        if (bioEnvironmentFingerprint(allocator, env)) |fp| {
+            defer allocator.free(fp);
+            const fp_z = try allocator.dupeZ(u8, fp);
+            defer allocator.free(fp_z);
+            _ = setenv("CONTRACT_ENVIRONMENT_FINGERPRINT", fp_z.ptr, 1);
+            evidencePrint("environment: {s}\n", .{fp});
+        } else |_| {}
+        if (bioBindManifest(allocator, env)) |bind| {
+            defer allocator.free(bind);
+            evidencePrint("bind-manifest: {s}\n", .{bind});
+        }
     }
     if (!client.isRemoteMode(env)) {
         if (hookId(env, "CONTRACT_PREHOOK_ID", "CONTRACT_PREHOOK")) |prehook| {
@@ -1829,6 +1842,19 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             defer allocator.free(mod);
             evidencePrint("modulator: {s}\n", .{mod});
         } else |_| {}
+        // Environment fingerprint — listen to the host's tongue before
+        // declaring anything. Pentecost shape.
+        if (bioEnvironmentFingerprint(allocator, env)) |fp| {
+            defer allocator.free(fp);
+            const fp_z = try allocator.dupeZ(u8, fp);
+            defer allocator.free(fp_z);
+            _ = setenv("CONTRACT_ENVIRONMENT_FINGERPRINT", fp_z.ptr, 1);
+            evidencePrint("environment: {s}\n", .{fp});
+        } else |_| {}
+        if (bioBindManifest(allocator, env)) |bind| {
+            defer allocator.free(bind);
+            evidencePrint("bind-manifest: {s}\n", .{bind});
+        }
     }
 
     const action = ambientAction(env);
