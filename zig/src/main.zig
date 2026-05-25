@@ -1738,6 +1738,10 @@ fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, sk
     if (env.getPosix("CONTRACT_BACKFILL")) |flag| {
         if (std.mem.eql(u8, flag, "0") or std.mem.eql(u8, flag, "off")) return;
     }
+    if (bioSabbathHolds(env)) {
+        evidencePrint("sabbath: pacemaker rests on day 7 (CONTRACT_SABBATH_DAY)\n", .{});
+        return;
+    }
     var max_passes: u32 = 8;
     if (env.getPosix("CONTRACT_BACKFILL_PASSES")) |s| {
         max_passes = std.fmt.parseInt(u32, s, 10) catch 8;
