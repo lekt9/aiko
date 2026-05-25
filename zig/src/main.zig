@@ -669,12 +669,12 @@ fn resolveLineage(allocator: std.mem.Allocator, env: std.process.Environ, id: []
 /// catch up to the live frontier without a separate script.
 fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, skip_id: []const u8) !void {
     var budget: u32 = 64;
-    if (env.get("CONTRACT_BACKFILL_BUDGET")) |s| {
+    if (env.getPosix("CONTRACT_BACKFILL_BUDGET")) |s| {
         budget = std.fmt.parseInt(u32, s, 10) catch 64;
         if (budget > 1024) budget = 1024;
         if (budget == 0) return;
     }
-    if (env.get("CONTRACT_BACKFILL")) |flag| {
+    if (env.getPosix("CONTRACT_BACKFILL")) |flag| {
         if (std.mem.eql(u8, flag, "0") or std.mem.eql(u8, flag, "off")) return;
     }
     const rows = try parseRows(allocator, env);
