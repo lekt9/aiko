@@ -30,6 +30,11 @@ pub const SynapseKind = enum {
     posthook,
     /// `prehook:<id>` — fire target before this contract is constructed.
     prehook,
+    /// `modality:<id>` — typed input/output channel edge. Target contract
+    /// is an adapter for a specific modality (chat-input, tts-output,
+    /// screen-output, etc.). Lets the Word's compiler bind a presence
+    /// surface to the right adapter family for the spawn environment.
+    modality,
 
     pub fn jsonName(self: SynapseKind) []const u8 {
         return switch (self) {
@@ -39,6 +44,7 @@ pub const SynapseKind = enum {
             .blocked_by => "blocked_by",
             .posthook => "posthook",
             .prehook => "prehook",
+            .modality => "modality",
         };
     }
 };
