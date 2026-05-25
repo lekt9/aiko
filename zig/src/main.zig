@@ -274,6 +274,65 @@ fn latestActionResult(rows: []const Row, cid: []const u8) ?[]const u8 {
     return null;
 }
 
+/// Find the declared row for `cid` (latest) so we can read its parent_id.
+fn declaredParentOf(rows: []const Row, cid: []const u8) ?[]const u8 {
+    var i: usize = rows.len;
+    while (i > 0) : (i -= 1) {
+        const r = rows[i - 1];
+        if (!std.mem.eql(u8, r.id, cid)) continue;
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        return r.parent_id;
+    }
+    return null;
+}
+
+/// JSON-escape a string into buf with the minimum set: \, ", control chars.
+fn appendJsonEscaped(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), s: []const u8) !void {
+    try buf.append(allocator, '"');
+    for (s) |c| switch (c) {
+        '"' => try buf.appendSlice(allocator, "\\\""),
+        '\\' => try buf.appendSlice(allocator, "\\\\"),
+        '\n' => try buf.appendSlice(allocator, "\\n"),
+        '\r' => try buf.appendSlice(allocator, "\\r"),
+        '\t' => try buf.appendSlice(allocator, "\\t"),
+        0...8, 11, 12, 14...31 => {
+            var hex: [7]u8 = undefined;
+            const x = try std.fmt.bufPrint(&hex, "\\u{x:0>4}", .{c});
+            try buf.appendSlice(allocator, x);
+        },
+        else => try buf.append(allocator, c),
+    };
+    try buf.append(allocator, '"');
+}
+
+/// Walk the parent_id chain from `cid` up to root and emit a JSON array of
+/// {id, action_result} entries — child-first ordering so posthooks can read
+/// the recursive ancestor stack at every layer. Caps depth at 32 and per-
+/// entry result size at 4KB to keep the env payload bounded.
+fn buildAncestorTree(allocator: std.mem.Allocator, rows: []const Row, cid: []const u8) ![]u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.append(allocator, '[');
+    var current: ?[]const u8 = cid;
+    var depth: usize = 0;
+    var first = true;
+    while (current != null and depth < 32) : (depth += 1) {
+        const this_id = current.?;
+        if (!first) try buf.append(allocator, ',');
+        first = false;
+        try buf.appendSlice(allocator, "{\"id\":");
+        try appendJsonEscaped(allocator, &buf, this_id);
+        try buf.appendSlice(allocator, ",\"result\":");
+        const res = latestActionResult(rows, this_id) orelse "";
+        const capped = res[0..@min(res.len, 4096)];
+        try appendJsonEscaped(allocator, &buf, capped);
+        try buf.append(allocator, '}');
+        current = declaredParentOf(rows, this_id);
+    }
+    try buf.append(allocator, ']');
+    return try buf.toOwnedSlice(allocator);
+}
+
 fn runShell(allocator: std.mem.Allocator, action: []const u8, cwd: []const u8) !i32 {
     const cmd_plain = if (cwd.len > 0)
         try std.fmt.allocPrint(allocator, "cd \"{s}\" && {s}", .{ cwd, action })
