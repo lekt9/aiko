@@ -22,6 +22,16 @@ const http = @import("http.zig");
 const env_fingerprint = @import("env_fingerprint.zig");
 const verses = @import("verses.zig");
 
+// libc getenv reads the LIVE process env, which is what we want for
+// setenv'd values from the same process (the env.Environ snapshot in
+// zig stdlib is taken at startup and doesn't see runtime mutations).
+extern fn getenv(name: [*:0]const u8) ?[*:0]const u8;
+
+fn liveEnv(name: [*:0]const u8) ?[]const u8 {
+    const p = getenv(name) orelse return null;
+    return std.mem.sliceTo(p, 0);
+}
+
 /// Canonical Unbrowse LLM-compiler endpoint. Hardcoded — never overridable.
 /// The substrate's natural-language → contract-tree compilation flows solely
 /// through this base. The previous `UNBROWSE_BASE` env override is removed.
