@@ -320,6 +320,11 @@ pub fn declareRemoteAiko(
     };
     if (resp.status < 200 or resp.status >= 300) {
         const peek_len = @min(resp.body.len, 400);
+        if (resp.status == 402) {
+            std.debug.print("aiko remote: HTTP 402 payment required — set AIKO_X_PAYMENT to a signed Solana x402 envelope, or use a wrangler proxy that injects it. Envelope sample: {s}\n", .{resp.body[0..peek_len]});
+            allocator.free(resp.body);
+            return ClientError.PaymentRequired;
+        }
         std.debug.print("aiko remote: HTTP {d}\n  url={s}\n  body[:{d}]={s}\n", .{ resp.status, url_buf.items, peek_len, resp.body[0..peek_len] });
         allocator.free(resp.body);
         return ClientError.RequestFailed;
