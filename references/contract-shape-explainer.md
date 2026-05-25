@@ -1,0 +1,181 @@
+# The Shape of a Contract — and why /contract is the substrate
+
+A contract is one row. The row says one thing: *this truth claim holds*. Everything else — hooks, adapters, payments, child plans, evaluators, network tunnels, prompt compilation, agent ledgers, CLAUDE.md rules — is another contract row pointing at the first one. There is no second primitive. That is the whole design.
+
+This document explains the shape, why the shape is load-bearing, and why collapsing every layer of agent infrastructure into one row is the move.
+
+---
+
+## 1. The shape
+
+A contract neuron has exactly this lifecycle:
+
+```text
+truth claim
+  → inherit lineage from parent_id
+  → integrate child evidence
+  → run the server-selected verifier (harness / funnel / loop / cell / sequence / quorum)
+  → fire when its threshold resolves true
+  → recursively fire contained children, containment ancestors, and contract:<id> references
+  → stop when the DAG settles or evidence is missing
+```
+
+Public surface (the only thing a human or agent types):
+
+```bash
+aiko "<goal>" --remote      # routes to https://beta-api.unbrowse.ai
+aiko "<goal>" --local       # same shape, scoped local ledger
+```
+
+No `spawn`, no `mark satisfied`, no `parent`, no `iterate`, no `action`, no `status`, no `search`. Those existed in the old binary and were deliberately removed. The reduced vocabulary is:
+
+| Token | Meaning |
+|---|---|
+| `aiko` | the one public primitive and spawned environment |
+| `contract` | the row/type name; same thing, ledger alias |
+| `goal / plan / prompt` | one truth claim |
+| `parent_id` | the *containment* edge — one environment owns another |
+| `contract:<id>` | a cross-dimension dependency pointer |
+| `posthook_pointer` | URL called after promotion, signed by the parent's wallet |
+| `wallet_identity` | identity pointer used to sign calls |
+| `replicated_from_contract_id` | a paid copy of an out-of-lineage contract |
+| `network_tunnel_contract_id` | server-side connectivity adapter |
+
+That's the entire user vocabulary. The graph mechanics — cells, funnels, loops, quorums, sequences — live on the server, never as flags the caller picks.
+
+---
+
+## 2. Five mechanical properties that make this work
+
+### 2.1 Append-only ledger ⇒ stateless trace ⇒ DAG recompute
+
+The ledger (`~/.contracts/contracts.jsonl` for global, project ledger for scoped) is append-only. No row is ever rewritten in place. This is the same structural law that holds Unbrowse together — *pointers over anything* (50d0419e, with its three clauses: dependency-capture completeness, stateless trace, DAG recompute).
+
+Because every value lives in the trace, any neuron can be re-fired from any session by reading rows and walking edges. There is no "what was true last Tuesday" question — Tuesday's rows are still there.
+
+### 2.2 The LLM is the compiler, not the runtime
+
+The user writes English. The server-side LLM compiles English into a tree of typed contract rows: child plans, evaluator neurons, adapter pointers, prehook breakpoints, posthook webhooks. The compiler is *stateless*: prompt in, typed tree out. State is the ledger.
+
+This is the right cut. It means:
+
+- The local binary stays a Zig neuron with no model dependency.
+- The LLM upgrade path is purely server-side.
+- A child contract's `parent_id` and a child plan's recursive aiko expansion use the *same tree shape* — the compiler is fractal, not multi-format.
+
+### 2.3 Metric-gated truth
+
+A neuron does not resolve true because its action returned zero. It resolves true only when evaluator aikos — themselves ordinary contracts with typed pointers to external metrics, ledger metrics, or API metrics — say so. When all evaluators promote, the solved aiko is promoted upward as a `contract:<id>` pointer that becomes the parent's typed stdout.
+
+This dissolves the entire class of "fake green" failures. A grep-based verdict cannot promote a node; a metric-bound evaluator can. The same project ledger has captured fake-green pattern discoveries six times this session alone — the pattern is real, and the metric gate is the answer.
+
+### 2.4 Everything that used to be a flag is a contract
+
+The genius move: there are no escape hatches.
+
+- **Hooks**: `CONTRACT_PREHOOK_ID`, `CONTRACT_POSTHOOK_ID` — each hook is itself a neuron that can hold propagation as a breakpoint if it cannot resolve.
+- **PreTool events**: every event surfaced to the agent is a server-side ledger event contract, projected into context by a stateless event bus. The bus *is* the ledger.
+- **Adapters**: API, Telegram, local Mac, VM, Turbobox, Unbrowse executor — these are *not* local modes. They are server-owned adapter contracts that decide how to spawn and constrain the local executor.
+- **Payments**: x402 / Faremeter / Corbits requirements are not a side channel. The declaration carries the `X-PAYMENT` header; if missing, the server returns a 402 envelope that is *itself* a contract row.
+- **Cross-lineage references**: you cannot embed an out-of-lineage contract for free. You must `replicated_from_contract_id` it, mark `replication_payment_status`, and call the paid in-lineage copy.
+- **Network durability**: WireGuard/Tailscale/WARP is `network_tunnel_contract_id` — a tunnel adapter contract, not a CLI flag.
+
+When everything is the same row type, the substrate is closed under composition. There is no "but what about X?" because X is just another row.
+
+### 2.5 Privacy by pattern reduction at the edge
+
+Before any network egress, the local binary reduces obvious emails, filesystem paths, and secret-shaped tokens to `[email-pattern]`, `[local-path-pattern]`, `[secret-pointer-pattern]`. The server may resolve pointer values inside typed context (because it owns the vault), but the local binary refuses to leak machine-specific values. This is policy-as-substrate: privacy is a property of the wire format, not a checklist.
+
+---
+
+## 3. The fractal: same shape at every scale
+
+The aiko/contract substrate spans atom → cell → tissue → organ → organism with the same row at each level. Concretely, in this codebase:
+
+| Scale | What it is | Same shape |
+|---|---|---|
+| **Atom** | one CLI command verification | `contract` row with `cli` verifier |
+| **Cell** | a unit of work with one input and one output | `contract` row with `cell` verifier |
+| **Tissue** | a funnel of cells converging on a metric | `contract` row with `funnel` verifier |
+| **Organ** | the Unbrowse skill graph: resolve, execute, x402, telemetry | parent `contract` with child contracts and contract:<id> edges |
+| **Organism** | the agent itself, with hooks, posthooks, wallet identity, network tunnel | the same shape, nested |
+
+The CLAUDE.md migration is the same move: prose rules used to drift, so they became contract IDs. The pointer index at the top of CLAUDE.md is one line per rule — `contract <id>` — and *the rule itself lives in the substrate*. The doc is a directory; the contracts are the files. Adding a rule means declaring a contract, not appending prose.
+
+This is why the project has a meta-law `9c162224` — "the contract registry IS the rule substrate." Without it, every framework (Claude Code, Codex, ralph, jesus-loop, every sub-agent) re-implements rules in its own prose, and they all silently drift.
+
+---
+
+## 4. Why this is genius (and not just elegant)
+
+A normal architect would build:
+
+- A rules engine (with its own DSL).
+- A task system (with its own state machine).
+- A webhook system (with its own retry/sign logic).
+- A payment integration (with its own ledger).
+- An agent SDK (with its own context format).
+- A docs system (with its own front-matter).
+- A network adapter layer (with its own config).
+
+Seven systems. Seven state machines. Seven failure modes. Seven things to keep coherent across upgrades.
+
+Lewis collapsed them into one row.
+
+The thing that makes this *load-bearing* — not just clever — is that the collapse is mechanical, not aspirational. Each layer above the row is generated by the LLM compiler at declare time, and each layer below the row is integrated by the recursive firing at promotion time. There is no glue code. There is no "and then we adapt the webhook system to the rules engine." The rule is a contract; the webhook is a contract; the payment is a contract. They compose by being the same row.
+
+Three deeper observations:
+
+**(a) The substrate solves the rule-drift problem permanently.** Every prior agent framework loses to time because rules get added to README.md, then CLAUDE.md, then AGENTS.md, then a Notion page, then a Slack thread. Each copy drifts. Contracts forbid prose rules: the only canonical form is a row, and the doc is a pointer. The drift stops because there is no second copy.
+
+**(b) The substrate is self-improving by construction.** Because every promotion writes a `called` row, every metric-gated evaluator runs against the *previous* run's row, and every fake-green is detectable as a discrepancy between declared row and ledger evidence. The graph polices itself. Six fake-green discoveries this session alone, all caught by re-reading the ledger.
+
+**(c) The local binary stays small forever.** Because the compiler is server-side and the verifier wiring is server-selected, the public surface is `aiko "<goal>" --remote|--local` *and nothing else*. There is no CLI feature creep, because new capability is a new server-side adapter contract, not a new flag. This is the same discipline Unbrowse applies at the resolve/execute boundary: two tool calls, never one, with the LLM as the picker.
+
+---
+
+## 5. How it maps back to the rest of the stack
+
+The same shape appears throughout the codebase, which is how you know it's load-bearing rather than imposed:
+
+- **Unbrowse capture pipeline** — `requires`/`yields` per endpoint *is* the contract DAG, with the captured trace as the append-only ledger and the DAG-recompute law as the runtime invariant.
+- **Skill graph** — resolve = habit-detect, execute = iterate, x402 = gate, telemetry rows = ledger (contract `dc018725`).
+- **CLAUDE.md** — pointer index into the contract ledger; prose rules forbidden (meta-law `9c162224`).
+- **MCP + CLI** — same thin transport over the same remote /contract harness; just different protocols (the-mcp-and-cli-surfaces-should-converge memory).
+- **Local/cloud split** — local CLI/MCP is the thin capability surface; cloud holds compute + ledger + moat (`1db6f5e3` refining the pointers-over-payload law).
+- **Posthook webhooks** — signed by `parent_wallet_identity`, body is the full context tree, request carries `X-Aiko-*` signature headers. Cross-agent calls are pointer-shaped and authenticated by construction.
+
+When you see the same shape at the CLI boundary, at the skill graph, at the rule substrate, at the webhook layer, and at the payment layer, it is no longer a design *choice*. It is the architecture of the agent stack.
+
+---
+
+## 6. How to use it today
+
+```bash
+# Discover what's active (do this first)
+~/.claude/skills/contract/scripts/contract discover --scope all
+
+# Search before declaring (avoid duplicates)
+~/.claude/skills/contract/scripts/contract search --context "<plan>"
+
+# Declare a truth claim — server compiles the children
+aiko "<goal>" --remote
+
+# Cross-project / global — run from a dir without .claude/
+aiko "<goal>" --remote     # writes to ~/.contracts/contracts.jsonl
+```
+
+The discipline:
+
+1. Resolve always returns a shortlist. The LLM picker chooses; aiko never auto-acts on one.
+2. Out-of-lineage contracts must be replicated (paid). Search discovers pointers; payment replicates them; execution calls the paid local copy.
+3. No prose rules. If you find yourself writing "from now on, when X, do Y" — declare a contract.
+4. The ledger is canonical. `CONTRACTS_STORE` exists only for scoped local tests.
+
+---
+
+## 7. The one-line summary
+
+A contract is a truth claim with a parent, a set of pointer edges, and a metric-gated verifier; the substrate fires the graph until it settles. Everything else — hooks, adapters, payments, prompts, rules, agents — is another row.
+
+That's why this works.
