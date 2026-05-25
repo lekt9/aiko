@@ -552,6 +552,90 @@ pub fn appendBreakAboveRow(
     allocator.free(path);
 }
 
+/// Append a `flex_hold` event row — the middleware-side reservation
+/// for a Faremeter Flex prepaid escrow authorization. Carries:
+///   max_amount       — ceiling the facilitator may settle (lamports of mint)
+///   mint             — SPL token mint (USDC by default)
+///   authorization_id — random u64 for replay protection
+///   expires_at_slot  — slot horizon (caller-provided; clamped server-side)
+///   splits           — JSON array of {recipient, bps}; bps must sum to 10000
+/// The facilitator validates the signature, reserves the hold in memory,
+/// then converts it to an on-chain pending settlement via `flex_settle`.
+pub fn appendFlexHoldRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    source_id: []const u8,
+    max_amount: u64,
+    mint: []const u8,
+    authorization_id: []const u8,
+    expires_at_slot: u64,
+    splits_json: []const u8,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    const agent = try getAgent(allocator, env);
+    defer allocator.free(agent);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "{\"event\": \"flex_hold\", \"id\": ");
+    try writeJsonString(&buf, allocator, source_id);
+    try buf.appendSlice(allocator, ", \"max_amount\": ");
+    var num_buf: [32]u8 = undefined;
+    const ma = try std.fmt.bufPrint(&num_buf, "{d}", .{max_amount});
+    try buf.appendSlice(allocator, ma);
+    try buf.appendSlice(allocator, ", \"mint\": ");
+    try writeJsonString(&buf, allocator, mint);
+    try buf.appendSlice(allocator, ", \"authorization_id\": ");
+    try writeJsonString(&buf, allocator, authorization_id);
+    try buf.appendSlice(allocator, ", \"expires_at_slot\": ");
+    var num_buf2: [32]u8 = undefined;
+    const es = try std.fmt.bufPrint(&num_buf2, "{d}", .{expires_at_slot});
+    try buf.appendSlice(allocator, es);
+    try buf.appendSlice(allocator, ", \"splits\": ");
+    try buf.appendSlice(allocator, splits_json);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
+/// Append a `flex_settle` event row — converts an in-memory hold to a
+/// pending settlement at the actual amount consumed. Must reference a
+/// prior `flex_hold` by authorization_id. settle_amount must be
+/// <= the original max_amount (facilitator-enforced on-chain).
+pub fn appendFlexSettleRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    source_id: []const u8,
+    authorization_id: []const u8,
+    settle_amount: u64,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    const agent = try getAgent(allocator, env);
+    defer allocator.free(agent);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "{\"event\": \"flex_settle\", \"id\": ");
+    try writeJsonString(&buf, allocator, source_id);
+    try buf.appendSlice(allocator, ", \"authorization_id\": ");
+    try writeJsonString(&buf, allocator, authorization_id);
+    try buf.appendSlice(allocator, ", \"settle_amount\": ");
+    var num_buf: [32]u8 = undefined;
+    const sa = try std.fmt.bufPrint(&num_buf, "{d}", .{settle_amount});
+    try buf.appendSlice(allocator, sa);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
 /// Append an `invitation` event row — external aiko (by pubkey) joins
 /// the inviter's network with typed role grants.
 pub fn appendInvitationRow(
