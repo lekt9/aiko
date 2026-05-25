@@ -3745,6 +3745,7 @@ PY
     PROOF=""
     PROOF_SKIP=""
     NO_LAYER_GUARD=0
+    LAYER_GUARD_BYPASSED_JSON=""  # initialized at handler-entry so it survives set -u when STATUS != satisfied (the layer-guard branch below sets it conditionally)
     while [ $# -gt 0 ]; do
       case "$1" in
         --proof) PROOF="${2:-}"; shift 2 ;;
