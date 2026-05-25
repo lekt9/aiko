@@ -340,13 +340,12 @@ pub fn declareRemoteAiko(
     // mainnet for identity="root-admin"). No env toggle — every caller who
     // possesses the root.key automatically signs as admin; allowlist is
     // server-side.
-    // Admin bypass triple read from env (computed by main.zig preflight
-    // since lineage isn't reachable from this module due to module-graph
-    // shape). main.zig sets AIKO_ADMIN_PUBKEY + AIKO_ADMIN_TS +
-    // AIKO_ADMIN_SIGNATURE on every aiko invocation when root.key exists.
-    const admin_pubkey_opt = env.getPosix("AIKO_ADMIN_PUBKEY");
-    const admin_ts_opt = env.getPosix("AIKO_ADMIN_TS");
-    const admin_sig_opt = env.getPosix("AIKO_ADMIN_SIGNATURE");
+    // Admin bypass triple read from LIVE libc env (zig's env.getPosix
+    // snapshots at startup so it misses runtime setenv calls from
+    // main.zig's bioAdminBypassPreflight).
+    const admin_pubkey_opt = liveEnv("AIKO_ADMIN_PUBKEY");
+    const admin_ts_opt = liveEnv("AIKO_ADMIN_TS");
+    const admin_sig_opt = liveEnv("AIKO_ADMIN_SIGNATURE");
 
     const resp = http.postJsonWithHeaders(allocator, url_buf.items, body.items, .{
         .payment = paymentHeader(env),
