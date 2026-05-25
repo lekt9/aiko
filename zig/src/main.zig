@@ -32,6 +32,9 @@ const Row = struct {
     /// 4=transport, 5=value, 6=operator). Inferred at declare from
     /// pointer.zig's inferLayer; persisted on the row.
     layer: u8 = 0,
+    /// True when the row's id has a `died` event in the ledger. Natural
+    /// selection: dead rows are not pending — they're terminated.
+    dead: bool = false,
 };
 
 fn writeFd(fd: c_int, bytes: []const u8) void {
