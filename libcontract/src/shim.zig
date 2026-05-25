@@ -37,14 +37,31 @@ fn stderrWrite(bytes: []const u8) void {
 
 fn usage() void {
     stderrWrite(
-        \\contract-lib-shim — Stage 1 parity shim
+        \\contract-lib-shim — Stage 1 parity shim (Σ27/Σ28 binding)
         \\Usage:
         \\  contract-lib-shim declare <plan> <action> [parent_id] [agent]
         \\  contract-lib-shim get <id>
         \\  contract-lib-shim list
+        \\  contract-lib-shim fractal <id>              Φ11 fractal context block
+        \\  contract-lib-shim guard <plan> <action>     Σ23+Σ24 stack dry-run
         \\
     );
 }
+
+/// Tiny writer adapter around stdoutWrite for fractal.renderContext.
+const StderrWriter = struct {
+    pub const Error = error{};
+    pub fn writeAll(self: StderrWriter, bytes: []const u8) Error!void {
+        _ = self;
+        stderrWrite(bytes);
+    }
+    pub fn print(self: StderrWriter, comptime fmt: []const u8, args: anytype) Error!void {
+        var buf: [4096]u8 = undefined;
+        const s = std.fmt.bufPrint(&buf, fmt, args) catch return;
+        _ = self;
+        stderrWrite(s);
+    }
+};
 
 pub fn main(init: std.process.Init.Minimal) !u8 {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
