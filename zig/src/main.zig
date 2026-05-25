@@ -962,6 +962,78 @@ fn cmdList(allocator: std.mem.Allocator, env: std.process.Environ) !u8 {
     return 0;
 }
 
+/// Resolve the absolute path of the currently-running binary. macOS uses
+/// `_NSGetExecutablePath`; we shim it via libc.
+extern fn _NSGetExecutablePath(buf: [*]u8, size: *u32) c_int;
+
+fn ownBinaryPath(allocator: std.mem.Allocator) ![]u8 {
+    var buf: [4096]u8 = undefined;
+    var size: u32 = buf.len;
+    if (_NSGetExecutablePath(&buf, &size) != 0) return error.PathTooLong;
+    // size on success holds the strlen+1; trim the trailing NUL if present.
+    var end: usize = 0;
+    while (end < buf.len and buf[end] != 0) end += 1;
+    return try allocator.dupe(u8, buf[0..end]);
+}
+
+/// Compat verb: `sign-binary <path>` — signs `<path>` with the binary-signing
+/// keypair derived from the root secret. Writes `<path>.sig` alongside.
+/// Used by build.sh after each `zig build` so newly-installed binaries pass
+/// self-attestation on next invocation.
+fn cmdSignBinary(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    if (args.len < 1) {
+        errPrint("sign-binary requires: <path>\n", .{});
+        return 2;
+    }
+    contract.Lineage.signBinary(allocator, env, args[0]) catch |e| {
+        errPrint("sign-binary failed: {s}\n", .{@errorName(e)});
+        return 1;
+    };
+    outPrint("signed: {s}.sig\n", .{args[0]});
+    return 0;
+}
+
+/// Compat verb: `verify-self` — verify the running binary's own integrity.
+/// Returns 0 if signature valid; 1 otherwise. Reports the binary path,
+/// signing-key pubkey, and verdict.
+fn cmdVerifySelf(allocator: std.mem.Allocator, env: std.process.Environ) !u8 {
+    const path = try ownBinaryPath(allocator);
+    defer allocator.free(path);
+    contract.Lineage.verifyBinary(allocator, env, path) catch |e| {
+        outPrint("verify-self: FAIL ({s})\n  binary: {s}\n", .{ @errorName(e), path });
+        return 1;
+    };
+    outPrint("verify-self: OK\n  binary: {s}\n", .{path});
+    return 0;
+}
+
+/// Refusal gate for LLM-bound operations. Run before any path that POSTs to
+/// the canonical Unbrowse endpoint. Tampered or unsigned binaries cannot
+/// invoke the LLM compiler — purely-local ledger operations remain available
+/// (the gate is per-surface, not per-process).
+///
+/// Failure-mode: prints a clear refusal to stderr and returns false so the
+/// caller exits with code 2 (refused) rather than running an LLM call from
+/// an unverified binary.
+fn assertBinaryIntegrityForLlm(allocator: std.mem.Allocator, env: std.process.Environ) bool {
+    const path = ownBinaryPath(allocator) catch return false;
+    defer allocator.free(path);
+    contract.Lineage.verifyBinary(allocator, env, path) catch |e| {
+        errPrint(
+            \\REFUSED: binary failed self-attestation ({s}).
+            \\  binary: {s}
+            \\
+            \\The LLM-compile (Unbrowse word→contract-tree expansion) path is
+            \\hardcoded to require a signed binary so that the Word's compiler
+            \\cannot be silently repointed or tampered. Run `contract sign-binary
+            \\{s}` to (re)sign after rebuilding, then retry.
+            \\
+        , .{ @errorName(e), path, path });
+        return false;
+    };
+    return true;
+}
+
 /// Compat verb: `verify-lineage <id>` — walk parent_id chain from `id` back to
 /// the root sentinel, recomputing each row's signing digest and verifying
 /// every parent_signature against the parent's env_pubkey. Root rows are
