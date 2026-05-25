@@ -1,30 +1,28 @@
 //! c_abi.zig — extern "C" wrappers exposing the Stage 1 verbs so non-Zig
-//! callers (bash via the shim binary, or a future Python/Node FFI) can link
+//! callers (bash via libffi, future Python/Node bindings) can link
 //! libcontract.a directly.
 //!
-//! The wrappers allocate via the C allocator so they don't depend on a
-//! caller-provided arena. Strings returned to C are NUL-terminated and must
-//! be released with `contract_free`.
+//! Strings returned to C are NUL-terminated and must be released with
+//! `contract_free`. All operations are synchronous and run on the libc
+//! allocator (no caller-owned arena required).
 const std = @import("std");
 const contract = @import("contract.zig");
 
 const gpa = std.heap.c_allocator;
 
-fn currentEnv() std.process.Environ {
-    return std.process.Init.Minimal.environ_var.*;
-}
-
-// HACK for stage 1: extern callers don't have a real std.process.Environ to
-// hand us, so we synthesize one off the libc `environ` global. Mirrors the
-// way std.process.Init.Minimal pulls it in main().
-extern var environ: [*:null]?[*:0]u8;
+// On POSIX with libc, `environ` is the global env-var array. Wrap it as a
+// std.process.Environ.PosixBlock so contract.zig's existing API (which takes
+// a std.process.Environ) works from non-Zig callers.
+extern var environ: [*:null]const ?[*:0]const u8;
 
 fn extEnv() std.process.Environ {
-    // std.process.Environ wraps an `environ`-style pointer; the type lives in
-    // std/process/Environ.zig as { ptr, count }. Materialize by counting.
     var count: usize = 0;
     while (environ[count] != null) : (count += 1) {}
-    return std.process.Environ{ .ptr = @ptrCast(&environ[0]), .count = count };
+    // PosixBlock.slice is [:null]const ?[*:0]const u8 — a sentinel-terminated
+    // slice. Cast the libc-provided pointer + length into that shape.
+    const ptr: [*:null]const ?[*:0]const u8 = @ptrCast(environ);
+    const slice: [:null]const ?[*:0]const u8 = ptr[0..count :null];
+    return .{ .block = .{ .slice = slice } };
 }
 
 fn cstr(p: [*:0]const u8) []const u8 {
@@ -49,7 +47,6 @@ export fn contract_declare(
     };
     const id = contract.declare(gpa, extEnv(), cstr(plan), cstr(action), opts) catch return null;
     defer gpa.free(id);
-    // NUL-terminated copy for C callers.
     const out = gpa.allocSentinel(u8, id.len, 0) catch return null;
     @memcpy(out, id);
     return out.ptr;
@@ -101,7 +98,6 @@ export fn contract_list() ?[*:0]u8 {
 export fn contract_free(p: ?[*:0]u8) void {
     if (p) |ptr| {
         const slice = std.mem.span(ptr);
-        // allocSentinel returns []:0]T whose underlying buffer is len+1.
         const full = ptr[0 .. slice.len + 1];
         gpa.free(full);
     }
