@@ -45,13 +45,24 @@ ptype=$(grep "\"id\": \"$CID\"" "$LEDGER" \
 [ "$ptype" = "bridge" ] || fail "expected pointer_type=bridge, got '$ptype' for id=$CID"
 pass "pointer_type=bridge persisted on declared row"
 
-# --- step 3: iterate and capture stderr + stdout + exit ---
+# --- step 3: iterate and capture stderr + stdout ---
+# Note: the iterate verb wraps action_rc into the TWO-KEY EXIT block and does
+# not propagate the inner action's exit code as the script's exit. We instead
+# verify the recorded action_result on the ledger row, which is the
+# source-of-truth for whether the inner action passed or failed.
 iter_out=$(bash "$CONTRACT_BIN" iterate "$CID" 2>&1)
-iter_rc=$?
 
-# --- step 4: assert non-zero exit (refused) ---
-[ "$iter_rc" -ne 0 ] || fail "expected iterate to exit non-zero (refused), got rc=$iter_rc"
-pass "iterate refused (exit $iter_rc)"
+# --- step 4: assert KEY 1 = FAIL in output AND action_result=fail on ledger ---
+printf '%s\n' "$iter_out" | grep -q "KEY 1 (machine): FAIL" \
+  || fail "expected KEY 1 (machine): FAIL in iterate output (bridge was not refused)"
+pass "iterate reported KEY 1 (machine): FAIL"
+
+last_result=$(grep "\"id\": \"$CID\"" "$LEDGER" \
+  | grep '"event": "iterated"' \
+  | tail -1 \
+  | python3 -c "import json,sys; row=json.loads(sys.stdin.read()); print(row.get('action_result',''))" 2>/dev/null)
+[ "$last_result" = "fail" ] || fail "expected last iteration action_result='fail', got '$last_result'"
+pass "ledger row records action_result=fail (refused, not satisfied)"
 
 # --- step 5: assert the === BRIDGE REFUSED === block + structured fields ---
 printf '%s\n' "$iter_out" | grep -q "=== BRIDGE REFUSED ===" \
