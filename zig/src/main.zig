@@ -706,6 +706,57 @@ fn cmdList(allocator: std.mem.Allocator, env: std.process.Environ) !u8 {
     return 0;
 }
 
+/// Compat verb: `_mark <id> satisfied [--proof <text>]`. Appends a `satisfied`
+/// row via libcontract.markSatisfied so externally-verified contracts can be
+/// driven to satisfaction without round-tripping through the resolver. This
+/// is the only honest path to "mark" a contract whose evidence lives outside
+/// the substrate (e.g. a passing test, a deployed surface, an observed metric).
+fn cmdMark(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    if (args.len < 2) {
+        errPrint("_mark requires: <id> satisfied [--proof <text>]\n", .{});
+        usage();
+        return 2;
+    }
+    const id = args[0];
+    const state = args[1];
+    if (!std.mem.eql(u8, state, "satisfied")) {
+        errPrint("_mark only supports state=satisfied (got: {s})\n", .{state});
+        return 2;
+    }
+    var proof: ?[]const u8 = null;
+    var i: usize = 2;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--proof") and i + 1 < args.len) {
+            proof = args[i + 1];
+            i += 1;
+        } else if (std.mem.eql(u8, args[i], "--proof-skip") and i + 1 < args.len) {
+            proof = args[i + 1];
+            i += 1;
+        }
+    }
+    if (id.len != 8) {
+        errPrint("_mark: id must be 8 hex chars (got: {s})\n", .{id});
+        return 2;
+    }
+    // Honest guard: refuse to mark an id with no prior declared row.
+    const rows = try parseRows(allocator, env);
+    defer allocator.free(rows);
+    var found = false;
+    for (rows) |r| {
+        if (std.mem.eql(u8, r.event, "declared") and std.mem.eql(u8, r.id, id)) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        errPrint("_mark: no declared row found for id {s}\n", .{id});
+        return 1;
+    }
+    try contract.markSatisfied(allocator, env, id, 1, proof);
+    outPrint("satisfied: {s}\n", .{id});
+    return 0;
+}
+
 fn cmdStatus(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
     if (args.len > 1) {
         err("status accepts zero args or exactly <id>\n");
