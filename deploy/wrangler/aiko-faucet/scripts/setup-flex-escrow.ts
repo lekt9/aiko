@@ -1,23 +1,19 @@
 #!/usr/bin/env tsx
 // setup-flex-escrow.ts — one-shot operator setup. Creates the Flex escrow
 // PDA, deposits initial funding, and registers the worker's wallet as a
-// session key. Output is the escrow PDA address — paste it into your
-// CF Worker env as `FLEX_ESCROW_ADDRESS` so the worker can sign
-// authorizations against it.
+// session key. Prints the escrow PDA address — paste it into CF Worker
+// secrets as FLEX_ESCROW_ADDRESS.
 //
 // Usage:
 //   FAUCET_PRIVATE_KEY=<base58_64_byte_keypair> \
 //   FACILITATOR_ADDRESS=<unbrowse_facilitator_pubkey> \
 //   INITIAL_DEPOSIT_USDC=10 \
-//   tsx scripts/setup-flex-escrow.ts
-//
-// Default network: Solana mainnet-beta. Override with RPC_URL.
+//   npm run setup-escrow
 
 import {
   createSolanaRpc,
   createSolanaRpcSubscriptions,
   createSignerFromKeyPair,
-  generateKeyPairSigner,
   createKeyPairFromBytes,
   pipe,
   createTransactionMessage,
@@ -28,18 +24,21 @@ import {
   sendAndConfirmTransactionFactory,
   getSignatureFromTransaction,
   address,
+  some,
 } from "@solana/kit";
 import {
   getCreateEscrowInstructionAsync,
   getDepositInstructionAsync,
   getRegisterSessionKeyInstructionAsync,
   findEscrowsByOwner,
-  MIN_REFUND_TIMEOUT_SLOTS,
-  MIN_DEADMAN_TIMEOUT_SLOTS,
 } from "@faremeter/flex-solana";
 import bs58 from "bs58";
 
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+// Minimums per Flex program reference: ~150 slots (~1 min) refund, ~1000
+// slots (~6.7 min) deadman with deadman >= 2 * refund.
+const REFUND_TIMEOUT_SLOTS = 150n;
+const DEADMAN_TIMEOUT_SLOTS = 1000n;
 
 function env(k: string, required = true): string {
   const v = process.env[k];
@@ -57,7 +56,8 @@ async function main() {
   const rpcUrl = env("RPC_URL", false) || "https://api.mainnet-beta.solana.com";
 
   const rpc = createSolanaRpc(rpcUrl);
-  const subs = createSolanaRpcSubscriptions(rpcUrl.replace("https://", "wss://"));
+  const wsUrl = rpcUrl.replace(/^http/, "ws");
+  const subs = createSolanaRpcSubscriptions(wsUrl);
 
   const secretBytes = bs58.decode(secretBs58);
   const keyPair = await createKeyPairFromBytes(secretBytes);
@@ -65,42 +65,37 @@ async function main() {
   console.log(`owner       : ${owner.address}`);
   console.log(`facilitator : ${facilitatorAddr}`);
 
-  // 1) Create escrow PDA (index=0, sane refund/deadman timeouts).
-  const refundTimeoutSlots = BigInt(MIN_REFUND_TIMEOUT_SLOTS);             // ~1 min
-  const deadmanTimeoutSlots = BigInt(MIN_DEADMAN_TIMEOUT_SLOTS) * 2n;       // ~13 min
+  // 1) Create escrow PDA. The Flex program derives the PDA from
+  // (owner, facilitator, index) so the same triplet always resolves
+  // to the same address.
   const escrowIx = await getCreateEscrowInstructionAsync({
     owner,
-    facilitator: address(facilitatorAddr),
     index: 0n,
-    refundTimeoutSlots,
-    deadmanTimeoutSlots,
+    facilitator: address(facilitatorAddr),
+    refundTimeoutSlots: REFUND_TIMEOUT_SLOTS,
+    deadmanTimeoutSlots: DEADMAN_TIMEOUT_SLOTS,
     maxSessionKeys: 4,
-    maxPending: 16,
   });
+  // The PDA is the second account in the instruction; pull it.
+  const escrowPda = escrowIx.accounts[1].address;
+  console.log(`escrow PDA  : ${escrowPda}`);
 
-  // 2) Deposit initial USDC into the escrow's vault.
+  // 2) Deposit initial USDC. depositor signs, escrow + mint are addresses.
   const depositLamports = BigInt(Math.floor(depositUsdc * 1_000_000));
   const depositIx = await getDepositInstructionAsync({
-    owner,
-    facilitator: address(facilitatorAddr),
-    escrowIndex: 0n,
+    depositor: owner,
+    escrow: escrowPda,
     mint: address(USDC_MINT),
     amount: depositLamports,
   });
 
-  // 3) Register the SAME wallet as a session key for simplicity (the
-  // faucet worker re-uses FAUCET_PRIVATE_KEY as session key inside
-  // signFaremeterEnvelope). For higher security split these: register
-  // a short-lived ed25519 keypair as the session key, store only its
-  // private bytes in the CF Worker, never let the owner key touch
-  // the worker.
+  // 3) Register the owner's pubkey as session key for simplicity. For
+  // higher security split into a separate session key — see README.
   const sessionKeyIx = await getRegisterSessionKeyInstructionAsync({
     owner,
-    facilitator: address(facilitatorAddr),
-    escrowIndex: 0n,
+    escrow: escrowPda,
     sessionKey: owner.address,
-    expiresAtSlot: null,                       // no expiry
-    revocationGracePeriodSlots: 256n,          // ~2 min
+    expiresAtSlot: some(0n),  // 0 = no expiry per program semantics
   });
 
   // Build, sign, send.
@@ -113,20 +108,22 @@ async function main() {
   );
   const tx = await signTransactionMessageWithSigners(msg);
   const send = sendAndConfirmTransactionFactory({ rpc, rpcSubscriptions: subs });
+  // sendAndConfirmTransactionFactory's send takes (tx, config). Config
+  // requires commitment per @solana/kit types.
   await send(tx, { commitment: "confirmed" });
   const sig = getSignatureFromTransaction(tx);
   console.log(`signature   : ${sig}`);
 
-  // 4) Look up the escrow PDA address now that it exists on-chain.
-  const escrows = await findEscrowsByOwner({ rpc, owner: owner.address });
-  const ours = escrows.find((e) => e.facilitator === facilitatorAddr && e.index === 0n);
+  // 4) Sanity-check that the escrow now resolves on-chain.
+  const escrows = await findEscrowsByOwner(rpc, owner.address);
+  const ours = escrows.find((e) => e.address === escrowPda);
   if (!ours) {
-    console.error("escrow not found after creation — check RPC");
+    console.error("escrow not found via findEscrowsByOwner after creation — check RPC commitment");
     process.exit(3);
   }
-  console.log(`escrow PDA  : ${ours.address}`);
-  console.log("\n>>> next step: wrangler secret put FLEX_ESCROW_ADDRESS");
-  console.log(`>>>            (paste: ${ours.address})`);
+  console.log("\n>>> next step:");
+  console.log(`>>> wrangler secret put FLEX_ESCROW_ADDRESS`);
+  console.log(`>>> (paste: ${escrowPda})`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
