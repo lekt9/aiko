@@ -323,6 +323,7 @@ const c_stat = extern struct {
     st_qspare: [2]i64 = .{ 0, 0 },
 };
 extern fn stat(path: [*:0]const u8, st: *c_stat) c_int;
+extern fn time(t: ?*i64) i64;
 
 /// Look up the latest non-empty action_result for `cid` in the in-memory rows.
 /// Used to propagate context up the tree as a posthook payload env var.
