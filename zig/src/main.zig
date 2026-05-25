@@ -731,7 +731,7 @@ fn bioFirstRunWalletGuidance(allocator: std.mem.Allocator, env: std.process.Envi
     wflags.TRUNC = true;
     const fd = std.c.open(marker_z.ptr, wflags, @as(c_uint, 0o600));
     if (fd >= 0) {
-        const stamp = std.fmt.allocPrint(allocator, "{s}\n", .{addr}) catch {
+        const stamp = std.fmt.allocPrint(allocator, "{s}\n", .{sol_addr}) catch {
             _ = std.c.close(fd);
             return;
         };
