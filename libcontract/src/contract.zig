@@ -272,37 +272,46 @@ pub fn declare(
     action: []const u8,
     opts: DeclareOptions,
 ) ![]u8 {
-    // Cache check FIRST (per AUTO-INVALIDATION-VIA-INPUT-POINTER-HASH —
-    // contract 27a39635 + Lewis 2026-05-26 "always fires, checks cache
-    // before doing anything else, and does so in parallel"). Compute
-    // inputs_hash over plan text; scan the ledger for an existing declared
-    // row whose inputs_hash matches. On cache hit, return that id and skip
-    // re-append; cache miss proceeds to declare-and-append. Plan-text
-    // collision-resistance is sha256, so equal hash ↔ equal plan ↔ same
-    // truth claim.
-    //
     // PARALLEL IDEMPOTENCY: the cache-scan + appendRow seam is wrapped in an
     // advisory exclusive flock on a `.lock` sidecar (per wave-40b TOCTOU
-    // analysis). N concurrent declares with the same plan now resolve to
-    // exactly 1 append + 1 id; distinct plans serialize through the lock
+    // analysis). N concurrent declares with the same v2 hash resolve to
+    // exactly 1 append + 1 id; distinct hashes serialize through the lock
     // but each still appends its own row. Readers (`readAll`) are not
     // serialized because they touch the data file, not the sidecar.
     const lock_fd = try ledger.acquireExclusive(allocator, env);
     defer ledger.releaseExclusive(lock_fd);
 
-    {
-        const sha256_mod = std.crypto.hash.sha2.Sha256;
-        var plan_digest: [32]u8 = undefined;
-        sha256_mod.hash(plan, &plan_digest, .{});
-        var plan_hex_buf: [64]u8 = undefined;
-        const hex_chars = "0123456789abcdef";
-        for (plan_digest, 0..) |b, i| {
-            plan_hex_buf[i * 2] = hex_chars[b >> 4];
-            plan_hex_buf[i * 2 + 1] = hex_chars[b & 0x0F];
-        }
-        if (try findCachedDeclared(allocator, env, &plan_hex_buf)) |cached_id| {
-            return cached_id;
-        }
+    // Cwd is part of the v2 cache key (context layer) — resolve BEFORE the
+    // cache check, not after. Hoisted from later in this function.
+    var cwd_buf: [4096]u8 = undefined;
+    const cwd: []const u8 = blk: {
+        if (opts.cwd) |c| break :blk c;
+        const cwd_ptr = std.c.getcwd(&cwd_buf, cwd_buf.len);
+        if (cwd_ptr == null) break :blk "";
+        break :blk std.mem.span(@as([*:0]const u8, @ptrCast(cwd_ptr.?)));
+    };
+
+    // Cache check FIRST per AUTO-INVALIDATION-VIA-INPUT-POINTER-HASH
+    // (contract 27a39635) + Lewis 2026-05-26 "always fires, checks cache
+    // before doing anything else, and does so in parallel" + Docker-layer
+    // proposal "kv cache must be context aware for the pointer". Compute
+    // inputs_hash_v2 (cwd + plan + file_refs_digest + parent.inputs_hash);
+    // scan the ledger for an existing declared row whose inputs_hash
+    // matches. On cache hit, return that id and skip re-append; cache miss
+    // proceeds to declare-and-append. sha256 collision-resistance: equal
+    // hash ↔ equal v2 inputs ↔ same truth claim in same context.
+    const inputs_hash = try computeInputsHashV2(
+        allocator,
+        env,
+        plan,
+        cwd,
+        opts.inputs_file_refs_digest,
+        opts.parent_id,
+    );
+    errdefer allocator.free(inputs_hash);
+    if (try findCachedDeclared(allocator, env, inputs_hash)) |cached_id| {
+        allocator.free(inputs_hash);
+        return cached_id;
     }
 
     const cid = try id_mod.generateId(allocator);
@@ -313,14 +322,6 @@ pub fn declare(
 
     var ts_buf: [64]u8 = undefined;
     const ts = try nowIsoUtc(&ts_buf);
-
-    var cwd_buf: [4096]u8 = undefined;
-    const cwd: []const u8 = blk: {
-        if (opts.cwd) |c| break :blk c;
-        const cwd_ptr = std.c.getcwd(&cwd_buf, cwd_buf.len);
-        if (cwd_ptr == null) break :blk "";
-        break :blk std.mem.span(@as([*:0]const u8, @ptrCast(cwd_ptr.?)));
-    };
 
     var owned_agent: ?[]u8 = null;
     defer if (owned_agent) |a| allocator.free(a);
