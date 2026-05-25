@@ -105,6 +105,35 @@ check "humanlike/over-iteration"    bash -c \
 check "self/no-drift"              env CONTRACTS_STORE="$HOME/.contracts/contracts.jsonl" python3 -c \
                                      "import json, subprocess, sys; r=subprocess.run(['bash','$CLI','self','--json'],capture_output=True,text=True); d=json.loads(r.stdout); sys.exit(0 if d['drift']==[] else 1)"
 
+# Locality R8 — channel ledgers are just ledgers at a different path. Existing
+# `contract list` reads any channel ledger when CONTRACTS_STORE points to it,
+# via the locality doctrine (79c2d656). No new CLI verb required (Σ18 efc2154b).
+# Proves: (a) populate ~/.contracts/channels/<id>/contracts.jsonl with 3 rows
+# and `contract list` surfaces all three; (b) a nonexistent CONTRACTS_STORE
+# path returns honestly empty with exit 0 (no fabrication). Contract 9aee99f6.
+check "locality/channel-ledger-as-ledger" bash -c "
+  tmpd=\$(mktemp -d); lpath=\"\$tmpd/channels/test-r8/contracts.jsonl\"
+  mkdir -p \"\$(dirname \"\$lpath\")\"
+  python3 -c \"
+import json
+rows = [
+    {'event':'declared','id':'aa111111','plan':'channel ledger sample row 1','action':'true','pointer_type':'cli','layer':2,'cwd':'/tmp','parent_id':None,'pointers':[],'ts':'2026-05-25T04:00:00Z','agent':'channel-test'},
+    {'event':'declared','id':'bb222222','plan':'channel ledger sample row 2','action':'true','pointer_type':'cli','layer':2,'cwd':'/tmp','parent_id':None,'pointers':[],'ts':'2026-05-25T04:00:01Z','agent':'channel-test'},
+    {'event':'declared','id':'cc333333','plan':'channel ledger sample row 3','action':'true','pointer_type':'cli','layer':2,'cwd':'/tmp','parent_id':None,'pointers':[],'ts':'2026-05-25T04:00:02Z','agent':'channel-test'},
+]
+with open('\$lpath','w') as f:
+    for r in rows: f.write(json.dumps(r)+'\n')
+\"
+  out=\$(CONTRACTS_STORE=\"\$lpath\" bash '$CLI' list 2>&1) || { rm -rf \"\$tmpd\"; exit 1; }
+  for id in aa111111 bb222222 cc333333; do
+    printf '%s' \"\$out\" | grep -q \"\$id\" || { echo \"missing id \$id in list output\"; echo \"\$out\"; rm -rf \"\$tmpd\"; exit 1; }
+  done
+  # Honest empty: nonexistent CONTRACTS_STORE path → rc=0, no rows.
+  empty_out=\$(CONTRACTS_STORE=\"\$tmpd/does-not-exist/contracts.jsonl\" bash '$CLI' list 2>&1) || { rm -rf \"\$tmpd\"; exit 1; }
+  printf '%s' \"\$empty_out\" | grep -q 'no contracts match' || { echo \"nonexistent path did not return honest empty: \$empty_out\"; rm -rf \"\$tmpd\"; exit 1; }
+  rm -rf \"\$tmpd\"
+"
+
 # ── Pre-flight self-checks (check yourself before you shrek yourself) ─────────
 # Drift between SKILL.md and the implementing code that no other gate catches.
 # Each one fails 1 when docs and code disagree; the agent reads the diff.
