@@ -154,6 +154,9 @@ test "inferPointerType exposes only native shapes plus cell/api" {
     try std.testing.expectEqualStrings("machine", inferPointerType("machine:mlx"));
     try std.testing.expectEqualStrings("inhibits", inferPointerType("inhibits:deadbeef"));
     try std.testing.expectEqualStrings("bind", inferPointerType("bind:deadbeef"));
+    try std.testing.expectEqualStrings("posthook", inferPointerType("posthook:deadbeef"));
+    try std.testing.expectEqualStrings("prehook", inferPointerType("prehook:deadbeef"));
+    try std.testing.expectEqualStrings("blocked_by", inferPointerType("blocked_by:deadbeef"));
 }
 
 test "inferLayer matches contract d10b3dbb convention" {
