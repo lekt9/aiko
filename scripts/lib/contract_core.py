@@ -1134,10 +1134,16 @@ def active_inhibitors(target_id: str) -> list[str]:
     return inhibitors
 def record_iteration(id: str, wave: int, action_exit: int, action_result: str,
                      agent_verdict: Optional[str], children_spawned: list,
-                     log_path: str = "") -> None:
-    _append({"event": "iterated", "id": id, "wave": wave, "action_exit": action_exit,
-             "action_result": action_result, "agent_verdict": agent_verdict,
-             "children_spawned": children_spawned, "log_path": log_path, "ts": _now()})
+                     log_path: str = "", action_meta: Optional[dict] = None) -> None:
+    row = {"event": "iterated", "id": id, "wave": wave, "action_exit": action_exit,
+           "action_result": action_result, "agent_verdict": agent_verdict,
+           "children_spawned": children_spawned, "log_path": log_path, "ts": _now()}
+    if action_meta:
+        # Structured metadata about what the action emitted (e.g. the block
+        # kind for bridge: refusals, payment-required payloads, etc.). Keeps
+        # downstream consumers from having to grep stderr for shape.
+        row["action_meta"] = dict(action_meta)
+    _append(row)
 
 
 def record_event(event: str, id: str, **fields) -> None:
