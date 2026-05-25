@@ -19,6 +19,12 @@ import {
   createAssociatedTokenAccountInstruction,
 } from "@solana/spl-token";
 import bs58 from "bs58";
+import {
+  serializePaymentAuthorization,
+  signPaymentAuthorization,
+  FLEX_PROGRAM_ADDRESS,
+} from "@faremeter/flex-solana";
+import { address as solAddress } from "@solana/kit";
 
 export interface Env {
   AIKO_FAUCET_KV: KVNamespace;
