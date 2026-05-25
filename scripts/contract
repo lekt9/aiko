@@ -1112,14 +1112,24 @@ print(_infer_pointer_type(os.environ['MH_ACTION']))
       rm -f "$CLOOKUP_OUT"
       _two_key_exit "$ID" "$ACTION_RC" "$ACTION"
     else
-      rm -f "$CLOOKUP_OUT"
+      rm -f "$CLOOKUP_OUT" /tmp/contract-action-meta
       CONTRACT_STDIN="$STDIN_DATA" _run_action "$ACTION" "$ID" "$CWD"
       ACTION_RC=$?
-      MH_ID="$ID" MH_WAVE="$WAVE" MH_RC="$ACTION_RC" _py_inline "
-import os; from contract_core import record_iteration
+      # Read action_meta stash written by pointer-type handlers (e.g. bridge:
+      # refusal, x402: payment-required) so the iterated row carries structured
+      # block metadata. Empty when the handler didn't emit one.
+      ACTION_META_JSON=""
+      [ -f /tmp/contract-action-meta ] && ACTION_META_JSON=$(cat /tmp/contract-action-meta 2>/dev/null || true)
+      MH_ID="$ID" MH_WAVE="$WAVE" MH_RC="$ACTION_RC" MH_META="$ACTION_META_JSON" _py_inline "
+import os, json; from contract_core import record_iteration
+meta = None
+raw = os.environ.get('MH_META','').strip()
+if raw:
+    try: meta = json.loads(raw)
+    except Exception: meta = None
 record_iteration(os.environ['MH_ID'], int(os.environ['MH_WAVE']),
   int(os.environ['MH_RC']),
-  'pass' if os.environ['MH_RC']=='0' else 'fail', None, [])
+  'pass' if os.environ['MH_RC']=='0' else 'fail', None, [], action_meta=meta)
 "
       if [ -z "$NO_CACHE" ] && [[ "$CACHE_HEADER" == MISS* ]]; then
         ARESULT=""
