@@ -168,6 +168,45 @@ _run_action() {
     ptype="cli"
   fi
 
+  # ── Π11 env-guard (doctrine 8edd53ef) ─────────────────────────────────────
+  # Classify required environment from ptype:
+  #   LOCAL-required → user's actual host (cli, machine, tool-guard, contract-ref reads local ledger)
+  #   REMOTE-capable → needs UNBROWSE_BASE reachable (x402, api, agent, bridge)
+  #   AGNOSTIC → pure-composition or in-thread judgment (agent-judges, funnel, funnel-first, sequence, quorum, loop, harness)
+  # Detect current env: UNBROWSE_BASE present + reachable counts as remote-capable.
+  # Soft mode by default (warn-only); CONTRACT_STRICT_ENV_GUARD=1 refuses with exit 2.
+  # Bypass per-call: NO_ENV_GUARD=1 env or --no-env-guard flag (set by caller).
+  if [ -z "${NO_ENV_GUARD:-}" ] && [ "${CONTRACT_ENV_GUARD:-1}" != "0" ]; then
+    local _req_env _cur_env
+    case "$ptype" in
+      cli|machine|tool-guard|contract-ref) _req_env="LOCAL" ;;
+      x402|api|agent|bridge) _req_env="REMOTE" ;;
+      *) _req_env="AGNOSTIC" ;;
+    esac
+    if [ -n "${UNBROWSE_BASE:-}" ]; then _cur_env="REMOTE-CAPABLE"; else _cur_env="LOCAL-ONLY"; fi
+    local _mismatch=""
+    if [ "$_req_env" = "REMOTE" ] && [ "$_cur_env" = "LOCAL-ONLY" ]; then
+      _mismatch="remote-required action in local-only env (UNBROWSE_BASE unset)"
+    fi
+    if [ -n "$_mismatch" ]; then
+      echo "=== WRONG ENVIRONMENT ===" >&2
+      echo "  contract: $id" >&2
+      echo "  action:   $action" >&2
+      echo "  ptype:    $ptype" >&2
+      echo "  required: $_req_env" >&2
+      echo "  current:  $_cur_env" >&2
+      echo "  reason:   $_mismatch" >&2
+      echo "  hint:     export UNBROWSE_BASE=https://beta-api.unbrowse.ai  (or run on a host where it's reachable)" >&2
+      echo "  bypass:   NO_ENV_GUARD=1 contract iterate $id  (or set CONTRACT_ENV_GUARD=0)" >&2
+      if [ "${CONTRACT_STRICT_ENV_GUARD:-0}" = "1" ]; then
+        echo "  (strict mode: refusing to run; exit 2)" >&2
+        return 2
+      fi
+      echo "  (soft mode: continuing — wrong-env warning logged for audit)" >&2
+    fi
+  fi
+  # ── /Π11 env-guard ─────────────────────────────────────────────────────────
+
   if [ "$action" = "agent-judges" ]; then
     _l0 "  pointer(agent-judges): agent-judges"
     echo "  result: AGENT-JUDGES"
