@@ -315,8 +315,8 @@ fn aggregateChildOutputs(allocator: std.mem.Allocator, rows: []const Row, parent
         while (i > 0) : (i -= 1) {
             const r = rows[i - 1];
             if (!std.mem.eql(u8, r.id, cid)) continue;
-            if (r.result.len == 0) continue;
-            const line = try std.fmt.allocPrint(allocator, "[{s}] {s}\n", .{ cid, r.result });
+            if (r.action_result.len == 0) continue;
+            const line = try std.fmt.allocPrint(allocator, "[{s}] {s}\n", .{ cid, r.action_result });
             defer allocator.free(line);
             try buf.appendSlice(allocator, line);
             break;
