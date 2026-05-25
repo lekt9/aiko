@@ -1190,16 +1190,23 @@ def record_tokens(ref_id: Optional[str], model: str, in_tokens: int, out_tokens:
     record_event("tokens", ref_id or "_", **fields)
 
 
-def mark_satisfied(id: str, wave: int, proof: str | None = None, proof_skip_reason: str | None = None) -> None:
+def mark_satisfied(id: str, wave: int, proof: str | None = None, proof_skip_reason: str | None = None, layer_guard_bypassed: list | None = None) -> None:
     """Append a satisfied row. One of `proof` (plan-fulfillment evidence)
     or `proof_skip_reason` (explicit opt-out) should be present; both None
     is permitted for callers that handle the requirement at the CLI layer
-    (the contract bash script enforces the bare-mark refusal)."""
+    (the contract bash script enforces the bare-mark refusal).
+
+    `layer_guard_bypassed` (Σ20 doctrine row 92d756ea): list of standing-gate
+    ids the agent acknowledged were unmet but consciously bypassed via the
+    --no-layer-guard flag. Honest audit trail — silent bypass is never
+    permitted; every bypass writes the unmet gate ids onto the row."""
     row = {"event": "satisfied", "id": id, "wave": wave, "ts": _now()}
     if proof is not None:
         row["proof"] = proof
     if proof_skip_reason is not None:
         row["proof_skip_reason"] = proof_skip_reason
+    if layer_guard_bypassed:
+        row["layer_guard_bypassed"] = list(layer_guard_bypassed)
     _append(row)
 
 
