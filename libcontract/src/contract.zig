@@ -215,11 +215,22 @@ pub fn declare(
 ) ![]u8 {
     // Cache check FIRST (per AUTO-INVALIDATION-VIA-INPUT-POINTER-HASH —
     // contract 27a39635 + Lewis 2026-05-26 "always fires, checks cache
-    // before doing anything else"). Compute inputs_hash over plan text and
-    // scan the ledger for an existing declared row whose inputs_hash
-    // matches. On cache hit, return that id and skip re-append; cache
-    // miss proceeds to declare-and-append. Plan-text collision-resistance
-    // is sha256, so equal hash ↔ equal plan ↔ same truth claim.
+    // before doing anything else, and does so in parallel"). Compute
+    // inputs_hash over plan text; scan the ledger for an existing declared
+    // row whose inputs_hash matches. On cache hit, return that id and skip
+    // re-append; cache miss proceeds to declare-and-append. Plan-text
+    // collision-resistance is sha256, so equal hash ↔ equal plan ↔ same
+    // truth claim.
+    //
+    // PARALLEL IDEMPOTENCY: the cache-scan + appendRow seam is wrapped in an
+    // advisory exclusive flock on a `.lock` sidecar (per wave-40b TOCTOU
+    // analysis). N concurrent declares with the same plan now resolve to
+    // exactly 1 append + 1 id; distinct plans serialize through the lock
+    // but each still appends its own row. Readers (`readAll`) are not
+    // serialized because they touch the data file, not the sidecar.
+    const lock_fd = try ledger.acquireExclusive(allocator, env);
+    defer ledger.releaseExclusive(lock_fd);
+
     {
         const sha256_mod = std.crypto.hash.sha2.Sha256;
         var plan_digest: [32]u8 = undefined;
