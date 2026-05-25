@@ -44,14 +44,11 @@ step "sign"
 "$SCRIPTS_DIR/contract" sign-binary "$SCRIPTS_DIR/aiko"
 "$SCRIPTS_DIR/contract" sign-binary "$SCRIPTS_DIR/contract"
 
-step "verify-self"
+step "verify"
+# `contract` verifies itself (own SHA-256 vs own .sig sidecar).
 "$SCRIPTS_DIR/contract" verify-self
-"$SCRIPTS_DIR/aiko" verify-self 2>/dev/null || {
-  # aiko is goal-only — when invoked without a positional it usage()'s. The
-  # verify-self verb path is dispatched ahead of the goal-only fallback only
-  # in the non-AIKO_DECLARE_ONLY binary; for aiko we instead invoke it through
-  # the contract binary against the aiko path.
-  printf '  (note: aiko binary verify-self runs via `contract verify-self` against its path)\n'
-}
+# `aiko` is goal-only — has no read verbs. `contract` attests aiko by path
+# using the same derived binary-signing key. Both binaries share Lineage.
+"$SCRIPTS_DIR/contract" verify-binary "$SCRIPTS_DIR/aiko"
 
 printf '\nbuild.sh: done — substrate is fresh, signed, attested.\n'
