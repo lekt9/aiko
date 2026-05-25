@@ -430,6 +430,22 @@ pub fn recordIteration(
     action_exit: i32,
     action_result: []const u8,
 ) !void {
+    return recordIterationWithHash(allocator, env, id, wave, action_exit, action_result, "");
+}
+
+/// Same as recordIteration but also records the input_hash that produced
+/// this result. The input_hash is the content-addressed identity of the
+/// (own plan + own action + recursive child input_hashes) tuple — when it
+/// changes, the cached result is stale and the resolver re-runs the action.
+pub fn recordIterationWithHash(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+    wave: u32,
+    action_exit: i32,
+    action_result: []const u8,
+    input_hash: []const u8,
+) !void {
     var ts_buf: [64]u8 = undefined;
     const ts = try nowIsoUtc(&ts_buf);
 
@@ -451,6 +467,10 @@ pub fn recordIteration(
     try buf.appendSlice(allocator, e);
     try buf.appendSlice(allocator, ", \"action_result\": ");
     try writeJsonString(&buf, allocator, action_result);
+    if (input_hash.len > 0) {
+        try buf.appendSlice(allocator, ", \"input_hash\": ");
+        try writeJsonString(&buf, allocator, input_hash);
+    }
     try buf.appendSlice(allocator, ", \"agent_verdict\": null, \"children_spawned\": [], \"log_path\": \"\", \"ts\": ");
     try writeJsonString(&buf, allocator, ts);
     try buf.appendSlice(allocator, ", \"agent\": ");
