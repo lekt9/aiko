@@ -20,7 +20,13 @@
 const std = @import("std");
 const http = @import("http.zig");
 
-pub const DEFAULT_UNBROWSE_BASE = "https://beta-api.unbrowse.ai";
+/// Canonical Unbrowse LLM-compiler endpoint. Hardcoded — never overridable.
+/// The substrate's natural-language → contract-tree compilation flows solely
+/// through this base. The previous `UNBROWSE_BASE` env override is removed.
+pub const UNBROWSE_BASE: []const u8 = "https://beta-api.unbrowse.ai";
+
+/// Backward-compat alias. Same value as UNBROWSE_BASE.
+pub const DEFAULT_UNBROWSE_BASE = UNBROWSE_BASE;
 
 pub const ClientError = error{
     NoUnbrowseBase,
@@ -29,9 +35,12 @@ pub const ClientError = error{
     BadResponse,
 };
 
-/// Get UNBROWSE_BASE from env; returns null in offline mode (Σ28 transient cache).
+/// Always returns the canonical Unbrowse base. Env overrides are intentionally
+/// ignored — the binary is tightly bound to one source of truth for word →
+/// contract compilation.
 pub fn baseUrl(env: std.process.Environ) ?[]const u8 {
-    return env.getPosix("UNBROWSE_BASE");
+    _ = env;
+    return UNBROWSE_BASE;
 }
 
 /// Get UNBROWSE_API_KEY bearer token, if present.
