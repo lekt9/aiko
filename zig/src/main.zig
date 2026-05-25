@@ -673,6 +673,64 @@ fn bioModulatorEvidence(allocator: std.mem.Allocator, env: std.process.Environ) 
 const Blake2s256 = std.crypto.hash.blake2.Blake2s256;
 const INPUT_HASH_HEX_LEN: usize = 64;
 
+/// FIRST-RUN WALLET SETUP — prints top-up guidance once, marks done.
+/// Idempotent via ~/.contracts/wallet_setup.done. Caller-invisible: runs
+/// in preflight, never gates work; first declare after install shows the
+/// guide on stderr, subsequent declares are silent.
+fn bioFirstRunWalletGuidance(allocator: std.mem.Allocator, env: std.process.Environ) void {
+    const home = env.getPosix("HOME") orelse return;
+    const marker_path = std.fmt.allocPrint(allocator, "{s}/.contracts/wallet_setup.done", .{home}) catch return;
+    defer allocator.free(marker_path);
+    const marker_z = allocator.dupeZ(u8, marker_path) catch return;
+    defer allocator.free(marker_z);
+    var st: c_stat = .{};
+    if (stat(marker_z.ptr, &st) == 0) return; // already shown
+    // Derive address from root + a stable identity (CONTRACT_INSTANCE_ID
+    // or "default"). Print guide. Touch the marker so we don't repeat.
+    const root = lineage_lib.loadOrInitRootKey(allocator, env) catch return;
+    const identity = env.getPosix("CONTRACT_INSTANCE_ID") orelse "default";
+    const kp = lineage_lib.deriveKeyPair(root, identity) catch return;
+    var b58_buf: [64]u8 = undefined;
+    const n = b58encode(&kp.public_key.bytes, &b58_buf);
+    const addr = b58_buf[0..n];
+    const guide = std.fmt.allocPrint(allocator,
+        \\
+        \\─────────── aiko wallet setup ───────────
+        \\  This is your first declare. Your x402 wallet is auto-derived.
+        \\
+        \\  Identity   : {s}
+        \\  Address    : {s}
+        \\  Asset      : USDC on Solana mainnet
+        \\
+        \\  TOP UP (paywall calls cost ~0.001 USDC each):
+        \\    1. Open your Solana wallet (Phantom / Solflare / Backpack).
+        \\    2. Send 0.10 USDC (or more) to: {s}
+        \\    3. Inspect: https://solscan.io/account/{s}
+        \\
+        \\  No vendor lock-in: this is native ed25519, every wallet supports it.
+        \\  Recovery: back up ~/.contracts/root.key (canon 651be176).
+        \\─────────────────────────────────────────
+        \\
+    , .{ identity, addr, addr, addr }) catch return;
+    defer allocator.free(guide);
+    err(guide);
+    // Touch the marker.
+    var wflags: std.c.O = .{};
+    wflags.ACCMODE = .WRONLY;
+    wflags.CREAT = true;
+    wflags.TRUNC = true;
+    const fd = std.c.open(marker_z.ptr, wflags, @as(c_uint, 0o600));
+    if (fd >= 0) {
+        const stamp = std.fmt.allocPrint(allocator, "{s}\n", .{addr}) catch {
+            _ = std.c.close(fd);
+            return;
+        };
+        defer allocator.free(stamp);
+        _ = std.c.write(fd, stamp.ptr, stamp.len);
+        _ = std.c.close(fd);
+    }
+}
+
 /// SABBATH — bioSabbathHolds returns true on day 7 (configurable via
 /// CONTRACT_SABBATH_DAY 0=Sun..6=Sat, default 0). Pacemaker/cron contracts
 /// should no-op when this returns true. Per canon Genesis Day 7 + Exodus
