@@ -7,14 +7,17 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+// Declared locally so the Linux/musl target links (std.c.getentropy is void
+// for non-Android Linux in zig 0.16).
+extern fn getentropy(buf: [*]u8, len: usize) c_int;
+
 fn fillRandom(buf: []u8) void {
     switch (builtin.os.tag) {
         .macos, .ios, .tvos, .watchos, .freebsd, .netbsd, .openbsd, .dragonfly => {
             std.c.arc4random_buf(buf.ptr, buf.len);
         },
         else => {
-            // Linux / others — use getentropy via libc.
-            _ = std.c.getentropy(buf.ptr, buf.len);
+            _ = getentropy(buf.ptr, buf.len);
         },
     }
 }
