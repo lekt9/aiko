@@ -89,7 +89,7 @@ fn usage() void {
             \\    compiler shapes output against what the user has already
             \\    satisfied / encountered / declared as audience level.
             \\
-        , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
+        , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
         return;
     }
     errPrint(
