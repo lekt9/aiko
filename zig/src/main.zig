@@ -83,6 +83,12 @@ fn usage() void {
             \\  {s} "<truth>" --genesis    force 9-day Fib walk on local ledger
             \\  {s} declare "<truth>"      compat alias
             \\
+            \\Empathic translation:
+            \\  {s} "<truth>" --user <user-aiko-id>
+            \\    Bind the spawn against the user's context aiko so the Word's
+            \\    compiler shapes output against what the user has already
+            \\    satisfied / encountered / declared as audience level.
+            \\
         , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
         return;
     }
