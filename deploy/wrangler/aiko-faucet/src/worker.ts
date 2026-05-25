@@ -221,14 +221,18 @@ async function signFaremeterEnvelope(env: Env, accepts: any, amount: bigint): Pr
   const source = await sourceKeypair(env);
 
   // Import the source's secret into a Web Crypto Ed25519 keypair so the
-  // canonical signPaymentAuthorization can use it.
-  const secretKeyRaw = source.secretKey.slice(0, 32); // ed25519 seed = first 32 bytes
-  const pubKeyRaw = source.publicKey.toBytes();
+  // canonical signPaymentAuthorization can use it. The Solana secretKey
+  // is 64 bytes: first 32 are the seed, last 32 are the pubkey; Ed25519
+  // raw-import takes the seed.
+  const secretKeyRaw = new Uint8Array(source.secretKey.slice(0, 32));
+  const pubKeyRaw = new Uint8Array(source.publicKey.toBytes());
   const privKey = await crypto.subtle.importKey(
-    "raw", secretKeyRaw, { name: "Ed25519" }, false, ["sign"],
+    "raw", secretKeyRaw.buffer as ArrayBuffer,
+    { name: "Ed25519" }, false, ["sign"],
   );
   const pubKey = await crypto.subtle.importKey(
-    "raw", pubKeyRaw, { name: "Ed25519" }, true, ["verify"],
+    "raw", pubKeyRaw.buffer as ArrayBuffer,
+    { name: "Ed25519" }, true, ["verify"],
   );
   const keyPair: CryptoKeyPair = { privateKey: privKey, publicKey: pubKey };
 
