@@ -330,21 +330,17 @@ pub fn declareRemoteAiko(
     // mainnet for identity="root-admin"). No env toggle — every caller who
     // possesses the root.key automatically signs as admin; allowlist is
     // server-side.
-    var admin_pubkey_b58: [64]u8 = undefined;
-    var admin_pubkey_len: usize = 0;
+    var admin_pubkey_hex: [lineage.PUBKEY_HEX_LEN]u8 = undefined;
     var admin_sig_hex: [lineage.SIG_HEX_LEN]u8 = undefined;
     var admin_ts_buf: [24]u8 = undefined;
     var admin_ts_len: usize = 0;
     var admin_ok = false;
     if (lineage.loadOrInitRootKey(allocator, env)) |root| {
         if (lineage.deriveKeyPair(root, "root-admin")) |kp| {
-            // Pubkey as base58.
-            admin_pubkey_len = lineage.bytesToBase58(&kp.public_key.bytes, &admin_pubkey_b58);
-            // Timestamp.
+            lineage.bytesToHex(&kp.public_key.bytes, &admin_pubkey_hex);
             const ts_now: i64 = @intCast(std.time.timestamp());
             const ts_slice = std.fmt.bufPrint(&admin_ts_buf, "{d}", .{ts_now}) catch &[_]u8{};
             admin_ts_len = ts_slice.len;
-            // Sign sha256("aiko-admin-bypass\0" + ts).
             var hasher = std.crypto.hash.sha2.Sha256.init(.{});
             hasher.update("aiko-admin-bypass\x00");
             hasher.update(ts_slice);
@@ -355,7 +351,7 @@ pub fn declareRemoteAiko(
             } else |_| {}
         } else |_| {}
     } else |_| {}
-    const admin_pubkey_opt: ?[]const u8 = if (admin_ok) admin_pubkey_b58[0..admin_pubkey_len] else null;
+    const admin_pubkey_opt: ?[]const u8 = if (admin_ok) &admin_pubkey_hex else null;
     const admin_ts_opt: ?[]const u8 = if (admin_ok) admin_ts_buf[0..admin_ts_len] else null;
     const admin_sig_opt: ?[]const u8 = if (admin_ok) &admin_sig_hex else null;
 
