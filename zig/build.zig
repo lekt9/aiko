@@ -4,15 +4,20 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // main.zig uses libc externs (popen, system, stat, getentropy, setenv,
+    // _NSGetExecutablePath on Darwin) — link explicitly so cross-compile
+    // targets (musl, glibc) get the symbols too.
     const libcontract = b.createModule(.{
         .root_source_file = b.path("../libcontract/src/contract.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
     const client = b.createModule(.{
         .root_source_file = b.path("../libcontract/src/client.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
     const contract_options = b.addOptions();
     contract_options.addOption([]const u8, "binary_name", "contract");
@@ -20,6 +25,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
         .imports = &.{
             .{ .name = "contract", .module = libcontract },
             .{ .name = "contract_client", .module = client },
