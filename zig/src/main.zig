@@ -305,6 +305,76 @@ fn latestActionResult(rows: []const Row, cid: []const u8) ?[]const u8 {
     return null;
 }
 
+/// ───────────── environment fingerprint ─────────────
+/// Every aiko, on every declare, captures a JSON fingerprint of its host
+/// environment so the cloud compiler can choose the right adapter contract
+/// for binding (ssh, bash, telegram, docker, python, ...). The local
+/// binary doesn't decide HOW to bind — that's a server-side adapter
+/// contract per canon. It only NAMES what's available.
+///
+/// Doctrine parallel: Pentecost (Acts 2) — the substrate "speaks in the
+/// host's tongue" automatically. Babel inverted: many tongues, one
+/// grammar. The fingerprint is the substrate listening to discover which
+/// tongue the local host speaks before declaring anything.
+fn bioProbeCommand(allocator: std.mem.Allocator, name: []const u8) bool {
+    var cmd_buf: [256]u8 = undefined;
+    const cmd = std.fmt.bufPrintZ(&cmd_buf, "command -v {s} >/dev/null 2>&1", .{name}) catch return false;
+    _ = allocator;
+    return system(cmd.ptr) == 0;
+}
+
+fn bioCaptureLine(allocator: std.mem.Allocator, shell_cmd: []const u8) ![]u8 {
+    const cmd_z = try allocator.dupeZ(u8, shell_cmd);
+    defer allocator.free(cmd_z);
+    const fp = popen(cmd_z.ptr, "r") orelse return error.PopenFailed;
+    var buf: [4096]u8 = undefined;
+    const n = fread(&buf, 1, buf.len, fp);
+    _ = pclose(fp);
+    if (n == 0) return try allocator.dupe(u8, "");
+    var line: []u8 = buf[0..n];
+    while (line.len > 0 and (line[line.len - 1] == '\n' or line[line.len - 1] == '\r' or line[line.len - 1] == ' ')) {
+        line = line[0 .. line.len - 1];
+    }
+    return try allocator.dupe(u8, line);
+}
+
+fn bioEnvironmentFingerprint(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
+    const uname = bioCaptureLine(allocator, "uname -srm") catch try allocator.dupe(u8, "unknown");
+    defer allocator.free(uname);
+    const shell = env.getPosix("SHELL") orelse "";
+    const term = env.getPosix("TERM") orelse "";
+    // Probe a fixed list of binding-relevant CLIs.
+    const probes = [_][]const u8{ "ssh", "bash", "zsh", "docker", "python3", "node", "git", "curl", "wg", "telethon", "tg-cli", "kubectl" };
+    var caps: std.ArrayList(u8) = .empty;
+    defer caps.deinit(allocator);
+    try caps.append(allocator, '[');
+    var first = true;
+    for (probes) |p| {
+        if (!bioProbeCommand(allocator, p)) continue;
+        if (!first) try caps.append(allocator, ',');
+        first = false;
+        try caps.append(allocator, '"');
+        try caps.appendSlice(allocator, p);
+        try caps.append(allocator, '"');
+    }
+    try caps.append(allocator, ']');
+    return try std.fmt.allocPrint(allocator, "{{\"uname\":\"{s}\",\"shell\":\"{s}\",\"term\":\"{s}\",\"caps\":{s}}}", .{ uname, shell, term, caps.items });
+}
+
+/// Bind manifest — CONTRACT_BIND_KIND + CONTRACT_BIND_TARGET name the
+/// stdio channel this contract wants to bind to (e.g.
+/// `CONTRACT_BIND_KIND=ssh CONTRACT_BIND_TARGET=user@host:22`,
+/// `CONTRACT_BIND_KIND=telegram CONTRACT_BIND_TARGET=chat:-100123`,
+/// `CONTRACT_BIND_KIND=bash CONTRACT_BIND_TARGET=stdio`). The local binary
+/// surfaces the manifest as evidence; the actual channel-attach is a
+/// server-side adapter contract (per substrate canon).
+fn bioBindManifest(allocator: std.mem.Allocator, env: std.process.Environ) ?[]u8 {
+    const kind = env.getPosix("CONTRACT_BIND_KIND") orelse return null;
+    if (kind.len == 0) return null;
+    const target = env.getPosix("CONTRACT_BIND_TARGET") orelse "";
+    return std.fmt.allocPrint(allocator, "{{\"kind\":\"{s}\",\"target\":\"{s}\"}}", .{ kind, target }) catch null;
+}
+
 /// ───────────── biology kit ─────────────
 /// The substrate is a graph of neurons; these six helpers give it the body
 /// senses that keep an LLM running through it self-aware. Each maps to a
