@@ -32,6 +32,15 @@ const pointer = @import("pointer.zig");
 const ledger = @import("ledger.zig");
 
 const VERSION = "0.4.0-guarded-native-shape";
+
+// ────────── public persona ──────────
+// The OpenAI-compatible surface presents as `aiko 69420b`. The CA pointer
+// is a Solana address surfaced in the model id + system layer; it is the
+// only public-facing identifier — substrate mechanics (contracts, ledger,
+// DAG, wallets) are obfuscated behind the humanizer.
+const AIKO_PERSONA_NAME = "aiko 69420b";
+const AIKO_PERSONA_CA = "2ZiSPGncrkwWa6GBZB4EDtsfq7HEWwkwsPFzEXieXjNL";
+const AIKO_PERSONA_MODEL_ID = "aiko-69420b";
 const lineage_lib = @import("contract").Lineage;
 const HkdfSha256 = std.crypto.kdf.hkdf.HkdfSha256;
 const X25519 = std.crypto.dh.X25519;
