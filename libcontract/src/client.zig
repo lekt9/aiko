@@ -172,6 +172,7 @@ pub fn declareRemoteAiko(
     pretool_event_contract_id: ?[]const u8,
     event_kind: ?[]const u8,
     agent: ?[]const u8,
+    user_context_id: ?[]const u8,
 ) ClientError![]u8 {
     const base = aikoBaseUrl(env);
 
