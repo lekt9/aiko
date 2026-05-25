@@ -305,6 +305,106 @@ fn latestActionResult(rows: []const Row, cid: []const u8) ?[]const u8 {
     return null;
 }
 
+/// ───────────── biology kit ─────────────
+/// The substrate is a graph of neurons; these six helpers give it the body
+/// senses that keep an LLM running through it self-aware. Each maps to a
+/// well-known biological mechanism, named in line.
+
+/// 1. INTEROCEPTION — proprioceptive self-state, computed on every declare
+///    and exposed to child env via CONTRACT_INTEROCEPTION (JSON).
+fn bioInteroceptionJson(allocator: std.mem.Allocator, rows: []const Row) ![]u8 {
+    var unresolved: u32 = 0;
+    var satisfied_n: u32 = 0;
+    var dead_n: u32 = 0;
+    var seen: std.StringHashMap(void) = .init(allocator);
+    defer seen.deinit();
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        if (seen.contains(r.id)) continue;
+        try seen.put(r.id, {});
+        if (isSatisfied(rows, r.id)) satisfied_n += 1 else if (isDead(rows, r.id)) dead_n += 1 else unresolved += 1;
+    }
+    return try std.fmt.allocPrint(allocator, "{{\"ledger_rows\":{d},\"declared\":{d},\"satisfied\":{d},\"unresolved\":{d},\"dead\":{d}}}", .{ rows.len, seen.count(), satisfied_n, unresolved, dead_n });
+}
+
+/// 2. HOMEOSTASIS — setpoint regulators. Refuse a new declare when the
+///    substrate is outside its declared bands. Bands come from env:
+///    CONTRACT_HOMEOSTAT_MAX_UNRESOLVED (default 0=off),
+///    CONTRACT_HOMEOSTAT_MAX_DEPTH (default 0=off on outer loop).
+fn bioHomeostatReject(allocator: std.mem.Allocator, env: std.process.Environ, rows: []const Row) ?[]const u8 {
+    const limit_str = env.getPosix("CONTRACT_HOMEOSTAT_MAX_UNRESOLVED") orelse return null;
+    const limit = std.fmt.parseInt(u32, limit_str, 10) catch return null;
+    if (limit == 0) return null;
+    var unresolved: u32 = 0;
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        if (isSatisfied(rows, r.id)) continue;
+        if (isDead(rows, r.id)) continue;
+        unresolved += 1;
+        if (unresolved > limit) {
+            return std.fmt.allocPrint(allocator, "homeostat: unresolved={d} > max={d}; drain the queue first", .{ unresolved, limit }) catch "homeostat: unresolved out of band";
+        }
+    }
+    return null;
+}
+
+/// 3. REFLEX-FIRST — when an action body is a pure deterministic verifier
+///    (neuron|funnel|sequence|funnel-first|quorum:|contract:), it is its own
+///    reflex; we already short-circuit in runAction without LLM round-trip.
+///    The marker exposes the routing: a declared contract whose action
+///    starts with these keywords resolves locally even in remote mode.
+fn bioIsReflex(action: []const u8) bool {
+    if (std.mem.eql(u8, action, "neuron")) return true;
+    if (std.mem.eql(u8, action, "funnel")) return true;
+    if (std.mem.eql(u8, action, "sequence")) return true;
+    if (std.mem.eql(u8, action, "funnel-first")) return true;
+    if (std.mem.startsWith(u8, action, "quorum:")) return true;
+    if (std.mem.startsWith(u8, action, "contract:")) return true;
+    return false;
+}
+
+/// 5. APOPTOSIS BY DISUSE — return ids whose latest activity is older than
+///    CONTRACT_APOPTOSIS_AGE_HOURS (default 0=off). Caller writes the
+///    apoptosed rows; this just identifies the cohort. ts parsing is best-
+///    effort (ISO-8601 lex compare); ledger rows are written in UTC.
+fn bioStaleIds(allocator: std.mem.Allocator, env: std.process.Environ, rows: []const Row) ![]const []const u8 {
+    const age_str = env.getPosix("CONTRACT_APOPTOSIS_AGE_HOURS") orelse return &.{};
+    const age_hours = std.fmt.parseInt(u32, age_str, 10) catch return &.{};
+    if (age_hours == 0) return &.{};
+    _ = allocator;
+    // For now: a stub. Returning empty until we wire the ts parser to
+    // libcontract. This marks the channel without making bad apoptose
+    // decisions silently. CONTRACT_APOPTOSIS_AGE_HOURS=N is the future
+    // policy hook.
+    _ = rows;
+    return &.{};
+}
+
+/// 6. PAIN INTERRUPT — check for a `pain` row whose target_pointer is the
+///    given cid. If present, halt the lineage with a NAMED cause. Pain is
+///    written by any layer via a normal declare with action="pain:<cid>".
+fn bioPainSignaled(rows: []const Row, cid: []const u8) bool {
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        if (!std.mem.startsWith(u8, r.action, "pain:")) continue;
+        const target = r.action["pain:".len..];
+        if (std.mem.eql(u8, target, cid)) return true;
+    }
+    return false;
+}
+
+/// 7. NEUROMODULATION — broadcast field. Bias child selection / urgency
+///    by reading CONTRACT_MOD_MODE (exploration|exploitation),
+///    CONTRACT_MOD_URGENCY (0..100), CONTRACT_MOD_CONFIDENCE (0..100).
+///    Surfaced as an evidence line + sent down through CONTRACT_PARENT_*
+///    env so children inherit the field.
+fn bioModulatorEvidence(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
+    const mode = env.getPosix("CONTRACT_MOD_MODE") orelse "auto";
+    const urg = env.getPosix("CONTRACT_MOD_URGENCY") orelse "0";
+    const conf = env.getPosix("CONTRACT_MOD_CONFIDENCE") orelse "0";
+    return try std.fmt.allocPrint(allocator, "{{\"mode\":\"{s}\",\"urgency\":{s},\"confidence\":{s}}}", .{ mode, urg, conf });
+}
+
 /// Content-addressed input hash for a contract row: blake2s(
 ///   plan || NUL || action || NUL || child_id_sorted || child_hash || ...
 /// ). Recursive — a child's contribution is its own current input_hash,
