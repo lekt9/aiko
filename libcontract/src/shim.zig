@@ -136,7 +136,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         const plan = rest[0];
         const action = rest[1];
         const has_remote = init.environ.getPosix("UNBROWSE_BASE") != null;
-        guards.runStack(plan, action, null, has_remote, &[_]guards.GuardKind{}) catch |err| switch (err) {
+        guards.runStack(plan, action, null, has_remote, &[_]guards.GuardKind{}, null) catch |err| switch (err) {
             error.PointerRequired => {
                 stderrWrite("=== REFUSED: pointer required (Σ24) ===\n");
                 return 2;
@@ -152,6 +152,14 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
             },
             error.LayerUnsatisfied => {
                 stderrWrite("=== REFUSED: layer claims unsatisfied (Σ20) ===\n");
+                return 2;
+            },
+            error.ProofTooThin => {
+                stderrWrite("=== REFUSED: proof too thin — under 20 chars and not pointer-prefixed (Fear-of-Lord) ===\n");
+                return 2;
+            },
+            error.AudienceJargonLeak => {
+                stderrWrite("=== REFUSED: substrate jargon leaked into --audience public content (Render-unto-Caesar) ===\n");
                 return 2;
             },
         };
