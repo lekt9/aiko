@@ -77,6 +77,11 @@ fn nowIsoUtc(buf: []u8) ![]u8 {
     });
 }
 
+// Zig 0.16: std.c.popen / pclose / fread aren't all exposed; declare extern.
+extern fn popen(cmd: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
+extern fn pclose(stream: *anyopaque) c_int;
+extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: *anyopaque) usize;
+
 fn getAgent(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
     // CONTRACT_AGENT > git config user.email > empty.
     if (env.getPosix("CONTRACT_AGENT")) |v| {
@@ -84,17 +89,14 @@ fn getAgent(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
         if (trimmed.len > 0) return try allocator.dupe(u8, trimmed);
     }
 
-    // Shell out to git via libc system()? Simpler: read git config from
-    // ~/.gitconfig manually OR shell out via std.c.popen. The Python uses
-    // `git config user.email`; we mirror it via popen for parity.
     var pipe_buf: [256]u8 = undefined;
     const cmd: [*:0]const u8 = "git config user.email 2>/dev/null";
-    const f = std.c.popen(cmd, "r");
+    const f = popen(cmd, "r");
     if (f == null) return try allocator.dupe(u8, "");
-    defer _ = std.c.pclose(f.?);
+    defer _ = pclose(f.?);
     var total: usize = 0;
     while (total < pipe_buf.len - 1) {
-        const got = std.c.fread(pipe_buf[total..].ptr, 1, pipe_buf.len - 1 - total, f.?);
+        const got = fread(pipe_buf[total..].ptr, 1, pipe_buf.len - 1 - total, f.?);
         if (got == 0) break;
         total += got;
     }
