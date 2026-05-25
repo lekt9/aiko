@@ -1457,6 +1457,26 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
     try contract.markSatisfied(allocator, env, id, wave, "native resolver reached mechanical true");
     evidencePrint("{s} -> resolved (hash {s})\n", .{ id, if (hash_str.len >= 16) hash_str[0..16] else hash_str });
 
+    // Pattern extraction — per meta-law 410bceea: every resolved aiko emits
+    // a reusable lesson row. Guard against recursion: skip if source row's
+    // plan is itself a pattern (starts with "pattern:") or already has a
+    // pattern row emitted (one per id, max).
+    if (r.plan.len > 0 and !std.mem.startsWith(u8, r.plan, "pattern:") and !hasPatternRow(rows, id)) {
+        var pattern_buf: std.ArrayList(u8) = .empty;
+        defer pattern_buf.deinit(allocator);
+        const plan_cap = @min(r.plan.len, 240);
+        try pattern_buf.appendSlice(allocator, "pattern: ");
+        try pattern_buf.appendSlice(allocator, r.plan[0..plan_cap]);
+        if (rr.result.len > 0 and !std.mem.eql(u8, rr.result, "pass") and !std.mem.eql(u8, rr.result, "fire")) {
+            try pattern_buf.appendSlice(allocator, " => ");
+            const result_cap = @min(rr.result.len, 240);
+            try pattern_buf.appendSlice(allocator, rr.result[0..result_cap]);
+        }
+        contract.appendPatternRow(allocator, env, id, pattern_buf.items) catch |e| {
+            evidencePrint("pattern emit skip: {s}\n", .{@errorName(e)});
+        };
+    }
+
     // GATE-PASSED side effects: reward routing + break-above propagation.
     // These run from the LIVE environ — CONTRACT_REWARD_CONTRACT_ID and
     // CONTRACT_BREAK_ABOVE come from whatever spawned this declare. The
