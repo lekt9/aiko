@@ -326,6 +326,20 @@ const c_stat = extern struct {
 };
 extern fn stat(path: [*:0]const u8, st: *c_stat) c_int;
 extern fn time(t: ?*i64) i64;
+const c_tm = extern struct {
+    tm_sec: c_int = 0,
+    tm_min: c_int = 0,
+    tm_hour: c_int = 0,
+    tm_mday: c_int = 0,
+    tm_mon: c_int = 0,
+    tm_year: c_int = 0,
+    tm_wday: c_int = 0,
+    tm_yday: c_int = 0,
+    tm_isdst: c_int = 0,
+    tm_gmtoff: c_long = 0,
+    tm_zone: ?[*:0]const u8 = null,
+};
+extern fn gmtime_r(timep: *const i64, result: *c_tm) ?*c_tm;
 
 /// Look up the latest non-empty action_result for `cid` in the in-memory rows.
 /// Used to propagate context up the tree as a posthook payload env var.
