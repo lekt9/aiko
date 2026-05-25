@@ -330,30 +330,13 @@ pub fn declareRemoteAiko(
     // mainnet for identity="root-admin"). No env toggle — every caller who
     // possesses the root.key automatically signs as admin; allowlist is
     // server-side.
-    var admin_pubkey_hex: [lineage.PUBKEY_HEX_LEN]u8 = undefined;
-    var admin_sig_hex: [lineage.SIG_HEX_LEN]u8 = undefined;
-    var admin_ts_buf: [24]u8 = undefined;
-    var admin_ts_len: usize = 0;
-    var admin_ok = false;
-    if (lineage.loadOrInitRootKey(allocator, env)) |root| {
-        if (lineage.deriveKeyPair(root, "root-admin")) |kp| {
-            lineage.bytesToHex(&kp.public_key.bytes, &admin_pubkey_hex);
-            const ts_now: i64 = @intCast(std.time.timestamp());
-            const ts_slice = std.fmt.bufPrint(&admin_ts_buf, "{d}", .{ts_now}) catch &[_]u8{};
-            admin_ts_len = ts_slice.len;
-            var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-            hasher.update("aiko-admin-bypass\x00");
-            hasher.update(ts_slice);
-            var digest: [32]u8 = undefined;
-            hasher.final(&digest);
-            if (lineage.signDigest(kp, digest, &admin_sig_hex)) {
-                admin_ok = true;
-            } else |_| {}
-        } else |_| {}
-    } else |_| {}
-    const admin_pubkey_opt: ?[]const u8 = if (admin_ok) &admin_pubkey_hex else null;
-    const admin_ts_opt: ?[]const u8 = if (admin_ok) admin_ts_buf[0..admin_ts_len] else null;
-    const admin_sig_opt: ?[]const u8 = if (admin_ok) &admin_sig_hex else null;
+    // Admin bypass triple read from env (computed by main.zig preflight
+    // since lineage isn't reachable from this module due to module-graph
+    // shape). main.zig sets AIKO_ADMIN_PUBKEY + AIKO_ADMIN_TS +
+    // AIKO_ADMIN_SIGNATURE on every aiko invocation when root.key exists.
+    const admin_pubkey_opt = env.getPosix("AIKO_ADMIN_PUBKEY");
+    const admin_ts_opt = env.getPosix("AIKO_ADMIN_TS");
+    const admin_sig_opt = env.getPosix("AIKO_ADMIN_SIGNATURE");
 
     const resp = http.postJsonWithHeaders(allocator, url_buf.items, body.items, .{
         .payment = paymentHeader(env),
