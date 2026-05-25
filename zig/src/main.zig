@@ -65,6 +65,10 @@ const Row = struct {
     input_hash: []const u8 = "",
     source_id: []const u8 = "",
     ts: []const u8 = "",
+    // RBAC grant tuple (only populated for event=="grant" rows)
+    actor_pubkey: []const u8 = "",
+    role: []const u8 = "",
+    scope: []const u8 = "",
     /// Layer per contract:d10b3dbb convention (1=system, 2=cell, 3=graph,
     /// 4=transport, 5=value, 6=operator). Inferred at declare from
     /// pointer.zig's inferLayer; persisted on the row.
