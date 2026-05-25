@@ -883,6 +883,8 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         },
         .remote => {
             // Remote target: Unbrowse compiles all seven days server-side.
+            // GATE — only signed/attested binaries may invoke the LLM compiler.
+            if (!assertBinaryIntegrityForLlm(allocator, env)) return 2;
             const body = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, adapter, adapter_kind, event_bus, pretool_event, event_kind, null) catch |e| {
                 errPrint("aiko remote failed against Unbrowse: {s}\n", .{@errorName(e)});
                 return 2;
