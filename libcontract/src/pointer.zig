@@ -30,6 +30,8 @@ pub fn inferPointerType(action: []const u8) []const u8 {
 }
 
 /// Native layer inference for the minimal shape catalog.
+/// Layer convention (contract:d10b3dbb): 1=system, 2=cell, 3=graph,
+/// 4=transport, 5=value, 6=operator.
 pub fn inferLayer(action: []const u8) i32 {
     const pt = inferPointerType(action);
     if (std.mem.eql(u8, pt, "cli") and std.mem.indexOf(u8, action, "wait-for-event") != null) return 4;
@@ -39,6 +41,15 @@ pub fn inferLayer(action: []const u8) i32 {
     if (std.mem.eql(u8, pt, "sequence")) return 3;
     if (std.mem.eql(u8, pt, "quorum")) return 3;
     if (std.mem.eql(u8, pt, "contract-ref")) return 3;
+    if (std.mem.eql(u8, pt, "inhibits")) return 3;
+    if (std.mem.eql(u8, pt, "bind")) return 3;
+    if (std.mem.eql(u8, pt, "embedding")) return 3;
+    if (std.mem.eql(u8, pt, "webhook")) return 4;
+    if (std.mem.eql(u8, pt, "tunnel")) return 4;
+    if (std.mem.eql(u8, pt, "wallet")) return 5;
+    if (std.mem.eql(u8, pt, "x402")) return 5;
+    if (std.mem.eql(u8, pt, "agent")) return 6;
+    if (std.mem.eql(u8, pt, "machine")) return 1;
     if (std.mem.eql(u8, pt, "cli")) return 2;
     if (std.mem.eql(u8, pt, "api")) return 2;
     if (std.mem.eql(u8, pt, "harness")) return 2;
