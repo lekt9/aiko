@@ -614,6 +614,69 @@ pub fn appendGrantRow(
     allocator.free(path);
 }
 
+/// Append a `pattern_use` event row — fires every time a contract
+/// references a pattern via contract:<pattern_id> ref. The use_count
+/// across these events is the Hebbian firing-rate analogue; when it
+/// crosses the threshold, the pattern auto-promotes to `primitive` via
+/// appendPrimitiveRow (handled by the resolver, not this writer).
+pub fn appendPatternUseRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    pattern_id: []const u8,
+    user_id: []const u8,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    const agent = try getAgent(allocator, env);
+    defer allocator.free(agent);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "{\"event\": \"pattern_use\", \"id\": ");
+    try writeJsonString(&buf, allocator, pattern_id);
+    try buf.appendSlice(allocator, ", \"source_id\": ");
+    try writeJsonString(&buf, allocator, user_id);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
+/// Append a `primitive` event row — a pattern whose reuse count has
+/// crossed the promotion threshold is now substrate-primitive. The cloud
+/// compiler reads this row and bakes the pattern into the fast path
+/// (server-side); locally it serves as the marker that the synapse has
+/// long-term-potentiated. Doctrine: Hebbian LTP + Decalogue (most-used
+/// among 613 commandments become the 10).
+pub fn appendPrimitiveRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    pattern_id: []const u8,
+    use_count: u32,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    const agent = try getAgent(allocator, env);
+    defer allocator.free(agent);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    var num_buf: [16]u8 = undefined;
+    const uc = try std.fmt.bufPrint(&num_buf, "{d}", .{use_count});
+    try buf.appendSlice(allocator, "{\"event\": \"primitive\", \"id\": ");
+    try writeJsonString(&buf, allocator, pattern_id);
+    try buf.appendSlice(allocator, ", \"use_count\": ");
+    try buf.appendSlice(allocator, uc);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
 /// Append a `pattern` ledger event row — the reusable lesson distilled
 /// from a satisfied contract. Append-only (not a declared row), so it
 /// doesn't trigger its own resolution cycle. Future aikos contract-search
