@@ -1,0 +1,1 @@
+This folder contains the built output assets for the worker "aiko-faucet" generated at 2026-05-25T19:11:22.534Z.
