@@ -314,8 +314,13 @@ pub fn declareRemoteAiko(
         .client = "aiko",
         .payment_provider = "corbits",
         .payment_scheme = "@faremeter/flex",
-    }) catch return ClientError.RequestFailed;
+    }) catch |e| {
+        std.debug.print("aiko remote: transport error: {s}\n", .{@errorName(e)});
+        return ClientError.RequestFailed;
+    };
     if (resp.status < 200 or resp.status >= 300) {
+        const peek_len = @min(resp.body.len, 400);
+        std.debug.print("aiko remote: HTTP {d}\n  url={s}\n  body[:{d}]={s}\n", .{ resp.status, url_buf.items, peek_len, resp.body[0..peek_len] });
         allocator.free(resp.body);
         return ClientError.RequestFailed;
     }
