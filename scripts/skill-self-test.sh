@@ -140,6 +140,50 @@ with open('\$lpath','w') as f:
   rm -rf \"\$tmpd\"
 "
 
+# Σ20 layer-guard — doctrine row 92d756ea. Plan-text tokenizes layer-marker
+# keywords → references standing gates → refuses _mark satisfied until each
+# referenced gate is satisfied. Bypass via --no-layer-guard writes a
+# layer_guard_bypassed audit field on the satisfied row. Three sub-cases:
+# (a) "deploy" keyword → exit 2 with === LAYER GATES PENDING === naming
+#     both 27125bd7 (served-surface) and 4a055cf7 (empathy).
+# (b) plan with no layer-marker keywords → no guard fires; exit 0.
+# (c) "render" keyword with --no-layer-guard → exit 0 AND the satisfied row
+#     carries layer_guard_bypassed=["4a055cf7"].
+check "sigma20/layer-guard" bash -c "
+  set -u
+  tmpd=\$(mktemp -d)
+  export CONTRACTS_STORE=\"\$tmpd/contracts.jsonl\"
+  # (a) deploy keyword → LAYER GATES PENDING, exit 2, names both gates.
+  out_a=\$(bash '$CLI' declare 'deploy the frontend to production' --action true --no-drive 2>&1) || { echo 'declare(a) failed: '\$out_a; rm -rf \"\$tmpd\"; exit 1; }
+  id_a=\$(printf '%s\n' \"\$out_a\" | awk '/^declared:/ {print \$2}')
+  [ -z \"\$id_a\" ] && { echo 'no id parsed (a)'; rm -rf \"\$tmpd\"; exit 1; }
+  err_a=\$(bash '$CLI' _mark \"\$id_a\" satisfied --proof 'fake green proof' 2>&1 >/dev/null)
+  rc_a=\$?
+  [ \"\$rc_a\" = \"2\" ] || { echo \"(a) expected exit 2, got \$rc_a; output: \$err_a\"; rm -rf \"\$tmpd\"; exit 1; }
+  printf '%s' \"\$err_a\" | grep -q 'LAYER GATES PENDING' || { echo '(a) missing LAYER GATES PENDING block: '\$err_a; rm -rf \"\$tmpd\"; exit 1; }
+  printf '%s' \"\$err_a\" | grep -q '27125bd7' || { echo '(a) missing 27125bd7: '\$err_a; rm -rf \"\$tmpd\"; exit 1; }
+  printf '%s' \"\$err_a\" | grep -q '4a055cf7' || { echo '(a) missing 4a055cf7: '\$err_a; rm -rf \"\$tmpd\"; exit 1; }
+  # (b) plan with no layer-marker keywords → guard does not fire.
+  out_b=\$(bash '$CLI' declare 'no relevant markers here just a generic task' --action true --no-drive 2>&1) || { echo 'declare(b) failed: '\$out_b; rm -rf \"\$tmpd\"; exit 1; }
+  id_b=\$(printf '%s\n' \"\$out_b\" | awk '/^declared:/ {print \$2}')
+  [ -z \"\$id_b\" ] && { echo 'no id parsed (b)'; rm -rf \"\$tmpd\"; exit 1; }
+  bash '$CLI' _mark \"\$id_b\" satisfied --proof 'genuine proof' >/dev/null 2>&1 || { echo '(b) expected exit 0 but mark failed'; rm -rf \"\$tmpd\"; exit 1; }
+  # (c) render keyword with --no-layer-guard → exit 0 AND row has layer_guard_bypassed.
+  out_c=\$(bash '$CLI' declare 'render the settings modal in the UI' --action true --no-drive 2>&1) || { echo 'declare(c) failed: '\$out_c; rm -rf \"\$tmpd\"; exit 1; }
+  id_c=\$(printf '%s\n' \"\$out_c\" | awk '/^declared:/ {print \$2}')
+  [ -z \"\$id_c\" ] && { echo 'no id parsed (c)'; rm -rf \"\$tmpd\"; exit 1; }
+  bash '$CLI' _mark \"\$id_c\" satisfied --proof 'rendered ok' --no-layer-guard >/dev/null 2>&1 || { echo '(c) expected exit 0 with bypass but mark failed'; rm -rf \"\$tmpd\"; exit 1; }
+  python3 -c \"
+import json, sys
+rows = [json.loads(l) for l in open('\$CONTRACTS_STORE') if l.strip()]
+sat = [r for r in rows if r.get('event')=='satisfied' and r.get('id')=='\$id_c']
+assert sat, 'no satisfied row for c'
+last = sat[-1]
+assert last.get('layer_guard_bypassed') == ['4a055cf7'], 'bypass field wrong: '+repr(last.get('layer_guard_bypassed'))
+\" || { echo '(c) layer_guard_bypassed audit field missing or wrong'; rm -rf \"\$tmpd\"; exit 1; }
+  rm -rf \"\$tmpd\"
+"
+
 # ── Pre-flight self-checks (check yourself before you shrek yourself) ─────────
 # Drift between SKILL.md and the implementing code that no other gate catches.
 # Each one fails 1 when docs and code disagree; the agent reads the diff.
