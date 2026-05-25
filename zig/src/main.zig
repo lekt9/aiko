@@ -525,10 +525,10 @@ fn bioStaleIds(allocator: std.mem.Allocator, env: std.process.Environ, rows: []c
         if (isSatisfied(rows, r.id)) continue; // satisfied rows aren't apoptose candidates here
         if (isDead(rows, r.id)) continue; // already dead
         if (std.mem.order(u8, r.ts, cutoff) == .lt) {
-            try out.append(allocator, r.id);
+            try stale_ids.append(allocator, r.id);
         }
     }
-    return out.toOwnedSlice(allocator);
+    return stale_ids.toOwnedSlice(allocator);
 }
 
 /// 6. PAIN INTERRUPT — check for a `pain` row whose target_pointer is the
