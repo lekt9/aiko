@@ -2561,6 +2561,8 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
         } else |_| {}
         // First-run wallet guidance — shown once, then silent forever.
         bioFirstRunWalletGuidance(allocator, env);
+        // Admin bypass — always-on if you hold the root.key.
+        bioAdminBypassPreflight(allocator, env);
         // Environment fingerprint — listen to the host's tongue before
         // declaring anything. Pentecost shape.
         if (bioEnvironmentFingerprint(allocator, env)) |fp| {
@@ -3021,6 +3023,8 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         } else |_| {}
         // First-run wallet guidance — shown once, then silent forever.
         bioFirstRunWalletGuidance(allocator, env);
+        // Admin bypass — always-on if you hold the root.key.
+        bioAdminBypassPreflight(allocator, env);
         // Environment fingerprint — listen to the host's tongue before
         // declaring anything. Pentecost shape.
         if (bioEnvironmentFingerprint(allocator, env)) |fp| {
