@@ -34176,38 +34176,54 @@ async function handleBalance(env3, ip2) {
   });
 }
 __name(handleBalance, "handleBalance");
+async function checkRateLimit(env3, ip2) {
+  const key = `rate:ip:${ip2}`;
+  const windowSecs = parseInt(env3.WINDOW_SECONDS || "3600", 10);
+  const limit = parseInt(env3.HOURLY_LIMIT || "10", 10);
+  const nowSecs = Math.floor(Date.now() / 1e3);
+  const cutoff = nowSecs - windowSecs;
+  const raw = await env3.AIKO_FAUCET_KV.get(key);
+  const hits = raw ? JSON.parse(raw) : [];
+  const recent = hits.filter((t) => t >= cutoff);
+  if (recent.length >= limit) {
+    const oldest = recent[0];
+    return { ok: false, remaining: 0, reset_in_seconds: oldest + windowSecs - nowSecs };
+  }
+  recent.push(nowSecs);
+  await env3.AIKO_FAUCET_KV.put(key, JSON.stringify(recent), { expirationTtl: windowSecs * 2 });
+  return { ok: true, remaining: limit - recent.length, reset_in_seconds: windowSecs };
+}
+__name(checkRateLimit, "checkRateLimit");
 async function handleDeclare(req, env3, ip2) {
+  const gate = await checkRateLimit(env3, ip2);
+  if (!gate.ok) {
+    return Response.json({
+      error: "rate_limit_exceeded",
+      remaining: 0,
+      reset_in_seconds: gate.reset_in_seconds,
+      doctrine: "Manna \u2014 gather only your omer; tomorrow comes fresh."
+    }, { status: 429, headers: { "Retry-After": String(gate.reset_in_seconds) } });
+  }
   const upstream = `${env3.UPSTREAM_BASE}/v1/contract/declare`;
   const body = await req.arrayBuffer();
   const headers = new Headers(req.headers);
   headers.set("x-client", "aiko");
+  headers.set("x-faucet-ip", ip2);
+  headers.set("x-faucet-remaining", String(gate.remaining));
   let resp = await fetch(upstream, { method: "POST", headers, body });
   if (resp.status !== 402)
     return resp;
   const env_402 = await resp.json();
-  const claim = await getClaim(env3, ip2);
-  if (!claim) {
-    return Response.json({
-      ...env_402,
-      hint: `no faucet claim for IP ${ip2}; POST /v1/faucet/claim with {public_key}`,
-      doctrine: "Gather your omer first."
-    }, { status: 402 });
-  }
   const need = BigInt(env_402.accepts?.[0]?.amount || "1000");
-  const remaining = BigInt(claim.total_granted_base) - BigInt(claim.spent_base);
-  if (remaining < need) {
+  const payment_header = await signFaremeterEnvelope(env3, env_402.accepts[0], need);
+  if (!payment_header) {
     return Response.json({
       ...env_402,
-      hint: "daily allowance exhausted; wait for TTL expiry (manna rots overnight)."
-    }, { status: 402 });
+      hint: "faucet could not sign envelope (FLEX_ESCROW_ADDRESS unset or SDK error)"
+    }, { status: 502 });
   }
-  const payment_header = await signFaremeterEnvelope(env3, env_402.accepts[0], need);
   headers.set("x-payment", payment_header);
   resp = await fetch(upstream, { method: "POST", headers, body });
-  if (resp.status >= 200 && resp.status < 300) {
-    claim.spent_base = (BigInt(claim.spent_base) + need).toString();
-    await putClaim(env3, ip2, claim);
-  }
   return resp;
 }
 __name(handleDeclare, "handleDeclare");
