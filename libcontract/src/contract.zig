@@ -206,6 +206,16 @@ pub fn declare(
         for (blocked_by) |r| allocator.free(r);
         allocator.free(blocked_by);
     }
+    const posthooks = try pointer.extractTypedRefs(allocator, scan_text, "posthook:");
+    defer {
+        for (posthooks) |r| allocator.free(r);
+        allocator.free(posthooks);
+    }
+    const prehooks = try pointer.extractTypedRefs(allocator, scan_text, "prehook:");
+    defer {
+        for (prehooks) |r| allocator.free(r);
+        allocator.free(prehooks);
+    }
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
