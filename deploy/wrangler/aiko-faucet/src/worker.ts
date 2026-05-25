@@ -193,65 +193,108 @@ async function handleDeclare(req: Request, env: Env, ip: string): Promise<Respon
   return resp;
 }
 
-/// Build + sign an x402 / Faremeter Flex envelope for Solana.
+/// Sign a Faremeter Flex authorization envelope for x402.
 ///
-/// The Flex scheme for SVM transports a pre-signed SPL transfer transaction
-/// inside the envelope payload. The facilitator (corbits-faremeter-flex)
-/// validates the signature, broadcasts the tx, then forwards the underlying
-/// HTTP request once on-chain.
+/// Wire format (verified against faremeter/flex@main): the FlexAuthorization
+/// is a binary message serialized as:
+///   [32B] programId || [32B] escrow || [32B] mint || [u64LE] maxAmount ||
+///   [u64LE] authorizationId || [u64LE] expiresAtSlot || [u32LE] splitCount ||
+///   for each split: [32B] recipient || [u16LE] bps
 ///
-/// Envelope shape per x402 v2 + Faremeter conventions:
-///   { x402Version, scheme: "@faremeter/flex", network, payload: {
-///       signedTransaction: <base64>,
-///       payer:    <source pubkey base58>,
-///       payTo:    <recipient base58>,
-///       amount:   <stringified base units>,
-///       asset:    <mint base58>,
-///       nonce:    <uuid>
+/// The session key signs that binary blob (Ed25519). The envelope JSON is:
+///   { x402Version, scheme:"@faremeter/flex", network, asset, payload: {
+///     escrow, mint, maxAmount, authorizationId, expiresAtSlot,
+///     splits:[{recipient,bps}], sessionKey, signature
 ///   } }
+/// Base64-encoded as the X-PAYMENT header.
 ///
-/// The whole envelope is JSON-stringified then base64-encoded; that base64
-/// string is the value of the X-PAYMENT header. The facilitator's spec is
-/// the source of truth; this implementation is best-effort against the
-/// public envelope shape observed on the 402 response.
+/// FLEX_PROGRAM_ADDRESS = EcfUgNgDXmBx4Xns2qZLE54xpM7V1N6PL8MdDW1syujS
+///
+/// Per substrate canon FOUNDRY_CUT_BPS=5000 — every authorization gets a
+/// 50% split to the Foundry treasury before any client destination.
 async function signFaremeterEnvelope(env: Env, accepts: any, amount: bigint): Promise<string> {
+  // The source wallet's keypair acts as the registered session key.
+  // (In production, the session key is a separate Ed25519 keypair the
+  // client registers on-chain via getRegisterSessionKeyInstructionAsync;
+  // for the faucet's auto-sign path we use the source wallet directly.)
   const source = await sourceKeypair(env);
-  const conn = new Connection(env.SOLANA_RPC, "confirmed");
-  const mint = new PublicKey(accepts.asset);
-  const payTo = new PublicKey(accepts.payTo);
 
-  const fromAta = await getAssociatedTokenAddress(mint, source.publicKey);
-  const toAta = await getAssociatedTokenAddress(mint, payTo);
+  // Import the source's secret into a Web Crypto Ed25519 keypair so the
+  // canonical signPaymentAuthorization can use it.
+  const secretKeyRaw = source.secretKey.slice(0, 32); // ed25519 seed = first 32 bytes
+  const pubKeyRaw = source.publicKey.toBytes();
+  const privKey = await crypto.subtle.importKey(
+    "raw", secretKeyRaw, { name: "Ed25519" }, false, ["sign"],
+  );
+  const pubKey = await crypto.subtle.importKey(
+    "raw", pubKeyRaw, { name: "Ed25519" }, true, ["verify"],
+  );
+  const keyPair: CryptoKeyPair = { privateKey: privKey, publicKey: pubKey };
 
-  const tx = new Transaction();
-  const toInfo = await conn.getAccountInfo(toAta);
-  if (!toInfo) {
-    // Source pays rent for the recipient's ATA. Tiny one-time cost; same
-    // wallet that funds the faucet covers it.
-    tx.add(createAssociatedTokenAccountInstruction(source.publicKey, toAta, payTo, mint));
+  // Parse Flex requirements from the 402 envelope. accepts.extra carries
+  // facilitator + escrow per FlexPaymentRequirementsExtra.
+  const extra = accepts.extra || {};
+  const escrow = extra.escrow || accepts.payTo; // fallback to payTo if escrow not advertised
+  const mint = accepts.asset;
+  const splitsAdvertised = extra.splits || [];
+
+  // Compose final splits: enforce the 50% Foundry cut at the front, then
+  // append the advertised destinations scaled to remaining 5000 bps.
+  const FOUNDRY_CUT_BPS = 5000;
+  const FOUNDRY_CUT_ADDRESS = "2ZiSPGncrkwWa6GBZB4EDtsfq7HEWwkwsPFzEXieXjNL";
+  const splits = [{ recipient: FOUNDRY_CUT_ADDRESS, bps: FOUNDRY_CUT_BPS }];
+  if (splitsAdvertised.length === 0) {
+    splits.push({ recipient: accepts.payTo, bps: 10000 - FOUNDRY_CUT_BPS });
+  } else {
+    const remaining = 10000 - FOUNDRY_CUT_BPS;
+    const totalAdv = splitsAdvertised.reduce((a: number, s: any) => a + s.bps, 0);
+    for (const s of splitsAdvertised) {
+      splits.push({ recipient: s.recipient, bps: Math.floor((s.bps * remaining) / totalAdv) });
+    }
+    // Round-off the dust into the last split so sum is exactly 10000.
+    const sum = splits.reduce((a, s) => a + s.bps, 0);
+    if (sum !== 10000) splits[splits.length - 1].bps += 10000 - sum;
   }
-  tx.add(createTransferInstruction(fromAta, toAta, source.publicKey, amount));
 
-  const { blockhash } = await conn.getLatestBlockhash("confirmed");
-  tx.recentBlockhash = blockhash;
-  tx.feePayer = source.publicKey;
-  tx.sign(source);
+  // Random u64 authorizationId (replay protection via PDA seed on-chain).
+  const idBytes = new Uint8Array(8);
+  crypto.getRandomValues(idBytes);
+  const authorizationId = new DataView(idBytes.buffer).getBigUint64(0, true);
 
-  const serialized = tx.serialize();
-  const signedTxB64 = btoa(String.fromCharCode(...new Uint8Array(serialized)));
+  // expiresAtSlot — facilitator clamps to <= current_slot + refund_timeout.
+  // We pass 0 to defer; the facilitator will reject if it requires explicit.
+  const expiresAtSlot = 0n;
+
+  const serArgs = {
+    programId: solAddress(FLEX_PROGRAM_ADDRESS as unknown as string),
+    escrow: solAddress(escrow),
+    mint: solAddress(mint),
+    maxAmount: amount,
+    authorizationId,
+    expiresAtSlot,
+    splits: splits.map((s) => ({ recipient: solAddress(s.recipient), bps: s.bps })),
+  };
+
+  const message = serializePaymentAuthorization(serArgs as any);
+  const signature = await signPaymentAuthorization({ keyPair, message });
+
+  const payload = {
+    escrow,
+    mint,
+    maxAmount: amount.toString(),
+    authorizationId: authorizationId.toString(),
+    expiresAtSlot: expiresAtSlot.toString(),
+    splits,
+    sessionKey: source.publicKey.toBase58(),
+    signature: bs58.encode(signature),
+  };
 
   const envelope = {
     x402Version: 2,
     scheme: "@faremeter/flex",
     network: accepts.network,
-    payload: {
-      signedTransaction: signedTxB64,
-      payer: source.publicKey.toBase58(),
-      payTo: accepts.payTo,
-      amount: amount.toString(),
-      asset: accepts.asset,
-      nonce: crypto.randomUUID(),
-    },
+    asset: accepts.asset,
+    payload,
   };
 
   return btoa(JSON.stringify(envelope));
