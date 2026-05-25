@@ -201,3 +201,17 @@ keeps the spawned environment reachable; aiko still exposes only goal + mode.
 
 The Unbrowse ledger is canonical. `CONTRACTS_STORE` exists only for scoped
 local tests and migrations. Never edit rows in place; append events.
+
+## Outline explainer sync
+
+The public-facing explainer of the contract shape lives at Outline doc
+`1b254adc-1db2-4bab-a063-328d022034d1` (urlId `cOkhCDzhyF`, collection
+Contracts: <https://docs.getfoundry.app/doc/the-shape-of-a-contract-and-why-contract-is-the-substrate-cOkhCDzhyF>).
+Its rendered body is checked in at
+`references/contract-shape-explainer.md`. Whenever any section above
+(Public Shape, Neuron Shape, vocabulary, hooks, adapters, PreTool,
+lineage replication, posthook signing, Ledger) changes, re-author the
+explainer to reflect the new shape and run
+`scripts/sync-outline-explainer.sh`; the hash sidecar at
+`references/.outline-explainer.hash` proves the last-synced body matches
+the local body. Obligation pinned by project contract `297ca10f`.
