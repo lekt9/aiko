@@ -1623,7 +1623,8 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         const auth_id = try std.fmt.allocPrint(allocator, "{d}-{s}", .{ time(null), r.id });
         defer allocator.free(auth_id);
         // splits: 5000 bps to Foundry, 5000 bps to client destination
-        const splits_json = try std.fmt.allocPrint(allocator,
+        const splits_json = try std.fmt.allocPrint(
+            allocator,
             "[{{\"recipient\":\"{s}\",\"bps\":{d}}},{{\"recipient\":\"{s}\",\"bps\":{d}}}]",
             .{ FOUNDRY_CUT_ADDRESS, FOUNDRY_CUT_BPS, client_b58[0..client_n], 10000 - FOUNDRY_CUT_BPS },
         );
