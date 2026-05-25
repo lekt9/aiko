@@ -234,6 +234,48 @@ check "self/proof-binding"         bash "$SCRIPTS/check-proof-binding.sh"
     rm -rf \"\$tmpd\"
   "
 
+# Σ18 Stage 4 — binary self-represent doctrine (1e338f93). The compiled
+# /contract binary self-represents as a contract row (kind=binary,
+# action=machine:contract). Three asserts:
+#   (a) ~/.config/contract/machine-binaries.json maps 'contract' to the
+#       realpath of ~/.claude/skills/contract/scripts/contract
+#   (b) at least one ledger row (the binary self-row) has action starting
+#       with 'machine:contract' AND bind_to ending in /contract
+#   (c) sandboxed contract-ref pointer iterates without regression
+#       (referenced satisfied → PASS), preserving the existing fractal
+#       resolution path that the binary uses to spawn sub-actions
+check "stage4/self-represent" bash -c "
+  set -u
+  cli_real=\$(realpath '$CLI')
+  map=\"\$HOME/.config/contract/machine-binaries.json\"
+  [ -f \"\$map\" ] || { echo 'missing machine-binaries.json'; exit 1; }
+  mapped=\$(python3 -c \"import json,os; m=json.load(open(os.path.expanduser('~/.config/contract/machine-binaries.json'))); print(m.get('contract',''))\")
+  [ \"\$mapped\" = \"\$cli_real\" ] || { echo \"map mismatch: \$mapped != \$cli_real\"; exit 1; }
+  ledger=\"\$HOME/.contracts/contracts.jsonl\"
+  python3 -c \"
+import json, sys
+hit = False
+for line in open('\$ledger'):
+    try:
+        r = json.loads(line)
+    except Exception:
+        continue
+    if r.get('event') == 'declared' and (r.get('action') or '').startswith('machine:contract') and '/contract' in (r.get('bind_to') or ''):
+        hit = True; break
+sys.exit(0 if hit else 1)
+\" || { echo 'no binary self-row found (machine:contract action + /contract bind_to)'; exit 1; }
+  tmp=\$(mktemp); trap 'rm -f \"\$tmp\"' EXIT
+  out=\$(CONTRACTS_STORE=\"\$tmp\" bash '$CLI' declare 'stage4 child probe' --action true --no-drive 2>&1)
+  cid=\$(printf '%s\n' \"\$out\" | awk '/^declared:/ {print \$2}')
+  [ -n \"\$cid\" ] || { echo 'child declare failed'; exit 1; }
+  CONTRACTS_STORE=\"\$tmp\" bash '$CLI' iterate \"\$cid\" >/dev/null 2>&1
+  CONTRACTS_STORE=\"\$tmp\" bash '$CLI' _mark \"\$cid\" satisfied --proof 'stage4 probe' >/dev/null 2>&1
+  pout=\$(CONTRACTS_STORE=\"\$tmp\" bash '$CLI' declare 'stage4 parent probe' --action \"contract:\$cid\" --no-drive 2>&1)
+  pid=\$(printf '%s\n' \"\$pout\" | awk '/^declared:/ {print \$2}')
+  iter=\$(CONTRACTS_STORE=\"\$tmp\" bash '$CLI' iterate \"\$pid\" 2>&1)
+  printf '%s' \"\$iter\" | grep -q 'PASS (referenced contract satisfied)' || { echo 'contract-ref regression'; printf '%s\n' \"\$iter\" | head -10; exit 1; }
+"
+
 # Π10 — bridge: pointer-type parser + iterate-time refusal block (gap 2543bdd0).
 # Until Σ17 RBAC (gap 2b98f80f) + Π8 unbrowse-broker (gap 036073d8) ship, every
 # bridge: iterate is REFUSED honestly. The invariant proves parser fields land
