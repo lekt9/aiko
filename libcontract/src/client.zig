@@ -63,18 +63,24 @@ pub fn paymentHeader(env: std.process.Environ) ?[]const u8 {
     return null;
 }
 
-/// Whether the binary is in thin-client mode (remote ledger). After the
-/// hardcoded-UNBROWSE_BASE change `baseUrl` always resolves, so the remote-
-/// mode signal must come from explicit caller intent: AIKO_REMOTE / payment
-/// header / bearer token. Status reads default to local unless the caller
-/// has opted in.
+/// Whether the binary is in thin-client mode (remote ledger). Per contract
+/// 5451d944 (WALLET-IS-IDENTITY-NOT-API-KEY): UNBROWSE_API_KEY no longer
+/// triggers remote mode by itself. The identity-bearing signal is the
+/// lobster.cash wallet (PK binding); api-key is an optional convenience
+/// hint at the request layer. Remote mode is opted into by explicit
+/// caller intent: AIKO_REMOTE flag or signed payment header. Without
+/// either, reads/writes default to local — which makes contract substrate
+/// hygiene predictable (api-key in env != silent remote routing).
 pub fn isRemoteMode(env: std.process.Environ) bool {
     if (env.getPosix("AIKO_REMOTE")) |v| {
         if (v.len > 0 and !std.mem.eql(u8, v, "0") and !std.mem.eql(u8, v, "false")) return true;
     }
     if (env.getPosix("AIKO_X_PAYMENT")) |v| if (v.len > 0) return true;
     if (env.getPosix("X_PAYMENT")) |v| if (v.len > 0) return true;
-    if (env.getPosix("UNBROWSE_API_KEY")) |v| if (v.len > 0) return true;
+    // UNBROWSE_API_KEY no longer triggers remote mode. The api-key is an
+    // optional bearer for authenticated requests when remote mode is
+    // ALREADY active (via AIKO_REMOTE or signed payment header). Pure
+    // presence of the env var does not route — wallet PK binding does.
     return false;
 }
 
