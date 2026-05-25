@@ -485,28 +485,28 @@ fn bioIsReflex(action: []const u8) bool {
 ///    CONTRACT_APOPTOSIS_AGE_HOURS (default 0=off). Caller writes the
 ///    apoptosed rows; this just identifies the cohort. ts parsing is best-
 ///    effort (ISO-8601 lex compare); ledger rows are written in UTC.
-/// Compute the ISO-8601 timestamp string for (now - age_hours) into out.
+/// Compute the ISO-8601 timestamp string for (now - age_hours) into dst.
 /// Uses libc gmtime_r for portable UTC. Returns the slice length.
-fn isoCutoff(out: *[24]u8, age_hours: u32) usize {
+fn isoCutoff(dst: *[24]u8, age_hours: u32) usize {
     const tv: i64 = time(null) - @as(i64, @intCast(age_hours)) * 3600;
     var tm: c_tm = .{};
     _ = gmtime_r(&tv, &tm);
-    return @intCast(std.fmt.bufPrint(out, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.000Z", .{
+    return @intCast((std.fmt.bufPrint(dst, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.000Z", .{
         @as(u32, @intCast(tm.tm_year + 1900)),
         @as(u32, @intCast(tm.tm_mon + 1)),
         @as(u32, @intCast(tm.tm_mday)),
         @as(u32, @intCast(tm.tm_hour)),
         @as(u32, @intCast(tm.tm_min)),
         @as(u32, @intCast(tm.tm_sec)),
-    }) catch return 0).len;
+    }) catch return 0).len);
 }
 
 fn bioStaleIds(allocator: std.mem.Allocator, env: std.process.Environ, rows: []const Row) ![][]const u8 {
-    var out: std.ArrayList([]const u8) = .empty;
-    errdefer out.deinit(allocator);
-    const age_str = env.getPosix("CONTRACT_APOPTOSIS_AGE_HOURS") orelse return out.toOwnedSlice(allocator);
-    const age_hours = std.fmt.parseInt(u32, age_str, 10) catch return out.toOwnedSlice(allocator);
-    if (age_hours == 0) return out.toOwnedSlice(allocator);
+    var stale_ids: std.ArrayList([]const u8) = .empty;
+    errdefer stale_ids.deinit(allocator);
+    const age_str = env.getPosix("CONTRACT_APOPTOSIS_AGE_HOURS") orelse return stale_ids.toOwnedSlice(allocator);
+    const age_hours = std.fmt.parseInt(u32, age_str, 10) catch return stale_ids.toOwnedSlice(allocator);
+    if (age_hours == 0) return stale_ids.toOwnedSlice(allocator);
 
     var cutoff_buf: [24]u8 = undefined;
     const cutoff_len = isoCutoff(&cutoff_buf, age_hours);
