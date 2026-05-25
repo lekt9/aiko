@@ -390,7 +390,22 @@ fn parseAikoArgs(allocator: std.mem.Allocator, args: []const []const u8) !AikoAr
     }
     if (parts.items.len == 0) return error.MissingPlan;
     const plan = try std.mem.join(allocator, " ", parts.items);
-    return .{ .plan = plan, .mode = mode orelse return error.MissingMode };
+    // Mode is optional. Default is .auto — the substrate resolves the
+    // dimension at call time from environment, so the public form collapses
+    // to `aiko "<truth>"`.
+    return .{ .plan = plan, .mode = mode orelse .auto };
+}
+
+/// Resolve `.auto` against the environment. The Word doesn't choose its
+/// dimension; the dimension is given by where it is being spoken into.
+fn resolveAutoMode(env: std.process.Environ) AikoMode {
+    if (env.getPosix("UNBROWSE_BASE")) |v| if (v.len > 0) return .remote;
+    if (env.getPosix("AIKO_X_PAYMENT")) |v| if (v.len > 0) return .remote;
+    if (env.getPosix("X_PAYMENT")) |v| if (v.len > 0) return .remote;
+    if (env.getPosix("AIKO_REMOTE")) |v| {
+        if (v.len > 0 and !std.mem.eql(u8, v, "0") and !std.mem.eql(u8, v, "false")) return .remote;
+    }
+    return .genesis;
 }
 
 fn isPathToken(tok: []const u8) bool {
