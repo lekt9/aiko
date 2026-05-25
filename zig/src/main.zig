@@ -925,16 +925,17 @@ fn runShellCapture(allocator: std.mem.Allocator, action: []const u8, cwd: []cons
     return .{ .rc = rc, .output = try buf.toOwnedSlice(allocator) };
 }
 
-/// Gather the latest `result` text of each direct child of `parent_id` and
-/// concatenate them, prefixed by child id. This becomes the parent's evidence
-/// when its neuron-aggregator fires — children's stdout flows up the tree.
+/// Gather the latest `result` text of each direct child of `parent_id`
+/// PLUS any `break_above` rows targeted at `parent_id` (descendants that
+/// declared they want to surface at this ancestor). Concatenated, prefixed
+/// by source id. Children's stdout flows up — and break-above sources skip
+/// intermediate layers to land directly here.
 fn aggregateChildOutputs(allocator: std.mem.Allocator, rows: []const Row, parent_id: []const u8) ![]u8 {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
     const ids = try childIds(allocator, rows, parent_id);
     defer allocator.free(ids);
     for (ids) |cid| {
-        // Find latest iteration row with a result for this child.
         var i: usize = rows.len;
         while (i > 0) : (i -= 1) {
             const r = rows[i - 1];
@@ -945,6 +946,17 @@ fn aggregateChildOutputs(allocator: std.mem.Allocator, rows: []const Row, parent
             try buf.appendSlice(allocator, line);
             break;
         }
+    }
+    // break_above absorption: a descendant somewhere down the tree wrote a
+    // row {event:break_above, id:parent_id, source_id:X, action_result:Y};
+    // surface it here as if it were a direct child.
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "break_above")) continue;
+        if (!std.mem.eql(u8, r.id, parent_id)) continue;
+        if (r.action_result.len == 0) continue;
+        const line = try std.fmt.allocPrint(allocator, "[↑{s}] {s}\n", .{ r.id, r.action_result });
+        defer allocator.free(line);
+        try buf.appendSlice(allocator, line);
     }
     return try buf.toOwnedSlice(allocator);
 }
