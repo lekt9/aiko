@@ -326,15 +326,15 @@ fn appendJsonEscaped(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), s: [
 /// wallet seed via HKDF-SHA256, X25519 ECDH + ChaCha20-Poly1305 to encrypt
 /// hook payloads to a remote peer's mesh pubkey. No persistent state, no
 /// wireguard kernel module, no user setup.
-fn meshDeriveX25519(root_seed: [32]u8, root_id: []const u8, peer_id: []const u8, out: *[32]u8) !void {
+fn meshDeriveX25519(root_seed: [32]u8, root_id: []const u8, peer_id: []const u8, out_key: *[32]u8) !void {
     var info_buf: [128]u8 = undefined;
     const info = try std.fmt.bufPrint(&info_buf, "aiko-mesh/v1/{s}/{s}", .{ root_id, peer_id });
     const prk = HkdfSha256.extract(&[_]u8{}, &root_seed);
-    HkdfSha256.expand(out[0..], info, prk);
+    HkdfSha256.expand(out_key[0..], info, prk);
     // x25519 clamping per RFC 7748.
-    out[0] &= 248;
-    out[31] &= 127;
-    out[31] |= 64;
+    out_key[0] &= 248;
+    out_key[31] &= 127;
+    out_key[31] |= 64;
 }
 
 fn meshPublicKey(priv: [32]u8) ![32]u8 {
