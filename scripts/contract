@@ -950,6 +950,11 @@ print(declare(os.environ['MH_PLAN'], os.environ['MH_ACTION'], p, pts, lrn, bdg, 
 ")
     echo "declared: $ID"
     _fire_contract_hooks "declare" "$ID" "0"
+    # Φ9 entrypoint-hints: run foreground (not via _fire_contract_hooks bus,
+    # which sinks hook stderr to errors.log) so the hints reach the agent.
+    # Fail-open: any non-zero exit is swallowed.
+    _PHI9_HOOK="$HOME/.contracts/hooks/phi9-entrypoint-hints.sh"
+    [ -x "$_PHI9_HOOK" ] && bash "$_PHI9_HOOK" "declare" "$ID" "0" 2>&1 1>/dev/null >&2 || true
     echo "  plan:        $PLAN"
     echo "  action:      $ACTION"
     [ -n "$BIND_TO" ] && echo "  bind_to:     $BIND_TO"
