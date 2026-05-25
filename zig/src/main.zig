@@ -1182,11 +1182,17 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
                     if (latestActionResult(rows2, cid)) |payload| {
                         const payload_z = try allocator.dupeZ(u8, payload[0..@min(payload.len, 32 * 1024)]);
                         defer allocator.free(payload_z);
-                        _ = setenv("CONTRACT_PARENT_RESULT", payload_z.ptr, 1);
-                        _ = setenv("CONTRACT_PARENT_ID", (try allocator.dupeZ(u8, cid)).ptr, 1);
+                        const cid_z = try allocator.dupeZ(u8, cid);
+                        defer allocator.free(cid_z);
+                        const sr1 = setenv("CONTRACT_PARENT_RESULT", payload_z.ptr, 1);
+                        const sr2 = setenv("CONTRACT_PARENT_ID", cid_z.ptr, 1);
+                        evidencePrint("posthook payload propagated: parent={s} len={d} setenv=({d},{d})\n", .{ cid, payload.len, sr1, sr2 });
+                    } else {
+                        evidencePrint("posthook payload: no action_result found for parent {s}\n", .{cid});
                     }
                     _ = try resolveLineage(allocator, env, posthook);
                     _ = unsetenv("CONTRACT_PARENT_RESULT");
+                    _ = unsetenv("CONTRACT_PARENT_ID");
                 }
             }
             // Backfill: sweep un-resolved tail every time the Word is spoken locally.
