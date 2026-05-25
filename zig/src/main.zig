@@ -1026,9 +1026,29 @@ fn enqueueOwned(allocator: std.mem.Allocator, queue: *std.ArrayList([]u8), id: [
 fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []const u8) !u8 {
     const rows = try parseRows(allocator, env);
     defer allocator.free(rows);
+    // Content-addressed cache: only treat a satisfied row as "already
+    // resolved" if its current input_hash still matches the input_hash
+    // recorded by the last iteration. When upstream rules or child results
+    // change, the hash differs and we fall through to re-run — that's the
+    // self-enforcing propagation primitive.
+    const current_hash = computeInputHash(allocator, rows, id, 0) catch null;
     if (isSatisfied(rows, id)) {
-        evidencePrint("{s} already resolved\n", .{id});
-        return 0;
+        const recorded = lastInputHash(rows, id);
+        if (current_hash) |ch| {
+            if (recorded) |rh| {
+                if (std.mem.eql(u8, &ch, rh)) {
+                    evidencePrint("{s} already resolved (hash {s})\n", .{ id, ch[0..16] });
+                    return 0;
+                }
+                evidencePrint("{s} cache invalidated (was {s}, now {s})\n", .{ id, rh[0..16], ch[0..16] });
+            } else {
+                evidencePrint("{s} satisfied without recorded hash — recomputing\n", .{id});
+            }
+        } else if (recorded == null) {
+            // Legacy row with no hash discipline; honor the old contract.
+            evidencePrint("{s} already resolved (legacy, no hash)\n", .{id});
+            return 0;
+        }
     }
     const r = latestDeclared(rows, id) orelse {
         errPrint("contract not found: {s}\n", .{id});
@@ -1036,10 +1056,11 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
     };
     const wave = latestWave(rows, id) + 1;
     const rr = try runAction(allocator, env, rows, r);
-    try contract.recordIteration(allocator, env, id, wave, rr.rc, rr.result);
+    const hash_str: []const u8 = if (current_hash) |*ch| ch[0..] else "";
+    try contract.recordIterationWithHash(allocator, env, id, wave, rr.rc, rr.result, hash_str);
     if (rr.rc != 0) return 1;
     try contract.markSatisfied(allocator, env, id, wave, "native resolver reached mechanical true");
-    evidencePrint("{s} -> resolved\n", .{id});
+    evidencePrint("{s} -> resolved (hash {s})\n", .{ id, if (hash_str.len >= 16) hash_str[0..16] else hash_str });
     return 0;
 }
 
