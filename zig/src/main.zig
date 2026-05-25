@@ -1596,6 +1596,24 @@ fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, sk
     // Fixed-point loop: keep sweeping until a full pass yields zero new
     // satisfies (whole ledger settled) or budget exhausts. Each pass takes
     // the newest-first slice of still-unresolved rows.
+    // Apoptosis sweep — runs once per backfill cycle, BEFORE the resolver
+    // passes, so stale rows don't get spuriously re-attempted. Disabled
+    // when CONTRACT_APOPTOSIS_AGE_HOURS is unset or 0.
+    {
+        const rows_for_apop = try parseRows(allocator, env);
+        defer allocator.free(rows_for_apop);
+        const stale = try bioStaleIds(allocator, env, rows_for_apop);
+        defer allocator.free(stale);
+        if (stale.len > 0) {
+            evidencePrint("apoptosis: {d} stale row(s) older than CONTRACT_APOPTOSIS_AGE_HOURS\n", .{stale.len});
+            for (stale) |id| {
+                contract.markDied(allocator, env, id, .apoptosed, null, "stale beyond age window") catch |e| {
+                    evidencePrint("apoptosis skip {s}: {s}\n", .{ id, @errorName(e) });
+                };
+            }
+        }
+    }
+
     var pass: u32 = 0;
     while (pass < max_passes) : (pass += 1) {
         const rows = try parseRows(allocator, env);
