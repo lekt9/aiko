@@ -1890,6 +1890,17 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
             defer allocator.free(bind);
             evidencePrint("bind-manifest: {s}\n", .{bind});
         }
+        // PreTool context: timestamp + channel + (env already surfaced)
+        // Land as evidence so the cloud compiler binds the call to its
+        // origin in time, space, and host shape.
+        const now_ts: i64 = time(null);
+        evidencePrint("pretool-ts: {d}\n", .{now_ts});
+        if (ambientPretoolChannel(env)) |ch| {
+            evidencePrint("pretool-channel: {s}\n", .{ch});
+        }
+        if (ambientPretoolTs(env)) |pts| {
+            evidencePrint("pretool-event-ts: {s}\n", .{pts});
+        }
     }
     if (!client.isRemoteMode(env)) {
         if (hookId(env, "CONTRACT_PREHOOK_ID", "CONTRACT_PREHOOK")) |prehook| {
@@ -2336,6 +2347,17 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         if (bioBindManifest(allocator, env)) |bind| {
             defer allocator.free(bind);
             evidencePrint("bind-manifest: {s}\n", .{bind});
+        }
+        // PreTool context: timestamp + channel + (env already surfaced)
+        // Land as evidence so the cloud compiler binds the call to its
+        // origin in time, space, and host shape.
+        const now_ts: i64 = time(null);
+        evidencePrint("pretool-ts: {d}\n", .{now_ts});
+        if (ambientPretoolChannel(env)) |ch| {
+            evidencePrint("pretool-channel: {s}\n", .{ch});
+        }
+        if (ambientPretoolTs(env)) |pts| {
+            evidencePrint("pretool-event-ts: {s}\n", .{pts});
         }
     }
 
