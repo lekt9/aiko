@@ -755,6 +755,9 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
             return 2;
         };
         outPrint("{s}\n", .{id});
+        backfillUnresolved(allocator, env, id) catch |e| {
+            errPrint("backfill skipped: {s}\n", .{@errorName(e)});
+        };
         return 0;
     }
     const cid = try contract.declare(allocator, env, d.plan, action, .{ .parent_id = parent });
