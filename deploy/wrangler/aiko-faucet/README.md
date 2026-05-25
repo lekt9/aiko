@@ -52,25 +52,13 @@ Returns remaining allowance for caller's IP.
 ### `POST /v1/contract/declare`
 Drop-in proxy for Unbrowse declare. On 402: if caller's IP has an active claim with remaining allowance, signs an x402 envelope on the caller's behalf and retries. Caller never has to sign payment themselves.
 
-## Operator TODO
+## Envelope signing
 
-The `signFaremeterEnvelope` function is a stub. Plug in the actual `@faremeter/flex` sign call:
+`signFaremeterEnvelope` builds an x402 v2 envelope against the Faremeter Flex scheme: pre-signs a Solana SPL transfer from the source wallet to the requested `payTo` address, serializes the tx to base64, wraps in the canonical envelope JSON `{x402Version, scheme, network, payload:{signedTransaction, payer, payTo, amount, asset, nonce}}`, and base64-encodes the result as the `X-PAYMENT` header value.
 
-```ts
-async function signFaremeterEnvelope(env: Env, accepts: any, amount: bigint) {
-  const source = await sourceKeypair(env);
-  const { header } = await flex.sign({
-    network: accepts.network,
-    asset: accepts.asset,
-    amount: amount.toString(),
-    payTo: accepts.payTo,
-    payer: source,
-  });
-  return header;
-}
-```
+The facilitator (corbits-faremeter-flex) validates the signature, broadcasts the tx, then forwards the underlying HTTP request. The accounting (per-IP allowance decrement on success, KV update with TTL) is wired against the same amount, so the per-day usage tracks real on-chain spend.
 
-The accounting (per-IP allowance decrement on success, KV update with TTL) is already wired correctly — only the envelope signature is missing.
+If the upstream facilitator rejects the envelope, the most likely cause is a shape mismatch — adjust the `envelope.payload` field names to match the facilitator's current spec (the public 402 response from `beta-api.unbrowse.ai` shows the canonical `accepts[]` shape and the response after a failed payment reports the field it expected).
 
 ## Pattern parallels
 
