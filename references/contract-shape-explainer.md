@@ -179,3 +179,7 @@ The discipline:
 A contract is a truth claim with a parent, a set of pointer edges, and a metric-gated verifier; the substrate fires the graph until it settles. Everything else — hooks, adapters, payments, prompts, rules, agents — is another row.
 
 That's why this works.
+
+---
+
+*This doc is the rendered body of `~/.claude/skills/contract/references/contract-shape-explainer.md`. Sync to Outline is governed by project contract `297ca10f`: whenever the Public Shape / Neuron Shape / vocabulary / hooks / adapters / PreTool / lineage replication / posthook signing / Ledger sections of SKILL.md change, this file is re-authored and `scripts/sync-outline-explainer.sh` is run to PATCH the Outline doc. Sidecar `references/.outline-explainer.hash` proves the last-synced body matches the local body.*
