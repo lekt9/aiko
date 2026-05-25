@@ -48,6 +48,64 @@ project that adopts it) is the canonical pre-deploy gate. The
 post-deploy live verification is the canonical post-deploy gate. Both
 gates are mandatory; neither substitutes for the other.
 
+## HOLD is non-terminal — iterate then escalate
+
+When any contract-gate (four-dim-gate, falsifier-gated-build, custom
+deploy gate) returns HOLD, the orchestrator MUST NOT terminate. HOLD
+is the substrate asking for more work, not permission to stop. The
+canonical recovery sequence:
+
+1. **Diagnose** — read the per-dimension verdict. Identify the
+   single dimension that blocked (CWV bytes, a11y serious, copy drift,
+   etc.) and the specific atom inside it (which metric, which
+   selector, which string).
+2. **Resolver wave** — spawn one focused sub-agent to fix the named
+   atom (no scope creep). The sub-agent edits, commits, and the
+   orchestrator re-runs the gate.
+3. **Re-gate** — if PROMOTE, ship. If still HOLD on the same
+   dimension, escalate to wave 2 (deeper investigation: build-chain
+   noise vs real product regression). Cap at 3 resolver waves per
+   HOLD.
+4. **Escalate to user via best channel** — if the gate still HOLDs
+   after 3 resolver waves, the orchestrator MUST contact the user via
+   the best-channel-right-now substrate (see below). The user becomes
+   the resolver of the substrate's standoff. Never silent-drop.
+
+Termination is reserved for explicit user "stop" / "park" / "abort"
+instructions. The substrate's job is to keep firing until the truth
+claim resolves or the user names the stop.
+
+## Channel registry — every contact channel is a contract
+
+Every channel through which the substrate can reach the user is its
+own contract neuron:
+
+- `channel:telegram` — Aiko Telegram bot (lekt8 / getFoundry namespace)
+- `channel:x-dm:lekt8_` — X direct message to @lekt8_
+- `channel:x-dm:getFoundry` — X direct message to @getFoundry
+- `channel:email` — Resend to lewistham9x@gmail.com
+- `channel:claude-code-session` — in-thread reply (this session)
+- `channel:push-notification` — PushNotification tool when user is
+  away from a thread
+
+The "best channel right now" is itself a contract — a picker that
+inspects each channel's status (recent activity, time-of-day,
+do-not-disturb flag, user-presence inference) and returns the
+canonical channel for the current moment. Substrate primitive:
+`scripts/channels.sh` emits the channel-list JSON; the picker is
+`scripts/pick-channel.sh`. Each channel binding is an aiko contract
+declaration with `posthook_pointer` set to the channel's actual
+send-endpoint.
+
+When the orchestrator escalates a HOLD per the rule above, it:
+1. Reads the channel registry (`scripts/channels.sh`)
+2. Asks the picker for the best channel right now
+   (`scripts/pick-channel.sh`)
+3. Fires a posthook contract that ships the escalation payload to
+   that channel
+4. Continues the loop — the user's response becomes the next
+   resolver-wave input
+
 ## Public Shape
 
 The user-facing surface is exactly:
