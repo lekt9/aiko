@@ -32,6 +32,8 @@ import {
   getRegisterSessionKeyInstructionAsync,
   findEscrowsByOwner,
 } from "@faremeter/flex-solana";
+import { PublicKey } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import bs58 from "bs58";
 
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
