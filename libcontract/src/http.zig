@@ -104,6 +104,11 @@ pub fn postJsonWithHeaders(
         cmd_buf.appendSlice(allocator, s) catch return HttpError.OutOfMemory;
         cmd_buf.appendSlice(allocator, "' ") catch return HttpError.OutOfMemory;
     }
+    if (headers.idempotency_key) |k| {
+        cmd_buf.appendSlice(allocator, "-H 'Idempotency-Key: ") catch return HttpError.OutOfMemory;
+        cmd_buf.appendSlice(allocator, k) catch return HttpError.OutOfMemory;
+        cmd_buf.appendSlice(allocator, "' ") catch return HttpError.OutOfMemory;
+    }
     cmd_buf.appendSlice(allocator, "-d @") catch return HttpError.OutOfMemory;
     cmd_buf.appendSlice(allocator, tmp_path) catch return HttpError.OutOfMemory;
     cmd_buf.appendSlice(allocator, " -w '\\n__STATUS__:%{http_code}\\n' ") catch return HttpError.OutOfMemory;
