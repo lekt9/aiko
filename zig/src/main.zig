@@ -701,26 +701,57 @@ fn enqueueAffected(allocator: std.mem.Allocator, rows: []const Row, queue: *std.
 }
 
 fn resolveLineage(allocator: std.mem.Allocator, env: std.process.Environ, id: []const u8) !u8 {
-    const declared_rc = try resolveOne(allocator, env, id);
-    var queue: std.ArrayList([]u8) = .empty;
-    defer {
-        for (queue.items) |item| allocator.free(item);
-        queue.deinit(allocator);
+    // Fixed-point loop: keep walking the affected-lineage queue until a full
+    // pass yields zero new satisfies (the DAG settled) or budget exhausts.
+    // The declared id is re-attempted on each pass so a parent that HOLDs
+    // because of pending children fires once those children later resolve.
+    var max_passes: u32 = 8;
+    if (env.getPosix("CONTRACT_RESOLVE_PASSES")) |s| {
+        max_passes = std.fmt.parseInt(u32, s, 10) catch 8;
+        if (max_passes == 0) max_passes = 1;
+        if (max_passes > 64) max_passes = 64;
     }
-    {
-        const rows = try parseRows(allocator, env);
-        defer allocator.free(rows);
-        try enqueueAffected(allocator, rows, &queue, id);
-    }
-    var index: usize = 0;
-    while (index < queue.items.len and index < 256) : (index += 1) {
-        const current = queue.items[index];
-        const rc = try resolveOne(allocator, env, current);
-        if (rc == 0) {
+    var declared_rc: u8 = 1;
+    var pass: u32 = 0;
+    while (pass < max_passes) : (pass += 1) {
+        var progressed = false;
+        const rc_root = try resolveOne(allocator, env, id);
+        if (pass == 0) declared_rc = rc_root;
+        if (rc_root == 0 and declared_rc != 0) {
+            declared_rc = 0;
+            progressed = true;
+        }
+
+        var queue: std.ArrayList([]u8) = .empty;
+        defer {
+            for (queue.items) |item| allocator.free(item);
+            queue.deinit(allocator);
+        }
+        {
             const rows = try parseRows(allocator, env);
             defer allocator.free(rows);
-            try enqueueAffected(allocator, rows, &queue, current);
+            try enqueueAffected(allocator, rows, &queue, id);
         }
+        var index: usize = 0;
+        while (index < queue.items.len and index < 256) : (index += 1) {
+            const current = queue.items[index];
+            const before = blk: {
+                const rows = try parseRows(allocator, env);
+                defer allocator.free(rows);
+                break :blk isSatisfied(rows, current);
+            };
+            const rc = try resolveOne(allocator, env, current);
+            if (rc == 0) {
+                if (!before) progressed = true;
+                const rows = try parseRows(allocator, env);
+                defer allocator.free(rows);
+                try enqueueAffected(allocator, rows, &queue, current);
+            }
+        }
+        if (!progressed) break; // DAG settled.
+    }
+    if (declared_rc == 0) {
+        evidencePrint("lineage: settled after {d} pass(es)\n", .{pass + 1});
     }
     return declared_rc;
 }
