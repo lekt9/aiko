@@ -523,8 +523,11 @@ fn binaryAttestReject(allocator: std.mem.Allocator, env: std.process.Environ) ?[
         if (std.mem.eql(u8, f, "1") or std.mem.eql(u8, f, "on")) require = true;
     }
     const root = lineage_lib.loadOrInitRootKey(allocator, env) catch return null;
-    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const exe_path = std.fs.selfExePath(&exe_buf) catch return null;
+    var exe_buf: [4096]u8 = undefined;
+    var buf_size: u32 = exe_buf.len;
+    if (_NSGetExecutablePath(&exe_buf, &buf_size) != 0) return null;
+    const exe_len = std.mem.indexOfScalar(u8, &exe_buf, 0) orelse exe_buf.len;
+    const exe_path = exe_buf[0..exe_len];
     lineage_lib.verifyBinary(allocator, root, exe_path) catch |e| {
         if (require) {
             const msg = std.fmt.allocPrint(allocator, "binary-attest: self-verify failed ({s}); refusing declare", .{@errorName(e)}) catch return "binary-attest: self-verify failed";
