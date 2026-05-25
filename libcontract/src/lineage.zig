@@ -119,17 +119,17 @@ fn parseHex(hex: []const u8, out: []u8) !void {
     if (hex.len != out.len * 2) return error.InvalidHexLength;
     var i: usize = 0;
     while (i < out.len) : (i += 1) {
-        const hi = try hexNibble(hex[i * 2]);
-        const lo = try hexNibble(hex[i * 2 + 1]);
+        const hi: u8 = try hexNibble(hex[i * 2]);
+        const lo: u8 = try hexNibble(hex[i * 2 + 1]);
         out[i] = (hi << 4) | lo;
     }
 }
 
-fn hexNibble(c: u8) !u4 {
+fn hexNibble(c: u8) !u8 {
     return switch (c) {
-        '0'...'9' => @intCast(c - '0'),
-        'a'...'f' => @intCast(c - 'a' + 10),
-        'A'...'F' => @intCast(c - 'A' + 10),
+        '0'...'9' => c - '0',
+        'a'...'f' => c - 'a' + 10,
+        'A'...'F' => c - 'A' + 10,
         else => error.InvalidHexChar,
     };
 }
