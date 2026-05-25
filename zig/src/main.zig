@@ -26,6 +26,8 @@ const Row = struct {
     action_exit: i32 = 0,
     wave: u32 = 0,
     satisfied: bool = false,
+    env_pubkey: []const u8 = "",
+    parent_signature: []const u8 = "",
 };
 
 fn writeFd(fd: c_int, bytes: []const u8) void {
