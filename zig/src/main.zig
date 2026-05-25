@@ -1812,6 +1812,10 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             const cid = try contract.declare(allocator, env, safe_plan, action, .{ .parent_id = parent });
             defer allocator.free(cid);
             outPrint("{s}\n", .{cid});
+            // Materialize binary if CONTRACT_BINARY_TARGET is declared.
+            bioMaterializeBinary(allocator, env, cid) catch |e| {
+                evidencePrint("materialize skipped: {s}\n", .{@errorName(e)});
+            };
 
             // Days 2-6 — Firmament, Earth, Lights, Life, Image. The resolver
             // walks the lineage: child_added edges are already written by
