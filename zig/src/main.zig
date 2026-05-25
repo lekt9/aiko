@@ -309,6 +309,46 @@ fn appendJsonEscaped(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), s: [
     try buf.append(allocator, '"');
 }
 
+/// Lineage-mesh primitives (canonical zig port of the python aiko-mesh.py
+/// scaffold — replaces it). Implements contract:1a808634 in-binary:
+/// deterministic x25519 keypair per (root, peer) derived from the user's
+/// wallet seed via HKDF-SHA256, X25519 ECDH + ChaCha20-Poly1305 to encrypt
+/// hook payloads to a remote peer's mesh pubkey. No persistent state, no
+/// wireguard kernel module, no user setup.
+fn meshDeriveX25519(root_seed: [32]u8, root_id: []const u8, peer_id: []const u8, out: *[32]u8) !void {
+    var info_buf: [128]u8 = undefined;
+    const info = try std.fmt.bufPrint(&info_buf, "aiko-mesh/v1/{s}/{s}", .{ root_id, peer_id });
+    const prk = HkdfSha256.extract(&[_]u8{}, &root_seed);
+    HkdfSha256.expand(out[0..], info, prk);
+    // x25519 clamping per RFC 7748.
+    out[0] &= 248;
+    out[31] &= 127;
+    out[31] |= 64;
+}
+
+fn meshPublicKey(priv: [32]u8) ![32]u8 {
+    return try X25519.recoverPublicKey(priv);
+}
+
+const MeshEnvelope = struct {
+    nonce: [ChaCha20Poly1305.nonce_length]u8,
+    tag: [ChaCha20Poly1305.tag_length]u8,
+    ciphertext: []u8,
+};
+
+fn meshEncryptHook(allocator: std.mem.Allocator, local_priv: [32]u8, peer_pub: [32]u8, payload: []const u8, info: []const u8) !MeshEnvelope {
+    const shared = try X25519.scalarmult(local_priv, peer_pub);
+    var sym: [32]u8 = undefined;
+    const prk = HkdfSha256.extract(&[_]u8{}, &shared);
+    HkdfSha256.expand(&sym, info, prk);
+    var nonce: [ChaCha20Poly1305.nonce_length]u8 = undefined;
+    std.crypto.random.bytes(&nonce);
+    const ct = try allocator.alloc(u8, payload.len);
+    var tag: [ChaCha20Poly1305.tag_length]u8 = undefined;
+    ChaCha20Poly1305.encrypt(ct, &tag, payload, &[_]u8{}, nonce, sym);
+    return .{ .nonce = nonce, .tag = tag, .ciphertext = ct };
+}
+
 /// Walk the parent_id chain from `cid` up to root and emit a JSON array of
 /// {id, action_result} entries — child-first ordering so posthooks can read
 /// the recursive ancestor stack at every layer. Caps depth at 32 and per-
