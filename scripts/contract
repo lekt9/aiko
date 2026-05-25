@@ -3675,6 +3675,69 @@ c=get(os.environ['MH_ID']); print((c['plan'][:60]) if c else '(unknown)')
         echo "  doctrine:          an inhibitory contract suppresses downstream firing while itself satisfied"
         exit 1
       fi
+      # Σ20 SELF-DECLARING-LAYER-GUARD (doctrine row 92d756ea):
+      # plan-text tokenizes layer-marker keywords → maps to standing gates →
+      # refuses _mark satisfied until each referenced gate is itself satisfied.
+      # Fires BEFORE the PROOF REQUIRED block so an unmet layer-gate trumps
+      # even a well-proofed mark (fake-green protection). Bypass via
+      # --no-layer-guard writes layer_guard_bypassed=[gate_ids] on the row
+      # (Σ18: substrate surfaces, agent chooses; never silent).
+      LAYER_GUARD_BYPASSED_JSON=""
+      LAYER_GUARD_UNMET=$(MH_ID="$ID" _py_inline "
+import os, re
+from contract_core import get
+KEYWORD_TO_GATE = [
+    (r'\bdeploy(ed|ment)?\b|\bproduction\b', ['27125bd7', '4a055cf7']),
+    (r'\brender(ed|ing)?\b|\bUI\b', ['4a055cf7']),
+    (r'\bsign(ing|ed)?\b|\bsig\b|\bOWS\b', ['cc5e8920']),
+    (r'\bRBAC\b|\bpermission(s)?\b|\baudience\b', ['6241d43e']),
+    (r'\bpayment(s)?\b|\bx402\b|\bbilling\b', ['1f14917d']),
+    (r'\bLLM\b|\bjudge\b|\bKEY\s*2\b', ['9d00660b']),
+    (r'\blineage\b|\battribution\b|\bchain\b', ['ac4bb115']),
+    (r'\bmirror\b|\bunbrowse\b|\bDAG\s*sync\b', ['397bc7bd']),
+]
+c = get(os.environ['MH_ID'])
+plan = (c or {}).get('plan', '') or ''
+matched = []
+seen = set()
+for pat, gates in KEYWORD_TO_GATE:
+    if re.search(pat, plan, re.IGNORECASE):
+        for g in gates:
+            if g in seen: continue
+            seen.add(g)
+            gc = get(g)
+            gstatus = (gc or {}).get('status', 'unknown')
+            gplan = ((gc or {}).get('plan') or '(gate row not in ledger)')[:80]
+            if gstatus != 'satisfied':
+                matched.append(g + '|' + gstatus + '|' + gplan)
+print('\n'.join(matched))
+" 2>/dev/null)
+      if [ -n "$LAYER_GUARD_UNMET" ]; then
+        if [ "$NO_LAYER_GUARD" = "1" ]; then
+          # Bypass — collect gate ids into a JSON array for the row.
+          LAYER_GUARD_BYPASSED_JSON=$(printf '%s\n' "$LAYER_GUARD_UNMET" | awk -F'|' '{print $1}' | python3 -c "import sys, json; print(json.dumps([x.strip() for x in sys.stdin if x.strip()]))")
+          echo "=== Σ20 LAYER GUARD BYPASSED ===" >&2
+          echo "  contract: $ID" >&2
+          echo "  unmet:    $LAYER_GUARD_BYPASSED_JSON" >&2
+          echo "  (writing layer_guard_bypassed onto the satisfied row for audit)" >&2
+        else
+          echo "=== LAYER GATES PENDING ===" >&2
+          echo "  contract: $ID" >&2
+          echo "  Σ20 (doctrine row 92d756ea): plan-text references layer-markers" >&2
+          echo "  whose standing gates are not yet satisfied. Refusing satisfaction." >&2
+          echo "" >&2
+          while IFS='|' read -r g_id g_status g_plan; do
+            [ -z "$g_id" ] && continue
+            echo "  · $g_id  [$g_status]  \"$g_plan\"" >&2
+            echo "      → contract iterate $g_id" >&2
+          done <<< "$LAYER_GUARD_UNMET"
+          echo "" >&2
+          echo "  Bypass (honest, writes audit field):" >&2
+          echo "    contract _mark $ID satisfied --proof \"...\" --no-layer-guard" >&2
+          exit 2
+        fi
+      fi
+
       # PROOF REQUIRED: bare mark refused. Surface the plan as the rule the
       # agent must self-judge against. Origin: 173c8819.
       if [ -z "$PROOF" ] && [ -z "$PROOF_SKIP" ]; then
