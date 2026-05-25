@@ -308,7 +308,9 @@ pub fn declare(
         opts.inputs_file_refs_digest,
         opts.parent_id,
     );
-    errdefer allocator.free(inputs_hash);
+    // Single owner: free at function exit OR on cache hit early return.
+    // No errdefer — the explicit defer at the row-write site below covers
+    // every other path including error returns past the cache check.
     if (try findCachedDeclared(allocator, env, inputs_hash)) |cached_id| {
         allocator.free(inputs_hash);
         return cached_id;
