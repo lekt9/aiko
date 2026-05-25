@@ -7717,3 +7717,4 @@
 {"event": "declared", "id": "fbf60a61", "plan": "STAGE-EXP-91458: posted or HOLD", "action": "agent-judges", "pointer_type": "agent-judges", "layer": 3, "cwd": "/Users/lekt9/Projects/money", "parent_id": "a0f490b8", "pointers": [], "ts": "2026-05-25T08:21:03.180108Z", "agent": "lewistham9x@gmail.com"}
 {"event": "child_added", "id": "a0f490b8", "child_id": "fbf60a61", "ts": "2026-05-25T08:21:03.189575Z", "agent": "lewistham9x@gmail.com"}
 {"event": "corroborated", "id": "9a4363f5", "corroborates": "fbf60a61", "label": "\u03a39 thread-chain: same /contract session (bf7395c5-89ba-4dd9-8fb4-ae6b95da842d)", "ts": "2026-05-25T08:21:03.356801Z", "agent": "lewistham9x@gmail.com"}
+{"event": "iterated", "id": "640cfbe0", "wave": 1, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-25T08:21:17.767109Z", "caller_chain": [], "agent": "lewistham9x@gmail.com"}
