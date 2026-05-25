@@ -278,6 +278,17 @@ fn latestActionResult(rows: []const Row, cid: []const u8) ?[]const u8 {
     return null;
 }
 
+/// Check if `cid` appears anywhere in the local ledger as a declared row.
+/// Used to decide whether a posthook target is local (env+popen path) or
+/// remote (lineage-mesh encrypted hook envelope path).
+fn isLocalContract(rows: []const Row, cid: []const u8) bool {
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        if (std.mem.eql(u8, r.id, cid)) return true;
+    }
+    return false;
+}
+
 /// Find the declared row for `cid` (latest) so we can read its parent_id.
 fn declaredParentOf(rows: []const Row, cid: []const u8) ?[]const u8 {
     var i: usize = rows.len;
