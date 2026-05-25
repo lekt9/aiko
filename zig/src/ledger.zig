@@ -31,12 +31,16 @@ pub fn resolvePath(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8
     return try std.fs.path.join(allocator, &.{ home, ".contracts", "contracts.jsonl" });
 }
 
+// std.c.stat isn't wired on macOS in Zig 0.16; use libc opendir/closedir.
+extern fn opendir(name: [*:0]const u8) ?*anyopaque;
+extern fn closedir(dirp: *anyopaque) c_int;
+
 fn isDirectory(allocator: std.mem.Allocator, path: []const u8) bool {
-    // std.c.stat isn't wired on macOS in Zig 0.16 — use std.fs.openDirAbsolute
-    // (path is absolute since it's built from getcwd + .claude).
-    _ = allocator;
-    var dir = std.fs.openDirAbsolute(path, .{}) catch return false;
-    dir.close();
+    const path_z = allocator.dupeZ(u8, path) catch return false;
+    defer allocator.free(path_z);
+    const d = opendir(path_z.ptr);
+    if (d == null) return false;
+    _ = closedir(d.?);
     return true;
 }
 
