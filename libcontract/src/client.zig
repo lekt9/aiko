@@ -62,9 +62,19 @@ pub fn paymentHeader(env: std.process.Environ) ?[]const u8 {
     return null;
 }
 
-/// Whether the binary is in thin-client mode (remote ledger).
+/// Whether the binary is in thin-client mode (remote ledger). After the
+/// hardcoded-UNBROWSE_BASE change `baseUrl` always resolves, so the remote-
+/// mode signal must come from explicit caller intent: AIKO_REMOTE / payment
+/// header / bearer token. Status reads default to local unless the caller
+/// has opted in.
 pub fn isRemoteMode(env: std.process.Environ) bool {
-    return baseUrl(env) != null;
+    if (env.getPosix("AIKO_REMOTE")) |v| {
+        if (v.len > 0 and !std.mem.eql(u8, v, "0") and !std.mem.eql(u8, v, "false")) return true;
+    }
+    if (env.getPosix("AIKO_X_PAYMENT")) |v| if (v.len > 0) return true;
+    if (env.getPosix("X_PAYMENT")) |v| if (v.len > 0) return true;
+    if (env.getPosix("UNBROWSE_API_KEY")) |v| if (v.len > 0) return true;
+    return false;
 }
 
 pub fn aikoBaseUrl(env: std.process.Environ) []const u8 {
