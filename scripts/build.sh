@@ -30,6 +30,7 @@ step "tests (libcontract)"
 ( cd "$LIB_DIR" && zig test src/pointer.zig --cache-dir "$CACHE" --global-cache-dir "$GCACHE" )
 ( cd "$LIB_DIR" && zig test src/lineage.zig --cache-dir "$CACHE" --global-cache-dir "$GCACHE" )
 ( cd "$LIB_DIR" && zig test src/env_fingerprint.zig --cache-dir "$CACHE" --global-cache-dir "$GCACHE" )
+( cd "$LIB_DIR" && zig test src/verses.zig --cache-dir "$CACHE" --global-cache-dir "$GCACHE" )
 
 step "build"
 ( cd "$ZIG_DIR" && zig build --cache-dir "$CACHE" --global-cache-dir "$GCACHE" )
