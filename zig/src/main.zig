@@ -778,32 +778,50 @@ fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, sk
     if (env.getPosix("CONTRACT_BACKFILL")) |flag| {
         if (std.mem.eql(u8, flag, "0") or std.mem.eql(u8, flag, "off")) return;
     }
-    const rows = try parseRows(allocator, env);
-    defer allocator.free(rows);
-
-    var seen: std.StringHashMap(void) = .init(allocator);
-    defer seen.deinit();
-    var candidates: std.ArrayList([]const u8) = .empty;
-    defer candidates.deinit(allocator);
-
-    // Walk in reverse — newest unresolved rows first; lineage of recent work
-    // usually unblocks older referenced rows.
-    var i: usize = rows.len;
-    while (i > 0) : (i -= 1) {
-        const r = rows[i - 1];
-        if (std.mem.eql(u8, r.id, skip_id)) continue;
-        if (seen.contains(r.id)) continue;
-        try seen.put(r.id, {});
-        if (isSatisfied(rows, r.id)) continue;
-        if (isDead(rows, r.id)) continue;
-        try candidates.append(allocator, r.id);
-        if (candidates.items.len >= budget) break;
+    var max_passes: u32 = 8;
+    if (env.getPosix("CONTRACT_BACKFILL_PASSES")) |s| {
+        max_passes = std.fmt.parseInt(u32, s, 10) catch 8;
+        if (max_passes == 0) max_passes = 1;
+        if (max_passes > 64) max_passes = 64;
     }
-    if (candidates.items.len == 0) return;
-    evidencePrint("backfill: {d} unresolved row(s) within budget {d}\n", .{ candidates.items.len, budget });
-    for (candidates.items) |cid| {
-        _ = resolveOne(allocator, env, cid) catch continue;
+    // Fixed-point loop: keep sweeping until a full pass yields zero new
+    // satisfies (whole ledger settled) or budget exhausts. Each pass takes
+    // the newest-first slice of still-unresolved rows.
+    var pass: u32 = 0;
+    while (pass < max_passes) : (pass += 1) {
+        const rows = try parseRows(allocator, env);
+        defer allocator.free(rows);
+        var seen: std.StringHashMap(void) = .init(allocator);
+        defer seen.deinit();
+        var candidates: std.ArrayList([]const u8) = .empty;
+        defer candidates.deinit(allocator);
+        var i: usize = rows.len;
+        while (i > 0) : (i -= 1) {
+            const r = rows[i - 1];
+            if (std.mem.eql(u8, r.id, skip_id)) continue;
+            if (seen.contains(r.id)) continue;
+            try seen.put(r.id, {});
+            if (isSatisfied(rows, r.id)) continue;
+            if (isDead(rows, r.id)) continue;
+            try candidates.append(allocator, r.id);
+            if (candidates.items.len >= budget) break;
+        }
+        if (candidates.items.len == 0) {
+            if (pass > 0) evidencePrint("backfill: ledger settled after {d} pass(es)\n", .{pass});
+            return;
+        }
+        evidencePrint("backfill pass {d}: {d} unresolved row(s) within budget {d}\n", .{ pass + 1, candidates.items.len, budget });
+        var progressed = false;
+        for (candidates.items) |cid| {
+            const rc = resolveOne(allocator, env, cid) catch continue;
+            if (rc == 0) progressed = true;
+        }
+        if (!progressed) {
+            evidencePrint("backfill: no progress on pass {d} — frontier stuck\n", .{pass + 1});
+            return;
+        }
     }
+    evidencePrint("backfill: passes exhausted at {d}\n", .{max_passes});
 }
 
 fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
