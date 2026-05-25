@@ -17,6 +17,10 @@ const ed = std.crypto.sign.Ed25519;
 const hkdf = std.crypto.kdf.hkdf.HkdfSha256;
 const sha256 = std.crypto.hash.sha2.Sha256;
 
+// libc arc4random_buf is the cleanest cross-Apple-platform CSPRNG and ships
+// in libSystem; Zig 0.16's std.posix.getrandom isn't wired on macOS targets.
+extern fn arc4random_buf(buf: [*]u8, len: usize) void;
+
 pub const PUBKEY_HEX_LEN: usize = 64; // 32 bytes * 2
 pub const SIG_HEX_LEN: usize = 128; // 64 bytes * 2
 pub const ROOT_KEY_HEX_LEN: usize = 64; // 32 bytes * 2
