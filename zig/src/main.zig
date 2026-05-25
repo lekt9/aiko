@@ -763,6 +763,10 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
             _ = try resolveLineage(allocator, env, posthook);
         }
     }
+    // Backfill: every declare sweeps the un-resolved tail of the ledger.
+    backfillUnresolved(allocator, env, cid) catch |e| {
+        errPrint("backfill skipped: {s}\n", .{@errorName(e)});
+    };
     return if (rc == 0) 0 else 1;
 }
 
