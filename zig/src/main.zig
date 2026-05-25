@@ -2189,8 +2189,12 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
         // row (idempotent per id), and declare a follow-up contract whose
         // plan is the remediation hint. The follow-up contract becomes
         // the prehook for any future contract matching the same class.
+        // Anti-recursion: skip guard emission if THIS contract is itself
+        // a guard follow-up (plan starts with "guard:") — otherwise every
+        // guard failure spawns another guard, recursively.
+        const is_already_guard = std.mem.startsWith(u8, r.plan, "guard:");
         const cls = bioClassifyRoadblock(rr.result, r.action);
-        if (!hasGuardRow(rows, id)) {
+        if (!is_already_guard and !hasGuardRow(rows, id)) {
             const remed = remediationFor(cls.class);
             contract.appendGuardRow(allocator, env, id, cls.class, cls.layer, remed) catch {};
             evidencePrint("  guard: class={s} layer={s} -> {s}\n", .{ cls.class, cls.layer, remed });
