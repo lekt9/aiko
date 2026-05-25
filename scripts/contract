@@ -6554,14 +6554,67 @@ print(f'  next: contract status {target}     # verify state preserved')
     # --max-iterations rows (default 5).
     TARGET="${1:-}"; shift || true
     MAX_ITERS="5"
+    LIMIT=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --max-iterations) MAX_ITERS="${2:-5}"; shift 2 ;;
+        --limit) LIMIT="${2:-}"; shift 2 ;;
         --json) shift ;;
         *) shift ;;
       esac
     done
-    [ -z "$TARGET" ] && { echo "usage: contract context <id> [--max-iterations N]" >&2; exit 2; }
+    [ -z "$TARGET" ] && { echo "usage: contract context <id|channel-id> [--max-iterations N] [--limit N]" >&2; exit 2; }
+    # R8 channel-context mode (gap 91d78419): if the target resolves to a
+    # channel ledger at ~/.contracts/channels/<id>/contracts.jsonl, walk that
+    # ledger and return the rolling stream as JSON. Detection rule:
+    #   - channel dir exists, OR
+    #   - target is NOT a known contract id (get() returns None) AND looks
+    #     like a channel slug (contains '-' or non-hex chars).
+    # The empty case (no rows yet) is a genuine "no events yet" envelope,
+    # NOT a stub (Γ1). Substrate-enables: returns rows, never decides which
+    # to consume (parent's LLM judges). Locality 79c2d656: channel ledgers
+    # stay scoped; explicit `contract promote` is the only path up.
+    CHANNEL_DIR="$HOME/.contracts/channels/$TARGET"
+    IS_CHANNEL=0
+    if [ -d "$CHANNEL_DIR" ]; then
+      IS_CHANNEL=1
+    elif ! printf '%s' "$TARGET" | grep -qE '^[a-f0-9]{6,12}$'; then
+      # Not a hex contract id — treat as channel id (create-on-miss).
+      IS_CHANNEL=1
+    fi
+    if [ "$IS_CHANNEL" = "1" ]; then
+      EFFECTIVE_LIMIT="${LIMIT:-$MAX_ITERS}"
+      MH_CHANNEL="$TARGET" MH_LIMIT="$EFFECTIVE_LIMIT" MH_CHDIR="$CHANNEL_DIR" python3 -c "
+import os, json, pathlib
+channel = os.environ['MH_CHANNEL']
+chdir = pathlib.Path(os.environ['MH_CHDIR'])
+ledger = chdir / 'contracts.jsonl'
+try:
+    limit = int(os.environ['MH_LIMIT'])
+except (ValueError, TypeError):
+    limit = 5
+events = []
+if ledger.exists():
+    for line in ledger.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+# Chronological order is file order (append-only). Tail to last N.
+tail = events[-limit:] if limit > 0 else events
+out = {
+    'channel': channel,
+    'limit': limit,
+    'events': tail,
+    'count': len(tail),
+}
+print(json.dumps(out, indent=2))
+"
+      exit $?
+    fi
     MH_TARGET="$TARGET" MH_MAX="$MAX_ITERS" _py_inline "
 import os, json
 from contract_core import get, _rows
