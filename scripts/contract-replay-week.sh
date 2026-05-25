@@ -12,6 +12,7 @@
 #
 # Idempotent: re-runs into a fresh timestamped dir, never overwrites.
 set -euo pipefail
+# normalise: derive PROJECT_DIRS from the canonical claude-project slug + variants
 SINCE_DAYS="${SINCE_DAYS:-8}"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -47,6 +48,7 @@ PROJECT_GLOBS=(
 } > "$OUT/git.md"
 
 # 2. prompt harvest (calls a sibling Python script for the JSON-parse heavy work)
+# normalise: derive PROJECT_DIRS from the canonical claude-project slug + variants
 SINCE_DAYS="$SINCE_DAYS" PROJECT_DIRS="${PROJECT_GLOBS[*]}" \
   python3 "$(dirname "$0")/contract-replay-harvest.py" > "$OUT/prompts.jsonl"
 wc -l "$OUT/prompts.jsonl" | awk '{print "harvested "$1" prompts"}' > "$OUT/SUMMARY"
