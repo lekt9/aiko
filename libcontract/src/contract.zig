@@ -752,6 +752,41 @@ pub fn recordIteration(
     return recordIterationWithHash(allocator, env, id, wave, action_exit, action_result, "");
 }
 
+/// Append a `judged` event row — the agent-judged second key.
+/// Verdict is one of PROMOTE | REJECT | HOLD. When PROMOTE, satisfaction
+/// holds; when REJECT, the row stays in HOLD even if programmatic gate
+/// passed. Captures the judge_id (which evaluator aiko returned this).
+pub fn appendJudgedRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+    judge_id: []const u8,
+    verdict: []const u8,
+    reasoning: []const u8,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    const agent = try getAgent(allocator, env);
+    defer allocator.free(agent);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "{\"event\": \"judged\", \"id\": ");
+    try writeJsonString(&buf, allocator, id);
+    try buf.appendSlice(allocator, ", \"judge_id\": ");
+    try writeJsonString(&buf, allocator, judge_id);
+    try buf.appendSlice(allocator, ", \"agent_verdict\": ");
+    try writeJsonString(&buf, allocator, verdict);
+    try buf.appendSlice(allocator, ", \"reasoning\": ");
+    try writeJsonString(&buf, allocator, reasoning);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
 /// Same as recordIteration but also records the input_hash that produced
 /// this result. The input_hash is the content-addressed identity of the
 /// (own plan + own action + recursive child input_hashes) tuple — when it
