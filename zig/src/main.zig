@@ -159,6 +159,8 @@ fn parseRows(allocator: std.mem.Allocator, env: std.process.Environ) ![]Row {
         r.action_exit = jsonInt(line, "action_exit") orelse 0;
         r.wave = @intCast(jsonInt(line, "wave") orelse 0);
         r.satisfied = std.mem.eql(u8, r.event, "satisfied");
+        r.env_pubkey = jsonString(line, "env_pubkey") orelse "";
+        r.parent_signature = jsonString(line, "parent_signature") orelse "";
         try rows.append(allocator, r);
     }
     return try rows.toOwnedSlice(allocator);
