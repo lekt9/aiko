@@ -111,6 +111,46 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         defer allocator.free(blob);
         stdoutWrite(blob);
         return 0;
+    } else if (std.mem.eql(u8, verb, "fractal")) {
+        // Φ11 — render fractal context block for <id> to stderr.
+        if (rest.len < 1) {
+            usage();
+            return 2;
+        }
+        var writer: StderrWriter = .{};
+        try fractal.renderContext(allocator, init.environ, rest[0], "fractal-cmd", writer);
+        return 0;
+    } else if (std.mem.eql(u8, verb, "guard")) {
+        // Σ23+Σ24+Π11 — dry-run the guard stack against (plan, action) and
+        // exit 2 with a refusal message if any guard fires.
+        if (rest.len < 2) {
+            usage();
+            return 2;
+        }
+        const plan = rest[0];
+        const action = rest[1];
+        const has_remote = init.environ.getPosix("UNBROWSE_BASE") != null;
+        guards.runStack(plan, action, null, has_remote, &[_]guards.GuardKind{}) catch |err| switch (err) {
+            error.PointerRequired => {
+                stderrWrite("=== REFUSED: pointer required (Σ24) ===\n");
+                return 2;
+            },
+            error.CredentialDetected => {
+                stderrWrite("=== REFUSED: credential detected in field (Σ23) ===\n");
+                return 2;
+            },
+            error.EnvMismatch => {
+                stderrWrite("=== REFUSED: env mismatch — remote-required action in local-only env (Π11) ===\n");
+                stderrWrite("  hint: export UNBROWSE_BASE=https://beta-api.unbrowse.ai\n");
+                return 2;
+            },
+            error.LayerUnsatisfied => {
+                stderrWrite("=== REFUSED: layer claims unsatisfied (Σ20) ===\n");
+                return 2;
+            },
+        };
+        stdoutWrite("guards-ok\n");
+        return 0;
     } else {
         stderrWrite("contract-lib-shim: unknown verb\n");
         usage();
