@@ -471,17 +471,50 @@ fn bioIsReflex(action: []const u8) bool {
 ///    CONTRACT_APOPTOSIS_AGE_HOURS (default 0=off). Caller writes the
 ///    apoptosed rows; this just identifies the cohort. ts parsing is best-
 ///    effort (ISO-8601 lex compare); ledger rows are written in UTC.
-fn bioStaleIds(allocator: std.mem.Allocator, env: std.process.Environ, rows: []const Row) ![]const []const u8 {
-    const age_str = env.getPosix("CONTRACT_APOPTOSIS_AGE_HOURS") orelse return &.{};
-    const age_hours = std.fmt.parseInt(u32, age_str, 10) catch return &.{};
-    if (age_hours == 0) return &.{};
-    _ = allocator;
-    // For now: a stub. Returning empty until we wire the ts parser to
-    // libcontract. This marks the channel without making bad apoptose
-    // decisions silently. CONTRACT_APOPTOSIS_AGE_HOURS=N is the future
-    // policy hook.
-    _ = rows;
-    return &.{};
+/// Compute the ISO-8601 timestamp string for (now - age_hours) into out.
+/// Uses libc gmtime_r for portable UTC. Returns the slice length.
+fn isoCutoff(out: *[24]u8, age_hours: u32) usize {
+    const tv: i64 = time(null) - @as(i64, @intCast(age_hours)) * 3600;
+    var tm: c_tm = .{};
+    _ = gmtime_r(&tv, &tm);
+    return @intCast(std.fmt.bufPrint(out, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.000Z", .{
+        @as(u32, @intCast(tm.tm_year + 1900)),
+        @as(u32, @intCast(tm.tm_mon + 1)),
+        @as(u32, @intCast(tm.tm_mday)),
+        @as(u32, @intCast(tm.tm_hour)),
+        @as(u32, @intCast(tm.tm_min)),
+        @as(u32, @intCast(tm.tm_sec)),
+    }) catch return 0).len;
+}
+
+fn bioStaleIds(allocator: std.mem.Allocator, env: std.process.Environ, rows: []const Row) ![][]const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    errdefer out.deinit(allocator);
+    const age_str = env.getPosix("CONTRACT_APOPTOSIS_AGE_HOURS") orelse return out.toOwnedSlice(allocator);
+    const age_hours = std.fmt.parseInt(u32, age_str, 10) catch return out.toOwnedSlice(allocator);
+    if (age_hours == 0) return out.toOwnedSlice(allocator);
+
+    var cutoff_buf: [24]u8 = undefined;
+    const cutoff_len = isoCutoff(&cutoff_buf, age_hours);
+    const cutoff = cutoff_buf[0..cutoff_len];
+
+    // Walk rows newest-first per id; the FIRST occurrence per id is the
+    // latest. If latest.ts < cutoff (lex compare on ISO-8601), id is stale.
+    var seen: std.StringHashMap(void) = .init(allocator);
+    defer seen.deinit();
+    var i: usize = rows.len;
+    while (i > 0) : (i -= 1) {
+        const r = rows[i - 1];
+        if (seen.contains(r.id)) continue;
+        try seen.put(r.id, {});
+        if (r.ts.len == 0) continue; // no timestamp -> can't judge -> leave alone
+        if (isSatisfied(rows, r.id)) continue; // satisfied rows aren't apoptose candidates here
+        if (isDead(rows, r.id)) continue; // already dead
+        if (std.mem.order(u8, r.ts, cutoff) == .lt) {
+            try out.append(allocator, r.id);
+        }
+    }
+    return out.toOwnedSlice(allocator);
 }
 
 /// 6. PAIN INTERRUPT — check for a `pain` row whose target_pointer is the
