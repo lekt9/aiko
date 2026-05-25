@@ -223,6 +223,66 @@ print(c['status'] if c else 'not-found')
     fi
   fi
 
+  # Π10 — bridge pointer: action is `bridge:contract:<foreign-id>@<owner-canonical>?cost=<usdc>`.
+  # Resolves a foreign contract row across owner silos. At iterate:
+  #   (1) Σ17 RBAC check on the foreign contract (owner must have allowed bridging)
+  #   (2) On RBAC pass: settle x402 against UNBROWSE_API_KEY for declared cost
+  #   (3) On 402: emit === PAYMENT REQUIRED === (per Π1 shape)
+  #   (4) On 200: read foreign contract's status + lineage as evidence
+  # NEVER copies the foreign row — only references it.
+  #
+  # CURRENT REALITY (2026-05-25): Σ17 RBAC field is DOCTRINE-NAMED but NOT
+  # YET IMPLEMENTED (gap 2b98f80f). Foreign-row lookup across owner silos is
+  # also not implemented (gap 036073d8 — unbrowse-broker per Π8). Until both
+  # land, every bridge: iterate is REFUSED honestly with === BRIDGE REFUSED ===
+  # naming the missing dependency. Γ1 no-stubs: no fake success path.
+  if [[ "$action" == bridge:* ]]; then
+    local bridge_spec="${action#bridge:}"
+    # Expect: contract:<foreign-id>@<owner-canonical>?cost=<usdc>
+    local bridge_foreign_id="" bridge_owner="" bridge_cost=""
+    bridge_foreign_id=$(printf '%s' "$bridge_spec" | python3 -c "
+import sys, re
+s = sys.stdin.read().strip()
+m = re.match(r'^contract:([^@]+)@([^?]+)(?:\?cost=([0-9.]+))?$', s)
+print(m.group(1) if m else '')
+")
+    bridge_owner=$(printf '%s' "$bridge_spec" | python3 -c "
+import sys, re
+s = sys.stdin.read().strip()
+m = re.match(r'^contract:([^@]+)@([^?]+)(?:\?cost=([0-9.]+))?$', s)
+print(m.group(2) if m else '')
+")
+    bridge_cost=$(printf '%s' "$bridge_spec" | python3 -c "
+import sys, re
+s = sys.stdin.read().strip()
+m = re.match(r'^contract:([^@]+)@([^?]+)(?:\?cost=([0-9.]+))?$', s)
+print(m.group(3) or '0' if m else '')
+")
+    _l0 "  pointer(bridge): contract:$bridge_foreign_id@$bridge_owner cost=\$$bridge_cost"
+    if [ -z "$bridge_foreign_id" ] || [ -z "$bridge_owner" ]; then
+      echo "  result: ERROR — bridge: action malformed (expected bridge:contract:<id>@<owner>?cost=<n>, got: $action)" >&2
+      return 1
+    fi
+    {
+      echo ""
+      echo "  === BRIDGE REFUSED ==="
+      echo "  foreign_id=$bridge_foreign_id"
+      echo "  owner_canonical=$bridge_owner"
+      echo "  cost_usdc=$bridge_cost"
+      echo "  reason=\xCE\xA317 RBAC not yet implemented — gap 2b98f80f"
+      echo "  also_blocked_on=unbrowse-broker foreign-row lookup — gap 036073d8"
+      echo ""
+      echo "  Substrate enables, never auto-installs. This bridge will iterate"
+      echo "  successfully once both dependencies land:"
+      echo "    - \xCE\xA317 RBAC field on the foreign contract (gap 2b98f80f)"
+      echo "    - unbrowse-broker cross-silo lookup (gap 036073d8)"
+      echo "  Until then every bridge: iterate refuses honestly (\xCE\x931 no-stubs)."
+      echo ""
+      echo "  result: FAIL (bridge refused — missing substrate dependencies)"
+    } >&2
+    return 1
+  fi
+
   # Π1 — x402 payment-gate pointer: action is `x402:<unbrowse-endpoint>`.
   # The substrate POSTs (or GETs for *balance* URLs) to the endpoint with
   # a Bearer token resolved from UNBROWSE_API_KEY env or ~/.config/unbrowse/api-key.
