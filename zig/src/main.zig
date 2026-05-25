@@ -1079,6 +1079,17 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
         errPrint("declare argument error: {s}\n", .{@errorName(e)});
         return 2;
     };
+    // Drills B + C — preflight: wallet permission and binary self-attest.
+    // Both fail-closed only when their strict env flag is set; otherwise emit
+    // a WARN evidence line so the caller sees the gap without breaking flow.
+    if (walletPermissionReject(allocator, env)) |cause| {
+        errPrint("declare refused: {s}\n", .{cause});
+        return 2;
+    }
+    if (binaryAttestReject(allocator, env)) |cause| {
+        errPrint("declare refused: {s}\n", .{cause});
+        return 2;
+    }
     if (!client.isRemoteMode(env)) {
         if (hookId(env, "CONTRACT_PREHOOK_ID", "CONTRACT_PREHOOK")) |prehook| {
             const pre_rc = try resolveOne(allocator, env, prehook);
