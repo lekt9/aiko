@@ -232,6 +232,11 @@ pub fn runStack(
         try audienceJargon(plan, audience);
         if (proof) |p| try audienceJargon(p, audience);
     }
+    // Σ32a Peace — destructive op without consent; bypass via guards_bypassed
+    // = [destructive_without_consent], which IS the explicit consent path.
+    if (!has.check(.destructive_without_consent, bypassed)) {
+        try peace(action, false);
+    }
     // Σ20 layer-claims: surface only (caller decides on action). This guard
     // doesn't refuse on its own — it's an evidence emitter for the caller.
     _ = has.check(.layer_unsatisfied, bypassed);
