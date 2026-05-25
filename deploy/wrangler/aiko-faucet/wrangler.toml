@@ -29,7 +29,11 @@ DAILY_LIMIT_USDC = "50"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 SOLANA_RPC = "https://api.mainnet-beta.solana.com"
 
-# Hard 24h TTL on per-IP allowance. Manna: overnight it rots.
+# Sliding-window rate limit per IP. Default: max 10 declares/hour.
+# Sliding window means tokens refill continuously — not a daily reset.
+HOURLY_LIMIT = "10"
+WINDOW_SECONDS = "3600"
+# Legacy claim TTL (still used by /v1/faucet/claim for one-time USDC drop).
 TTL_SECONDS = "86400"
 
 [[kv_namespaces]]
