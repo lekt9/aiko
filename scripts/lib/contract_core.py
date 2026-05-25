@@ -1134,7 +1134,8 @@ def active_inhibitors(target_id: str) -> list[str]:
     return inhibitors
 def record_iteration(id: str, wave: int, action_exit: int, action_result: str,
                      agent_verdict: Optional[str], children_spawned: list,
-                     log_path: str = "", action_meta: Optional[dict] = None) -> None:
+                     log_path: str = "", action_meta: Optional[dict] = None,
+                     caller_chain: Optional[list] = None) -> None:
     row = {"event": "iterated", "id": id, "wave": wave, "action_exit": action_exit,
            "action_result": action_result, "agent_verdict": agent_verdict,
            "children_spawned": children_spawned, "log_path": log_path, "ts": _now()}
@@ -1143,6 +1144,12 @@ def record_iteration(id: str, wave: int, action_exit: int, action_result: str,
         # kind for bridge: refusals, payment-required payloads, etc.). Keeps
         # downstream consumers from having to grep stderr for shape.
         row["action_meta"] = dict(action_meta)
+    # Σ21 — caller chain (8hex ids, root-toward-tail). Empty list when this
+    # is a top-level invocation; absent on rows predating doctrine ac4bb115.
+    # The chain IS the attention context for KEY 2 — surfaces "why is this
+    # contract being iterated in this turn" without re-walking parent_id.
+    if caller_chain is not None:
+        row["caller_chain"] = list(caller_chain)
     _append(row)
 
 
