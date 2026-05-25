@@ -266,17 +266,103 @@ test "hasLayerClaims: clean plan returns false" {
 }
 
 test "runStack: full clean triple passes" {
-    try runStack("verify the test passes", "agent-judges", "pointer:contract:deadbeef", true, &[_]GuardKind{});
+    try runStack("verify the test passes", "agent-judges", "pointer:contract:deadbeef", true, &[_]GuardKind{}, null);
 }
 
 test "runStack: cred in plan refused" {
-    try std.testing.expectError(GuardError.CredentialDetected, runStack("here is sk-proj-leaked-key", "agent-judges", null, true, &[_]GuardKind{}));
+    try std.testing.expectError(GuardError.CredentialDetected, runStack("here is sk-proj-leaked-key", "agent-judges", null, true, &[_]GuardKind{}, null));
 }
 
 test "runStack: cred bypass with explicit audit" {
-    try runStack("here is sk-proj-leaked-key", "agent-judges", null, true, &[_]GuardKind{.cred_entropy});
+    try runStack("here is sk-proj-leaked-key", "agent-judges", null, true, &[_]GuardKind{.cred_entropy}, null);
 }
 
 test "runStack: env mismatch refused" {
-    try std.testing.expectError(GuardError.EnvMismatch, runStack("ok", "x402:https://example", null, false, &[_]GuardKind{}));
+    try std.testing.expectError(GuardError.EnvMismatch, runStack("ok", "x402:https://example", null, false, &[_]GuardKind{}, null));
+}
+
+// ─── thinProof tests (Fear-of-Lord / Be-ye-perfect) ───
+
+test "thinProof: empty proof passes (handled upstream)" {
+    try thinProof("");
+}
+
+test "thinProof: substantive narrative passes" {
+    try thinProof("served-surface verify exit 0 across 4 routes");
+}
+
+test "thinProof: trivial 'ok' refused" {
+    try std.testing.expectError(GuardError.ProofTooThin, thinProof("ok"));
+}
+
+test "thinProof: trivial 'done' refused" {
+    try std.testing.expectError(GuardError.ProofTooThin, thinProof("done"));
+}
+
+test "thinProof: short pointer-prefixed passes" {
+    try thinProof("contract:abc12345");
+}
+
+test "thinProof: short sha256-prefixed passes" {
+    try thinProof("sha256:04e7");
+}
+
+test "thinProof: 19-char narrative refused (boundary)" {
+    try std.testing.expectError(GuardError.ProofTooThin, thinProof("nineteen-char-prfx!"));
+}
+
+test "thinProof: 20-char narrative passes (boundary)" {
+    try thinProof("twenty-char-prefix-x");
+}
+
+// ─── audienceJargon tests (Render-unto-Caesar / Aiko-voice rule 3) ───
+
+test "audienceJargon: null audience skipped" {
+    try audienceJargon("KEY 2 in-thread judgment fired", null);
+}
+
+test "audienceJargon: team tier skipped" {
+    try audienceJargon("KEY 2 in-thread judgment fired", "team");
+}
+
+test "audienceJargon: private tier skipped" {
+    try audienceJargon("the funnel-first row resolved", "private");
+}
+
+test "audienceJargon: clean public content passes" {
+    try audienceJargon("she finishes by tomorrow", "public");
+}
+
+test "audienceJargon: 'KEY 2' leak refused" {
+    try std.testing.expectError(GuardError.AudienceJargonLeak, audienceJargon("KEY 2 judgment required", "public"));
+}
+
+test "audienceJargon: 'wavefront' leak refused" {
+    try std.testing.expectError(GuardError.AudienceJargonLeak, audienceJargon("the wavefront fired", "public"));
+}
+
+test "audienceJargon: 'refractory' leak refused" {
+    try std.testing.expectError(GuardError.AudienceJargonLeak, audienceJargon("refractory period before propagation", "public"));
+}
+
+// ─── runStack integration with new guards ───
+
+test "runStack: thin proof refused via stack" {
+    try std.testing.expectError(GuardError.ProofTooThin, runStack("the plan", "agent-judges", "ok", true, &[_]GuardKind{}, null));
+}
+
+test "runStack: thin proof bypass with explicit audit" {
+    try runStack("the plan", "agent-judges", "ok", true, &[_]GuardKind{.thin_proof}, null);
+}
+
+test "runStack: audience jargon refused via stack" {
+    try std.testing.expectError(GuardError.AudienceJargonLeak, runStack("KEY 2 in plan to public", "agent-judges", null, true, &[_]GuardKind{}, "public"));
+}
+
+test "runStack: audience jargon bypass with explicit audit" {
+    try runStack("KEY 2 in plan to public", "agent-judges", null, true, &[_]GuardKind{.audience_jargon}, "public");
+}
+
+test "runStack: audience jargon in proof refused" {
+    try std.testing.expectError(GuardError.AudienceJargonLeak, runStack("clean plan", "agent-judges", "the funnel-first row resolved", true, &[_]GuardKind{}, "public"));
 }
