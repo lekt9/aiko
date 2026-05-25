@@ -406,3 +406,35 @@ test "runStack: audience jargon bypass with explicit audit" {
 test "runStack: audience jargon in proof refused" {
     try std.testing.expectError(GuardError.AudienceJargonLeak, runStack("clean plan", "agent-judges", "the funnel-first row resolved", true, &[_]GuardKind{}, "public"));
 }
+
+test "peace: empty action passes" {
+    try peace("", false);
+}
+
+test "peace: benign action passes" {
+    try peace("npm test", false);
+}
+
+test "peace: rm -rf refused without consent" {
+    try std.testing.expectError(GuardError.DestructiveWithoutConsent, peace("rm -rf /tmp/scratch", false));
+}
+
+test "peace: git push --force refused without consent" {
+    try std.testing.expectError(GuardError.DestructiveWithoutConsent, peace("git push --force origin main", false));
+}
+
+test "peace: DROP TABLE refused without consent" {
+    try std.testing.expectError(GuardError.DestructiveWithoutConsent, peace("psql -c 'DROP TABLE users'", false));
+}
+
+test "peace: explicit consent passes destructive" {
+    try peace("rm -rf /tmp/scratch", true);
+}
+
+test "runStack: destructive action refused" {
+    try std.testing.expectError(GuardError.DestructiveWithoutConsent, runStack("clear scratch dir", "rm -rf /tmp/scratch", null, true, &[_]GuardKind{}, null));
+}
+
+test "runStack: destructive bypass with explicit audit" {
+    try runStack("clear scratch dir", "rm -rf /tmp/scratch", null, true, &[_]GuardKind{.destructive_without_consent}, null);
+}
