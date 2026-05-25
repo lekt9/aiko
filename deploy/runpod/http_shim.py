@@ -46,24 +46,46 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(404, {"error": {"message": "not found", "type": "not_found"}})
         n = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(n)
+        # Sniff stream flag in body — if true, run aiko openai with stdout
+        # streamed back as SSE; otherwise capture full JSON output.
+        wants_stream = b'"stream":true' in body or b'"stream": true' in body
+        if wants_stream:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            proc = subprocess.Popen(
+                [AIKO_BIN, "openai"],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            )
+            try:
+                proc.stdin.write(body); proc.stdin.close()
+                while True:
+                    line = proc.stdout.readline()
+                    if not line: break
+                    self.wfile.write(line)
+                    self.wfile.flush()
+            except Exception:
+                pass
+            finally:
+                proc.wait(timeout=120)
+            return
         try:
             proc = subprocess.run(
-                [AIKO_BIN, "openai"],
-                input=body,
-                capture_output=True,
-                timeout=120,
+                [AIKO_BIN, "openai"], input=body,
+                capture_output=True, timeout=120,
             )
         except subprocess.TimeoutExpired:
             return self._json(504, {"error": {"message": "aiko timeout", "type": "timeout"}})
-        out = proc.stdout
         try:
-            parsed = json.loads(out)
+            parsed = json.loads(proc.stdout)
         except Exception:
             return self._json(502, {
                 "error": {
                     "message": "aiko returned malformed json",
                     "type": "upstream_error",
-                    "raw": out.decode(errors="replace")[:500],
+                    "raw": proc.stdout.decode(errors="replace")[:500],
                 }
             })
         return self._json(200, parsed)
