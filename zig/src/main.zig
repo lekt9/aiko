@@ -54,9 +54,11 @@ fn printUsageStderr() void {
 }
 
 fn nowIsoUtc(buf: []u8) ![]u8 {
-    const us_total: i64 = std.time.microTimestamp();
-    const secs_total: i64 = @divFloor(us_total, std.time.us_per_s);
-    const us_remainder: i64 = @mod(us_total, std.time.us_per_s);
+    // Zig 0.16: std.time.microTimestamp() was removed. Use libc gettimeofday.
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    const secs_total: i64 = @intCast(tv.sec);
+    const us_remainder: i64 = @intCast(tv.usec);
 
     const epoch_secs = std.time.epoch.EpochSeconds{ .secs = @intCast(secs_total) };
     const epoch_day = epoch_secs.getEpochDay();
