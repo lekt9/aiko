@@ -21,24 +21,24 @@ fi
 
 mkdir -p "$HOME/.contracts"
 chmod 700 "$HOME/.contracts"
-
-# Persist root.key only for in-container resolver; cleared on cold-stop.
 echo -n "$AIKO_ROOT_KEY" > "$HOME/.contracts/root.key"
 chmod 600 "$HOME/.contracts/root.key"
 
-# RunPod serverless feeds the job JSON via $RUNPOD_INPUT or stdin.
+MODE="${AIKO_RUN_MODE:-server}"
+
+if [[ "$MODE" == "server" ]]; then
+    # OpenAI-compatible HTTP transport. http_shim.py listens on $PORT,
+    # routes /v1/chat/completions to `aiko openai` (cmdOpenAi in zig).
+    exec python3 /opt/aiko/http_shim.py
+fi
+
+# ONESHOT: RunPod serverless one-job-per-container shape.
 INPUT="${RUNPOD_INPUT:-$(cat)}"
 GOAL=$(printf '%s' "$INPUT" | sed -n 's/.*"goal"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p')
-
 if [[ -z "$GOAL" ]]; then
     echo '{"error":"no goal field in input"}'
     exit 1
 fi
-
-# Route through aiko --remote. The cloud compiler handles everything —
-# this container is just the executor body for one contract turn.
 export CONTRACT_PARENT_ID="${CONTRACT_INSTANCE_ID:-}"
 RESULT=$(aiko "$GOAL" --remote 2>&1) || true
-
-# Wrap stdout in RunPod-shaped JSON.
 printf '{"output":%s}\n' "$(printf '%s' "$RESULT" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
