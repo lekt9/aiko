@@ -4,6 +4,29 @@
 //! declare, inspect, discover, search, and self. Manual stepping and manual
 //! satisfaction are internal mechanics, not user-facing escape hatches.
 const std = @import("std");
+const builtin = @import("builtin");
+
+/// Portable self-executable path. Darwin uses _NSGetExecutablePath; Linux
+/// readlinks /proc/self/exe. Caller-provided buf is filled, returns the
+/// path slice (no null terminator), or an error.
+extern fn readlink_libc(path: [*:0]const u8, buf: [*]u8, bufsize: usize) isize;
+fn selfExePathPortable(buf: []u8) ![]const u8 {
+    switch (builtin.os.tag) {
+        .macos => {
+            var size: u32 = @intCast(buf.len);
+            if (_NSGetExecutablePath(buf.ptr, &size) != 0) return error.SelfPathTooLong;
+            const len = std.mem.indexOfScalar(u8, buf, 0) orelse buf.len;
+            return buf[0..len];
+        },
+        .linux => {
+            const proc: [*:0]const u8 = "/proc/self/exe";
+            const n = readlink_libc(proc, buf.ptr, buf.len);
+            if (n <= 0) return error.SelfPathTooLong;
+            return buf[0..@intCast(n)];
+        },
+        else => return error.UnsupportedOS,
+    }
+}
 const contract = @import("contract");
 const client = @import("contract_client");
 const build_options = @import("build_options");
