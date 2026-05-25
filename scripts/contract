@@ -125,7 +125,7 @@ _fire_contract_hooks() {
   # CONTRACT_FRACTAL_CONTEXT=0 to silence; CONTRACT_PHI11_FIRING re-entry
   # guard so a hook script that re-invokes the CLI doesn't recurse.
   if [ "${CONTRACT_FRACTAL_CONTEXT:-1}" != "0" ] && [ -z "${CONTRACT_PHI11_FIRING:-}" ]; then
-    CONTRACT_PHI11_FIRING=1 _render_fractal_context "$event" "$id" "$rc" 2>&1 1>&2 || true
+    CONTRACT_PHI11_FIRING=1 _render_fractal_context "$event" "$id" "$rc" >&2 || true
   fi
   local hook_dir="$HOME/.contracts/hooks"
   [ -d "$hook_dir" ] || return 0
