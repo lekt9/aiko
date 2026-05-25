@@ -39,12 +39,17 @@ fn stderrWrite(bytes: []const u8) void {
 fn usage() void {
     stderrWrite(
         \\contract-lib-shim — Stage 1 parity shim (Σ27/Σ28 binding)
-        \\Usage:
+        \\Usage (local mode):
         \\  contract-lib-shim declare <plan> <action> [parent_id] [agent]
         \\  contract-lib-shim get <id>
         \\  contract-lib-shim list
         \\  contract-lib-shim fractal <id>              Φ11 fractal context block
         \\  contract-lib-shim guard <plan> <action>     Σ23+Σ24 stack dry-run
+        \\Usage (thin-client mode, Σ28 — set UNBROWSE_BASE):
+        \\  contract-lib-shim remote-declare <plan> <action> [parent_id]
+        \\  contract-lib-shim remote-iterate <id>
+        \\  contract-lib-shim remote-mark <id> <proof>
+        \\  contract-lib-shim mode                        show current client/server mode
         \\
     );
 }
