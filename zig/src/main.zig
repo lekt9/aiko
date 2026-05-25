@@ -666,6 +666,15 @@ fn bioModulatorEvidence(allocator: std.mem.Allocator, env: std.process.Environ) 
 const Blake2s256 = std.crypto.hash.blake2.Blake2s256;
 const INPUT_HASH_HEX_LEN: usize = 64;
 
+/// Has a pattern row already been emitted for this source id?
+fn hasPatternRow(rows: []const Row, cid: []const u8) bool {
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "pattern")) continue;
+        if (std.mem.eql(u8, r.id, cid)) return true;
+    }
+    return false;
+}
+
 fn lastInputHash(rows: []const Row, cid: []const u8) ?[]const u8 {
     var i: usize = rows.len;
     while (i > 0) : (i -= 1) {
