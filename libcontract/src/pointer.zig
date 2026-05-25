@@ -94,6 +94,41 @@ pub fn extractContractRefs(allocator: std.mem.Allocator, action: []const u8) ![]
     return try refs.toOwnedSlice(allocator);
 }
 
+/// Extract every typed contract id reference matching `prefix:<8hex>` from
+/// `text`. Used for `inhibits:`, `bind:`, `blocked_by:`, etc.
+pub fn extractTypedRefs(allocator: std.mem.Allocator, text: []const u8, prefix: []const u8) ![][]u8 {
+    var refs: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (refs.items) |r| allocator.free(r);
+        refs.deinit(allocator);
+    }
+    var i: usize = 0;
+    while (i + prefix.len <= text.len) {
+        if (std.mem.startsWith(u8, text[i..], prefix)) {
+            const start = i + prefix.len;
+            if (start + 8 <= text.len) {
+                const candidate = text[start .. start + 8];
+                var ok = true;
+                for (candidate) |c| {
+                    const is_hex = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+                    if (!is_hex) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok) {
+                    const copy = try allocator.dupe(u8, candidate);
+                    try refs.append(allocator, copy);
+                    i = start + 8;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    return try refs.toOwnedSlice(allocator);
+}
+
 test "inferPointerType exposes only native shapes plus cell/api" {
     try std.testing.expectEqualStrings("funnel", inferPointerType("funnel"));
     try std.testing.expectEqualStrings("neuron", inferPointerType("neuron"));
