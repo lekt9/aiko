@@ -2491,6 +2491,8 @@ fn cmdOpenAi(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
     //    always Unbrowse-backed.
     const action = ambientAction(env);
     const parent = ambientParent(env);
+    var tool_calls_json: ?[]u8 = null;
+    defer if (tool_calls_json) |t| allocator.free(t);
     const result_text = blk: {
         const body_json = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, null, null, null, null, null, null, null) catch |e| {
             const msg = switch (e) {
@@ -2503,6 +2505,25 @@ fn cmdOpenAi(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
             break :blk err_msg;
         };
         defer allocator.free(body_json);
+        // Tool-calls passthrough: cloud may emit "tool_calls":[{...}]
+        if (std.mem.indexOf(u8, body_json, "\"tool_calls\":")) |tc_start| {
+            const after = body_json[tc_start + "\"tool_calls\":".len ..];
+            if (after.len > 0 and after[0] == '[') {
+                var depth: i32 = 0;
+                var end: usize = 0;
+                while (end < after.len) : (end += 1) {
+                    if (after[end] == '[') depth += 1;
+                    if (after[end] == ']') {
+                        depth -= 1;
+                        if (depth == 0) {
+                            end += 1;
+                            break;
+                        }
+                    }
+                }
+                tool_calls_json = try allocator.dupe(u8, after[0..end]);
+            }
+        }
         if (jsonString(body_json, "result")) |r| break :blk try allocator.dupe(u8, r);
         if (jsonString(body_json, "stdout")) |r| break :blk try allocator.dupe(u8, r);
         if (jsonString(body_json, "id")) |id| {
@@ -2519,7 +2540,7 @@ fn cmdOpenAi(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
     if (wants_stream) {
         try writeOpenAiStream(allocator, humanized);
     } else {
-        try writeOpenAiCompletion(allocator, humanized);
+        try writeOpenAiCompletionExt(allocator, humanized, tool_calls_json);
     }
     return 0;
 }
