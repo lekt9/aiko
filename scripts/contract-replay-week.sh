@@ -11,7 +11,7 @@
 #   4. Returns the artifact path; agent reads + decides what to re-declare
 #
 # Idempotent: re-runs into a fresh timestamped dir, never overwrites.
-set -euo pipefail
+set -eu  # no pipefail — head | sort | awk SIGPIPEs are benign
 # normalise: derive PROJECT_DIRS from the canonical claude-project slug + variants
 SINCE_DAYS="${SINCE_DAYS:-8}"
 while [ $# -gt 0 ]; do
