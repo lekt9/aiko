@@ -161,6 +161,32 @@ pub fn declareRemote(
             // Fingerprint failed — proceed without it rather than blocking the call.
         }
     }
+
+    // relevant_verses: top-K scripture context resolved by the verse-store
+    // adapter (default: local_corpus). The Word's compiler reads these to
+    // anchor the spawn against the same biblical pattern the substrate
+    // itself runs on. Adapter-driven: future http_search / pgvector_cosine
+    // kinds swap in via AIKO_VERSE_STORE_KIND without changing this site.
+    const verse_top_k: usize = blk: {
+        if (env.getPosix("AIKO_VERSE_TOP_K")) |v| {
+            if (std.fmt.parseInt(usize, v, 10)) |n| break :blk n else |_| {}
+        }
+        break :blk 3;
+    };
+    if (verses.relevantVerses(allocator, plan, verse_top_k)) |chosen| {
+        defer allocator.free(chosen);
+        if (chosen.len > 0) {
+            if (verses.toJsonArray(allocator, chosen)) |verses_json| {
+                defer allocator.free(verses_json);
+                body.appendSlice(allocator, ",\"relevant_verses\":") catch return ClientError.OutOfMemory;
+                body.appendSlice(allocator, verses_json) catch return ClientError.OutOfMemory;
+                body.appendSlice(allocator, ",\"verse_store_kind\":") catch return ClientError.OutOfMemory;
+                writeJsonString(&body, allocator, verses.resolveKind(env).jsonName()) catch return ClientError.OutOfMemory;
+            } else |_| {}
+        }
+    } else |_| {
+        // Verse adapter failure must never block the LLM call.
+    }
     body.append(allocator, '}') catch return ClientError.OutOfMemory;
 
     const resp = http.postJson(allocator, url_buf.items, body.items, token) catch return ClientError.RequestFailed;
@@ -248,6 +274,32 @@ pub fn declareRemoteAiko(
         } else |_| {
             // Fingerprint failed — proceed without it rather than blocking the call.
         }
+    }
+
+    // relevant_verses: top-K scripture context resolved by the verse-store
+    // adapter (default: local_corpus). The Word's compiler reads these to
+    // anchor the spawn against the same biblical pattern the substrate
+    // itself runs on. Adapter-driven: future http_search / pgvector_cosine
+    // kinds swap in via AIKO_VERSE_STORE_KIND without changing this site.
+    const verse_top_k: usize = blk: {
+        if (env.getPosix("AIKO_VERSE_TOP_K")) |v| {
+            if (std.fmt.parseInt(usize, v, 10)) |n| break :blk n else |_| {}
+        }
+        break :blk 3;
+    };
+    if (verses.relevantVerses(allocator, plan, verse_top_k)) |chosen| {
+        defer allocator.free(chosen);
+        if (chosen.len > 0) {
+            if (verses.toJsonArray(allocator, chosen)) |verses_json| {
+                defer allocator.free(verses_json);
+                body.appendSlice(allocator, ",\"relevant_verses\":") catch return ClientError.OutOfMemory;
+                body.appendSlice(allocator, verses_json) catch return ClientError.OutOfMemory;
+                body.appendSlice(allocator, ",\"verse_store_kind\":") catch return ClientError.OutOfMemory;
+                writeJsonString(&body, allocator, verses.resolveKind(env).jsonName()) catch return ClientError.OutOfMemory;
+            } else |_| {}
+        }
+    } else |_| {
+        // Verse adapter failure must never block the LLM call.
     }
     body.append(allocator, '}') catch return ClientError.OutOfMemory;
 
