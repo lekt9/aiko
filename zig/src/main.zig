@@ -754,6 +754,29 @@ fn cmdMark(allocator: std.mem.Allocator, env: std.process.Environ, args: []const
     }
     try contract.markSatisfied(allocator, env, id, 1, proof);
     outPrint("satisfied: {s}\n", .{id});
+
+    // Posthook dispatch: scan the declared row's plan for posthook:<id> refs
+    // and append a `called` row per target. This is the second half of the
+    // dispatcher contract d8a30a14 — the graph itself records that the
+    // upstream contract fired its successors. Target action execution
+    // (cli shell-out / webhook POST / etc.) is deferred to the resolveLineage
+    // loop; cmdMark only emits the called edge so the chain is observable.
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        if (!std.mem.eql(u8, r.id, id)) continue;
+        const targets = try pointer.extractTypedRefs(allocator, r.plan, "posthook:");
+        defer {
+            for (targets) |t| allocator.free(t);
+            allocator.free(targets);
+        }
+        for (targets) |target| {
+            var ptr_buf: [32]u8 = undefined;
+            const target_pointer = try std.fmt.bufPrint(&ptr_buf, "contract:{s}", .{target});
+            try contract.appendCalledRow(allocator, env, id, target_pointer, "posthook");
+            outPrint("called: posthook -> {s}\n", .{target});
+        }
+        break;
+    }
     return 0;
 }
 
