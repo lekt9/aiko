@@ -1126,6 +1126,11 @@ fn enqueueOwned(allocator: std.mem.Allocator, queue: *std.ArrayList([]u8), id: [
 fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []const u8) !u8 {
     const rows = try parseRows(allocator, env);
     defer allocator.free(rows);
+    // 6. PAIN INTERRUPT — preempt the lineage if a pain signal targets us.
+    if (bioPainSignaled(rows, id)) {
+        evidencePrint("{s} -> PAIN interrupt; lineage halted\n", .{id});
+        return 1;
+    }
     // Content-addressed cache: only treat a satisfied row as "already
     // resolved" if its current input_hash still matches the input_hash
     // recorded by the last iteration. When upstream rules or child results
