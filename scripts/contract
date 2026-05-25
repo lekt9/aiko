@@ -3872,6 +3872,40 @@ print('\n'.join(matched))
         fi
       fi
 
+      # Σ28 ORGAN-SHAPE MARK-TIME GUARD (cross-row state check):
+      #   empty_organ         — funnel/funnel-first/sequence/quorum:K with zero children
+      #   no_satisfied_branch — funnel-first with children but none satisfied
+      #   stage_skip          — sequence with a prior stage unsatisfied
+      # Fires AFTER Σ20 layer-guard, BEFORE PROOF REQUIRED. Bypass via
+      # --no-organ-guard writes organ_guard_bypassed=[kind] on the row.
+      ORGAN_GUARD_RAW=$(MH_ID="$ID" _py_inline "
+import os
+from contract_core import check_organ_mark_eligibility
+v, k, d = check_organ_mark_eligibility(os.environ['MH_ID'])
+if v == 'refused':
+    print(k + '|' + (d or ''))
+" 2>/dev/null)
+      if [ -n "$ORGAN_GUARD_RAW" ]; then
+        ORGAN_KIND=$(printf '%s' "$ORGAN_GUARD_RAW" | awk -F'|' '{print $1}')
+        ORGAN_DETAIL=$(printf '%s' "$ORGAN_GUARD_RAW" | awk -F'|' '{print $2}')
+        if [ "$NO_ORGAN_GUARD" = "1" ]; then
+          ORGAN_GUARD_BYPASSED_JSON=$(python3 -c "import json; print(json.dumps(['$ORGAN_KIND']))")
+          echo "=== Σ28 ORGAN GUARD BYPASSED ===" >&2
+          echo "  contract: $ID" >&2
+          echo "  kind:     $ORGAN_KIND" >&2
+          echo "  detail:   $ORGAN_DETAIL" >&2
+          echo "  (writing organ_guard_bypassed=$ORGAN_GUARD_BYPASSED_JSON onto the satisfied row for audit)" >&2
+        else
+          echo "=== ORGAN GUARD: $ORGAN_KIND ===" >&2
+          echo "  contract: $ID" >&2
+          echo "  refusal:  $ORGAN_DETAIL" >&2
+          echo "" >&2
+          echo "  Bypass (honest, writes audit field):" >&2
+          echo "    contract _mark $ID satisfied --proof \"...\" --no-organ-guard" >&2
+          exit 2
+        fi
+      fi
+
       # PROOF REQUIRED: bare mark refused. Surface the plan as the rule the
       # agent must self-judge against. Origin: 173c8819.
       if [ -z "$PROOF" ] && [ -z "$PROOF_SKIP" ]; then
