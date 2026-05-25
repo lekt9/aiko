@@ -1,22 +1,33 @@
-//! contract-zig — Stage 1 binary for the /contract substrate.
+//! contract-zig — native core for the /contract substrate.
 //!
-//! Σ18 bootstrap floor (declare, iterate, _mark, self). Γ1 no stubs:
-//! iterate and _mark exit 1 with an explicit STAGE 2 PENDING block
-//! pointing at gap aa1176c4. Stage 1 ships ONLY declare + self.
-//!
-//! Zig 0.16: main takes std.process.Init.Minimal so we have args + environ
-//! without going through the Io vtable for trivial argv parsing. All real
-//! I/O (file writes, stdout/stderr) uses std.c.* libc calls — macOS-first,
-//! works on every POSIX target that links libc.
+//! This binary owns the load-bearing loop behind a small public surface:
+//! declare, inspect, discover, search, and self. Manual stepping and manual
+//! satisfaction are internal mechanics, not user-facing escape hatches.
 const std = @import("std");
-const id = @import("id.zig");
+const contract = @import("contract");
+const client = @import("contract_client");
+const build_options = @import("build_options");
 const pointer = @import("pointer.zig");
 const ledger = @import("ledger.zig");
 
-const VERSION = "0.0.1-stage1";
-const STAGE2_GAP = "aa1176c4";
+const VERSION = "0.4.0-guarded-native-shape";
+const BINARY_NAME = build_options.binary_name;
+const AIKO_DECLARE_ONLY = std.mem.eql(u8, BINARY_NAME, "aiko");
 
-// ── tiny POSIX I/O helpers (no Io vtable needed for stdout/stderr) ─────────
+const Row = struct {
+    id: []const u8 = "",
+    event: []const u8 = "",
+    plan: []const u8 = "",
+    action: []const u8 = "",
+    cwd: []const u8 = "",
+    parent_id: ?[]const u8 = null,
+    child_id: []const u8 = "",
+    action_result: []const u8 = "",
+    action_exit: i32 = 0,
+    wave: u32 = 0,
+    satisfied: bool = false,
+};
+
 fn writeFd(fd: c_int, bytes: []const u8) void {
     var rem = bytes;
     while (rem.len > 0) {
@@ -26,284 +37,830 @@ fn writeFd(fd: c_int, bytes: []const u8) void {
     }
 }
 
-fn stdoutWrite(bytes: []const u8) void {
+fn out(bytes: []const u8) void {
     writeFd(std.c.STDOUT_FILENO, bytes);
 }
 
-fn stderrWrite(bytes: []const u8) void {
+fn err(bytes: []const u8) void {
     writeFd(std.c.STDERR_FILENO, bytes);
 }
 
-fn stderrPrint(comptime fmt: []const u8, args: anytype) void {
-    var buf: [4096]u8 = undefined;
+fn outPrint(comptime fmt: []const u8, args: anytype) void {
+    var buf: [8192]u8 = undefined;
     const s = std.fmt.bufPrint(&buf, fmt, args) catch return;
-    stderrWrite(s);
+    out(s);
 }
 
-fn printUsageStderr() void {
-    stderrPrint(
-        \\contract-zig {s} — Stage 1 (declare + self only)
-        \\
-        \\Usage:
-        \\  contract-zig declare <plan> [--action <a>] [--parent <id>]
-        \\  contract-zig self
-        \\  contract-zig iterate <id>          (Stage 2 — gap {s})
-        \\  contract-zig _mark <id> <status>   (Stage 2 — gap {s})
-        \\
-    , .{ VERSION, STAGE2_GAP, STAGE2_GAP });
+fn errPrint(comptime fmt: []const u8, args: anytype) void {
+    var buf: [8192]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, fmt, args) catch return;
+    err(s);
 }
 
-fn nowIsoUtc(buf: []u8) ![]u8 {
-    // Zig 0.16: std.time.microTimestamp() was removed. Use libc gettimeofday.
-    var tv: std.c.timeval = undefined;
-    _ = std.c.gettimeofday(&tv, null);
-    const secs_total: i64 = @intCast(tv.sec);
-    const us_remainder: i64 = @intCast(tv.usec);
-
-    const epoch_secs = std.time.epoch.EpochSeconds{ .secs = @intCast(secs_total) };
-    const epoch_day = epoch_secs.getEpochDay();
-    const year_day = epoch_day.calculateYearDay();
-    const month_day = year_day.calculateMonthDay();
-    const day_secs = epoch_secs.getDaySeconds();
-
-    return try std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>6}Z", .{
-        year_day.year,
-        month_day.month.numeric(),
-        month_day.day_index + 1,
-        day_secs.getHoursIntoDay(),
-        day_secs.getMinutesIntoHour(),
-        day_secs.getSecondsIntoMinute(),
-        @as(u64, @intCast(us_remainder)),
-    });
+fn evidence(bytes: []const u8) void {
+    err(bytes);
 }
 
-// Zig 0.16: std.c.popen / pclose / fread aren't all exposed; declare extern.
-extern fn popen(cmd: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
-extern fn pclose(stream: *anyopaque) c_int;
-extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: *anyopaque) usize;
+fn evidencePrint(comptime fmt: []const u8, args: anytype) void {
+    errPrint(fmt, args);
+}
 
-fn getAgent(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
-    // CONTRACT_AGENT > git config user.email > empty.
-    if (env.getPosix("CONTRACT_AGENT")) |v| {
-        const trimmed = std.mem.trim(u8, v, " \t\r\n");
-        if (trimmed.len > 0) return try allocator.dupe(u8, trimmed);
+fn usage() void {
+    errPrint("{s} {s}\n\nUsage:\n", .{ BINARY_NAME, VERSION });
+    if (AIKO_DECLARE_ONLY) {
+        errPrint(
+            \\  {s} "<goal>" --remote
+            \\  {s} "<goal>" --local
+            \\  {s} declare "<goal>" --remote   (compat)
+            \\
+        , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME });
+        return;
     }
-
-    var pipe_buf: [256]u8 = undefined;
-    const cmd: [*:0]const u8 = "git config user.email 2>/dev/null";
-    const f = popen(cmd, "r");
-    if (f == null) return try allocator.dupe(u8, "");
-    defer _ = pclose(f.?);
-    var total: usize = 0;
-    while (total < pipe_buf.len - 1) {
-        const got = fread(pipe_buf[total..].ptr, 1, pipe_buf.len - 1 - total, f.?);
-        if (got == 0) break;
-        total += got;
+    errPrint(
+        \\  {s} declare <truth-claim>
+        \\
+    , .{BINARY_NAME});
+    if (!AIKO_DECLARE_ONLY) {
+        errPrint(
+            \\  {s} status [<id>]
+            \\  {s} discover [--scope all|project|global]
+            \\  {s} search --context <text>
+            \\  {s} self [--json]
+            \\
+        , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
     }
-    const out = std.mem.trim(u8, pipe_buf[0..total], " \t\r\n");
-    return try allocator.dupe(u8, out);
 }
 
-fn writeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []const u8) !void {
-    try out.append(allocator, '"');
-    for (s) |c| {
-        switch (c) {
-            '"' => try out.appendSlice(allocator, "\\\""),
-            '\\' => try out.appendSlice(allocator, "\\\\"),
-            '\n' => try out.appendSlice(allocator, "\\n"),
-            '\r' => try out.appendSlice(allocator, "\\r"),
-            '\t' => try out.appendSlice(allocator, "\\t"),
-            0x08 => try out.appendSlice(allocator, "\\b"),
-            0x0c => try out.appendSlice(allocator, "\\f"),
-            else => {
-                if (c < 0x20) {
-                    var buf: [8]u8 = undefined;
-                    const hex = try std.fmt.bufPrint(&buf, "\\u{x:0>4}", .{c});
-                    try out.appendSlice(allocator, hex);
-                } else {
-                    try out.append(allocator, c);
-                }
-            },
+fn jsonString(line: []const u8, key: []const u8) ?[]const u8 {
+    var needle_buf: [128]u8 = undefined;
+    const needle = std.fmt.bufPrint(&needle_buf, "\"{s}\":", .{key}) catch return null;
+    const at = std.mem.indexOf(u8, line, needle) orelse return null;
+    var start = at + needle.len;
+    while (start < line.len and (line[start] == ' ' or line[start] == '\t')) : (start += 1) {}
+    if (start >= line.len or line[start] != '"') return null;
+    start += 1;
+    var i = start;
+    while (i < line.len) : (i += 1) {
+        if (line[i] == '\\') {
+            i += 1;
+            continue;
+        }
+        if (line[i] == '"') return line[start..i];
+    }
+    return null;
+}
+
+fn jsonInt(line: []const u8, key: []const u8) ?i32 {
+    var needle_buf: [128]u8 = undefined;
+    const needle = std.fmt.bufPrint(&needle_buf, "\"{s}\": ", .{key}) catch return null;
+    const at = std.mem.indexOf(u8, line, needle) orelse return null;
+    const start = at + needle.len;
+    var end = start;
+    while (end < line.len and ((line[end] >= '0' and line[end] <= '9') or line[end] == '-')) : (end += 1) {}
+    if (end == start) return null;
+    return std.fmt.parseInt(i32, line[start..end], 10) catch null;
+}
+
+fn jsonNullableString(line: []const u8, key: []const u8) ?[]const u8 {
+    if (jsonString(line, key)) |s| return s;
+    return null;
+}
+
+fn parseRows(allocator: std.mem.Allocator, env: std.process.Environ) ![]Row {
+    const data = try ledger.readAll(allocator, env);
+    // Rows intentionally borrow slices from `data`. The native CLI is a
+    // short-lived process, so keeping the ledger buffer alive until process
+    // exit is simpler and safer than duplicating every field.
+
+    var rows: std.ArrayList(Row) = .empty;
+    errdefer rows.deinit(allocator);
+    var it = std.mem.splitScalar(u8, data, '\n');
+    while (it.next()) |line| {
+        if (line.len == 0) continue;
+        var r = Row{};
+        r.id = jsonString(line, "id") orelse "";
+        r.event = jsonString(line, "event") orelse "";
+        r.plan = jsonString(line, "plan") orelse "";
+        r.action = jsonString(line, "action") orelse "";
+        r.cwd = jsonString(line, "cwd") orelse "";
+        r.parent_id = jsonNullableString(line, "parent_id");
+        r.child_id = jsonString(line, "child_id") orelse "";
+        r.action_result = jsonString(line, "action_result") orelse "";
+        r.action_exit = jsonInt(line, "action_exit") orelse 0;
+        r.wave = @intCast(jsonInt(line, "wave") orelse 0);
+        r.satisfied = std.mem.eql(u8, r.event, "satisfied");
+        try rows.append(allocator, r);
+    }
+    return try rows.toOwnedSlice(allocator);
+}
+
+fn latestDeclared(rows: []const Row, id: []const u8) ?Row {
+    var found: ?Row = null;
+    for (rows) |r| {
+        if (std.mem.eql(u8, r.event, "declared") and std.mem.eql(u8, r.id, id)) found = r;
+    }
+    return found;
+}
+
+fn isSatisfied(rows: []const Row, id: []const u8) bool {
+    for (rows) |r| {
+        if (std.mem.eql(u8, r.event, "satisfied") and std.mem.eql(u8, r.id, id)) return true;
+    }
+    return false;
+}
+
+fn latestWave(rows: []const Row, id: []const u8) u32 {
+    var w: u32 = 0;
+    for (rows) |r| {
+        if (std.mem.eql(u8, r.id, id) and std.mem.eql(u8, r.event, "iterated")) {
+            if (r.wave > w) w = r.wave;
         }
     }
-    try out.append(allocator, '"');
+    return w;
 }
 
-const DeclareArgs = struct {
-    plan: []const u8,
-    action: []const u8 = "agent-judges",
-    parent: ?[]const u8 = null,
-};
+fn appendUnique(ids: *std.ArrayList([]const u8), allocator: std.mem.Allocator, id: []const u8) !void {
+    for (ids.items) |existing| {
+        if (std.mem.eql(u8, existing, id)) return;
+    }
+    try ids.append(allocator, id);
+}
 
-fn parseDeclareArgs(args: []const []const u8) !DeclareArgs {
-    if (args.len < 1) return error.MissingPlan;
-    var out = DeclareArgs{ .plan = args[0] };
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        const a = args[i];
-        if (std.mem.eql(u8, a, "--action")) {
-            i += 1;
-            if (i >= args.len) return error.MissingValue;
-            out.action = args[i];
-        } else if (std.mem.eql(u8, a, "--parent")) {
-            i += 1;
-            if (i >= args.len) return error.MissingValue;
-            out.parent = args[i];
-        } else {
-            return error.UnknownFlag;
+fn childIds(allocator: std.mem.Allocator, rows: []const Row, parent_id: []const u8) ![][]const u8 {
+    var ids: std.ArrayList([]const u8) = .empty;
+    errdefer ids.deinit(allocator);
+    for (rows) |r| {
+        if (std.mem.eql(u8, r.event, "declared")) {
+            if (r.parent_id) |p| {
+                if (std.mem.eql(u8, p, parent_id)) try ids.append(allocator, r.id);
+            }
         }
     }
-    return out;
+    return try ids.toOwnedSlice(allocator);
 }
 
-fn cmdDeclare(
-    allocator: std.mem.Allocator,
-    env: std.process.Environ,
-    args: []const []const u8,
-) !u8 {
-    const dargs = parseDeclareArgs(args) catch |e| {
-        stderrPrint("contract-zig declare: argument error ({s})\n", .{@errorName(e)});
-        printUsageStderr();
-        return 2;
-    };
-
-    const cid = try id.generateId(allocator);
-    defer allocator.free(cid);
-
-    const ptype = pointer.inferPointerType(dargs.action);
-    const layer = pointer.inferLayer(dargs.action);
-
-    var ts_buf: [64]u8 = undefined;
-    const ts = try nowIsoUtc(&ts_buf);
-
-    // cwd via libc getcwd
-    var cwd_buf: [4096]u8 = undefined;
-    const cwd_ptr = std.c.getcwd(&cwd_buf, cwd_buf.len);
-    const cwd: []const u8 = if (cwd_ptr == null) "" else std.mem.span(@as([*:0]const u8, @ptrCast(cwd_ptr.?)));
-
-    const agent = try getAgent(allocator, env);
-    defer allocator.free(agent);
-
-    const refs = try pointer.extractContractRefs(allocator, dargs.action);
-    defer {
-        for (refs) |r| allocator.free(r);
-        allocator.free(refs);
+fn dependentIds(allocator: std.mem.Allocator, rows: []const Row, target_id: []const u8) ![][]const u8 {
+    var ids: std.ArrayList([]const u8) = .empty;
+    errdefer ids.deinit(allocator);
+    var needle_buf: [32]u8 = undefined;
+    const needle = std.fmt.bufPrint(&needle_buf, "contract:{s}", .{target_id}) catch return try ids.toOwnedSlice(allocator);
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        if (std.mem.indexOf(u8, r.action, needle) != null) try appendUnique(&ids, allocator, r.id);
     }
-
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(allocator);
-
-    try buf.appendSlice(allocator, "{\"event\": \"declared\", \"id\": ");
-    try writeJsonString(&buf, allocator, cid);
-    try buf.appendSlice(allocator, ", \"plan\": ");
-    try writeJsonString(&buf, allocator, dargs.plan);
-    try buf.appendSlice(allocator, ", \"action\": ");
-    try writeJsonString(&buf, allocator, dargs.action);
-    try buf.appendSlice(allocator, ", \"pointer_type\": ");
-    try writeJsonString(&buf, allocator, ptype);
-    try buf.appendSlice(allocator, ", \"layer\": ");
-    var layer_buf: [16]u8 = undefined;
-    const layer_str = try std.fmt.bufPrint(&layer_buf, "{d}", .{layer});
-    try buf.appendSlice(allocator, layer_str);
-    try buf.appendSlice(allocator, ", \"cwd\": ");
-    try writeJsonString(&buf, allocator, cwd);
-    try buf.appendSlice(allocator, ", \"parent_id\": ");
-    if (dargs.parent) |p| {
-        try writeJsonString(&buf, allocator, p);
-    } else {
-        try buf.appendSlice(allocator, "null");
-    }
-    try buf.appendSlice(allocator, ", \"pointers\": [");
-    for (refs, 0..) |r, idx| {
-        if (idx > 0) try buf.appendSlice(allocator, ", ");
-        try writeJsonString(&buf, allocator, r);
-    }
-    try buf.appendSlice(allocator, "], \"ts\": ");
-    try writeJsonString(&buf, allocator, ts);
-    try buf.appendSlice(allocator, ", \"agent\": ");
-    try writeJsonString(&buf, allocator, agent);
-    try buf.append(allocator, '}');
-
-    const path = try ledger.appendRow(allocator, env, buf.items);
-    defer allocator.free(path);
-
-    if (dargs.parent) |p| {
-        var child_buf: std.ArrayList(u8) = .empty;
-        defer child_buf.deinit(allocator);
-        try child_buf.appendSlice(allocator, "{\"event\": \"child_added\", \"id\": ");
-        try writeJsonString(&child_buf, allocator, p);
-        try child_buf.appendSlice(allocator, ", \"child_id\": ");
-        try writeJsonString(&child_buf, allocator, cid);
-        try child_buf.appendSlice(allocator, ", \"ts\": ");
-        var ts2_buf: [64]u8 = undefined;
-        const ts2 = try nowIsoUtc(&ts2_buf);
-        try writeJsonString(&child_buf, allocator, ts2);
-        try child_buf.appendSlice(allocator, ", \"agent\": ");
-        try writeJsonString(&child_buf, allocator, agent);
-        try child_buf.append(allocator, '}');
-        const p2 = try ledger.appendRow(allocator, env, child_buf.items);
-        allocator.free(p2);
-    }
-
-    var out_buf: [16]u8 = undefined;
-    const out_line = try std.fmt.bufPrint(&out_buf, "{s}\n", .{cid});
-    stdoutWrite(out_line);
-    return 0;
+    return try ids.toOwnedSlice(allocator);
 }
 
-fn cmdSelf() u8 {
-    const payload =
-        "{\"binary\":\"contract-zig\", \"version\":\"" ++ VERSION ++ "\", " ++
-        "\"verbs\":[\"declare\",\"self\"], \"stage2_pending\":\"" ++ STAGE2_GAP ++ "\"}\n";
-    stdoutWrite(payload);
-    return 0;
+fn hookId(env: std.process.Environ, primary: []const u8, secondary: []const u8) ?[]const u8 {
+    if (env.getPosix(primary)) |v| {
+        if (v.len > 0) return v;
+    }
+    if (env.getPosix(secondary)) |v| {
+        if (v.len > 0) return v;
+    }
+    return null;
 }
 
-fn cmdStage2Pending(verb: []const u8) u8 {
-    stderrPrint(
-        \\=== STAGE 2 PENDING (gap {s}) ===
-        \\verb '{s}' is declared on this binary but NOT YET IMPLEMENTED in
-        \\Stage 1. The remote-delegation path (UNBROWSE_BASE → POST
-        \\/v1/contract/invoke) plus local-required fallback is the Stage 2
-        \\scope. See: contract status {s}
-        \\Refusing to fake-pass per Γ1 no-stubs.
-        \\
-    , .{ STAGE2_GAP, verb, STAGE2_GAP });
+extern fn system(command: [*:0]const u8) c_int;
+
+fn runShell(allocator: std.mem.Allocator, action: []const u8, cwd: []const u8) !i32 {
+    const cmd_plain = if (cwd.len > 0)
+        try std.fmt.allocPrint(allocator, "cd \"{s}\" && {s}", .{ cwd, action })
+    else
+        try allocator.dupe(u8, action);
+    defer allocator.free(cmd_plain);
+    const cmd = try allocator.dupeZ(u8, cmd_plain);
+    defer allocator.free(cmd);
+    const rc = system(cmd.ptr);
+    if (rc == -1) return 127;
+    if ((rc & 0xff) == 0) return @intCast((rc >> 8) & 0xff);
     return 1;
 }
 
-pub fn main(init: std.process.Init.Minimal) !u8 {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []const Row, r: Row) !struct { rc: i32, result: []const u8 } {
+    _ = env;
+    const action = r.action;
+    const ptype = pointer.inferPointerType(action);
 
-    // Materialize argv as a slice of []const u8 (drop nul-termination).
-    var arena: std.heap.ArenaAllocator = .init(allocator);
-    defer arena.deinit();
-    const arena_alloc = arena.allocator();
-    const argv_z = try init.args.toSlice(arena_alloc);
-
-    if (argv_z.len < 2) {
-        printUsageStderr();
-        return 2;
+    if (std.mem.eql(u8, ptype, "neuron")) {
+        const ids = try childIds(allocator, rows, r.id);
+        defer allocator.free(ids);
+        if (ids.len == 0) {
+            evidence("  result: HOLD — neuron has no fired child evidence\n");
+            return .{ .rc = 1, .result = "hold" };
+        }
+        for (ids) |cid| {
+            if (!isSatisfied(rows, cid)) {
+                evidencePrint("  result: HOLD — child neuron pending: {s}\n", .{cid});
+                return .{ .rc = 1, .result = "hold" };
+            }
+        }
+        evidence("  result: FIRE — neuron integrated all child evidence\n");
+        return .{ .rc = 0, .result = "fire" };
     }
 
-    const verb: []const u8 = argv_z[1];
-    // Build a flat []const []const u8 for the dispatcher.
-    var rest = try arena_alloc.alloc([]const u8, argv_z.len - 2);
+    if (std.mem.eql(u8, ptype, "funnel") or std.mem.eql(u8, ptype, "sequence")) {
+        const ids = try childIds(allocator, rows, r.id);
+        defer allocator.free(ids);
+        if (ids.len == 0) {
+            evidence("  result: FAIL — no children declared\n");
+            return .{ .rc = 1, .result = "fail" };
+        }
+        for (ids) |cid| {
+            if (!isSatisfied(rows, cid)) {
+                evidencePrint("  result: FAIL — current stage: {s} (pending)\n", .{cid});
+                return .{ .rc = 1, .result = "fail" };
+            }
+        }
+        evidence("  result: PASS — every stage satisfied, in order\n");
+        return .{ .rc = 0, .result = "pass" };
+    }
+
+    if (std.mem.eql(u8, ptype, "funnel-first")) {
+        const ids = try childIds(allocator, rows, r.id);
+        defer allocator.free(ids);
+        if (ids.len == 0) {
+            evidence("  result: FAIL — no children declared\n");
+            return .{ .rc = 1, .result = "fail" };
+        }
+        for (ids) |cid| {
+            if (isSatisfied(rows, cid)) {
+                evidencePrint("  result: PASS — child satisfied: {s}\n", .{cid});
+                return .{ .rc = 0, .result = "pass" };
+            }
+        }
+        evidence("  result: FAIL — no child satisfied\n");
+        return .{ .rc = 1, .result = "fail" };
+    }
+
+    if (std.mem.eql(u8, ptype, "quorum")) {
+        const k_txt = action["quorum:".len..];
+        const need = std.fmt.parseInt(usize, k_txt, 10) catch 1;
+        const ids = try childIds(allocator, rows, r.id);
+        defer allocator.free(ids);
+        if (ids.len == 0) {
+            evidence("  result: FAIL — no children declared\n");
+            return .{ .rc = 1, .result = "fail" };
+        }
+        var got: usize = 0;
+        for (ids) |cid| {
+            if (isSatisfied(rows, cid)) got += 1;
+        }
+        if (got >= need) {
+            evidencePrint("  result: PASS — quorum {d}/{d}\n", .{ got, need });
+            return .{ .rc = 0, .result = "pass" };
+        }
+        evidencePrint("  result: FAIL — quorum {d}/{d}\n", .{ got, need });
+        return .{ .rc = 1, .result = "fail" };
+    }
+
+    if (std.mem.eql(u8, ptype, "contract-ref")) {
+        const ref = action["contract:".len..];
+        const target = if (ref.len >= 8) ref[0..8] else ref;
+        if (isSatisfied(rows, target)) {
+            evidencePrint("  result: PASS — contract:{s} satisfied\n", .{target});
+            return .{ .rc = 0, .result = "pass" };
+        }
+        evidencePrint("  result: FAIL — contract:{s} not satisfied\n", .{target});
+        return .{ .rc = 1, .result = "fail" };
+    }
+
+    var body = action;
+    if (std.mem.startsWith(u8, action, "loop-until:")) body = action["loop-until:".len..];
+    if (std.mem.startsWith(u8, action, "harness:")) {
+        const hdir = action["harness:".len..];
+        body = try std.fmt.allocPrint(allocator, "\"{s}/verify.sh\"", .{hdir});
+    }
+    const rc = try runShell(allocator, body, r.cwd);
+    if (rc == 0) {
+        evidence("  result: PASS (exit 0)\n");
+        return .{ .rc = 0, .result = "pass" };
+    }
+    evidencePrint("  result: FAIL (exit {d})\n", .{rc});
+    return .{ .rc = rc, .result = "fail" };
+}
+
+const DeclareArgs = struct { plan: []const u8 };
+
+fn parseDeclare(args: []const []const u8) !DeclareArgs {
+    if (args.len == 0) return error.MissingPlan;
+    if (args.len != 1) return error.UnknownFlag;
+    return .{ .plan = args[0] };
+}
+
+const AikoMode = enum {
+    remote,
+    local,
+};
+
+const AikoArgs = struct {
+    plan: []u8,
+    mode: AikoMode,
+};
+
+fn parseAikoArgs(allocator: std.mem.Allocator, args: []const []const u8) !AikoArgs {
+    if (args.len == 0) return error.MissingPlan;
+    var mode: ?AikoMode = null;
+    var parts: std.ArrayList([]const u8) = .empty;
+    defer parts.deinit(allocator);
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--remote")) {
+            if (mode != null) return error.DuplicateMode;
+            mode = .remote;
+        } else if (std.mem.eql(u8, arg, "--local")) {
+            if (mode != null) return error.DuplicateMode;
+            mode = .local;
+        } else if (std.mem.startsWith(u8, arg, "--")) {
+            return error.UnknownFlag;
+        } else {
+            try parts.append(allocator, arg);
+        }
+    }
+    if (parts.items.len == 0) return error.MissingPlan;
+    const plan = try std.mem.join(allocator, " ", parts.items);
+    return .{ .plan = plan, .mode = mode orelse return error.MissingMode };
+}
+
+fn isPathToken(tok: []const u8) bool {
+    return std.mem.startsWith(u8, tok, "/Users/") or
+        std.mem.startsWith(u8, tok, "/home/") or
+        std.mem.startsWith(u8, tok, "~/");
+}
+
+fn isEmailToken(tok: []const u8) bool {
+    const at = std.mem.indexOfScalar(u8, tok, '@') orelse return false;
+    if (at == 0 or at + 1 >= tok.len) return false;
+    return std.mem.indexOfScalar(u8, tok[at + 1 ..], '.') != null;
+}
+
+fn isSecretLikeToken(tok: []const u8) bool {
+    if (tok.len < 32) return false;
+    var alnum: usize = 0;
+    var symbol: usize = 0;
+    for (tok) |c| {
+        if (std.ascii.isAlphanumeric(c)) {
+            alnum += 1;
+        } else if (c == '_' or c == '-' or c == '.' or c == ':' or c == '/' or c == '+' or c == '=') {
+            symbol += 1;
+        } else {
+            return false;
+        }
+    }
+    return alnum >= 24 and symbol > 0;
+}
+
+fn appendSanitizedToken(out_buf: *std.ArrayList(u8), allocator: std.mem.Allocator, tok: []const u8) !void {
+    if (isPathToken(tok)) {
+        try out_buf.appendSlice(allocator, "[local-path-pattern]");
+    } else if (isEmailToken(tok)) {
+        try out_buf.appendSlice(allocator, "[email-pattern]");
+    } else if (isSecretLikeToken(tok)) {
+        try out_buf.appendSlice(allocator, "[secret-pointer-pattern]");
+    } else {
+        try out_buf.appendSlice(allocator, tok);
+    }
+}
+
+fn redactAikoPlan(allocator: std.mem.Allocator, plan: []const u8) ![]u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    errdefer buf.deinit(allocator);
+    var start: usize = 0;
+    var i: usize = 0;
+    while (i < plan.len) : (i += 1) {
+        const c = plan[i];
+        if (std.ascii.isWhitespace(c)) {
+            if (start < i) try appendSanitizedToken(&buf, allocator, plan[start..i]);
+            try buf.append(allocator, c);
+            start = i + 1;
+        }
+    }
+    if (start < plan.len) try appendSanitizedToken(&buf, allocator, plan[start..]);
+    return buf.toOwnedSlice(allocator);
+}
+
+fn ambientParent(env: std.process.Environ) ?[]const u8 {
+    if (env.getPosix("CONTRACT_PARENT_ID")) |v| {
+        if (v.len > 0) return v;
+    }
+    if (env.getPosix("CONTRACT_PARENT")) |v| {
+        if (v.len > 0) return v;
+    }
+    return null;
+}
+
+fn ambientAction(env: std.process.Environ) []const u8 {
+    if (env.getPosix("CONTRACT_NEURON_ACTION")) |v| {
+        if (v.len > 0) return v;
+    }
+    if (env.getPosix("CONTRACT_INTERNAL_ACTION")) |v| {
+        if (v.len > 0) return v;
+    }
+    return "neuron";
+}
+
+fn ambientAdapter(env: std.process.Environ) ?[]const u8 {
+    if (env.getPosix("CONTRACT_ADAPTER_ID")) |v| {
+        if (v.len > 0) return v;
+    }
+    if (env.getPosix("CONTRACT_ADAPTER")) |v| {
+        if (v.len > 0) return v;
+    }
+    return null;
+}
+
+fn ambientAdapterKind(env: std.process.Environ) ?[]const u8 {
+    if (env.getPosix("CONTRACT_ADAPTER_KIND")) |v| {
+        if (v.len > 0) return v;
+    }
+    if (env.getPosix("CONTRACT_ENVIRONMENT_KIND")) |v| {
+        if (v.len > 0) return v;
+    }
+    return null;
+}
+
+fn ambientEventBus(env: std.process.Environ) ?[]const u8 {
+    if (env.getPosix("CONTRACT_EVENT_BUS_ID")) |v| {
+        if (v.len > 0) return v;
+    }
+    if (env.getPosix("CONTRACT_EVENT_BUS")) |v| {
+        if (v.len > 0) return v;
+    }
+    return null;
+}
+
+fn ambientPretoolEvent(env: std.process.Environ) ?[]const u8 {
+    if (env.getPosix("CONTRACT_PRETOOL_EVENT_ID")) |v| {
+        if (v.len > 0) return v;
+    }
+    if (env.getPosix("CONTRACT_PRETOOL_EVENT")) |v| {
+        if (v.len > 0) return v;
+    }
+    return null;
+}
+
+fn ambientEventKind(env: std.process.Environ) ?[]const u8 {
+    if (env.getPosix("CONTRACT_EVENT_KIND")) |v| {
+        if (v.len > 0) return v;
+    }
+    if (env.getPosix("CONTRACT_PRETOOL_KIND")) |v| {
+        if (v.len > 0) return v;
+    }
+    return null;
+}
+
+fn enqueueOwned(allocator: std.mem.Allocator, queue: *std.ArrayList([]u8), id: []const u8) !void {
+    for (queue.items) |existing| {
+        if (std.mem.eql(u8, existing, id)) return;
+    }
+    const copy = try allocator.dupe(u8, id);
+    errdefer allocator.free(copy);
+    try queue.append(allocator, copy);
+}
+
+fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []const u8) !u8 {
+    const rows = try parseRows(allocator, env);
+    defer allocator.free(rows);
+    if (isSatisfied(rows, id)) {
+        evidencePrint("{s} already resolved\n", .{id});
+        return 0;
+    }
+    const r = latestDeclared(rows, id) orelse {
+        errPrint("contract not found: {s}\n", .{id});
+        return 1;
+    };
+    const wave = latestWave(rows, id) + 1;
+    const rr = try runAction(allocator, env, rows, r);
+    try contract.recordIteration(allocator, env, id, wave, rr.rc, rr.result);
+    if (rr.rc != 0) return 1;
+    try contract.markSatisfied(allocator, env, id, wave, "native resolver reached mechanical true");
+    evidencePrint("{s} -> resolved\n", .{id});
+    return 0;
+}
+
+fn enqueueAffected(allocator: std.mem.Allocator, rows: []const Row, queue: *std.ArrayList([]u8), id: []const u8) !void {
+    if (latestDeclared(rows, id)) |r| {
+        if (r.parent_id) |parent| {
+            try enqueueOwned(allocator, queue, parent);
+        }
+    }
+    const children = try childIds(allocator, rows, id);
+    defer allocator.free(children);
+    for (children) |child| try enqueueOwned(allocator, queue, child);
+
+    const dependents = try dependentIds(allocator, rows, id);
+    defer allocator.free(dependents);
+    for (dependents) |dep| {
+        if (std.mem.eql(u8, dep, id)) continue;
+        try enqueueOwned(allocator, queue, dep);
+    }
+}
+
+fn resolveLineage(allocator: std.mem.Allocator, env: std.process.Environ, id: []const u8) !u8 {
+    const declared_rc = try resolveOne(allocator, env, id);
+    var queue: std.ArrayList([]u8) = .empty;
+    defer {
+        for (queue.items) |item| allocator.free(item);
+        queue.deinit(allocator);
+    }
+    {
+        const rows = try parseRows(allocator, env);
+        defer allocator.free(rows);
+        try enqueueAffected(allocator, rows, &queue, id);
+    }
+    var index: usize = 0;
+    while (index < queue.items.len and index < 256) : (index += 1) {
+        const current = queue.items[index];
+        const rc = try resolveOne(allocator, env, current);
+        if (rc == 0) {
+            const rows = try parseRows(allocator, env);
+            defer allocator.free(rows);
+            try enqueueAffected(allocator, rows, &queue, current);
+        }
+    }
+    return declared_rc;
+}
+
+fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    const d = parseDeclare(args) catch |e| {
+        errPrint("declare argument error: {s}\n", .{@errorName(e)});
+        return 2;
+    };
+    if (!client.isRemoteMode(env)) {
+        if (hookId(env, "CONTRACT_PREHOOK_ID", "CONTRACT_PREHOOK")) |prehook| {
+            const pre_rc = try resolveOne(allocator, env, prehook);
+            if (pre_rc != 0) return pre_rc;
+        }
+    }
+    const action = ambientAction(env);
+    const parent = ambientParent(env);
+    const adapter = ambientAdapter(env);
+    const adapter_kind = ambientAdapterKind(env);
+    const event_bus = ambientEventBus(env);
+    const pretool_event = ambientPretoolEvent(env);
+    const event_kind = ambientEventKind(env);
+    if (AIKO_DECLARE_ONLY) {
+        const safe_plan = redactAikoPlan(allocator, d.plan) catch |e| {
+            errPrint("aiko privacy guard failed: {s}\n", .{@errorName(e)});
+            return 2;
+        };
+        defer allocator.free(safe_plan);
+        const body = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, adapter, adapter_kind, event_bus, pretool_event, event_kind, null) catch |e| {
+            errPrint("aiko declare failed against Unbrowse: {s}\n", .{@errorName(e)});
+            return 2;
+        };
+        defer allocator.free(body);
+        const id = jsonString(body, "id") orelse {
+            err("remote declare response missing id\n");
+            return 2;
+        };
+        outPrint("{s}\n", .{id});
+        return 0;
+    }
+    if (client.isRemoteMode(env)) {
+        const body = client.declareRemote(allocator, env, d.plan, action, parent, adapter, adapter_kind, event_bus, pretool_event, event_kind, null) catch |e| {
+            errPrint("remote declare failed: {s}\n", .{@errorName(e)});
+            return 2;
+        };
+        defer allocator.free(body);
+        const id = jsonString(body, "id") orelse {
+            err("remote declare response missing id\n");
+            return 2;
+        };
+        outPrint("{s}\n", .{id});
+        return 0;
+    }
+    const cid = try contract.declare(allocator, env, d.plan, action, .{ .parent_id = parent });
+    defer allocator.free(cid);
+    outPrint("{s}\n", .{cid});
+    const rc = try resolveLineage(allocator, env, cid);
+    if (rc == 0) {
+        if (hookId(env, "CONTRACT_POSTHOOK_ID", "CONTRACT_POSTHOOK")) |posthook| {
+            _ = try resolveLineage(allocator, env, posthook);
+        }
+    }
+    return if (rc == 0) 0 else 1;
+}
+
+fn cmdAikoGoal(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    const parsed = parseAikoArgs(allocator, args) catch |e| {
+        errPrint("aiko argument error: {s}\n", .{@errorName(e)});
+        usage();
+        return 2;
+    };
+    defer allocator.free(parsed.plan);
+    const safe_plan = redactAikoPlan(allocator, parsed.plan) catch |e| {
+        errPrint("aiko privacy guard failed: {s}\n", .{@errorName(e)});
+        return 2;
+    };
+    defer allocator.free(safe_plan);
+
+    const action = ambientAction(env);
+    const parent = ambientParent(env);
+    const adapter = ambientAdapter(env);
+    const adapter_kind = ambientAdapterKind(env);
+    const event_bus = ambientEventBus(env);
+    const pretool_event = ambientPretoolEvent(env);
+    const event_kind = ambientEventKind(env);
+
+    switch (parsed.mode) {
+        .remote => {
+            const body = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, adapter, adapter_kind, event_bus, pretool_event, event_kind, null) catch |e| {
+                errPrint("aiko remote failed against Unbrowse: {s}\n", .{@errorName(e)});
+                return 2;
+            };
+            defer allocator.free(body);
+            const id = jsonString(body, "id") orelse {
+                err("remote declare response missing id\n");
+                return 2;
+            };
+            outPrint("{s}\n", .{id});
+            return 0;
+        },
+        .local => {
+            if (hookId(env, "CONTRACT_PREHOOK_ID", "CONTRACT_PREHOOK")) |prehook| {
+                const pre_rc = try resolveOne(allocator, env, prehook);
+                if (pre_rc != 0) return pre_rc;
+            }
+            const cid = try contract.declare(allocator, env, safe_plan, action, .{ .parent_id = parent });
+            defer allocator.free(cid);
+            outPrint("{s}\n", .{cid});
+            const rc = try resolveLineage(allocator, env, cid);
+            if (rc == 0) {
+                if (hookId(env, "CONTRACT_POSTHOOK_ID", "CONTRACT_POSTHOOK")) |posthook| {
+                    _ = try resolveLineage(allocator, env, posthook);
+                }
+            }
+            return if (rc == 0) 0 else 1;
+        },
+    }
+}
+
+fn cmdList(allocator: std.mem.Allocator, env: std.process.Environ) !u8 {
+    const rows = try parseRows(allocator, env);
+    defer allocator.free(rows);
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        const status = if (isSatisfied(rows, r.id)) "satisfied" else "pending";
+        outPrint("[{s}] {s} ({s}) — \"{s}\"\n", .{ status, r.id, pointer.inferPointerType(r.action), r.plan });
+    }
+    return 0;
+}
+
+fn cmdStatus(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    if (args.len > 1) {
+        err("status accepts zero args or exactly <id>\n");
+        return 2;
+    }
+    if (client.isRemoteMode(env)) {
+        if (args.len != 1) {
+            err("remote status requires <id>\n");
+            return 2;
+        }
+        const body = client.statusRemote(allocator, env, args[0]) catch |e| {
+            errPrint("remote status failed: {s}\n", .{@errorName(e)});
+            return 2;
+        };
+        defer allocator.free(body);
+        out(body);
+        out("\n");
+        return 0;
+    }
+    const rows = try parseRows(allocator, env);
+    defer allocator.free(rows);
+    if (args.len == 0) return cmdList(allocator, env);
+    const id = args[0];
+    const r = latestDeclared(rows, id) orelse {
+        errPrint("contract not found: {s}\n", .{id});
+        return 1;
+    };
+    const status = if (isSatisfied(rows, id)) "satisfied" else "pending";
+    outPrint("[{s}] {s} ({s})\n  plan:   {s}\n  action: {s}\n", .{ status, id, pointer.inferPointerType(r.action), r.plan, r.action });
+    const ids = try childIds(allocator, rows, id);
+    defer allocator.free(ids);
+    for (ids) |cid| {
+        if (latestDeclared(rows, cid)) |c| {
+            const cs = if (isSatisfied(rows, cid)) "satisfied" else "pending";
+            outPrint("  [{s}] {s} ({s}) — {s}\n", .{ cs, cid, pointer.inferPointerType(c.action), c.plan });
+        }
+    }
+    return 0;
+}
+
+fn score(query: []const u8, plan: []const u8) u32 {
+    var qbuf: [2048]u8 = undefined;
+    var pbuf: [4096]u8 = undefined;
+    const q = std.ascii.lowerString(qbuf[0..@min(qbuf.len, query.len)], query[0..@min(qbuf.len, query.len)]);
+    const p = std.ascii.lowerString(pbuf[0..@min(pbuf.len, plan.len)], plan[0..@min(pbuf.len, plan.len)]);
+    var total: u32 = 0;
+    var it = std.mem.tokenizeAny(u8, q, " \t\r\n.,:;()[]{}\"'");
+    while (it.next()) |tok| {
+        if (tok.len < 3) continue;
+        if (std.mem.indexOf(u8, p, tok) != null) total += 1;
+    }
+    return total;
+}
+
+fn cmdSearch(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    var ctx: []const u8 = "";
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--context")) {
+            i += 1;
+            if (i >= args.len) {
+                err("search --context requires a value\n");
+                return 2;
+            }
+            ctx = args[i];
+        } else {
+            errPrint("search unknown flag: {s}\n", .{args[i]});
+            return 2;
+        }
+    }
+    const rows = try parseRows(allocator, env);
+    defer allocator.free(rows);
+    out("RELATED CONTRACTS (native lexical score):\n\n");
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        const s = score(ctx, r.plan);
+        if (s == 0) continue;
+        const status = if (isSatisfied(rows, r.id)) "satisfied" else "pending";
+        outPrint("  [+] score={d} id={s} status={s}\n      plan: {s}\n", .{ s, r.id, status, r.plan });
+    }
+    return 0;
+}
+
+fn cmdDiscover(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--scope")) {
+            i += 1;
+            if (i >= args.len) {
+                err("discover --scope requires all, project, or global\n");
+                return 2;
+            }
+            if (!std.mem.eql(u8, args[i], "all") and
+                !std.mem.eql(u8, args[i], "project") and
+                !std.mem.eql(u8, args[i], "global"))
+            {
+                err("discover --scope requires all, project, or global\n");
+                return 2;
+            }
+        } else {
+            errPrint("discover unknown flag: {s}\n", .{args[i]});
+            return 2;
+        }
+    }
+    const rows = try parseRows(allocator, env);
+    defer allocator.free(rows);
+    var shown: usize = 0;
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        const status = if (isSatisfied(rows, r.id)) "satisfied" else "pending";
+        outPrint("[native]  {s} ({s}/{s}) — \"{s}\"\n", .{ r.id, pointer.inferPointerType(r.action), status, r.plan });
+        shown += 1;
+        if (shown >= 80) break;
+    }
+    return 0;
+}
+
+fn cmdSelf(args: []const []const u8) u8 {
+    if (args.len > 1 or (args.len == 1 and !std.mem.eql(u8, args[0], "--json"))) {
+        err("self accepts no args or --json\n");
+        return 2;
+    }
+    out(
+        "{ \"binary\": \"" ++ BINARY_NAME ++ "\", \"implementation\": \"zig\", \"version\": \"" ++ VERSION ++
+            "\", \"public_shape\": \"aiko <goal> --remote|--local\", \"public_verbs\": [\"aiko\"], \"compat_verbs\": [\"declare\"], \"context_verbs\": [\"status\",\"discover\",\"search\",\"self\"], \"shapes\": [\"neuron\"], \"internal_shapes\": [\"cell\",\"funnel\",\"funnel-first\",\"sequence\",\"quorum\",\"loop\",\"harness\",\"contract-ref\"], \"containment_edge\": \"parent_id\", \"cross_edges\": [\"contract-ref\"], \"environment_lineage\": [\"CONTRACT_PARENT_ID\",\"CONTRACT_PARENT\"], \"hook_edges\": {\"pre\": [\"CONTRACT_PREHOOK_ID\",\"CONTRACT_PREHOOK\"], \"post\": [\"CONTRACT_POSTHOOK_ID\",\"CONTRACT_POSTHOOK\"]}, \"adapter_edge\": [\"CONTRACT_ADAPTER_ID\",\"CONTRACT_ADAPTER\"], \"adapter_kind\": [\"CONTRACT_ADAPTER_KIND\",\"CONTRACT_ENVIRONMENT_KIND\"], \"pretool_event_bus\": [\"CONTRACT_EVENT_BUS_ID\",\"CONTRACT_EVENT_BUS\"], \"pretool_event_edge\": [\"CONTRACT_PRETOOL_EVENT_ID\",\"CONTRACT_PRETOOL_EVENT\"], \"event_kind\": [\"CONTRACT_EVENT_KIND\",\"CONTRACT_PRETOOL_KIND\"], \"pretool_contracts_are_ledger_events\": true, \"server_event_bus_stateless\": true, \"adapters_are_server_contracts\": true, \"prompt_compiler\": \"unbrowse-llm\", \"prompt_to_contract_graph\": true, \"prompt_text_is_root_declaration\": true, \"server_integrator\": \"unbrowse-llm\", \"core_loop_native\": true, \"scripts_required_for_core\": false, \"manual_resolution_verbs\": false, \"recursive_firing\": true, \"recursive_children\": true, \"breakpoints\": true, \"fractal_environment_layers\": true, \"multidimensional_dag\": true }\n",
+    );
+    return 0;
+}
+
+pub fn main(init: std.process.Init.Minimal) !u8 {
+    const allocator = std.heap.page_allocator;
+    var arena: std.heap.ArenaAllocator = .init(allocator);
+    defer arena.deinit();
+    const argv_z = try init.args.toSlice(arena.allocator());
+    if (argv_z.len < 2) {
+        usage();
+        return 2;
+    }
+    const verb = argv_z[1];
+    var rest = try arena.allocator().alloc([]const u8, argv_z.len - 2);
     for (argv_z[2..], 0..) |a, i| rest[i] = a;
 
     if (std.mem.eql(u8, verb, "declare")) {
+        if (AIKO_DECLARE_ONLY) return try cmdAikoGoal(allocator, init.environ, rest);
         return try cmdDeclare(allocator, init.environ, rest);
-    } else if (std.mem.eql(u8, verb, "self")) {
-        return cmdSelf();
-    } else if (std.mem.eql(u8, verb, "iterate")) {
-        return cmdStage2Pending("iterate");
-    } else if (std.mem.eql(u8, verb, "_mark")) {
-        return cmdStage2Pending("_mark");
-    } else {
-        stderrPrint("contract-zig: unknown verb '{s}'\n\n", .{verb});
-        printUsageStderr();
-        return 2;
     }
+    if (AIKO_DECLARE_ONLY) {
+        return try cmdAikoGoal(allocator, init.environ, argv_z[1..]);
+    }
+    if (std.mem.eql(u8, verb, "status")) return try cmdStatus(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "discover")) return try cmdDiscover(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "search")) return try cmdSearch(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "self")) return cmdSelf(rest);
+
+    errPrint("unknown native verb: {s}\n", .{verb});
+    usage();
+    return 2;
 }

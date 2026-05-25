@@ -1,14 +1,13 @@
 //! http.zig — minimal HTTP client for thin-client mode (Σ28 9d88a55c).
 //!
 //! Per Σ28 thin-client-no-local-ledger: when UNBROWSE_BASE is set, the
-//! binary POSTs every declare/iterate/_mark to the unbrowse server
-//! instead of appending locally. Server owns the canonical ledger; client
-//! holds only pointers + lineage.
+//! binary sends public contract operations to the unbrowse server instead of
+//! appending locally. Server owns the canonical ledger; client holds only
+//! pointers + lineage.
 //!
 //! This module shells to libcurl via popen so we stay in pure libc
 //! (no std.http API churn between zig versions, no dyld deps beyond what
-//! macOS / linux ship by default). The whole module is ≤100 LOC because
-//! it has exactly two operations: POST json → status+body, GET → body.
+//! macOS / linux ship by default).
 
 const std = @import("std");
 
@@ -28,6 +27,14 @@ pub const Response = struct {
     body: []u8, // owned by caller
 };
 
+pub const Headers = struct {
+    bearer_token: ?[]const u8 = null,
+    payment: ?[]const u8 = null,
+    client: ?[]const u8 = null,
+    payment_provider: ?[]const u8 = null,
+    payment_scheme: ?[]const u8 = null,
+};
+
 /// POST JSON body to url. Returns owned Response.body (caller frees).
 /// Adds Authorization: Bearer <token> when token != null.
 /// Status is parsed from the trailing line `__STATUS__:NNN` we tell curl
@@ -37,6 +44,15 @@ pub fn postJson(
     url: []const u8,
     body: []const u8,
     token: ?[]const u8,
+) HttpError!Response {
+    return postJsonWithHeaders(allocator, url, body, .{ .bearer_token = token });
+}
+
+pub fn postJsonWithHeaders(
+    allocator: std.mem.Allocator,
+    url: []const u8,
+    body: []const u8,
+    headers: Headers,
 ) HttpError!Response {
     // Build curl command:
     //   curl -sS -X POST -H 'Content-Type: application/json' -H 'Authorization: Bearer ...'
@@ -61,10 +77,30 @@ pub fn postJson(
     var cmd_buf: std.ArrayList(u8) = .empty;
     defer cmd_buf.deinit(allocator);
     cmd_buf.appendSlice(allocator, "curl -sS -X POST -H 'Content-Type: application/json' ") catch return HttpError.OutOfMemory;
-    if (token) |t| {
+    if (headers.bearer_token) |t| {
         cmd_buf.appendSlice(allocator, "-H 'Authorization: Bearer ") catch return HttpError.OutOfMemory;
         // Naive escape — assume token has no single quotes (unbrowse keys don't).
         cmd_buf.appendSlice(allocator, t) catch return HttpError.OutOfMemory;
+        cmd_buf.appendSlice(allocator, "' ") catch return HttpError.OutOfMemory;
+    }
+    if (headers.payment) |p| {
+        cmd_buf.appendSlice(allocator, "-H 'X-PAYMENT: ") catch return HttpError.OutOfMemory;
+        cmd_buf.appendSlice(allocator, p) catch return HttpError.OutOfMemory;
+        cmd_buf.appendSlice(allocator, "' ") catch return HttpError.OutOfMemory;
+    }
+    if (headers.client) |c| {
+        cmd_buf.appendSlice(allocator, "-H 'X-Unbrowse-Contract-Client: ") catch return HttpError.OutOfMemory;
+        cmd_buf.appendSlice(allocator, c) catch return HttpError.OutOfMemory;
+        cmd_buf.appendSlice(allocator, "' ") catch return HttpError.OutOfMemory;
+    }
+    if (headers.payment_provider) |p| {
+        cmd_buf.appendSlice(allocator, "-H 'X-Payment-Provider: ") catch return HttpError.OutOfMemory;
+        cmd_buf.appendSlice(allocator, p) catch return HttpError.OutOfMemory;
+        cmd_buf.appendSlice(allocator, "' ") catch return HttpError.OutOfMemory;
+    }
+    if (headers.payment_scheme) |s| {
+        cmd_buf.appendSlice(allocator, "-H 'X-Payment-Scheme: ") catch return HttpError.OutOfMemory;
+        cmd_buf.appendSlice(allocator, s) catch return HttpError.OutOfMemory;
         cmd_buf.appendSlice(allocator, "' ") catch return HttpError.OutOfMemory;
     }
     cmd_buf.appendSlice(allocator, "-d @") catch return HttpError.OutOfMemory;
@@ -97,6 +133,53 @@ pub fn postJson(
     const status_str = body_buf.items[at + marker.len .. status_end];
     const status = std.fmt.parseInt(u16, status_str, 10) catch return HttpError.BadResponse;
     // Trim status line + the leading \n curl wrote.
+    var end = at;
+    if (end > 0 and body_buf.items[end - 1] == '\n') end -= 1;
+    body_buf.shrinkRetainingCapacity(end);
+    const owned = body_buf.toOwnedSlice(allocator) catch return HttpError.OutOfMemory;
+    return .{ .status = status, .body = owned };
+}
+
+/// GET url. Returns owned Response.body (caller frees).
+/// Adds Authorization: Bearer <token> when token != null.
+pub fn get(
+    allocator: std.mem.Allocator,
+    url: []const u8,
+    token: ?[]const u8,
+) HttpError!Response {
+    var cmd_buf: std.ArrayList(u8) = .empty;
+    defer cmd_buf.deinit(allocator);
+    cmd_buf.appendSlice(allocator, "curl -sS ") catch return HttpError.OutOfMemory;
+    if (token) |t| {
+        cmd_buf.appendSlice(allocator, "-H 'Authorization: Bearer ") catch return HttpError.OutOfMemory;
+        cmd_buf.appendSlice(allocator, t) catch return HttpError.OutOfMemory;
+        cmd_buf.appendSlice(allocator, "' ") catch return HttpError.OutOfMemory;
+    }
+    cmd_buf.appendSlice(allocator, "-w '\\n__STATUS__:%{http_code}\\n' ") catch return HttpError.OutOfMemory;
+    cmd_buf.append(allocator, '\'') catch return HttpError.OutOfMemory;
+    cmd_buf.appendSlice(allocator, url) catch return HttpError.OutOfMemory;
+    cmd_buf.append(allocator, '\'') catch return HttpError.OutOfMemory;
+    cmd_buf.append(allocator, 0) catch return HttpError.OutOfMemory;
+
+    const cmd_z: [*:0]const u8 = @ptrCast(cmd_buf.items.ptr);
+    const f = popen(cmd_z, "r") orelse return HttpError.CurlMissing;
+    defer _ = pclose(f);
+
+    var body_buf: std.ArrayList(u8) = .empty;
+    errdefer body_buf.deinit(allocator);
+    var chunk: [4096]u8 = undefined;
+    while (true) {
+        const got = fread(&chunk, 1, chunk.len, f);
+        if (got == 0) break;
+        body_buf.appendSlice(allocator, chunk[0..got]) catch return HttpError.OutOfMemory;
+    }
+
+    const marker = "__STATUS__:";
+    const at = std.mem.lastIndexOf(u8, body_buf.items, marker) orelse return HttpError.BadResponse;
+    var status_end: usize = at + marker.len;
+    while (status_end < body_buf.items.len and body_buf.items[status_end] >= '0' and body_buf.items[status_end] <= '9') status_end += 1;
+    const status_str = body_buf.items[at + marker.len .. status_end];
+    const status = std.fmt.parseInt(u16, status_str, 10) catch return HttpError.BadResponse;
     var end = at;
     if (end > 0 and body_buf.items[end - 1] == '\n') end -= 1;
     body_buf.shrinkRetainingCapacity(end);

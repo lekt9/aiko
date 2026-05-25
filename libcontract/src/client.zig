@@ -2,13 +2,11 @@
 //!
 //! Per Σ28 thin-client-no-local-ledger + Σ27 the-binary-IS-the-interface:
 //! the SAME zig binary is server-or-client by env. When UNBROWSE_BASE is set,
-//! declareRemote / markSatisfiedRemote POST to the unbrowse server which
-//! owns the canonical ledger; the client carries only pointers + lineage.
+//! declareRemote POSTs to the unbrowse server which owns the canonical ledger;
+//! the client carries only pointers + lineage.
 //!
 //! Server-side endpoints (already declared at unbrowse/backend/src/routes/contract.ts):
 //!   POST /v1/contract/declare    → returns {id, row}
-//!   POST /v1/contract/iterate    → returns {id, wave, action_result, ...}
-//!   POST /v1/contract/mark       → returns {id, satisfied}
 //!   GET  /v1/contract/status?id  → returns full row list
 //!
 //! Hide-logic-server-side discipline:
@@ -21,6 +19,8 @@
 
 const std = @import("std");
 const http = @import("http.zig");
+
+pub const DEFAULT_UNBROWSE_BASE = "https://beta-api.unbrowse.ai";
 
 pub const ClientError = error{
     NoUnbrowseBase,
@@ -39,12 +39,30 @@ pub fn bearerToken(env: std.process.Environ) ?[]const u8 {
     return env.getPosix("UNBROWSE_API_KEY");
 }
 
+pub fn paymentHeader(env: std.process.Environ) ?[]const u8 {
+    if (env.getPosix("AIKO_X_PAYMENT")) |v| {
+        if (v.len > 0) return v;
+    }
+    if (env.getPosix("X_PAYMENT")) |v| {
+        if (v.len > 0) return v;
+    }
+    if (env.getPosix("PAYMENT_SIGNATURE")) |v| {
+        if (v.len > 0) return v;
+    }
+    return null;
+}
+
 /// Whether the binary is in thin-client mode (remote ledger).
 pub fn isRemoteMode(env: std.process.Environ) bool {
     return baseUrl(env) != null;
 }
 
-/// POST /v1/contract/declare with {plan, action, parent_id?, agent?}.
+pub fn aikoBaseUrl(env: std.process.Environ) []const u8 {
+    return baseUrl(env) orelse DEFAULT_UNBROWSE_BASE;
+}
+
+/// POST /v1/contract/declare with pointer fields for lineage, adapters,
+/// pretool events, and agent identity.
 /// Returns owned response body (caller frees). Server owns id allocation +
 /// row schema; client just hands over the pointer payload.
 pub fn declareRemote(
@@ -53,6 +71,11 @@ pub fn declareRemote(
     plan: []const u8,
     action: []const u8,
     parent_id: ?[]const u8,
+    adapter_contract_id: ?[]const u8,
+    adapter_kind: ?[]const u8,
+    event_bus_contract_id: ?[]const u8,
+    pretool_event_contract_id: ?[]const u8,
+    event_kind: ?[]const u8,
     agent: ?[]const u8,
 ) ClientError![]u8 {
     const base = baseUrl(env) orelse return ClientError.NoUnbrowseBase;
@@ -75,79 +98,126 @@ pub fn declareRemote(
         body.appendSlice(allocator, ",\"parent_id\":") catch return ClientError.OutOfMemory;
         writeJsonString(&body, allocator, p) catch return ClientError.OutOfMemory;
     }
-    if (agent) |a| {
-        body.appendSlice(allocator, ",\"agent\":") catch return ClientError.OutOfMemory;
+    if (adapter_contract_id) |a| {
+        body.appendSlice(allocator, ",\"adapter_contract_id\":") catch return ClientError.OutOfMemory;
         writeJsonString(&body, allocator, a) catch return ClientError.OutOfMemory;
     }
-    body.append(allocator, '}') catch return ClientError.OutOfMemory;
-
-    const resp = http.postJson(allocator, url_buf.items, body.items, token) catch return ClientError.RequestFailed;
-    if (resp.status < 200 or resp.status >= 300) {
-        allocator.free(resp.body);
-        return ClientError.RequestFailed;
+    if (adapter_kind) |k| {
+        body.appendSlice(allocator, ",\"adapter_kind\":") catch return ClientError.OutOfMemory;
+        writeJsonString(&body, allocator, k) catch return ClientError.OutOfMemory;
     }
-    return resp.body;
-}
-
-/// POST /v1/contract/iterate with {id, agent?, local_result?}.
-pub fn iterateRemote(
-    allocator: std.mem.Allocator,
-    env: std.process.Environ,
-    id: []const u8,
-    agent: ?[]const u8,
-) ClientError![]u8 {
-    const base = baseUrl(env) orelse return ClientError.NoUnbrowseBase;
-    const token = bearerToken(env);
-
-    var url_buf: std.ArrayList(u8) = .empty;
-    defer url_buf.deinit(allocator);
-    url_buf.appendSlice(allocator, base) catch return ClientError.OutOfMemory;
-    url_buf.appendSlice(allocator, "/v1/contract/iterate") catch return ClientError.OutOfMemory;
-
-    var body: std.ArrayList(u8) = .empty;
-    defer body.deinit(allocator);
-    body.appendSlice(allocator, "{\"id\":") catch return ClientError.OutOfMemory;
-    writeJsonString(&body, allocator, id) catch return ClientError.OutOfMemory;
-    if (agent) |a| {
-        body.appendSlice(allocator, ",\"agent\":") catch return ClientError.OutOfMemory;
-        writeJsonString(&body, allocator, a) catch return ClientError.OutOfMemory;
+    if (event_bus_contract_id) |b| {
+        body.appendSlice(allocator, ",\"event_bus_contract_id\":") catch return ClientError.OutOfMemory;
+        writeJsonString(&body, allocator, b) catch return ClientError.OutOfMemory;
     }
-    body.append(allocator, '}') catch return ClientError.OutOfMemory;
-
-    const resp = http.postJson(allocator, url_buf.items, body.items, token) catch return ClientError.RequestFailed;
-    if (resp.status < 200 or resp.status >= 300) {
-        allocator.free(resp.body);
-        return ClientError.RequestFailed;
-    }
-    return resp.body;
-}
-
-/// POST /v1/contract/mark with {id, proof?, proof_skip?}.
-pub fn markSatisfiedRemote(
-    allocator: std.mem.Allocator,
-    env: std.process.Environ,
-    id: []const u8,
-    proof: ?[]const u8,
-) ClientError![]u8 {
-    const base = baseUrl(env) orelse return ClientError.NoUnbrowseBase;
-    const token = bearerToken(env);
-
-    var url_buf: std.ArrayList(u8) = .empty;
-    defer url_buf.deinit(allocator);
-    url_buf.appendSlice(allocator, base) catch return ClientError.OutOfMemory;
-    url_buf.appendSlice(allocator, "/v1/contract/mark") catch return ClientError.OutOfMemory;
-
-    var body: std.ArrayList(u8) = .empty;
-    defer body.deinit(allocator);
-    body.appendSlice(allocator, "{\"id\":") catch return ClientError.OutOfMemory;
-    writeJsonString(&body, allocator, id) catch return ClientError.OutOfMemory;
-    if (proof) |p| {
-        body.appendSlice(allocator, ",\"proof\":") catch return ClientError.OutOfMemory;
+    if (pretool_event_contract_id) |p| {
+        body.appendSlice(allocator, ",\"pretool_event_contract_id\":") catch return ClientError.OutOfMemory;
         writeJsonString(&body, allocator, p) catch return ClientError.OutOfMemory;
     }
+    if (event_kind) |k| {
+        body.appendSlice(allocator, ",\"event_kind\":") catch return ClientError.OutOfMemory;
+        writeJsonString(&body, allocator, k) catch return ClientError.OutOfMemory;
+    }
+    if (agent) |a| {
+        body.appendSlice(allocator, ",\"agent\":") catch return ClientError.OutOfMemory;
+        writeJsonString(&body, allocator, a) catch return ClientError.OutOfMemory;
+    }
     body.append(allocator, '}') catch return ClientError.OutOfMemory;
 
     const resp = http.postJson(allocator, url_buf.items, body.items, token) catch return ClientError.RequestFailed;
+    if (resp.status < 200 or resp.status >= 300) {
+        allocator.free(resp.body);
+        return ClientError.RequestFailed;
+    }
+    return resp.body;
+}
+
+pub fn declareRemoteAiko(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    plan: []const u8,
+    action: []const u8,
+    parent_id: ?[]const u8,
+    adapter_contract_id: ?[]const u8,
+    adapter_kind: ?[]const u8,
+    event_bus_contract_id: ?[]const u8,
+    pretool_event_contract_id: ?[]const u8,
+    event_kind: ?[]const u8,
+    agent: ?[]const u8,
+) ClientError![]u8 {
+    const base = aikoBaseUrl(env);
+
+    var url_buf: std.ArrayList(u8) = .empty;
+    defer url_buf.deinit(allocator);
+    url_buf.appendSlice(allocator, base) catch return ClientError.OutOfMemory;
+    url_buf.appendSlice(allocator, "/v1/contract/declare") catch return ClientError.OutOfMemory;
+
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(allocator);
+    body.appendSlice(allocator, "{\"plan\":") catch return ClientError.OutOfMemory;
+    writeJsonString(&body, allocator, plan) catch return ClientError.OutOfMemory;
+    body.appendSlice(allocator, ",\"action\":") catch return ClientError.OutOfMemory;
+    writeJsonString(&body, allocator, action) catch return ClientError.OutOfMemory;
+    body.appendSlice(allocator, ",\"client\":\"aiko\",\"payment_provider\":\"corbits\",\"payment_scheme\":\"@faremeter/flex\"") catch return ClientError.OutOfMemory;
+    if (parent_id) |p| {
+        body.appendSlice(allocator, ",\"parent_id\":") catch return ClientError.OutOfMemory;
+        writeJsonString(&body, allocator, p) catch return ClientError.OutOfMemory;
+    }
+    if (adapter_contract_id) |a| {
+        body.appendSlice(allocator, ",\"adapter_contract_id\":") catch return ClientError.OutOfMemory;
+        writeJsonString(&body, allocator, a) catch return ClientError.OutOfMemory;
+    }
+    if (adapter_kind) |k| {
+        body.appendSlice(allocator, ",\"adapter_kind\":") catch return ClientError.OutOfMemory;
+        writeJsonString(&body, allocator, k) catch return ClientError.OutOfMemory;
+    }
+    if (event_bus_contract_id) |b| {
+        body.appendSlice(allocator, ",\"event_bus_contract_id\":") catch return ClientError.OutOfMemory;
+        writeJsonString(&body, allocator, b) catch return ClientError.OutOfMemory;
+    }
+    if (pretool_event_contract_id) |p| {
+        body.appendSlice(allocator, ",\"pretool_event_contract_id\":") catch return ClientError.OutOfMemory;
+        writeJsonString(&body, allocator, p) catch return ClientError.OutOfMemory;
+    }
+    if (event_kind) |k| {
+        body.appendSlice(allocator, ",\"event_kind\":") catch return ClientError.OutOfMemory;
+        writeJsonString(&body, allocator, k) catch return ClientError.OutOfMemory;
+    }
+    if (agent) |a| {
+        body.appendSlice(allocator, ",\"agent\":") catch return ClientError.OutOfMemory;
+        writeJsonString(&body, allocator, a) catch return ClientError.OutOfMemory;
+    }
+    body.append(allocator, '}') catch return ClientError.OutOfMemory;
+
+    const resp = http.postJsonWithHeaders(allocator, url_buf.items, body.items, .{
+        .payment = paymentHeader(env),
+        .client = "aiko",
+        .payment_provider = "corbits",
+        .payment_scheme = "@faremeter/flex",
+    }) catch return ClientError.RequestFailed;
+    if (resp.status < 200 or resp.status >= 300) {
+        allocator.free(resp.body);
+        return ClientError.RequestFailed;
+    }
+    return resp.body;
+}
+
+/// GET /v1/contract/status?id=<id>. Server projects canonical ledger rows.
+pub fn statusRemote(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+) ClientError![]u8 {
+    const base = baseUrl(env) orelse return ClientError.NoUnbrowseBase;
+    const token = bearerToken(env);
+
+    var url_buf: std.ArrayList(u8) = .empty;
+    defer url_buf.deinit(allocator);
+    url_buf.appendSlice(allocator, base) catch return ClientError.OutOfMemory;
+    url_buf.appendSlice(allocator, "/v1/contract/status?id=") catch return ClientError.OutOfMemory;
+    url_buf.appendSlice(allocator, id) catch return ClientError.OutOfMemory;
+
+    const resp = http.get(allocator, url_buf.items, token) catch return ClientError.RequestFailed;
     if (resp.status < 200 or resp.status >= 300) {
         allocator.free(resp.body);
         return ClientError.RequestFailed;

@@ -1,7 +1,7 @@
 //! Ledger row append + path discovery via libc (Zig 0.16 std no longer
 //! exposes plain posix write/open/mkdir at the top level).
 //!
-//! Discovery (mirrors contract_core._resolve_ledger()):
+//! Discovery:
 //!   1. $CONTRACTS_STORE — explicit override
 //!   2. <cwd>/.claude/contracts.jsonl if <cwd>/.claude/ is a directory
 //!   3. ~/.contracts/contracts.jsonl global fallback

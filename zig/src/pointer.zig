@@ -1,32 +1,18 @@
-//! Pointer-type inference + contract:<id> ref extraction.
-//!
-//! Mirrors contract_core._infer_pointer_type() byte-for-byte (line ~164 in
-//! ~/.claude/skills/contract/scripts/lib/contract_core.py).
+//! Native pointer-type inference + contract:<id> ref extraction.
 const std = @import("std");
 
-/// Infer the pointer_type from an action string. Mirrors Python order +
-/// returned constants. Caller does NOT free — the returned slice is a
-/// compile-time string literal.
+/// Infer the native pointer type from an action string. Only mechanically
+/// implemented composition shapes receive a distinct type; everything else is
+/// a cell unless it is plainly a URL/API action.
 pub fn inferPointerType(action: []const u8) []const u8 {
-    if (std.mem.eql(u8, action, "agent-judges")) return "agent-judges";
+    if (std.mem.eql(u8, action, "neuron")) return "neuron";
     if (std.mem.eql(u8, action, "children-satisfy") or std.mem.eql(u8, action, "funnel")) return "funnel";
     if (std.mem.eql(u8, action, "funnel-first")) return "funnel-first";
     if (std.mem.eql(u8, action, "sequence")) return "sequence";
     if (std.mem.startsWith(u8, action, "quorum:")) return "quorum";
     if (std.mem.startsWith(u8, action, "contract:")) return "contract-ref";
-    if (std.mem.startsWith(u8, action, "loop-until:") or std.mem.eql(u8, action, "loop")) return "loop";
+    if (std.mem.startsWith(u8, action, "loop-until:")) return "loop";
     if (std.mem.startsWith(u8, action, "harness:")) return "harness";
-    if (std.mem.startsWith(u8, action, "tool-guard:")) return "tool-guard";
-    if (std.mem.startsWith(u8, action, "x402:")) return "x402";
-    if (std.mem.startsWith(u8, action, "bridge:")) return "bridge";
-    if (std.mem.startsWith(u8, action, "agent:")) return "agent";
-    if (std.mem.startsWith(u8, action, "machine:")) return "machine";
-    if (std.mem.startsWith(u8, action, "sandbox:")) return "sandbox";
-    if (std.mem.startsWith(u8, action, "runpod:")) return "runpod";
-    if (std.mem.startsWith(u8, action, "bun:")) return "bun";
-    if (std.mem.startsWith(u8, action, "macos-sandbox:")) return "macos-sandbox";
-    if (std.mem.startsWith(u8, action, "deepwiki:")) return "deepwiki";
-    if (std.mem.startsWith(u8, action, "findskills:")) return "findskills";
     if (std.mem.startsWith(u8, action, "curl ") or
         std.mem.startsWith(u8, action, "http://") or
         std.mem.startsWith(u8, action, "https://") or
@@ -34,15 +20,12 @@ pub fn inferPointerType(action: []const u8) []const u8 {
     return "cli";
 }
 
-/// Π5 layer inference, mirroring contract_core._infer_layer().
+/// Native layer inference for the minimal shape catalog.
 pub fn inferLayer(action: []const u8) i32 {
     const pt = inferPointerType(action);
     if (std.mem.eql(u8, pt, "cli") and std.mem.indexOf(u8, action, "wait-for-event") != null) return 4;
-    if (std.mem.eql(u8, pt, "agent")) return 6;
-    if (std.mem.eql(u8, pt, "x402")) return 5;
-    if (std.mem.eql(u8, pt, "bridge")) return 5;
-    if (std.mem.eql(u8, pt, "agent-judges")) return 3;
     if (std.mem.eql(u8, pt, "funnel")) return 3;
+    if (std.mem.eql(u8, pt, "neuron")) return 3;
     if (std.mem.eql(u8, pt, "funnel-first")) return 3;
     if (std.mem.eql(u8, pt, "sequence")) return 3;
     if (std.mem.eql(u8, pt, "quorum")) return 3;
@@ -51,14 +34,6 @@ pub fn inferLayer(action: []const u8) i32 {
     if (std.mem.eql(u8, pt, "api")) return 2;
     if (std.mem.eql(u8, pt, "harness")) return 2;
     if (std.mem.eql(u8, pt, "loop")) return 2;
-    if (std.mem.eql(u8, pt, "tool-guard")) return 2;
-    if (std.mem.eql(u8, pt, "machine")) return 1;
-    if (std.mem.eql(u8, pt, "sandbox")) return 1;
-    if (std.mem.eql(u8, pt, "runpod")) return 1;
-    if (std.mem.eql(u8, pt, "bun")) return 1;
-    if (std.mem.eql(u8, pt, "macos-sandbox")) return 1;
-    if (std.mem.eql(u8, pt, "deepwiki")) return 6;
-    if (std.mem.eql(u8, pt, "findskills")) return 6;
     return 2;
 }
 
@@ -99,12 +74,14 @@ pub fn extractContractRefs(allocator: std.mem.Allocator, action: []const u8) ![]
     return try refs.toOwnedSlice(allocator);
 }
 
-test "inferPointerType matches python rules" {
-    try std.testing.expectEqualStrings("agent-judges", inferPointerType("agent-judges"));
+test "inferPointerType exposes only native shapes plus cell/api" {
     try std.testing.expectEqualStrings("funnel", inferPointerType("funnel"));
+    try std.testing.expectEqualStrings("neuron", inferPointerType("neuron"));
     try std.testing.expectEqualStrings("funnel", inferPointerType("children-satisfy"));
     try std.testing.expectEqualStrings("contract-ref", inferPointerType("contract:deadbeef"));
     try std.testing.expectEqualStrings("quorum", inferPointerType("quorum:foo"));
+    try std.testing.expectEqualStrings("loop", inferPointerType("loop-until:true"));
+    try std.testing.expectEqualStrings("cli", inferPointerType("loop"));
     try std.testing.expectEqualStrings("api", inferPointerType("https://example.com"));
     try std.testing.expectEqualStrings("cli", inferPointerType("ls -la"));
 }

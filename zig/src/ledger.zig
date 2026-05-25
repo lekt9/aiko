@@ -1,7 +1,7 @@
 //! Ledger row append + path discovery via libc (Zig 0.16 std no longer
 //! exposes plain posix write/open/mkdir at the top level).
 //!
-//! Discovery (mirrors contract_core._resolve_ledger()):
+//! Discovery:
 //!   1. $CONTRACTS_STORE — explicit override
 //!   2. <cwd>/.claude/contracts.jsonl if <cwd>/.claude/ is a directory
 //!   3. ~/.contracts/contracts.jsonl global fallback
@@ -91,4 +91,31 @@ pub fn appendRow(allocator: std.mem.Allocator, env: std.process.Environ, row_jso
     if (n < 0) return error.WriteFailed;
 
     return path;
+}
+
+/// Slurp the entire resolved ledger file. Returns an owned []u8; missing
+/// ledger is an empty bootstrap state.
+pub fn readAll(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
+    const path = try resolvePath(allocator, env);
+    defer allocator.free(path);
+
+    const path_z = try allocator.dupeZ(u8, path);
+    defer allocator.free(path_z);
+
+    var flags: c.O = .{};
+    flags.ACCMODE = .RDONLY;
+    const fd: c_int = c.open(path_z.ptr, flags, @as(c_uint, 0));
+    if (fd < 0) return try allocator.alloc(u8, 0);
+    defer _ = c.close(fd);
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    var chunk: [8192]u8 = undefined;
+    while (true) {
+        const n = c.read(fd, &chunk, chunk.len);
+        if (n <= 0) break;
+        try out.appendSlice(allocator, chunk[0..@intCast(n)]);
+        if (out.items.len > 64 * 1024 * 1024) return error.LedgerTooLarge;
+    }
+    return try out.toOwnedSlice(allocator);
 }

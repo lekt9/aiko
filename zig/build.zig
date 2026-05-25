@@ -4,16 +4,55 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const libcontract = b.createModule(.{
+        .root_source_file = b.path("../libcontract/src/contract.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const client = b.createModule(.{
+        .root_source_file = b.path("../libcontract/src/client.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const contract_options = b.addOptions();
+    contract_options.addOption([]const u8, "binary_name", "contract");
+    const root = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "contract", .module = libcontract },
+            .{ .name = "contract_client", .module = client },
+        },
+    });
+    root.addOptions("build_options", contract_options);
+
     const exe = b.addExecutable(.{
         .name = "contract-zig",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
+        .root_module = root,
     });
 
     b.installArtifact(exe);
+
+    const aiko_options = b.addOptions();
+    aiko_options.addOption([]const u8, "binary_name", "aiko");
+    const aiko_root = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "contract", .module = libcontract },
+            .{ .name = "contract_client", .module = client },
+        },
+    });
+    aiko_root.addOptions("build_options", aiko_options);
+
+    const aiko = b.addExecutable(.{
+        .name = "aiko",
+        .root_module = aiko_root,
+    });
+
+    b.installArtifact(aiko);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());

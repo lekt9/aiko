@@ -1,10 +1,8 @@
 //! contract.zig — public Zig API for libcontract.
 //!
-//! Mirrors the Python data-model in
-//! ~/.claude/skills/contract/scripts/lib/contract_core.py for the bootstrap
-//! verbs (Σ18): declare, record_iteration, mark_satisfied, list_all, get.
-//! Row schema is byte-for-byte compatible — bash `contract status <id>` reads
-//! rows written by Zig and vice-versa.
+//! Owns the append-only row writer for the native contract binary. The public
+//! API is deliberately small: declare, record_iteration, mark_satisfied,
+//! list_all, and get.
 const std = @import("std");
 const id_mod = @import("id.zig");
 const pointer = @import("pointer.zig");
@@ -91,10 +89,8 @@ fn writeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []c
 
 /// Declare a contract. Returns an owned 8-hex id slice; caller frees.
 ///
-/// Parity contract: writes a `declared` row whose field order and shape
-/// matches `contract_core.declare()` — event, id, plan, action, pointer_type,
-/// layer, cwd, parent_id, pointers, ts, agent. If parent_id is set, a
-/// follow-on `child_added` row is appended.
+/// Write a `declared` row. If parent_id is set, a follow-on `child_added` row
+/// is appended.
 pub fn declare(
     allocator: std.mem.Allocator,
     env: std.process.Environ,
@@ -305,9 +301,8 @@ pub fn get(allocator: std.mem.Allocator, env: std.process.Environ, target: []con
 
 /// Return `<id>\t<plan>\n` lines, one per `declared` row in the ledger.
 /// Caller owns the slice. Plan is parsed naively from the JSON string after
-/// the `"plan": "` marker; embedded escapes are surfaced unescaped (matches
-/// `contract list` consumer behaviour — pointer-not-payload, the caller
-/// re-parses if richer access is needed).
+/// the `"plan": "` marker; embedded escapes are surfaced unescaped. Callers
+/// re-parse the ledger if richer access is needed.
 pub fn listAll(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
     const data = try readAll(allocator, env);
     defer allocator.free(data);
