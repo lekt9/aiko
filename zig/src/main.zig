@@ -1273,6 +1273,37 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
     // for package install (https://github.com/justrach/nanobrew). The
     // local binary trusts the named runtime is on PATH (baked at build
     // time per Dockerfile). Same capture + budget semantics as runShell.
+    // jsonString returns the slice between the surrounding "" — JSON
+    // escapes are still literal in it. Unescape before treating bytes as
+    // source code. Caller frees the returned buffer.
+    const codeUnescape = struct {
+        fn run(a: std.mem.Allocator, src: []const u8) ![]u8 {
+            var out_buf: std.ArrayList(u8) = .empty;
+            errdefer out_buf.deinit(a);
+            var i: usize = 0;
+            while (i < src.len) : (i += 1) {
+                if (src[i] != '\\' or i + 1 >= src.len) {
+                    try out_buf.append(a, src[i]);
+                    continue;
+                }
+                switch (src[i + 1]) {
+                    'n' => try out_buf.append(a, '\n'),
+                    't' => try out_buf.append(a, '\t'),
+                    'r' => try out_buf.append(a, '\r'),
+                    '"' => try out_buf.append(a, '"'),
+                    '\\' => try out_buf.append(a, '\\'),
+                    '/' => try out_buf.append(a, '/'),
+                    else => {
+                        try out_buf.append(a, src[i]);
+                        try out_buf.append(a, src[i + 1]);
+                    },
+                }
+                i += 1;
+            }
+            return out_buf.toOwnedSlice(a);
+        }
+    }.run;
+
     // Code prefixes write the body to a temp file (avoids shell-quote hell
     // with nested " ' \ in the source) and exec the runtime against it.
     if (std.mem.startsWith(u8, action, "bun:")) {
