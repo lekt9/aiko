@@ -996,8 +996,7 @@ fn cmdSignBinary(allocator: std.mem.Allocator, env: std.process.Environ, args: [
 }
 
 /// Compat verb: `verify-self` — verify the running binary's own integrity.
-/// Returns 0 if signature valid; 1 otherwise. Reports the binary path,
-/// signing-key pubkey, and verdict.
+/// Returns 0 if signature valid; 1 otherwise.
 fn cmdVerifySelf(allocator: std.mem.Allocator, env: std.process.Environ) !u8 {
     const path = try ownBinaryPath(allocator);
     defer allocator.free(path);
@@ -1006,6 +1005,22 @@ fn cmdVerifySelf(allocator: std.mem.Allocator, env: std.process.Environ) !u8 {
         return 1;
     };
     outPrint("verify-self: OK\n  binary: {s}\n", .{path});
+    return 0;
+}
+
+/// Compat verb: `verify-binary <path>` — verify any binary by path against
+/// its sidecar `<path>.sig`. Lets one binary attest another (used by build.sh
+/// to attest both aiko and contract from one invocation).
+fn cmdVerifyBinary(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    if (args.len < 1) {
+        errPrint("verify-binary requires: <path>\n", .{});
+        return 2;
+    }
+    contract.Lineage.verifyBinary(allocator, env, args[0]) catch |e| {
+        outPrint("verify-binary: FAIL ({s})\n  binary: {s}\n", .{ @errorName(e), args[0] });
+        return 1;
+    };
+    outPrint("verify-binary: OK\n  binary: {s}\n", .{args[0]});
     return 0;
 }
 
