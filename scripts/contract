@@ -3851,7 +3851,8 @@ print(c['plan'] if c else '(unknown)')
         exit 2
       fi
     fi
-    MH_ID="$ID" MH_STATUS="$STATUS" MH_PROOF="$PROOF" MH_PROOF_SKIP="$PROOF_SKIP" MH_LG_BYPASS="$LAYER_GUARD_BYPASSED_JSON" _py_inline "
+    MH_ID="$ID" MH_STATUS="$STATUS" MH_PROOF="$PROOF" MH_PROOF_SKIP="$PROOF_SKIP" \
+      MH_LG_BYPASS="$LAYER_GUARD_BYPASSED_JSON" MH_CHAIN="$(_caller_chain_get)" _py_inline "
 import os, sys, json
 from contract_core import mark_satisfied, mark_status, get
 id=os.environ['MH_ID']; st=os.environ['MH_STATUS']
@@ -3864,6 +3865,8 @@ if lg_raw.strip():
         lg_bypass = json.loads(lg_raw)
     except Exception:
         lg_bypass = None
+chain_raw = os.environ.get('MH_CHAIN','').strip()
+caller_chain = [x for x in chain_raw.split(',') if x] if chain_raw else []
 # Substrate principle: never silently fabricate a row for an unknown id.
 # verb-gate _mark caught this — marking a nonexistent id silently appended
 # a satisfied row, which violates default #11 (every verification result
@@ -3874,7 +3877,9 @@ if get(id) is None:
 if st=='satisfied':
     # Honest mark: write only the satisfied event. The agent's KEY-2 verdict
     # this explicit mark IS the verdict — proof / skip captured on the row.
-    mark_satisfied(id, 0, proof=proof, proof_skip_reason=skip, layer_guard_bypassed=lg_bypass)
+    # Σ21 — caller_chain crystallized onto the row for attention context.
+    mark_satisfied(id, 0, proof=proof, proof_skip_reason=skip,
+                   layer_guard_bypassed=lg_bypass, caller_chain=caller_chain)
 else:
     mark_status(id, st)
 print(f'  {id} -> {st}')
