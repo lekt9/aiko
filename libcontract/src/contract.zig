@@ -405,6 +405,81 @@ pub fn markSatisfied(
     allocator.free(path);
 }
 
+/// Death cause for natural-selection over the contract DAG. Each cause is
+/// biblically-anchored:
+///   .superseded — John 12:24, the seed dies that fruit may come; the
+///                  superseding contract carries the truth forward.
+///   .contradicts — Romans 6:23, the wages of contradiction is death; the
+///                  contract violates an established root principle.
+///   .stale       — Genesis 3:19, dust thou art, unto dust shalt thou return;
+///                  declared with no evidence and no path to satisfaction.
+///   .apoptosed   — programmed self-shutdown; the row's purpose has been
+///                  served (smoke probe, debug session) and it retires by
+///                  intent rather than failure.
+pub const DeathCause = enum {
+    superseded,
+    contradicts,
+    stale,
+    apoptosed,
+
+    pub fn jsonName(self: DeathCause) []const u8 {
+        return switch (self) {
+            .superseded => "superseded",
+            .contradicts => "contradicts",
+            .stale => "stale",
+            .apoptosed => "apoptosed",
+        };
+    }
+};
+
+/// Append a `died` event row. Append-only: a dead row stays in the ledger,
+/// but the substrate's projection treats it as terminated rather than
+/// pending. Per Hebrews 9:27 — appointed once to die, and after this the
+/// judgment. The `by_id` pointer is mandatory for .superseded / .contradicts
+/// (death must name its agent); optional for .stale / .apoptosed.
+pub fn markDied(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+    cause: DeathCause,
+    by_id: ?[]const u8,
+    reason: ?[]const u8,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+
+    const agent = try getAgent(allocator, env);
+    defer allocator.free(agent);
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+
+    try buf.appendSlice(allocator, "{\"event\": \"died\", \"id\": ");
+    try writeJsonString(&buf, allocator, id);
+    try buf.appendSlice(allocator, ", \"cause\": ");
+    try writeJsonString(&buf, allocator, cause.jsonName());
+    if (by_id) |b| {
+        if (b.len > 0) {
+            try buf.appendSlice(allocator, ", \"by_contract_id\": ");
+            try writeJsonString(&buf, allocator, b);
+        }
+    }
+    if (reason) |r| {
+        if (r.len > 0) {
+            try buf.appendSlice(allocator, ", \"reason\": ");
+            try writeJsonString(&buf, allocator, r);
+        }
+    }
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
 /// Append a `called` event row recording that the dispatcher fired a hook
 /// from `source_id` toward `target_pointer` (typically `contract:<id>`). The
 /// `call_kind` discriminates posthook vs prehook vs posttool vs pretool.
