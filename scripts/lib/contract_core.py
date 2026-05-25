@@ -1197,7 +1197,7 @@ def record_tokens(ref_id: Optional[str], model: str, in_tokens: int, out_tokens:
     record_event("tokens", ref_id or "_", **fields)
 
 
-def mark_satisfied(id: str, wave: int, proof: str | None = None, proof_skip_reason: str | None = None, layer_guard_bypassed: list | None = None, caller_chain: Optional[list] = None) -> None:
+def mark_satisfied(id: str, wave: int, proof: str | None = None, proof_skip_reason: str | None = None, layer_guard_bypassed: list | None = None, caller_chain: Optional[list] = None, organ_guard_bypassed: list | None = None) -> None:
     """Append a satisfied row. One of `proof` (plan-fulfillment evidence)
     or `proof_skip_reason` (explicit opt-out) should be present; both None
     is permitted for callers that handle the requirement at the CLI layer
@@ -1210,7 +1210,12 @@ def mark_satisfied(id: str, wave: int, proof: str | None = None, proof_skip_reas
 
     `caller_chain` (Σ21 doctrine row ac4bb115): list of 8hex caller ids,
     root-toward-tail, captured from CONTRACT_CALLER_CHAIN at mark time. Empty
-    list when this is a top-level mark; absent on rows predating doctrine."""
+    list when this is a top-level mark; absent on rows predating doctrine.
+
+    `organ_guard_bypassed` (Σ28 organ-shape mark-time guard): list of
+    refusal-kind strings (empty_organ, no_satisfied_branch, stage_skip) the
+    agent acknowledged via --no-organ-guard. Same audit-trail discipline as
+    layer_guard_bypassed — bypass writes the refusal kind onto the row."""
     row = {"event": "satisfied", "id": id, "wave": wave, "ts": _now()}
     if proof is not None:
         row["proof"] = proof
@@ -1220,6 +1225,8 @@ def mark_satisfied(id: str, wave: int, proof: str | None = None, proof_skip_reas
         row["layer_guard_bypassed"] = list(layer_guard_bypassed)
     if caller_chain is not None:
         row["caller_chain"] = list(caller_chain)
+    if organ_guard_bypassed:
+        row["organ_guard_bypassed"] = list(organ_guard_bypassed)
     _append(row)
 
 
