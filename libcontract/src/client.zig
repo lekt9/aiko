@@ -310,11 +310,25 @@ pub fn declareRemoteAiko(
     }
     body.append(allocator, '}') catch return ClientError.OutOfMemory;
 
+    // Idempotency-Key over the canonical request body so retries dedupe.
+    var ikey_buf: [64]u8 = undefined;
+    {
+        var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+        hasher.update(body.items);
+        var digest: [32]u8 = undefined;
+        hasher.final(&digest);
+        const hex_chars = "0123456789abcdef";
+        for (digest, 0..) |b, i| {
+            ikey_buf[i * 2] = hex_chars[b >> 4];
+            ikey_buf[i * 2 + 1] = hex_chars[b & 0x0F];
+        }
+    }
     const resp = http.postJsonWithHeaders(allocator, url_buf.items, body.items, .{
         .payment = paymentHeader(env),
         .client = "aiko",
         .payment_provider = "corbits",
         .payment_scheme = "@faremeter/flex",
+        .idempotency_key = &ikey_buf,
     }) catch |e| {
         std.debug.print("aiko remote: transport error: {s}\n", .{@errorName(e)});
         return ClientError.RequestFailed;
