@@ -18,8 +18,11 @@
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl python3 && \
+        ca-certificates curl python3 python3-pip git unzip bash && \
     rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://bun.sh/install | bash && \
+    install -m 755 /root/.bun/bin/bun /usr/local/bin/bun
+RUN curl -fsSL https://raw.githubusercontent.com/justrach/nanobrew/main/install.sh | bash -s -- /usr/local || true
 
 ARG AIKO_R2_URL
 ARG AIKO_BIN_SHA
