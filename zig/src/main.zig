@@ -900,7 +900,20 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
     const rc = try resolveLineage(allocator, env, cid);
     if (rc == 0) {
         if (hookId(env, "CONTRACT_POSTHOOK_ID", "CONTRACT_POSTHOOK")) |posthook| {
+            const rows2 = try parseRows(allocator, env);
+            defer allocator.free(rows2);
+            if (latestActionResult(rows2, cid)) |payload| {
+                const payload_z = try allocator.dupeZ(u8, payload[0..@min(payload.len, 32 * 1024)]);
+                defer allocator.free(payload_z);
+                const cid_z = try allocator.dupeZ(u8, cid);
+                defer allocator.free(cid_z);
+                _ = setenv("CONTRACT_PARENT_RESULT", payload_z.ptr, 1);
+                _ = setenv("CONTRACT_PARENT_ID", cid_z.ptr, 1);
+                evidencePrint("posthook payload propagated: parent={s} len={d}\n", .{ cid, payload.len });
+            }
             _ = try resolveLineage(allocator, env, posthook);
+            _ = unsetenv("CONTRACT_PARENT_RESULT");
+            _ = unsetenv("CONTRACT_PARENT_ID");
         }
     }
     // Backfill: every declare sweeps the un-resolved tail of the ledger.
