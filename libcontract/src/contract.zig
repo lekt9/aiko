@@ -552,6 +552,48 @@ pub fn appendBreakAboveRow(
     allocator.free(path);
 }
 
+/// Append a `guard` event row — a self-healing follow-up neuron declared
+/// when a contract hits a classified roadblock (payment_required,
+/// rate_limit, schema_mismatch, sabbath, pain, transport, etc.). The
+/// guard's truth claim is "prevent future failures of this class at this
+/// layer." Future contracts matching the same pattern auto-install the
+/// guard as a prehook via the standard CONTRACT_PREHOOK_ID env.
+///
+/// Doctrine: scar tissue — once an organism survives an injury, it forms
+/// guarding tissue that resists the same insult thereafter. Substrate
+/// equivalent: every classified failure leaves a guard row; high-use
+/// guards Hebbian-promote to primitive (canon 182b11c6 threshold=7).
+pub fn appendGuardRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    source_id: []const u8,
+    error_class: []const u8,
+    layer: []const u8,
+    remediation: []const u8,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    const agent = try getAgent(allocator, env);
+    defer allocator.free(agent);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "{\"event\": \"guard\", \"id\": ");
+    try writeJsonString(&buf, allocator, source_id);
+    try buf.appendSlice(allocator, ", \"error_class\": ");
+    try writeJsonString(&buf, allocator, error_class);
+    try buf.appendSlice(allocator, ", \"layer\": ");
+    try writeJsonString(&buf, allocator, layer);
+    try buf.appendSlice(allocator, ", \"remediation\": ");
+    try writeJsonString(&buf, allocator, remediation);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
 /// Append a `flex_hold` event row — the middleware-side reservation
 /// for a Faremeter Flex prepaid escrow authorization. Carries:
 ///   max_amount       — ceiling the facilitator may settle (lamports of mint)
