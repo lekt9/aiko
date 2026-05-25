@@ -3,6 +3,11 @@
 //! Σ18 bootstrap floor (declare, iterate, _mark, self). Γ1 no stubs:
 //! iterate and _mark exit 1 with an explicit STAGE 2 PENDING block
 //! pointing at gap aa1176c4. Stage 1 ships ONLY declare + self.
+//!
+//! Zig 0.16: main takes std.process.Init.Minimal so we have args + environ
+//! without going through the Io vtable for trivial argv parsing. All real
+//! I/O (file writes, stdout/stderr) uses std.c.* libc calls — macOS-first,
+//! works on every POSIX target that links libc.
 const std = @import("std");
 const id = @import("id.zig");
 const pointer = @import("pointer.zig");
@@ -11,8 +16,32 @@ const ledger = @import("ledger.zig");
 const VERSION = "0.0.1-stage1";
 const STAGE2_GAP = "aa1176c4";
 
-fn printUsage(w: anytype) !void {
-    try w.print(
+// ── tiny POSIX I/O helpers (no Io vtable needed for stdout/stderr) ─────────
+fn writeFd(fd: c_int, bytes: []const u8) void {
+    var rem = bytes;
+    while (rem.len > 0) {
+        const n = std.c.write(fd, rem.ptr, rem.len);
+        if (n <= 0) return;
+        rem = rem[@intCast(n)..];
+    }
+}
+
+fn stdoutWrite(bytes: []const u8) void {
+    writeFd(std.c.STDOUT_FILENO, bytes);
+}
+
+fn stderrWrite(bytes: []const u8) void {
+    writeFd(std.c.STDERR_FILENO, bytes);
+}
+
+fn stderrPrint(comptime fmt: []const u8, args: anytype) void {
+    var buf: [4096]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, fmt, args) catch return;
+    stderrWrite(s);
+}
+
+fn printUsageStderr() void {
+    stderrPrint(
         \\contract-zig {s} — Stage 1 (declare + self only)
         \\
         \\Usage:
@@ -24,32 +53,7 @@ fn printUsage(w: anytype) !void {
     , .{ VERSION, STAGE2_GAP, STAGE2_GAP });
 }
 
-fn writeStdout(bytes: []const u8) !void {
-    const stdout_file = std.fs.File.stdout();
-    try stdout_file.writeAll(bytes);
-}
-
-fn writeStderr(bytes: []const u8) !void {
-    const stderr_file = std.fs.File.stderr();
-    try stderr_file.writeAll(bytes);
-}
-
-const StderrPrinter = struct {
-    pub fn print(self: @This(), comptime fmt: []const u8, args: anytype) !void {
-        _ = self;
-        var buf: [4096]u8 = undefined;
-        const s = try std.fmt.bufPrint(&buf, fmt, args);
-        try writeStderr(s);
-    }
-    pub fn writeAll(self: @This(), bytes: []const u8) !void {
-        _ = self;
-        try writeStderr(bytes);
-    }
-};
-
 fn nowIsoUtc(buf: []u8) ![]u8 {
-    // Python emits "YYYY-MM-DDTHH:MM:SS.ffffffZ" (microsecond precision).
-    // We emit microsecond precision using std.time.microTimestamp.
     const us_total: i64 = std.time.microTimestamp();
     const secs_total: i64 = @divFloor(us_total, std.time.us_per_s);
     const us_remainder: i64 = @mod(us_total, std.time.us_per_s);
@@ -71,40 +75,31 @@ fn nowIsoUtc(buf: []u8) ![]u8 {
     });
 }
 
-fn getAgent(allocator: std.mem.Allocator) ![]u8 {
+fn getAgent(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
     // CONTRACT_AGENT > git config user.email > empty.
-    if (std.process.getEnvVarOwned(allocator, "CONTRACT_AGENT")) |v| {
+    if (env.getPosix("CONTRACT_AGENT")) |v| {
         const trimmed = std.mem.trim(u8, v, " \t\r\n");
-        if (trimmed.len > 0) {
-            const out = try allocator.dupe(u8, trimmed);
-            allocator.free(v);
-            return out;
-        }
-        allocator.free(v);
-    } else |err| switch (err) {
-        error.EnvironmentVariableNotFound => {},
-        else => return err,
+        if (trimmed.len > 0) return try allocator.dupe(u8, trimmed);
     }
 
-    var child = std.process.Child.init(&.{ "git", "config", "user.email" }, allocator);
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
-    child.spawn() catch return try allocator.dupe(u8, "");
-    var stdout: std.ArrayList(u8) = .empty;
-    defer stdout.deinit(allocator);
-    var stderr_buf: std.ArrayList(u8) = .empty;
-    defer stderr_buf.deinit(allocator);
-    child.collectOutput(allocator, &stdout, &stderr_buf, 4096) catch {
-        _ = child.wait() catch {};
-        return try allocator.dupe(u8, "");
-    };
-    _ = child.wait() catch {};
-    const out = std.mem.trim(u8, stdout.items, " \t\r\n");
+    // Shell out to git via libc system()? Simpler: read git config from
+    // ~/.gitconfig manually OR shell out via std.c.popen. The Python uses
+    // `git config user.email`; we mirror it via popen for parity.
+    var pipe_buf: [256]u8 = undefined;
+    const cmd: [*:0]const u8 = "git config user.email 2>/dev/null";
+    const f = std.c.popen(cmd, "r");
+    if (f == null) return try allocator.dupe(u8, "");
+    defer _ = std.c.pclose(f.?);
+    var total: usize = 0;
+    while (total < pipe_buf.len - 1) {
+        const got = std.c.fread(pipe_buf[total..].ptr, 1, pipe_buf.len - 1 - total, f.?);
+        if (got == 0) break;
+        total += got;
+    }
+    const out = std.mem.trim(u8, pipe_buf[0..total], " \t\r\n");
     return try allocator.dupe(u8, out);
 }
 
-/// Append a single JSON object field. Strings only — values are JSON-escaped.
 fn writeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []const u8) !void {
     try out.append(allocator, '"');
     for (s) |c| {
@@ -136,7 +131,7 @@ const DeclareArgs = struct {
     parent: ?[]const u8 = null,
 };
 
-fn parseDeclareArgs(args: [][]const u8) !DeclareArgs {
+fn parseDeclareArgs(args: []const []const u8) !DeclareArgs {
     if (args.len < 1) return error.MissingPlan;
     var out = DeclareArgs{ .plan = args[0] };
     var i: usize = 1;
@@ -157,10 +152,14 @@ fn parseDeclareArgs(args: [][]const u8) !DeclareArgs {
     return out;
 }
 
-fn cmdDeclare(allocator: std.mem.Allocator, args: [][]const u8) !u8 {
+fn cmdDeclare(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    args: []const []const u8,
+) !u8 {
     const dargs = parseDeclareArgs(args) catch |e| {
-        try StderrPrinter.print(.{}, "contract-zig declare: argument error ({s})\n", .{@errorName(e)});
-        try printUsage(StderrPrinter{});
+        stderrPrint("contract-zig declare: argument error ({s})\n", .{@errorName(e)});
+        printUsageStderr();
         return 2;
     };
 
@@ -173,10 +172,12 @@ fn cmdDeclare(allocator: std.mem.Allocator, args: [][]const u8) !u8 {
     var ts_buf: [64]u8 = undefined;
     const ts = try nowIsoUtc(&ts_buf);
 
-    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const cwd = try std.process.getCwd(&cwd_buf);
+    // cwd via libc getcwd
+    var cwd_buf: [4096]u8 = undefined;
+    const cwd_ptr = std.c.getcwd(&cwd_buf, cwd_buf.len);
+    const cwd: []const u8 = if (cwd_ptr == null) "" else std.mem.span(@as([*:0]const u8, @ptrCast(cwd_ptr.?)));
 
-    const agent = try getAgent(allocator);
+    const agent = try getAgent(allocator, env);
     defer allocator.free(agent);
 
     const refs = try pointer.extractContractRefs(allocator, dargs.action);
@@ -185,8 +186,6 @@ fn cmdDeclare(allocator: std.mem.Allocator, args: [][]const u8) !u8 {
         allocator.free(refs);
     }
 
-    // Build the row manually to control key order & match Python's json.dumps
-    // (key insertion order from declare() in contract_core.py).
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
 
@@ -221,10 +220,9 @@ fn cmdDeclare(allocator: std.mem.Allocator, args: [][]const u8) !u8 {
     try writeJsonString(&buf, allocator, agent);
     try buf.append(allocator, '}');
 
-    const path = try ledger.appendRow(allocator, buf.items);
+    const path = try ledger.appendRow(allocator, env, buf.items);
     defer allocator.free(path);
 
-    // child_added event when parent is set, mirroring contract_core.declare().
     if (dargs.parent) |p| {
         var child_buf: std.ArrayList(u8) = .empty;
         defer child_buf.deinit(allocator);
@@ -239,28 +237,26 @@ fn cmdDeclare(allocator: std.mem.Allocator, args: [][]const u8) !u8 {
         try child_buf.appendSlice(allocator, ", \"agent\": ");
         try writeJsonString(&child_buf, allocator, agent);
         try child_buf.append(allocator, '}');
-        const p2 = try ledger.appendRow(allocator, child_buf.items);
+        const p2 = try ledger.appendRow(allocator, env, child_buf.items);
         allocator.free(p2);
     }
 
-    // Print just the id to stdout — matches contract_core.declare() return.
     var out_buf: [16]u8 = undefined;
     const out_line = try std.fmt.bufPrint(&out_buf, "{s}\n", .{cid});
-    try writeStdout(out_line);
+    stdoutWrite(out_line);
     return 0;
 }
 
-fn cmdSelf() !u8 {
+fn cmdSelf() u8 {
     const payload =
         "{\"binary\":\"contract-zig\", \"version\":\"" ++ VERSION ++ "\", " ++
         "\"verbs\":[\"declare\",\"self\"], \"stage2_pending\":\"" ++ STAGE2_GAP ++ "\"}\n";
-    try writeStdout(payload);
+    stdoutWrite(payload);
     return 0;
 }
 
-fn cmdStage2Pending(verb: []const u8) !u8 {
-    var buf: [512]u8 = undefined;
-    const msg = try std.fmt.bufPrint(&buf,
+fn cmdStage2Pending(verb: []const u8) u8 {
+    stderrPrint(
         \\=== STAGE 2 PENDING (gap {s}) ===
         \\verb '{s}' is declared on this binary but NOT YET IMPLEMENTED in
         \\Stage 1. The remote-delegation path (UNBROWSE_BASE → POST
@@ -269,37 +265,41 @@ fn cmdStage2Pending(verb: []const u8) !u8 {
         \\Refusing to fake-pass per Γ1 no-stubs.
         \\
     , .{ STAGE2_GAP, verb, STAGE2_GAP });
-    try writeStderr(msg);
     return 1;
 }
 
-pub fn main() !u8 {
+pub fn main(init: std.process.Init.Minimal) !u8 {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    // Materialize argv as a slice of []const u8 (drop nul-termination).
+    var arena: std.heap.ArenaAllocator = .init(allocator);
+    defer arena.deinit();
+    const arena_alloc = arena.allocator();
+    const argv_z = try init.args.toSlice(arena_alloc);
 
-    if (args.len < 2) {
-        try printUsage(StderrPrinter{});
+    if (argv_z.len < 2) {
+        printUsageStderr();
         return 2;
     }
 
-    const verb = args[1];
-    const rest = args[2..];
+    const verb: []const u8 = argv_z[1];
+    // Build a flat []const []const u8 for the dispatcher.
+    var rest = try arena_alloc.alloc([]const u8, argv_z.len - 2);
+    for (argv_z[2..], 0..) |a, i| rest[i] = a;
 
     if (std.mem.eql(u8, verb, "declare")) {
-        return try cmdDeclare(allocator, rest);
+        return try cmdDeclare(allocator, init.environ, rest);
     } else if (std.mem.eql(u8, verb, "self")) {
-        return try cmdSelf();
+        return cmdSelf();
     } else if (std.mem.eql(u8, verb, "iterate")) {
-        return try cmdStage2Pending("iterate");
+        return cmdStage2Pending("iterate");
     } else if (std.mem.eql(u8, verb, "_mark")) {
-        return try cmdStage2Pending("_mark");
+        return cmdStage2Pending("_mark");
     } else {
-        try StderrPrinter.print(.{}, "contract-zig: unknown verb '{s}'\n\n", .{verb});
-        try printUsage(StderrPrinter{});
+        stderrPrint("contract-zig: unknown verb '{s}'\n\n", .{verb});
+        printUsageStderr();
         return 2;
     }
 }
