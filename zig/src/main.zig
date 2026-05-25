@@ -309,7 +309,6 @@ fn latestActionResult(rows: []const Row, cid: []const u8) ?[]const u8 {
 /// The substrate is a graph of neurons; these six helpers give it the body
 /// senses that keep an LLM running through it self-aware. Each maps to a
 /// well-known biological mechanism, named in line.
-
 /// 1. INTEROCEPTION — proprioceptive self-state, computed on every declare
 ///    and exposed to child env via CONTRACT_INTEROCEPTION (JSON).
 fn bioInteroceptionJson(allocator: std.mem.Allocator, rows: []const Row) ![]u8 {
