@@ -195,37 +195,19 @@ async function handleDeclare(req: Request, env: Env, ip: string): Promise<Respon
   let resp = await fetch(upstream, { method: "POST", headers, body });
   if (resp.status !== 402) return resp;
 
-  const env_402 = await resp.json<any>();
-  const claim = await getClaim(env, ip);
-  if (!claim) {
-    return Response.json({
-      ...env_402,
-      hint: `no faucet claim for IP ${ip}; POST /v1/faucet/claim with {public_key}`,
-      doctrine: "Gather your omer first.",
-    }, { status: 402 });
-  }
+  const env_402 = (await resp.json()) as any;
+  // Per-IP rate limit is the gate; no separate claim required. Each IP
+  // within HOURLY_LIMIT gets auto-paid x402 envelopes from FAUCET_PRIVATE_KEY.
   const need = BigInt(env_402.accepts?.[0]?.amount || "1000");
-  const remaining = BigInt(claim.total_granted_base) - BigInt(claim.spent_base);
-  if (remaining < need) {
+  const payment_header = await signFaremeterEnvelope(env, env_402.accepts[0], need);
+  if (!payment_header) {
     return Response.json({
       ...env_402,
-      hint: "daily allowance exhausted; wait for TTL expiry (manna rots overnight).",
-    }, { status: 402 });
+      hint: "faucet could not sign envelope (FLEX_ESCROW_ADDRESS unset or SDK error)",
+    }, { status: 502 });
   }
-
-  // Build x402 payment header from source wallet. Faremeter-flex envelope.
-  // NOTE: this is a STUB — the actual envelope signing for @faremeter/flex
-  // needs the Faremeter SDK call shape; left as a clear marker so the
-  // operator can plug it in. The accounting (KV decrement) is wired.
-  const payment_header = await signFaremeterEnvelope(env, env_402.accepts[0], need);
-
   headers.set("x-payment", payment_header);
   resp = await fetch(upstream, { method: "POST", headers, body });
-
-  if (resp.status >= 200 && resp.status < 300) {
-    claim.spent_base = (BigInt(claim.spent_base) + need).toString();
-    await putClaim(env, ip, claim);
-  }
   return resp;
 }
 
