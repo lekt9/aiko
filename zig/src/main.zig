@@ -1390,6 +1390,38 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         evidencePrint("  result: FAIL (python exit {d})\n", .{out_capture.rc});
         return .{ .rc = out_capture.rc, .result = if (out_capture.output.len > 0) out_capture.output else "fail" };
     }
+    // depends_on:<runtime>:<pkg> — declarative sidecar. Resolves by
+    // running `nanobrew install <pkg>` (or runtime-specific equivalent)
+    // if the package isn't already on PATH. Idempotent — re-firing on a
+    // satisfied dependency is a no-op via the standard cache-validity
+    // check (input_hash invalidates on policy change).
+    if (std.mem.startsWith(u8, action, "depends_on:")) {
+        const rest = action["depends_on:".len..];
+        const sep = std.mem.indexOfScalar(u8, rest, ':') orelse return .{ .rc = 1, .result = "depends_on: missing pkg" };
+        const runtime = rest[0..sep];
+        const pkg = rest[sep + 1 ..];
+        // Probe first: if pkg is already on PATH, no-op.
+        const probe_buf = try std.fmt.allocPrint(allocator, "command -v {s} >/dev/null 2>&1", .{pkg});
+        defer allocator.free(probe_buf);
+        const probe_z = try allocator.dupeZ(u8, probe_buf);
+        defer allocator.free(probe_z);
+        if (system(probe_z.ptr) == 0) {
+            evidencePrint("  result: PASS — depends_on:{s}:{s} already present\n", .{ runtime, pkg });
+            return .{ .rc = 0, .result = "present" };
+        }
+        // Install via nanobrew. Other runtimes (pip, bun add) extend later.
+        const install_cmd = try std.fmt.allocPrint(allocator, "nanobrew install \"{s}\"", .{pkg});
+        defer allocator.free(install_cmd);
+        evidencePrint("  exec: depends_on {s}:{s} via nanobrew\n", .{ runtime, pkg });
+        const out_capture = try runShellCapture(allocator, install_cmd, r.cwd);
+        if (out_capture.rc == 0) {
+            evidence("  result: PASS (sidecar installed)\n");
+            return .{ .rc = 0, .result = if (out_capture.output.len > 0) out_capture.output else "installed" };
+        }
+        evidencePrint("  result: FAIL (sidecar install exit {d})\n", .{out_capture.rc});
+        return .{ .rc = out_capture.rc, .result = if (out_capture.output.len > 0) out_capture.output else "fail" };
+    }
+
     if (std.mem.startsWith(u8, action, "nanobrew:")) {
         const pkg = action["nanobrew:".len..];
         const cmd_text = try std.fmt.allocPrint(allocator, "nanobrew install \"{s}\"", .{pkg});
