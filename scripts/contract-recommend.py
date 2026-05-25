@@ -102,7 +102,8 @@ def _search(context: str, threshold: float) -> list[dict]:
     current: dict | None = None
     for raw in out.splitlines():
         line = raw.rstrip()
-        m = re.match(r"\s*\[\+\]\s+score=([\d.]+)(?:.*?via\s+\S+)?(?:.*?bm25=[\d.]+\s+embed=[\d.]+)?\s+id=([a-f0-9]+)\s+status=(\S+)", line)
+        # Match both [+] (above threshold) and [~] (at threshold) rows.
+        m = re.match(r"\s*\[[+~]\]\s+score=([\d.]+).*?id=([a-f0-9]+)\s+status=(\S+)", line)
         if m:
             if current: matches.append(current)
             current = {"score": float(m.group(1)), "id": m.group(2), "status": m.group(3),
