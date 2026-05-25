@@ -32,11 +32,12 @@ pub fn resolvePath(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8
 }
 
 fn isDirectory(allocator: std.mem.Allocator, path: []const u8) bool {
-    const path_z = allocator.dupeZ(u8, path) catch return false;
-    defer allocator.free(path_z);
-    var st: c.Stat = undefined;
-    if (c.stat(path_z.ptr, &st) != 0) return false;
-    return c.S.ISDIR(st.mode);
+    // std.c.stat isn't wired on macOS in Zig 0.16 — use std.fs.openDirAbsolute
+    // (path is absolute since it's built from getcwd + .claude).
+    _ = allocator;
+    var dir = std.fs.openDirAbsolute(path, .{}) catch return false;
+    dir.close();
+    return true;
 }
 
 fn makePath(allocator: std.mem.Allocator, path: []const u8) !void {
