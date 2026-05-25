@@ -499,9 +499,9 @@ fn walletPermissionReject(allocator: std.mem.Allocator, env: std.process.Environ
     defer allocator.free(path);
     const path_z = allocator.dupeZ(u8, path) catch return null;
     defer allocator.free(path_z);
-    var st: std.c.Stat = undefined;
-    if (std.c.stat(path_z.ptr, &st) != 0) return null; // missing is fine; loadOrInitRootKey will create
-    const mode = st.mode;
+    var st: c_stat = .{};
+    if (stat(path_z.ptr, &st) != 0) return null; // missing is fine; loadOrInitRootKey will create
+    const mode: u16 = st.st_mode;
     if ((mode & 0o077) != 0) {
         const msg = std.fmt.allocPrint(allocator, "wallet-strict: ~/.contracts/root.key mode 0{o} is group/world-readable; chmod 600", .{mode & 0o777}) catch return "wallet-strict: root.key permissions too open";
         return msg;
