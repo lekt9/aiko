@@ -345,9 +345,7 @@ pub fn listAll(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
     return try out.toOwnedSlice(allocator);
 }
 
-test "declare round-trips through get/listAll" {
-    const allocator = std.testing.allocator;
-    // Sanity: just check the schema-builder helpers compile + run.
+test "nowIsoUtc emits Z-terminated ISO-8601 timestamp" {
     var buf_ts: [64]u8 = undefined;
     const ts = try nowIsoUtc(&buf_ts);
     try std.testing.expect(ts.len >= 20);
