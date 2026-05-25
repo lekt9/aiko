@@ -3929,7 +3929,8 @@ print(c['plan'] if c else '(unknown)')
       fi
     fi
     MH_ID="$ID" MH_STATUS="$STATUS" MH_PROOF="$PROOF" MH_PROOF_SKIP="$PROOF_SKIP" \
-      MH_LG_BYPASS="$LAYER_GUARD_BYPASSED_JSON" MH_CHAIN="$(_caller_chain_get)" _py_inline "
+      MH_LG_BYPASS="$LAYER_GUARD_BYPASSED_JSON" MH_OG_BYPASS="$ORGAN_GUARD_BYPASSED_JSON" \
+      MH_CHAIN="$(_caller_chain_get)" _py_inline "
 import os, sys, json
 from contract_core import mark_satisfied, mark_status, get
 id=os.environ['MH_ID']; st=os.environ['MH_STATUS']
@@ -3942,6 +3943,13 @@ if lg_raw.strip():
         lg_bypass = json.loads(lg_raw)
     except Exception:
         lg_bypass = None
+og_raw = os.environ.get('MH_OG_BYPASS') or ''
+og_bypass = None
+if og_raw.strip():
+    try:
+        og_bypass = json.loads(og_raw)
+    except Exception:
+        og_bypass = None
 chain_raw = os.environ.get('MH_CHAIN','').strip()
 caller_chain = [x for x in chain_raw.split(',') if x] if chain_raw else []
 # Substrate principle: never silently fabricate a row for an unknown id.
@@ -3955,8 +3963,10 @@ if st=='satisfied':
     # Honest mark: write only the satisfied event. The agent's KEY-2 verdict
     # this explicit mark IS the verdict — proof / skip captured on the row.
     # Σ21 — caller_chain crystallized onto the row for attention context.
+    # Σ28 — organ_guard_bypassed crystallized onto the row when bypassed.
     mark_satisfied(id, 0, proof=proof, proof_skip_reason=skip,
-                   layer_guard_bypassed=lg_bypass, caller_chain=caller_chain)
+                   layer_guard_bypassed=lg_bypass, caller_chain=caller_chain,
+                   organ_guard_bypassed=og_bypass)
 else:
     mark_status(id, st)
 print(f'  {id} -> {st}')
