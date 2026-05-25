@@ -111,7 +111,51 @@ pub fn hasLayerClaims(plan: []const u8) bool {
     return false;
 }
 
-/// Run the full guard stack against a (plan, action, proof) triple.
+/// Fear-of-Lord (Prov 9:10) + Be-ye-perfect (Matt 5:48): refuse a `--proof`
+/// shorter than MIN_PROOF_CHARS that doesn't lead with a recognized pointer
+/// prefix. Trivial proofs ("ok", "done", "pass") indistinguishable from
+/// rubber-stamping; the substrate forces either a substantive narrative OR
+/// a pointer to evidence.
+///
+/// Empty proof is NOT this guard's concern — that path is governed by the
+/// existing PROOF REQUIRED refusal in mark_satisfied.
+pub const MIN_PROOF_CHARS: usize = 20;
+pub fn thinProof(value: []const u8) GuardError!void {
+    // Empty handled upstream by PROOF REQUIRED; not this guard's scope.
+    if (value.len == 0) return;
+    // Pointer-prefixed proofs accepted at any length — the pointer IS the evidence.
+    const prefixes = [_][]const u8{
+        "file:",     "contract:", "url:",   "http://", "https://",
+        "machine:",  "sha256:",   "agent:", "x402:",   "bridge:",
+        "pointer:",  "ssh://",    "git+",   "ipfs://",
+    };
+    for (prefixes) |p| {
+        if (std.mem.startsWith(u8, value, p)) return;
+    }
+    // Otherwise enforce minimum narrative length.
+    if (value.len < MIN_PROOF_CHARS) return GuardError.ProofTooThin;
+}
+
+/// Render-unto-Caesar (Matt 22:21) + Aiko-voice rule #3 (no substrate jargon
+/// in public): refuse when audience == "public" and the content contains L1
+/// substrate vocabulary that should never leak past the Σ2 boundary.
+///
+/// Caller passes audience as ?[]const u8; null means "not public, skip".
+pub fn audienceJargon(content: []const u8, audience: ?[]const u8) GuardError!void {
+    const tier = audience orelse return;
+    if (!std.mem.eql(u8, tier, "public")) return;
+    if (content.len == 0) return;
+    const jargon = [_][]const u8{
+        "cell-gate", "funnel-gate", "iterate ",  "_mark ",     "KEY 1", "KEY 2",
+        "KEY 3",     "quorum:",     "wavefront", "refractory", " supersede ", "agent-judges",
+        "funnel-first",
+    };
+    for (jargon) |kw| {
+        if (std.mem.indexOf(u8, content, kw) != null) return GuardError.AudienceJargonLeak;
+    }
+}
+
+/// Run the full guard stack against a (plan, action, proof, audience) tuple.
 /// `bypassed` is the set of GuardKind values explicitly bypassed by the
 /// caller via the `guards_bypassed` row field; each bypass is audited.
 pub fn runStack(
@@ -120,6 +164,7 @@ pub fn runStack(
     proof: ?[]const u8,
     has_remote_env: bool,
     bypassed: []const GuardKind,
+    audience: ?[]const u8,
 ) GuardError!void {
     const has = struct {
         fn check(needle: GuardKind, haystack: []const GuardKind) bool {
@@ -142,6 +187,15 @@ pub fn runStack(
     if (!has.check(.env_mismatch, bypassed)) {
         const ptype = pointer.inferPointerType(action);
         try envGuard(ptype, has_remote_env);
+    }
+    // Fear-of-Lord thin-proof refusal
+    if (!has.check(.thin_proof, bypassed)) {
+        if (proof) |p| try thinProof(p);
+    }
+    // Render-unto-Caesar audience-jargon refusal
+    if (!has.check(.audience_jargon, bypassed)) {
+        try audienceJargon(plan, audience);
+        if (proof) |p| try audienceJargon(p, audience);
     }
     // Σ20 layer-claims: surface only (caller decides on action). This guard
     // doesn't refuse on its own — it's an evidence emitter for the caller.
