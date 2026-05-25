@@ -163,6 +163,8 @@ const synapse_table = [_]struct {
     .{ .prefix = "posthook:", .kind = .posthook },
     .{ .prefix = "prehook:", .kind = .prehook },
     .{ .prefix = "modality:", .kind = .modality },
+    .{ .prefix = "at:", .kind = .at },
+    .{ .prefix = "repeat:", .kind = .repeat },
 };
 
 extern fn popen(cmd: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
