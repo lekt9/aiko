@@ -323,12 +323,51 @@ pub fn declareRemoteAiko(
             ikey_buf[i * 2 + 1] = hex_chars[b & 0x0F];
         }
     }
+    // Admin bypass — sign a short challenge with the root-admin identity's
+    // ed25519 key. Server checks the pubkey against its allowlist; if it
+    // matches, 402 is skipped. The pubkey is deterministic per AIKO_ROOT_KEY
+    // (Lewis's pubkey BQkw7At4hL528s3K713hLskRqeRhKtmQb2QDYf254PwC on
+    // mainnet for identity="root-admin"). No env toggle — every caller who
+    // possesses the root.key automatically signs as admin; allowlist is
+    // server-side.
+    var admin_pubkey_b58: [64]u8 = undefined;
+    var admin_pubkey_len: usize = 0;
+    var admin_sig_hex: [lineage.SIG_HEX_LEN]u8 = undefined;
+    var admin_ts_buf: [24]u8 = undefined;
+    var admin_ts_len: usize = 0;
+    var admin_ok = false;
+    if (lineage.loadOrInitRootKey(allocator, env)) |root| {
+        if (lineage.deriveKeyPair(root, "root-admin")) |kp| {
+            // Pubkey as base58.
+            admin_pubkey_len = lineage.bytesToBase58(&kp.public_key.bytes, &admin_pubkey_b58);
+            // Timestamp.
+            const ts_now: i64 = @intCast(std.time.timestamp());
+            const ts_slice = std.fmt.bufPrint(&admin_ts_buf, "{d}", .{ts_now}) catch &[_]u8{};
+            admin_ts_len = ts_slice.len;
+            // Sign sha256("aiko-admin-bypass\0" + ts).
+            var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+            hasher.update("aiko-admin-bypass\x00");
+            hasher.update(ts_slice);
+            var digest: [32]u8 = undefined;
+            hasher.final(&digest);
+            if (lineage.signDigest(kp, digest, &admin_sig_hex)) {
+                admin_ok = true;
+            } else |_| {}
+        } else |_| {}
+    } else |_| {}
+    const admin_pubkey_opt: ?[]const u8 = if (admin_ok) admin_pubkey_b58[0..admin_pubkey_len] else null;
+    const admin_ts_opt: ?[]const u8 = if (admin_ok) admin_ts_buf[0..admin_ts_len] else null;
+    const admin_sig_opt: ?[]const u8 = if (admin_ok) &admin_sig_hex else null;
+
     const resp = http.postJsonWithHeaders(allocator, url_buf.items, body.items, .{
         .payment = paymentHeader(env),
         .client = "aiko",
         .payment_provider = "corbits",
         .payment_scheme = "@faremeter/flex",
         .idempotency_key = &ikey_buf,
+        .admin_pubkey = admin_pubkey_opt,
+        .admin_ts = admin_ts_opt,
+        .admin_signature = admin_sig_opt,
     }) catch |e| {
         std.debug.print("aiko remote: transport error: {s}\n", .{@errorName(e)});
         return ClientError.RequestFailed;
