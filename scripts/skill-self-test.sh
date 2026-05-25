@@ -190,6 +190,14 @@ check "self/proof-binding"         bash "$SCRIPTS/check-proof-binding.sh"
     rm -rf \"\$tmpd\"
   "
 
+# Π10 — bridge: pointer-type parser + iterate-time refusal block (gap 2543bdd0).
+# Until Σ17 RBAC (gap 2b98f80f) + Π8 unbrowse-broker (gap 036073d8) ship, every
+# bridge: iterate is REFUSED honestly. The invariant proves parser fields land
+# on the declared row and the refusal block names BOTH missing-dep gap ids.
+[ -x "$SCRIPTS/check-bridge-parser-and-refused.sh" ] && \
+  check "pointer-types/bridge-parser-and-refused" \
+                                     bash "$SCRIPTS/check-bridge-parser-and-refused.sh"
+
 # ── Corpus audits (rule-bound checks across all affected artifacts) ──────────
 # Every audits/<rule>/verify.sh is a corpus-wide check for one rule. The
 # runner walks them all. A failure here means the rule's audits/*/fix.sh
