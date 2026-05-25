@@ -1330,6 +1330,26 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
         errPrint("declare refused: {s}\n", .{cause});
         return 2;
     }
+    // Biology kit — interoception + homeostasis + neuromodulation preflight.
+    {
+        const rows_pre = try parseRows(allocator, env);
+        defer allocator.free(rows_pre);
+        if (bioHomeostatReject(allocator, env, rows_pre)) |cause| {
+            errPrint("declare refused: {s}\n", .{cause});
+            return 2;
+        }
+        if (bioInteroceptionJson(allocator, rows_pre)) |intero| {
+            defer allocator.free(intero);
+            const intero_z = try allocator.dupeZ(u8, intero);
+            defer allocator.free(intero_z);
+            _ = setenv("CONTRACT_INTEROCEPTION", intero_z.ptr, 1);
+            evidencePrint("interoception: {s}\n", .{intero});
+        } else |_| {}
+        if (bioModulatorEvidence(allocator, env)) |mod| {
+            defer allocator.free(mod);
+            evidencePrint("modulator: {s}\n", .{mod});
+        } else |_| {}
+    }
     if (!client.isRemoteMode(env)) {
         if (hookId(env, "CONTRACT_PREHOOK_ID", "CONTRACT_PREHOOK")) |prehook| {
             const pre_rc = try resolveOne(allocator, env, prehook);
