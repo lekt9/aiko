@@ -1403,6 +1403,65 @@ def quorum_satisfied(id: str, k: int) -> bool:
     return n_sat >= k
 
 
+def check_organ_mark_eligibility(id: str) -> tuple[str, str | None, str | None]:
+    """Σ28 organ-shape mark-time eligibility (Body of Christ + Sower-good-soil +
+    Talents). Returns (verdict, refusal_kind, refusal_detail).
+
+    Refuses _mark satisfied of a composition-shape row when the children-graph
+    contradicts the shape's claim:
+
+    - `empty_organ`: funnel / funnel-first / sequence / quorum:K with zero
+      declared children. The shape claims composition; zero parts is a
+      tautology, not an organism.
+    - `no_satisfied_branch`: funnel-first with children but none satisfied.
+      OR-gate cannot fire when no branch fired.
+    - `stage_skip`: sequence with one or more prior-ordered children
+      unsatisfied. The sequence's claim is ordered completion; skipping
+      defeats the shape.
+
+    Returns ('ok', None, None) when the row is not an organ shape, when the
+    organ-shape conditions hold, or when the row id is unknown (caller
+    handles unknown-id separately).
+
+    Substrate enables; the agent chooses bypass via --no-organ-guard which
+    writes organ_guard_bypassed=[refusal_kind] onto the satisfied row.
+    """
+    c = get(id)
+    if not c:
+        return ("ok", None, None)
+    action = c.get("action", "") or ""
+    children = c.get("children", []) or []
+
+    is_and_funnel = action in ("funnel", "children-satisfy")
+    is_or_funnel = action == "funnel-first"
+    is_sequence = action == "sequence"
+    is_quorum = action.startswith("quorum:")
+
+    if not (is_and_funnel or is_or_funnel or is_sequence or is_quorum):
+        return ("ok", None, None)
+
+    if not children:
+        return ("refused", "empty_organ",
+                f"{action} row has zero declared children — the shape claims composition")
+
+    if is_or_funnel:
+        any_sat = any((get(cid) or {}).get("status") == "satisfied"
+                      for cid in children)
+        if not any_sat:
+            return ("refused", "no_satisfied_branch",
+                    "funnel-first row has no satisfied child — OR-gate cannot fire")
+
+    if is_sequence:
+        for cid in children:
+            child = get(cid) or {}
+            st = child.get("status")
+            if st not in ("satisfied", "merged"):
+                return ("refused", "stage_skip",
+                        f"sequence stage {cid} status={st} — prior stage unsatisfied")
+
+    return ("ok", None, None)
+
+
 def invocation_root(id: str) -> str | None:
     """Walk parent_id chain to the topmost ancestor — the original /contract
     invocation root. Returns None if id is unknown; returns id itself when
