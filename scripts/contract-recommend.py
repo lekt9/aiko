@@ -93,7 +93,8 @@ def _search(context: str, threshold: float) -> list[dict]:
     try:
         proc = subprocess.run(
             [str(CONTRACT_CLI), "search", "--context", context, "--scope", "global"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=60,
+            env={**os.environ, "CONTRACT_NO_EMBED": "1"},
         )
     except Exception as e:
         return [{"_error": str(e)}]
