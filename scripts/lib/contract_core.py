@@ -182,6 +182,8 @@ def _infer_pointer_type(action: str) -> str:
         return "tool-guard"
     if action.startswith("x402:"):
         return "x402"
+    if action.startswith("bridge:"):
+        return "bridge"
     if action.startswith("agent:"):
         return "agent"
     if action.startswith("machine:"):
