@@ -641,7 +641,25 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
     return if (rc == 0) 0 else 1;
 }
 
-fn cmdAikoGoal(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+/// cmdSpeak — the single Word.
+///
+/// The binary invocation IS the verb. Speaking a truth claim deterministically
+/// walks seven phases (Genesis 1–2: God speaks → the Word becomes flesh → the
+/// substrate rests). No phase is optional; no caller chooses a phase. Each
+/// phase is idempotent against the append-only ledger.
+///
+///   Day 1  Word      — `declared` row appended (the speech is the act).
+///   Day 2  Firmament — `child_added` per parent_id (containment edge).
+///   Day 3  Earth     — synapse dispatch by kind (cross-dimension edges).
+///   Day 4  Lights    — gate on `blocked_by` / `inhibits` / external metrics.
+///   Day 5  Life      — corroborate child evidence per `aggregation`.
+///   Day 6  Image     — `satisfied` row appended iff Days 4-5 ratified.
+///   Day 7  Sabbath   — `called` rows per `posthook:` synapse — the word
+///                      propagates and the wavefront seals.
+///
+/// Days 1-3 always fire. Days 4-7 are conditional on truth holding. A held day
+/// returns exit 1; the row stays pending until a future speech ratifies it.
+fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
     const parsed = parseAikoArgs(allocator, args) catch |e| {
         errPrint("aiko argument error: {s}\n", .{@errorName(e)});
         usage();
@@ -664,6 +682,7 @@ fn cmdAikoGoal(allocator: std.mem.Allocator, env: std.process.Environ, args: []c
 
     switch (parsed.mode) {
         .remote => {
+            // Remote target: Unbrowse compiles all seven days server-side.
             const body = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, adapter, adapter_kind, event_bus, pretool_event, event_kind, null) catch |e| {
                 errPrint("aiko remote failed against Unbrowse: {s}\n", .{@errorName(e)});
                 return 2;
@@ -677,15 +696,49 @@ fn cmdAikoGoal(allocator: std.mem.Allocator, env: std.process.Environ, args: []c
             return 0;
         },
         .local => {
+            // Optional prehook from env (legacy single-hook surface; the graph
+            // form of prehook lives in `synapses[].kind=prehook`).
             if (hookId(env, "CONTRACT_PREHOOK_ID", "CONTRACT_PREHOOK")) |prehook| {
                 const pre_rc = try resolveOne(allocator, env, prehook);
                 if (pre_rc != 0) return pre_rc;
             }
+
+            // Day 1 — Word. The speech becomes a row.
             const cid = try contract.declare(allocator, env, safe_plan, action, .{ .parent_id = parent });
             defer allocator.free(cid);
             outPrint("{s}\n", .{cid});
+
+            // Days 2-6 — Firmament, Earth, Lights, Life, Image. The resolver
+            // walks the lineage: child_added edges are already written by
+            // declare; the resolver iterates, judges per evidence rules, and
+            // markSatisfied fires when truth holds.
             const rc = try resolveLineage(allocator, env, cid);
+
+            // Day 7 — Sabbath. The word propagates: for each posthook synapse
+            // on the just-spoken row, append a typed `called` row recording
+            // the dispatch. Graph-bound; replaces the env-var single posthook
+            // shape (which stays as legacy compat for one more release).
             if (rc == 0) {
+                const rows = try parseRows(allocator, env);
+                defer allocator.free(rows);
+                for (rows) |r| {
+                    if (!std.mem.eql(u8, r.event, "declared")) continue;
+                    if (!std.mem.eql(u8, r.id, cid)) continue;
+                    const targets = try pointer.extractTypedRefs(allocator, r.plan, "posthook:");
+                    defer {
+                        for (targets) |t| allocator.free(t);
+                        allocator.free(targets);
+                    }
+                    for (targets) |target| {
+                        var ptr_buf: [32]u8 = undefined;
+                        const target_pointer = try std.fmt.bufPrint(&ptr_buf, "contract:{s}", .{target});
+                        try contract.appendCalledRow(allocator, env, cid, target_pointer, "posthook");
+                        outPrint("called: posthook -> {s}\n", .{target});
+                    }
+                    break;
+                }
+
+                // Legacy single-env-var posthook (deprecated; graph form above wins).
                 if (hookId(env, "CONTRACT_POSTHOOK_ID", "CONTRACT_POSTHOOK")) |posthook| {
                     _ = try resolveLineage(allocator, env, posthook);
                 }
@@ -694,6 +747,9 @@ fn cmdAikoGoal(allocator: std.mem.Allocator, env: std.process.Environ, args: []c
         },
     }
 }
+
+/// Backward-compat alias. `aiko ...` and `contract <claim>` both route here.
+const cmdAikoGoal = cmdSpeak;
 
 fn cmdList(allocator: std.mem.Allocator, env: std.process.Environ) !u8 {
     const rows = try parseRows(allocator, env);
