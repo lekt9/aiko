@@ -2125,6 +2125,14 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         return 2;
     };
     defer allocator.free(parsed.plan);
+    // Extract file-refs digest from the RAW (pre-scrub) plan — paths get
+    // redacted to `[local-path-pattern]` by `redactAikoPlan` so they're not
+    // visible to declare(); the digest captures their byte-state and folds
+    // into inputs_hash_v2 as the Docker-style "content layer". Paths
+    // themselves never leave this function; only the 64-char hex digest
+    // crosses into the row.
+    const file_refs_digest_opt: ?[]u8 = extractFileRefsAndHash(allocator, parsed.plan) catch null;
+    defer if (file_refs_digest_opt) |d| allocator.free(d);
     const safe_plan = redactAikoPlan(allocator, parsed.plan) catch |e| {
         errPrint("aiko privacy guard failed: {s}\n", .{@errorName(e)});
         return 2;
