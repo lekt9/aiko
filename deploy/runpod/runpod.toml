@@ -1,0 +1,37 @@
+# RunPod serverless template — aiko default remote execution layer.
+# Usage:  runpodctl create endpoint --from runpod.toml
+#
+# Pairs with deploy/runpod/Dockerfile. The image is built + pushed to
+# whatever container registry you point RUNPOD_IMAGE at (Docker Hub, GHCR,
+# ECR). The runtime env is populated from RunPod's secret store, which
+# the user mirrors from Cloudflare Secrets via `wrangler secret bulk`.
+
+[endpoint]
+name = "aiko"
+image = "${RUNPOD_IMAGE}"                  # ex: ghcr.io/<you>/aiko:latest
+container_disk_gb = 2
+flashboot = true                            # cold-start optimized
+scaler_type = "QUEUE_DELAY"
+scaler_value = 4                            # workers when queue depth > 4
+min_workers = 0                             # truly serverless: scale-to-zero
+max_workers = 10
+idle_timeout_seconds = 5
+
+[gpu]
+# CPU-only by default — aiko substrate doesn't need GPU; the cloud aiko
+# compiler routes model invocations to whatever child neuron names a GPU.
+# Override here when this aiko is deployed as a model-running adapter.
+required = false
+
+[env]
+UNBROWSE_BASE = "https://beta-api.unbrowse.ai"
+CONTRACT_BACKFILL_BUDGET = "64"
+CONTRACT_RESOLVE_PASSES = "8"
+CONTRACT_WALLET_STRICT = "1"
+CONTRACT_REQUIRE_SIGNED = "0"               # flip on once binary signed by your wallet
+
+[secrets]
+# Pull from RunPod secret store (mirrored from CF Secrets).
+AIKO_ROOT_KEY = { ref = "AIKO_ROOT_KEY" }
+CONTRACT_INSTANCE_ID = { ref = "CONTRACT_INSTANCE_ID" }
+AIKO_X_PAYMENT = { ref = "AIKO_X_PAYMENT" }
