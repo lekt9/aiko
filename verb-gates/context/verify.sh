@@ -74,6 +74,48 @@ N3=$(echo "$ENV3" | python3 -c 'import json,sys; d=json.loads(sys.stdin.read());
 [ "$N3" -le 2 ] || { echo "FAIL(5): --max-iterations 2 did not cap; got $N3"; exit 1; }
 echo "PASS(5): --max-iterations N respected"
 
+# Phase 6 (R8 gap 91d78419): channel-scoped ledger walking.
+# `contract context <channel-id> [--limit N]` resolves
+# ~/.contracts/channels/<channel-id>/contracts.jsonl, returns last N rows
+# in chronological order as JSON. Empty / missing channel returns
+# count == 0 without error (genuine empty case per Γ1, not a stub).
+CHAN="test-r8-channel-$$"
+CHANDIR="$HOME/.contracts/channels/$CHAN"
+cleanup_chan() { rm -rf "$CHANDIR"; }
+trap 'rm -rf "$TMPDIR_"; cleanup_chan' EXIT
+
+# Missing channel → empty-events shape, count == 0, no error
+MISSING=$("$CLI" context "$CHAN" --limit 5 2>&1) || { echo "FAIL(6a): missing channel should not error"; echo "$MISSING"; exit 1; }
+echo "$MISSING" | python3 -c '
+import json, sys, os
+d = json.loads(sys.stdin.read())
+assert d["channel"] == "'"$CHAN"'", f"channel mismatch: {d}"
+assert d["count"] == 0, f"expected count=0 for missing channel, got {d[\"count\"]}"
+assert d["events"] == [], f"expected empty events for missing channel, got {d[\"events\"]}"
+' || { echo "FAIL(6a): missing-channel envelope wrong shape"; echo "$MISSING"; exit 1; }
+echo "PASS(6a): missing channel returns count=0 empty-events shape"
+
+# Seed 3 fake rows then assert --limit 2 returns the LAST 2 in chronological order
+mkdir -p "$CHANDIR"
+LEDGER="$CHANDIR/contracts.jsonl"
+printf '%s\n' '{"event":"inbound","seq":1,"ts":"2026-05-25T00:00:01Z","msg":"first"}' >> "$LEDGER"
+printf '%s\n' '{"event":"poll_delta","seq":2,"ts":"2026-05-25T00:00:02Z","msg":"second"}' >> "$LEDGER"
+printf '%s\n' '{"event":"claim","seq":3,"ts":"2026-05-25T00:00:03Z","msg":"third"}' >> "$LEDGER"
+OUT=$("$CLI" context "$CHAN" --limit 2 2>&1) || { echo "FAIL(6b): channel verb failed"; echo "$OUT"; exit 1; }
+echo "$OUT" | python3 -c '
+import json, sys
+d = json.loads(sys.stdin.read())
+assert d["channel"] == "'"$CHAN"'", f"channel mismatch: {d}"
+assert d["count"] == 2, f"expected count=2, got {d[\"count\"]}"
+assert isinstance(d["events"], list) and len(d["events"]) == 2, f"events not 2-element list: {d}"
+# Chronological order: last 2 are seq 2 then seq 3
+assert d["events"][0]["seq"] == 2, f"events[0].seq expected 2, got {d[\"events\"][0]}"
+assert d["events"][1]["seq"] == 3, f"events[1].seq expected 3, got {d[\"events\"][1]}"
+' || { echo "FAIL(6b): channel envelope wrong shape/order"; echo "$OUT"; exit 1; }
+echo "PASS(6b): channel returns last N rows in chronological order"
+
+cleanup_chan
+
 echo
 echo "verb-gates/context: PASS"
 exit 0
