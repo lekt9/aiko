@@ -422,6 +422,40 @@ pub fn declare(
 }
 
 /// Append an `iterated` event row.
+/// Append a `materialized` ledger event when a contract spawns its own
+/// signed binary at a declared target. Captures the deployment lineage:
+/// {cid, target_path, sha256, wallet_pubkey} so the chain is auditable.
+pub fn appendMaterializedRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+    target_path: []const u8,
+    sha256_hex: []const u8,
+    wallet_pubkey_hex: []const u8,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    const agent = try getAgent(allocator, env);
+    defer allocator.free(agent);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "{\"event\": \"materialized\", \"id\": ");
+    try writeJsonString(&buf, allocator, id);
+    try buf.appendSlice(allocator, ", \"target_path\": ");
+    try writeJsonString(&buf, allocator, target_path);
+    try buf.appendSlice(allocator, ", \"binary_sha256\": ");
+    try writeJsonString(&buf, allocator, sha256_hex);
+    try buf.appendSlice(allocator, ", \"wallet_pubkey\": ");
+    try writeJsonString(&buf, allocator, wallet_pubkey_hex);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
 pub fn recordIteration(
     allocator: std.mem.Allocator,
     env: std.process.Environ,
