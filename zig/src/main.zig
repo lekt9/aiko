@@ -69,11 +69,19 @@ fn usage() void {
     errPrint("{s} {s}\n\nUsage:\n", .{ BINARY_NAME, VERSION });
     if (AIKO_DECLARE_ONLY) {
         errPrint(
-            \\  {s} "<goal>" --remote
-            \\  {s} "<goal>" --local
-            \\  {s} declare "<goal>" --remote   (compat)
+            \\  {s} "<truth claim>"
             \\
-        , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME });
+            \\Dimension resolves from the environment. Set UNBROWSE_BASE /
+            \\AIKO_X_PAYMENT / X_PAYMENT to route to Unbrowse; else the local
+            \\ledger receives the Word and walks 9 days (Genesis-shaped).
+            \\
+            \\Overrides (rarely needed):
+            \\  {s} "<truth>" --remote     route to Unbrowse explicitly
+            \\  {s} "<truth>" --local      one-shot local lifecycle (no day walk)
+            \\  {s} "<truth>" --genesis    force 9-day Fib walk on local ledger
+            \\  {s} declare "<truth>"      compat alias
+            \\
+        , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
         return;
     }
     errPrint(
