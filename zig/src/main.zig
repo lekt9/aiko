@@ -991,6 +991,9 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
                 return 2;
             };
             outPrint("{s}\n", .{id});
+            backfillUnresolved(allocator, env, id) catch |e| {
+                errPrint("backfill skipped: {s}\n", .{@errorName(e)});
+            };
             return 0;
         },
         .local => {
