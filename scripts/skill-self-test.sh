@@ -171,11 +171,11 @@ check "self/proof-binding"         bash "$SCRIPTS/check-proof-binding.sh"
     tmpd=\$(mktemp -d)
     export CONTRACTS_STORE=\"\$tmpd/contracts.jsonl\"
     # case 1: plan with telegram keyword → hints emitted on stderr
-    err1=\$(bash '$CLI' declare 'chat with Lewis on Telegram daily' --action agent-judges 2>&1 >/dev/null) || { echo 'declare(telegram) failed'; rm -rf \"\$tmpd\"; exit 1; }
+    err1=\$(bash '$CLI' declare 'chat with Lewis on Telegram daily' --action agent-judges 3>&1 1>/dev/null 2>&3) || { echo 'declare(telegram) failed'; rm -rf \"\$tmpd\"; exit 1; }
     printf '%s' \"\$err1\" | grep -q '=== ENTRYPOINT HINTS ===' || { echo 'missing ENTRYPOINT HINTS block on telegram plan'; printf '%s\n' \"\$err1\" | head -20; rm -rf \"\$tmpd\"; exit 1; }
     printf '%s' \"\$err1\" | grep -q -- '--resource telegram' || { echo 'missing --resource telegram hint'; printf '%s\n' \"\$err1\" | head -20; rm -rf \"\$tmpd\"; exit 1; }
     # case 2: plan with no resource keyword → no ENTRYPOINT HINTS block
-    err2=\$(bash '$CLI' declare 'update the readme' --action agent-judges 2>&1 >/dev/null) || { echo 'declare(noop) failed'; rm -rf \"\$tmpd\"; exit 1; }
+    err2=\$(bash '$CLI' declare 'update the readme' --action agent-judges 3>&1 1>/dev/null 2>&3) || { echo 'declare(noop) failed'; rm -rf \"\$tmpd\"; exit 1; }
     if printf '%s' \"\$err2\" | grep -q '=== ENTRYPOINT HINTS ==='; then
       echo 'noop plan emitted ENTRYPOINT HINTS (should be silent)'
       printf '%s\n' \"\$err2\" | head -20
