@@ -2230,7 +2230,15 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             }
 
             // Day 1 — Word. The speech becomes a row.
-            const cid = try contract.declare(allocator, env, safe_plan, action, .{ .parent_id = parent });
+            // v2 cache key folds in cwd (libcontract picks it up via libc
+            // getcwd) + file_refs_digest (computed above from raw plan) +
+            // parent.inputs_hash (libcontract scans the ledger). Docker-
+            // layer behavior: same plan + same cwd + same referenced files
+            // + same parent → cached id; any layer changes → fresh id.
+            const cid = try contract.declare(allocator, env, safe_plan, action, .{
+                .parent_id = parent,
+                .inputs_file_refs_digest = file_refs_digest_opt,
+            });
             defer allocator.free(cid);
             outPrint("{s}\n", .{cid});
             // Materialize binary if CONTRACT_BINARY_TARGET is declared.
