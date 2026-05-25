@@ -19,6 +19,7 @@
 
 const std = @import("std");
 const http = @import("http.zig");
+const env_fingerprint = @import("env_fingerprint.zig");
 
 /// Canonical Unbrowse LLM-compiler endpoint. Hardcoded — never overridable.
 /// The substrate's natural-language → contract-tree compilation flows solely
