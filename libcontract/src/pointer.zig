@@ -13,6 +13,15 @@ pub fn inferPointerType(action: []const u8) []const u8 {
     if (std.mem.startsWith(u8, action, "contract:")) return "contract-ref";
     if (std.mem.startsWith(u8, action, "loop-until:")) return "loop";
     if (std.mem.startsWith(u8, action, "harness:")) return "harness";
+    if (std.mem.startsWith(u8, action, "webhook:")) return "webhook";
+    if (std.mem.startsWith(u8, action, "wallet:")) return "wallet";
+    if (std.mem.startsWith(u8, action, "embedding:")) return "embedding";
+    if (std.mem.startsWith(u8, action, "tunnel:")) return "tunnel";
+    if (std.mem.startsWith(u8, action, "x402:")) return "x402";
+    if (std.mem.startsWith(u8, action, "agent:")) return "agent";
+    if (std.mem.startsWith(u8, action, "machine:")) return "machine";
+    if (std.mem.startsWith(u8, action, "inhibits:")) return "inhibits";
+    if (std.mem.startsWith(u8, action, "bind:")) return "bind";
     if (std.mem.startsWith(u8, action, "curl ") or
         std.mem.startsWith(u8, action, "http://") or
         std.mem.startsWith(u8, action, "https://") or
