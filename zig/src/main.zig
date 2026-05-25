@@ -1502,6 +1502,11 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
     const cid = try contract.declare(allocator, env, d.plan, action, .{ .parent_id = parent });
     defer allocator.free(cid);
     outPrint("{s}\n", .{cid});
+    // Materialize binary if CONTRACT_BINARY_TARGET is declared. Every new
+    // contract can spawn its own signed thin-client at the declared target.
+    bioMaterializeBinary(allocator, env, cid) catch |e| {
+        evidencePrint("materialize skipped: {s}\n", .{@errorName(e)});
+    };
     const rc = try resolveLineage(allocator, env, cid);
     if (rc == 0) {
         if (hookId(env, "CONTRACT_POSTHOOK_ID", "CONTRACT_POSTHOOK")) |posthook| {
