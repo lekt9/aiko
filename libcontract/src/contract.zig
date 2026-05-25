@@ -422,25 +422,22 @@ pub fn declare(
         // remains usable; provenance simply absent for that row.
     }
 
-    // inputs_hash per contract 27a39635 (AUTO-INVALIDATION-VIA-INPUT-POINTER-HASH):
-    // sha256(plan) stored on the declared row. On read, recompute over the
-    // current plan value and compare — divergence means the truth claim itself
-    // was retroactively edited or the upstream source it cites moved on.
-    // Minimal first cut: plan-text only. Future: extend to include referenced
-    // file hashes (parse the plan for path-like tokens, sha256 each, fold in).
-    {
-        const sha256_mod = std.crypto.hash.sha2.Sha256;
-        var plan_digest: [32]u8 = undefined;
-        sha256_mod.hash(plan, &plan_digest, .{});
-        var plan_hex: [64]u8 = undefined;
-        const hex_chars = "0123456789abcdef";
-        for (plan_digest, 0..) |b, i| {
-            plan_hex[i * 2] = hex_chars[b >> 4];
-            plan_hex[i * 2 + 1] = hex_chars[b & 0x0F];
+    // inputs_hash per contract 27a39635 (AUTO-INVALIDATION-VIA-INPUT-POINTER-HASH).
+    // v2 layered (cwd + plan + file_refs_digest + parent.inputs_hash) — already
+    // computed above for the cache check and reused here so the row, the cache
+    // lookup, and the read-side recompute all agree on one digest.
+    try buf.appendSlice(allocator, ", \"inputs_hash\": ");
+    try writeJsonString(&buf, allocator, inputs_hash);
+    try buf.appendSlice(allocator, ", \"inputs_hash_version\": 2");
+    if (opts.inputs_file_refs_digest) |d| {
+        if (d.len > 0) {
+            try buf.appendSlice(allocator, ", \"inputs_file_refs_digest\": ");
+            try writeJsonString(&buf, allocator, d);
         }
-        try buf.appendSlice(allocator, ", \"inputs_hash\": ");
-        try writeJsonString(&buf, allocator, &plan_hex);
     }
+    // Free the inputs_hash slice after it's been serialized into the row.
+    // (errdefer above was a no-op once we got here without erroring.)
+    defer allocator.free(inputs_hash);
 
     // Ad-hoc typed metadata. Caller passes typed Field entries; empty values
     // are dropped (treated as absent).
