@@ -2435,7 +2435,11 @@ fn cmdOpenAi(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
     const wants_stream = std.mem.indexOf(u8, body, "\"stream\":true") != null or
         std.mem.indexOf(u8, body, "\"stream\": true") != null;
 
-    const user_content = extractLastUserContent(body) orelse "";
+    // Multi-message: prefer full conversation history; fall back to
+    // single-user-line extraction if no role/content pairs land.
+    const full_msgs_opt = try extractAllMessages(allocator, body);
+    const user_content: []const u8 = if (full_msgs_opt) |m| m else (extractLastUserContent(body) orelse "");
+    defer if (full_msgs_opt) |m| allocator.free(m);
     if (user_content.len == 0) {
         try writeOpenAiError("no user message in request");
         return 0;
