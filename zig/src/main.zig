@@ -265,6 +265,30 @@ extern fn feof(stream: *anyopaque) c_int;
 extern fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 extern fn unsetenv(name: [*:0]const u8) c_int;
 extern fn getentropy(buf: [*]u8, len: usize) c_int;
+// macOS stat: we only need st_mode (u16 on Darwin) — declare a minimal stat
+// struct in C ABI. Use _DARWIN_FEATURE_64_BIT_INODE via stat$INODE64 on
+// older Darwin; the default symbol on arm64 macOS 11+ is already 64-bit.
+const c_stat = extern struct {
+    st_dev: i32 = 0,
+    st_mode: u16 = 0,
+    st_nlink: u16 = 0,
+    st_ino: u64 = 0,
+    st_uid: u32 = 0,
+    st_gid: u32 = 0,
+    st_rdev: i32 = 0,
+    st_atimespec: extern struct { tv_sec: i64 = 0, tv_nsec: i64 = 0 } = .{},
+    st_mtimespec: extern struct { tv_sec: i64 = 0, tv_nsec: i64 = 0 } = .{},
+    st_ctimespec: extern struct { tv_sec: i64 = 0, tv_nsec: i64 = 0 } = .{},
+    st_birthtimespec: extern struct { tv_sec: i64 = 0, tv_nsec: i64 = 0 } = .{},
+    st_size: i64 = 0,
+    st_blocks: i64 = 0,
+    st_blksize: i32 = 0,
+    st_flags: u32 = 0,
+    st_gen: u32 = 0,
+    st_lspare: i32 = 0,
+    st_qspare: [2]i64 = .{ 0, 0 },
+};
+extern fn stat(path: [*:0]const u8, st: *c_stat) c_int;
 
 /// Look up the latest non-empty action_result for `cid` in the in-memory rows.
 /// Used to propagate context up the tree as a posthook payload env var.
