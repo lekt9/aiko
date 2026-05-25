@@ -47,6 +47,8 @@ pub fn build(b: *std.Build) void {
         "src/pointer.zig",
         "src/guards.zig",
         "src/fractal.zig",
+        "src/http.zig",
+        "src/client.zig",
     };
     for (test_files) |tf| {
         const t = b.addTest(.{
