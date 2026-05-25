@@ -2183,7 +2183,35 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
     const rr = try runAction(allocator, env, rows, r);
     const hash_str: []const u8 = if (current_hash) |*ch| ch[0..] else "";
     try contract.recordIterationWithHash(allocator, env, id, wave, rr.rc, rr.result, hash_str);
-    if (rr.rc != 0) return 1;
+    if (rr.rc != 0) {
+        // SELF-HEALING SCAR TISSUE — classify the roadblock, emit a guard
+        // row (idempotent per id), and declare a follow-up contract whose
+        // plan is the remediation hint. The follow-up contract becomes
+        // the prehook for any future contract matching the same class.
+        const cls = bioClassifyRoadblock(rr.result, r.action);
+        if (!hasGuardRow(rows, id)) {
+            const remed = remediationFor(cls.class);
+            contract.appendGuardRow(allocator, env, id, cls.class, cls.layer, remed) catch {};
+            evidencePrint("  guard: class={s} layer={s} -> {s}\n", .{ cls.class, cls.layer, remed });
+            // Declare the follow-up resolver contract pointing at this id
+            // as parent. Its plan is the remediation hint; resolving it
+            // promotes a primitive future contracts of the same class can
+            // install as prehook.
+            var followup_buf: std.ArrayList(u8) = .empty;
+            defer followup_buf.deinit(allocator);
+            followup_buf.appendSlice(allocator, "guard:") catch {};
+            followup_buf.appendSlice(allocator, cls.class) catch {};
+            followup_buf.appendSlice(allocator, ":") catch {};
+            followup_buf.appendSlice(allocator, cls.layer) catch {};
+            followup_buf.appendSlice(allocator, " — ") catch {};
+            followup_buf.appendSlice(allocator, remed) catch {};
+            if (contract.declare(allocator, env, followup_buf.items, "neuron", .{ .parent_id = id })) |fid| {
+                evidencePrint("  follow-up declared: {s}\n", .{fid});
+                allocator.free(fid);
+            } else |_| {}
+        }
+        return 1;
+    }
 
     // AGENT-JUDGED SECOND KEY (per canon C-G01: "harness collects, agent
     // judges"). When CONTRACT_AGENT_JUDGE_ID is set, after programmatic
