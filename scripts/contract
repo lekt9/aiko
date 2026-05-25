@@ -118,6 +118,15 @@ _caller_chain_check_cycle() {
 # Runs in background so they never block the primary action.
 _fire_contract_hooks() {
   local event="$1" id="$2" rc="${3:-0}"
+  # Φ11 fractal-context-on-every-emission (doctrine 23dff9bf): render the
+  # FRACTAL CONTEXT block BEFORE firing external hooks so the agent's
+  # context window holds the contract's position in the funnel+loop+harness
+  # lineage on every substrate emission, not just at _mark. Bypass:
+  # CONTRACT_FRACTAL_CONTEXT=0 to silence; CONTRACT_PHI11_FIRING re-entry
+  # guard so a hook script that re-invokes the CLI doesn't recurse.
+  if [ "${CONTRACT_FRACTAL_CONTEXT:-1}" != "0" ] && [ -z "${CONTRACT_PHI11_FIRING:-}" ]; then
+    CONTRACT_PHI11_FIRING=1 _render_fractal_context "$event" "$id" "$rc" 2>&1 1>&2 || true
+  fi
   local hook_dir="$HOME/.contracts/hooks"
   [ -d "$hook_dir" ] || return 0
   for hook in "$hook_dir"/*.sh; do
@@ -126,6 +135,151 @@ _fire_contract_hooks() {
   for hook in "$hook_dir"/*.py; do
     [ -x "$hook" ] && python3 "$hook" "$event" "$id" "$rc" 2>>"$hook_dir/errors.log" &
   done
+}
+
+# Φ11 — render_fractal_context(event, id, rc)
+# Emits one === FRACTAL CONTEXT === block to stderr containing:
+#   THIS shape + plan
+#   PARENT_CHAIN walked to root (with each ancestor's shape + plan-prefix)
+#   COMPOSITION_ROLE (Nth-of-M under parent)
+#   REFERRERS (contracts whose action is contract:THIS_ID)
+#   FIRST_PRINCIPLE (derived from root.plan first line)
+#   FUNNEL+LOOP+HARNESS self-statement
+# Layer-tiered per Α2: default shows L3+L4; CONTRACT_FRACTAL_VERBOSE=1 adds L1+L0.
+# Skipped for non-id events (verb-only fires without a contract id).
+_render_fractal_context() {
+  local event="$1" id="$2" rc="${3:-0}"
+  # Skip if id is not an 8-hex contract id (verbless verb fires carry plan text or empty)
+  [[ "$id" =~ ^[0-9a-f]{8}$ ]] || return 0
+  CONTRACT_PHI11_FIRING=1 python3 - "$event" "$id" "$rc" <<'PYEOF' 2>/dev/null || true
+import sys, os, json
+from pathlib import Path
+
+event, cid, rc = sys.argv[1], sys.argv[2], sys.argv[3]
+verbose = os.environ.get("CONTRACT_FRACTAL_VERBOSE", "0") == "1"
+
+# Resolve ledger: CONTRACTS_STORE wins, else walk up for .claude/contracts.jsonl, else ~/.contracts/contracts.jsonl
+def find_ledger():
+    s = os.environ.get("CONTRACTS_STORE")
+    if s and Path(s).exists(): return Path(s)
+    cwd = Path.cwd()
+    for p in [cwd] + list(cwd.parents):
+        c = p / ".claude" / "contracts.jsonl"
+        if c.exists(): return c
+    g = Path.home() / ".contracts" / "contracts.jsonl"
+    return g if g.exists() else None
+
+ledger = find_ledger()
+if not ledger: sys.exit(0)
+
+# Load only what we need: declared rows by id (latest), parent_ids, satisfied set, referrers index
+by_id = {}      # id -> declared row
+satisfied = set()
+ref_index = {}  # referenced_id -> [referrer_ids]
+try:
+    with ledger.open() as f:
+        for line in f:
+            try: r = json.loads(line)
+            except: continue
+            ev = r.get("event")
+            rid = r.get("id")
+            if ev == "declared" and rid:
+                by_id[rid] = r
+                act = r.get("action", "") or ""
+                if act.startswith("contract:"):
+                    refd = act.split(":", 1)[1][:8]
+                    ref_index.setdefault(refd, []).append(rid)
+            elif ev == "satisfied" and rid:
+                satisfied.add(rid)
+except Exception:
+    sys.exit(0)
+
+this = by_id.get(cid)
+if not this: sys.exit(0)
+
+def shape_of(row):
+    act = (row.get("action", "") or "")
+    if act == "agent-judges": return "judgment"
+    if act in ("funnel", "children-satisfy"): return "funnel"
+    if act == "funnel-first": return "funnel-first"
+    if act == "sequence": return "sequence"
+    if act.startswith("quorum:"): return "quorum"
+    if act.startswith("loop-until:") or act == "loop": return "loop"
+    if act.startswith("harness:"): return "harness"
+    if act.startswith("tool-guard:"): return "tool-guard"
+    if act.startswith("contract:"): return "contract-ref"
+    if act.startswith("x402:"): return "x402"
+    if act.startswith("agent:"): return "agent-route"
+    if act.startswith("machine:"): return "machine"
+    return "cell"
+
+def plan_prefix(row, n=50):
+    p = (row.get("plan", "") or "").replace("\n", " ").strip()
+    return p[:n] + ("…" if len(p) > n else "")
+
+# Walk parent chain to root
+chain = [this]
+seen = {cid}
+cur = this
+while cur.get("parent_id") and cur["parent_id"] not in seen:
+    p = by_id.get(cur["parent_id"])
+    if not p: break
+    chain.append(p); seen.add(p["id"]); cur = p
+root = chain[-1]
+
+# Composition role: which child am I of my parent?
+role = ""
+parent = by_id.get(this.get("parent_id") or "")
+if parent:
+    siblings = [r for r in by_id.values() if r.get("parent_id") == parent["id"]]
+    siblings.sort(key=lambda r: r.get("ts", ""))
+    try:
+        idx = next(i for i, s in enumerate(siblings) if s["id"] == cid)
+        role = f"child {idx+1} of {len(siblings)} under parent[{shape_of(parent)}]"
+    except StopIteration:
+        pass
+else:
+    role = "ROOT organ (no parent)"
+
+# Referrers — contracts whose action is contract:<this>
+referrers = ref_index.get(cid[:8], [])
+
+# Render
+out = sys.stderr
+out.write("\n=== FRACTAL CONTEXT ===\n")
+out.write(f"  EVENT:             {event}  (rc={rc})\n")
+out.write(f"  THIS:              {cid}  [{shape_of(this)}]  \"{plan_prefix(this, 70)}\"\n")
+# Parent chain root → ... → this
+if len(chain) > 1:
+    arrow = "  PARENT_CHAIN:      "
+    parts = []
+    for r in reversed(chain):
+        marker = "THIS" if r["id"] == cid else r["id"]
+        parts.append(f"{marker}[{shape_of(r)}]")
+    out.write(arrow + " → ".join(parts) + "\n")
+else:
+    out.write("  PARENT_CHAIN:      THIS is root (no ancestors)\n")
+out.write(f"  COMPOSITION_ROLE:  {role}\n")
+if referrers:
+    out.write(f"  REFERRERS:         {', '.join(referrers[:5])}{' …' if len(referrers) > 5 else ''}\n")
+    out.write(f"                     (wavefront these will fire when THIS satisfies)\n")
+else:
+    out.write("  REFERRERS:         none (no contract:<id> points at THIS yet)\n")
+first_principle = (root.get("plan", "") or "").replace("\n", " ").strip()
+fp_short = first_principle.split(".")[0][:120] if first_principle else "(no root plan)"
+out.write(f"  FIRST_PRINCIPLE:   \"{fp_short}\"\n")
+out.write("  FUNNEL+LOOP+HARNESS:\n")
+out.write(f"    funnel  → narrows to children's truth   (root={root['id']})\n")
+out.write(f"    loop    → iterate until KEY 1+2+3 fire  ({len(chain)}-deep lineage)\n")
+proof_status = "satisfied" if cid in satisfied else "pending"
+out.write(f"    harness → evidence on row                ({proof_status})\n")
+if verbose:
+    out.write(f"  [L1] action:       {this.get('action', '')[:80]}\n")
+    out.write(f"  [L1] pointer_type: {this.get('pointer_type', '')}\n")
+    out.write(f"  [L0] cwd:          {this.get('cwd', '')}\n")
+    out.write(f"  [L0] agent:        {this.get('agent', '')}\n")
+out.flush()
+PYEOF
 }
 
 cmd="${1:-help}"; shift || true
