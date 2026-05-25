@@ -258,6 +258,21 @@ extern fn popen(command: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
 extern fn pclose(stream: *anyopaque) c_int;
 extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: *anyopaque) usize;
 extern fn feof(stream: *anyopaque) c_int;
+extern fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+extern fn unsetenv(name: [*:0]const u8) c_int;
+
+/// Look up the latest non-empty action_result for `cid` in the in-memory rows.
+/// Used to propagate context up the tree as a posthook payload env var.
+fn latestActionResult(rows: []const Row, cid: []const u8) ?[]const u8 {
+    var i: usize = rows.len;
+    while (i > 0) : (i -= 1) {
+        const r = rows[i - 1];
+        if (!std.mem.eql(u8, r.id, cid)) continue;
+        if (r.action_result.len == 0) continue;
+        return r.action_result;
+    }
+    return null;
+}
 
 fn runShell(allocator: std.mem.Allocator, action: []const u8, cwd: []const u8) !i32 {
     const cmd_plain = if (cwd.len > 0)
