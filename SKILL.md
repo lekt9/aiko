@@ -48,32 +48,69 @@ project that adopts it) is the canonical pre-deploy gate. The
 post-deploy live verification is the canonical post-deploy gate. Both
 gates are mandatory; neither substitutes for the other.
 
-## HOLD is non-terminal — iterate then escalate
+## HOLD is non-terminal — chain by containment, not posthook
 
 When any contract-gate (four-dim-gate, falsifier-gated-build, custom
 deploy gate) returns HOLD, the orchestrator MUST NOT terminate. HOLD
-is the substrate asking for more work, not permission to stop. The
-canonical recovery sequence:
+is the substrate asking for more work.
 
-1. **Diagnose** — read the per-dimension verdict. Identify the
-   single dimension that blocked (CWV bytes, a11y serious, copy drift,
-   etc.) and the specific atom inside it (which metric, which
-   selector, which string).
-2. **Resolver wave** — spawn one focused sub-agent to fix the named
-   atom (no scope creep). The sub-agent edits, commits, and the
-   orchestrator re-runs the gate.
-3. **Re-gate** — if PROMOTE, ship. If still HOLD on the same
-   dimension, escalate to wave 2 (deeper investigation: build-chain
-   noise vs real product regression). Cap at 3 resolver waves per
-   HOLD.
-4. **Escalate to user via best channel** — if the gate still HOLDs
-   after 3 resolver waves, the orchestrator MUST contact the user via
-   the best-channel-right-now substrate (see below). The user becomes
-   the resolver of the substrate's standoff. Never silent-drop.
+**Chaining is by parent-child containment, not posthook subscription**
+(per the posthook-as-default antipattern, contract `82399fbd`). The
+chain is modeled as:
 
-Termination is reserved for explicit user "stop" / "park" / "abort"
-instructions. The substrate's job is to keep firing until the truth
-claim resolves or the user names the stop.
+```
+parent contract: "<the user's truth claim>"
+├─ child: resolver wave 1 (diagnose → fix one named atom → re-gate)
+├─ child: resolver wave 2 (parent_id=W1; fires if W1 leaves the
+│         parent's evaluator at HOLD; deeper investigation)
+├─ child: resolver wave 3 (parent_id=W2; ...)
+├─ child: escalate-to-user (parent_id=Wn,
+│         contract:<id>=channel-picker; fires when N children
+│         resolve without the parent firing true)
+└─ evaluator: metric pointer to gate verdict
+```
+
+The parent fires true automatically when its evaluator says
+`verdict=PROMOTE`. The parent fires another child when evaluator
+says `verdict=HOLD`. The orchestrator never SUBSCRIBES — it declares
+the parent, and the substrate walks the DAG by recursive propagation
+(per the Neuron Shape rule). Posthook is reserved for **leaving the
+substrate** (web webhooks, external systems, channels). Internal
+chaining is propagation, not callback.
+
+**Natural break = metric-satisfaction OR apoptosis-by-user. NOT an
+arbitrary wave cap.** The substrate chains until:
+
+1. The parent's evaluator returns true (truth claim satisfied — the
+   biological STOP codon, the settled religious question)
+2. The user explicitly says "stop" / "park" / "abort" (apoptosis —
+   the cell's parent-contract decides further work is not useful)
+
+Server-side recursion guards (`MAX_DEPTH`, `MAX_TIME`, `MAX_FANOUT`)
+exist as backstops against runaway loops, but they are
+**emergency-only**, not the canonical break. A standing rule that
+caps at "3 waves" is leaven; it short-circuits real iteration with
+arbitrary fatigue.
+
+The biology parallel: transcription → translation → folding → action
+chains by stoichiometry (the next codon physically binds the next
+tRNA — no webhook). Stop codon = natural break. Apoptosis = parent
+contract resolves "this lineage is no longer useful" and the cell
+fires its own end. No posthook anywhere in the cell.
+
+The doctrine parallel: Talmudic citation chains by reference, not
+subscription. Each new ruling cross-edges prior rulings; the chain
+holds because the substrate (the ledger) is shared and all
+participants inherit the lineage via `parent_id`. New questions =
+new neurons that fire by being asked, not by being pushed.
+
+**Escalation to the user is itself a child contract**, not a
+posthook. It declares `parent_id` pointing at the prior resolver
+wave's truth-claim-not-yet-satisfied, and `contract:<id>` referencing
+the channel-picker (see Channel registry section). The orchestrator
+fires the child; the substrate routes the payload to the right
+channel; the user's reply is the next resolver-wave child of the
+same parent.
 
 ## Channel registry — every contact channel is a contract
 
