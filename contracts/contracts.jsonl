@@ -7653,3 +7653,4 @@
 {"event": "satisfied", "id": "72014b1f", "wave": 0, "ts": "2026-05-25T08:07:33.654647Z", "proof": "all 5 stages satisfied; walker PASS on 11 routes + 404 fallback", "caller_chain": [], "agent": "lewistham9x@gmail.com"}
 {"event": "satisfied", "id": "11ed687a", "wave": 0, "ts": "2026-05-25T08:07:55.879389Z", "proof": "scripts/verify-all-pages.sh exits 0; walker reports 11 routes ok + 404-as-expected on bogus", "layer_guard_bypassed": ["4a055cf7"], "caller_chain": [], "agent": "lewistham9x@gmail.com"}
 {"event": "iterated", "id": "72014b1f", "wave": 12, "action_exit": 0, "action_result": "pass", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-25T08:08:25.198412Z", "caller_chain": [], "agent": "lewistham9x@gmail.com"}
+{"event": "satisfied", "id": "72014b1f", "wave": 0, "ts": "2026-05-25T08:08:54.774691Z", "proof": "all 5 stages green; walker PASS", "caller_chain": [], "agent": "lewistham9x@gmail.com"}
