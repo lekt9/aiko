@@ -624,6 +624,15 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
     }
     // Capture stdout+stderr so the parent layer sees child context, not
     // just an exit code. This is the recursive context-aggregation channel.
+    // Drill A — shell strict gate: refuse meta-shell when CONTRACT_SHELL_STRICT=1.
+    // The action's environment carries the policy; rejection is HOLD with a
+    // named cause, never silent execution.
+    var unused_env: std.process.Environ = undefined;
+    unused_env = std.process.getEnvMap(allocator) catch undefined;
+    if (shellStrictReject(body, std.process.getEnviron() catch unused_env)) |cause| {
+        evidencePrint("  result: HOLD — {s}\n", .{cause});
+        return .{ .rc = 1, .result = try allocator.dupe(u8, cause) };
+    }
     const out_capture = try runShellCapture(allocator, body, r.cwd);
     if (out_capture.rc == 0) {
         evidence("  result: PASS (exit 0)\n");
