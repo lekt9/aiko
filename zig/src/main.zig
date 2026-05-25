@@ -2789,6 +2789,11 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         if (AIKO_DECLARE_ONLY) return try cmdAikoGoal(allocator, init.environ, rest);
         return try cmdDeclare(allocator, init.environ, rest);
     }
+    // OpenAI-compatible adapter: stdin chat-completions JSON → stdout
+    // response with persona obfuscation. Available on BOTH binaries.
+    if (std.mem.eql(u8, verb, "openai") or std.mem.eql(u8, verb, "--openai")) {
+        return try cmdOpenAi(allocator, init.environ, rest);
+    }
     if (AIKO_DECLARE_ONLY) {
         return try cmdAikoGoal(allocator, init.environ, argv_z[1..]);
     }
