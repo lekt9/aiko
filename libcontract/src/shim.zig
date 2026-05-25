@@ -117,7 +117,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
             usage();
             return 2;
         }
-        var writer: StderrWriter = .{};
+        const writer: StderrWriter = .{};
         try fractal.renderContext(allocator, init.environ, rest[0], "fractal-cmd", writer);
         return 0;
     } else if (std.mem.eql(u8, verb, "guard")) {
