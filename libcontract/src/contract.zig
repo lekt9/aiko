@@ -422,6 +422,80 @@ pub fn declare(
 }
 
 /// Append an `iterated` event row.
+/// Append a `reward` event row. Every gate that resolves can route a
+/// reward signal to a tracking contract (CONTRACT_REWARD_CONTRACT_ID).
+/// The tracking contract's input_hash depends on its referenced sources,
+/// so the existing KV-cache invalidation mechanism fires the reward
+/// neuron automatically when new reward rows land.
+pub fn appendRewardRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    source_id: []const u8,
+    target_id: []const u8,
+    signal: []const u8,
+    kv_hash: []const u8,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    const agent = try getAgent(allocator, env);
+    defer allocator.free(agent);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "{\"event\": \"reward\", \"id\": ");
+    try writeJsonString(&buf, allocator, target_id);
+    try buf.appendSlice(allocator, ", \"source_id\": ");
+    try writeJsonString(&buf, allocator, source_id);
+    try buf.appendSlice(allocator, ", \"signal\": ");
+    try writeJsonString(&buf, allocator, signal);
+    try buf.appendSlice(allocator, ", \"kv_hash\": ");
+    try writeJsonString(&buf, allocator, kv_hash);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
+/// Append a `break_above` event row — a resolved gate escaping its
+/// environment to surface its result at an ancestor layer. Each ancestor
+/// in the chain receives one row; the ancestor's neuron resolver picks it
+/// up via the affected-lineage queue and re-aggregates with the new
+/// great-descendant evidence in scope.
+pub fn appendBreakAboveRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    source_id: []const u8,
+    ancestor_id: []const u8,
+    result: []const u8,
+    depth: u32,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    const agent = try getAgent(allocator, env);
+    defer allocator.free(agent);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "{\"event\": \"break_above\", \"id\": ");
+    try writeJsonString(&buf, allocator, ancestor_id);
+    try buf.appendSlice(allocator, ", \"source_id\": ");
+    try writeJsonString(&buf, allocator, source_id);
+    try buf.appendSlice(allocator, ", \"depth\": ");
+    var num_buf: [16]u8 = undefined;
+    const d = try std.fmt.bufPrint(&num_buf, "{d}", .{depth});
+    try buf.appendSlice(allocator, d);
+    try buf.appendSlice(allocator, ", \"action_result\": ");
+    try writeJsonString(&buf, allocator, result);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
 /// Append a `materialized` ledger event when a contract spawns its own
 /// signed binary at a declared target. Captures the deployment lineage:
 /// {cid, target_path, sha256, wallet_pubkey} so the chain is auditable.
