@@ -1147,6 +1147,10 @@ emit_context_orientation(os.environ.get('MH_PLAN_CO',''))
       esac
     done
     [ -z "$ID" ] && { echo "usage: contract iterate <id> [--stdin] [--no-cache]" >&2; exit 2; }
+    # Σ21 — refuse re-recursion if this id already appears in the caller chain.
+    if ! _caller_chain_check_cycle "$ID"; then
+      exit 2
+    fi
     STDIN_DATA=""
     if [ -n "$USE_STDIN" ] || [ ! -t 0 ]; then
       STDIN_DATA=$(cat)
