@@ -54,9 +54,16 @@ and `[secret-pointer-pattern]`. The server may resolve pointer values inside
 typed context, but the local binary does not leak machine-specific private
 values.
 
-There are no public action, parent, iterate, mark, spawn, status, or search
-choices. Context and status may be injected by the runtime, but they are not
-escape hatches the caller chooses.
+There are no public action, parent, iterate, mark, spawn, status, or
+search choices. Context and status may be injected by the runtime (via
+environment variables — `CONTRACT_PARENT_ID`, `CONTRACT_ENVIRONMENT_ID`,
+hooks, etc.), but they are not escape hatches the caller chooses. A
+caller that wants to read the local ledger reads the file; a caller
+that wants to write goes through `aiko`. Anything else is a
+backwards-compat hack and is rejected. **Whenever this section changes
+to add or remove a surface, update SKILL.md in the same change and run
+`scripts/sync-outline-explainer.sh` — see the Outline explainer sync
+section below.**
 
 Reduced vocabulary:
 
