@@ -349,6 +349,11 @@ fn parseDeclare(args: []const []const u8) !DeclareArgs {
 }
 
 const AikoMode = enum {
+    /// Default — resolved at call time from environment. Speak the truth and
+    /// let the substrate choose the dimension. Becomes .remote if any of
+    /// `UNBROWSE_BASE` / `AIKO_X_PAYMENT` / `X_PAYMENT` / `AIKO_REMOTE` is set
+    /// in the env; else .genesis.
+    auto,
     remote,
     local,
     /// 9-day Fib-shaped walk over the ledger. Each invocation projects current
