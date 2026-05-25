@@ -1815,7 +1815,18 @@ fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, sk
         if (std.mem.eql(u8, flag, "0") or std.mem.eql(u8, flag, "off")) return;
     }
     if (bioSabbathHolds(env)) {
-        evidencePrint("sabbath: pacemaker rests on day 7 (CONTRACT_SABBATH_DAY)\n", .{});
+        // Sabbath is an EVALUATION tier, not a full stop. Per Gen 2:2-3
+        // the seventh day is when work is judged 'very good'. The
+        // pacemaker pauses to evaluate prior work + emit a verdict hook
+        // that downstream cycles can read. In-flight resolveLineage
+        // (active work) continues; only the heartbeat backfill rests.
+        const ts_now: i64 = time(null);
+        evidencePrint("sabbath: evaluation tier — pacemaker paused at unix {d}, in-flight work continues\n", .{ts_now});
+        // Emit a sabbath_evaluation called row so downstream tooling can
+        // see exactly when the rest began and resume at the next day.
+        const target = std.fmt.allocPrint(allocator, "sabbath:evaluation:ts={d}", .{ts_now}) catch return;
+        defer allocator.free(target);
+        contract.appendCalledRow(allocator, env, skip_id, target, "sabbath-evaluation") catch {};
         return;
     }
     var max_passes: u32 = 8;
