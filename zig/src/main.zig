@@ -264,6 +264,7 @@ extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: *anyopaque) usize
 extern fn feof(stream: *anyopaque) c_int;
 extern fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 extern fn unsetenv(name: [*:0]const u8) c_int;
+extern fn getentropy(buf: [*]u8, len: usize) c_int;
 
 /// Look up the latest non-empty action_result for `cid` in the in-memory rows.
 /// Used to propagate context up the tree as a posthook payload env var.
