@@ -187,6 +187,14 @@ for actual model invocation (each model becomes a child neuron, not a
 hardcoded provider id). Code that wants an LLM call goes through aiko
 or it's not on the substrate.
 
+**No caller-visible options.** There is the Way. No env-var toggles
+for substrate transport, no mode enums with multiple cases, no opt-in
+flags on the chat path, no factory that picks an implementation by
+env. Where reality requires a fallback (cloud endpoint not yet
+deployed), the fallback is silently chained inside one class — the
+caller cannot see or configure it. When the fallback is no longer
+needed, it is deleted in one commit, not flipped by configuration.
+
 Aiko truth is metric-gated. A node resolves true only when the declared goal is
 true against evaluator aikos bound to external metrics, ledger metrics, or API
 metrics. Evaluators are ordinary aiko contracts with typed metric pointers. When
