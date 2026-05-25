@@ -93,6 +93,62 @@ pub fn appendRow(allocator: std.mem.Allocator, env: std.process.Environ, row_jso
     return path;
 }
 
+// flock primitive — POSIX-ish but BSD-derived. macOS and Linux both
+// expose it via libc. LOCK_EX = 2 (exclusive, blocking); LOCK_UN = 8.
+extern fn flock(fd: c_int, op: c_int) c_int;
+const LOCK_EX: c_int = 2;
+const LOCK_UN: c_int = 8;
+
+/// Acquire an exclusive advisory lock on the ledger's sidecar `.lock` file.
+/// Blocks until the lock is granted. Returns the fd holding the lock; the
+/// caller MUST close it (via `releaseExclusive` or `c.close`) to release.
+///
+/// Locking the sidecar (not contracts.jsonl itself) keeps `readAll` non-
+/// blocking under contention — readers see the append-only ledger without
+/// serialization, and only the cache-check+append seam in declare() pays
+/// the serialization cost. Used by contract.declare() to make the
+/// findCachedDeclared+appendRow seam atomic against concurrent declares.
+pub fn acquireExclusive(allocator: std.mem.Allocator, env: std.process.Environ) !c_int {
+    const path = try resolvePath(allocator, env);
+    defer allocator.free(path);
+
+    if (std.fs.path.dirname(path)) |parent| {
+        try makePath(allocator, parent);
+    }
+
+    const lock_path = try std.fmt.allocPrint(allocator, "{s}.lock", .{path});
+    defer allocator.free(lock_path);
+    const lock_path_z = try allocator.dupeZ(u8, lock_path);
+    defer allocator.free(lock_path_z);
+
+    var flags: c.O = .{};
+    flags.ACCMODE = .RDWR;
+    flags.CREAT = true;
+    const fd: c_int = c.open(lock_path_z.ptr, flags, @as(c_uint, 0o644));
+    if (fd < 0) return error.OpenFailed;
+    errdefer _ = c.close(fd);
+
+    // Blocking exclusive lock. Returns 0 on success; -1 on signal interrupt
+    // (which we retry, since callers want serialized semantics).
+    while (true) {
+        const r = flock(fd, LOCK_EX);
+        if (r == 0) break;
+        // EINTR retry — any other error is fatal.
+        const errno = std.c._errno().*;
+        if (errno == 4) continue; // EINTR
+        return error.LockFailed;
+    }
+    return fd;
+}
+
+/// Release a lock previously acquired via `acquireExclusive`. Closing the
+/// fd implicitly releases the flock; we still call LOCK_UN explicitly so
+/// the unlock is visible even if some BSD variant defers fd-close cleanup.
+pub fn releaseExclusive(fd: c_int) void {
+    _ = flock(fd, LOCK_UN);
+    _ = c.close(fd);
+}
+
 /// Slurp the entire resolved ledger file. Returns an owned []u8 (empty when
 /// the file doesn't exist). 16 MiB cap is way above the largest ledger ever
 /// observed (the global ledger is ~3 MB after months of use).
