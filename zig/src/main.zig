@@ -274,7 +274,7 @@ fn cmdStage2Pending(verb: []const u8) !u8 {
 }
 
 pub fn main() !u8 {
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
