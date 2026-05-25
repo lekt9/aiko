@@ -35,6 +35,8 @@ export interface Env {
   USDC_MINT: string;
   SOLANA_RPC: string;
   TTL_SECONDS: string;
+  HOURLY_LIMIT: string;
+  WINDOW_SECONDS: string;
 }
 
 const USDC_DECIMALS = 6;
