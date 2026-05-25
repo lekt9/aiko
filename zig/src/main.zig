@@ -1367,6 +1367,16 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     };
     defer allocator.free(safe_plan);
 
+    // Drills B + C — preflight: wallet permission and binary self-attest.
+    if (walletPermissionReject(allocator, env)) |cause| {
+        errPrint("aiko refused: {s}\n", .{cause});
+        return 2;
+    }
+    if (binaryAttestReject(allocator, env)) |cause| {
+        errPrint("aiko refused: {s}\n", .{cause});
+        return 2;
+    }
+
     const action = ambientAction(env);
     const parent = ambientParent(env);
     const adapter = ambientAdapter(env);
