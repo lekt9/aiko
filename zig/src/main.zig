@@ -845,6 +845,47 @@ fn appendJsonEscaped(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), s: [
     try buf.append(allocator, '"');
 }
 
+/// Base58 (Bitcoin alphabet) encode 32-byte Solana pubkey to caller-
+/// provided buf. Returns bytes written. Standard alphabet so any wallet
+/// (Phantom, Solflare, Backpack, web3.js) recognizes the address.
+const B58_ALPHA = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+fn b58encode(in: []const u8, out_buf: []u8) usize {
+    // Count leading zeros — they become '1' prefix bytes.
+    var zeros: usize = 0;
+    while (zeros < in.len and in[zeros] == 0) : (zeros += 1) {}
+    // base58 length bound: ceil(in_len * log(256)/log(58)) ≈ in_len * 138/100 + 1
+    var tmp: [80]u8 = [_]u8{0} ** 80;
+    var hi: usize = tmp.len;
+    var i: usize = zeros;
+    while (i < in.len) : (i += 1) {
+        var carry: u32 = in[i];
+        var j: usize = tmp.len;
+        while (j > 0) : (j -= 1) {
+            const k = j - 1;
+            const acc: u32 = @as(u32, tmp[k]) * 256 + carry;
+            tmp[k] = @intCast(acc % 58);
+            carry = acc / 58;
+            if (k < hi and carry == 0 and acc / 58 == 0 and tmp[k] == 0) {} // no-op
+            if (carry == 0 and k < hi) break;
+        }
+        while (hi > 0 and tmp[hi - 1] != 0) : (hi -= 1) {}
+    }
+    // Skip leading zeros in tmp produced by the loop (we want them ONLY for true input leading zeros).
+    var start = tmp.len;
+    {
+        var k: usize = 0;
+        while (k < tmp.len and tmp[k] == 0) : (k += 1) {}
+        start = k;
+    }
+    var n: usize = 0;
+    while (n < zeros and n < out_buf.len) : (n += 1) out_buf[n] = '1';
+    while (start < tmp.len and n < out_buf.len) : (start += 1) {
+        out_buf[n] = B58_ALPHA[tmp[start]];
+        n += 1;
+    }
+    return n;
+}
+
 /// Lineage-mesh primitives (canonical zig port of the python aiko-mesh.py
 /// scaffold — replaces it). Implements contract:1a808634 in-binary:
 /// deterministic x25519 keypair per (root, peer) derived from the user's
