@@ -190,19 +190,17 @@ fn writeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []c
     try out.append(allocator, '"');
 }
 
-test "relevantVerses returns top-K for a Genesis-shaped plan" {
+test "relevantVerses surfaces Luke 14:28 for a 'count the cost' plan" {
     const allocator = std.testing.allocator;
-    // A plan that should match Day 5 (Creatures — run/test) + Day 3 (Land — seed)
-    const verses = try relevantVerses(allocator, "let the substrate bring forth working code that runs against tests", 3);
+    const verses = try relevantVerses(allocator, "count the cost before laying stones for a tower we cannot finish", 3);
     defer allocator.free(verses);
     try std.testing.expectEqual(@as(usize, 3), verses.len);
-    // At least one verse should reference 'run', 'test', or 'bring forth'.
-    var hit = false;
+    // Top-K must include Luke 14:28 (the explicit count-the-cost verse).
+    var luke_present = false;
     for (verses) |v| {
-        if (std.mem.indexOf(u8, v.pattern, "run") != null) hit = true;
-        if (std.mem.indexOf(u8, v.label, "bring forth") != null) hit = true;
+        if (std.mem.eql(u8, v.ref, "Luke 14:28")) luke_present = true;
     }
-    try std.testing.expect(hit);
+    try std.testing.expect(luke_present);
 }
 
 test "toJsonArray produces parseable JSON" {
