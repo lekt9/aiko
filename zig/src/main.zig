@@ -1636,6 +1636,26 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         errPrint("aiko refused: {s}\n", .{cause});
         return 2;
     }
+    // Biology kit preflight: homeostat + interoception + neuromodulator.
+    {
+        const rows_pre = parseRows(allocator, env) catch &[_]Row{};
+        defer if (rows_pre.len > 0) allocator.free(rows_pre);
+        if (bioHomeostatReject(allocator, env, rows_pre)) |cause| {
+            errPrint("aiko refused: {s}\n", .{cause});
+            return 2;
+        }
+        if (bioInteroceptionJson(allocator, rows_pre)) |intero| {
+            defer allocator.free(intero);
+            const intero_z = try allocator.dupeZ(u8, intero);
+            defer allocator.free(intero_z);
+            _ = setenv("CONTRACT_INTEROCEPTION", intero_z.ptr, 1);
+            evidencePrint("interoception: {s}\n", .{intero});
+        } else |_| {}
+        if (bioModulatorEvidence(allocator, env)) |mod| {
+            defer allocator.free(mod);
+            evidencePrint("modulator: {s}\n", .{mod});
+        } else |_| {}
+    }
 
     const action = ambientAction(env);
     const parent = ambientParent(env);
