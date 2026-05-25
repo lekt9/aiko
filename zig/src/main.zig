@@ -1335,6 +1335,41 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
     if (rr.rc != 0) return 1;
     try contract.markSatisfied(allocator, env, id, wave, "native resolver reached mechanical true");
     evidencePrint("{s} -> resolved (hash {s})\n", .{ id, if (hash_str.len >= 16) hash_str[0..16] else hash_str });
+
+    // GATE-PASSED side effects: reward routing + break-above propagation.
+    // These run from the LIVE environ — CONTRACT_REWARD_CONTRACT_ID and
+    // CONTRACT_BREAK_ABOVE come from whatever spawned this declare. The
+    // semantics: a gate that PASSES emits a reward row to its tracker and
+    // a break_above row to each ancestor it wants to surface at.
+    if (env.getPosix("CONTRACT_REWARD_CONTRACT_ID")) |reward_target| {
+        if (reward_target.len > 0) {
+            const signal = if (rr.result.len > 0) rr.result[0..@min(rr.result.len, 8192)] else "pass";
+            contract.appendRewardRow(allocator, env, id, reward_target, signal, hash_str) catch |e| {
+                evidencePrint("reward emit skipped: {s}\n", .{@errorName(e)});
+            };
+            evidencePrint("reward: {s} -> {s} signal_len={d}\n", .{ id, reward_target, signal.len });
+        }
+    }
+    if (env.getPosix("CONTRACT_BREAK_ABOVE")) |flag| {
+        const enabled = std.mem.eql(u8, flag, "1") or std.mem.eql(u8, flag, "on") or std.mem.eql(u8, flag, "all");
+        if (enabled and rr.result.len > 0) {
+            // Walk parent_id chain and emit break_above row at each ancestor
+            // up to depth 32. The ancestors' resolvers will see the new
+            // evidence on their next resolveOne pass and re-aggregate.
+            var current: ?[]const u8 = declaredParentOf(rows, id);
+            var depth: u32 = 1;
+            while (current != null and depth <= 32) : (depth += 1) {
+                const ancestor = current.?;
+                const result_capped = rr.result[0..@min(rr.result.len, 8192)];
+                contract.appendBreakAboveRow(allocator, env, id, ancestor, result_capped, depth) catch |e| {
+                    evidencePrint("break_above skipped at depth {d}: {s}\n", .{ depth, @errorName(e) });
+                    break;
+                };
+                evidencePrint("break_above: {s} -> {s} (depth {d})\n", .{ id, ancestor, depth });
+                current = declaredParentOf(rows, ancestor);
+            }
+        }
+    }
     return 0;
 }
 
