@@ -8,6 +8,51 @@ const id_mod = @import("id.zig");
 const pointer = @import("pointer.zig");
 const ledger = @import("ledger.zig");
 
+/// Typed edge kind across the contract DAG. The substrate compiles narrative
+/// references in the plan/action text (e.g. `inhibits:deadbeef`) into one
+/// uniform stream of typed synapses on the declared row — there are no
+/// per-kind parallel arrays.
+pub const SynapseKind = enum {
+    /// `contract:<id>` — generic dependency / lineage / composition edge.
+    pointer,
+    /// `inhibits:<id>` — negative edge: this contract suppresses target.
+    inhibits,
+    /// `bind:<id>` — sibling synapse: lateral binding to target.
+    bind,
+    /// `blocked_by:<id>` — this contract waits for target to satisfy first.
+    blocked_by,
+    /// `posthook:<id>` — fire target after this contract resolves.
+    posthook,
+    /// `prehook:<id>` — fire target before this contract is constructed.
+    prehook,
+
+    pub fn jsonName(self: SynapseKind) []const u8 {
+        return switch (self) {
+            .pointer => "pointer",
+            .inhibits => "inhibits",
+            .bind => "bind",
+            .blocked_by => "blocked_by",
+            .posthook => "posthook",
+            .prehook => "prehook",
+        };
+    }
+};
+
+/// One typed edge on the declared row. `to` is owned by libcontract during
+/// declare(); callers do not allocate or free.
+pub const Synapse = struct {
+    to: []const u8,
+    kind: SynapseKind,
+};
+
+/// Ad-hoc string field to splice into the declared row JSON. Caller owns
+/// the slices; libcontract JSON-escapes both at write time. Empty `value`
+/// is treated as absent and dropped.
+pub const Field = struct {
+    key: []const u8,
+    value: []const u8,
+};
+
 pub const DeclareOptions = struct {
     /// Optional parent id; null = root-level contract.
     parent_id: ?[]const u8 = null,
@@ -15,28 +60,24 @@ pub const DeclareOptions = struct {
     agent: ?[]const u8 = null,
     /// Optional cwd override; null = libc getcwd().
     cwd: ?[]const u8 = null,
-    // ---- Merged neural-substrate fields (composes contract:d10b3dbb,
-    // contract:f93f7205, contract:495babae, contract:15b7a67c). All optional;
-    // emitted only when set so legacy callers stay unaffected.
-    /// Aiko role on the stateless compiler graph: "goal" | "eval" |
-    /// "posthook" | "optimizer".
-    aiko_role: ?[]const u8 = null,
-    /// "all" | "any" | "quorum:n" | "weighted_sum:t" — promotion aggregator.
-    aggregation: ?[]const u8 = null,
-    /// "private" | "team" | "public" — projects to graph_namespaces.
-    audience: ?[]const u8 = null,
-    /// Wallet identity that owns this contract environment.
-    wallet_identity: ?[]const u8 = null,
-    /// Wallet identity inherited from parent — used for posthook signing.
-    parent_wallet_identity: ?[]const u8 = null,
-    /// Source contract id this row replicates from (paid out-of-lineage copy).
-    replicated_from_contract_id: ?[]const u8 = null,
-    /// `embedding:<id>` pointer — vector lives in pgvector, ledger holds pointer.
-    embedding_pointer: ?[]const u8 = null,
-    /// For eval-role rows: external metric assertion.
-    metric_source: ?[]const u8 = null,
-    metric_pointer: ?[]const u8 = null,
-    metric_assertion: ?[]const u8 = null,
+    /// Strongly-typed pass-through metadata. Replaces the previous flat list
+    /// of `?[]const u8` fields (aiko_role, aggregation, audience, …) — any
+    /// new attribute is now data on a row, not a new struct field.
+    extras: []const Field = &.{},
+};
+
+/// Table-driven prefix → SynapseKind mapping. The ONLY place edge kinds
+/// are enumerated; adding one is a single row here.
+const synapse_table = [_]struct {
+    prefix: []const u8,
+    kind: SynapseKind,
+}{
+    .{ .prefix = "contract:", .kind = .pointer },
+    .{ .prefix = "inhibits:", .kind = .inhibits },
+    .{ .prefix = "bind:", .kind = .bind },
+    .{ .prefix = "blocked_by:", .kind = .blocked_by },
+    .{ .prefix = "posthook:", .kind = .posthook },
+    .{ .prefix = "prehook:", .kind = .prehook },
 };
 
 extern fn popen(cmd: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
