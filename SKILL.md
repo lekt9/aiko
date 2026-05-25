@@ -60,7 +60,17 @@ environment variables — `CONTRACT_PARENT_ID`, `CONTRACT_ENVIRONMENT_ID`,
 hooks, etc.), but they are not escape hatches the caller chooses. A
 caller that wants to read the local ledger reads the file; a caller
 that wants to write goes through `aiko`. Anything else is a
-backwards-compat hack and is rejected. **Whenever this section changes
+backwards-compat hack and is rejected.
+
+**Read views are strongly typed and read-only.** The local executor
+exposes the ledger through immutable typed views (struct fields are
+`let`-only, no setters, no mutable escape hatches). Untyped `[String:
+Any]` dictionaries do not cross the substrate→app boundary inside the
+executor; they survive only as the JSON adapter at the very edge for
+renderer compatibility. New ledger event kinds are added as enum
+cases in the typed reader, not as string switches scattered across
+the codebase. Heuristics (status fold, edge derivation, stdout cid
+extraction) are confined to one named function each — no duplication. **Whenever this section changes
 to add or remove a surface, update SKILL.md in the same change and run
 `scripts/sync-outline-explainer.sh` — see the Outline explainer sync
 section below.**
