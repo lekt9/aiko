@@ -358,6 +358,41 @@ pub fn markSatisfied(
     allocator.free(path);
 }
 
+/// Append a `called` event row recording that the dispatcher fired a hook
+/// from `source_id` toward `target_pointer` (typically `contract:<id>`). The
+/// `call_kind` discriminates posthook vs prehook vs posttool vs pretool.
+pub fn appendCalledRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    source_id: []const u8,
+    target_pointer: []const u8,
+    call_kind: []const u8,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+
+    const agent = try getAgent(allocator, env);
+    defer allocator.free(agent);
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+
+    try buf.appendSlice(allocator, "{\"event\": \"called\", \"id\": ");
+    try writeJsonString(&buf, allocator, source_id);
+    try buf.appendSlice(allocator, ", \"target_pointer\": ");
+    try writeJsonString(&buf, allocator, target_pointer);
+    try buf.appendSlice(allocator, ", \"call_kind\": ");
+    try writeJsonString(&buf, allocator, call_kind);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
 /// Return the raw JSONL bytes of the resolved ledger (or empty when missing).
 /// Caller owns the returned slice.
 pub fn readAll(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
