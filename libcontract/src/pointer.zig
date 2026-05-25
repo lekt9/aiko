@@ -22,6 +22,9 @@ pub fn inferPointerType(action: []const u8) []const u8 {
     if (std.mem.startsWith(u8, action, "machine:")) return "machine";
     if (std.mem.startsWith(u8, action, "inhibits:")) return "inhibits";
     if (std.mem.startsWith(u8, action, "bind:")) return "bind";
+    if (std.mem.startsWith(u8, action, "posthook:")) return "posthook";
+    if (std.mem.startsWith(u8, action, "prehook:")) return "prehook";
+    if (std.mem.startsWith(u8, action, "blocked_by:")) return "blocked_by";
     if (std.mem.startsWith(u8, action, "curl ") or
         std.mem.startsWith(u8, action, "http://") or
         std.mem.startsWith(u8, action, "https://") or
