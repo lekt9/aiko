@@ -132,6 +132,24 @@ pub fn declareRemote(
         body.appendSlice(allocator, ",\"agent\":") catch return ClientError.OutOfMemory;
         writeJsonString(&body, allocator, a) catch return ClientError.OutOfMemory;
     }
+
+    // cwd_fingerprint: sanitized projection of the local environment so the
+    // server's word→tree compiler can pick the right adapter family
+    // (Swift app? notch? Convex backend? Cloudflare Worker?). Pure pattern
+    // match — no paths, no contents, no user identifiers leave the host.
+    var cwd_buf: [4096]u8 = undefined;
+    const cwd_ptr = std.c.getcwd(&cwd_buf, cwd_buf.len);
+    if (cwd_ptr != null) {
+        const cwd_s = std.mem.span(@as([*:0]const u8, @ptrCast(cwd_ptr.?)));
+        if (env_fingerprint.fingerprintCwd(allocator, cwd_s)) |fp| {
+            defer allocator.free(fp);
+            body.appendSlice(allocator, ",\"cwd_fingerprint\":") catch return ClientError.OutOfMemory;
+            // `fp` is already a JSON object — splice as-is, not string-escaped.
+            body.appendSlice(allocator, fp) catch return ClientError.OutOfMemory;
+        } else |_| {
+            // Fingerprint failed — proceed without it rather than blocking the call.
+        }
+    }
     body.append(allocator, '}') catch return ClientError.OutOfMemory;
 
     const resp = http.postJson(allocator, url_buf.items, body.items, token) catch return ClientError.RequestFailed;
@@ -196,6 +214,24 @@ pub fn declareRemoteAiko(
     if (agent) |a| {
         body.appendSlice(allocator, ",\"agent\":") catch return ClientError.OutOfMemory;
         writeJsonString(&body, allocator, a) catch return ClientError.OutOfMemory;
+    }
+
+    // cwd_fingerprint: sanitized projection of the local environment so the
+    // server's word→tree compiler can pick the right adapter family
+    // (Swift app? notch? Convex backend? Cloudflare Worker?). Pure pattern
+    // match — no paths, no contents, no user identifiers leave the host.
+    var cwd_buf: [4096]u8 = undefined;
+    const cwd_ptr = std.c.getcwd(&cwd_buf, cwd_buf.len);
+    if (cwd_ptr != null) {
+        const cwd_s = std.mem.span(@as([*:0]const u8, @ptrCast(cwd_ptr.?)));
+        if (env_fingerprint.fingerprintCwd(allocator, cwd_s)) |fp| {
+            defer allocator.free(fp);
+            body.appendSlice(allocator, ",\"cwd_fingerprint\":") catch return ClientError.OutOfMemory;
+            // `fp` is already a JSON object — splice as-is, not string-escaped.
+            body.appendSlice(allocator, fp) catch return ClientError.OutOfMemory;
+        } else |_| {
+            // Fingerprint failed — proceed without it rather than blocking the call.
+        }
     }
     body.append(allocator, '}') catch return ClientError.OutOfMemory;
 
