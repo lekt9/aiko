@@ -225,6 +225,21 @@ ledger evidence. The same shape applies whether the environment is an API call,
 a Telegram bot contract, a local Mac executor, a VM, a Turbobox, or another
 Unbrowse-spawned environment.
 
+**Posthooks are opt-in per call. Setting `CONTRACT_POSTHOOK_ID` as an
+executor-level default is an anti-pattern:** non-applicable spawns
+(executor declarations, identity rows, auto-chain meta-contracts) have
+no shape-matched output for the hook to consume, so propagation hangs
+at the breakpoint forever; the hook's own handler chain spawning
+`aiko` inherits the same id, risking infinite recursion. A caller
+sets `CONTRACT_POSTHOOK_ID` in its own scope only when its spawn's
+output shape matches what the hook handles. Break mechanisms when a
+hook misbehaves: (a) per-call opt-out — the default; don't set it;
+(b) declare a contract that `contract merge`s the misbehaving hook
+into a no-op, superseding it without violating append-only; (c)
+server-side posthook resolver enforces a deadline and a recursion
+guard (strip `CONTRACT_POSTHOOK_ID` before spawning the handler
+chain). Rule is contract `82399fbd`.
+
 PreTool context is also contract-shaped. Every contract surfaced in PreTool
 context is a server-side ledger event contract, projected into context by a
 stateless event bus. Local PreTool code does not own memory; it forwards
