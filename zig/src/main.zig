@@ -1390,6 +1390,23 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         evidencePrint("  result: FAIL (python exit {d})\n", .{out_capture.rc});
         return .{ .rc = out_capture.rc, .result = if (out_capture.output.len > 0) out_capture.output else "fail" };
     }
+    // route:<env_kind> — ROUTER action. The contract declares which
+    // adapter family it wants to run in (turbobox, runpod, telegram-bot,
+    // local-mac, vm, mesh-peer, ...). Local executor emits a
+    // `route_request` called row with the chosen kind + caller env
+    // fingerprint; cloud compiler picks the matching adapter contract.
+    // Resolves PASS immediately — the routing decision IS the work; the
+    // actual binding happens server-side via the adapter neuron.
+    if (std.mem.startsWith(u8, action, "route:")) {
+        const env_kind = action["route:".len..];
+        const target_pointer = try std.fmt.allocPrint(allocator, "route:env_kind={s}", .{env_kind});
+        defer allocator.free(target_pointer);
+        contract.appendCalledRow(allocator, env, r.id, target_pointer, "route-request") catch {};
+        evidencePrint("  route: requested env_kind={s}\n", .{env_kind});
+        const msg = try std.fmt.allocPrint(allocator, "route-request: env_kind={s}", .{env_kind});
+        return .{ .rc = 0, .result = msg };
+    }
+
     // depends_on:<runtime>:<pkg> — declarative sidecar. Resolves by
     // running `nanobrew install <pkg>` (or runtime-specific equivalent)
     // if the package isn't already on PATH. Idempotent — re-firing on a
