@@ -109,6 +109,38 @@ fn writeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []c
     try out.append(allocator, '"');
 }
 
+fn writeOptionalStringField(
+    out: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    key: []const u8,
+    value: ?[]const u8,
+) !void {
+    if (value) |v| {
+        if (v.len == 0) return;
+        try out.appendSlice(allocator, ", \"");
+        try out.appendSlice(allocator, key);
+        try out.appendSlice(allocator, "\": ");
+        try writeJsonString(out, allocator, v);
+    }
+}
+
+fn writeArrayFieldIfNonEmpty(
+    out: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    key: []const u8,
+    items: [][]u8,
+) !void {
+    if (items.len == 0) return;
+    try out.appendSlice(allocator, ", \"");
+    try out.appendSlice(allocator, key);
+    try out.appendSlice(allocator, "\": [");
+    for (items, 0..) |r, idx| {
+        if (idx > 0) try out.appendSlice(allocator, ", ");
+        try writeJsonString(out, allocator, r);
+    }
+    try out.append(allocator, ']');
+}
+
 /// Declare a contract. Returns an owned 8-hex id slice; caller frees.
 ///
 /// Write a `declared` row. If parent_id is set, a follow-on `child_added` row
