@@ -994,6 +994,28 @@ fn cmdList(allocator: std.mem.Allocator, env: std.process.Environ) !u8 {
     return 0;
 }
 
+/// Compat verb: `layer <id>` — return the contract's layer (1-6) per
+/// contract:d10b3dbb (1=system, 2=cell, 3=graph, 4=transport, 5=value,
+/// 6=operator). The Word's compiler reads this to choose translators when
+/// crossing layer boundaries. Stdout = bare integer; stderr names the row.
+fn cmdLayer(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    if (args.len < 1) {
+        errPrint("layer requires: <id>\n", .{});
+        return 2;
+    }
+    const target = args[0];
+    const rows = try parseRows(allocator, env);
+    defer allocator.free(rows);
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        if (!std.mem.eql(u8, r.id, target)) continue;
+        outPrint("{d}\n", .{r.layer});
+        return 0;
+    }
+    errPrint("layer: no declared row for {s}\n", .{target});
+    return 1;
+}
+
 /// Resolve the absolute path of the currently-running binary. macOS uses
 /// `_NSGetExecutablePath`; we shim it via libc.
 extern fn _NSGetExecutablePath(buf: [*]u8, size: *u32) c_int;
