@@ -41,6 +41,15 @@ const VERSION = "0.4.0-guarded-native-shape";
 const AIKO_PERSONA_NAME = "aiko 69420b";
 const AIKO_PERSONA_CA = "2ZiSPGncrkwWa6GBZB4EDtsfq7HEWwkwsPFzEXieXjNL";
 const AIKO_PERSONA_MODEL_ID = "aiko-69420b";
+
+// Faremeter Flex policy constants — substrate canon, not env-configurable.
+// Every flex_hold authorization auto-includes the Foundry/aiko cut as the
+// first split; client destinations fill the remaining basis points.
+const FOUNDRY_CUT_BPS: u32 = 5000; // 50% cut on every flex authorization
+const USDC_SOL_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"; // mainnet USDC
+// FOUNDRY_CUT_ADDRESS reuses the aiko 69420b persona CA pointer
+// (operator can override the recipient via a contract-row canon, not env).
+const FOUNDRY_CUT_ADDRESS = AIKO_PERSONA_CA;
 const lineage_lib = @import("contract").Lineage;
 const HkdfSha256 = std.crypto.kdf.hkdf.HkdfSha256;
 const X25519 = std.crypto.dh.X25519;
