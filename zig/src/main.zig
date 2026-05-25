@@ -1563,26 +1563,34 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         evidencePrint("  result: FAIL (python exit {d})\n", .{out_capture.rc});
         return .{ .rc = out_capture.rc, .result = if (out_capture.output.len > 0) out_capture.output else "fail" };
     }
-    // wallet:address — derive + print the current aiko identity's
-    // Solana address (ed25519 pubkey, base58-encoded for Solana display).
-    // The default x402 wallet adapter is native ed25519 — vendor-agnostic,
-    // no SDK lock-in, just the raw key the substrate already derives.
+    // wallet:address — emit CAIP-10 addresses for every chain the
+    // substrate derives. Same root_seed → ed25519 (Solana family) +
+    // secp256k1 (EVM family). The 402 envelope's `network` field picks
+    // which key signs — caller never specifies.
     if (std.mem.eql(u8, action, "wallet:address")) {
         const root = lineage_lib.loadOrInitRootKey(allocator, env) catch {
             evidence("  result: FAIL — no root key\n");
             return .{ .rc = 1, .result = "no-root-key" };
         };
         const identity_id = env.getPosix("CONTRACT_INSTANCE_ID") orelse r.id;
-        const kp = lineage_lib.deriveKeyPair(root, identity_id) catch {
-            evidence("  result: FAIL — derive failed\n");
-            return .{ .rc = 1, .result = "derive-failed" };
-        };
+        // Solana (ed25519)
+        const sol_kp = lineage_lib.deriveKeyPair(root, identity_id) catch return .{ .rc = 1, .result = "derive-failed" };
         var b58: [64]u8 = undefined;
-        const n = b58encode(&kp.public_key.bytes, &b58);
-        var hex: [64]u8 = undefined;
-        lineage_lib.bytesToHex(&kp.public_key.bytes, &hex);
-        const msg = try std.fmt.allocPrint(allocator, "wallet identity={s}  base58={s}  hex={s}", .{ identity_id, b58[0..n], hex });
-        evidencePrint("  result: PASS — {s}\n", .{msg});
+        const b58_n = b58encode(&sol_kp.public_key.bytes, &b58);
+        // EVM (secp256k1) — same address across all EVM chains
+        var evm_priv: [32]u8 = undefined;
+        deriveEvmPrivateKey(root, identity_id, &evm_priv) catch return .{ .rc = 1, .result = "evm-derive-failed" };
+        var evm_addr: [42]u8 = undefined;
+        _ = evmAddressFromPriv(evm_priv, &evm_addr) catch return .{ .rc = 1, .result = "evm-address-failed" };
+        const msg = try std.fmt.allocPrint(allocator,
+            \\identity={s}
+            \\solana:mainnet:{s}
+            \\eip155:1:{s}     (Ethereum mainnet)
+            \\eip155:8453:{s}  (Base)
+            \\eip155:42161:{s} (Arbitrum One)
+            \\eip155:137:{s}   (Polygon)
+        , .{ identity_id, b58[0..b58_n], &evm_addr, &evm_addr, &evm_addr, &evm_addr });
+        evidencePrint("  result: PASS — chain-agnostic addresses derived\n", .{});
         return .{ .rc = 0, .result = msg };
     }
 
