@@ -2584,6 +2584,43 @@ fn extractLastUserContent(body: []const u8) ?[]const u8 {
     return region[start..end];
 }
 
+/// Walk the full messages array preserving role + content. Caller owns
+/// the returned slice. Output shape: "[role] content\n..." lines.
+fn extractAllMessages(allocator: std.mem.Allocator, body: []const u8) !?[]u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    var i: usize = 0;
+    var any = false;
+    while (i < body.len) {
+        const role_key = "\"role\":\"";
+        const r = std.mem.indexOfPos(u8, body, i, role_key) orelse break;
+        const role_start = r + role_key.len;
+        var role_end = role_start;
+        while (role_end < body.len and body[role_end] != '"') : (role_end += 1) {}
+        const role = body[role_start..role_end];
+        const content_key = "\"content\":\"";
+        const c = std.mem.indexOfPos(u8, body, role_end, content_key) orelse break;
+        const cs = c + content_key.len;
+        var ce = cs;
+        while (ce < body.len) : (ce += 1) {
+            if (body[ce] == '\\') {
+                ce += 1;
+                continue;
+            }
+            if (body[ce] == '"') break;
+        }
+        if (any) try buf.append(allocator, '\n');
+        try buf.append(allocator, '[');
+        try buf.appendSlice(allocator, role);
+        try buf.appendSlice(allocator, "] ");
+        try buf.appendSlice(allocator, body[cs..ce]);
+        any = true;
+        i = ce + 1;
+    }
+    if (!any) return null;
+    return try buf.toOwnedSlice(allocator);
+}
+
 fn humanizePersona(allocator: std.mem.Allocator, raw: []const u8) ![]u8 {
     // Strip any contract:xxxxxxxx leakage and ledger jargon from the
     // raw result. Persona prefix added so the response reads as aiko.
