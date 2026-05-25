@@ -1528,6 +1528,23 @@ fn ambientEventBus(env: std.process.Environ) ?[]const u8 {
     return null;
 }
 
+/// PreTool context dimensions per canon: every event lands with
+/// timestamp + channel + environment. These are read from env at declare
+/// time, surfaced as evidence, and forwarded to children via setenv so
+/// they propagate down the lineage like the existing PARENT_RESULT tree.
+fn ambientPretoolTs(env: std.process.Environ) ?[]const u8 {
+    if (env.getPosix("CONTRACT_PRETOOL_TS")) |v| {
+        if (v.len > 0) return v;
+    }
+    return null;
+}
+fn ambientPretoolChannel(env: std.process.Environ) ?[]const u8 {
+    if (env.getPosix("CONTRACT_PRETOOL_CHANNEL")) |v| {
+        if (v.len > 0) return v;
+    }
+    return null;
+}
+
 fn ambientPretoolEvent(env: std.process.Environ) ?[]const u8 {
     if (env.getPosix("CONTRACT_PRETOOL_EVENT_ID")) |v| {
         if (v.len > 0) return v;
