@@ -243,6 +243,41 @@ pub fn declare(
         try buf.append(allocator, '}');
     }
     try buf.append(allocator, ']');
+
+    // Cryptographic lineage: every row carries env_pubkey (the contract's
+    // derived ed25519 public key) and parent_signature (parent privkey's
+    // signature over a canonical digest of this row's identity). Roots are
+    // self-signed. Derivation is deterministic from the single root key, so
+    // no per-contract privkey lives on disk — substrate stays stateless
+    // modulo the one root secret.
+    if (lineage.loadOrInitRootKey(allocator, env)) |root_key| {
+        const child_kp = try lineage.deriveKeyPair(root_key, cid);
+        var pubkey_hex: [lineage.PUBKEY_HEX_LEN]u8 = undefined;
+        lineage.bytesToHex(&child_kp.public_key.bytes, &pubkey_hex);
+
+        const parent_or_root: []const u8 = if (opts.parent_id) |p| p else lineage.ROOT_PARENT_SENTINEL;
+        var digest: [32]u8 = undefined;
+        lineage.signingDigest(cid, &pubkey_hex, plan, parent_or_root, &digest);
+
+        // Signer = parent's derived key when parented; else self (root contract).
+        const signer_kp = if (opts.parent_id) |p|
+            try lineage.deriveKeyPair(root_key, p)
+        else
+            child_kp;
+
+        var sig_hex: [lineage.SIG_HEX_LEN]u8 = undefined;
+        try lineage.signDigest(signer_kp, digest, &sig_hex);
+
+        try buf.appendSlice(allocator, ", \"env_pubkey\": ");
+        try writeJsonString(&buf, allocator, &pubkey_hex);
+        try buf.appendSlice(allocator, ", \"parent_signature\": ");
+        try writeJsonString(&buf, allocator, &sig_hex);
+    } else |_| {
+        // No root key resolvable (e.g. NoHome in a constrained env) — emit
+        // the row without lineage rather than failing closed. Substrate
+        // remains usable; provenance simply absent for that row.
+    }
+
     // Ad-hoc typed metadata. Caller passes typed Field entries; empty values
     // are dropped (treated as absent).
     for (opts.extras) |f| {
