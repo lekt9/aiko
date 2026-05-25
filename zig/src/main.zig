@@ -658,6 +658,53 @@ fn resolveLineage(allocator: std.mem.Allocator, env: std.process.Environ, id: []
     return declared_rc;
 }
 
+/// Walk the entire ledger and attempt to resolve every contract that is
+/// neither satisfied nor dead. Mechanical, deterministic, idempotent: a row
+/// that resolves stays resolved; a row that fails stays pending. Budget is
+/// controlled by CONTRACT_BACKFILL_BUDGET (default 64, max 1024). Skip the
+/// id passed in `skip_id` (the one we just declared, already resolved).
+///
+/// This is the in-binary realisation of contract:3600ca96 + contract:410bceea:
+/// every declaration sweeps the un-backfilled tail so accumulated learnings
+/// catch up to the live frontier without a separate script.
+fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, skip_id: []const u8) !void {
+    var budget: u32 = 64;
+    if (env.get("CONTRACT_BACKFILL_BUDGET")) |s| {
+        budget = std.fmt.parseInt(u32, s, 10) catch 64;
+        if (budget > 1024) budget = 1024;
+        if (budget == 0) return;
+    }
+    if (env.get("CONTRACT_BACKFILL")) |flag| {
+        if (std.mem.eql(u8, flag, "0") or std.mem.eql(u8, flag, "off")) return;
+    }
+    const rows = try parseRows(allocator, env);
+    defer allocator.free(rows);
+
+    var seen: std.StringHashMap(void) = .init(allocator);
+    defer seen.deinit();
+    var candidates: std.ArrayList([]const u8) = .empty;
+    defer candidates.deinit(allocator);
+
+    // Walk in reverse — newest unresolved rows first; lineage of recent work
+    // usually unblocks older referenced rows.
+    var i: usize = rows.len;
+    while (i > 0) : (i -= 1) {
+        const r = rows[i - 1];
+        if (std.mem.eql(u8, r.id, skip_id)) continue;
+        if (seen.contains(r.id)) continue;
+        try seen.put(r.id, {});
+        if (isSatisfied(rows, r.id)) continue;
+        if (isDead(rows, r.id)) continue;
+        try candidates.append(allocator, r.id);
+        if (candidates.items.len >= budget) break;
+    }
+    if (candidates.items.len == 0) return;
+    evidencePrint("backfill: {d} unresolved row(s) within budget {d}\n", .{ candidates.items.len, budget });
+    for (candidates.items) |cid| {
+        _ = resolveOne(allocator, env, cid) catch continue;
+    }
+}
+
 fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
     const d = parseDeclare(args) catch |e| {
         errPrint("declare argument error: {s}\n", .{@errorName(e)});
