@@ -1406,6 +1406,64 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         evidencePrint("  result: FAIL (python exit {d})\n", .{out_capture.rc});
         return .{ .rc = out_capture.rc, .result = if (out_capture.output.len > 0) out_capture.output else "fail" };
     }
+    // wallet:address — derive + print the current aiko identity's
+    // Solana address (ed25519 pubkey, base58-encoded for Solana display).
+    // The default x402 wallet adapter is native ed25519 — vendor-agnostic,
+    // no SDK lock-in, just the raw key the substrate already derives.
+    if (std.mem.eql(u8, action, "wallet:address")) {
+        const root = lineage_lib.loadOrInitRootKey(allocator, env) catch {
+            evidence("  result: FAIL — no root key\n");
+            return .{ .rc = 1, .result = "no-root-key" };
+        };
+        const identity_id = env.getPosix("CONTRACT_INSTANCE_ID") orelse r.id;
+        const kp = lineage_lib.deriveKeyPair(root, identity_id) catch {
+            evidence("  result: FAIL — derive failed\n");
+            return .{ .rc = 1, .result = "derive-failed" };
+        };
+        var b58: [64]u8 = undefined;
+        const n = b58encode(&kp.public_key.bytes, &b58);
+        var hex: [64]u8 = undefined;
+        lineage_lib.bytesToHex(&kp.public_key.bytes, &hex);
+        const msg = try std.fmt.allocPrint(allocator, "wallet identity={s}  base58={s}  hex={s}", .{ identity_id, b58[0..n], hex });
+        evidencePrint("  result: PASS — {s}\n", .{msg});
+        return .{ .rc = 0, .result = msg };
+    }
+
+    // wallet:setup — first-run guidance. Surfaces address + top-up steps.
+    // Idempotent — re-runs print the same instructions.
+    if (std.mem.eql(u8, action, "wallet:setup")) {
+        const root = lineage_lib.loadOrInitRootKey(allocator, env) catch {
+            evidence("  result: FAIL — no root key\n");
+            return .{ .rc = 1, .result = "no-root-key" };
+        };
+        const identity_id = env.getPosix("CONTRACT_INSTANCE_ID") orelse r.id;
+        const kp = lineage_lib.deriveKeyPair(root, identity_id) catch return .{ .rc = 1, .result = "derive-failed" };
+        var b58: [64]u8 = undefined;
+        const n = b58encode(&kp.public_key.bytes, &b58);
+        const addr = b58[0..n];
+        const guide = try std.fmt.allocPrint(allocator,
+            \\WALLET SETUP — your aiko identity is now configured.
+            \\
+            \\  Identity   : {s}
+            \\  Address    : {s}  (Solana mainnet, ed25519 — vendor-agnostic)
+            \\  Asset      : USDC (mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v)
+            \\
+            \\  TOP UP:
+            \\    1. Open your Solana wallet (Phantom, Solflare, Backpack — any work).
+            \\    2. Send at least 0.10 USDC to: {s}
+            \\    3. Inspect at: https://solscan.io/account/{s}
+            \\
+            \\  Each x402 paywall call typically costs 0.001 USDC, so 0.10 USDC = ~100 calls.
+            \\  The substrate auto-signs x402 envelopes from this address — no manual signing needed.
+            \\  Lose the root.key, lose the wallet — see canon 651be176 for recovery shards plan.
+        , .{ identity_id, addr, addr, addr });
+        defer allocator.free(guide);
+        out(guide);
+        out("\n");
+        contract.appendCalledRow(allocator, env, r.id, "wallet:setup-complete", "wallet-setup") catch {};
+        return .{ .rc = 0, .result = "wallet-setup-done" };
+    }
+
     // route:<env_kind> — ROUTER action. The contract declares which
     // adapter family it wants to run in (turbobox, runpod, telegram-bot,
     // local-mac, vm, mesh-peer, ...). Local executor emits a
