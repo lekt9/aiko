@@ -2705,6 +2705,10 @@ fn humanizePersona(allocator: std.mem.Allocator, raw: []const u8) ![]u8 {
 }
 
 fn writeOpenAiCompletion(allocator: std.mem.Allocator, content: []const u8) !void {
+    return writeOpenAiCompletionExt(allocator, content, null);
+}
+
+fn writeOpenAiCompletionExt(allocator: std.mem.Allocator, content: []const u8, tool_calls_json: ?[]const u8) !void {
     // Minimal ChatCompletion shape: id, object, created, model, choices.
     var content_escaped: std.ArrayList(u8) = .empty;
     defer content_escaped.deinit(allocator);
