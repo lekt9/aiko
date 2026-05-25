@@ -22,8 +22,14 @@ export CONTRACT_NO_UNBROWSE_MIRROR=1
 # Also clear toggle env (otherwise CONTRACT_NO_* loses to toggle-on contract).
 unset CONTRACT_GIT_SYNC CONTRACT_OUTLINE_SYNC CONTRACT_UNBROWSE_MIRROR
 
+SST_FILTER="${1:-}"
 check() {
   local name="$1"; shift
+  # Optional positional filter: skip invariants whose name doesn't match.
+  # Lets a caller drill ONE invariant fast (e.g. pointer-types/bridge-...).
+  if [ -n "$SST_FILTER" ] && [ "$name" != "$SST_FILTER" ]; then
+    return 0
+  fi
   # Per-gate hard timeout (default 60s). A gate that hangs longer than
   # this is treated as a TIMEOUT failure with the gate name visible —
   # was previously opaque because the wrapper timed out generically.
