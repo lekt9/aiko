@@ -259,6 +259,8 @@ pub fn declare(
     try writeArrayFieldIfNonEmpty(&buf, allocator, "inhibits", inhibits);
     try writeArrayFieldIfNonEmpty(&buf, allocator, "bind_to", bind_to);
     try writeArrayFieldIfNonEmpty(&buf, allocator, "blocked_by", blocked_by);
+    try writeArrayFieldIfNonEmpty(&buf, allocator, "posthooks", posthooks);
+    try writeArrayFieldIfNonEmpty(&buf, allocator, "prehooks", prehooks);
     try buf.appendSlice(allocator, ", \"ts\": ");
     try writeJsonString(&buf, allocator, ts);
     try buf.appendSlice(allocator, ", \"agent\": ");
