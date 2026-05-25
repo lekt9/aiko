@@ -28,9 +28,17 @@ RUN zig build -Doptimize=ReleaseSafe \
 RUN ls -la zig-out/bin && file zig-out/bin/aiko
 
 FROM debian:bookworm-slim
+# bun + python3 baked at build time so the contract binary's bun:/python:
+# action prefixes work out-of-the-box. nanobrew is the bash-based package
+# manager (https://github.com/justrach/nanobrew) so contracts can declare
+# nanobrew:<pkg> and the resolver installs into the runtime image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl python3 && \
+        ca-certificates curl python3 python3-pip git unzip bash && \
     rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://bun.sh/install | bash && \
+    install -m 755 /root/.bun/bin/bun /usr/local/bin/bun
+RUN curl -fsSL https://raw.githubusercontent.com/justrach/nanobrew/main/install.sh | bash -s -- /usr/local || \
+    echo "nanobrew install: best-effort; bun/python3 still available"
 RUN useradd -m -u 10001 -s /bin/bash aiko
 WORKDIR /opt/aiko
 COPY --from=builder /src/zig/zig-out/bin/aiko /usr/local/bin/aiko
