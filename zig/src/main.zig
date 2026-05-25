@@ -1267,6 +1267,52 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         return .{ .rc = 0, .result = msg };
     }
 
+    // Code-typed action prefixes — first-class language bindings so the
+    // contract row IS the strict-typed payload, not a free-form shell
+    // string. Bun for TypeScript/JavaScript, python3 for Python, nanobrew
+    // for package install (https://github.com/justrach/nanobrew). The
+    // local binary trusts the named runtime is on PATH (baked at build
+    // time per Dockerfile). Same capture + budget semantics as runShell.
+    if (std.mem.startsWith(u8, action, "bun:")) {
+        const code = action["bun:".len..];
+        const cmd_text = try std.fmt.allocPrint(allocator, "bun -e \"{s}\"", .{code});
+        defer allocator.free(cmd_text);
+        evidencePrint("  exec: bun ({d} chars)\n", .{code.len});
+        const out_capture = try runShellCapture(allocator, cmd_text, r.cwd);
+        if (out_capture.rc == 0) {
+            evidence("  result: PASS (bun)\n");
+            return .{ .rc = 0, .result = if (out_capture.output.len > 0) out_capture.output else "pass" };
+        }
+        evidencePrint("  result: FAIL (bun exit {d})\n", .{out_capture.rc});
+        return .{ .rc = out_capture.rc, .result = if (out_capture.output.len > 0) out_capture.output else "fail" };
+    }
+    if (std.mem.startsWith(u8, action, "python:")) {
+        const code = action["python:".len..];
+        const cmd_text = try std.fmt.allocPrint(allocator, "python3 -c \"{s}\"", .{code});
+        defer allocator.free(cmd_text);
+        evidencePrint("  exec: python3 ({d} chars)\n", .{code.len});
+        const out_capture = try runShellCapture(allocator, cmd_text, r.cwd);
+        if (out_capture.rc == 0) {
+            evidence("  result: PASS (python)\n");
+            return .{ .rc = 0, .result = if (out_capture.output.len > 0) out_capture.output else "pass" };
+        }
+        evidencePrint("  result: FAIL (python exit {d})\n", .{out_capture.rc});
+        return .{ .rc = out_capture.rc, .result = if (out_capture.output.len > 0) out_capture.output else "fail" };
+    }
+    if (std.mem.startsWith(u8, action, "nanobrew:")) {
+        const pkg = action["nanobrew:".len..];
+        const cmd_text = try std.fmt.allocPrint(allocator, "nanobrew install \"{s}\"", .{pkg});
+        defer allocator.free(cmd_text);
+        evidencePrint("  exec: nanobrew install {s}\n", .{pkg});
+        const out_capture = try runShellCapture(allocator, cmd_text, r.cwd);
+        if (out_capture.rc == 0) {
+            evidence("  result: PASS (nanobrew)\n");
+            return .{ .rc = 0, .result = if (out_capture.output.len > 0) out_capture.output else "pass" };
+        }
+        evidencePrint("  result: FAIL (nanobrew exit {d})\n", .{out_capture.rc});
+        return .{ .rc = out_capture.rc, .result = if (out_capture.output.len > 0) out_capture.output else "fail" };
+    }
+
     // grant:<pubkey_hex>:<role>:<scope_id> — delegate one (actor, role,
     // scope) tuple. Granter = this row's id; chained grants follow lineage.
     if (std.mem.startsWith(u8, action, "grant:")) {
