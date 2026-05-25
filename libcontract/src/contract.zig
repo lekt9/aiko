@@ -308,13 +308,13 @@ pub fn declare(
         opts.inputs_file_refs_digest,
         opts.parent_id,
     );
-    // Single owner: free at function exit OR on cache hit early return.
-    // No errdefer — the explicit defer at the row-write site below covers
-    // every other path including error returns past the cache check.
+    // Single owner. Cache-hit returns its own free; cache-miss installs a
+    // function-wide defer so every path from here on releases the slice.
     if (try findCachedDeclared(allocator, env, inputs_hash)) |cached_id| {
         allocator.free(inputs_hash);
         return cached_id;
     }
+    defer allocator.free(inputs_hash);
 
     const cid = try id_mod.generateId(allocator);
     errdefer allocator.free(cid);
