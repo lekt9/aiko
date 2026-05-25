@@ -79,7 +79,7 @@ async function handleClaim(req: Request, env: Env, ip: string): Promise<Response
     }, { status: 429 });
   }
 
-  const body = await req.json<{ public_key?: string }>().catch(() => ({}));
+  const body = (await req.json().catch(() => ({}))) as { public_key?: string };
   if (!body.public_key) {
     return Response.json({ ok: false, error: "missing public_key" }, { status: 400 });
   }
