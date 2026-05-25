@@ -962,6 +962,115 @@ fn cmdList(allocator: std.mem.Allocator, env: std.process.Environ) !u8 {
     return 0;
 }
 
+/// Compat verb: `verify-lineage <id>` — walk parent_id chain from `id` back to
+/// the root sentinel, recomputing each row's signing digest and verifying
+/// every parent_signature against the parent's env_pubkey. Root rows are
+/// self-signed (signer == own pubkey).
+///
+/// Reports per-link PASS / FAIL and an overall verdict. Exits 0 only when
+/// every link verifies and the chain reaches a root.
+fn cmdVerifyLineage(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    if (args.len < 1) {
+        errPrint("verify-lineage requires: <id>\n", .{});
+        return 2;
+    }
+    const target = args[0];
+    const rows = try parseRows(allocator, env);
+    defer allocator.free(rows);
+
+    var chain: std.ArrayList(Row) = .empty;
+    defer chain.deinit(allocator);
+
+    // Walk parent_id from target backward.
+    var cur: []const u8 = target;
+    var seen_root = false;
+    while (true) {
+        var found: ?Row = null;
+        for (rows) |r| {
+            if (!std.mem.eql(u8, r.event, "declared")) continue;
+            if (std.mem.eql(u8, r.id, cur)) {
+                found = r;
+                break;
+            }
+        }
+        const row = found orelse {
+            errPrint("verify-lineage: no declared row for {s}\n", .{cur});
+            return 1;
+        };
+        try chain.append(allocator, row);
+        if (row.parent_id) |p| {
+            if (p.len == 0) {
+                seen_root = true;
+                break;
+            }
+            cur = p;
+        } else {
+            seen_root = true;
+            break;
+        }
+    }
+    if (!seen_root) {
+        errPrint("verify-lineage: chain did not terminate at root\n", .{});
+        return 1;
+    }
+
+    // Build a pubkey lookup for signer resolution.
+    var pubkey_for_id: std.StringHashMap([]const u8) = .init(allocator);
+    defer pubkey_for_id.deinit();
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        if (r.env_pubkey.len == 0) continue;
+        try pubkey_for_id.put(r.id, r.env_pubkey);
+    }
+
+    outPrint("verify-lineage {s}:\n", .{target});
+    // Iterate chain leaf -> root and verify each row's parent_signature.
+    var all_ok = true;
+    var i: usize = 0;
+    while (i < chain.items.len) : (i += 1) {
+        const r = chain.items[i];
+        if (r.env_pubkey.len == 0 or r.parent_signature.len == 0) {
+            outPrint("  [SKIP] {s} — row predates lineage signing\n", .{r.id});
+            continue;
+        }
+        const parent_or_root: []const u8 = if (r.parent_id) |p|
+            (if (p.len > 0) p else "root")
+        else
+            "root";
+        // Resolve signer's pubkey: parent's env_pubkey, or self for root.
+        const signer_pubkey: []const u8 = blk: {
+            if (r.parent_id) |p| {
+                if (p.len > 0) {
+                    if (pubkey_for_id.get(p)) |pk| break :blk pk;
+                    break :blk ""; // missing parent row
+                }
+            }
+            break :blk r.env_pubkey; // self-signed root
+        };
+        if (signer_pubkey.len == 0) {
+            outPrint("  [FAIL] {s} — parent's env_pubkey unavailable\n", .{r.id});
+            all_ok = false;
+            continue;
+        }
+        var digest: [32]u8 = undefined;
+        @import("contract").Lineage.signingDigest(r.id, r.env_pubkey, r.plan, parent_or_root, &digest);
+        @import("contract").Lineage.verifyDigest(r.parent_signature, signer_pubkey, digest) catch {
+            outPrint("  [FAIL] {s} — signature verification failed (signer={s}...)\n", .{ r.id, signer_pubkey[0..16] });
+            all_ok = false;
+            continue;
+        };
+        const role = if (r.parent_id == null or r.parent_id.?.len == 0) "root (self-signed)" else "child (signed by parent)";
+        outPrint("  [ OK ] {s} {s}\n", .{ r.id, role });
+    }
+    if (all_ok) {
+        outPrint("verdict: chain authentic ({d} links)\n", .{chain.items.len});
+        return 0;
+    } else {
+        outPrint("verdict: chain INVALID\n", .{});
+        return 1;
+    }
+}
+
 /// Compat verb: `_mark <id> satisfied [--proof <text>]`. Appends a `satisfied`
 /// row via libcontract.markSatisfied so externally-verified contracts can be
 /// driven to satisfaction without round-tripping through the resolver. This
