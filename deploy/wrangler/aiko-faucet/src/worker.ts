@@ -187,11 +187,68 @@ async function handleDeclare(req: Request, env: Env, ip: string): Promise<Respon
   return resp;
 }
 
-async function signFaremeterEnvelope(_env: Env, _accepts: any, _amount: bigint): Promise<string> {
-  // TODO(operator): plug in @faremeter/flex sign call here. The shape:
-  //   const { header } = await flex.sign({ ... });  return header;
-  // For now we return an empty string so the failure is loud, not silent.
-  return "";
+/// Build + sign an x402 / Faremeter Flex envelope for Solana.
+///
+/// The Flex scheme for SVM transports a pre-signed SPL transfer transaction
+/// inside the envelope payload. The facilitator (corbits-faremeter-flex)
+/// validates the signature, broadcasts the tx, then forwards the underlying
+/// HTTP request once on-chain.
+///
+/// Envelope shape per x402 v2 + Faremeter conventions:
+///   { x402Version, scheme: "@faremeter/flex", network, payload: {
+///       signedTransaction: <base64>,
+///       payer:    <source pubkey base58>,
+///       payTo:    <recipient base58>,
+///       amount:   <stringified base units>,
+///       asset:    <mint base58>,
+///       nonce:    <uuid>
+///   } }
+///
+/// The whole envelope is JSON-stringified then base64-encoded; that base64
+/// string is the value of the X-PAYMENT header. The facilitator's spec is
+/// the source of truth; this implementation is best-effort against the
+/// public envelope shape observed on the 402 response.
+async function signFaremeterEnvelope(env: Env, accepts: any, amount: bigint): Promise<string> {
+  const source = await sourceKeypair(env);
+  const conn = new Connection(env.SOLANA_RPC, "confirmed");
+  const mint = new PublicKey(accepts.asset);
+  const payTo = new PublicKey(accepts.payTo);
+
+  const fromAta = await getAssociatedTokenAddress(mint, source.publicKey);
+  const toAta = await getAssociatedTokenAddress(mint, payTo);
+
+  const tx = new Transaction();
+  const toInfo = await conn.getAccountInfo(toAta);
+  if (!toInfo) {
+    // Source pays rent for the recipient's ATA. Tiny one-time cost; same
+    // wallet that funds the faucet covers it.
+    tx.add(createAssociatedTokenAccountInstruction(source.publicKey, toAta, payTo, mint));
+  }
+  tx.add(createTransferInstruction(fromAta, toAta, source.publicKey, amount));
+
+  const { blockhash } = await conn.getLatestBlockhash("confirmed");
+  tx.recentBlockhash = blockhash;
+  tx.feePayer = source.publicKey;
+  tx.sign(source);
+
+  const serialized = tx.serialize();
+  const signedTxB64 = btoa(String.fromCharCode(...new Uint8Array(serialized)));
+
+  const envelope = {
+    x402Version: 2,
+    scheme: "@faremeter/flex",
+    network: accepts.network,
+    payload: {
+      signedTransaction: signedTxB64,
+      payer: source.publicKey.toBase58(),
+      payTo: accepts.payTo,
+      amount: amount.toString(),
+      asset: accepts.asset,
+      nonce: crypto.randomUUID(),
+    },
+  };
+
+  return btoa(JSON.stringify(envelope));
 }
 
 export default {

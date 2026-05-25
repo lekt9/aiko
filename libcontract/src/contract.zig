@@ -437,9 +437,6 @@ pub fn declare(
             try writeJsonString(&buf, allocator, d);
         }
     }
-    // Free the inputs_hash slice after it's been serialized into the row.
-    // (errdefer above was a no-op once we got here without erroring.)
-    defer allocator.free(inputs_hash);
 
     // Ad-hoc typed metadata. Caller passes typed Field entries; empty values
     // are dropped (treated as absent).
