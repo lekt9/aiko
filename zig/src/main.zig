@@ -997,7 +997,12 @@ fn cmdList(allocator: std.mem.Allocator, env: std.process.Environ) !u8 {
     defer allocator.free(rows);
     for (rows) |r| {
         if (!std.mem.eql(u8, r.event, "declared")) continue;
-        const status = if (isSatisfied(rows, r.id)) "satisfied" else "pending";
+        const status: []const u8 = if (isSatisfied(rows, r.id))
+            "satisfied"
+        else if (isDead(rows, r.id))
+            "dead"
+        else
+            "pending";
         outPrint("[{s}] {s} ({s}) — \"{s}\"\n", .{ status, r.id, pointer.inferPointerType(r.action), r.plan });
     }
     return 0;
