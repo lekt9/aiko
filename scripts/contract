@@ -237,49 +237,49 @@ print(c['status'] if c else 'not-found')
   # land, every bridge: iterate is REFUSED honestly with === BRIDGE REFUSED ===
   # naming the missing dependency. Γ1 no-stubs: no fake success path.
   if [[ "$action" == bridge:* ]]; then
-    local bridge_spec="${action#bridge:}"
-    # Expect: contract:<foreign-id>@<owner-canonical>?cost=<usdc>
-    local bridge_foreign_id="" bridge_owner="" bridge_cost=""
-    bridge_foreign_id=$(printf '%s' "$bridge_spec" | python3 -c "
-import sys, re
-s = sys.stdin.read().strip()
-m = re.match(r'^contract:([^@]+)@([^?]+)(?:\?cost=([0-9.]+))?$', s)
-print(m.group(1) if m else '')
+    # Strict parse per Π10 spec: bridge:contract:<8-hex>@<owner>?cost=<usdc>
+    # Three fields are crystallized on the declared row at declare-time
+    # (bridge_foreign_id / bridge_owner_canonical / bridge_cost_usdc) but
+    # we re-derive here for the runtime block — the regex is the gate.
+    local bridge_parts
+    bridge_parts=$(MH_ACTION="$action" python3 -c "
+import os, re
+m = re.match(r'^bridge:contract:([0-9a-f]{8})@([^?]+)\?cost=([0-9]+(?:\.[0-9]+)?)$', os.environ['MH_ACTION'])
+if not m:
+    print('MALFORMED')
+else:
+    print(m.group(1) + '\t' + m.group(2) + '\t' + m.group(3))
 ")
-    bridge_owner=$(printf '%s' "$bridge_spec" | python3 -c "
-import sys, re
-s = sys.stdin.read().strip()
-m = re.match(r'^contract:([^@]+)@([^?]+)(?:\?cost=([0-9.]+))?$', s)
-print(m.group(2) if m else '')
-")
-    bridge_cost=$(printf '%s' "$bridge_spec" | python3 -c "
-import sys, re
-s = sys.stdin.read().strip()
-m = re.match(r'^contract:([^@]+)@([^?]+)(?:\?cost=([0-9.]+))?$', s)
-print(m.group(3) or '0' if m else '')
-")
-    _l0 "  pointer(bridge): contract:$bridge_foreign_id@$bridge_owner cost=\$$bridge_cost"
-    if [ -z "$bridge_foreign_id" ] || [ -z "$bridge_owner" ]; then
-      echo "  result: ERROR — bridge: action malformed (expected bridge:contract:<id>@<owner>?cost=<n>, got: $action)" >&2
+    if [ "$bridge_parts" = "MALFORMED" ]; then
+      echo "  result: ERROR — bridge: action malformed (expected bridge:contract:<8hex>@<owner>?cost=<n>, got: $action)" >&2
       return 1
     fi
+    local bridge_foreign_id bridge_owner bridge_cost
+    bridge_foreign_id=$(printf '%s' "$bridge_parts" | cut -f1)
+    bridge_owner=$(printf '%s' "$bridge_parts" | cut -f2)
+    bridge_cost=$(printf '%s' "$bridge_parts" | cut -f3)
+    _l0 "  pointer(bridge): contract:$bridge_foreign_id@$bridge_owner cost=\$$bridge_cost"
     {
       echo ""
       echo "  === BRIDGE REFUSED ==="
-      echo "  foreign_id=$bridge_foreign_id"
-      echo "  owner_canonical=$bridge_owner"
-      echo "  cost_usdc=$bridge_cost"
-      echo "  reason=Sigma17 RBAC not yet implemented — gap 2b98f80f"
-      echo "  also_blocked_on=unbrowse-broker foreign-row lookup — gap 036073d8"
+      echo "    kind: bridge"
+      echo "    foreign_id: $bridge_foreign_id"
+      echo "    owner_canonical: $bridge_owner"
+      echo "    cost_usdc: $bridge_cost"
+      echo "    reason: Σ17 RBAC not yet implemented (depends on gap 2b98f80f); foreign-fetch depends on Π8 broker (gap 036073d8)"
       echo ""
       echo "  Substrate enables, never auto-installs. This bridge will iterate"
-      echo "  successfully once both dependencies land:"
-      echo "    - Sigma17 RBAC field on the foreign contract (gap 2b98f80f)"
-      echo "    - unbrowse-broker cross-silo lookup (gap 036073d8)"
-      echo "  Until then every bridge: iterate refuses honestly (Gamma1 no-stubs)."
+      echo "  successfully once both dependencies land. Until then every bridge:"
+      echo "  iterate refuses honestly (Γ1 no-stubs)."
       echo ""
       echo "  result: FAIL (bridge refused — missing substrate dependencies)"
     } >&2
+    # Stash structured action_meta for record_iteration to crystallize on the
+    # iterated row. The wrapper in the main iterate loop reads this file when
+    # writing the ledger event so consumers don't have to grep stderr.
+    cat >/tmp/contract-action-meta <<EOF
+{"block_kind":"bridge-refused","bridge_foreign_id":"$bridge_foreign_id","bridge_owner_canonical":"$bridge_owner","bridge_cost_usdc":"$bridge_cost","missing_deps":["2b98f80f","036073d8"]}
+EOF
     return 1
   fi
 
