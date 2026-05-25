@@ -3614,10 +3614,12 @@ PY
     # a recorded artifact, not just in-thread agent judgment. Origin: 173c8819.
     PROOF=""
     PROOF_SKIP=""
+    NO_LAYER_GUARD=0
     while [ $# -gt 0 ]; do
       case "$1" in
         --proof) PROOF="${2:-}"; shift 2 ;;
         --proof-skip) PROOF_SKIP="${2:-}"; shift 2 ;;
+        --no-layer-guard) NO_LAYER_GUARD=1; shift ;;
         *) shift ;;
       esac
     done
