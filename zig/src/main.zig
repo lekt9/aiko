@@ -426,13 +426,17 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         const hdir = action["harness:".len..];
         body = try std.fmt.allocPrint(allocator, "\"{s}/verify.sh\"", .{hdir});
     }
-    const rc = try runShell(allocator, body, r.cwd);
-    if (rc == 0) {
+    // Capture stdout+stderr so the parent layer sees child context, not
+    // just an exit code. This is the recursive context-aggregation channel.
+    const out_capture = try runShellCapture(allocator, body, r.cwd);
+    if (out_capture.rc == 0) {
         evidence("  result: PASS (exit 0)\n");
+        if (out_capture.output.len > 0) return .{ .rc = 0, .result = out_capture.output };
         return .{ .rc = 0, .result = "pass" };
     }
-    evidencePrint("  result: FAIL (exit {d})\n", .{rc});
-    return .{ .rc = rc, .result = "fail" };
+    evidencePrint("  result: FAIL (exit {d})\n", .{out_capture.rc});
+    if (out_capture.output.len > 0) return .{ .rc = out_capture.rc, .result = out_capture.output };
+    return .{ .rc = out_capture.rc, .result = "fail" };
 }
 
 const DeclareArgs = struct { plan: []const u8 };
