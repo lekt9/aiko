@@ -360,6 +360,51 @@ fn meshEncryptHook(allocator: std.mem.Allocator, local_priv: [32]u8, peer_pub: [
     return .{ .nonce = nonce, .tag = tag, .ciphertext = ct };
 }
 
+/// Encrypt a hook payload to a remote posthook target and emit the envelope
+/// as ledger evidence + a called-row with transport=wireguard-lineage-mesh.
+/// root_id for the derivation is the firing contract id (cid) — the firing
+/// node IS the root of its own ephemeral hook mesh.
+fn meshEmitRemoteHook(allocator: std.mem.Allocator, env: std.process.Environ, cid: []const u8, posthook: []const u8, tree_payload: []const u8) !void {
+    const root_seed = try lineage_lib.loadOrInitRootKey(allocator, env);
+    var local_priv: [32]u8 = undefined;
+    var peer_priv: [32]u8 = undefined;
+    try meshDeriveX25519(root_seed, cid, cid, &local_priv);
+    try meshDeriveX25519(root_seed, cid, posthook, &peer_priv);
+    const peer_pub = try meshPublicKey(peer_priv);
+    var info_buf: [128]u8 = undefined;
+    const info = try std.fmt.bufPrint(&info_buf, "aiko-mesh/hook/{s}/{s}->{s}", .{ cid, cid, posthook });
+    const env_pkt = try meshEncryptHook(allocator, local_priv, peer_pub, tree_payload, info);
+    defer allocator.free(env_pkt.ciphertext);
+
+    // Hex-encode peer pubkey + nonce + tag + ciphertext for the called row's
+    // target_pointer body. Bounded by 16KB so the ledger row stays sane.
+    const hex_max: usize = @min(env_pkt.ciphertext.len, 8 * 1024);
+    var hex_buf: std.ArrayList(u8) = .empty;
+    defer hex_buf.deinit(allocator);
+    try hex_buf.appendSlice(allocator, "wireguard-lineage-mesh:peer=");
+    var pub_hex: [64]u8 = undefined;
+    lineage_lib.bytesToHex(&peer_pub, &pub_hex);
+    try hex_buf.appendSlice(allocator, &pub_hex);
+    try hex_buf.appendSlice(allocator, ",nonce=");
+    var nonce_hex: [24]u8 = undefined;
+    lineage_lib.bytesToHex(&env_pkt.nonce, &nonce_hex);
+    try hex_buf.appendSlice(allocator, &nonce_hex);
+    try hex_buf.appendSlice(allocator, ",tag=");
+    var tag_hex: [32]u8 = undefined;
+    lineage_lib.bytesToHex(&env_pkt.tag, &tag_hex);
+    try hex_buf.appendSlice(allocator, &tag_hex);
+    try hex_buf.appendSlice(allocator, ",ct=");
+    const ct_hex = try allocator.alloc(u8, hex_max * 2);
+    defer allocator.free(ct_hex);
+    lineage_lib.bytesToHex(env_pkt.ciphertext[0..hex_max], ct_hex);
+    try hex_buf.appendSlice(allocator, ct_hex);
+    const target_pointer = try hex_buf.toOwnedSlice(allocator);
+    defer allocator.free(target_pointer);
+
+    try contract.appendCalledRow(allocator, env, cid, target_pointer, "posthook-mesh");
+    evidencePrint("mesh hook encrypted: {s} -> {s} ct_bytes={d} nonce={s}\n", .{ cid, posthook, env_pkt.ciphertext.len, nonce_hex[0..16] });
+}
+
 /// Walk the parent_id chain from `cid` up to root and emit a JSON array of
 /// {id, action_result} entries — child-first ordering so posthooks can read
 /// the recursive ancestor stack at every layer. Caps depth at 32 and per-
