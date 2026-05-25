@@ -2224,7 +2224,7 @@ fn writeOpenAiCompletion(allocator: std.mem.Allocator, content: []const u8) !voi
         },
         else => try content_escaped.append(allocator, c),
     };
-    const ts = std.time.timestamp();
+    const ts: i64 = time(null);
     const out_json = try std.fmt.allocPrint(allocator,
         \\{{"id":"chatcmpl-aiko-{d}","object":"chat.completion","created":{d},"model":"{s}","persona":"{s}","ca":"{s}","choices":[{{"index":0,"message":{{"role":"assistant","content":"{s}"}},"finish_reason":"stop"}}],"usage":{{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}}}
         \\
