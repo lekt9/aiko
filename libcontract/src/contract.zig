@@ -227,35 +227,17 @@ pub fn declare(
     try scan_buf.appendSlice(allocator, plan);
     const scan_text = scan_buf.items;
 
-    const refs = try pointer.extractContractRefs(allocator, scan_text);
+    // One typed scan per declared row. Iterate the kind table once; each
+    // ref discovered becomes a Synapse{ to, kind } in a single owned slice.
+    var synapses: std.ArrayList(Synapse) = .empty;
     defer {
-        for (refs) |r| allocator.free(r);
-        allocator.free(refs);
+        for (synapses.items) |s| allocator.free(s.to);
+        synapses.deinit(allocator);
     }
-    const inhibits = try pointer.extractTypedRefs(allocator, scan_text, "inhibits:");
-    defer {
-        for (inhibits) |r| allocator.free(r);
-        allocator.free(inhibits);
-    }
-    const bind_to = try pointer.extractTypedRefs(allocator, scan_text, "bind:");
-    defer {
-        for (bind_to) |r| allocator.free(r);
-        allocator.free(bind_to);
-    }
-    const blocked_by = try pointer.extractTypedRefs(allocator, scan_text, "blocked_by:");
-    defer {
-        for (blocked_by) |r| allocator.free(r);
-        allocator.free(blocked_by);
-    }
-    const posthooks = try pointer.extractTypedRefs(allocator, scan_text, "posthook:");
-    defer {
-        for (posthooks) |r| allocator.free(r);
-        allocator.free(posthooks);
-    }
-    const prehooks = try pointer.extractTypedRefs(allocator, scan_text, "prehook:");
-    defer {
-        for (prehooks) |r| allocator.free(r);
-        allocator.free(prehooks);
+    for (synapse_table) |entry| {
+        const ids = try pointer.extractTypedRefs(allocator, scan_text, entry.prefix);
+        defer allocator.free(ids); // inner-string ownership transfers to synapses[].to
+        for (ids) |id| try synapses.append(allocator, .{ .to = id, .kind = entry.kind });
     }
 
     var buf: std.ArrayList(u8) = .empty;
@@ -281,27 +263,26 @@ pub fn declare(
     } else {
         try buf.appendSlice(allocator, "null");
     }
-    try buf.appendSlice(allocator, ", \"pointers\": [");
-    for (refs, 0..) |r, idx| {
+    // Typed edge list. One uniform array; readers discriminate by `kind`.
+    try buf.appendSlice(allocator, ", \"synapses\": [");
+    for (synapses.items, 0..) |s, idx| {
         if (idx > 0) try buf.appendSlice(allocator, ", ");
-        try writeJsonString(&buf, allocator, r);
+        try buf.appendSlice(allocator, "{\"to\": ");
+        try writeJsonString(&buf, allocator, s.to);
+        try buf.appendSlice(allocator, ", \"kind\": ");
+        try writeJsonString(&buf, allocator, s.kind.jsonName());
+        try buf.append(allocator, '}');
     }
     try buf.append(allocator, ']');
-    try writeOptionalStringField(&buf, allocator, "aiko_role", opts.aiko_role);
-    try writeOptionalStringField(&buf, allocator, "aggregation", opts.aggregation);
-    try writeOptionalStringField(&buf, allocator, "audience", opts.audience);
-    try writeOptionalStringField(&buf, allocator, "wallet_identity", opts.wallet_identity);
-    try writeOptionalStringField(&buf, allocator, "parent_wallet_identity", opts.parent_wallet_identity);
-    try writeOptionalStringField(&buf, allocator, "replicated_from_contract_id", opts.replicated_from_contract_id);
-    try writeOptionalStringField(&buf, allocator, "embedding_pointer", opts.embedding_pointer);
-    try writeOptionalStringField(&buf, allocator, "metric_source", opts.metric_source);
-    try writeOptionalStringField(&buf, allocator, "metric_pointer", opts.metric_pointer);
-    try writeOptionalStringField(&buf, allocator, "metric_assertion", opts.metric_assertion);
-    try writeArrayFieldIfNonEmpty(&buf, allocator, "inhibits", inhibits);
-    try writeArrayFieldIfNonEmpty(&buf, allocator, "bind_to", bind_to);
-    try writeArrayFieldIfNonEmpty(&buf, allocator, "blocked_by", blocked_by);
-    try writeArrayFieldIfNonEmpty(&buf, allocator, "posthooks", posthooks);
-    try writeArrayFieldIfNonEmpty(&buf, allocator, "prehooks", prehooks);
+    // Ad-hoc typed metadata. Caller passes typed Field entries; empty values
+    // are dropped (treated as absent).
+    for (opts.extras) |f| {
+        if (f.value.len == 0) continue;
+        try buf.appendSlice(allocator, ", ");
+        try writeJsonString(&buf, allocator, f.key);
+        try buf.appendSlice(allocator, ": ");
+        try writeJsonString(&buf, allocator, f.value);
+    }
     try buf.appendSlice(allocator, ", \"ts\": ");
     try writeJsonString(&buf, allocator, ts);
     try buf.appendSlice(allocator, ", \"agent\": ");
