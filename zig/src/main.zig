@@ -1594,39 +1594,46 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         return .{ .rc = 0, .result = msg };
     }
 
-    // wallet:setup — first-run guidance. Surfaces address + top-up steps.
-    // Idempotent — re-runs print the same instructions.
+    // wallet:setup — chain-agnostic first-run guidance.
     if (std.mem.eql(u8, action, "wallet:setup")) {
-        const root = lineage_lib.loadOrInitRootKey(allocator, env) catch {
-            evidence("  result: FAIL — no root key\n");
-            return .{ .rc = 1, .result = "no-root-key" };
-        };
+        const root = lineage_lib.loadOrInitRootKey(allocator, env) catch return .{ .rc = 1, .result = "no-root-key" };
         const identity_id = env.getPosix("CONTRACT_INSTANCE_ID") orelse r.id;
-        const kp = lineage_lib.deriveKeyPair(root, identity_id) catch return .{ .rc = 1, .result = "derive-failed" };
+        const sol_kp = lineage_lib.deriveKeyPair(root, identity_id) catch return .{ .rc = 1, .result = "derive-failed" };
         var b58: [64]u8 = undefined;
-        const n = b58encode(&kp.public_key.bytes, &b58);
-        const addr = b58[0..n];
+        const b58_n = b58encode(&sol_kp.public_key.bytes, &b58);
+        const sol_addr = b58[0..b58_n];
+        var evm_priv: [32]u8 = undefined;
+        deriveEvmPrivateKey(root, identity_id, &evm_priv) catch return .{ .rc = 1, .result = "evm-derive-failed" };
+        var evm_addr: [42]u8 = undefined;
+        _ = evmAddressFromPriv(evm_priv, &evm_addr) catch return .{ .rc = 1, .result = "evm-address-failed" };
         const guide = try std.fmt.allocPrint(allocator,
-            \\WALLET SETUP — your aiko identity is now configured.
+            \\WALLET SETUP — your aiko identity is chain-agnostic.
+            \\Same root_seed -> ed25519 (Solana family) + secp256k1 (EVM family).
+            \\The 402 envelope's `network` field picks which key signs.
             \\
-            \\  Identity   : {s}
-            \\  Address    : {s}  (Solana mainnet, ed25519 — vendor-agnostic)
-            \\  Asset      : USDC (mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v)
+            \\  Identity        : {s}
+            \\  CAIP-10 addresses:
+            \\    solana:mainnet : {s}
+            \\    eip155:1       : {s}  (Ethereum mainnet)
+            \\    eip155:8453    : {s}  (Base — recommended, low fees)
+            \\    eip155:42161   : {s}  (Arbitrum One)
+            \\    eip155:137     : {s}  (Polygon)
             \\
-            \\  TOP UP:
-            \\    1. Open your Solana wallet (Phantom, Solflare, Backpack — any work).
-            \\    2. Send at least 0.10 USDC to: {s}
-            \\    3. Inspect at: https://solscan.io/account/{s}
+            \\  TOP UP — any USDC on ANY of those chains works. Recommended: Base.
+            \\    Base USDC:  send to {s}  (~$0.001 per x402 call)
+            \\    Solana USDC: send to {s}  (~$0.001 per x402 call)
             \\
-            \\  Each x402 paywall call typically costs 0.001 USDC, so 0.10 USDC = ~100 calls.
-            \\  The substrate auto-signs x402 envelopes from this address — no manual signing needed.
-            \\  Lose the root.key, lose the wallet — see canon 651be176 for recovery shards plan.
-        , .{ identity_id, addr, addr, addr });
+            \\  Inspect:
+            \\    Solana:    https://solscan.io/account/{s}
+            \\    EVM (Base): https://basescan.org/address/{s}
+            \\
+            \\  Recovery: back up ~/.contracts/root.key (canon 651be176).
+        , .{ identity_id, sol_addr, &evm_addr, &evm_addr, &evm_addr, &evm_addr, &evm_addr, sol_addr, sol_addr, &evm_addr });
         defer allocator.free(guide);
         out(guide);
         out("\n");
-        contract.appendCalledRow(allocator, env, r.id, "wallet:setup-complete", "wallet-setup") catch {};
-        return .{ .rc = 0, .result = "wallet-setup-done" };
+        contract.appendCalledRow(allocator, env, r.id, "wallet:setup-complete:multichain", "wallet-setup") catch {};
+        return .{ .rc = 0, .result = "wallet-setup-done-multichain" };
     }
 
     // route:<env_kind> — ROUTER action. The contract declares which
