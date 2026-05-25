@@ -36,15 +36,27 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(shim);
 
     // ── tests ────────────────────────────────────────────────────────────
-    const tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/contract.zig"),
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-        }),
-    });
-    const run_tests = b.addRunArtifact(tests);
+    // Σ27 (a4e162c8) — the-binary-IS-the-interface: every doctrine has its
+    // tests INSIDE the source file, exercised by `zig build test`. No
+    // verb-gates/<name>/verify.sh folder outriggers; if it isn't testable
+    // from here, it isn't bound.
     const test_step = b.step("test", "Run libcontract tests");
-    test_step.dependOn(&run_tests.step);
+
+    const test_files = [_][]const u8{
+        "src/contract.zig",
+        "src/pointer.zig",
+        "src/guards.zig",
+        "src/fractal.zig",
+    };
+    for (test_files) |tf| {
+        const t = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(tf),
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            }),
+        });
+        test_step.dependOn(&b.addRunArtifact(t).step);
+    }
 }
