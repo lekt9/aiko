@@ -157,6 +157,39 @@ pub fn audienceJargon(content: []const u8, audience: ?[]const u8) GuardError!voi
     }
 }
 
+/// Σ32a Peace (Galatians 5:22) + Aiko voice rule 4 (ask before irreversible):
+/// refuse action strings containing destructive verbs unless `has_consent`
+/// is true. Bytes-falsifiable substring scan: agent decides what nuance
+/// stays in KEY 2 (e.g. "git stash drop" is destructive but routine).
+/// Composes Σ31 binary-vs-doctrine + the existing audit-trail discipline.
+pub fn peace(action: []const u8, has_consent: bool) GuardError!void {
+    if (action.len == 0) return;
+    if (has_consent) return; // explicit --consent or guards_bypassed: [destructive_without_consent]
+    const destructive = [_][]const u8{
+        "rm -rf",
+        "rm -fr",
+        " --force-with-lease",
+        " --force ",
+        " push --force",
+        " push -f ",
+        "DROP TABLE",
+        "DROP DATABASE",
+        "TRUNCATE TABLE",
+        "DELETE FROM",
+        "git reset --hard",
+        "git clean -fd",
+        "git branch -D",
+        ":> /dev/", // accidental zero-out
+        "shred ",
+        "wipefs ",
+        "mkfs.",
+        "dd if=/dev/zero of=",
+    };
+    for (destructive) |d| {
+        if (std.mem.indexOf(u8, action, d) != null) return GuardError.DestructiveWithoutConsent;
+    }
+}
+
 /// Run the full guard stack against a (plan, action, proof, audience) tuple.
 /// `bypassed` is the set of GuardKind values explicitly bypassed by the
 /// caller via the `guards_bypassed` row field; each bypass is audited.
