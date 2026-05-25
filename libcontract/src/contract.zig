@@ -496,6 +496,36 @@ pub fn appendBreakAboveRow(
     allocator.free(path);
 }
 
+/// Append a `pattern` ledger event row — the reusable lesson distilled
+/// from a satisfied contract. Append-only (not a declared row), so it
+/// doesn't trigger its own resolution cycle. Future aikos contract-search
+/// over `pattern_text` to find related lessons before reinventing.
+/// Anti-recursion guard: caller skips if source is itself a pattern row.
+pub fn appendPatternRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    source_id: []const u8,
+    pattern_text: []const u8,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    const agent = try getAgent(allocator, env);
+    defer allocator.free(agent);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "{\"event\": \"pattern\", \"id\": ");
+    try writeJsonString(&buf, allocator, source_id);
+    try buf.appendSlice(allocator, ", \"pattern_text\": ");
+    try writeJsonString(&buf, allocator, pattern_text);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
 /// Append a `materialized` ledger event when a contract spawns its own
 /// signed binary at a declared target. Captures the deployment lineage:
 /// {cid, target_path, sha256, wallet_pubkey} so the chain is auditable.
