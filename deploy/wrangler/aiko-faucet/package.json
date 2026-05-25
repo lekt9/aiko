@@ -1,0 +1,19 @@
+{
+  "name": "aiko-faucet",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0",
+    "typescript": "^5.0.0",
+    "@cloudflare/workers-types": "^4.0.0"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.91.0",
+    "@solana/spl-token": "^0.4.0",
+    "bs58": "^5.0.0"
+  }
+}
