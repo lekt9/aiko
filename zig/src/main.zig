@@ -689,29 +689,39 @@ fn bioFirstRunWalletGuidance(allocator: std.mem.Allocator, env: std.process.Envi
     // or "default"). Print guide. Touch the marker so we don't repeat.
     const root = lineage_lib.loadOrInitRootKey(allocator, env) catch return;
     const identity = env.getPosix("CONTRACT_INSTANCE_ID") orelse "default";
-    const kp = lineage_lib.deriveKeyPair(root, identity) catch return;
+    const sol_kp = lineage_lib.deriveKeyPair(root, identity) catch return;
     var b58_buf: [64]u8 = undefined;
-    const n = b58encode(&kp.public_key.bytes, &b58_buf);
-    const addr = b58_buf[0..n];
+    const n = b58encode(&sol_kp.public_key.bytes, &b58_buf);
+    const sol_addr = b58_buf[0..n];
+    var evm_priv: [32]u8 = undefined;
+    deriveEvmPrivateKey(root, identity, &evm_priv) catch return;
+    var evm_addr: [42]u8 = undefined;
+    _ = evmAddressFromPriv(evm_priv, &evm_addr) catch return;
     const guide = std.fmt.allocPrint(allocator,
         \\
-        \\─────────── aiko wallet setup ───────────
-        \\  This is your first declare. Your x402 wallet is auto-derived.
+        \\─────────── aiko wallet setup (chain-agnostic) ───────────
+        \\  First declare — same root_seed derives BOTH ed25519 (Solana family)
+        \\  AND secp256k1 (EVM family). The 402 envelope picks which key signs.
         \\
-        \\  Identity   : {s}
-        \\  Address    : {s}
-        \\  Asset      : USDC on Solana mainnet
+        \\  Identity        : {s}
+        \\  Solana mainnet  : {s}
+        \\  EVM (all chains): {s}
+        \\                    works on Base, Ethereum, Arbitrum, Polygon, Optimism
         \\
-        \\  TOP UP (paywall calls cost ~0.001 USDC each):
-        \\    1. Open your Solana wallet (Phantom / Solflare / Backpack).
-        \\    2. Send 0.10 USDC (or more) to: {s}
-        \\    3. Inspect: https://solscan.io/account/{s}
+        \\  TOP UP — any USDC on any of these chains works. Recommended: Base (low fees).
+        \\    Base USDC:    send to {s}  (~$0.001 per x402 call)
+        \\    Solana USDC:  send to {s}  (~$0.001 per x402 call)
         \\
-        \\  No vendor lock-in: this is native ed25519, every wallet supports it.
+        \\  Inspect:
+        \\    Solana       : https://solscan.io/account/{s}
+        \\    Base / EVM   : https://basescan.org/address/{s}
+        \\
+        \\  No vendor lock — CAIP-10 standard; every wallet (Phantom, Metamask,
+        \\  Rabby, Solflare, Coinbase, Backpack) recognizes one of these addresses.
         \\  Recovery: back up ~/.contracts/root.key (canon 651be176).
-        \\─────────────────────────────────────────
+        \\──────────────────────────────────────────────────────────
         \\
-    , .{ identity, addr, addr, addr }) catch return;
+    , .{ identity, sol_addr, &evm_addr, &evm_addr, sol_addr, sol_addr, &evm_addr }) catch return;
     defer allocator.free(guide);
     err(guide);
     // Touch the marker.
