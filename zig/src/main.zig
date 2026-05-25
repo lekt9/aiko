@@ -857,7 +857,13 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     const pretool_event = ambientPretoolEvent(env);
     const event_kind = ambientEventKind(env);
 
-    switch (parsed.mode) {
+    const effective_mode: AikoMode = switch (parsed.mode) {
+        .auto => resolveAutoMode(env),
+        else => parsed.mode,
+    };
+
+    switch (effective_mode) {
+        .auto => unreachable, // resolved above
         .genesis => {
             // Stateless 9-day Fib walker — projects state from the ledger,
             // spawns next day's workers, exits. Re-fire to advance.
