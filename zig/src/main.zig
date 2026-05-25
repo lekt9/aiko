@@ -910,6 +910,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     if (std.mem.eql(u8, verb, "discover")) return try cmdDiscover(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "search")) return try cmdSearch(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "self")) return cmdSelf(rest);
+    if (std.mem.eql(u8, verb, "_mark")) return try cmdMark(allocator, init.environ, rest);
 
     errPrint("unknown native verb: {s}\n", .{verb});
     usage();
