@@ -162,6 +162,11 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
                 stderrWrite("=== REFUSED: substrate jargon leaked into --audience public content (Render-unto-Caesar) ===\n");
                 return 2;
             },
+            error.DestructiveWithoutConsent => {
+                stderrWrite("=== REFUSED: destructive op without consent (Peace / ask-before-irreversible) ===\n");
+                stderrWrite("  bypass: pass --consent or set guards_bypassed=[destructive_without_consent] on the row\n");
+                return 2;
+            },
         };
         stdoutWrite("guards-ok\n");
         return 0;
