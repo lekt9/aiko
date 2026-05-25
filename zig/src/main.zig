@@ -673,6 +673,39 @@ fn bioModulatorEvidence(allocator: std.mem.Allocator, env: std.process.Environ) 
 const Blake2s256 = std.crypto.hash.blake2.Blake2s256;
 const INPUT_HASH_HEX_LEN: usize = 64;
 
+/// SABBATH — bioSabbathHolds returns true on day 7 (configurable via
+/// CONTRACT_SABBATH_DAY 0=Sun..6=Sat, default 0). Pacemaker/cron contracts
+/// should no-op when this returns true. Per canon Genesis Day 7 + Exodus
+/// 20:8-10 "Remember the sabbath day, to keep it holy. Six days shalt
+/// thou labour... but the seventh day is the sabbath of the LORD".
+fn bioSabbathHolds(env: std.process.Environ) bool {
+    var day_n: c_int = 0;
+    if (env.getPosix("CONTRACT_SABBATH_DAY")) |s| {
+        day_n = std.fmt.parseInt(c_int, s, 10) catch 0;
+    }
+    const now: i64 = time(null);
+    var tm: c_tm = .{};
+    _ = gmtime_r(&now, &tm);
+    return tm.tm_wday == day_n;
+}
+
+/// IDEMPOTENCY — sha256(plan || NUL || action || NUL || parent_id) hex
+/// for the Idempotency-Key header. Identical (plan, action, parent_id)
+/// retries land on the same row server-side instead of duplicating.
+fn computeIdempotencyKey(allocator: std.mem.Allocator, plan: []const u8, action: []const u8, parent_id: ?[]const u8) ![]u8 {
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update(plan);
+    hasher.update(&.{0});
+    hasher.update(action);
+    hasher.update(&.{0});
+    if (parent_id) |p| hasher.update(p);
+    var digest: [32]u8 = undefined;
+    hasher.final(&digest);
+    const hex = try allocator.alloc(u8, 64);
+    lineage_lib.bytesToHex(&digest, hex);
+    return hex;
+}
+
 /// RBAC: does `actor_pubkey` hold `role` over `scope`?  Walks `grant` rows
 /// newest-first. Empty pubkey or empty role short-circuits true (the row
 /// declares no requirement). Used for visibility-only inspection today;
