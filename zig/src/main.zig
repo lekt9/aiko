@@ -1050,11 +1050,24 @@ fn shellStrictReject(action: []const u8, env: std.process.Environ) ?[]const u8 {
 }
 
 fn runShellCapture(allocator: std.mem.Allocator, action: []const u8, cwd: []const u8) !ShellOutput {
-    // Build "cd <cwd> && <action> 2>&1" so combined stdout+stderr are captured.
-    const cmd_plain = if (cwd.len > 0)
-        try std.fmt.allocPrint(allocator, "cd \"{s}\" && {s} 2>&1", .{ cwd, action })
+    // Build "cd <cwd> && timeout <secs> <action> 2>&1" when a budget is set
+    // via CONTRACT_BUDGET_MS. The timeout binary kills the child at deadline;
+    // its exit 124 surfaces as a clean FAIL. Default = no timeout.
+    var budget_secs: u32 = 0;
+    if (std.c.getenv("CONTRACT_BUDGET_MS")) |bm| {
+        const sl = std.mem.sliceTo(bm, 0);
+        const ms = std.fmt.parseInt(u32, sl, 10) catch 0;
+        budget_secs = (ms + 999) / 1000;
+    }
+    const timeout_prefix = if (budget_secs > 0)
+        try std.fmt.allocPrint(allocator, "timeout {d} ", .{budget_secs})
     else
-        try std.fmt.allocPrint(allocator, "{s} 2>&1", .{action});
+        try allocator.dupe(u8, "");
+    defer allocator.free(timeout_prefix);
+    const cmd_plain = if (cwd.len > 0)
+        try std.fmt.allocPrint(allocator, "cd \"{s}\" && {s}{s} 2>&1", .{ cwd, timeout_prefix, action })
+    else
+        try std.fmt.allocPrint(allocator, "{s}{s} 2>&1", .{ timeout_prefix, action });
     defer allocator.free(cmd_plain);
     const cmd = try allocator.dupeZ(u8, cmd_plain);
     defer allocator.free(cmd);
