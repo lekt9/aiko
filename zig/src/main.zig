@@ -1175,7 +1175,18 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
 
                 // Legacy single-env-var posthook (deprecated; graph form above wins).
                 if (hookId(env, "CONTRACT_POSTHOOK_ID", "CONTRACT_POSTHOOK")) |posthook| {
+                    // Propagate aggregated parent context up the tree: the
+                    // posthook body can read CONTRACT_PARENT_RESULT.
+                    const rows2 = try parseRows(allocator, env);
+                    defer allocator.free(rows2);
+                    if (latestActionResult(rows2, cid)) |payload| {
+                        const payload_z = try allocator.dupeZ(u8, payload[0..@min(payload.len, 32 * 1024)]);
+                        defer allocator.free(payload_z);
+                        _ = setenv("CONTRACT_PARENT_RESULT", payload_z.ptr, 1);
+                        _ = setenv("CONTRACT_PARENT_ID", (try allocator.dupeZ(u8, cid)).ptr, 1);
+                    }
                     _ = try resolveLineage(allocator, env, posthook);
+                    _ = unsetenv("CONTRACT_PARENT_RESULT");
                 }
             }
             // Backfill: sweep un-resolved tail every time the Word is spoken locally.
