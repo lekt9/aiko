@@ -903,6 +903,64 @@ fn appendJsonEscaped(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), s: [
     try buf.append(allocator, '"');
 }
 
+/// Chain-agnostic wallet derivation. Same root_seed feeds two algorithm
+/// branches via HKDF: ed25519 for Solana (and any other ed25519 chain)
+/// and secp256k1 for the entire EVM family (Ethereum, Base, Polygon,
+/// Arbitrum, Optimism, ...). Addresses are surfaced as CAIP-10 strings
+/// (namespace:chain_id:address) so the 402 envelope's `network` field
+/// dictates which keypair signs without any caller-visible toggle.
+const Secp256k1 = std.crypto.ecc.Secp256k1;
+const Keccak256 = std.crypto.hash.sha3.Keccak256;
+
+/// Derive an EVM-shape secp256k1 private key from root + contract_id via
+/// HKDF-SHA256 with chain-specific info. Returns 32-byte scalar suitable
+/// for use with Secp256k1.basePoint.mul or any ECDSA signer.
+fn deriveEvmPrivateKey(root_seed: [32]u8, contract_id: []const u8, out_scalar: *[32]u8) !void {
+    var info_buf: [128]u8 = undefined;
+    const info = try std.fmt.bufPrint(&info_buf, "evm/secp256k1/v1/{s}", .{contract_id});
+    const prk = HkdfSha256.extract(&[_]u8{}, &root_seed);
+    HkdfSha256.expand(out_scalar[0..], info, prk);
+    // Reduce mod n by rejection sampling — if scalar >= secp256k1_n, re-roll
+    // by HKDF-expanding a "v1-r" suffix. In practice the probability of
+    // exceeding n is ~2^-128 so this almost never loops.
+    var attempts: u8 = 0;
+    while (Secp256k1.scalar.Scalar.fromBytes(out_scalar.*, .big)) |_| {
+        break;
+    } else |_| {
+        attempts += 1;
+        if (attempts > 8) return error.ScalarReductionFailed;
+        var info2_buf: [128]u8 = undefined;
+        const info2 = try std.fmt.bufPrint(&info2_buf, "evm/secp256k1/v1-r{d}/{s}", .{ attempts, contract_id });
+        HkdfSha256.expand(out_scalar[0..], info2, prk);
+    }
+}
+
+/// Compute the EVM address (lower 20 bytes of Keccak256(uncompressed pubkey
+/// without 0x04 prefix)) and write it as a 0x-prefixed hex string into
+/// out_buf. Returns bytes written (always 42 for "0x" + 40 hex chars).
+/// Lowercase, no EIP-55 checksum — every EVM wallet accepts lowercase.
+fn evmAddressFromPriv(priv: [32]u8, out_buf: *[42]u8) !usize {
+    const scalar = try Secp256k1.scalar.Scalar.fromBytes(priv, .big);
+    const pub_point = try Secp256k1.basePoint.mul(scalar.toBytes(.big), .big);
+    // Uncompressed pubkey: 0x04 || X(32) || Y(32). We want X||Y (64 bytes)
+    // hashed, so skip the 0x04 prefix.
+    const affine = pub_point.affineCoordinates();
+    var pub_xy: [64]u8 = undefined;
+    @memcpy(pub_xy[0..32], &affine.x.toBytes(.big));
+    @memcpy(pub_xy[32..64], &affine.y.toBytes(.big));
+    var digest: [32]u8 = undefined;
+    Keccak256.hash(&pub_xy, &digest, .{});
+    out_buf[0] = '0';
+    out_buf[1] = 'x';
+    const hex_chars = "0123456789abcdef";
+    var i: usize = 0;
+    while (i < 20) : (i += 1) {
+        out_buf[2 + i * 2] = hex_chars[digest[12 + i] >> 4];
+        out_buf[2 + i * 2 + 1] = hex_chars[digest[12 + i] & 0x0F];
+    }
+    return 42;
+}
+
 /// Base58 (Bitcoin alphabet) encode 32-byte Solana pubkey to caller-
 /// provided buf. Returns bytes written. Standard alphabet so any wallet
 /// (Phantom, Solflare, Backpack, web3.js) recognizes the address.
