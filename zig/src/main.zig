@@ -1180,8 +1180,14 @@ fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, sk
             if (std.mem.eql(u8, r.id, skip_id)) continue;
             if (seen.contains(r.id)) continue;
             try seen.put(r.id, {});
-            if (isSatisfied(rows, r.id)) continue;
             if (isDead(rows, r.id)) continue;
+            if (isSatisfied(rows, r.id)) {
+                // Hash-stale satisfied rows still re-enter — that's the
+                // cache-invalidation propagation channel.
+                const cur = computeInputHash(allocator, rows, r.id, 0) catch continue;
+                const rec = lastInputHash(rows, r.id) orelse continue;
+                if (std.mem.eql(u8, &cur, rec)) continue;
+            }
             try candidates.append(allocator, r.id);
             if (candidates.items.len >= budget) break;
         }
