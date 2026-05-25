@@ -1416,13 +1416,23 @@ fn cmdStatus(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
         errPrint("contract not found: {s}\n", .{id});
         return 1;
     };
-    const status = if (isSatisfied(rows, id)) "satisfied" else "pending";
+    const status: []const u8 = if (isSatisfied(rows, id))
+        "satisfied"
+    else if (isDead(rows, id))
+        "dead"
+    else
+        "pending";
     outPrint("[{s}] {s} ({s})\n  plan:   {s}\n  action: {s}\n", .{ status, id, pointer.inferPointerType(r.action), r.plan, r.action });
     const ids = try childIds(allocator, rows, id);
     defer allocator.free(ids);
     for (ids) |cid| {
         if (latestDeclared(rows, cid)) |c| {
-            const cs = if (isSatisfied(rows, cid)) "satisfied" else "pending";
+            const cs: []const u8 = if (isSatisfied(rows, cid))
+                "satisfied"
+            else if (isDead(rows, cid))
+                "dead"
+            else
+                "pending";
             outPrint("  [{s}] {s} ({s}) — {s}\n", .{ cs, cid, pointer.inferPointerType(c.action), c.plan });
         }
     }
