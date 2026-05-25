@@ -972,6 +972,10 @@ On every `mark` of an organ-root contract (parent_id None, RC=0), `~/.contracts/
 
 When Β7 autodrill fires N drill children per organ-root mark, dispatch them in **parallel** via the Agent fan-out pattern (Β5 `3a67d08d`) rather than one-at-a-time. Substrate spawns rows serially (one declare per gap); the agent dispatches the actual work as ONE message with N Agent tool calls. Standing-gate: `087bbca1`. Composes Β5 + Β7 — every /contract turn drills the open backlog with N concurrent sub-agents.
 
+## Λ-supreme — aiko-IS-contract (one entry, identity-translated, native 402)
+
+Everything is a pointer to a pointer to a pointer to /contract; environmental context is itself a primitive. aiko ≡ /contract — same primitive, two names. Verbs are gone (Σ11 `af9c06a5`); there is ONE entry: `aiko "<prompt>"` (or `contract "<prompt>"`) declares under Σ3 canonical with Ω6 face context, Φ6 default `kind=aiko_cell`, Φ7 node+edge silo mirror to unbrowse. Native 402 via x402 pointer-type. Server-side (unbrowse) decides routing — stays-server vs back-to-client — based on lineage hierarchy. Shipped this turn: no-subverb entry in `aiko` CLI (KNOWN_SUBVERBS escape hatch; everything else is a prompt). Full rewrite (OWS-signed RBAC, server-routing decider, identity-translation middleware, verb elimination) captured as `DEFERRED-AIKO-CONTRACT-FULL-REWRITE` gap. Standing-gate: `3d221d24`.
+
 ## The stdio model (receptors · streams · ledger as trunk)
 
 Per Β4 thin-index: full prose lives on standing-gate contracts; this section is the pointer.
