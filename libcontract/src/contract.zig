@@ -71,11 +71,70 @@ pub const DeclareOptions = struct {
     agent: ?[]const u8 = null,
     /// Optional cwd override; null = libc getcwd().
     cwd: ?[]const u8 = null,
+    /// Optional pre-computed hex digest of file content referenced by the
+    /// caller's pre-scrub plan. Folds into inputs_hash_v2 so the cache key
+    /// invalidates when referenced files change (Docker-layer behavior).
+    /// Caller must extract path-refs from raw plan + sha256-fold file bytes
+    /// BEFORE privacy scrub — only the digest survives in the row, no paths
+    /// leak. Empty/null = file-content layer absent (cache key behaves as
+    /// cwd+plan+parent only).
+    inputs_file_refs_digest: ?[]const u8 = null,
     /// Strongly-typed pass-through metadata. Replaces the previous flat list
     /// of `?[]const u8` fields (aiko_role, aggregation, audience, …) — any
     /// new attribute is now data on a row, not a new struct field.
     extras: []const Field = &.{},
 };
+
+/// Compute the v2 layered inputs hash for a contract. Docker-layer shape —
+/// every layer's bytes contribute to one digest, and any layer changing
+/// (cwd, plan, file content, parent) flips the digest → cache miss → new id.
+///
+///   sha256(
+///     "v2|"
+///     || cwd                       ← context layer
+///     || "\n" || plan              ← intent layer (privacy-scrubbed)
+///     || "\n" || file_refs_digest  ← content layer (caller pre-computed)
+///     || "\n" || parent.inputs_hash ← lineage layer (transitive fold-in)
+///   )
+///
+/// Parent lookup is one ledger scan via ledger.findInputsHashForId; absence
+/// (missing parent or v1 parent without inputs_hash) means an empty layer —
+/// child is still cacheable but doesn't transitively invalidate against
+/// that parent until the parent is re-declared with v2.
+///
+/// Returns 64-char hex (owned slice; caller frees).
+fn computeInputsHashV2(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    plan: []const u8,
+    cwd: []const u8,
+    file_refs_digest: ?[]const u8,
+    parent_id: ?[]const u8,
+) ![]u8 {
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update("v2|");
+    hasher.update(cwd);
+    hasher.update("\n");
+    hasher.update(plan);
+    hasher.update("\n");
+    if (file_refs_digest) |d| hasher.update(d);
+    hasher.update("\n");
+    if (parent_id) |pid| {
+        if (try ledger.findInputsHashForId(allocator, env, pid)) |parent_hash| {
+            defer allocator.free(parent_hash);
+            hasher.update(parent_hash);
+        }
+    }
+    var digest: [32]u8 = undefined;
+    hasher.final(&digest);
+    const hex_chars = "0123456789abcdef";
+    var hex_buf: [64]u8 = undefined;
+    for (digest, 0..) |b, i| {
+        hex_buf[i * 2] = hex_chars[b >> 4];
+        hex_buf[i * 2 + 1] = hex_chars[b & 0x0F];
+    }
+    return try allocator.dupe(u8, &hex_buf);
+}
 
 /// Table-driven prefix → SynapseKind mapping. The ONLY place edge kinds
 /// are enumerated; adding one is a single row here.
