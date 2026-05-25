@@ -12,6 +12,42 @@ only; the binary you call is always `aiko`.
 
 Local code is only the environment executor for the server-spawned aiko context.
 
+## Activation rule — every `/contract` invocation MUST spawn the aiko binary
+
+When the user types `/contract <args...>` (or invokes this skill via any
+alias), the orchestrator MUST, as a non-negotiable first step, spawn the
+aiko binary with the user's full argument text as the truth claim:
+
+```bash
+~/.claude/skills/contract/scripts/aiko "<args verbatim>" --remote
+```
+
+The binary's stdout is recorded as ledger evidence regardless of what
+other work the orchestrator does in the same turn. The 402 Payment
+Required envelope is a valid response — it proves the substrate fired;
+the orchestrator continues its work. Any agent that interprets `/contract`
+prose without firing the binary is in violation of the substrate rule
+(the prose is the spec, the binary is the substrate).
+
+## Verification rule — every prod deploy MUST be visually verified live
+
+Any code path that deploys to a public URL (e.g. `wrangler deploy`,
+`bun run deploy`, Cloudflare Pages push to main) MUST be followed by a
+live observation step before the work is reported done:
+
+1. Fetch the live URL with curl AND confirm HTTP 200 + the load-bearing
+   identity string is in the rendered HTML.
+2. Open the live URL in a headless browser (puppeteer or equivalent) and
+   capture a screenshot of the above-the-fold viewport at 1440×900.
+3. Read the screenshot in-thread and judge whether it matches the
+   pre-deploy candidate screenshots. If it doesn't match, surface the
+   delta as a blocker — do NOT report "deployed and verified".
+
+The contract substrate's four-dim gate (`four-dim-gate.sh` in any
+project that adopts it) is the canonical pre-deploy gate. The
+post-deploy live verification is the canonical post-deploy gate. Both
+gates are mandatory; neither substitutes for the other.
+
 ## Public Shape
 
 The user-facing surface is exactly:
