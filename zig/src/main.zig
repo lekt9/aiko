@@ -323,8 +323,6 @@ fn unescapeJsonValue(allocator: std.mem.Allocator, src: []const u8) ![]u8 {
     return buf.toOwnedSlice(allocator);
 }
 
-/// Convenience: locate a JSON string value by key AND decode its escapes.
-/// Returns an owned slice (caller pays for it); null when the key is absent.
 fn jsonStringDecoded(allocator: std.mem.Allocator, line: []const u8, key: []const u8) !?[]u8 {
     const raw = jsonString(line, key) orelse return null;
     return try unescapeJsonValue(allocator, raw);
