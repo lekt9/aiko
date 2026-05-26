@@ -41,6 +41,19 @@ extern fn system(command: [*:0]const u8) c_int;
 const FALLBACK_HKDF_SALT: []const u8 = "aiko-keystore-v1";
 const FALLBACK_DIR_REL: []const u8 = ".aiko/keys";
 
+/// Surface a fallback or degradation event to stderr. Fallbacks must NEVER be
+/// silent — observers (the orchestrator, telemetry, a watching human) need to
+/// see when a non-primary path engaged. Caller behavior is unchanged; this is
+/// pure observability. Format mirrors main.zig's evidence lines:
+///   `keystore[<scope>]: <message>`
+fn surface(comptime fmt: []const u8, args: anytype) void {
+    var buf: [1024]u8 = undefined;
+    const line = std.fmt.bufPrint(&buf, "keystore: " ++ fmt ++ "\n", args) catch return;
+    // Best-effort write to stderr (fd 2). Never throw from a surface emitter —
+    // surfacing is observability, not flow control.
+    _ = std.c.write(std.c.STDERR_FILENO, line.ptr, line.len);
+}
+
 pub const KeystoreError = error{
     InvalidServiceName,
     NoHome,
