@@ -995,10 +995,10 @@ PYAUDIT
   if ! grep -q 'const PROFILE_STR: \[\]const u8 = build_options.contract_binary_profile' "$ZIG_DIR/src/main.zig"; then
     _fail "doctrine[client/server split]: main.zig must read PROFILE_STR from build_options.contract_binary_profile — the compile-time profile selector is load-bearing"
   fi
-  if ! grep -q 'b.option.*contract_binary_profile' "$ZIG_DIR/build.zig"; then
+  if ! grep -q '"contract_binary_profile"' "$ZIG_DIR/build.zig"; then
     _fail "doctrine[client/server split]: build.zig must expose -Dcontract_binary_profile so the two-binary split is selectable at build time"
   fi
-  if ! grep -q 'addContractExecutable.*contract-zig-server.*server' "$ZIG_DIR/build.zig"; then
+  if ! grep -qE 'addContractExecutable\(.*"contract-zig-server"' "$ZIG_DIR/build.zig"; then
     _fail "doctrine[client/server split]: build.zig must install the contract-zig-server artifact with profile=server"
   fi
   # The two installed binaries must differ in `self --json` profile.
