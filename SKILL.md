@@ -252,21 +252,20 @@ needs to *write*, it spawns `aiko "<goal>" --mode`. That is the entire
 write API.
 
 `aiko` is the Zig neuron substrate with the smallest local surface. It
-accepts one goal and one mode. `--remote` routes to the Unbrowse contract
-ledger, defaulting to `https://beta-api.unbrowse.ai` when `UNBROWSE_BASE`
-is not set. `--local` uses the same neuron shape against the local
-scoped ledger.
+accepts one goal and an optional `--remote|--local` transport pointer.
+`--remote` routes to the Unbrowse contract ledger at the hardcoded base
+`https://beta-api.unbrowse.ai` — there is no env override. `--local`
+uses the same neuron shape against the local scoped ledger at
+`~/.contracts/contracts.jsonl` (resolved from `HOME`, the one POSIX
+identity read the binary makes).
 
-`aiko` is x402-native. It marks contract declarations as Corbits/Faremeter Flex
-requests and sends a signed payment header from the caller environment when
-present:
-
-```text
-AIKO_X_PAYMENT / X_PAYMENT -> X-PAYMENT
-```
-
-If no payment header is available, Unbrowse returns the canonical 402 payment
-requirements envelope instead of falling back to local mutation.
+`aiko` is x402-native. Faremeter Flex payment, when required, is
+satisfied by the wallet derived from the binary's deployer keypair
+(`libcontract.Lineage` HKDF). There is no env-provided payment header
+to inject, no `AIKO_X_PAYMENT` / `X_PAYMENT` / `PAYMENT_SIGNATURE`
+override, and no admin-bypass triple. If the wallet cannot satisfy
+the 402, Unbrowse returns the canonical Payment Required envelope and
+the orchestrator treats it as valid evidence.
 
 `aiko` guards privacy before network egress. Local declarations are reduced to
 patterns and meta-patterns: obvious emails, local filesystem paths, and
@@ -276,12 +275,17 @@ typed context, but the local binary does not leak machine-specific private
 values.
 
 There are no public action, parent, iterate, mark, spawn, status, or
-search choices. Context and status may be injected by the runtime (via
-environment variables — `CONTRACT_PARENT_ID`, `CONTRACT_ENVIRONMENT_ID`,
-hooks, etc.), but they are not escape hatches the caller chooses. A
-caller that wants to read the local ledger reads the file; a caller
-that wants to write goes through `aiko`. Anything else is a
-backwards-compat hack and is rejected.
+search choices, and there are **no environment variables**. The binary
+reads only `HOME` (for ledger path resolution) and ignores every other
+env — `CONTRACT_*`, `AIKO_*`, `UNBROWSE_*`, `X_PAYMENT`,
+`PAYMENT_SIGNATURE`, `CONTRACTS_STORE`, `SHELL`, `TERM` are all unread.
+Lineage, hooks, adapters, event-bus pointers, budgets, thresholds,
+identity overrides, payment headers, admin bypass — every one of these
+that used to be configurable by env has been hard-wired or moved to
+server-side state (the cloud reconstructs lineage from wallet identity
++ declare timestamp). A caller that wants to read the local ledger
+reads the file; a caller that wants to write goes through `aiko`.
+Anything else is a backwards-compat hack and is rejected.
 
 **Read views are strongly typed and read-only.** The local executor
 exposes the ledger through immutable typed views (struct fields are
