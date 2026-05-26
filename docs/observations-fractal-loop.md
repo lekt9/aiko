@@ -1189,6 +1189,7 @@ it ships the fix. The ledger itself is now the canonical work-tracker.
 | gap-3 — wrapper escape hatch | `bbc97dd8` | BYPASS_LLM_SHAPER + legacy*Shape helpers deleted; shaper is the only path |
 | gap-6 — spirit-attest LLM gate | `8dbe68b4` | spirit/attest layer fully removed; substrate self-attests via pattern + tests + parent-signed binary lineage |
 | gap-prune-authority | `61c76aa9` | cmdPrune verifies by_id == target.parent_id or self-apoptosis; 4/4 falsifier tests pass (parent-kills-child OK; stranger REFUSED; self-apoptosis OK; sibling-kills-sibling REFUSED) |
+| gap-verb-trio-falsifier | `bd3ae94d` | 17/20 imperative verbs reduce to {build,run,eval,prune}; 3 unmapped (fix/investigate/save) decompose into chains; four-verb closure is the substrate's universal verb space |
 
 **Workflow going forward:** to close an open gap, ship the code +
 fire one envelope:
