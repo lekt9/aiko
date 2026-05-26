@@ -1242,7 +1242,8 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
     // intentionally idempotent: re-firing on an already-settled ledger emits
     // "ledger settled after 0 pass(es)" and returns satisfied.
     if (std.mem.startsWith(u8, action, "drill:")) {
-        _ = rows; // backfill re-parses the ledger live; the snapshot is stale by then.
+        // Note: backfill re-parses the ledger inside; the `rows` slice
+        // captured by this runAction is a snapshot, not used by drill.
         evidencePrint("drill: action fired (scope={s}) — full-ledger backfill begins\n", .{action["drill:".len..]});
         backfillUnresolvedDeep(allocator, env, r.id) catch |e| {
             evidencePrint("  result: HOLD — drill errored: {s}\n", .{@errorName(e)});
