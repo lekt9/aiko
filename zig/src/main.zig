@@ -4673,11 +4673,3 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     usage();
     return 2;
 }
-<<<<<<< Updated upstream
-=======
-
-fn ambientTestStub(env: anytype) ?[]const u8 {
-    _ = env;
-    return null;
-}
->>>>>>> Stashed changes
