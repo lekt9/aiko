@@ -214,15 +214,51 @@ sibling root /contract; sibling repos pick which version they pin
 to by id, not by name. The append-only ledger means v1 never breaks
 even as v2 lands.
 
+## Streaming — the fractal pattern
+
+SSE streaming is not a special case; it is the same trio applied at
+a finer grain. The wrapper composes:
+
+```
+  build  (rootId, system + user + tool_calls)
+  for each upstream SSE chunk:
+    pass-through to downstream client     # transport
+    accumulate chunk into running text    # state
+  run    (rootId, full accumulated text)  # one iteration row per turn
+  eval   (rootId, full accumulated text)  # markSatisfied + L7→L8 cascade
+```
+
+**v0.1 granularity**: one `run` row per turn (per stream close). The
+ledger sees the assistant's full message as a single iteration; the
+wire sees N delta chunks. This keeps the ledger tractable.
+
+**v0.2 granularity (planned, not wired)**: if
+`CONTRACT_STREAM_GRANULARITY=chunk` is set, each SSE delta becomes
+its own `run` call → one iteration child /contract per chunk. The
+fractal extends: the conversation /contract has assistant turn
+children; each turn child has chunk grandchildren; each chunk could
+itself spawn token-level great-grandchildren. The substrate doesn't
+care how deep the fractal goes — every layer is the same trio.
+
+**Custom SSE event for substrate fingerprints**: just before the
+canonical `data: [DONE]` sentinel, the wrapper emits:
+
+```
+event: contract
+data: {"contract_id":"<root>","contract_signature":"<L8 sig>","model":"..."}
+```
+
+Standard OpenAI clients ignore the unknown event type. Substrate-
+aware clients (the `@contract/sdk` siblings) parse it to discover
+the conversation root id and the wallet-ratified signature without
+making an extra round-trip.
+
 ## What is NOT in this mapping
 
-- **Streaming.** SSE token streaming is a transport concern handled
-  by the wrapper itself; the mapping describes only the message-level
-  semantics. The wrapper can stream tokens while the iteration row
-  builds up — final row append happens on stream close.
 - **Embeddings, audio, image gen.** This mapping covers chat
   completions only. Each sister API gets its own mapping /contract
-  if/when wired (`openai-embeddings-mapping-v1`, etc.).
+  if/when wired (`openai-embeddings-mapping-v1`, etc.). Each will
+  decompose into the same trio.
 - **Function-calling parallel modes.** The mapping assumes one
   tool_call per iteration; multi-tool-call iterations decompose to
   multiple R5 rows (siblings).
