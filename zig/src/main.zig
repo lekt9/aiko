@@ -2826,18 +2826,9 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     const pretool_event = ambientPretoolEvent(env);
     const event_kind = ambientEventKind(env);
 
-    const effective_mode: AikoMode = switch (parsed.mode) {
-        .auto => resolveAutoMode(env),
-        else => parsed.mode,
-    };
+    const effective_mode: AikoMode = parsed.mode;
 
     switch (effective_mode) {
-        .auto => unreachable, // resolved above
-        .genesis => {
-            // Stateless 9-day Fib walker — projects state from the ledger,
-            // spawns next day's workers, exits. Re-fire to advance.
-            return try cmdGenesis(allocator, env, safe_plan);
-        },
         .remote => {
             // Remote target: Unbrowse compiles all seven days server-side.
             // GATE — only signed/attested binaries may invoke the LLM compiler.
