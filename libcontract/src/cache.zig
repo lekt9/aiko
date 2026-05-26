@@ -453,7 +453,7 @@ pub fn collectChildIds(
 
     var children: std.ArrayList([]u8) = .empty;
     errdefer {
-        for (children.items) |c| allocator.free(c);
+        for (children.items) |ch| allocator.free(ch);
         children.deinit(allocator);
     }
     var seen: std.ArrayList([]const u8) = .empty;
