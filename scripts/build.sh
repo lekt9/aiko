@@ -124,25 +124,68 @@ wait_for_quiescence() {
   return 0
 }
 
-# ─── build:guard — doctrine-as-data folder allowlist ─────────────────
+# ─── build:guard — doctrine-as-data, ledger-as-source ────────────────
+# Foundation, not subprocess: the canonical scripts/ set lives as a
+# declared /contract row (guard:scripts-allowlist-canonical) on the
+# ledger, not in a flat ALLOWLIST.txt parsed by grep. This step reads
+# the canonical set directly from ~/.contracts/contracts.jsonl (or the
+# project-scoped $PWD/.claude/contracts.jsonl when present). If no
+# guard row is found (first build after the migration), we surface
+# the fallback and read ALLOWLIST.txt — the substrate degrades
+# visibly rather than silently. Purge target: 724f792a.
 step_guard() {
-  step "build:guard — scripts/ allowlist"
-  if [[ ! -f "$ALLOWLIST_FILE" ]]; then
-    echo "build:guard FAIL — missing $ALLOWLIST_FILE" >&2
-    echo "  fix: restore the doctrine file (declares the canonical scripts/ set)" >&2
-    return 9
+  step "build:guard — scripts/ allowlist (ledger-canonical)"
+  local ledger="" project_ledger="$PWD/.claude/contracts.jsonl" global_ledger="$HOME/.contracts/contracts.jsonl"
+  if [[ -s "$project_ledger" ]]; then
+    ledger="$project_ledger"
+  elif [[ -s "$global_ledger" ]]; then
+    ledger="$global_ledger"
   fi
-  local expected actual
-  expected="$(grep -vE '^\s*(#|$)' "$ALLOWLIST_FILE" | sort | tr '\n' ' ' | sed 's/ $//')"
+
+  local expected="" source=""
+  if [[ -n "$ledger" ]]; then
+    # Find the most recent declared row whose plan carries the canonical
+    # brace-list shape (aiko ... sync-outline-explainer.sh). The aiko
+    # binary may rewrite the prose tag (e.g. "[secret-pointer-pattern]"),
+    # so we anchor on the brace-list payload rather than the tag string.
+    local row=""
+    row="$(grep '"event": "declared"' "$ledger" 2>/dev/null \
+           | grep '{aiko,' \
+           | grep 'sync-outline-explainer.sh}' \
+           | tail -1 || true)"
+    if [[ -n "$row" ]]; then
+      # Extract the brace body (a, b, c) — sed pulls between '{' and '}'.
+      local brace
+      brace="$(printf '%s\n' "$row" | sed -nE 's/.*\{([^}]*)\}.*/\1/p')"
+      if [[ -n "$brace" ]]; then
+        expected="$(printf '%s\n' "$brace" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')"
+        source="ledger:$ledger"
+      fi
+    fi
+  fi
+
+  if [[ -z "$expected" ]]; then
+    echo "  step_guard: ledger row guard:scripts-allowlist-canonical not found — falling back to ALLOWLIST.txt for this build" >&2
+    if [[ ! -f "$ALLOWLIST_FILE" ]]; then
+      echo "build:guard FAIL — no ledger row AND missing $ALLOWLIST_FILE" >&2
+      echo "  fix: declare the guard:scripts-allowlist-canonical contract OR restore ALLOWLIST.txt" >&2
+      return 9
+    fi
+    expected="$(grep -vE '^\s*(#|$)' "$ALLOWLIST_FILE" | sort | tr '\n' ' ' | sed 's/ $//')"
+    source="file:$ALLOWLIST_FILE"
+  fi
+
+  local actual
   actual="$(cd "$SCRIPTS_DIR" && ls | sort | tr '\n' ' ' | sed 's/ $//')"
   if [[ "$actual" != "$expected" ]]; then
-    echo "build:guard FAIL — scripts/ folder drift detected vs $ALLOWLIST_FILE" >&2
+    echo "build:guard FAIL — scripts/ folder drift detected vs $source" >&2
     echo "  expected: $expected" >&2
     echo "  actual:   $actual" >&2
     diff <(echo "$expected" | tr ' ' '\n') <(echo "$actual" | tr ' ' '\n') >&2 | sed 's/^/    /'
-    echo "  fix: delete the non-canonical files OR amend ALLOWLIST.txt + re-declare guard:scripts-allowlist-canonical" >&2
+    echo "  fix: delete the non-canonical files OR re-declare guard:scripts-allowlist-canonical with the new set" >&2
     return 9
   fi
+  echo "build:guard OK — scripts/ matches canonical set ($source)"
 }
 
 # ─── build:fmt — Zig source is fmt-clean ─────────────────────────────
