@@ -434,6 +434,14 @@ step_parity() {
   if ! grep -q '## Pointer-keyed truthy cache' "$REPO/SKILL.md"; then
     _fail "doctrine[truthy cache]: SKILL.md is missing the '## Pointer-keyed truthy cache' section that declares the deterministic self-resolve substrate"
   fi
+  # computeInputHash must fold each child's RESOLUTION state into the layer
+  # bytes, not just declared content — Docker-image-layer semantics where
+  # each layer is a pointer that resolves to true against itself. Without
+  # this fold, a child satisfying does NOT invalidate parents, breaking
+  # the cascade Lewis named (Granola 988cf805, follow-up message).
+  if ! grep -q "state_byte: u8 = if (isSatisfied" "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[truthy cache layers]: computeInputHash must fold child resolution state ('S'/'D'/'P' byte) into the layer hash so satisfied/died propagates upward — pointer that resolves to true against itself"
+  fi
 
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
