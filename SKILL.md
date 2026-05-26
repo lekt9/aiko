@@ -42,8 +42,12 @@ alias), the orchestrator MUST, as a non-negotiable first step, spawn the
 aiko binary with the user's full argument text as the truth claim:
 
 ```bash
-~/.claude/skills/contract/scripts/aiko "<args verbatim>" --remote
+~/.claude/skills/contract/scripts/aiko "<args verbatim>"
 ```
+
+(no flag → shared visibility, the default). `--remote` is still accepted
+as a deprecated alias for backwards compatibility, but new call sites
+omit it.
 
 The binary's stdout is recorded as ledger evidence regardless of what
 other work the orchestrator does in the same turn. The 402 Payment
