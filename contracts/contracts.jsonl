@@ -11924,3 +11924,4 @@
 {"event": "iterated", "id": "83e300a6", "wave": 1, "action_exit": 127, "action_result": "sh: sabbath:: command not found\n", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-26T10:46:44.129802Z", "agent": "lewistham9x@gmail.com"}
 {"event": "guard", "id": "83e300a6", "error_class": "sabbath", "layer": "scheduler", "remediation": "pacemaker rests on day 7; re-fires at next day rollover", "ts": "2026-05-26T10:46:44.140850Z", "agent": "lewistham9x@gmail.com"}
 {"event": "evidence", "id": "8e5634e8", "pointer": "sha256:1e34434294e18000455e94db239fb772c93ed9727d2e2867f1723f871f118154", "scope": "shared", "bytes": 1927, "ts": "2026-05-26T10:46:44.294062Z", "agent": "lewistham9x@gmail.com"}
+{"event": "declared", "source": "cloud-mirror", "id": "8b7779e8", "plan": "sabbath: build complete, substrate at rest, beholding the work", "action": "sabbath:", "ts": "2026-05-26T10:48:33.843281Z"}
