@@ -35,6 +35,15 @@ pub fn inferPointerType(action: []const u8) []const u8 {
     if (std.mem.startsWith(u8, action, "prehook:")) return "prehook";
     if (std.mem.startsWith(u8, action, "blocked_by:")) return "blocked_by";
     if (std.mem.startsWith(u8, action, "modality:")) return "modality";
+    // Recursive truth-substrate (this turn): every word in a plan is itself
+    // a /contract pointer, and the layer-7 validator → layer-8 signed
+    // pointer-memory cascade is mechanical. `word:<tok>` is a sub-cell
+    // (layer 0); `validate:<id>` is the L7 boundary check; `signed:<sig>`
+    // is the L8 pointer-memory the wallet ratifies. Each remains a
+    // /contract — there is no other primitive.
+    if (std.mem.startsWith(u8, action, "word:")) return "word";
+    if (std.mem.startsWith(u8, action, "validate:")) return "validate";
+    if (std.mem.startsWith(u8, action, "signed:")) return "signed";
     if (std.mem.startsWith(u8, action, "curl ") or
         std.mem.startsWith(u8, action, "http://") or
         std.mem.startsWith(u8, action, "https://") or
