@@ -35,11 +35,10 @@ pub const pattern = @import("pattern.zig");
 comptime {
     pattern.assertInvariants();
 }
-// Spirit layer: per-file LLM attestation against the 10 commandments
-// (order) + 7 fruits of the spirit. Runtime verification (filesystem
-// + signed ledger), not comptime. Enforced via the spirit-check
-// binary that gates every `zig build install`.
-pub const spirit = @import("spirit.zig");
+// (spirit-layer LLM attestation was removed 2026-05-26 — the
+// substrate self-attests via pattern.zig + zig build test + the
+// build pipeline's own L8 signed:<binary-sha> cascade. No external
+// LLM gate. See docs/observations-fractal-loop.md for the rationale.)
 // Canonical /contract JSON shape validator. The substrate accepts
 // pre-translated JSON envelopes; this is the boundary that rejects
 // non-conforming input before any signing / ledger write.
