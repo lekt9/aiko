@@ -289,12 +289,9 @@ fn dependentIds(allocator: std.mem.Allocator, rows: []const Row, target_id: []co
 }
 
 fn hookId(env: std.process.Environ, primary: []const u8, secondary: []const u8) ?[]const u8 {
-    if (env.getPosix(primary)) |v| {
-        if (v.len > 0) return v;
-    }
-    if (env.getPosix(secondary)) |v| {
-        if (v.len > 0) return v;
-    }
+    _ = env;
+    _ = primary;
+    _ = secondary;
     return null;
 }
 
