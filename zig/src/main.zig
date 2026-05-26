@@ -2298,11 +2298,15 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
         if (bioInteroceptionJson(allocator, rows_pre)) |intero| {
             defer allocator.free(intero);
             evidencePrint("interoception: {s}\n", .{intero});
-        } else |_| {}
+        } else |err| {
+            evidencePrint("interoception: bioInteroceptionJson failed: {s} — preflight proceeds without interoception evidence\n", .{@errorName(err)});
+        }
         if (bioModulatorEvidence(allocator, env)) |mod| {
             defer allocator.free(mod);
             evidencePrint("modulator: {s}\n", .{mod});
-        } else |_| {}
+        } else |err| {
+            evidencePrint("modulator: bioModulatorEvidence failed: {s} — preflight proceeds without neuromodulator evidence\n", .{@errorName(err)});
+        }
         // First-run wallet guidance — shown once, then silent forever.
         bioFirstRunWalletGuidance(allocator, env);
         // Environment fingerprint — listen to the host's tongue before
@@ -2310,7 +2314,9 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
         if (bioEnvironmentFingerprint(allocator, env)) |fp| {
             defer allocator.free(fp);
             evidencePrint("environment: {s}\n", .{fp});
-        } else |_| {}
+        } else |err| {
+            evidencePrint("environment: bioEnvironmentFingerprint failed: {s} — preflight proceeds without env-fingerprint binding\n", .{@errorName(err)});
+        }
         if (bioBindManifest(allocator, env)) |bind| {
             defer allocator.free(bind);
             evidencePrint("bind-manifest: {s}\n", .{bind});
@@ -2733,11 +2739,15 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         if (bioInteroceptionJson(allocator, rows_pre)) |intero| {
             defer allocator.free(intero);
             evidencePrint("interoception: {s}\n", .{intero});
-        } else |_| {}
+        } else |err| {
+            evidencePrint("interoception: bioInteroceptionJson failed: {s} — preflight proceeds without interoception evidence\n", .{@errorName(err)});
+        }
         if (bioModulatorEvidence(allocator, env)) |mod| {
             defer allocator.free(mod);
             evidencePrint("modulator: {s}\n", .{mod});
-        } else |_| {}
+        } else |err| {
+            evidencePrint("modulator: bioModulatorEvidence failed: {s} — preflight proceeds without neuromodulator evidence\n", .{@errorName(err)});
+        }
         // First-run wallet guidance — shown once, then silent forever.
         bioFirstRunWalletGuidance(allocator, env);
         // Environment fingerprint — listen to the host's tongue before
@@ -2745,7 +2755,9 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         if (bioEnvironmentFingerprint(allocator, env)) |fp| {
             defer allocator.free(fp);
             evidencePrint("environment: {s}\n", .{fp});
-        } else |_| {}
+        } else |err| {
+            evidencePrint("environment: bioEnvironmentFingerprint failed: {s} — preflight proceeds without env-fingerprint binding\n", .{@errorName(err)});
+        }
         if (bioBindManifest(allocator, env)) |bind| {
             defer allocator.free(bind);
             evidencePrint("bind-manifest: {s}\n", .{bind});
