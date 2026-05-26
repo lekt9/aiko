@@ -1103,6 +1103,27 @@ pub fn appendCalledRow(
     target_pointer: []const u8,
     call_kind: []const u8,
 ) !void {
+    // Resolve antipattern:posthook-pointer-as-raw-url — `target_pointer` must
+    // be a Synapse-shaped pointer (e.g. `contract:<id>`, `posthook:<id>`,
+    // `bind:<id>`, …). Payload-bearing strings violate pointers-over-payload;
+    // the caller must declare the payload as its own contract row first and
+    // pass `contract:<id>` here. Table-driven check against synapse_table —
+    // the single source of truth for edge kinds.
+    const valid_prefix = blk: {
+        for (synapse_table) |entry| {
+            if (std.mem.startsWith(u8, target_pointer, entry.prefix)) break :blk true;
+        }
+        break :blk false;
+    };
+    if (!valid_prefix) {
+        std.debug.print(
+            "contract.appendCalledRow: target_pointer must be a Synapse-shaped pointer; got '{s}'. " ++
+                "Declare the payload as its own contract row first, then pass 'contract:<id>'.\n",
+            .{target_pointer},
+        );
+        return error.NotASynapsePointer;
+    }
+
     var ts_buf: [64]u8 = undefined;
     const ts = try nowIsoUtc(&ts_buf);
 
