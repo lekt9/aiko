@@ -300,6 +300,9 @@ pub fn verifyAllAttested(
         if (verifyAttestation(allocator, env, p)) |_| {
             continue;
         } else |e| {
+            // verifyAttestation's inferred error union is exactly
+            // SpiritError; no else-prong is needed (and Zig refuses
+            // an unreachable else).
             return .{
                 .err = switch (e) {
                     error.UnattestedSource => SpiritError.UnattestedSource,
@@ -309,7 +312,6 @@ pub fn verifyAllAttested(
                     error.AttestationSignatureInvalid => SpiritError.AttestationSignatureInvalid,
                     error.AttestationVerdictNotPass => SpiritError.AttestationVerdictNotPass,
                     error.OutOfMemory => SpiritError.OutOfMemory,
-                    else => SpiritError.UnattestedSource,
                 },
                 .failing_path = try allocator.dupe(u8, p),
             };
