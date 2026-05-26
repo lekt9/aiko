@@ -80,10 +80,18 @@ step_compile() {
 }
 
 # ─── build:install — installed binaries land in scripts/ ─────────────
+# ONE binary is installed (`contract`); `aiko` is a symlink to it. The
+# persona is selected at runtime from argv[0]'s basename inside main.zig.
+# Pre-refactor this step installed two byte-different binaries built from
+# the same source with different `build_options.binary_name` — Lewis
+# 2026-05-26: "bind it so aiko is contract itself so theres no confusion".
 step_install() {
-  step "build:install — install -m 755"
-  install -m 755 "$ZIG_DIR/zig-out/bin/aiko"         "$SCRIPTS_DIR/aiko"
+  step "build:install — install -m 755 + symlink"
   install -m 755 "$ZIG_DIR/zig-out/bin/contract-zig" "$SCRIPTS_DIR/contract"
+  # `ln -sf` replaces any prior independent binary at scripts/aiko with the
+  # canonical symlink. The relative target keeps the link valid no matter
+  # where the scripts/ folder lives.
+  ln -sf contract "$SCRIPTS_DIR/aiko"
 }
 
 # ─── build:sign — wallet signs each binary's SHA-256 ─────────────────
