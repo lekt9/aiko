@@ -29,8 +29,12 @@ pub fn build(b: *std.Build) void {
             .{ .name = "contract", .module = libcontract },
         },
     });
-    const contract_options = b.addOptions();
-    contract_options.addOption([]const u8, "binary_name", "contract");
+    // Single executable: `contract-zig`. The aiko persona is selected at
+    // RUNTIME from argv[0]'s basename inside main.zig (see BINARY_NAME +
+    // AIKO_DECLARE_ONLY init in `pub fn main`). The installed `aiko`
+    // entrypoint is a symlink → `contract` (see scripts/build.sh
+    // step_install); one binary, two faces, no `build_options.binary_name`
+    // discriminator.
     const root = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -41,7 +45,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "contract_client", .module = client },
         },
     });
-    root.addOptions("build_options", contract_options);
 
     const exe = b.addExecutable(.{
         .name = "contract-zig",
@@ -49,27 +52,6 @@ pub fn build(b: *std.Build) void {
     });
 
     b.installArtifact(exe);
-
-    const aiko_options = b.addOptions();
-    aiko_options.addOption([]const u8, "binary_name", "aiko");
-    const aiko_root = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-        .imports = &.{
-            .{ .name = "contract", .module = libcontract },
-            .{ .name = "contract_client", .module = client },
-        },
-    });
-    aiko_root.addOptions("build_options", aiko_options);
-
-    const aiko = b.addExecutable(.{
-        .name = "aiko",
-        .root_module = aiko_root,
-    });
-
-    b.installArtifact(aiko);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
