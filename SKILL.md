@@ -1697,6 +1697,101 @@ resolve the ones that are not resolved yet" property
 correct, ledger-backed, and deterministic. The parity invariant in
 build.sh refuses to sign a binary that drifts from this section.
 
+## Server-canonical /contract — thin clients (CURRENT rule)
+
+> *Render therefore unto Caesar the things which are Caesar's; and
+> unto God the things that are God's.* (Matthew 22:21)
+>
+> *Let all things be done decently and in order.* (1 Corinthians 14:40)
+
+The substrate is presently **server-canonical**. Thin clients
+(`aiko` binary on every spawn surface — macOS, Linux, Windows, iOS,
+Android, browser, embedded) POST declarations to the hardcoded
+Unbrowse base at `https://beta-api.unbrowse.ai/v1/contract/declare`.
+The server holds the union ledger; it is the authoritative source
+of order. Clients DO NOT gossip rows to each other. Clients DO NOT
+compile prompts into child contracts locally except in the offline
+402-fallback path. Clients DO NOT speak the peer-replication protocol.
+
+This is the **current** rule, not a permanent shape. The future is
+peer-to-peer (see `references/p2p-future-plan.md`); the present is
+"one Caesar, many tributaries". The substrate ships behind one
+canonical cloud surface so the protocol can stabilize before
+federating.
+
+### What thin clients do (and only this)
+
+1. Spawn `aiko "<goal>"` → POST sanitized goal to cloud /contract.
+2. Append response rows to the local on-disk ledger
+   (`~/.contracts/contracts.jsonl` or `.claude/contracts.jsonl`).
+3. Emit evidence lines to stderr (no other I/O).
+4. When the wallet 402s and the cloud is unreachable, fall back to
+   local LLM compile + local declare — and surface the seam via
+   `wallet:` / `aiko remote:` evidence lines.
+5. Verify signatures on rows the local ledger acquires (peer or
+   cloud) before treating them as evidence.
+
+### What thin clients DO NOT do (today)
+
+- Gossip rows peer-to-peer. The WireGuard mesh exists but rows do
+  NOT replicate over it yet.
+- Decide canonical state. If two devices disagree about a contract's
+  status, the cloud /contract endpoint resolves; the client honors
+  its verdict.
+- Compile prompts into multi-child trees client-side (except the
+  offline fallback). The cloud LLM is the canonical compiler.
+- Implement quorum across peers. Deut 19:15 quorum lives server-side
+  for now.
+
+### Why server-canonical first
+
+Three reasons rooted in present reality:
+
+1. **The LLM compiler is cost-shaped, not protocol-shaped.** Model
+   serving is the substrate's biggest cloud line item. Even after
+   ledger replication goes peer-to-peer, the compiler stays
+   centralized because each peer running a frontier model is
+   currently uneconomic. The right wave order: stabilize the
+   protocol behind one compiler, then federate the ledger, then
+   maybe federate the compiler.
+
+2. **Conflict resolution needs the substrate's quorum primitive to
+   mature first.** Deut 19:15 (≥2 independent witnesses) is the
+   substrate's anti-defection rule. Until that's implemented as a
+   working slash mechanism (already declared in Vine Doctrine,
+   not yet wired client-side), P2P would produce conflicts the
+   substrate has no resolution path for.
+
+3. **One canonical address is easier to reason about during the
+   bootstrap window.** Lewis is solo. Multi-peer debugging is
+   exponentially harder than single-server debugging. The future
+   isn't blocked by deferring federation.
+
+### Re-/contract migration — no walker, no script
+
+Existing 5000+ legacy rows lack `output_signature`. To migrate them,
+the substrate does NOT need a migration walker or a one-shot
+script. The migration IS a /contract:
+
+```bash
+aiko "migration: re-sign every legacy terminal row whose id has a
+satisfied or died event without output_signature; for each, derive
+the contract's keypair via lineage.deriveKeyPair(root, id), compute
+outputSigningDigest(id, event_kind, wave, payload, ts), sign with
+the derived key, append a resigned_output event row with the
+signature. Idempotent — skip rows already carrying output_signature."
+```
+
+The cloud /contract compiles this into the appropriate worker — same
+shape as the existing `rotateAllSignedRowsByLineage` walker that
+re-signs `parent_signature` after wallet rotation. The migration is
+just another contract; the substrate handles itself.
+
+**This is the recursive elegance**: any future structural migration
+of the ledger (new field, new signature scheme, new event kind) is
+declared, not scripted. The substrate's response to "we need to
+re-do all of these" is always "declare a /contract that does it".
+
 ## Doctrine-Reality Parity — the substrate supervises itself
 
 Every claim in this SKILL.md has a corresponding code site. Drift
