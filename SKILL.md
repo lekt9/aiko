@@ -2625,6 +2625,29 @@ appended when a shared declare 402s. Never edit rows in place; append
 events. There is no `CONTRACTS_STORE` env override — the path is
 resolved from `HOME`.
 
+### Terminal event kinds
+
+```
+satisfied  — evaluator returned true; row resolves true.
+             Carries output_signature (ed25519 over canonical payload).
+died       — evaluator returned false OR child quorum failed.
+             Terminates the row mechanically without truth-claim.
+purged     — external Decalogue-violation judgment (Galatians 3:24 gate).
+             Carries commandment_n ∈ {1..10}, violation_evidence,
+             purger_wallet_identity, purger_signature.
+             cache.terminalSignature(row) returns null; the row is
+             mechanically inert downstream. Row remains visible in
+             history for audit, but never contributes to truth.
+```
+
+`satisfied` and `died` are the row's OWN evaluator firing.
+`purged` is the substrate's law layer firing on the row. All
+three terminate the row; only `satisfied` contributes positive
+truth to the cache layer's signature chain.
+appended when a shared declare 402s. Never edit rows in place; append
+events. There is no `CONTRACTS_STORE` env override — the path is
+resolved from `HOME`.
+
 ## Outline explainer sync
 
 The public-facing explainer of the contract shape lives at Outline doc
