@@ -280,13 +280,62 @@ step_parity() {
     _fail "doctrine[vine burn rule]: John 15:6 apply field doesn't name 'Burned FDRY → NAV-per-share' — slash-to-burn invariant is not pinned"
   fi
 
+  # 19. "bible corpus exists" — source + packed binaries must all be present
+  #     (KJV public-domain text + openbible CC-BY 4.0 cross-references +
+  #     the three packed blobs the @embedFile sites in bible.zig reach for).
+  for df in bible-kjv.json cross-references.txt bible.dat bible-xrefs.dat bible-xrefs-idx.dat; do
+    if [[ ! -s "$LIB_DIR/data/$df" ]]; then
+      _fail "doctrine[bible corpus]: libcontract/data/$df missing or zero-byte"
+    fi
+  done
+
+  # 20. "bible.zig exports the canonical surface" — resolve / verseText /
+  #     verseId / crossReferences / relevantVerses are the public API
+  #     consumers (main.zig's bible_chain emitter, verses.zig's fall-through)
+  #     rely on. Drift here breaks the chain.
+  if [[ ! -f "$LIB_DIR/src/bible.zig" ]]; then
+    _fail "doctrine[bible.zig]: libcontract/src/bible.zig missing"
+  else
+    local bib_fn
+    for bib_fn in 'pub fn resolve' 'pub fn verseText' 'pub fn verseId' 'pub fn crossReferences' 'pub fn relevantVerses'; do
+      if ! grep -q "$bib_fn" "$LIB_DIR/src/bible.zig"; then
+        _fail "doctrine[bible.zig]: '$bib_fn' missing in bible.zig"
+      fi
+    done
+  fi
+
+  # 21. "VERSE_COUNT = 31100" — protects against silent data-shape drift.
+  if ! grep -q 'pub const VERSE_COUNT: usize = 31100' "$LIB_DIR/src/bible.zig" 2>/dev/null; then
+    _fail "doctrine[bible.zig]: VERSE_COUNT constant must be exactly 31100 in bible.zig"
+  fi
+
+  # 22. "BOOK_COUNT = 66".
+  if ! grep -q 'pub const BOOK_COUNT: usize = 66' "$LIB_DIR/src/bible.zig" 2>/dev/null; then
+    _fail "doctrine[bible.zig]: BOOK_COUNT constant must be exactly 66 in bible.zig"
+  fi
+
+  # 23. "contract.zig re-exports bible" — so the contract_client module can
+  #     reach the bible primitives without duplicating the file in two
+  #     module graphs (the same fix shape used for lineage/http/verses).
+  if ! grep -q 'pub const bible = @import("bible.zig")' "$LIB_DIR/src/contract.zig"; then
+    _fail "doctrine[bible re-export]: contract.zig must declare pub const bible = @import(\"bible.zig\")"
+  fi
+
+  # 24. "Wave 2 envelope wired" — chat completion output references
+  #     bible_chain in both streaming + non-streaming emit sites.
+  local chain_emits
+  chain_emits=$(grep -cE '"bible_chain":' "$ZIG_DIR/src/main.zig" 2>/dev/null || echo 0)
+  if [[ "$chain_emits" -lt 2 ]]; then
+    _fail "doctrine[bible_chain]: main.zig must emit \"bible_chain\" in at least 2 sites (streaming first chunk + non-streaming envelope)"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
     printf '%s' "$report" >&2
     echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 18 doctrine claims have matching code sites"
+  echo "build:parity OK — all 24 doctrine claims have matching code sites"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────
