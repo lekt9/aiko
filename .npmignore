@@ -1,0 +1,23 @@
+# NEVER PUBLISH THIS REPO TO NPM
+#
+# This is the SERVER side of /contract:
+#   - libcontract/ (Zig core)
+#   - zig/ (binary source)
+#   - docs/ (observations-fractal-loop.md — design substrate)
+#   - scripts/ (build, sign, sync — wallet operations)
+#   - audit-gate/, bm25-gate/, ... (closed-source quality gates)
+#
+# The PUBLIC surface is `@aiko/contract` — a separate repo at
+# ~/Projects/contract-thin-client/ — and ONLY that one gets published.
+#
+# This .npmignore is defensive belt-and-suspenders. The repo has no
+# package.json so `npm publish` already errors. If a package.json ever
+# lands here by accident, this file ensures nothing useful ships.
+#
+# Doctrine: OPEN-SOURCE-NOTICE.md split — capture/RE engine + backend
+# + CLI binary + anti-bot research = CLOSED; SDKs + thin client = OPEN.
+
+# Exclude EVERYTHING (whitelist nothing — we don't want anything
+# from this tree to leave on npm)
+*
+.*
