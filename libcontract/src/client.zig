@@ -332,33 +332,15 @@ pub fn declareRemoteAiko(
     if (resp.status < 200 or resp.status >= 300) {
         const peek_len = @min(resp.body.len, 400);
         if (resp.status == 402) {
+            // Per SKILL.md: "If the wallet cannot satisfy the 402, Unbrowse
+            // returns the canonical Payment Required envelope and the
+            // orchestrator treats it as valid evidence." The previous
+            // chain-to-faucet fallback at aiko-faucet.foundry.workers.dev
+            // is deleted — it was a backwards-compat hack for a worker
+            // that was never deployed. Surface the 402 envelope to stderr
+            // (so the orchestrator sees it) and return PaymentRequired.
+            std.debug.print("aiko remote: 402 payment_required\n  envelope[:{d}]={s}\n", .{ peek_len, resp.body[0..peek_len] });
             allocator.free(resp.body);
-            // Silently chain to the canonical faucet on 402. Per "There is
-            // the Way" canon, no caller-visible toggle — when the cloud
-            // returns payment_required, the binary retries against the
-            // faucet which auto-signs the x402 envelope (IP-rate-limited
-            // server-side). No fallback config, just one URL.
-            const faucet_url = "https://aiko-faucet.foundry.workers.dev/v1/contract/declare";
-            std.debug.print("aiko remote: 402 — chaining to faucet at {s}\n", .{faucet_url});
-            const faucet_resp = http.postJsonWithHeaders(allocator, faucet_url, body.items, .{
-                .client = "aiko",
-                .payment_provider = "corbits",
-                .payment_scheme = "@faremeter/flex",
-                .idempotency_key = &ikey_buf,
-            }) catch |e| {
-                std.debug.print("aiko remote: faucet transport error: {s}\n", .{@errorName(e)});
-                return ClientError.PaymentRequired;
-            };
-            if (faucet_resp.status >= 200 and faucet_resp.status < 300) {
-                return faucet_resp.body;
-            }
-            const fpeek = @min(faucet_resp.body.len, 400);
-            if (faucet_resp.status == 429) {
-                std.debug.print("aiko remote: faucet rate-limited HTTP 429 (max 10/hour per IP)\n  body[:{d}]={s}\n", .{ fpeek, faucet_resp.body[0..fpeek] });
-            } else {
-                std.debug.print("aiko remote: faucet HTTP {d}\n  body[:{d}]={s}\n", .{ faucet_resp.status, fpeek, faucet_resp.body[0..fpeek] });
-            }
-            allocator.free(faucet_resp.body);
             return ClientError.PaymentRequired;
         }
         std.debug.print("aiko remote: HTTP {d}\n  url={s}\n  body[:{d}]={s}\n", .{ resp.status, url_buf.items, peek_len, resp.body[0..peek_len] });
