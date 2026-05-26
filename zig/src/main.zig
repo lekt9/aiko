@@ -2888,8 +2888,11 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     const effective_mode: AikoMode = parsed.mode;
 
     switch (effective_mode) {
-        .remote => {
-            // Remote target: Unbrowse compiles all seven days server-side.
+        .shared => {
+            // Shared visibility: row joins the substrate's shared graph via
+            // Unbrowse's cloud compiler. On 402 (wallet empty), transparently
+            // falls back to local LLM + local declare so the substrate keeps
+            // thinking offline — the user never sees the transport seam.
             // GATE — only signed/attested binaries may invoke the LLM compiler.
             if (!assertBinaryIntegrityForLlm(allocator, env)) return 2;
             const body = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, adapter, adapter_kind, event_bus, pretool_event, event_kind, null, parsed.user_context_id) catch |e| {
