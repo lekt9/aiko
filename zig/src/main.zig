@@ -2158,15 +2158,6 @@ fn ambientEventBus(env: std.process.Environ) ?[]const u8 {
     return null;
 }
 
-fn ambientPretoolTs(env: std.process.Environ) ?[]const u8 {
-    _ = env;
-    return null;
-}
-fn ambientPretoolChannel(env: std.process.Environ) ?[]const u8 {
-    _ = env;
-    return null;
-}
-
 fn ambientPretoolEvent(env: std.process.Environ) ?[]const u8 {
     _ = env;
     return null;
