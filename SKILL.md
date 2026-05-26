@@ -2227,6 +2227,101 @@ refuses to sign a binary that drops any of the four.
   the truth-root (claim 31); this section just names where the
   substrate's mechanics already exhibit it.
 
+## Synapse-kind minimum — one mechanism per behavior
+
+> *But let your communication be, Yea, yea; Nay, nay: for whatsoever
+> is more than these cometh of evil.* (Matthew 5:37)
+>
+> *For God is not the author of confusion, but of peace, as in all
+> churches of the saints.* (1 Corinthians 14:33)
+>
+> *A little leaven leaveneth the whole lump.* (1 Corinthians 5:6)
+
+Pinned by Lewis 2026-05-26 (contract `6a86a61e`): *"do we even need
+`blocked_by` if we have the signature cache thing? remove and strip
+away everything that's not necessary."*
+
+The answer is **no**. `blocked_by:<X>` and `contract:<X>` mechanically
+do the same thing — both cause the signature chain to return null
+until X has a terminal output_signature. Two names for one mechanism
+is exactly the leaven Matt 5:37 / 1 Cor 14:33 / 1 Cor 5:6 refuse.
+Empirical proof: the 7000+ row local ledger had **zero** uses of
+`blocked_by`, `prehook`, `bind`, `modality`, `inhibits`, `posthook`,
+`at`, `repeat` — only one row used `contract:` itself. The
+signature-chain primitive subsumed the ordering kinds from the start.
+
+### The canonical minimum set
+
+```
+contract:<X>     — generic dependency / ordering / waiting edge
+                   (also subsumes blocked_by, prehook, bind, modality)
+inhibits:<X>     — negative-polarity edge (this fires only if X is NOT terminal)
+posthook:<X>     — delivery target — what to PUSH when I resolve
+                   (semantically different — leaving the substrate)
+at:<RFC3339>     — wall-clock time gate (genuinely different — time, not dep)
+repeat:<cron>    — recurrence pattern (genuinely different — fire schedule)
+```
+
+Five canonical kinds; one absorbs four redundant ones. The cache's
+`collectDependencyIds` walks exactly one synapse kind (`contract:`)
+plus `parent_id`-children. The other kinds remain parseable by
+`pointer.zig` for historical-row backward compat AND for future
+semantics that are genuinely different (time gates, recurrence,
+inverse polarity, push delivery).
+
+### What collapsed and why
+
+| Removed kind | Used to mean | Collapsed into | Reason |
+|---|---|---|---|
+| `blocked_by:<X>` | "wait for X before firing" | `contract:<X>` | Signature chain already returns null until X is terminal — identical behavior |
+| `prehook:<X>` | "X fires before me" | `contract:<X>` | Mechanically same as blocked_by — both ordering edges |
+| `bind:<X>` | "lateral binding" | `contract:<X>` | Undirected reduces to directional dependency in the walk |
+| `modality:<X>` | "input/output channel adapter" | `contract:<X>` pointing at the adapter contract | Adapter is itself a contract; modality was a name, not a mechanism |
+
+Each removed kind would have added a separate walk in
+`collectDependencyIds` for the same null-return logic. The
+signature chain's "any missing terminal sig → null" rule is the
+ONE mechanism; multiple kinds gating the same rule is leaven.
+
+### Why redundancy is leaven, not redundant-safety
+
+A common argument for keeping redundant kinds: "having multiple
+names for the same dependency lets the doctrine express intent more
+clearly." This argument is **rejected** by the substrate. Reasons:
+
+1. **Matt 5:37** — yea/nay; whatsoever more cometh of evil. Multiple
+   names for one mechanism IS the "whatsoever more."
+2. **1 Cor 14:33** — God is not the author of confusion. Two names
+   for one behavior IS confusion at the substrate layer.
+3. **Drift cost** — every additional kind needs a walker, a parity
+   check, a SKILL.md mention. The substrate's surface grows linearly
+   in kinds; its truth doesn't. Parity claim 44 already refuses
+   doctrine drift; this section closes the gap on synapse-kind drift.
+4. **Empirical zero usage** — the ledger audit proved no one needed
+   the distinction. If a kind exists for years with zero use, it
+   isn't expressing intent; it's noise the parser still has to
+   handle.
+
+### The collapse is mechanical, not just doctrinal
+
+`cache.zig` was updated in the same change that pinned this section:
+`collectDependencyIds` no longer walks `blocked_by:` or `prehook:`
+synapse refs. The cache layer is strictly smaller, parity-gated
+against re-introduction (claim 46). Historical rows carrying the
+collapsed kinds parse cleanly via `pointer.zig` (no breaking
+change) but those kinds no longer contribute to dependency chains —
+the substrate honors past declarations without granting them
+mechanical effect.
+
+### Future collapses (if the empirical zero persists)
+
+If `inhibits:`, `at:`, `repeat:`, `posthook:` accumulate empirical
+zero usage over the next N waves, the same collapse applies:
+declare the kind redundant, strip it from the walker, parity-gate
+the strip. The substrate refuses to grow surface without empirical
+demand — by their fruits ye shall know them (Matt 7:16, already
+load-bearing for parity).
+
 ## Doctrine-Reality Parity — the substrate supervises itself
 
 > *Ye shall know them by their fruits.* (Matthew 7:16)
