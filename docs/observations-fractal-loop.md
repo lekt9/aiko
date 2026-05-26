@@ -538,32 +538,81 @@ thin serialization over /contract envelopes:
                                         the result as a pointer-memory
 ```
 
-### Environment-typed action prefixes
+### Environment is generative, not bound (Lewis 2026-05-27 correction)
 
-The substrate's existing typed-pointer set generalizes per-environment.
-Adding a runtime = adding a prefix to `pointer.zig:isKnownAction` +
-the SDK validator tables (or, when gap 2 closes, just to pointer.zig
-since SDKs read the canonical manifest).
+**Wrong shape (rejected):** hardcode a fixed set of environment
+prefixes (`wasm:` / `binary:` / `telegram:` / `email:` /
+`browser-script:`) into `pointer.zig:isKnownAction`. This binds the
+environment table to compile time and forces every new runtime to
+land via a substrate rebuild.
 
-| Prefix | Runtime | Where it executes | Layer |
-|---|---|---|---|
-| `cli:<cmd>` | shell | host OS | 2 (cell) |
-| `wasm:<sha>` | wasm runtime | browser / wasmtime / wasmer | 2 (cell) |
-| `binary:<sha>` | native ELF/Mach-O | host OS, sandbox, container | 2 (cell) |
-| `browser-script:<sha>` | JS sandbox | browser devtools / extension | 2 (cell) |
-| `webhook:<url>` | HTTP POST | network | 4 (transport) |
-| `telegram:<chat>:<cmd>` | bot API | telegram | 4 (transport) |
-| `email:<addr>:<template>` | SMTP | mail | 4 (transport) |
-| `wallet:<addr>` | signing | local keystore | 5 (value) |
-| `x402:<endpoint>` | paywall fulfillment | payment rail | 5 (value) |
-| `contract:<id>` | another /contract | this ledger | 3 (graph) |
-| `agent:<id>` | human-in-the-loop | wherever the operator is | 6 (operator) |
+**Right shape:** the environment a contract spawns in is a **location
+word** in the contract's plan. The substrate parses the plan,
+identifies the location word, looks up the matching `wrapper:<name>`
+contract in the ledger, and spawns in that environment. If no
+location word is present, the contract inherits the parent's
+environment via the lineage walk.
 
-The **same /contract id** can surface as different prefixes per host:
-the row in the ledger says `action: wasm:<sha>`, but the WASM blob's
-sha can correspond to a binary's sha on a different host, or to a
-telegram command on a phone. Each host's dereferencer picks the right
-prefix from the row — the lineage chain stays identical.
+```
+contract plan: "send a telegram message to lewis about the build"
+   ↑                ↑
+   location word "telegram" → looked up as wrapper:telegram → dispatched there
+
+contract plan: "answer the user's question"
+   ↑                ↑
+   no environment word → falls back to parent's environment
+                          (parent declared under wrapper:openai-compat
+                          → child runs there too)
+```
+
+### Why generative + fallback is the right substrate shape
+
+- **No fixed table.** Any word can name an environment. New
+  environments register by declaring a `wrapper:<name>` /contract
+  (layer 4) once; the substrate finds it on next lookup. No rebuild,
+  no prefix-table edit.
+- **Lineage carries default location.** A child without a location
+  word inherits its parent's wrapper — walked via parent_id chain
+  until a wrapper:<name> is found. This is the same shape as
+  capability inheritance: dependencies and defaults propagate down
+  the chain, never sideways.
+- **Words are already /contracts.** The substrate already fans out
+  `word:<tok>` children per token (via `cmdDeclare`'s
+  `emitWordChildren`). The location-word selector reuses this — no
+  new parsing surface.
+- **Same /contract surfaces in different environments without
+  copying.** A contract whose plan names no location runs wherever
+  its parent runs; the same row can be dereferenced by a browser
+  parent, a CLI parent, or a telegram bot parent. Environment is
+  resolution-time, not declaration-time.
+
+### Reference resolver (substrate-side, future work)
+
+```
+fn resolveEnvironment(contract_id) -> wrapper_contract_id:
+    1. Read contract's plan; tokenize.
+    2. For each token: try `aiko list --published --action wrapper:<token>`.
+       If hit, return that wrapper's contract id.
+    3. If no token matches, walk parent_id chain:
+       - For each ancestor, repeat step 2.
+       - First match wins.
+    4. If chain exhausts to root without a wrapper, the root's
+       environment is the default (typically the binary's local cwd).
+```
+
+This is `findActionForId`-style ledger walking, parameterized by
+"is this a wrapper:<token> action?" Lives in a future `environment.zig`
+helper; no new prefix table needed.
+
+### Examples of generative location resolution
+
+| Contract plan | Resolved environment | How |
+|---|---|---|
+| "send a telegram message to lewis" | `wrapper:telegram` | "telegram" matches a published `wrapper:telegram` contract |
+| "execute the wasm module to compute X" | `wrapper:wasm` | "wasm" matches `wrapper:wasm` |
+| "answer the user's question" (parent runs in `wrapper:openai-compat`) | `wrapper:openai-compat` | no location word → inherits parent |
+| "run shell command ls -la" | `wrapper:shell` (if declared) or parent's env | "shell" matches `wrapper:shell` if published; else inherit |
+| "post webhook to the deploy endpoint" | `wrapper:webhook` (if published) | "webhook" matches |
 
 ### Stdio is the universal lineage channel
 
