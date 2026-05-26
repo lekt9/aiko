@@ -4807,6 +4807,8 @@ fn cmdRun(allocator: std.mem.Allocator, env: std.process.Environ, args: []const 
         errPrint("run: shape validation failed: {s}\n", .{@errorName(e)});
         return 2;
     };
+    defer ps.deinit();
+    const sh = ps.shape;
     // Two acceptable shapes:
     //   (a) event=declared with action starting `iterate:` → child contract
     //   (b) event=iterated with id present → recordIteration on existing
