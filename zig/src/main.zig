@@ -2372,12 +2372,6 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
             evidencePrint("pretool-event-ts: {s}\n", .{pts});
         }
     }
-    if (!client.isRemoteMode(env)) {
-        if (hookId(env, "CONTRACT_PREHOOK_ID", "CONTRACT_PREHOOK")) |prehook| {
-            const pre_rc = try resolveOne(allocator, env, prehook);
-            if (pre_rc != 0) return pre_rc;
-        }
-    }
     const action = ambientAction(env);
     const parent = ambientParent(env);
     const adapter = ambientAdapter(env);
