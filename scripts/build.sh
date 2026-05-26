@@ -553,6 +553,15 @@ step_parity() {
     fi
   done
 
+  # Purge 08263211 (sibling of b9e07951): ambient* env-reading functions
+  # were stubs that returned null unconditionally and threaded null
+  # through declareRemote*/declare cloud-declare params the cloud
+  # discards. Empirical surface (Day 3 probe) confirmed zero env reads;
+  # deletion is safe. Refuse to ship a binary that resurrects the shape.
+  if grep -nE '^fn ambient[A-Z]' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[purge:08263211]: zig/src/main.zig must contain ZERO ambient* env-reading functions (purged per contract:08263211 sibling of b9e07951)"
+  fi
+
   # purge:apoptosed-by-cap (contract af7429cd) — Day 4 regression-lock.
   # The three wave-cap apoptosis branches in main.zig that called
   # markDied("neuron_stuck") / markDied("cli_persistent_failure") were
