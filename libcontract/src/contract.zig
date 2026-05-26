@@ -13,6 +13,11 @@ const lineage = @import("lineage.zig");
 /// the build graph.
 pub const Lineage = lineage;
 
+/// Local-LLM fallback: when --remote 402s (wallet empty), substrate
+/// downloads llama.cpp + Qwen3.5-0.8B-Instruct GGUF on first use and
+/// spawns the compile locally. See `llm_fallback.zig` for the doctrine.
+pub const LlmFallback = @import("llm_fallback.zig");
+
 /// Typed edge kind across the contract DAG. The substrate compiles narrative
 /// references in the plan/action text (e.g. `inhibits:deadbeef`) into one
 /// uniform stream of typed synapses on the declared row — there are no
