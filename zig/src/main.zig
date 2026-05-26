@@ -579,7 +579,7 @@ fn bioFirstRunWalletGuidance(allocator: std.mem.Allocator, env: std.process.Envi
     // Derive address from root + a stable identity (CONTRACT_INSTANCE_ID
     // or "default"). Print guide. Touch the marker so we don't repeat.
     const root = lineage_lib.loadOrInitRootKey(allocator, env) catch return;
-    const identity = env.getPosix("CONTRACT_INSTANCE_ID") orelse "default";
+    const identity: []const u8 = "default";
     const sol_kp = lineage_lib.deriveKeyPair(root, identity) catch return;
     var b58_buf: [64]u8 = undefined;
     const n = b58encode(&sol_kp.public_key.bytes, &b58_buf);
