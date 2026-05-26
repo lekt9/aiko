@@ -33,7 +33,10 @@ const ledger = @import("ledger.zig");
 const lineage = @import("lineage.zig");
 const http = @import("http.zig");
 
-const DEFAULT_MODEL: []const u8 = "moonshotai/Kimi-K2-Instruct";
+// Canonical Kimi K2.5 — what Nebius Studio actually serves. Faster
+// build-time judgments come from the `-fast` variant; full K2.5 has
+// stronger doctrine judgment. Operator overrides via CONTRACT_LLM_MODEL.
+const DEFAULT_MODEL: []const u8 = "moonshotai/Kimi-K2.5-fast";
 // Base URL (the env var CONTRACT_LLM_BASE_URL takes the same form).
 // The chat-completions path is appended at the call site so the env
 // stays substrate-agnostic — same shape as the wrapper's translator.ts.
