@@ -2463,11 +2463,19 @@ fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, sk
             try seen.put(r.id, {});
             if (isDead(rows, r.id)) continue;
             if (isSatisfied(rows, r.id)) {
-                // Hash-stale satisfied rows still re-enter — that's the
-                // cache-invalidation propagation channel.
-                const cur = computeInputHash(allocator, rows, r.id, 0) catch continue;
-                const rec = lastInputHash(rows, r.id) orelse continue;
-                if (std.mem.eql(u8, &cur, rec)) continue;
+                // Chain-stale satisfied rows re-enter — that's the
+                // cache-invalidation propagation channel. Same pointer
+                // primitive as resolveOne: a satisfied row whose current
+                // signature chain still matches the recorded snapshot
+                // skips backfill; chain drift OR missing chain (legacy)
+                // honors the prior satisfaction and skips too.
+                const chain_opt = contract.cache.computeSignatureChain(allocator, env, r.id) catch null;
+                if (chain_opt == null) continue;
+                defer if (chain_opt) |c| allocator.free(c);
+                const rec_opt = contract.cache.findLatestResolvedSnapshot(allocator, env, r.id) catch null;
+                if (rec_opt == null) continue;
+                defer if (rec_opt) |c| allocator.free(c);
+                if (std.mem.eql(u8, chain_opt.?, rec_opt.?)) continue;
             }
             try candidates.append(allocator, r.id);
             if (candidates.items.len >= budget) break;
