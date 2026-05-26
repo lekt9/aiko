@@ -191,7 +191,7 @@ fn pathExists(path: []const u8) bool {
 fn shell(allocator: std.mem.Allocator, comptime fmt_str: []const u8, args: anytype) Error!void {
     const cmd = std.fmt.allocPrintZ(allocator, fmt_str, args) catch return Error.OutOfMemory;
     defer allocator.free(cmd);
-    const rc = system(cmd.ptr);
+    const rc = std.c.system(cmd.ptr);
     if (rc != 0) return Error.DownloadFailed;
 }
 
