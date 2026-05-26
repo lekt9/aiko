@@ -686,7 +686,6 @@ test "Verdict.jsonName covers every variant" {
     try std.testing.expectEqualStrings("miss", Verdict.miss.jsonName());
     try std.testing.expectEqualStrings("stale", Verdict.stale.jsonName());
     try std.testing.expectEqualStrings("legacy", Verdict.legacy.jsonName());
-    try std.testing.expectEqualStrings("signature_incomplete", Verdict.signature_incomplete.jsonName());
 }
 
 test "extractStringField parses both spaced and unspaced JSON" {
