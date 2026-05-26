@@ -1989,7 +1989,8 @@ it ships the fix. The ledger itself is now the canonical work-tracker.
 | gap-env-generative — location word in plan → wrapper:<word> lookup → fallback to parent env via lineage | `379afd78` | neuron:gap-env-generative |
 | gap-payload-seal-on-write — wire payload_crypto.seal into ledger.appendRow; render-without-seeing becomes end-to-end | `2670d670` | neuron:gap-payload-seal-on-write |
 | gap-edge-meta-invariant — pin "any layer-4 prefix is a valid edge carrier" in pointer.zig + build.sh parity | `7783ca73` | neuron:gap-edge-meta-invariant |
-| gap-cache-invalidated-cascade — drill skips isSatisfied rows even when cache_invalidated landed; fix drill + cascade up parent_id chain | `abe3c445` | neuron:gap-cache-invalidated-cascade |
+| ~~gap-cache-invalidated-cascade~~ (SUPERSEDED 2026-05-27 by gap-radix-prefix-cache) | ~~`abe3c445`~~ | radix-tree-keyed cache lookup IS the cascade; half-fixing the drill skip would be wrong shape; subsumed |
+| gap-radix-prefix-cache — sglang RadixAttention applied to parent_id chain; cache lookup walks UP finding deepest valid prefix; sibling prefix-sharing; cache_evicted tombstone | `1e52b77a` | neuron:gap-radix-prefix-cache |
 | gap-relay-sign-and-verify — SDK signEnvelope + relay verifier wiring; end-to-end signed cross-host webhook | `27f42009` | neuron:gap-relay-sign-and-verify |
 | gap-relay-deploy-unbrowse — mount @contract/tunnel-relay on unbrowse backend; substrate wrapper:webhook-relay points at /relay endpoint | `65471ff2` | neuron:gap-relay-deploy-unbrowse |
 | gap-bus-auto-declare — auto-declare default render-history bus on session start; descendants inherit fractally | `23f5fcae` | neuron:gap-bus-auto-declare |
