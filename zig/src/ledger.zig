@@ -2,19 +2,14 @@
 //! exposes plain posix write/open/mkdir at the top level).
 //!
 //! Discovery:
-//!   1. $CONTRACTS_STORE — explicit override
-//!   2. <cwd>/.claude/contracts.jsonl if <cwd>/.claude/ is a directory
-//!   3. ~/.contracts/contracts.jsonl global fallback
+//!   1. <cwd>/.claude/contracts.jsonl if <cwd>/.claude/ is a directory
+//!   2. ~/.contracts/contracts.jsonl global fallback
 const std = @import("std");
 
 const c = std.c;
 
 /// Resolve the ledger path. Returns an owned slice the caller must free.
 pub fn resolvePath(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
-    if (env.getPosix("CONTRACTS_STORE")) |v| {
-        if (v.len > 0) return try allocator.dupe(u8, v);
-    }
-
     var cwd_buf: [4096]u8 = undefined;
     const cwd_ptr = c.getcwd(&cwd_buf, cwd_buf.len);
     if (cwd_ptr == null) return error.CwdFailed;
