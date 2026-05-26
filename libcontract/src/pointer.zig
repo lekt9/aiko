@@ -113,6 +113,18 @@ pub fn isKnownAction(action: []const u8) bool {
 /// Native layer inference for the minimal shape catalog.
 /// Layer convention (contract:d10b3dbb): 1=system, 2=cell, 3=graph,
 /// 4=transport, 5=value, 6=operator.
+///
+/// META-INVARIANT (Lewis 2026-05-27 gap `7783ca73`): **any prefix
+/// that returns layer 4 is a valid edge carrier between contracts at
+/// any higher layer (5/6/7/8).** Layer 4 IS the transport layer; the
+/// substrate refuses to enumerate a fixed edge-carrier whitelist
+/// because the carrier-vs-non-carrier distinction collapses to the
+/// already-enforced layer-4 membership. Adding a new layer-4 prefix
+/// (e.g. `wireguard-mesh:`, `nats:`, `ipfs:`) automatically makes it
+/// a valid higher-layer edge without any additional registration.
+/// Conversely: prefixes returning other layers are NOT valid edge
+/// carriers between higher-layer contracts — using them as such is
+/// a substrate-doctrine violation the parity gate refuses.
 pub fn inferLayer(action: []const u8) i32 {
     const pt = inferPointerType(action);
     if (std.mem.eql(u8, pt, "cli") and std.mem.indexOf(u8, action, "wait-for-event") != null) return 4;
