@@ -21,6 +21,7 @@ extern fn popen(cmd: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
 extern fn pclose(stream: *anyopaque) c_int;
 extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: *anyopaque) usize;
 extern fn access(path: [*:0]const u8, mode: c_int) c_int;
+extern fn system(cmd: [*:0]const u8) c_int;
 
 const F_OK: c_int = 0;
 
