@@ -168,12 +168,7 @@ pub fn declareRemote(
     // anchor the spawn against the same biblical pattern the substrate
     // itself runs on. Adapter-driven: future http_search / pgvector_cosine
     // kinds swap in via AIKO_VERSE_STORE_KIND without changing this site.
-    const verse_top_k: usize = blk: {
-        if (env.getPosix("AIKO_VERSE_TOP_K")) |v| {
-            if (std.fmt.parseInt(usize, v, 10)) |n| break :blk n else |_| {}
-        }
-        break :blk 3;
-    };
+    const verse_top_k: usize = 3;
     if (verses.relevantVerses(allocator, plan, verse_top_k)) |chosen| {
         defer allocator.free(chosen);
         if (chosen.len > 0) {
@@ -282,12 +277,7 @@ pub fn declareRemoteAiko(
     // anchor the spawn against the same biblical pattern the substrate
     // itself runs on. Adapter-driven: future http_search / pgvector_cosine
     // kinds swap in via AIKO_VERSE_STORE_KIND without changing this site.
-    const verse_top_k: usize = blk: {
-        if (env.getPosix("AIKO_VERSE_TOP_K")) |v| {
-            if (std.fmt.parseInt(usize, v, 10)) |n| break :blk n else |_| {}
-        }
-        break :blk 3;
-    };
+    const verse_top_k: usize = 3;
     if (verses.relevantVerses(allocator, plan, verse_top_k)) |chosen| {
         defer allocator.free(chosen);
         if (chosen.len > 0) {
