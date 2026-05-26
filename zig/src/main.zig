@@ -4217,9 +4217,14 @@ fn cmdSelf(args: []const []const u8) u8 {
         err("self accepts no args or --json\n");
         return 2;
     }
-    out(
-        "{ \"binary\": \"" ++ BINARY_NAME ++ "\", \"implementation\": \"zig\", \"version\": \"" ++ VERSION ++
-            "\", \"public_shape\": \"<binary-name> \\\"<truth claim>\\\" [--private]\", \"visibility_axis\": {\"default\": \"shared\", \"override\": \"--private\"}, \"env_reads\": [\"HOME\"], \"unbrowse_base\": \"https://beta-api.unbrowse.ai\", \"llm_compiler_binding\": \"hardcoded\", \"binary_self_attestation\": true, \"shapes\": [\"neuron\"], \"internal_shapes\": [\"cell\",\"funnel\",\"funnel-first\",\"sequence\",\"quorum\",\"loop\",\"harness\",\"contract-ref\"], \"containment_edge\": \"parent_id\", \"cross_edges\": [\"contract-ref\"], \"lineage_assignment\": \"server-side (wallet identity + declare timestamp)\", \"prompt_compiler\": \"unbrowse-llm\", \"prompt_to_contract_graph\": true, \"prompt_text_is_root_declaration\": true, \"server_integrator\": \"unbrowse-llm\", \"local_llm_fallback\": {\"trigger\": \"PaymentRequired\", \"model\": \"unsloth/Qwen3.5-0.8B-GGUF\", \"engine\": \"llama.cpp\"}, \"adapters_are_server_contracts\": true, \"recursive_firing\": true, \"recursive_children\": true, \"breakpoints\": true, \"fractal_environment_layers\": true, \"multidimensional_dag\": true }\n",
+    // BINARY_NAME is a runtime var (set in main from argv[0] basename),
+    // so the JSON header has to be built at runtime too — was a comptime
+    // `++ BINARY_NAME ++` concat under the old build_options.binary_name
+    // discriminator. The JSON shape is byte-identical to the previous
+    // output for any given BINARY_NAME value.
+    outPrint(
+        "{{ \"binary\": \"{s}\", \"implementation\": \"zig\", \"version\": \"{s}\", \"public_shape\": \"<binary-name> \\\"<truth claim>\\\" [--private]\", \"visibility_axis\": {{\"default\": \"shared\", \"override\": \"--private\"}}, \"env_reads\": [\"HOME\"], \"unbrowse_base\": \"https://beta-api.unbrowse.ai\", \"llm_compiler_binding\": \"hardcoded\", \"binary_self_attestation\": true, \"shapes\": [\"neuron\"], \"internal_shapes\": [\"cell\",\"funnel\",\"funnel-first\",\"sequence\",\"quorum\",\"loop\",\"harness\",\"contract-ref\"], \"containment_edge\": \"parent_id\", \"cross_edges\": [\"contract-ref\"], \"lineage_assignment\": \"server-side (wallet identity + declare timestamp)\", \"prompt_compiler\": \"unbrowse-llm\", \"prompt_to_contract_graph\": true, \"prompt_text_is_root_declaration\": true, \"server_integrator\": \"unbrowse-llm\", \"local_llm_fallback\": {{\"trigger\": \"PaymentRequired\", \"model\": \"unsloth/Qwen3.5-0.8B-GGUF\", \"engine\": \"llama.cpp\"}}, \"adapters_are_server_contracts\": true, \"recursive_firing\": true, \"recursive_children\": true, \"breakpoints\": true, \"fractal_environment_layers\": true, \"multidimensional_dag\": true }}\n",
+        .{ BINARY_NAME, VERSION },
     );
     return 0;
 }
