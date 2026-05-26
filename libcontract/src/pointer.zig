@@ -48,7 +48,51 @@ pub fn inferPointerType(action: []const u8) []const u8 {
         std.mem.startsWith(u8, action, "http://") or
         std.mem.startsWith(u8, action, "https://") or
         std.mem.startsWith(u8, action, "wget ")) return "api";
+    // `neuron:<subtype>` shapes (e.g. `neuron:user`,
+    // `neuron:openai-session`) — treated as neurons, not cli fallthroughs.
+    // Must come BEFORE the bare "cli" default. Same for the other
+    // graph-layer shapes that admit subtypes.
+    if (std.mem.startsWith(u8, action, "neuron:")) return "neuron";
+    if (std.mem.startsWith(u8, action, "funnel:")) return "funnel";
+    if (std.mem.startsWith(u8, action, "sequence:")) return "sequence";
+    if (std.mem.startsWith(u8, action, "iterate:")) return "iterate";
     return "cli";
+}
+
+/// Returns true if `action` matches a known exact shape or starts
+/// with a known typed prefix. The substrate's shape validator
+/// (shape.zig) uses this to refuse JSON envelopes carrying actions
+/// the substrate cannot interpret. SDK validators mirror this set.
+pub fn isKnownAction(action: []const u8) bool {
+    // Exact bare-name shapes.
+    if (std.mem.eql(u8, action, "neuron")) return true;
+    if (std.mem.eql(u8, action, "funnel")) return true;
+    if (std.mem.eql(u8, action, "funnel-first")) return true;
+    if (std.mem.eql(u8, action, "sequence")) return true;
+    if (std.mem.eql(u8, action, "cli")) return true;
+    if (std.mem.eql(u8, action, "api")) return true;
+    if (std.mem.eql(u8, action, "harness")) return true;
+    if (std.mem.eql(u8, action, "loop")) return true;
+    // Typed prefixes — each must end with ':' or be a network shape.
+    const prefixes = [_][]const u8{
+        "word:",       "machine:",    "neuron:",
+        "funnel:",     "sequence:",   "quorum:",
+        "contract:",   "loop-until:", "harness:",
+        "embedding:",  "sabbath-eval:", "inhibits:",
+        "bind:",       "blocked_by:",
+        "webhook:",    "tunnel:",     "posthook:",
+        "prehook:",    "modality:",
+        "sha256-private:", "sha256-shared:", "sha256:",
+        "wallet:",     "x402:",
+        "agent:",
+        "validate:",   "signed:",
+        "iterate:",
+        "curl ",       "http://",     "https://", "wget ",
+    };
+    for (prefixes) |p| {
+        if (std.mem.startsWith(u8, action, p)) return true;
+    }
+    return false;
 }
 
 /// Native layer inference for the minimal shape catalog.
