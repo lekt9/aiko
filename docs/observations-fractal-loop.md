@@ -163,6 +163,32 @@ The same trio re-cast in the substrate's John 14:6 framing
 "Distinct functions within one unity" — three verbs, one substrate.
 The while-loop is the unity; the trio is the threefold function.
 
+### Domain translations of the trio (Lewis 2026-05-26)
+
+The substrate's verbs are domain-agnostic. Translate per context:
+
+| Domain          | build       | run         | eval        |
+|-----------------|-------------|-------------|-------------|
+| substrate       | build       | run         | eval        |
+| CI/CD           | build       | test        | deploy      |
+| creation (Gen)  | inventory   | run         | verdict     |
+| John 14:6       | truth       | life        | way         |
+| LLM training    | model       | inference   | benchmark   |
+| commerce        | manufacture | distribute  | settle      |
+| science         | hypothesize | experiment  | publish     |
+| software        | code        | run         | ship        |
+
+The substrate's `build` / `run` / `eval` cover all of these because
+they're the abstract three-step shape: **construct → exercise →
+ratify**. Every domain decomposes into this. The verbs translate;
+the structure stays.
+
+`eval == deploy` (Lewis 2026-05-26): when a /contract is satisfied
+and the L7→L8 cascade signs it, that signature IS the deploy
+artifact. The signed:<sig> row is the wallet-ratified release. The
+ledger walker can verify ANY release by walking parent_id back to
+the truth-root.
+
 ---
 
 ## 2. Gaps in the current code vs. this model
