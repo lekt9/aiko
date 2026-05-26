@@ -267,14 +267,10 @@ fn jsonNullableString(line: []const u8, key: []const u8) ?[]const u8 {
     return null;
 }
 
-/// JSON-decode a string value extracted by `jsonString`. The slice returned by
-/// `jsonString` is the raw byte span between the surrounding `"` — JSON
-/// escapes (`\"`, `\\`, `\n`, `\t`, `\r`, `\/`, `\uXXXX`) remain LITERAL.
-/// Anything that feeds those bytes back to a downstream interpreter (a shell,
-/// a Python `-c` payload, a child process arg) MUST first decode the escapes;
-/// otherwise an action written as JSON `"d[\"thread\"]"` shells out the
-/// literal `d[\"thread\"]` bytes and the interpreter rejects it. Symmetric to
-/// `writeJsonString` in libcontract/src/contract.zig.
+/// Symmetric to `writeJsonString` in libcontract/src/contract.zig. Without it,
+/// bytes round-tripped through the ledger reach downstream interpreters with
+/// escapes still literal — `"d[\"thread\"]"` shells out as 14 bytes including
+/// the backslashes, and python -c rejects it.
 fn unescapeJsonValue(allocator: std.mem.Allocator, src: []const u8) ![]u8 {
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(allocator);
