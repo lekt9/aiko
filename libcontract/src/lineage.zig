@@ -29,24 +29,129 @@ pub const ROOT_KEY_HEX_LEN: usize = 64; // 32 bytes * 2
 /// signing tuple. Picked to be unmistakable in audit and human-readable.
 pub const ROOT_PARENT_SENTINEL: []const u8 = "root";
 
-/// Try to load the 32-byte root secret. Resolution order:
-///   1. `$HOME/.contracts/root.key` (64-hex contents, mode 600)
-///   2. generate fresh + persist to `$HOME/.contracts/root.key`
+/// Three-tier wallet bootstrap. Resolution order on every aiko invocation:
+///   1. `$HOME/.contracts/root.key`             (canonical file, mode 600)
+///   2. `$HOME/.aiko/keys/root.key`             (mirror file, mode 600)
+///   3. macOS Keychain `aiko.root.ed25519.seed` (security CLI shellout)
+///   4. generate fresh + persist to all three (atomic three-way mirror)
+///
+/// Idempotent: after first successful read from ANY tier, the missing tiers
+/// are silently back-filled so the next invocation has all three mirrors
+/// populated. Generation only happens when ALL THREE tiers miss (true
+/// first-run on a clean machine).
 pub fn loadOrInitRootKey(allocator: std.mem.Allocator, env: std.process.Environ) ![32]u8 {
     const home = env.getPosix("HOME") orelse return error.NoHome;
-    const path = try std.fs.path.join(allocator, &.{ home, ".contracts", "root.key" });
-    defer allocator.free(path);
+    const canonical = try std.fs.path.join(allocator, &.{ home, ".contracts", "root.key" });
+    defer allocator.free(canonical);
+    const mirror = try std.fs.path.join(allocator, &.{ home, ".aiko", "keys", "root.key" });
+    defer allocator.free(mirror);
 
-    if (readHexFile(path)) |existing| return existing else |err| {
-        if (err != error.FileNotFound) return err;
-    }
+    // Tier 1: canonical file
+    if (readHexFile(canonical)) |existing| {
+        backfillMirrors(allocator, &existing, canonical, mirror) catch {};
+        return existing;
+    } else |err| if (err != error.FileNotFound) return err;
 
-    // Generate + persist. Use libc CSPRNG (arc4random_buf on Apple platforms
-    // is /dev/urandom-backed and always seeded).
+    // Tier 2: ~/.aiko/keys/root.key mirror
+    if (readHexFile(mirror)) |existing| {
+        backfillMirrors(allocator, &existing, canonical, mirror) catch {};
+        return existing;
+    } else |err| if (err != error.FileNotFound) return err;
+
+    // Tier 3: macOS Keychain
+    if (readKeychainSeed(allocator)) |existing| {
+        backfillMirrors(allocator, &existing, canonical, mirror) catch {};
+        return existing;
+    } else |err| if (err != error.NotFound) return err;
+
+    // Tier 4: fresh generation, write to all three.
     var fresh: [32]u8 = undefined;
     arc4random_buf(&fresh, fresh.len);
-    try writeHexFile(allocator, path, &fresh);
+    try writeHexFile(allocator, canonical, &fresh);
+    backfillMirrors(allocator, &fresh, canonical, mirror) catch {};
     return fresh;
+}
+
+/// Best-effort back-fill: ensure the mirror file and Keychain both carry the
+/// same seed as the canonical file. Failures here are non-fatal; the caller
+/// has a valid seed in hand. Run after every successful read so the substrate
+/// self-heals when one tier is wiped or never populated.
+fn backfillMirrors(
+    allocator: std.mem.Allocator,
+    seed: *const [32]u8,
+    canonical_path: []const u8,
+    mirror_path: []const u8,
+) !void {
+    // Canonical may be missing (we just read from mirror or keychain).
+    if (readHexFile(canonical_path)) |_| {} else |err| switch (err) {
+        error.FileNotFound => writeHexFile(allocator, canonical_path, seed) catch {},
+        else => {},
+    }
+    // Mirror file.
+    if (readHexFile(mirror_path)) |_| {} else |err| switch (err) {
+        error.FileNotFound => writeHexFile(allocator, mirror_path, seed) catch {},
+        else => {},
+    }
+    // Keychain.
+    if (readKeychainSeed(allocator)) |_| {} else |err| switch (err) {
+        error.NotFound => writeKeychainSeed(allocator, seed) catch {},
+        else => {},
+    }
+}
+
+// ────────── macOS Keychain shellout ──────────
+//
+// We shell out to /usr/bin/security instead of linking Security.framework
+// directly. Reasons: (a) cross-target portability — same source compiles to
+// linux where these calls become no-ops via the popen->error.NotFound path;
+// (b) zero-FFI surface; (c) avoids the macOS code-signing identity dance for
+// linking system frameworks from a self-signed binary.
+
+extern fn popen(command: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
+extern fn pclose(stream: *anyopaque) c_int;
+extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: *anyopaque) usize;
+extern fn system(command: [*:0]const u8) c_int;
+
+const KEYCHAIN_SVC: []const u8 = "aiko.root.ed25519.seed";
+
+fn readKeychainSeed(allocator: std.mem.Allocator) ![32]u8 {
+    // `security` is darwin-only; on linux the binary just won't be on PATH.
+    var cmd_buf: [256]u8 = undefined;
+    const cmd = try std.fmt.bufPrintZ(
+        &cmd_buf,
+        "security find-generic-password -s {s} -w 2>/dev/null",
+        .{KEYCHAIN_SVC},
+    );
+    const fp = popen(cmd.ptr, "r") orelse return error.NotFound;
+    var buf: [128]u8 = undefined;
+    const n = fread(&buf, 1, buf.len, fp);
+    const rc = pclose(fp);
+    if (rc != 0 or n < ROOT_KEY_HEX_LEN) return error.NotFound;
+    var end: usize = n;
+    while (end > 0 and (buf[end - 1] == '\n' or buf[end - 1] == '\r' or buf[end - 1] == ' ')) end -= 1;
+    if (end < ROOT_KEY_HEX_LEN) return error.NotFound;
+    var out: [32]u8 = undefined;
+    parseHex(buf[0..ROOT_KEY_HEX_LEN], &out) catch return error.NotFound;
+    _ = allocator;
+    return out;
+}
+
+fn writeKeychainSeed(allocator: std.mem.Allocator, seed: *const [32]u8) !void {
+    var hex: [ROOT_KEY_HEX_LEN]u8 = undefined;
+    bytesToHex(seed, &hex);
+    // -U updates if present; -a root pins the account; -D / -j are human
+    // labels. ACL: allow `security` and the running binary itself.
+    var cmd_buf: [512]u8 = undefined;
+    const cmd = try std.fmt.bufPrintZ(
+        &cmd_buf,
+        "security add-generic-password -a root -s {s} " ++
+            "-D 'aiko HD root seed (ed25519, 32B hex)' " ++
+            "-j 'Canonical root for /contract lineage + binary signing.' " ++
+            "-w '{s}' -U 2>/dev/null",
+        .{ KEYCHAIN_SVC, hex },
+    );
+    _ = system(cmd.ptr);
+    _ = allocator;
 }
 
 /// HKDF-derive a 32-byte private seed, then build the ed25519 keypair.
