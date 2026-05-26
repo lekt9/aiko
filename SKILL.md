@@ -1487,7 +1487,8 @@ needed is also the explanation that's leaven.
 
 A style preference would be a system-prompt instruction the model
 can forget. A /contract rule is **a substrate invariant pinned by
-the parity step in build.sh** (claim 19 below) AND **a memory-
+the parity step in build.sh** (claim 28 — "Doctrine speaks only when
+interrogated") AND **a memory-
 system entry that re-arms the rule on every future session**
 (memory: `doctrine-speaks-only-when-interrogated`). The build
 refuses to sign a binary whose SKILL.md is missing the rule; the
