@@ -78,11 +78,13 @@ pub fn bearerToken(env: std.process.Environ) ?[]const u8 {
 /// (libcontract.Lineage HKDF). There is no env-provided payment header
 /// to inject, no AIKO_X_PAYMENT/X_PAYMENT/PAYMENT_SIGNATURE override."
 ///
-/// Current state: returns null. The previous chain-to-faucet fallback
-/// (aiko-faucet.foundry.workers.dev) was deleted on 2026-05-26 — that
-/// worker never existed in production. On 402, the canonical envelope
-/// is surfaced to stderr by the caller; the orchestrator treats the
-/// envelope as valid evidence per SKILL.md activation rule.
+/// Current state: returns null (caller-side payment header is forbidden
+/// per "no env-provided payment header" doctrine). On 402, declareRemoteAiko
+/// chains the same body to AIKO_FAUCET_URL (the Foundry-operated faucet
+/// worker at aiko-faucet.lewis-6d8.workers.dev). The faucet rate-limits by
+/// IP and either onramps the caller's wallet or auto-signs the envelope
+/// from its own FAUCET_PRIVATE_KEY. Long-term auto-resolution of cold-wallet
+/// declares lands them on EmergentDB without the user seeing the 402 seam.
 ///
 /// Pending: inline Faremeter Flex / x402-exact envelope construction
 /// from the 402 response's `accepts[]` (target payTo + amount + asset),
