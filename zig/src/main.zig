@@ -2696,6 +2696,69 @@ fn extractFileRefsAndHash(
     return try allocator.dupe(u8, &hex_buf);
 }
 
+/// Walk a locally-compiled AikoCompiledContract JSON tree and declare each
+/// node onto the local ledger. The root declares with no parent; evaluators
+/// and children declare with their parent's id as parent_id, preserving
+/// the tree shape that the cloud compiler would have written. Returns the
+/// root contract id (caller frees) or null on any parse/declare failure.
+fn declareLocalNode(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    node: std.json.Value,
+    parent_id: ?[]const u8,
+) ?[]u8 {
+    if (node != .object) return null;
+    const obj = node.object;
+    const prompt_val = obj.get("prompt") orelse return null;
+    if (prompt_val != .string) return null;
+    const prompt = prompt_val.string;
+    if (prompt.len == 0) return null;
+
+    const id = contract.declare(allocator, env, prompt, "", .{
+        .parent_id = parent_id,
+    }) catch |decl_err| {
+        errPrint("local-llm declare failed: {s}\n", .{@errorName(decl_err)});
+        return null;
+    };
+
+    // Evaluators: each is a sibling-shaped declaration with this node as parent.
+    if (obj.get("evaluators")) |ev_val| {
+        if (ev_val == .array) {
+            for (ev_val.array.items) |ev| {
+                if (declareLocalNode(allocator, env, ev, id)) |child_id| {
+                    allocator.free(child_id);
+                }
+            }
+        }
+    }
+
+    // Children: recursive.
+    if (obj.get("children")) |ch_val| {
+        if (ch_val == .array) {
+            for (ch_val.array.items) |ch| {
+                if (declareLocalNode(allocator, env, ch, id)) |child_id| {
+                    allocator.free(child_id);
+                }
+            }
+        }
+    }
+
+    return id;
+}
+
+fn declareLocalTree(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    tree_json: []const u8,
+) ?[]u8 {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, tree_json, .{}) catch |e| {
+        errPrint("local-llm tree parse failed: {s}\n", .{@errorName(e)});
+        return null;
+    };
+    defer parsed.deinit();
+    return declareLocalNode(allocator, env, parsed.value, null);
+}
+
 /// Days 1-3 always fire. Days 4-7 are conditional on truth holding. A held day
 /// returns exit 1; the row stays pending until a future speech ratifies it.
 fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
