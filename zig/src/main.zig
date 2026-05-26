@@ -823,6 +823,18 @@ fn bioClassifyRoadblock(result: []const u8, action: []const u8) RoadblockClass {
     return .{ .class = "generic", .layer = "neuron" };
 }
 
+/// True when the action body is a plain shell command — neither one of the
+/// substrate's reflex primitives (neuron/funnel/sequence/funnel-first/quorum:/
+/// contract:) nor a typed-prefix URI (`agent-judges`, `api:`, `bridge:`,
+/// `machine:`, `tool-guard:`, `bun:`, `python:`, etc.). Used to gate the
+/// persistent-fail apoptosis branch so we never apoptose a row whose substrate
+/// resolver returned HOLD because lineage is still maturing.
+fn actionIsBareCli(action: []const u8) bool {
+    if (bioIsReflex(action)) return false;
+    const ptype = pointer.inferPointerType(action);
+    return std.mem.eql(u8, ptype, "cli");
+}
+
 /// Map an error_class to its canonical remediation hint. Future aikos
 /// matching the same class auto-install this hint as their prehook plan.
 fn remediationFor(class: []const u8) []const u8 {
