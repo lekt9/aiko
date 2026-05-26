@@ -2232,7 +2232,9 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
                 };
                 evidencePrint("{s} pointer chain drifted (was {s}, now {s})\n", .{ id, recorded[0..16], sig_chain[0..16] });
             } else {
-                contract.cache.appendCacheCheckRow(allocator, env, id, .stale, sig_chain, "") catch |e| {
+                // purge:verdict-stale (42bce795) — chain-present-without-recorded
+                // collapses into .miss; behavior identical (fall through, re-evaluate).
+                contract.cache.appendCacheCheckRow(allocator, env, id, .miss, sig_chain, "") catch |e| {
                     evidencePrint("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
                 };
                 evidencePrint("{s} satisfied without recorded pointer chain — recomputing\n", .{id});
