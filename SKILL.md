@@ -2225,6 +2225,22 @@ refuses to sign a binary that drops any of the four.
 
 ## Doctrine-Reality Parity — the substrate supervises itself
 
+> *Ye shall know them by their fruits.* (Matthew 7:16)
+>
+> *But be ye doers of the word, and not hearers only, deceiving
+> your own selves ... faith, if it hath not works, is dead.*
+> (James 1:22, 2:17)
+>
+> *Beloved, believe not every spirit, but try the spirits whether
+> they are of God.* (1 John 4:1)
+
+Matt 7:16 IS the parity gate: by their fruits — by what the code
+actually does — the doctrine is known true or false. James 2:17
+names the inverse: doctrine without code site is "faith without
+works" — dead. 1 John 4:1 commands the substrate's own test:
+"try the spirits" — every claim must be tested for whether it is
+of God, which IS the parity grep.
+
 Every claim in this SKILL.md has a corresponding code site. Drift
 between doctrine and implementation is the substrate failing to
 keep its word. To prevent silent drift, parity itself is **a
