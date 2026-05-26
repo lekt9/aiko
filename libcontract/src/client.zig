@@ -240,12 +240,12 @@ pub fn declareRemoteAiko(
     // bootstrap; signing is deterministic given the root + the identity
     // string. Same caller, same wallet, every invocation.
     const root = lineage.loadOrInitRootKey(allocator, env) catch |e| {
-        std.debug.print("aiko declare: loadOrInitRootKey failed: {s} — declare proceeds unsigned (will be coerced to agent=anonymous server-side)\n", .{@errorName(e)});
-        return declareRemoteAikoUnsigned(allocator, env, plan, action, parent_id, adapter_contract_id, adapter_kind, event_bus_contract_id, pretool_event_contract_id, event_kind, agent, user_context_id);
+        std.debug.print("aiko declare: loadOrInitRootKey failed: {s} — wallet bootstrap required for signed declare per SKILL.md\n", .{@errorName(e)});
+        return ClientError.RequestFailed;
     };
     const declare_kp = lineage.deriveKeyPair(root, "aiko-declare-identity") catch |e| {
-        std.debug.print("aiko declare: deriveKeyPair failed: {s} — declare proceeds unsigned\n", .{@errorName(e)});
-        return declareRemoteAikoUnsigned(allocator, env, plan, action, parent_id, adapter_contract_id, adapter_kind, event_bus_contract_id, pretool_event_contract_id, event_kind, agent, user_context_id);
+        std.debug.print("aiko declare: deriveKeyPair failed: {s}\n", .{@errorName(e)});
+        return ClientError.RequestFailed;
     };
     var wid_hex: [64]u8 = undefined;
     lineage.bytesToHex(&declare_kp.public_key.bytes, &wid_hex);
@@ -255,8 +255,8 @@ pub fn declareRemoteAiko(
     // the exact string we just generated.
     var ts_buf: [32]u8 = undefined;
     const ts = contract_mod.nowIsoUtc(&ts_buf) catch |e| {
-        std.debug.print("aiko declare: nowIsoUtc failed: {s} — declare proceeds unsigned\n", .{@errorName(e)});
-        return declareRemoteAikoUnsigned(allocator, env, plan, action, parent_id, adapter_contract_id, adapter_kind, event_bus_contract_id, pretool_event_contract_id, event_kind, agent, user_context_id);
+        std.debug.print("aiko declare: nowIsoUtc failed: {s}\n", .{@errorName(e)});
+        return ClientError.RequestFailed;
     };
 
     // Canonical body — byte-for-byte match of server's canonicalizeDeclareBody
@@ -268,8 +268,8 @@ pub fn declareRemoteAiko(
 
     // Sign the canonical bytes with ed25519.
     const sig = declare_kp.sign(canon.items, null) catch |e| {
-        std.debug.print("aiko declare: sign failed: {s} — declare proceeds unsigned\n", .{@errorName(e)});
-        return declareRemoteAikoUnsigned(allocator, env, plan, action, parent_id, adapter_contract_id, adapter_kind, event_bus_contract_id, pretool_event_contract_id, event_kind, agent, user_context_id);
+        std.debug.print("aiko declare: sign failed: {s}\n", .{@errorName(e)});
+        return ClientError.RequestFailed;
     };
     var sig_hex: [128]u8 = undefined;
     lineage.bytesToHex(&sig.toBytes(), &sig_hex);
