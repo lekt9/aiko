@@ -214,6 +214,73 @@ fn jsonNullableString(line: []const u8, key: []const u8) ?[]const u8 {
     return null;
 }
 
+/// JSON-decode a string value extracted by `jsonString`. The slice returned by
+/// `jsonString` is the raw byte span between the surrounding `"` — JSON
+/// escapes (`\"`, `\\`, `\n`, `\t`, `\r`, `\/`, `\uXXXX`) remain LITERAL.
+/// Anything that feeds those bytes back to a downstream interpreter (a shell,
+/// a Python `-c` payload, a child process arg) MUST first decode the escapes;
+/// otherwise an action written as JSON `"d[\"thread\"]"` shells out the
+/// literal `d[\"thread\"]` bytes and the interpreter rejects it. Symmetric to
+/// `writeJsonString` in libcontract/src/contract.zig.
+fn unescapeJsonValue(allocator: std.mem.Allocator, src: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    var i: usize = 0;
+    while (i < src.len) : (i += 1) {
+        if (src[i] != '\\' or i + 1 >= src.len) {
+            try out.append(allocator, src[i]);
+            continue;
+        }
+        switch (src[i + 1]) {
+            'n' => try out.append(allocator, '\n'),
+            't' => try out.append(allocator, '\t'),
+            'r' => try out.append(allocator, '\r'),
+            '"' => try out.append(allocator, '"'),
+            '\\' => try out.append(allocator, '\\'),
+            '/' => try out.append(allocator, '/'),
+            'b' => try out.append(allocator, 0x08),
+            'f' => try out.append(allocator, 0x0c),
+            'u' => {
+                if (i + 5 >= src.len) {
+                    try out.append(allocator, src[i]);
+                    try out.append(allocator, src[i + 1]);
+                    i += 1;
+                    continue;
+                }
+                const hex = src[i + 2 .. i + 6];
+                const cp = std.fmt.parseInt(u21, hex, 16) catch {
+                    try out.append(allocator, src[i]);
+                    try out.append(allocator, src[i + 1]);
+                    i += 1;
+                    continue;
+                };
+                var ubuf: [4]u8 = undefined;
+                const n = std.unicode.utf8Encode(cp, &ubuf) catch {
+                    try out.append(allocator, src[i]);
+                    try out.append(allocator, src[i + 1]);
+                    i += 1;
+                    continue;
+                };
+                try out.appendSlice(allocator, ubuf[0..n]);
+                i += 4;
+            },
+            else => {
+                try out.append(allocator, src[i]);
+                try out.append(allocator, src[i + 1]);
+            },
+        }
+        i += 1;
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+/// Convenience: locate a JSON string value by key AND decode its escapes.
+/// Returns an owned slice (caller pays for it); null when the key is absent.
+fn jsonStringDecoded(allocator: std.mem.Allocator, line: []const u8, key: []const u8) !?[]u8 {
+    const raw = jsonString(line, key) orelse return null;
+    return try unescapeJsonValue(allocator, raw);
+}
+
 fn parseRows(allocator: std.mem.Allocator, env: std.process.Environ) ![]Row {
     const data = try ledger.readAll(allocator, env);
     // Rows intentionally borrow slices from `data`. The native CLI is a
