@@ -409,14 +409,14 @@ test "keystore round-trip on this platform" {
     try write(allocator, svc, payload);
     const got = try read(allocator, svc);
     try std.testing.expect(got != null);
-    defer if (got) |g| std.heap.page_allocator.free(g);
+    defer if (got) |g| allocator.free(g);
     try std.testing.expectEqualSlices(u8, payload, got.?);
 
     try delete(allocator, svc);
     const after = try read(allocator, svc);
     if (after) |a| {
         // Some keystores defer deletion or fail silently; treat as soft assertion.
-        std.heap.page_allocator.free(a);
+        allocator.free(a);
     }
 }
 
