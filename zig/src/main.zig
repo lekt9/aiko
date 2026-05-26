@@ -2960,7 +2960,7 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         }
     }
 
-    const action = actionFromPlan(d.plan);
+    const action = actionFromPlan(parsed.plan);
     const parent = ambientParent(env);
     const adapter = ambientAdapter(env);
     const adapter_kind = ambientAdapterKind(env);
