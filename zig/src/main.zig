@@ -2407,6 +2407,13 @@ fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, sk
             if (seen.contains(r.id)) continue;
             try seen.put(r.id, {});
             if (isDead(rows, r.id)) continue;
+            // Orphan filter — an id that appears in some event row but has
+            // no `declared` row has no action to fire. Decalogue commandment
+            // 5 (honor lineage): the substrate refuses to invoke a neuron
+            // whose parent declaration never landed. Skip silently — the
+            // row that referenced this orphan still resolves via its own
+            // evaluator (not via the orphan's resolution).
+            if (latestDeclared(rows, r.id) == null) continue;
             if (isSatisfied(rows, r.id)) {
                 // Chain-stale satisfied rows re-enter — that's the
                 // cache-invalidation propagation channel. Same pointer
