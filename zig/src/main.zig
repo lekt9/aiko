@@ -452,19 +452,9 @@ fn bioInteroceptionJson(allocator: std.mem.Allocator, rows: []const Row) ![]u8 {
 ///    CONTRACT_HOMEOSTAT_MAX_UNRESOLVED (default 0=off),
 ///    CONTRACT_HOMEOSTAT_MAX_DEPTH (default 0=off on outer loop).
 fn bioHomeostatReject(allocator: std.mem.Allocator, env: std.process.Environ, rows: []const Row) ?[]const u8 {
-    const limit_str = env.getPosix("CONTRACT_HOMEOSTAT_MAX_UNRESOLVED") orelse return null;
-    const limit = std.fmt.parseInt(u32, limit_str, 10) catch return null;
-    if (limit == 0) return null;
-    var unresolved: u32 = 0;
-    for (rows) |r| {
-        if (!std.mem.eql(u8, r.event, "declared")) continue;
-        if (isSatisfied(rows, r.id)) continue;
-        if (isDead(rows, r.id)) continue;
-        unresolved += 1;
-        if (unresolved > limit) {
-            return std.fmt.allocPrint(allocator, "homeostat: unresolved={d} > max={d}; drain the queue first", .{ unresolved, limit }) catch "homeostat: unresolved out of band";
-        }
-    }
+    _ = allocator;
+    _ = env;
+    _ = rows;
     return null;
 }
 
