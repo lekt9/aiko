@@ -1,2 +1,0 @@
-# Β3 references-purge audit scope: the only directory this rule walks.
-~/.claude/skills/contract/references
