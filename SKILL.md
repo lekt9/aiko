@@ -299,6 +299,19 @@ via aiko; the substrate fires the chain.
 
 ## No scripts in the contract substrate — collapse to binary + contracts
 
+> *But let your communication be, Yea, yea; Nay, nay: for whatsoever
+> is more than these cometh of evil.* (Matthew 5:37)
+>
+> *A little leaven leaveneth the whole lump.* (1 Corinthians 5:6)
+>
+> *Let all things be done decently and in order.* (1 Corinthians 14:40)
+
+Matt 5:37 names the substrate's minimum-surface rule directly: yea
+or nay, nothing more. Every shell wrapper beyond the canonical
+binary set IS the "whatsoever is more" that "cometh of evil" — it
+is leaven (1 Cor 5:6) that decays the whole lump. The seven-item
+allowlist is the "decently and in order" form (1 Cor 14:40).
+
 The `scripts/` folder of this skill contains ONLY the canonical
 signed-binary set:
 
