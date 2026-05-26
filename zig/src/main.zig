@@ -1006,8 +1006,14 @@ fn writeCloudMirrorRow(
     // Bridge cache layer: compute the signature chain (typically null for
     // a fresh mirror with no children) and emit cache_check. Failure here
     // is non-fatal — the mirror row landed; cache visibility is best-effort.
-    const chain_opt = contract.cache.computeSignatureChain(allocator, env, id) catch null;
-    const recorded_opt = contract.cache.findLatestResolvedSnapshot(allocator, env, id) catch null;
+    const chain_opt = contract.cache.computeSignatureChain(allocator, env, id) catch |e| blk: {
+        evidencePrint("cache: computeSignatureChain failed for {s}: {s} — treating as miss\n", .{ id, @errorName(e) });
+        break :blk null;
+    };
+    const recorded_opt = contract.cache.findLatestResolvedSnapshot(allocator, env, id) catch |e| blk: {
+        evidencePrint("cache: findLatestResolvedSnapshot failed for {s}: {s} — treating as miss\n", .{ id, @errorName(e) });
+        break :blk null;
+    };
     defer if (chain_opt) |c| allocator.free(c);
     defer if (recorded_opt) |r| allocator.free(r);
     const current_hex: []const u8 = if (chain_opt) |c| c else "";
