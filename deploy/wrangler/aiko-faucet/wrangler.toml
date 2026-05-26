@@ -27,7 +27,11 @@ compatibility_flags = ["nodejs_compat"]
 UPSTREAM_BASE = "https://beta-api.unbrowse.ai"
 DAILY_LIMIT_USDC = "50"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
-SOLANA_RPC = "https://api.mainnet-beta.solana.com"
+# SOLANA_RPC is set via `wrangler secret put SOLANA_RPC` so the URL (which
+# carries the Helius API key inline) never lands in this checked-in file.
+# Public RPC (api.mainnet-beta.solana.com) blocks Cloudflare Workers IP
+# ranges with 403, so a managed RPC (Helius / QuickNode / Alchemy) is
+# mandatory for this worker to function.
 
 # Sliding-window rate limit per IP. Default: max 10 declares/hour.
 # Sliding window means tokens refill continuously — not a daily reset.
