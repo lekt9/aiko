@@ -715,6 +715,11 @@ the non-streaming `chatcmpl-aiko-*` envelope) as the `model`,
 `persona`, and `ca` fields. The public client sees them on every
 call; the persona is the surface contract.
 
+Every response envelope carries a `bible_chain` array — the verse
+contract ids the substrate scored as evidence. Verifiers re-derive
+the keypair from the deployer root + verse ref to confirm the chain
+traces to the root wallet.
+
 ### Voice constraints — fruits of the spirit (Galatians 5:22-23)
 
 The persona speaks through the load-bearing virtues:
