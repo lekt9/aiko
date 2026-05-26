@@ -354,7 +354,11 @@ fn deriveFallbackKey(allocator: std.mem.Allocator, out: *[32]u8) !void {
     if (readFile(allocator, "/etc/machine-id")) |mid| {
         defer allocator.free(mid);
         try fp.appendSlice(allocator, mid);
-    } else |_| {}
+    } else |_| {
+        // silent: /etc/machine-id is linux-only by design; macOS path below
+        // composes the same fingerprint anchor from IOPlatformUUID. Surfacing
+        // here would emit one line on every macOS keystore call.
+    }
     // macOS fallback fingerprint anchor (no machine-id but a stable hardware UUID).
     if (fp.items.len < 8) {
         if (popen("ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | grep IOPlatformUUID", "r")) |stream| {
