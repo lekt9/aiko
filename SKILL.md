@@ -1883,15 +1883,24 @@ binary-registration step.
 
 ### What this section refuses
 
-- A binary signed by `build.sh` that does NOT embed SKILL.md.
+- A binary signed by `build.sh` that does NOT carry the pointer
+  set (skill_md_sha + skill_usage_sha + bible_kjv_sha +
+  bible_usage_sha + the three preprocessed-bible shas).
+- A binary that `@embedFile`s SKILL.md or the bible corpus into
+  runtime bytes instead of embedding only the SHA. (Pointers-
+  Over-Anything Clause A: the binary holds pointers, not payload.)
 - A cloud /contract endpoint that accepts declares whose
-  `skill_md_sha256` is not on the registered-binaries list.
+  `doctrine_anchor_set_sha` is not on the registered-binaries
+  list.
 - A response envelope that omits `doctrine_chain` when sections
-  WERE scored.
+  were scored.
 - A calling LLM that ignores `doctrine_chain` and re-decomposes
   against stale doctrine — that's silent drift; surface it.
-- Reading stdin as a doctrine source. Doctrine is the embedded
-  bytes signed into the binary, not anything piped in at runtime.
+- Reading stdin as a doctrine source. Doctrine is the on-disk
+  file referenced by signed SHA, not anything piped in at
+  runtime.
+- Silent fallback when a doctrine file is missing. Refuse with
+  evidence; do not act without canonical doctrine.
 
 ## Vine Doctrine — staking by abiding
 
