@@ -963,6 +963,44 @@ fn appendJsonEscaped(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), s: [
     try buf.append(allocator, '"');
 }
 
+/// Append a `declared` mirror row for a cloud-issued contract id (contract
+/// d38149d0 + root-fix:substrate-singularity f5ff4f42). The row carries
+/// source="cloud-mirror" so resolvers can distinguish it from rows born
+/// locally. Single error-handling site at the call site — every internal
+/// step propagates via `try`, callers surface the verb with one evidence
+/// line.
+fn writeCloudMirrorRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+    plan: []const u8,
+    action: []const u8,
+    parent_id: ?[]const u8,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try contract.nowIsoUtc(&ts_buf);
+
+    var row: std.ArrayList(u8) = .empty;
+    defer row.deinit(allocator);
+
+    try row.appendSlice(allocator, "{\"event\": \"declared\", \"source\": \"cloud-mirror\", \"id\": ");
+    try appendJsonEscaped(allocator, &row, id);
+    try row.appendSlice(allocator, ", \"plan\": ");
+    try appendJsonEscaped(allocator, &row, plan);
+    try row.appendSlice(allocator, ", \"action\": ");
+    try appendJsonEscaped(allocator, &row, action);
+    if (parent_id) |p| {
+        try row.appendSlice(allocator, ", \"parent_id\": ");
+        try appendJsonEscaped(allocator, &row, p);
+    }
+    try row.appendSlice(allocator, ", \"ts\": ");
+    try appendJsonEscaped(allocator, &row, ts);
+    try row.append(allocator, '}');
+
+    const path = try ledger.appendRow(allocator, env, row.items);
+    allocator.free(path);
+}
+
 /// Chain-agnostic wallet derivation. Same root_seed feeds two algorithm
 /// branches via HKDF: ed25519 for Solana (and any other ed25519 chain)
 /// and secp256k1 for the entire EVM family (Ethereum, Base, Polygon,
