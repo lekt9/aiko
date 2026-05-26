@@ -1721,25 +1721,7 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
     // typed result via stdout. This is how the lineage-mesh reaches into
     // another machine without re-installing — the binary already exists
     // there from a previous materialize, we just exec it.
-    if (env.getPosix("CONTRACT_EXEC_BINARY")) |peer_bin| {
-        if (peer_bin.len > 0) {
-            const peer_mode = env.getPosix("CONTRACT_EXEC_MODE") orelse "--local";
-            // env -u CONTRACT_EXEC_BINARY breaks the recursion: the
-            // child won't see the variable and won't re-fork itself.
-            const cmd_text = try std.fmt.allocPrint(allocator, "env -u CONTRACT_EXEC_BINARY -u CONTRACT_EXEC_MODE \"{s}\" {s} \"{s}\"", .{ peer_bin, peer_mode, r.plan });
-            defer allocator.free(cmd_text);
-            evidencePrint("  exec-binary: {s} {s}\n", .{ peer_bin, peer_mode });
-            const peer_out = try runShellCapture(allocator, cmd_text, r.cwd);
-            if (peer_out.rc == 0) {
-                evidence("  result: PASS via exec-binary\n");
-                if (peer_out.output.len > 0) return .{ .rc = 0, .result = peer_out.output };
-                return .{ .rc = 0, .result = "pass" };
-            }
-            evidencePrint("  result: FAIL via exec-binary (exit {d})\n", .{peer_out.rc});
-            if (peer_out.output.len > 0) return .{ .rc = peer_out.rc, .result = peer_out.output };
-            return .{ .rc = peer_out.rc, .result = "fail" };
-        }
-    }
+    // exec-binary env routing (CONTRACT_EXEC_BINARY / CONTRACT_EXEC_MODE) removed.
     // Drill A — shell strict gate: refuse meta-shell when CONTRACT_SHELL_STRICT=1.
     // Policy comes from the action's environment; rejection is HOLD with a
     // named cause, never silent execution.
