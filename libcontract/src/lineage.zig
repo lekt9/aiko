@@ -30,17 +30,9 @@ pub const ROOT_KEY_HEX_LEN: usize = 64; // 32 bytes * 2
 pub const ROOT_PARENT_SENTINEL: []const u8 = "root";
 
 /// Try to load the 32-byte root secret. Resolution order:
-///   1. `AIKO_ROOT_KEY` env var as 64-hex
-///   2. `$HOME/.contracts/root.key` (64-hex contents, mode 600)
-///   3. generate fresh + persist to `$HOME/.contracts/root.key`
+///   1. `$HOME/.contracts/root.key` (64-hex contents, mode 600)
+///   2. generate fresh + persist to `$HOME/.contracts/root.key`
 pub fn loadOrInitRootKey(allocator: std.mem.Allocator, env: std.process.Environ) ![32]u8 {
-    if (env.getPosix("AIKO_ROOT_KEY")) |hex| {
-        if (hex.len == ROOT_KEY_HEX_LEN) {
-            var out: [32]u8 = undefined;
-            try parseHex(hex, &out);
-            return out;
-        }
-    }
     const home = env.getPosix("HOME") orelse return error.NoHome;
     const path = try std.fs.path.join(allocator, &.{ home, ".contracts", "root.key" });
     defer allocator.free(path);
