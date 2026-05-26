@@ -1910,6 +1910,8 @@ it ships the fix. The ledger itself is now the canonical work-tracker.
 | gap-aiko-symlink-bug | `0c719084` | killed legacy symlink at canonical SKILL path; installed real-file copies of fresh signed contract-zig-server as aiko + contract; build-fractal.sh propagates on every build; activation rule works end-to-end |
 | gap-tunnel-relay-skeleton | `f695b3b6` | ~/Projects/contract-tunnel-relay shipped: stateless Hono HTTP relay, runtime-agnostic, no DB/KV/sessions, pluggable verifier, 8/8 tests pass; canonical default for cross-host runtime webhook edges |
 | gap-webhook-tunnel-default-doc | `9524132f` | observations doc captures the buildtime-vs-runtime split (1-6 / 7-8), the webhook+tunnel default for runtime edges, rendered-value history bus composition pattern with telegram + chatbox worked examples |
+| gap-storage-tier-doc | `c64140d2` | 5-tier storage hierarchy (hot/warm/federated/anchored/edge); EmergentDB named as federated; FDRY-stake-weighted Solana anchoring only for L8 batches; reads stay cheap, chain handles only what NEEDS immutability |
+| gap-per-call-fee-doctrine-doc | `ffae6e6e` | per-call → stFDRY buyback wire catalog (7 existing + 3 missing); routeRevenue.ts confirmed live; Matt 6:24 preserved; strategic Unbrowse-old vs substrate-new framing |
 
 **Workflow going forward:** to close an open gap, ship the code +
 fire one envelope:
