@@ -762,6 +762,7 @@ fn remediationFor(class: []const u8) []const u8 {
     if (std.mem.eql(u8, class, "shell_injection")) return "shell-strict gate rejected ; | & ` $ < > — use code:/python:/bun: typed prefixes instead";
     if (std.mem.eql(u8, class, "wallet_mode")) return "chmod 600 ~/.contracts/root.key — wallet must not be group/world-readable";
     if (std.mem.eql(u8, class, "command_not_found")) return "missing binary on PATH; declare depends_on:<runtime>:<pkg> sidecar contract first";
+    if (std.mem.eql(u8, class, "stage_dead")) return "sequence's current stage was apoptosed; the sequence cannot satisfy and inherits the death (Genesis Day N inherits Day N-1)";
     if (std.mem.eql(u8, class, "bun_failure")) return "bun runtime returned non-zero; verify bun on PATH and code body has no shell-escape issues";
     if (std.mem.eql(u8, class, "python_failure")) return "python3 runtime returned non-zero; verify python3 on PATH and code body parses";
     return "generic resolver fault; inspect action_result + check parent_id chain for upstream cause";
