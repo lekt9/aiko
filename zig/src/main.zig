@@ -558,31 +558,10 @@ const INPUT_HASH_HEX_LEN: usize = 64;
 /// skips 402 on match. Substrate-canonical: no user config; if you have
 /// the root.key (you = the operator) you're admin. Automatic.
 fn bioAdminBypassPreflight(allocator: std.mem.Allocator, env: std.process.Environ) void {
-    const root = lineage_lib.loadOrInitRootKey(allocator, env) catch return;
-    const kp = lineage_lib.deriveKeyPair(root, "root-admin") catch return;
-    var pubkey_hex: [lineage_lib.PUBKEY_HEX_LEN]u8 = undefined;
-    lineage_lib.bytesToHex(&kp.public_key.bytes, &pubkey_hex);
-    const ts_now: i64 = time(null);
-    var ts_buf: [24]u8 = undefined;
-    const ts_slice = std.fmt.bufPrint(&ts_buf, "{d}", .{ts_now}) catch return;
-    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-    hasher.update("aiko-admin-bypass\x00");
-    hasher.update(ts_slice);
-    var digest: [32]u8 = undefined;
-    hasher.final(&digest);
-    var sig_hex: [lineage_lib.SIG_HEX_LEN]u8 = undefined;
-    lineage_lib.signDigest(kp, digest, &sig_hex) catch return;
-
-    // setenv all three so client.zig forwards them as headers.
-    const pubkey_z = allocator.dupeZ(u8, &pubkey_hex) catch return;
-    defer allocator.free(pubkey_z);
-    const ts_z = allocator.dupeZ(u8, ts_slice) catch return;
-    defer allocator.free(ts_z);
-    const sig_z = allocator.dupeZ(u8, &sig_hex) catch return;
-    defer allocator.free(sig_z);
-    _ = setenv("AIKO_ADMIN_PUBKEY", pubkey_z.ptr, 1);
-    _ = setenv("AIKO_ADMIN_TS", ts_z.ptr, 1);
-    _ = setenv("AIKO_ADMIN_SIGNATURE", sig_z.ptr, 1);
+    _ = allocator;
+    _ = env;
+    // Admin bypass deleted: was an env escape hatch (AIKO_ADMIN_PUBKEY/TS/SIGNATURE).
+    return;
 }
 
 /// FIRST-RUN WALLET SETUP — prints top-up guidance once, marks done.
