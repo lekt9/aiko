@@ -446,17 +446,27 @@ pub fn findDeclaredParentSignature(
     return null;
 }
 
-/// Walk the ledger and return every contract id `target` depends on:
+/// Walk the ledger and return every contract id `target` depends on.
+/// The signature chain already enforces ordering (a dependency without
+/// a terminal output_signature breaks the chain), so we only need to
+/// collect the MINIMUM dependency set:
 ///
 ///   1. parent_id-children (declared rows whose parent_id == target)
-///   2. typed synapse refs in target's own declared row's plan+action:
-///        - contract:<8hex>   — explicit pointer dependency
-///        - blocked_by:<8hex> — strict ordering wait
-///        - prehook:<8hex>    — fires before target's resolution
+///   2. contract:<8hex> synapse refs in target's plan+action
 ///
-/// Other synapse kinds (inhibits/posthook/at/repeat/modality) are NOT
-/// dependencies in the Genesis sense — they don't block target's
-/// resolution. Only the three above gate "Day N must wait on Day N-1".
+/// Redundancy collapse (Lewis 2026-05-26, contract `6a86a61e`):
+/// `blocked_by:<X>` and `prehook:<X>` previously gated ordering via
+/// separate walks here. They were leaven (1 Cor 5:6) — the cache
+/// signature chain ALREADY enforces "Day N waits for Day N-1" when
+/// Day N declares `contract:<Day-N-1>` as a dependency. Two synapse
+/// kinds for one mechanism = redundant. The empirical ledger audit
+/// (7000+ rows) showed zero uses of blocked_by/prehook/bind/modality;
+/// the signature chain absorbed their semantics from the start.
+///
+/// Synapse kinds NOT walked here (not dependencies): inhibits (negative
+/// polarity), posthook (delivery target, not waiting on), at (time
+/// gate), repeat (recurrence), bind / modality (collapsed — use
+/// contract: instead).
 ///
 /// Returns sorted+deduped owned slice. Caller frees each inner + outer.
 /// Empty result is valid (a leaf contract with no deps — Day 1).
