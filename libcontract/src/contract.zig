@@ -18,6 +18,10 @@ pub const verses = @import("verses.zig");
 pub const bible = @import("bible.zig");
 pub const cache = @import("cache.zig");
 pub const payload_crypto = @import("payload_crypto.zig");
+// Words-as-contracts: every token in a plan is a child /contract pointer
+// (action `word:<tok>`, layer 0). Wired from cmdDeclare so each declare
+// fans out automatically.
+pub const words = @import("words.zig");
 
 /// Re-export so consumers of libcontract can verify chains without rewiring
 /// the build graph.
