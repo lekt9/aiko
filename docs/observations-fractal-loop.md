@@ -171,16 +171,11 @@ Audited 2026-05-26. Listed in order of severity (1 = most load-bearing).
 
 ### Gap 1 — SDK still exposes pre-trio verbs
 
-Python + TS SDK ship `declare` / `mark_satisfied` (Python) and
-`declare` / `markSatisfied` (TS) **alongside** the canonical `build`
-/ `run` / `eval`. Two names per concept = drift surface; LLM-shaped
-callers see both and pick inconsistently.
-
-Substrate has collapsed to the trio (binary verbs `build`/`run`/`eval`).
-SDK should mirror.
-
-**Fix**: remove `declare` / `mark_satisfied` from SDK __all__ /
-exports. Keep build/run/eval only.
+~~Closed 2026-05-26.~~ Python + TS SDKs were collapsed to the trio:
+`build` / `run` / `eval` are the only user-facing verbs. The pre-
+trio names (`declare` / `mark_satisfied` / `markSatisfied`) are
+removed from exports and the surface tests assert they don't leak
+back.
 
 ### Gap 2 — Validation table duplicated across three languages
 
