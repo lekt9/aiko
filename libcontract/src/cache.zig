@@ -44,10 +44,10 @@ pub const Verdict = enum {
     hit,
     /// Signature chain present + differs from the recorded snapshot.
     /// A dependency's terminal state changed; the parent re-evaluates.
+    /// Also covers the "chain present but no recorded snapshot for this id"
+    /// case — purge:verdict-stale (42bce795) folded the prior .stale verdict
+    /// into .miss since both require the same action (re-evaluate).
     miss,
-    /// Signature chain present but no recorded snapshot for this id.
-    /// Treat as miss; the next satisfaction lands the first snapshot.
-    stale,
     /// No signature chain — either the contract predates output_signature
     /// (pre-cache rows) OR a dependency is still pending its terminal
     /// signature (Genesis-day ordering: Day N waits on Day N-1). In
