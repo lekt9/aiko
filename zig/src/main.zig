@@ -2312,6 +2312,8 @@ fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.E
             try seen.put(r.id, {});
             if (isDead(rows, r.id)) continue;
             if (isSatisfied(rows, r.id)) continue;
+            // Orphan filter (mirrors backfillUnresolved) — Decalogue cmd 5.
+            if (latestDeclared(rows, r.id) == null) continue;
             // Skip OTHER drill rows — they're standing resolvers, not work
             // items. Recursing into a drill from within a drill would create
             // unbounded mutual recursion (drill → backfill → resolveOne →
