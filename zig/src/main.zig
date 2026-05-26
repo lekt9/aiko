@@ -1240,6 +1240,18 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         return .{ .rc = 0, .result = "fire" };
     }
 
+    // `agent-judges` — the canonical doctrine sentinel (c64bf5e2 / C-G01
+    // 5b9574ee): substrate emits raw evidence; the agent in-thread renders
+    // the verdict. No shell exec. Return HOLD with an honest reason and
+    // leave the row pending until an in-thread agent fires `_mark satisfied`
+    // or `corroborate`. Without this branch the row falls through to the
+    // CLI path and pollutes the ledger with `sh: agent-judges: command not
+    // found` rows on every backfill pass.
+    if (std.mem.eql(u8, ptype, "agent-judges")) {
+        evidence("  result: HOLD — agent-judges sentinel: awaiting in-thread agent verdict (substrate has no opinion)\n");
+        return .{ .rc = 1, .result = "hold:agent-judges — awaiting in-thread agent verdict" };
+    }
+
     if (std.mem.eql(u8, ptype, "neuron")) {
         const ids = try childIds(allocator, rows, r.id);
         defer allocator.free(ids);
