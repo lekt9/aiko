@@ -238,7 +238,8 @@ test "satisfied requires 8-hex id and positive wave" {
     const good =
         \\{"event":"satisfied","id":"deadbeef","wave":1}
     ;
-    _ = try validateShape(allocator, good);
+    var ps_good = try validateShape(allocator, good);
+    ps_good.deinit();
 
     const bad_wave =
         \\{"event":"satisfied","id":"deadbeef","wave":0}
@@ -256,15 +257,18 @@ test "accepts boundary layers 0/7/8" {
     const word =
         \\{"event":"declared","plan":"x","action":"word:contract","layer":0}
     ;
-    _ = try validateShape(allocator, word);
+    var ps_word = try validateShape(allocator, word);
+    ps_word.deinit();
     const validate =
         \\{"event":"declared","plan":"x","action":"validate:deadbeef","layer":7}
     ;
-    _ = try validateShape(allocator, validate);
+    var ps_validate = try validateShape(allocator, validate);
+    ps_validate.deinit();
     const signed =
         \\{"event":"declared","plan":"x","action":"signed:abc123","layer":8}
     ;
-    _ = try validateShape(allocator, signed);
+    var ps_signed = try validateShape(allocator, signed);
+    ps_signed.deinit();
 }
 
 test "rejects bad synapses" {
