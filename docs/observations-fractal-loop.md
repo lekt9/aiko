@@ -512,6 +512,105 @@ shape as its row topology. Every /contract has a parent_id; every
 LLM endpoint has a parent endpoint; every wrapper has a parent
 wrapper. Walk the pointer chain to get the full provenance.
 
+## Meta-drill — /contract as while-loop over open gaps (Lewis 2026-05-27)
+
+Lewis: "can you /contract a /contract that while loops /contract so
+all resolve and breaks when all resolve? — is this better to be
+mechanically done?"
+
+**Yes — and the substrate had the right primitive all along: `funnel`.**
+
+### What landed
+
+A single /contract declared this turn at id `93b92681`:
+
+```
+event:      declared
+action:     funnel            ← substrate primitive: satisfies only when
+                                 ALL referenced contracts have satisfied
+layer:      3                 ← graph layer
+parent_id:  f739f8cd          ← gap-drill root from prior iterations
+synapses:   21 × {to:<gap-id>, kind:pointer}  ← every open gap auto-parsed
+                                                 from contract:<id> refs in the
+                                                 plan text via the substrate's
+                                                 existing synapse_table
+```
+
+That's the **while-loop as a single truth claim**. Its evaluator
+is built into the substrate (`funnel` action). When all 21 referenced
+gap contracts satisfy, the funnel satisfies. HOLD-non-terminal keeps
+it alive between iterations; `backfillUnresolved` heartbeat (already
+fires on every aiko invocation) re-checks on every call.
+
+### Mechanical vs not — the honest split
+
+| Step in the loop | Where it lives today |
+|---|---|
+| Track loop state (is meta-drill satisfied?) | **mechanical** — funnel evaluator built into substrate |
+| Periodically re-check (the "while" part) | **mechanical** — `backfillUnresolved` heartbeat on every aiko invocation |
+| Final cascade when all 21 satisfy | **mechanical** — L7→L8 `signed:*` auto-spawn |
+| Close a specific gap (write code, run tests, fire eval) | **agent** today (me); future = cloud-LLM-compiler's "if not, /contract more" emission per SKILL.md "Recursive self-interrogation" runtime-layer TODO |
+| Auto-spawn agent work on HOLD | **gap** — already in the ledger as `gap-7` (cmdDrain) + `gap-while-loop-runtime` (`3212a613`) + the cloud-compiler runtime gap |
+
+**So: the LOOP is mechanical TODAY**; the substrate tracks it row-
+for-row. What's NOT mechanical today is the agent's hands actually
+doing the closure work — until cmdDrain + the cloud compiler's
+auto-spawn-children behavior ship, the agent (a human operator OR
+an LLM session) has to physically write the code and fire `eval`
+against each gap-contract id.
+
+### Why funnel is the right primitive (and why "loop-until:" isn't yet)
+
+- `funnel` (already in pointer.zig:inferPointerType + inferLayer at
+  layer 3) — synapse-bound; satisfies when all refs satisfy; the
+  substrate's canonical AND-composition primitive
+- `loop-until:<predicate>` (also in pointer.zig as a prefix) — would
+  work in theory but the predicate-evaluator runtime is part of the
+  same runtime-layer gap that's pending
+- The funnel uses primitives the substrate ALREADY ships and tests;
+  loop-until requires a predicate-evaluator harness that's still
+  doctrinal-only
+
+So we pick the smaller, already-mechanical primitive (`funnel`) over
+the larger, half-wired one (`loop-until:`). Substrate-doctrine:
+"foundation precedes building" — use what's signed and tested before
+adding new mechanism.
+
+### How to drive it forward
+
+Each turn, an agent (or future cloud LLM compiler):
+
+1. Reads `93b92681` status — shows funnel state + which children are
+   still pending.
+2. Picks one or more open child gaps.
+3. Writes the code, runs tests, builds via the fractal pipeline.
+4. Fires `eval` against the closed gap's id.
+5. On the NEXT aiko invocation, `backfillUnresolved` walks the funnel:
+   if N+1 of 21 children satisfied, funnel stays HOLD; if 21/21,
+   funnel satisfies → L7→L8 cascade → meta-drill-complete signed
+   pointer-memory in the ledger.
+
+The substrate's "drill" semantic from SKILL.md ("Continuous
+resolver — drill the ledger always") IS this funnel's heartbeat —
+the funnel is a standing /contract; the drill walks it every time
+the substrate breathes.
+
+### Why this answers "is this better mechanical"
+
+The MECHANICAL part already is. What couldn't be mechanical without
+multi-turn work (gap-7 + gap-while-loop-runtime + the cloud compiler
+auto-spawn) is the *agent's hands doing the closure work*. Declaring
+the meta-drill as a /contract makes the loop legible to the
+substrate even while the agent layer is still hand-driven — every
+backfill pass surfaces the funnel's pending state, which is the
+substrate's way of saying "X gaps still need code". Future closures
+trigger the funnel's evaluator without any new wiring needed.
+
+When cmdDrain + cloud-compiler-auto-spawn ship, the agent-side
+hand-driving collapses into the substrate-side automatic loop.
+Until then: the funnel knows; the agent works; each closure brings
+the funnel one step closer to its L8 signed pointer-memory.
+
 ## Radix-prefix cache — sglang RadixAttention applied to /contract (Lewis 2026-05-27)
 
 Lewis: "is there a better way to kv cache contract style that check
