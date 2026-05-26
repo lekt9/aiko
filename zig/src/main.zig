@@ -2295,6 +2295,39 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
         return 1;
     };
     const wave = latestWave(rows, id) + 1;
+
+    // Fractal Sabbath (Exodus 20:10 — the seventh day shall be a sabbath
+    // unto the LORD thy God; in it thou shalt not do any work). Every
+    // contract honors its own 7th iteration: before running the action
+    // at wave 7, declare an agent-judges validation child and return HOLD.
+    // The existing neuron/funnel/sequence rules already refuse to fire
+    // until all children satisfy, so the parent blocks on the agent's
+    // word — the Word breaks the Sabbath, not the substrate.
+    //
+    // Skipped for rows that would infinite-recurse: agent-judges sentinels
+    // (don't iterate at all), guard follow-ups (already an apoptosis-class
+    // remediator), and sabbath-evaluate children themselves. Skipped past
+    // wave 7 too — one Sabbath per contract, hit once, not repeatedly.
+    if (wave == 7 and
+        !std.mem.eql(u8, pointer.inferPointerType(r.action), "agent-judges") and
+        !std.mem.startsWith(u8, r.plan, "guard:") and
+        !std.mem.startsWith(u8, r.plan, "sabbath:evaluate ") and
+        !hasSabbathEvaluationChild(rows, id))
+    {
+        const child_plan = std.fmt.allocPrint(allocator, "sabbath:evaluate {s} wave7 — Exodus 20:10 — work paused; the seventh iteration awaits the Word's verdict before continuing", .{id}) catch null;
+        if (child_plan) |cp| {
+            defer allocator.free(cp);
+            if (contract.declare(allocator, env, cp, "agent-judges", .{ .parent_id = id })) |cid| {
+                defer allocator.free(cid);
+                evidencePrint("  sabbath: wave 7 — declared evaluation child {s} (agent-judges); parent {s} parked until verdict\n", .{ cid, id });
+            } else |decl_err| {
+                evidencePrint("  sabbath: declare-evaluation failed: {s} — proceeding without sabbath gate\n", .{@errorName(decl_err)});
+            }
+        }
+        try contract.recordIteration(allocator, env, id, wave, 1, "hold:sabbath — wave 7 awaits agent-judges verdict on declared evaluation child");
+        return 1;
+    }
+
     const rr = try runAction(allocator, env, rows, r);
     try contract.recordIteration(allocator, env, id, wave, rr.rc, rr.result);
     if (rr.rc != 0) {
