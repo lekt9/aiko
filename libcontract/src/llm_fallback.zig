@@ -161,6 +161,12 @@ pub fn compileLocallyJson(
         out_buf.appendSlice(allocator, chunk[0..got]) catch return Error.OutOfMemory;
     }
 
+    // Diagnostic: persist captured output for inspection. Cheap; only fires
+    // on each fallback invocation and helps when grammar/model misbehave.
+    const out_dump_path = std.fmt.allocPrint(allocator, "{s}/.last-output.txt", .{models_dir}) catch return Error.OutOfMemory;
+    defer allocator.free(out_dump_path);
+    writeFile(allocator, out_dump_path, out_buf.items) catch {};
+
     // Extract the first balanced { … } from the model's output.
     const json_slice = extractFirstJsonObject(out_buf.items) orelse return Error.NoJsonInOutput;
     const owned = allocator.dupe(u8, json_slice) catch return Error.OutOfMemory;
