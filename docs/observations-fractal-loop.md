@@ -1547,6 +1547,8 @@ it ships the fix. The ledger itself is now the canonical work-tracker.
 | ~~gap-env-prefixes~~ (SUPERSEDED 2026-05-27, pruned by parent) | ~~`7847a188`~~ | premise wrong: hardcoded prefix table binds runtime to compile time |
 | gap-env-generative — location word in plan → wrapper:<word> lookup → fallback to parent env via lineage | `379afd78` | neuron:gap-env-generative |
 | gap-payload-seal-on-write — wire payload_crypto.seal into ledger.appendRow; render-without-seeing becomes end-to-end | `2670d670` | neuron:gap-payload-seal-on-write |
+| gap-edge-meta-invariant — pin "any layer-4 prefix is a valid edge carrier" in pointer.zig + build.sh parity | `7783ca73` | neuron:gap-edge-meta-invariant |
+| gap-cache-invalidated-cascade — drill skips isSatisfied rows even when cache_invalidated landed; fix drill + cascade up parent_id chain | `abe3c445` | neuron:gap-cache-invalidated-cascade |
 | gap-dereferencers — sibling-repo runtimes per environment | `234555df` | neuron:gap-environment-dereferencers |
 | gap-deref-spec — document the dereferencer contract per prefix | `9265afb4` | neuron:gap-dereferencer-spec |
 | gap-edge-wire — signed cross-machine wire primitive (wireguard-style) | `f7f193b8` | neuron:gap-edge-wire |
