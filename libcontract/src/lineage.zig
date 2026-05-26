@@ -784,10 +784,12 @@ test "rotateAllSignedRowsByLineage re-signs every old-root row" {
     try signDigest(old_kp, digest, &old_sig_hex);
 
     // Write the row to a tmp ledger file.
+    var rnd: [4]u8 = undefined;
+    arc4random_buf(&rnd, rnd.len);
     const tmp_path = try std.fmt.allocPrint(
         allocator,
-        "/tmp/contract-rotation-test-{d}.jsonl",
-        .{std.time.milliTimestamp()},
+        "/tmp/contract-rotation-test-{x:0>2}{x:0>2}{x:0>2}{x:0>2}.jsonl",
+        .{ rnd[0], rnd[1], rnd[2], rnd[3] },
     );
     defer allocator.free(tmp_path);
     defer {
