@@ -52,14 +52,17 @@ pub fn build(b: *std.Build) void {
         "src/bible.zig",
     };
     for (test_files) |tf| {
-        const t = b.addTest(.{
-            .root_module = b.createModule(.{
-                .root_source_file = b.path(tf),
-                .target = target,
-                .optimize = optimize,
-                .link_libc = true,
-            }),
+        const mod = b.createModule(.{
+            .root_source_file = b.path(tf),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
         });
+        // bible.zig embeds packed data from libcontract/data/. Make that dir
+        // available to @embedFile in all test modules (cheap; cost is zero
+        // if the file isn't referenced).
+        mod.addEmbedPath(b.path("data"));
+        const t = b.addTest(.{ .root_module = mod });
         test_step.dependOn(&b.addRunArtifact(t).step);
     }
 }
