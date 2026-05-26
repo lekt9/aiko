@@ -180,7 +180,7 @@ extern fn popen(cmd: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
 extern fn pclose(stream: *anyopaque) c_int;
 extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: *anyopaque) usize;
 
-fn nowIsoUtc(buf: []u8) ![]u8 {
+pub fn nowIsoUtc(buf: []u8) ![]u8 {
     var tv: std.c.timeval = undefined;
     _ = std.c.gettimeofday(&tv, null);
     const secs_total: i64 = @intCast(tv.sec);
