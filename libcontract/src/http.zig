@@ -93,11 +93,6 @@ pub fn postJsonWithHeaders(
         cmd_buf.appendSlice(allocator, c) catch return HttpError.OutOfMemory;
         cmd_buf.appendSlice(allocator, "' ") catch return HttpError.OutOfMemory;
     }
-    if (headers.payment_provider) |p| {
-        cmd_buf.appendSlice(allocator, "-H 'X-Payment-Provider: ") catch return HttpError.OutOfMemory;
-        cmd_buf.appendSlice(allocator, p) catch return HttpError.OutOfMemory;
-        cmd_buf.appendSlice(allocator, "' ") catch return HttpError.OutOfMemory;
-    }
     if (headers.payment_scheme) |s| {
         cmd_buf.appendSlice(allocator, "-H 'X-Payment-Scheme: ") catch return HttpError.OutOfMemory;
         cmd_buf.appendSlice(allocator, s) catch return HttpError.OutOfMemory;
