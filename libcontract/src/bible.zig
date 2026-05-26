@@ -367,7 +367,7 @@ pub fn relevantVerses(allocator: std.mem.Allocator, plan: []const u8, k: usize) 
     }
     if (plan_tokens.items.len == 0) {
         // No useful tokens; return first K verses as default context.
-        var out = try allocator.alloc(VerseRef, @min(k, VERSE_COUNT));
+        const out = try allocator.alloc(VerseRef, @min(k, VERSE_COUNT));
         for (out, 0..) |*v, i| v.* = refFromIdx(@intCast(i)).?;
         return out;
     }
