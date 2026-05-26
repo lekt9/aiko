@@ -3307,7 +3307,7 @@ fn retryOneQueuedDeclare(
     // bytes; if a future payload grows beyond this we'll see it.
     const fd = std.c.open(path_z.ptr, .{ .ACCMODE = .RDONLY }, @as(c_uint, 0));
     if (fd < 0) return;
-    var raw = std.ArrayList(u8){};
+    var raw: std.ArrayList(u8) = .empty;
     defer raw.deinit(allocator);
     var chunk: [4096]u8 = undefined;
     while (true) {
