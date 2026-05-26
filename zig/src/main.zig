@@ -1009,14 +1009,66 @@ fn writeCloudMirrorRow(
     }
     try row.appendSlice(allocator, ", \"ts\": ");
     try appendJsonEscaped(allocator, &row, ts);
+
+    // Cryptographic lineage parity with libcontract/src/contract.zig:declare —
+    // a cloud-mirror declared row without env_pubkey/parent_signature is
+    // invisible to cache.computeSignatureChain (which requires
+    // parent_signature to exist; cache.zig L442). Without that, every
+    // cloud-mirrored id is forever cache-miss with empty snapshots and
+    // cache_resolved never fires. Derive the keypair from the root the
+    // same way libcontract does, sign the canonical digest, embed.
+    // Root key unresolvable (e.g. NoHome) is non-fatal: row emits unsigned
+    // and the cache surface honestly degrades to "no chain".
+    var have_signature = false;
+    if (lineage_lib.loadOrInitRootKey(allocator, env)) |root_key| {
+        const child_kp = lineage_lib.deriveKeyPair(root_key, id) catch |e| blk: {
+            substrateEvidence("cloud-mirror lineage: deriveKeyPair({s}) failed: {s} — emitting unsigned\n", .{ id, @errorName(e) });
+            break :blk null;
+        };
+        if (child_kp) |kp| {
+            var pubkey_hex: [lineage_lib.PUBKEY_HEX_LEN]u8 = undefined;
+            lineage_lib.bytesToHex(&kp.public_key.bytes, &pubkey_hex);
+
+            const parent_or_root: []const u8 = if (parent_id) |p| p else lineage_lib.ROOT_PARENT_SENTINEL;
+            var digest: [32]u8 = undefined;
+            lineage_lib.signingDigest(id, &pubkey_hex, plan, parent_or_root, &digest);
+
+            // Signer: parent's derived key if parented (matches libcontract),
+            // else self (root contract).
+            const signer_kp_opt: ?std.crypto.sign.Ed25519.KeyPair = if (parent_id) |p|
+                (lineage_lib.deriveKeyPair(root_key, p) catch |e| blk2: {
+                    substrateEvidence("cloud-mirror lineage: deriveKeyPair(parent={s}) failed: {s} — falling back to self-sign\n", .{ p, @errorName(e) });
+                    break :blk2 kp;
+                })
+            else
+                kp;
+
+            if (signer_kp_opt) |signer_kp| {
+                var sig_hex: [lineage_lib.SIG_HEX_LEN]u8 = undefined;
+                if (lineage_lib.signDigest(signer_kp, digest, &sig_hex)) {
+                    try row.appendSlice(allocator, ", \"env_pubkey\": ");
+                    try appendJsonEscaped(allocator, &row, &pubkey_hex);
+                    try row.appendSlice(allocator, ", \"parent_signature\": ");
+                    try appendJsonEscaped(allocator, &row, &sig_hex);
+                    have_signature = true;
+                } else |e| {
+                    substrateEvidence("cloud-mirror lineage: signDigest({s}) failed: {s} — emitting unsigned\n", .{ id, @errorName(e) });
+                }
+            }
+        }
+    } else |e| {
+        substrateEvidence("cloud-mirror lineage: loadOrInitRootKey failed for {s}: {s} — emitting unsigned\n", .{ id, @errorName(e) });
+    }
+
     try row.append(allocator, '}');
 
     const path = try ledger.appendRow(allocator, env, row.items);
     allocator.free(path);
 
-    // Bridge cache layer: compute the signature chain (typically null for
-    // a fresh mirror with no children) and emit cache_check. Failure here
-    // is non-fatal — the mirror row landed; cache visibility is best-effort.
+    // Bridge cache layer: with parent_signature now embedded above, the
+    // chain computation finds a non-null snapshot on the very first pass,
+    // so cache_check carries a populated current_hex and the
+    // subsequent appendCacheResolvedRow pins it for future hits.
     const chain_opt = contract.cache.computeSignatureChain(allocator, env, id) catch |e| blk: {
         substrateEvidence("cache: computeSignatureChain failed for {s}: {s} — treating as miss\n", .{ id, @errorName(e) });
         break :blk null;
@@ -1040,6 +1092,18 @@ fn writeCloudMirrorRow(
     contract.cache.appendCacheCheckRow(allocator, env, id, verdict, current_hex, recorded_hex) catch |e| {
         substrateEvidence("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
     };
+
+    // Pin the chain snapshot via cache_resolved so the *next* cloud-mirror
+    // pass for this id sees verdict=hit instead of miss. Mirrors the
+    // canonical post-markSatisfied pin at main.zig:2349. Only pin when we
+    // actually produced a signature this pass and the chain resolved.
+    if (have_signature) {
+        if (chain_opt) |chain| {
+            contract.cache.appendCacheResolvedRow(allocator, env, id, 0, chain) catch |e| {
+                substrateEvidence("cache_resolved: append failed for {s}: {s} — snapshot not pinned\n", .{ id, @errorName(e) });
+            };
+        }
+    }
 }
 
 /// Chain-agnostic wallet derivation. Same root_seed feeds two algorithm
