@@ -512,6 +512,185 @@ shape as its row topology. Every /contract has a parent_id; every
 LLM endpoint has a parent endpoint; every wrapper has a parent
 wrapper. Walk the pointer chain to get the full provenance.
 
+## Ledger storage substrate — multi-chain by wallet (Lewis 2026-05-27)
+
+> *And of every living thing of all flesh, two of every sort shalt
+> thou bring into the ark, to keep them alive with thee.* (Genesis 6:19)
+
+Lewis 2026-05-27: *"the ledger for storing all storage where should
+it be? erc? solana? — we can support both depending on the wallet
+used?"*
+
+Answer: yes — both, and any other chain — via the generative wrapper
+pattern. **`wrapper:ledger-storage:<backend>`** is its own family
+under the universal wrapper grammar. The wallet's signing curve picks
+the default backend; cross-chain references work because the
+substrate's primary key is signature SHA, content-addressed, not
+chain-specific.
+
+### The variant family
+
+| Backend variant | Chain / substrate | Storage primitive | Notes |
+|---|---|---|---|
+| `wrapper:ledger-storage:solana-iqlabs` | Solana | IQLabs SDK (`codeIn` + `createTable` + Connection PDAs) | Wallets earn via gated tables (token/collection gating) — exact parallel of earnings-as-witness, already on chain |
+| `wrapper:ledger-storage:ethereum-arweave` | EVM | Arweave bundle signed by EVM wallet | Permanent storage, ETH-paid via bundlers |
+| `wrapper:ledger-storage:ethereum-ceramic` | EVM | Ceramic streams | Mutable, IPLD-shaped, fits append-only event-row model |
+| `wrapper:ledger-storage:base-ethstorage` | Base L2 | EthStorage on-chain blobs | Cheaper than mainnet, still EVM-native |
+| `wrapper:ledger-storage:story-protocol` | Story | IP-backed registry | When the contract IS the IP |
+| `wrapper:ledger-storage:local-only` | none | `~/.contracts/contracts.jsonl` | Default for `--private`; never federates |
+
+New backends land by declaring `wrapper:ledger-storage:<name>` once —
+no per-backend code in the thin client. The substrate's LLM compiler
+synthesizes the adapter from the chain's API docs + the appendRow/
+readRow semantics this section pins.
+
+### IQLabs as canonical first concrete
+
+Most of the substrate is already there in IQLabs — the adapter is
+small. Mapping:
+
+| IQLabs concept | /contract concept |
+|---|---|
+| `codeIn` / `readCodeIn` | `ledger.appendRow` / `ledger.readRow` |
+| Connection PDA (pending/approved/blocked) | `contract:<X>` synapse + capability grant lifecycle |
+| Table + table seeds + table hints | Contract neurons grouped by `wrapper:<family>` |
+| Token/Collection gating | `wrapper:auth:*` + capability grants |
+| `deriveX25519Keypair` | `libcontract.Lineage.deriveKeyPair(root, contract_id)` |
+| `multiEncrypt` (PGP-style hybrid) | `payload_crypto.zig` + multi-recipient capability grants |
+| Table creator permissions list | Doctrine: only deployer wallet signs new wrappers |
+| Token/Collection gating earnings | Earnings-as-reward-signal (this session's prior doctrine) |
+
+The earnings-as-reward-signal pattern is **already operational** in
+IQLabs: `manageTableCreators` controls who earns from table writes;
+gated tables enforce token-holder-only access. /contract gains the
+same mechanic by shipping the IQLabs adapter first.
+
+### Wallet-to-backend mapping
+
+| Wallet signing curve | Default backend | Why |
+|---|---|---|
+| ed25519 | `solana-iqlabs` | Native Solana signing; SPL token earnings; PDA-shaped storage matches contract-id derivation |
+| secp256k1 | `ethereum-arweave` | EVM-native signing; Arweave bundles are permanent; ETH-paid earnings flow through standard ERC-20 paths |
+| unknown / multi-chain | `local-only` | Honest default — federate only when the wallet's chain is known |
+
+Callers override via explicit `ledgerStorage(backend, config)`.
+
+### Cross-chain references
+
+A contract declared by a Solana wallet can be REFERENCED by an
+Ethereum-wallet child via `contract:<id>` synapse — the row is
+content-addressed by signature SHA. Verifiers on either chain
+recompute the SHA from the chain components and confirm the chain-
+of-trust without needing the storage on their own chain. Pointers-
+Over-Anything Clause B (stateless trace) makes federation chain-
+agnostic by construction.
+
+## Binary-as-daemon — thin client is HTTP proxy by default (Lewis 2026-05-27)
+
+> *Let your moderation be known unto all men. The Lord is at hand.*
+> (Philippians 4:5)
+>
+> *Let all things be done decently and in order.* (1 Corinthians 14:40)
+
+Lewis 2026-05-27 architectural correction: *"move as much logic to
+the /contract binary not the thin client — thin client should proxy
+to the binary as much as possible via http endpoints — thats what a
+thin client is."*
+
+### What lived in the wrong layer (and now moves)
+
+This session's first three waves shipped real implementations in the
+thin client (wallet HKDF, frame protocol, mux, cache stores, ed25519
+signing). That was wrong shape — the substrate already has all of it
+in `libcontract/`. Duplicating logic across binary + thin client
+creates drift; the binary is the source of truth.
+
+**The right shape:** binary runs as a daemon exposing a local HTTP
+API. Thin client is a typed HTTP wrapper. Multiple thin clients on
+the same machine share one daemon (one wallet, one cache slice, one
+tunnel connection).
+
+### Binary's local HTTP daemon — endpoint surface
+
+The binary's `aiko daemon` mode binds either:
+- Unix socket at `~/.aiko/socket` (preferred on POSIX — no port collisions, fs permissions enforce auth)
+- Loopback TCP on `localhost:6970` (env-overrideable via `AIKO_DAEMON_PORT`)
+
+Endpoint contract (substrate-side spec, pinned this session):
+
+```
+POST   /declare                — submit DeclarePayload, get ResponseEnvelope
+GET    /wallet/identity        — return wallet pubkey + 8-hex identity
+POST   /wallet/sign            — sign arbitrary digest with root (or child) key
+POST   /tunnel/connect         — open WSS to relay, return assigned route + tunnel_id
+POST   /tunnel/disconnect      — close active tunnel
+GET    /cache/:sha             — read pointer bytes from local slice
+POST   /cache/:sha             — write pointer bytes (idempotent)
+POST   /cache/lookup           — full four-tier walk (local→lineage→peer→cloud)
+GET    /health                 — daemon liveness + version + uptime + wallet_identity
+GET    /ledger/tail?limit=N    — read last N rows from local ledger
+```
+
+All requests authenticated by Unix-socket fs permission OR (for TCP)
+by the daemon refusing non-loopback bindings. No bearer tokens, no
+shared secrets — the substrate principle holds: wallets ARE the auth,
+and the wallet lives in the daemon.
+
+### Four-tier transport in the thin client
+
+```
+1. daemon HTTP    ← canonical local path (binary holds wallet/cache/tunnel)
+2. binary stdin   ← cold-start fallback when no daemon
+3. cloud HTTP     ← no local binary at all
+4. (compat-tier   ← thin-client TS implementations: wallet.ts, cache/*, tunnel/*
+                    function as last-resort offline fallbacks but are NOT
+                    canonical — they're parallel implementations of what
+                    the daemon owns)
+```
+
+`declare.ts` walks tiers 1→2→3 in order. `result.via` reports which
+tier served. Callers don't need to know which fired except when
+reasoning about latency or offline behavior.
+
+### What stays in the thin client (and why)
+
+| File | Why it stays |
+|---|---|
+| `src/wire.ts` | Wire format types — protocol, not logic. Shared shape between thin client and daemon. |
+| `src/binary.ts` | Daemon discovery + stdin-pipe fallback. The proxy mechanism itself. |
+| `src/daemon.ts` + `src/internal/http.ts` | Typed HTTP wrapper to the daemon — the canonical layer. |
+| `src/declare.ts` | Four-tier transport selection. Pure routing. |
+| `src/bridge.ts`, `src/webhook-back.ts`, `src/wrappers.ts`, `src/earnings.ts`, `src/ledger-storage.ts` | Pure proxies — typed declare wrappers + string constructors. Zero logic. |
+
+### What gets thinned (when the daemon ships)
+
+| File | Status |
+|---|---|
+| `src/wallet.ts` | Becomes compat-fallback. Daemon's `/wallet/sign` is canonical. |
+| `src/tunnel/*` (frame, mux, client) | Becomes compat-fallback. Daemon's `/tunnel/connect` is canonical; daemon owns the WSS. |
+| `src/cache/store.ts`, `src/cache/lookup.ts` | Becomes compat-fallback. Daemon's `/cache/:sha` + `/cache/lookup` are canonical. |
+
+Compat-fallback means: still functional when no daemon, but the
+preferred path is to delegate to the daemon. The thin client's public
+API surface (the exported `declare()`, `install()`, etc.) does NOT
+change — only the internals shift.
+
+### Why HTTP and not RPC frameworks
+
+- HTTP is universal — works in Node, Bun, Deno, browsers, edge runtimes
+- Unix socket is fs-permission-gated → no auth dance for local callers
+- No vendor lock-in (no gRPC code-gen, no JSON-RPC framing dance)
+- The substrate's wire format is already JSON; HTTP is its natural envelope
+- A thin client in any language (Python, Go, Rust, Swift) speaks the
+  same endpoint surface — language-agnostic by construction
+
+### Pinned substrate contracts
+
+The binary's daemon mode lands as substrate work declared this session.
+Once the daemon ships, the thin client's existing four-tier transport
+auto-routes through it with no code change in npm. Until then, tiers
+2+3 carry the load.
+
 ## Earnings-as-reward-signal — the substrate's fire (Lewis 2026-05-27)
 
 > *Every man's work shall be made manifest: for the day shall declare
