@@ -587,26 +587,31 @@ pub fn computeSignatureChain(
     if (self_sig == null) return null;
     defer if (self_sig) |s| allocator.free(s);
 
-    const child_ids = try collectChildIds(allocator, env, id);
+    const dep_ids = try collectDependencyIds(allocator, env, id);
     defer {
-        for (child_ids) |cid| allocator.free(cid);
-        allocator.free(child_ids);
+        for (dep_ids) |d| allocator.free(d);
+        allocator.free(dep_ids);
     }
 
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
     hasher.update(self_sig.?);
-    for (child_ids) |child| {
-        const child_sig = try findLatestTerminalSignature(allocator, env, child);
-        if (child_sig == null) {
-            // Defensive cascade: any missing child signature breaks the
-            // pointer chain. Refuse to assert a verdict.
+    for (dep_ids) |dep| {
+        const dep_sig = try findLatestTerminalSignature(allocator, env, dep);
+        if (dep_sig == null) {
+            // Genesis-order enforcement: any missing dependency signature
+            // breaks the chain. Day N's chain returns null until Day N-1
+            // has a terminal output_signature. The substrate refuses to
+            // assert a verdict from an incomplete pointer chain; the
+            // resolver short-circuits via the legacy verdict (return 0
+            // for already-satisfied rows) or falls through to runAction
+            // (for pending rows).
             return null;
         }
-        defer allocator.free(child_sig.?);
+        defer allocator.free(dep_sig.?);
         hasher.update(&.{0});
-        hasher.update(child);
+        hasher.update(dep);
         hasher.update(&.{0});
-        hasher.update(child_sig.?);
+        hasher.update(dep_sig.?);
     }
     var digest: [32]u8 = undefined;
     hasher.final(&digest);
@@ -618,6 +623,60 @@ pub fn computeSignatureChain(
         out_hex[i * 2 + 1] = hex_chars[b & 0x0F];
     }
     return try allocator.dupe(u8, &out_hex);
+}
+
+/// Time-aware history read: return the snapshot pinned by the latest
+/// `cache_resolved` row for `id` whose `ts` is ≤ `as_of_ts_iso`. The
+/// append-only ledger IS the version control — every cache_resolved
+/// is a commit; walking forward to a point in time reconstructs the
+/// substrate's state-at-T from pointer chains alone.
+///
+/// Per Lewis 2026-05-26 follow-up: "is there a way to be time aware
+/// via the pointer cache history somehow? whats the best way to
+/// handle for time based memory? version control?" Answer: yes, and
+/// this is the helper that surfaces it.
+///
+/// Returns null if no cache_resolved row for `id` exists with
+/// `ts ≤ as_of_ts_iso`. Empty string `as_of_ts_iso` means "latest"
+/// (no upper bound). Caller-owned slice.
+pub fn snapshotAt(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+    as_of_ts_iso: []const u8,
+) !?[]u8 {
+    const body = ledger.readAll(allocator, env) catch return null;
+    defer allocator.free(body);
+
+    var offsets: std.ArrayList(usize) = .empty;
+    defer offsets.deinit(allocator);
+    try offsets.append(allocator, 0);
+    var i: usize = 0;
+    while (i < body.len) : (i += 1) {
+        if (body[i] == '\n' and i + 1 < body.len) try offsets.append(allocator, i + 1);
+    }
+
+    // Walk newest-first; first cache_resolved row for id whose ts is
+    // ≤ the cutoff wins.
+    var k: usize = offsets.items.len;
+    while (k > 0) : (k -= 1) {
+        const start = offsets.items[k - 1];
+        const end = std.mem.indexOfScalarPos(u8, body, start, '\n') orelse body.len;
+        const line = body[start..end];
+        if (line.len < 2) continue;
+        const ev = extractStringField(line, "event") orelse continue;
+        if (!std.mem.eql(u8, ev, "cache_resolved")) continue;
+        const rid = extractStringField(line, "id") orelse continue;
+        if (!std.mem.eql(u8, rid, id)) continue;
+        if (as_of_ts_iso.len > 0) {
+            const row_ts = extractStringField(line, "ts") orelse continue;
+            // ISO-8601 sorts lexicographically — row_ts must be ≤ cutoff.
+            if (std.mem.order(u8, row_ts, as_of_ts_iso) == .gt) continue;
+        }
+        const snap = extractStringField(line, "snapshot") orelse continue;
+        return try allocator.dupe(u8, snap);
+    }
+    return null;
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────
