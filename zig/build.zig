@@ -53,12 +53,44 @@ pub fn build(b: *std.Build) void {
         "Build profile: 'client' (default, the aiko-symlinked binary) or 'server' (canonical compile/resolve/biology, not yet runtime-divergent in Wave 1)",
     ) orelse "client";
 
-    // Build BOTH artifacts in one invocation so `zig build` (no -D) emits
-    // contract-zig (client) + contract-zig-server (server). build.sh
-    // calls `zig build` once and installs both. Each executable has its
-    // own root_module so the OptionsModule constant differs per binary.
-    addContractExecutable(b, target, optimize, libcontract, client, "contract-zig", "client");
-    addContractExecutable(b, target, optimize, libcontract, client, "contract-zig-server", "server");
+    // ─── Spirit-check gate (build-time LLM attestation verifier) ─────
+    //
+    // Every `zig build install` runs the spirit-check binary BEFORE
+    // installing the main contract binaries. spirit-check refuses to
+    // exit 0 unless every .zig source file under libcontract/src/ +
+    // zig/src/ carries a current PASS row in `.contract-spirit-
+    // attest.jsonl`, signed by the root /contract wallet.
+    //
+    // Verdicts are produced by an LLM judge (driven by `aiko attest`)
+    // evaluating each file against the 10 commandments (order) +
+    // 7 fruits of the spirit. Substrate-faithful: the LLM is the
+    // judge, the wallet signs, the build verifies the signature.
+    //
+    // There is no flag, env var, or argument that bypasses this. The
+    // only way to make the build green is to land an attested PASS
+    // row for each source file.
+    const spirit_check_root = b.createModule(.{
+        .root_source_file = b.path("../libcontract/src/spirit_check_main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    spirit_check_root.addEmbedPath(b.path("../libcontract/data"));
+    const spirit_check_exe = b.addExecutable(.{
+        .name = "spirit-check",
+        .root_module = spirit_check_root,
+    });
+    const run_spirit_check = b.addRunArtifact(spirit_check_exe);
+    // Walk-up resolution in spirit.attestationLedgerPath needs a cwd
+    // inside the repo tree; build_root is the canonical anchor.
+    run_spirit_check.setCwd(b.path(".."));
+    // The run-step's exit status propagates: non-zero → build fails.
+    run_spirit_check.expectExitCode(0);
+
+    // Build the main binaries (contract-zig + contract-zig-server)
+    // and bind each install to the spirit-check verdict.
+    addContractExecutable(b, target, optimize, libcontract, client, "contract-zig", "client", &run_spirit_check.step);
+    addContractExecutable(b, target, optimize, libcontract, client, "contract-zig-server", "server", &run_spirit_check.step);
 
     // The `zig build run` step uses the profile_arg the operator passed
     // (default "client"). Useful for local smoke-testing the server
