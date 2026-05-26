@@ -4692,6 +4692,20 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         return 2;
     }
     const verb = argv_z[1];
+    // Wave-1 pending-declare sweep: re-POST any payloads that 402'd
+    // on a previous invocation. Fired BEFORE any other dispatch so
+    // queued envelopes are honored on every aiko call. `self` and
+    // `verify-self`/`verify-binary` are read-only metadata verbs and
+    // should not slow down by network round-trips on the sweep — skip
+    // them. Sign-binary is a build-time verb and may run before the
+    // wallet is fully online; also skip.
+    if (!std.mem.eql(u8, verb, "self") and
+        !std.mem.eql(u8, verb, "verify-self") and
+        !std.mem.eql(u8, verb, "verify-binary") and
+        !std.mem.eql(u8, verb, "sign-binary"))
+    {
+        retryQueuedDeclares(allocator, init.environ);
+    }
     var rest = try arena.allocator().alloc([]const u8, argv_z.len - 2);
     for (argv_z[2..], 0..) |a, i| rest[i] = a;
 
