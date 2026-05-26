@@ -34,7 +34,10 @@ const lineage = @import("lineage.zig");
 const http = @import("http.zig");
 
 const DEFAULT_MODEL: []const u8 = "moonshotai/Kimi-K2-Instruct";
-const DEFAULT_URL: []const u8 = "https://api.studio.nebius.com/v1/chat/completions";
+// Base URL (the env var CONTRACT_LLM_BASE_URL takes the same form).
+// The chat-completions path is appended at the call site so the env
+// stays substrate-agnostic — same shape as the wrapper's translator.ts.
+const DEFAULT_BASE_URL: []const u8 = "https://api.openai.com/v1";
 const MAX_SOURCE_BYTES: usize = 18 * 1024; // truncate huge files for prompt size
 
 fn writeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []const u8) !void {
