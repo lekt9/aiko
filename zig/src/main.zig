@@ -5012,6 +5012,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     if (std.mem.eql(u8, verb, "build")) return try cmdBuild(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "run")) return try cmdRun(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "eval")) return try cmdEval(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "prune")) return try cmdPrune(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "verify-lineage")) return try cmdVerifyLineage(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "sign-binary")) return try cmdSignBinary(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "verify-self")) return try cmdVerifySelf(allocator, init.environ);
