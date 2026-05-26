@@ -2141,6 +2141,23 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
                 evidencePrint("apoptosis: markDied failed for {s}: {s} — row will continue to cycle\n", .{ id, @errorName(e) });
             };
             evidencePrint("  -> apoptosed (command_not_found is permanently unresolvable)\n", .{});
+        } else if (std.mem.eql(u8, cls.class, "stage_dead")) {
+            contract.markDied(allocator, env, id, .apoptosed, null, "stage_dead — sequence inherited death of an apoptosed stage (Genesis Day N inherits Day N-1)") catch |e| {
+                evidencePrint("apoptosis: markDied failed for {s}: {s} — sequence will continue to cycle\n", .{ id, @errorName(e) });
+            };
+            evidencePrint("  -> apoptosed (sequence inherits stage death)\n", .{});
+        } else if (std.mem.startsWith(u8, r.plan, "guard:") and std.mem.eql(u8, r.action, "neuron") and iterCount(rows, id) >= 2) {
+            // guard:generic:neuron rows declared by the scar-tissue
+            // remediator stay HOLD forever because the `neuron` action
+            // returns HOLD until child evidence fires — but guard rows
+            // rarely get children declared under them. After 2+ HOLD
+            // iterations with no progress, apoptose the guard so it
+            // exits the candidate pool. The original violation is still
+            // documented by the guard event row on the parent.
+            contract.markDied(allocator, env, id, .apoptosed, null, "guard:generic:neuron apoptosed after 2+ HOLD iterations with no fired child evidence — scar tissue without follow-up children cannot resolve") catch |e| {
+                evidencePrint("apoptosis: markDied failed for guard {s}: {s}\n", .{ id, @errorName(e) });
+            };
+            evidencePrint("  -> apoptosed (guard:generic:neuron with no fired children after 2+ iterations)\n", .{});
         }
         return 1;
     }
