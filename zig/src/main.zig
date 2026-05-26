@@ -2324,50 +2324,16 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
                 evidencePrint("apoptosis: markDied failed for {s}: {s} — neuron will continue to cycle\n", .{ id, @errorName(e) });
             };
             evidencePrint("  -> apoptosed (neuron inherits child death)\n", .{});
-        } else if (std.mem.startsWith(u8, r.plan, "guard:") and std.mem.eql(u8, r.action, "neuron") and latestWave(rows, id) >= 2) {
-            // guard:generic:neuron rows declared by the scar-tissue
-            // remediator stay HOLD forever because the `neuron` action
-            // returns HOLD until child evidence fires — but guard rows
-            // rarely get children declared under them. After 2+ HOLD
-            // iterations with no progress, apoptose the guard so it
-            // exits the candidate pool. The original violation is still
-            // documented by the guard event row on the parent.
-            contract.markDied(allocator, env, id, .apoptosed, null, "guard:generic:neuron apoptosed after 2+ HOLD iterations with no fired child evidence — scar tissue without follow-up children cannot resolve") catch |e| {
-                evidencePrint("apoptosis: markDied failed for guard {s}: {s}\n", .{ id, @errorName(e) });
-            };
-            evidencePrint("  -> apoptosed (guard:generic:neuron with no fired children after 2+ iterations)\n", .{});
-        } else if (actionIsBareCli(r.action) and latestWave(rows, id) >= 3) {
-            // Bare shell action that has failed 3+ times with no classifier
-            // match (not command_not_found, not stage_dead, not child_dead,
-            // not a guard:generic:neuron). The substrate has tried as many
-            // times as is honest; the action is either broken or names a
-            // condition the resolver cannot bring about. Apoptose so the
-            // backfill frontier advances instead of cycling the same row
-            // every pass. Matches the existing 2-HOLD guard-neuron rule.
-            contract.markDied(allocator, env, id, .apoptosed, null, "cli_persistent_failure — bare shell action exited non-zero 3+ times with no classifiable transient cause; the substrate cannot make a failing command pass") catch |e| {
-                evidencePrint("apoptosis: markDied failed for cli {s}: {s}\n", .{ id, @errorName(e) });
-            };
-            evidencePrint("  -> apoptosed (cli_persistent_failure — 3+ failed iterations with no transient class)\n", .{});
-        } else if (std.mem.eql(u8, r.action, "neuron") and latestWave(rows, id) >= 3) {
-            // Bare `neuron` action (not a guard follow-up) that HOLDs 3+
-            // times because no child evidence ever landed. The neuron is
-            // the canonical NL-goal shape: declared, then either an
-            // in-thread agent declares sub-contracts under it OR the
-            // cloud compiler returns a tree. If neither happens within
-            // a few backfill passes the substrate is honest about it:
-            // the goal stays unresolved because no one is working on it.
-            // Apoptose so the frontier doesn't cycle the same root forever.
-            // Guard follow-ups already apoptose via the guard-specific
-            // branch above at 2+ HOLDs; user roots get one extra pass.
-            const child_count = childIds(allocator, rows, id) catch &[_][]const u8{};
-            defer if (child_count.len > 0) allocator.free(child_count);
-            if (child_count.len == 0) {
-                contract.markDied(allocator, env, id, .apoptosed, null, "neuron_stuck — bare neuron HOLD'd 3+ times with no fired child evidence; no agent or compiler declared sub-contracts to integrate, the substrate cannot synthesize children unaided") catch |e| {
-                    evidencePrint("apoptosis: markDied failed for neuron {s}: {s}\n", .{ id, @errorName(e) });
-                };
-                evidencePrint("  -> apoptosed (neuron_stuck — 3+ HOLDs with no child evidence)\n", .{});
-            }
         }
+        // PURGED (contract af7429cd — purge:apoptosed-by-cap): three wave-cap
+        // apoptosis branches (guard@>=2, cli@>=3, neuron@>=3) deleted per the
+        // HOLD-non-terminal doctrine. The frontier "cycling forever" the cap
+        // was meant to break is the persistent widow's pattern (Luke 18:1) —
+        // feature, not bug. Apoptosis is user-explicit only (Mark 3:29 /
+        // Proof 4). command_not_found / stage_dead / child_dead branches
+        // above are KEPT — they are inherent-impossibility classifications
+        // (the action's mechanical truth cannot become true), not arbitrary
+        // wave caps.
         return 1;
     }
 
