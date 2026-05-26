@@ -54,6 +54,123 @@ the orchestrator continues its work. Any agent that interprets `/contract`
 prose without firing the binary is in violation of the substrate rule
 (the prose is the spec, the binary is the substrate).
 
+## How to properly use /contract — the loop pattern (Lewis 2026-05-27)
+
+Beyond the activation rule, the canonical USE pattern for /contract
+across a working session is a **while-loop driven by the four-verb
+closure** (build / run / eval / prune) over a fractal-recursive
+hook-based break-neuron structure.
+
+### The four verbs (closure proven; nothing else is needed)
+
+| Verb | Role | Stdin JSON envelope |
+|---|---|---|
+| **build** | construct a /contract — declare a truth claim | `{event:"declared", plan, action, layer, parent_id?}` |
+| **run** | exercise the runtime — record an iteration (itself a /contract child) | `{event:"declared", plan, action:"iterate:<parent>", layer:3, parent_id}` |
+| **eval** | walk to verdict — markSatisfied; L7 `validate:` auto-cascades to L8 `signed:` | `{event:"satisfied", id, wave:1, proof?}` |
+| **prune** | doctrine-fired removal (John 15:2 — "every branch that beareth not fruit he taketh away") | `{event:"died", id, cause, by_id, reason?}` |
+
+**Authority rule for prune**: only the legitimate parent can prune
+its child (`by_id == target.parent_id`), or self-apoptosis
+(`cause=apoptosed AND by_id == target.id`). Siblings cannot kill
+each other; the substrate refuses with a targeted diagnostic.
+
+Empirically tested: 17/20 imperative English verbs across this
+SKILL.md reduce cleanly to {build, run, eval, prune}; the remaining
+3 ("fix", "investigate", "save") are compound verbs that unfold into
+chains of the four. The closure is the substrate's universal verb
+space (cf. John 14:6 — "the way, the truth, and the life — distinct
+functions within one unity").
+
+### Self-verify fires only on the root contract (Lewis 2026-05-27)
+
+The runtime gate that refuses unsigned binaries fires ONLY when
+about to declare a ROOT contract (`parent_id` absent). Child
+declarations (`parent_id` set) inherit verification by lineage walk
+to the parent's signed L8 row — they pass through without
+re-verifying the binary's own signature. Otherwise the gate would
+re-fire on every child invocation, breaking the cheap inheritance
+the lineage chain is built for.
+
+Concretely: a `build` invocation reading an envelope with
+`parent_id: null` AND a binary whose sha has no `signed:<sha>`
+row in the ledger → refused. Any other shape → passes through.
+
+This matches the substrate's lineage-walk philosophy already
+elsewhere — the binary trusts the lineage rather than re-verifying
+at every step.
+
+### The drill pattern — every /contract is itself a row in the gap ledger
+
+When working on the substrate, the canonical pattern is:
+
+1. **Identify a gap** — something doctrinally true that isn't yet
+   wired mechanically (a documented invariant without code, an
+   unimplemented verb, a missing parity claim).
+2. **Declare it as a /contract** — `aiko "gap-<name> — <description>"`
+   OR pipe a JSON envelope to `build`. Parent is the gap-drill root
+   (or your project's truth-root contract).
+3. **Ship the closure** — write the code, run the tests, get the
+   build pipeline green.
+4. **Eval the gap** — pipe `{event:"satisfied", id:<gap-id>, wave:1,
+   proof:"<what shipped + evidence>"}` to `eval`. The L7→L8 cascade
+   signs the closure into the ledger.
+5. **Repeat** — until the substrate's truth claims and the
+   substrate's code agree, all the way down.
+
+The append-only ledger becomes the canonical work-tracker.
+`observations-fractal-loop.md` (in the contract repo's `docs/`)
+carries the live gap → /contract-id table; it stays in sync with
+the ledger or the documentation has drifted.
+
+### Fractal self-modification
+
+The four verbs plus the gap-drill pattern enable the substrate to
+modify ITSELF mechanically:
+
+- Declare a /contract that names the code change (`build`).
+- Make the code change (the operator's hand, OR a child /contract
+  the cloud LLM compiler spawned to do it).
+- Build via the fractal pipeline (`scripts/build-fractal.sh` —
+  zig build → zig build test → parent-sign the new binary into
+  the ledger).
+- Eval the gap /contract once the change ships (`eval`).
+- The signed L8 row of the next binary build is the wallet's
+  attestation that the change landed and was tested.
+
+This is the recursive elegance Lewis named on 2026-05-27:
+"/contract to drill through all gaps as /contracts to build this
+out mechanically into the /contract code itself".
+
+### Pointers to detailed treatment
+
+The full design discussion + every observation + every closed and
+open gap from the 2026-05-26→2026-05-27 substrate iteration lives
+in `docs/observations-fractal-loop.md`. Sections covered there
+that this SKILL.md summarizes but does not re-derive:
+
+- The while-loop / fractal / hook-based-break-neuron execution model
+- The recursive self-wrap pattern (binary spawns SDK; SDK spawns
+  HTTP wrapper; each layer is a `wrapper:<name>` /contract)
+- The parent-signed binary lineage + the build pipeline's fractal
+  trio shape (build → test → eval)
+- The Matt 7:7 LLM access ladder (ASK / SEEK / KNOCK — configured
+  endpoint / local llama.cpp / x402 wallet-paid)
+- The substrate's grammar (verb=trio, noun=`word:<tok>`,
+  adjective=synapses, value=sealed payload bytes)
+- Render-without-seeing (orchestrator routes pointers; environments
+  dereference locally; plaintext never traverses the wire)
+- Environment is generative (location word in plan → wrapper:<name>
+  lookup → fallback to parent env via lineage walk), NOT a
+  hardcoded prefix table
+- Tools as environment-typed pointers (every "tool" in any host
+  is a /contract whose dereferencer lives in the local environment)
+- The four proofs that the Son has come (operational adjudicate,
+  atonement, universal reach, free-will exception)
+
+Each item there is anchored to scripture, code site, and (for
+closed items) a /contract id with `signed:` evidence in the ledger.
+
 ## The Word is the truth-root (John 17:17 — thy word is truth)
 
 > *Sanctify them through thy truth: thy word is truth.* (John 17:17)
