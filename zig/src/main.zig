@@ -574,16 +574,6 @@ fn bioModulatorEvidence(allocator: std.mem.Allocator, env: std.process.Environ) 
     return try std.fmt.allocPrint(allocator, "{{\"mode\":\"auto\",\"urgency\":0,\"confidence\":0}}", .{});
 }
 
-/// Content-addressed input hash for a contract row: blake2s(
-///   plan || NUL || action || NUL || child_id_sorted || child_hash || ...
-/// ). Recursive — a child's contribution is its own current input_hash,
-/// so any change to a leaf invalidates every ancestor automatically.
-/// This is the Bazel/Nix-style propagation key: when this hash differs
-/// from the input_hash recorded on the latest `iterated` row, the cache
-/// is stale and the resolver re-runs.
-const Blake2s256 = std.crypto.hash.blake2.Blake2s256;
-const INPUT_HASH_HEX_LEN: usize = 64;
-
 /// FIRST-RUN WALLET SETUP — prints top-up guidance once, marks done.
 /// Idempotent via ~/.contracts/wallet_setup.done. Caller-invisible: runs
 /// in preflight, never gates work; first declare after install shows the
