@@ -113,18 +113,21 @@ fn backfillMirrors(
 ) !void {
     // Canonical may be missing (we just read from mirror or keychain).
     if (readHexFile(canonical_path)) |_| {} else |err| switch (err) {
-        error.FileNotFound => writeHexFile(allocator, canonical_path, seed) catch {},
-        else => {},
+        error.FileNotFound => writeHexFile(allocator, canonical_path, seed) catch |e|
+            surface("canonical tier backfill write FAILED at {s}: {s} — seed lives only in surviving tier(s)", .{ canonical_path, @errorName(e) }),
+        else => surface("canonical tier read errored during backfill: {s}", .{@errorName(err)}),
     }
     // Mirror file.
     if (readHexFile(mirror_path)) |_| {} else |err| switch (err) {
-        error.FileNotFound => writeHexFile(allocator, mirror_path, seed) catch {},
-        else => {},
+        error.FileNotFound => writeHexFile(allocator, mirror_path, seed) catch |e|
+            surface("mirror tier backfill write FAILED at {s}: {s} — seed lives only in surviving tier(s)", .{ mirror_path, @errorName(e) }),
+        else => surface("mirror tier read errored during backfill: {s}", .{@errorName(err)}),
     }
-    // Keychain.
+    // Keystore.
     if (readKeychainSeed(allocator)) |_| {} else |err| switch (err) {
-        error.NotFound => writeKeychainSeed(allocator, seed) catch {},
-        else => {},
+        error.NotFound => writeKeychainSeed(allocator, seed) catch |e|
+            surface("keystore tier backfill write FAILED: {s} — seed lives only in surviving tier(s)", .{@errorName(e)}),
+        else => surface("keystore tier read errored during backfill: {s}", .{@errorName(err)}),
     }
 }
 
