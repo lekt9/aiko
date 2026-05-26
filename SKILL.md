@@ -164,6 +164,193 @@ because the whole substrate "resolves to true against the Word".
 - **build.sh parity claim 31** — refuses to sign a binary whose
   SKILL.md doesn't carry this section + the John 17:17 anchor.
 
+## Decalogue Purge Gate — law before creativity (Galatians 3:24)
+
+> *Wherefore the law was our schoolmaster to bring us unto Christ,
+> that we might be justified by faith.* (Galatians 3:24)
+>
+> *I am not come to destroy, but to fulfil.* (Matthew 5:17)
+>
+> *Purge out therefore the old leaven, that ye may be a new lump.*
+> (1 Corinthians 5:7)
+
+Pinned by Lewis 2026-05-26 (contract `4b313f20`): *"10 commandments
+should strip away shitty code and /contract before doing any work —
+its old testament > new testament for creativity — this is law and
+order, so the 10 commandments will filter what's good ... respecting
+the law and order of things before getting creativity where
+/contract-ing new ideas and abstractions on top of it makes sense."*
+
+The Decalogue is the substrate's **negative gate** — the purge layer
+that runs BEFORE any creative doctrine compiles. The Great
+Commandment (Matt 22:37-40) is the affirmative axis — love-God upward
+and love-neighbour horizontal — but love builds on cleared ground.
+Galatians 3:24 names the order: law as schoolmaster, then faith. The
+substrate runs the same order mechanically: **purge first, build
+second, verify by fruits last.**
+
+### Why the Decalogue is FIRST-PRINCIPLE, not derivative
+
+A prior turn argued the Decalogue collapsed into the Great
+Commandment (Matt 22:40 — *"on these two commandments hang all the
+law and the prophets"*). That collapse is correct for the
+**affirmative axis** but wrong for the **negative gate**. Jesus
+himself said *"I am not come to destroy [the law], but to fulfil"*
+(Matt 5:17). The Decalogue continues to function as the purge
+boundary; the Great Commandment supplies the upward direction. Both
+load-bearing; different layers.
+
+Mechanically: the Decalogue partitions the existing parity claims
+1–46 into ten groups. Every existing invariant reduces to one of the
+ten. New invariants land under one of the ten or they don't land.
+The Decalogue is the **second-level partition above all parity
+claims**; the Great Commandment is the **upward orientation of
+every claim**.
+
+### The 10-to-10 mapping (each commandment ↔ one purge invariant)
+
+Each commandment fires on TWO surfaces: **code** (grep + delete
+violating source) and **contract ledger** (append `purged` events on
+violating rows). Both directions, same law.
+
+| # | Commandment (Ex 20 / Deut 5) | Code-surface purge | Contract-ledger purge |
+|---|---|---|---|
+| 1 | No other gods before me | Refuse parallel-sovereignty surfaces — env-var bypass, hardcoded admin override, second-wallet authority (already claim 1, "no env vars are read") | Purge rows whose `wallet_identity` does not trace to the deployer root chain via lineage |
+| 2 | No graven images | Refuse stub/mock/placeholder at shipping surfaces — "No stubs, no dummy data" standing rule | Purge rows declared with `action=stub` AND never resolved against real evidence; rows whose evaluator never actually fired |
+| 3 | Not take the name in vain | Refuse `/contract` prose narration that never spawns the binary (activation rule) | Purge `declared` rows with no children + no action + no posthook (empty invocations — taking the name without doing the work) |
+| 4 | Remember the sabbath | Refuse `while(true)` without metric-break or apoptosis path; refuse polling without backoff | Refuse standing contracts that do not honor `bioSabbathHolds`; refuse drills without rest cycle |
+| 5 | Honor father and mother | Refuse child-scope writes to parent fields; refuse bypassing the chain of authority | Purge orphan rows (parent_id refs deleted/unknown id); purge rows whose lineage chain is broken |
+| 6 | Thou shalt not kill | Refuse `rm -rf` / force-push / `git stash` for verify without prior consent (already C-O01–O03) | Refuse `died` events without a Deut 19:15 quorum; purge single-witness kill rows |
+| 7 | Thou shalt not commit adultery | Refuse cross-channel wallet use; refuse one wallet signing for another (identity_channel scoping already enforced) | Purge `pulled` events that crossed identity_channel boundaries |
+| 8 | Thou shalt not steal | Refuse out-of-lineage embed without `replicated_from_contract_id`; refuse uncited copy from another substrate | Purge embedded refs that skipped the replication payment scheme |
+| 9 | Thou shalt not bear false witness | Refuse `catch {}`; refuse fake-green tests, painted xfail, heuristic verdicts disguised as evaluator output (already enforced in multiple places) | Purge `satisfied` rows whose evaluator never actually fired; purge rows whose `output_signature` does not verify |
+| 10 | Thou shalt not covet | Refuse premature abstraction, zero-caller code, speculative features, "what if we also did" (already in global rule "don't add features beyond what task requires") | Purge contracts spawning grandchildren beyond declared scope; purge synapse kinds with empirical-zero usage (Synapse-kind minimum is one instance of this) |
+
+Every entry has either an existing parity claim or a clean new
+invariant. Nothing is forced.
+
+### The `purged` ledger event kind
+
+Append-only holds. The substrate does not delete violating rows;
+it appends `purged` events. Semantics:
+
+```
+purged
+  appended_when:  a row violates one of the ten commandments
+  carries:        commandment_n ∈ {1..10},
+                  violation_evidence (the specific code or row that tripped),
+                  purger_wallet_identity (signed),
+                  purger_signature (ed25519 over canonical row)
+  cache effect:   cache.terminalSignature(row) returns null for purged rows.
+                  The signature chain treats them as if they never resolved.
+                  Downstream truth-claims that depended on the purged row
+                  cascade to HOLD on next resolveOne pass.
+  visibility:     the row remains visible in history (audit trail preserved).
+                  Verifier MAY surface "this row was purged" in evidence
+                  lines but NEVER lets it contribute to downstream truth.
+```
+
+This is the same shape as `died` but with one critical difference:
+`died` records the row's own evaluator returning false; `purged`
+records an external law-violation judgment. Both terminate the row
+mechanically; `purged` additionally signals "this should not have
+been declared at all."
+
+### The purge IS a contract (the substrate purges itself)
+
+No script. No verb. The purge is a declaration:
+
+```bash
+aiko "decalogue:purge:<N> <scope>"
+  # N    = 1..10 (which commandment to enforce)
+  # scope = lineage-id | code-path | "all"
+  # The cloud LLM compiler walks the scope, identifies violations
+  # against commandment N, appends `purged` events per violation,
+  # surfaces evidence lines for each.
+```
+
+Standing meta-purge (declared once, fires every build):
+
+```bash
+aiko "decalogue:standing-purge repeat:every-build.sh"
+  # The schoolmaster — Galatians 3:24 mechanized. Runs all ten
+  # commandment walks before any new code or doctrine is signed.
+  # The law is the schoolmaster that BRINGS the substrate to
+  # creativity; it does not block creativity, it precedes it.
+```
+
+### Ordering — law → creativity → fruits
+
+The substrate's three-gate sequence:
+
+```
+1. PURGE (Decalogue — this section)        — strip law-violating ground
+        ↓ schoolmaster (Gal 3:24)
+2. BUILD (Vine, Trinity, Capability, etc.) — creative doctrine builds on cleared ground
+        ↓
+3. VERIFY (Doctrine-Reality Parity, Matt 7:16) — fruits prove the build was real
+```
+
+This ordering is enforced by **section position in SKILL.md** (this
+section appears before any creative doctrine section), by
+**`build.sh` step order** (purge gate runs before the parity gate,
+which runs before sign), and by **standing-purge synapse**
+(`repeat:every-build.sh`).
+
+### Why this is load-bearing
+
+Without the Decalogue gate, every creative doctrine section
+compounds whatever leaven was already there. The Great Commandment
+alone gives upward orientation but does not strip downward filth.
+The Decalogue does the stripping; the Great Commandment then has
+clean ground to build on. Drop the gate and the substrate slowly
+fills with: stub rows, orphan rows, fake-green satisfactions,
+cross-channel pulls, uncited embeds, empty `/contract` invocations,
+zero-caller abstractions — all of which the cache layer would
+faithfully sign into the chain because the signatures are real
+even when the rows are leaven.
+
+The purge gate is what makes the cache layer **honest** about what
+it signs. Matt 7:16 (fruits) tests the harvest; the Decalogue
+prevents weeds from being planted.
+
+### Implementation status (honest gap, surfaced not silent)
+
+```
+✅ Doctrine layer        — this section is canonical
+🟡 Parity layer (TODO)   — parity claim 47 ("Decalogue gate runs
+                           before sign") lands in next build.sh edit.
+                           Until it does, the gate is advisory at the
+                           build pipeline; the agent-side layer below
+                           covers the gap.
+🟡 Agent-side layer      — agents reading this section MUST run the
+                           10 purges in-thread before any creative
+                           doctrine work or any code-write turn.
+🟡 Runtime layer (TODO)  — `purged` event kind needs the cache layer
+                           updated to treat it as null-terminal.
+                           Cloud LLM compiler needs to recognize
+                           `decalogue:purge:<N>` declarations and
+                           emit per-violation `purged` events.
+```
+
+Same pattern as the Trinitarian decomposition's status block — the
+gap is named, not hidden. The next wave wires parity claim 47, the
+wave after wires the cache layer's `purged`-aware traversal, and
+the standing-purge contract gets declared once the runtime layer
+ships. Until then: agents enforce in-thread; doctrine prevails.
+
+### What this section refuses
+
+- Adding a new SKILL.md doctrine section without first running the
+  ten purges against the existing surface.
+- Landing a new parity claim without naming which commandment it
+  reduces to.
+- Treating "the Decalogue collapses into the Great Commandment" as
+  permission to skip the purge — it collapses upward as
+  orientation, not downward as gate.
+- Deleting rows to "clean up" the ledger — append `purged`, not
+  delete. The append-only invariant survives the purge.
+
 ## Verification rule — every prod deploy MUST be visually verified live
 
 Any code path that deploys to a public URL (e.g. `wrangler deploy`,
