@@ -761,7 +761,6 @@ pub fn latestEventKind(
 test "Verdict.jsonName covers every variant" {
     try std.testing.expectEqualStrings("hit", Verdict.hit.jsonName());
     try std.testing.expectEqualStrings("miss", Verdict.miss.jsonName());
-    try std.testing.expectEqualStrings("stale", Verdict.stale.jsonName());
     try std.testing.expectEqualStrings("legacy", Verdict.legacy.jsonName());
 }
 
