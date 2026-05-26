@@ -1006,4 +1006,5 @@ main() {
 # No arg propagation. The 7-day order is non-negotiable; passing args is
 # a category error (the substrate has no escape hatches at the build
 # layer either).
+acquire_build_lock
 main
