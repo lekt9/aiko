@@ -239,13 +239,51 @@ step_parity() {
     _fail "doctrine[persona voice]: 'fruits of the spirit' label missing from verses.zig (verse exists but lacks the canonical label)"
   fi
 
+  # 15. "Vine Doctrine section exists" — SKILL.md must declare the staking
+  #     layer doctrine; the parity check refuses any code reference to vine
+  #     constants without the matching doctrine section.
+  if ! grep -q '## Vine Doctrine' "$REPO/SKILL.md"; then
+    _fail "doctrine[vine]: SKILL.md is missing the '## Vine Doctrine' section that declares the stake substrate"
+  fi
+
+  # 16. "Vine Doctrine constants pinned in main.zig" — AIKO_VINE_DOCTRINE_VERSE,
+  #     AIKO_STAKE_TOKEN_FDRY, AIKO_STAKE_VAULT present with exact values.
+  if ! grep -q 'AIKO_VINE_DOCTRINE_VERSE = "John 15:6"' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[vine constants]: AIKO_VINE_DOCTRINE_VERSE != 'John 15:6' in main.zig"
+  fi
+  if ! grep -q 'AIKO_STAKE_TOKEN_FDRY = AIKO_PERSONA_CA' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[vine constants]: AIKO_STAKE_TOKEN_FDRY must alias AIKO_PERSONA_CA (Matt 6:24 — one FDRY, not two)"
+  fi
+  if ! grep -q 'AIKO_STAKE_VAULT = "Bpr49sQXsxwNXNMRWS2v3tTBGWu2QgZtdA83BX77xBX1"' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[vine constants]: AIKO_STAKE_VAULT != Voltr/Ranger FDRY-only vault pubkey in main.zig"
+  fi
+
+  # 17. "Vine Doctrine verses in corpus" — cornerstone + supporting laws must
+  #     exist in verses.zig so the cloud LLM scores them against stake-shaped
+  #     prompts (challenge, slash, tier-eligibility, route-publish, tithe).
+  local vine_ref
+  for vine_ref in 'John 15:1' 'John 15:4' 'John 15:6' 'Malachi 3:10' 'Matthew 6:24' 'Matthew 25:29' 'Mark 12:43-44' 'Deuteronomy 19:15' 'Matthew 7:16'; do
+    if ! grep -qF "$vine_ref" "$LIB_DIR/src/verses.zig"; then
+      _fail "doctrine[vine verses]: '$vine_ref' missing from verses.zig corpus — cornerstone or supporting law cannot be surfaced"
+    fi
+  done
+
+  # 18. "slash burns to vault, never redistributes" — John 15:6 apply field
+  #     must literally name the burn-to-vault rule. This is the load-bearing
+  #     economic invariant; drift here decays the substrate into a
+  #     redistribution-style staker, contradicting the whitepaper's
+  #     accountability framing.
+  if ! grep -q 'Burned FDRY → NAV-per-share' "$LIB_DIR/src/verses.zig"; then
+    _fail "doctrine[vine burn rule]: John 15:6 apply field doesn't name 'Burned FDRY → NAV-per-share' — slash-to-burn invariant is not pinned"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
     printf '%s' "$report" >&2
     echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 14 doctrine claims have matching code sites"
+  echo "build:parity OK — all 18 doctrine claims have matching code sites"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────
