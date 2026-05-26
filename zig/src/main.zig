@@ -2305,26 +2305,7 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
             const rows2 = try parseRows(allocator, env);
             defer allocator.free(rows2);
             if (isLocalContract(rows2, posthook)) {
-                if (latestActionResult(rows2, cid)) |payload| {
-                    const payload_z = try allocator.dupeZ(u8, payload[0..@min(payload.len, 32 * 1024)]);
-                    defer allocator.free(payload_z);
-                    const cid_z = try allocator.dupeZ(u8, cid);
-                    defer allocator.free(cid_z);
-                    _ = setenv("CONTRACT_PARENT_RESULT", payload_z.ptr, 1);
-                    _ = setenv("CONTRACT_PARENT_ID", cid_z.ptr, 1);
-                    const tree = buildAncestorTree(allocator, rows2, cid) catch "";
-                    defer if (tree.len > 0) allocator.free(tree);
-                    if (tree.len > 0) {
-                        const tree_z = try allocator.dupeZ(u8, tree[0..@min(tree.len, 64 * 1024)]);
-                        defer allocator.free(tree_z);
-                        _ = setenv("CONTRACT_PARENT_RESULT_TREE", tree_z.ptr, 1);
-                    }
-                    evidencePrint("posthook payload propagated: parent={s} len={d} tree_bytes={d}\n", .{ cid, payload.len, tree.len });
-                }
                 _ = try resolveLineage(allocator, env, posthook);
-                _ = unsetenv("CONTRACT_PARENT_RESULT");
-                _ = unsetenv("CONTRACT_PARENT_ID");
-                _ = unsetenv("CONTRACT_PARENT_RESULT_TREE");
             } else {
                 // Remote posthook: route via lineage-mesh encrypted envelope.
                 const tree = buildAncestorTree(allocator, rows2, cid) catch try allocator.dupe(u8, "[]");
