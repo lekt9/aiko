@@ -4874,6 +4874,167 @@ fn cmdEval(allocator: std.mem.Allocator, env: std.process.Environ, args: []const
     return 0;
 }
 
+// ─── Parent-signed binary lineage (Lewis 2026-05-27) ──────────────
+//
+// Each built binary is signed into the ledger by its PARENT (the
+// previous binary version). The L8 signed:<sig> row's parent_id
+// points at the parent's L8 row, so the signing chain walks back to
+// the root wallet via parent_signature on each hop. Same shape as
+// existing /contract lineage — applied to binaries themselves.
+//
+// Two verbs:
+//   _bootstrap-self-sign  fires ONCE at the very first build; refuses
+//                         if any prior signed:<own-sha> row exists.
+//                         Roots the chain at the wallet directly.
+//   _sign-child <path>    fires from the PARENT binary; signs the
+//                         child binary's sha into a new L8 row whose
+//                         parent_id is this binary's own L8 row id.
+//
+// Runtime gate (`isSelfSignedInLedger`): on every invocation that
+// isn't itself bootstrap or read-only metadata, the binary checks
+// the ledger for a signed:<own-sha8> row. No row → refuse to run.
+
+/// Compute this binary's sha256 short hex (first 8 chars).
+fn ownSha8(allocator: std.mem.Allocator, out_hex64: *[64]u8) ![]const u8 {
+    const path = try ownBinaryPath(allocator);
+    defer allocator.free(path);
+    var digest: [32]u8 = undefined;
+    try contract.lineage.fileSha256(allocator, path, &digest);
+    contract.lineage.bytesToHex(&digest, out_hex64);
+    return out_hex64[0..8];
+}
+
+/// Walk the ledger looking for any L8 signed:<...> row whose parent
+/// row's action is validate:<own-sha8>. Returns the L8 row's `id` if
+/// found (so callers can use it as parent_id for the next-generation
+/// sign). Returns null if no such row exists.
+fn findOwnL8RowId(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    own_sha8: []const u8,
+) !?[]u8 {
+    const data = try contract.lineage.@import("ledger.zig").readAll(allocator, env);
+    defer allocator.free(data);
+    if (data.len == 0) return null;
+    // Step 1: find the validate:<sha8> row id.
+    var needle_buf: [64]u8 = undefined;
+    const needle = try std.fmt.bufPrint(&needle_buf, "\"action\": \"validate:{s}\"", .{own_sha8});
+    var validate_id: ?[]const u8 = null;
+    var line_it = std.mem.splitScalar(u8, data, '\n');
+    while (line_it.next()) |line| {
+        if (line.len < 2) continue;
+        if (std.mem.indexOf(u8, line, "\"event\": \"declared\"") == null) continue;
+        if (std.mem.indexOf(u8, line, needle) == null) continue;
+        // Extract id
+        const id_marker = "\"id\": \"";
+        const id_start = std.mem.indexOf(u8, line, id_marker) orelse continue;
+        const id_value_start = id_start + id_marker.len;
+        const id_end = std.mem.indexOfScalarPos(u8, line, id_value_start, '"') orelse continue;
+        validate_id = line[id_value_start..id_end];
+        // keep iterating — take the LAST matching row (most recent
+        // attestation supersedes prior ones if any).
+    }
+    if (validate_id == null) return null;
+
+    // Step 2: find the signed:<...> declared row whose parent_id is the validate row.
+    var pid_buf: [128]u8 = undefined;
+    const pid_needle = try std.fmt.bufPrint(&pid_buf, "\"parent_id\": \"{s}\"", .{validate_id.?});
+    var signed_id: ?[]const u8 = null;
+    line_it = std.mem.splitScalar(u8, data, '\n');
+    while (line_it.next()) |line| {
+        if (line.len < 2) continue;
+        if (std.mem.indexOf(u8, line, "\"event\": \"declared\"") == null) continue;
+        if (std.mem.indexOf(u8, line, "\"action\": \"signed:") == null) continue;
+        if (std.mem.indexOf(u8, line, pid_needle) == null) continue;
+        const id_marker = "\"id\": \"";
+        const id_start = std.mem.indexOf(u8, line, id_marker) orelse continue;
+        const id_value_start = id_start + id_marker.len;
+        const id_end = std.mem.indexOfScalarPos(u8, line, id_value_start, '"') orelse continue;
+        signed_id = line[id_value_start..id_end];
+    }
+    if (signed_id == null) return null;
+    return try allocator.dupe(u8, signed_id.?);
+}
+
+/// Runtime gate: true if this binary's own sha has a signed L8 row.
+fn isSelfSignedInLedger(allocator: std.mem.Allocator, env: std.process.Environ) bool {
+    var sha_buf: [64]u8 = undefined;
+    const sha8 = ownSha8(allocator, &sha_buf) catch return false;
+    const id_opt = findOwnL8RowId(allocator, env, sha8) catch return false;
+    if (id_opt) |id| {
+        allocator.free(id);
+        return true;
+    }
+    return false;
+}
+
+/// `_sign-child <child-binary-path>` — the running (parent) binary
+/// signs the child binary's sha into a new L8 row. parent_id of the
+/// new row = THIS binary's own L8 row id, so the signing chain
+/// extends through this binary's wallet-derived keypair back to root.
+fn cmdSignChild(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    if (args.len < 1) {
+        errPrint("_sign-child: requires <child-binary-path>\n", .{});
+        return 2;
+    }
+    const child_path = args[0];
+
+    // Resolve OUR own L8 row id — this becomes the new row's parent_id.
+    var own_sha_buf: [64]u8 = undefined;
+    const own_sha8 = try ownSha8(allocator, &own_sha_buf);
+    const own_l8_id = (try findOwnL8RowId(allocator, env, own_sha8)) orelse {
+        errPrint("_sign-child: this binary has no L8 row in the ledger.\n", .{});
+        errPrint("  The parent must itself be signed before signing children. Run\n", .{});
+        errPrint("  _bootstrap-self-sign first if this IS the root binary.\n", .{});
+        return 2;
+    };
+    defer allocator.free(own_l8_id);
+
+    // Compute child's sha.
+    var child_digest: [32]u8 = undefined;
+    try contract.lineage.fileSha256(allocator, child_path, &child_digest);
+    var child_sha_hex: [64]u8 = undefined;
+    contract.lineage.bytesToHex(&child_digest, &child_sha_hex);
+
+    var plan_buf: [256]u8 = undefined;
+    const plan = try std.fmt.bufPrint(&plan_buf, "child binary {s} signed by parent (L8 row {s})", .{ child_sha_hex[0..16], own_l8_id });
+    var action_buf: [32]u8 = undefined;
+    const action = try std.fmt.bufPrint(&action_buf, "validate:{s}", .{child_sha_hex[0..8]});
+
+    const cid = try contract.declare(allocator, env, plan, action, .{ .parent_id = own_l8_id });
+    defer allocator.free(cid);
+    try contract.markSatisfied(allocator, env, cid, 1, plan);
+    outPrint("_sign-child: L8 row landed for child sha {s} (parent_id={s})\n", .{ child_sha_hex[0..8], own_l8_id });
+    return 0;
+}
+
+/// `_bootstrap-self-sign` — fires ONCE at first build. Refuses if any
+/// prior L8 row exists for this binary's sha. Creates a root-level
+/// L8 row whose parent_signature is the root wallet's self-sig.
+fn cmdBootstrapSelfSign(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    _ = args;
+    var sha_buf: [64]u8 = undefined;
+    const own_sha8 = try ownSha8(allocator, &sha_buf);
+
+    if (try findOwnL8RowId(allocator, env, own_sha8)) |existing| {
+        allocator.free(existing);
+        errPrint("_bootstrap-self-sign: this binary already has an L8 row. Bootstrap is single-use;\n", .{});
+        errPrint("  use _sign-child from a parent binary for subsequent builds.\n", .{});
+        return 1;
+    }
+
+    var plan_buf: [256]u8 = undefined;
+    const plan = try std.fmt.bufPrint(&plan_buf, "bootstrap: root binary sha {s} self-signed by root wallet (no parent)", .{sha_buf[0..16]});
+    var action_buf: [32]u8 = undefined;
+    const action = try std.fmt.bufPrint(&action_buf, "validate:{s}", .{own_sha8});
+
+    const cid = try contract.declare(allocator, env, plan, action, .{ .parent_id = null });
+    defer allocator.free(cid);
+    try contract.markSatisfied(allocator, env, cid, 1, plan);
+    outPrint("_bootstrap-self-sign: root L8 row landed for sha {s}\n", .{own_sha8});
+    return 0;
+}
+
 /// `aiko prune` — read a /contract JSON envelope (event=died) from
 /// stdin, mark the target died with the given cause. Implements the
 /// 4th verb in the substrate's user-facing surface (build / run /
