@@ -808,8 +808,7 @@ test "rotateAllSignedRowsByLineage re-signs every old-root row" {
     try appendBytesToFile(allocator, tmp_path, row);
 
     // Run the walker.
-    var env = std.process.Environ.init(&.{});
-    defer env.deinit(allocator);
+    const env: std.process.Environ = .empty;
     const count = try rotateAllSignedRowsByLineage(allocator, env, old_root, new_root, tmp_path, "rotate-evt-1");
     try std.testing.expectEqual(@as(u32, 1), count);
 
