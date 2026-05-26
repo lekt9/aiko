@@ -367,10 +367,78 @@ grows fractally.
 3. The wrapper's docstring + README name the wrapper itself as
    `wrapper:openai-compat` at layer 4 — explicit lineage.
 
-### What's still future-work
+### Outward spawn — how a wrapper wraps the environment it needs (Lewis 2026-05-26)
 
-The wrappers don't yet **auto-declare themselves as /contracts on
-startup**. When the openai-api server boots, it could:
+The "wrapper wraps itself in the environment it needs" pattern means
+each wrapper INTROSPECTS the host on startup, ENUMERATES the
+primitives available, and DECLARES one `wrapper:<cap>` /contract per
+capability it intends to use. The wrapper isn't pre-coded with a
+fixed dependency set; it discovers what's there and binds outward.
+
+**Mechanical sequence per wrapper boot:**
+
+```
+   1. introspect          which runtime am I in?
+                          (bun? python? curl? docker? kuri? a parent
+                          /contract binary reachable via stdio? a
+                          wireguard mesh? a sibling SDK on disk?)
+
+   2. discover            /find-skills "openai compat shaper for $domain"
+                          /find-skills returns skill manifests for
+                          the relevant abstraction layer — the LLM
+                          doesn't have to guess; it reads the skill
+                          docs at the right depth.
+
+   3. declare             for each capability the wrapper will use,
+                          aiko build "use <cap> for <purpose>"
+                          --action "wrapper:<cap>" (layer 4),
+                          parent_id = this wrapper's identity.
+
+   4. wire                set CONTRACT_LLM_BASE_URL on spawned children
+                          to point at THIS wrapper's openai-compat
+                          endpoint (if it serves one), or at the
+                          parent the wrapper itself uses. The chain
+                          is the lineage.
+
+   5. eval (per cap)      when a capability's truth claim is met,
+                          aiko eval <cap-contract-id>. The L7→L8
+                          cascade signs the capability's binding into
+                          the ledger.
+
+   6. eval (self)         on shutdown, aiko eval <self-contract-id>.
+                          The wrapper's whole lifetime becomes a
+                          signed row in the ledger.
+```
+
+**Why /find-skills sits in the middle of step 2:** the wrapper can
+ask the substrate "what skills exist for this abstraction layer?"
+and get back manifests with usage docs, env-var requirements,
+example invocations. The wrapper then binds the right primitive
+mechanically — no LLM guess at what library to use. /find-skills is
+the substrate's name service for primitives.
+
+**Why /contract stdio in the middle of step 4:** the spawned child
+wrapper's `CONTRACT_LLM_BASE_URL` can point at its parent over
+stdio (or a unix socket, or wireguard). The parent's `cmdOpenAi`
+verb already accepts chat-completions JSON on stdin. So:
+
+```
+   parent wrapper          child wrapper (spawned)
+   ──────────────          ──────────────────────────
+   binds CONTRACT_LLM_BASE_URL_FOR_CHILD = its-own-stdio-endpoint
+   spawns child with env  →
+                          CONTRACT_LLM_BASE_URL points back at parent
+                          CONTRACT_LLM_API_KEY is the lineage signature
+                          child shapes its sentences ← parent's openai
+                          parent shapes ← grandparent's openai
+                          …all the way to the vendor LLM at the root
+```
+
+Each hop is signed by the wallet pubkey at that hop. The full chain
+of LLM calls is reconstructible from the ledger — the lineage chain
+IS the call chain. Provenance for free.
+
+### Skeleton for an auto-declaring wrapper
 
 ```
    id = sdk.build(
