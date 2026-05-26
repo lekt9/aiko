@@ -152,12 +152,13 @@ fn err(bytes: []const u8) void {
     if (!stderr_tape_armed) return;
     if (stderr_tape_capped) return;
     const a = stderr_tape_alloc orelse return;
-    const buf = &(stderr_tape_buf orelse return);
-    if (buf.items.len + bytes.len > STDERR_TAPE_CAP) {
-        stderr_tape_capped = true;
-        return;
+    if (stderr_tape_buf) |*buf| {
+        if (buf.items.len + bytes.len > STDERR_TAPE_CAP) {
+            stderr_tape_capped = true;
+            return;
+        }
+        buf.appendSlice(a, bytes) catch {};
     }
-    buf.appendSlice(a, bytes) catch {};
 }
 
 fn outPrint(comptime fmt: []const u8, args: anytype) void {
