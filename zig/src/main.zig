@@ -1496,9 +1496,22 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         const sep = std.mem.indexOfScalar(u8, rest, ':') orelse rest.len;
         const budget_lamports = rest[0..sep];
         const mint = if (sep < rest.len) rest[sep + 1 ..] else USDC_SOL_MINT;
-        const target = try std.fmt.allocPrint(allocator, "flex:budget:lamports={s}:mint={s}", .{ budget_lamports, mint });
-        defer allocator.free(target);
-        contract.appendCalledRow(allocator, env, r.id, target, "budget-estimate") catch {};
+        // Resolve antipattern:posthook-pointer-as-raw-url — declare the budget
+        // claim as its own contract row first, then point the called row at
+        // it via `contract:<id>`. The substrate refuses to write a called row
+        // whose target_pointer carries payload (see appendCalledRow validator).
+        const budget_claim = try std.fmt.allocPrint(allocator, "flex:budget lamports={s} mint={s}", .{ budget_lamports, mint });
+        defer allocator.free(budget_claim);
+        const budget_id_opt: ?[]u8 = contract.declare(allocator, env, budget_claim, "", .{}) catch |err| blk: {
+            evidencePrint("  flex:budget declare failed: {s} — skipping called row\n", .{@errorName(err)});
+            break :blk null;
+        };
+        if (budget_id_opt) |bid| {
+            defer allocator.free(bid);
+            const target = try std.fmt.allocPrint(allocator, "contract:{s}", .{bid});
+            defer allocator.free(target);
+            contract.appendCalledRow(allocator, env, r.id, target, "budget-estimate") catch {};
+        }
         const msg = try std.fmt.allocPrint(allocator, "budget: max={s} lamports of {s}", .{ budget_lamports, mint });
         evidencePrint("  result: PASS — {s}\n", .{msg});
         return .{ .rc = 0, .result = msg };
