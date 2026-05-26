@@ -87,6 +87,33 @@ pub fn build(b: *std.Build) void {
     // The run-step's exit status propagates: non-zero → build fails.
     run_spirit_check.expectExitCode(0);
 
+    // ─── aiko-attest (LLM judge + signer; NOT gated by spirit-check) ─
+    //
+    // The only build target that bypasses the gate. It exists for one
+    // reason: to populate `.contract-spirit-attest.jsonl` on a fresh
+    // repo where no attestations exist yet. Otherwise the gate would
+    // be unreachable (no aiko binary → no `aiko attest` → no rows →
+    // gate fails → no aiko binary). aiko-attest closes the chicken-
+    // and-egg.
+    //
+    // It is a single-purpose binary: read NEBIUS_API_KEY env, walk
+    // SOURCE_FILES, judge each via the LLM, sign verdicts with the
+    // root wallet, append rows. No other verbs. The full /contract
+    // verb dispatcher lives only on contract-zig-server, which IS
+    // gated.
+    const attest_root = b.createModule(.{
+        .root_source_file = b.path("../libcontract/src/attest_main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    attest_root.addEmbedPath(b.path("../libcontract/data"));
+    const attest_exe = b.addExecutable(.{
+        .name = "aiko-attest",
+        .root_module = attest_root,
+    });
+    b.installArtifact(attest_exe);
+
     // Build the main binaries (contract-zig + contract-zig-server)
     // and bind each install to the spirit-check verdict.
     addContractExecutable(b, target, optimize, libcontract, client, "contract-zig", "client", &run_spirit_check.step);
