@@ -4734,6 +4734,140 @@ fn cmdDiscover(allocator: std.mem.Allocator, env: std.process.Environ, args: []c
     return 0;
 }
 
+// ────────── trio: build / run / eval (stdin JSON, no flags) ──────────
+//
+// Lewis 2026-05-26: "no need to fan out flags ever — remove that."
+// The trio reads /contract-shape JSON envelopes from stdin, validates
+// via contract.shape.validateShape, then calls the substrate's
+// declare/recordIteration/markSatisfied primitives. There are no
+// --plan / --action / --parent flags because the JSON envelope IS
+// the parameter set.
+//
+// Pipeline per call:
+//   1. read stdin into a buffer
+//   2. shape.validateShape — refuse non-conforming JSON
+//   3. dispatch to the right primitive based on event kind
+//   4. emit the resulting id (or the verdict for eval) on stdout
+
+fn readStdinJson(allocator: std.mem.Allocator) ![]u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    errdefer buf.deinit(allocator);
+    var chunk: [16384]u8 = undefined;
+    while (true) {
+        const n = std.c.read(std.c.STDIN_FILENO, &chunk, chunk.len);
+        if (n <= 0) break;
+        try buf.appendSlice(allocator, chunk[0..@intCast(n)]);
+        if (buf.items.len > 4 * 1024 * 1024) break; // 4 MiB cap
+    }
+    return try buf.toOwnedSlice(allocator);
+}
+
+/// `aiko build` — read a /contract JSON envelope (event=declared) from
+/// stdin, validate, append a declared row. Emits the resulting id on
+/// stdout. Substrate's L0 word-children + L7→L8 cascade fire as usual.
+fn cmdBuild(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    _ = args;
+    const json = try readStdinJson(allocator);
+    defer allocator.free(json);
+    const sh = contract.shape.validateShape(allocator, json) catch |e| {
+        errPrint("build: shape validation failed: {s}\n", .{@errorName(e)});
+        return 2;
+    };
+    if (sh.event != .declared) {
+        errPrint("build: requires event=\"declared\"; got {s}\n", .{@tagName(sh.event)});
+        return 2;
+    }
+    const plan = sh.plan orelse {
+        errPrint("build: missing plan after validation (substrate bug)\n", .{});
+        return 2;
+    };
+    const action = sh.action orelse {
+        errPrint("build: missing action after validation (substrate bug)\n", .{});
+        return 2;
+    };
+    var opts: contract.DeclareOptions = .{};
+    if (sh.parent_id) |p| opts.parent_id = p;
+    const cid = try contract.declare(allocator, env, plan, action, opts);
+    defer allocator.free(cid);
+    outPrint("{s}\n", .{cid});
+    return 0;
+}
+
+/// `aiko run` — read a /contract JSON envelope (event=iterated OR
+/// declared with action=iterate:<parent>) from stdin, append the
+/// iteration row. Every iteration is itself a /contract (fractal):
+/// a declared child of its parent. Emits the new child's id.
+fn cmdRun(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    _ = args;
+    const json = try readStdinJson(allocator);
+    defer allocator.free(json);
+    const sh = contract.shape.validateShape(allocator, json) catch |e| {
+        errPrint("run: shape validation failed: {s}\n", .{@errorName(e)});
+        return 2;
+    };
+    // Two acceptable shapes:
+    //   (a) event=declared with action starting `iterate:` → child contract
+    //   (b) event=iterated with id present → recordIteration on existing
+    switch (sh.event) {
+        .declared => {
+            const plan = sh.plan orelse return 2;
+            const action = sh.action orelse return 2;
+            if (!std.mem.startsWith(u8, action, "iterate:")) {
+                errPrint("run: declared event requires action prefix iterate:<parent_id>; got {s}\n", .{action});
+                return 2;
+            }
+            var opts: contract.DeclareOptions = .{};
+            if (sh.parent_id) |p| opts.parent_id = p;
+            const cid = try contract.declare(allocator, env, plan, action, opts);
+            defer allocator.free(cid);
+            outPrint("{s}\n", .{cid});
+            return 0;
+        },
+        .iterated => {
+            const id = sh.id orelse {
+                errPrint("run: iterated event requires id\n", .{});
+                return 2;
+            };
+            const wave: u32 = sh.wave orelse 1;
+            const proof = sh.proof orelse "";
+            try contract.recordIteration(allocator, env, id, wave, 0, proof);
+            outPrint("{s}\n", .{id});
+            return 0;
+        },
+        else => {
+            errPrint("run: event must be declared (iterate:<parent>) or iterated; got {s}\n", .{@tagName(sh.event)});
+            return 2;
+        },
+    }
+}
+
+/// `aiko eval` — read a /contract JSON envelope (event=satisfied) from
+/// stdin, mark satisfied. The substrate's L7→L8 cascade fires on the
+/// resulting row. Emits the resulting id on stdout (echoing the input
+/// id — caller already knew it; this keeps the trio output shape
+/// uniform across build/run/eval).
+fn cmdEval(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    _ = args;
+    const json = try readStdinJson(allocator);
+    defer allocator.free(json);
+    const sh = contract.shape.validateShape(allocator, json) catch |e| {
+        errPrint("eval: shape validation failed: {s}\n", .{@errorName(e)});
+        return 2;
+    };
+    if (sh.event != .satisfied) {
+        errPrint("eval: requires event=\"satisfied\"; got {s}\n", .{@tagName(sh.event)});
+        return 2;
+    }
+    const id = sh.id orelse {
+        errPrint("eval: missing id after validation (substrate bug)\n", .{});
+        return 2;
+    };
+    const wave: u32 = sh.wave orelse 1;
+    try contract.markSatisfied(allocator, env, id, wave, sh.proof);
+    outPrint("{s}\n", .{id});
+    return 0;
+}
+
 fn cmdSelf(args: []const []const u8) u8 {
     if (args.len > 1 or (args.len == 1 and !std.mem.eql(u8, args[0], "--json"))) {
         err("self accepts no args or --json\n");
