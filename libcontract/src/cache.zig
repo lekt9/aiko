@@ -61,7 +61,6 @@ pub const Verdict = enum {
         return switch (self) {
             .hit => "hit",
             .miss => "miss",
-            .stale => "stale",
             .legacy => "legacy",
         };
     }
