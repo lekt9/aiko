@@ -750,6 +750,25 @@ PYAUDIT
     _fail "doctrine[claim-reference parity]: SKILL.md's 'Canonical reference index' table must list claim 45 itself — the guard is recursive; if claim 45 isn't named in the table, the table is stale and claim 45 catches itself"
   fi
 
+  # 46. "Synapse-kind minimum — no redundant edge walks." Pinned by Lewis
+  #     2026-05-26 (contract 6a86a61e). cache.collectDependencyIds must
+  #     walk parent_id-children + contract:<X> ONLY. blocked_by, prehook,
+  #     bind, modality were collapsed (empirical zero usage in 7000+
+  #     rows; signature chain absorbs ordering). Re-introducing those
+  #     walks reintroduces leaven. The "Synapse-kind minimum" section
+  #     in SKILL.md must exist and the cache.zig walker must not
+  #     contain extractTypedRefs calls for the collapsed kinds.
+  if ! grep -q '## Synapse-kind minimum' "$REPO/SKILL.md"; then
+    _fail "doctrine[synapse minimum]: SKILL.md is missing the '## Synapse-kind minimum' section — the collapse doctrine (Lewis 2026-05-26, contract 6a86a61e) must be pinned so future contributors don't re-add the redundant kinds"
+  fi
+  if grep -qE 'extractTypedRefs\(allocator, scan_buf\.items, "(blocked_by|prehook|bind|modality):"' "$LIB_DIR/src/cache.zig"; then
+    _fail "doctrine[synapse minimum]: cache.zig walks a collapsed synapse kind (blocked_by/prehook/bind/modality) in collectDependencyIds — these were removed because the signature chain absorbs their semantics; re-adding them is leaven"
+  fi
+  # The Canonical reference index must list claim 46 itself.
+  if ! grep -q '| 46 | Synapse-kind minimum' "$REPO/SKILL.md"; then
+    _fail "doctrine[synapse minimum]: SKILL.md Canonical reference index must list claim 46 itself"
+  fi
+
   # 38. "Verdict alphabet in SKILL.md matches cache.zig." Doctrine drifts
   #     silently when prose mentions a verdict the code purged. The parity
   #     refuses to ship if SKILL.md mentions any verdict NOT in
