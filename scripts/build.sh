@@ -542,6 +542,17 @@ step_parity() {
     _fail "doctrine[global word-is-truth guard]: ~/.claude/CLAUDE.md must carry the 'When resolving any contradiction in code' clause — the rule must be a MECHANICAL conflict-resolver, not just a descriptive declaration"
   fi
 
+  # 37b. "Per-keystroke /contract spawn rule" pinned in global CLAUDE.md.
+  #      Without this clause loaded turn-one in every session, agents
+  #      drift into prose-only responses to /contract invocations.
+  #      Anchored to contract 74778535 (Lewis 2026-05-26).
+  if ! grep -q 'Per-keystroke `/contract` spawn rule' "$HOME/.claude/CLAUDE.md" 2>/dev/null; then
+    _fail "doctrine[per-keystroke spawn]: ~/.claude/CLAUDE.md must carry the 'Per-keystroke \`/contract\` spawn rule' section — every /contract invocation MUST fire the aiko binary as the first tool call, and this rule needs to load turn-one in every session"
+  fi
+  if ! grep -q 'scripts/aiko "<args verbatim>"' "$HOME/.claude/CLAUDE.md" 2>/dev/null; then
+    _fail "doctrine[per-keystroke spawn]: ~/.claude/CLAUDE.md must carry the exact aiko-spawn command literal so agents can find the canonical invocation without searching"
+  fi
+
   # 38. "Verdict alphabet in SKILL.md matches cache.zig." Doctrine drifts
   #     silently when prose mentions a verdict the code purged. The parity
   #     refuses to ship if SKILL.md mentions any verdict NOT in
