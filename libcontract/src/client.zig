@@ -322,7 +322,6 @@ pub fn declareRemoteAiko(
     const resp = http.postJsonWithHeaders(allocator, url_buf.items, body.items, .{
         .payment = paymentHeader(env),
         .client = "aiko",
-        .payment_provider = "corbits",
         .payment_scheme = "@faremeter/flex",
         .idempotency_key = &ikey_buf,
     }) catch |e| {
