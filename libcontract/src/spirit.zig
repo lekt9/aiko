@@ -219,7 +219,6 @@ pub fn verifyAttestation(
     env: std.process.Environ,
     source_path: []const u8,
 ) !void {
-    _ = env;
     // Resolve absolute source path (relative-to-repo → absolute).
     const ledger_path = try attestationLedgerPath(allocator);
     defer allocator.free(ledger_path);
