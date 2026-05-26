@@ -189,10 +189,17 @@ step_parity() {
 
   # 10. "skill-sync auto-commits" — the .git repo exists and recent
   #     commits use the sync(contract): prefix.
+  #     Note: read git log into a var FIRST — piping straight to grep -q
+  #     races SIGPIPE under `set -o pipefail` (grep early-exits on match,
+  #     git log gets SIGPIPE, pipefail propagates non-zero falsely).
   if [[ ! -d "$REPO/.git" ]]; then
     _fail "doctrine[skill-sync]: $REPO/.git missing"
-  elif ! ( cd "$REPO" && git log --oneline -10 2>/dev/null | grep -qE '^[0-9a-f]+ sync\(contract\):' ); then
-    _fail "doctrine[skill-sync]: no recent 'sync(contract):' commits in last 10"
+  else
+    local git_log_out
+    git_log_out=$( cd "$REPO" && git log --oneline -10 2>/dev/null || true )
+    if ! grep -qE '^[0-9a-f]+ sync\(contract\):' <<< "$git_log_out"; then
+      _fail "doctrine[skill-sync]: no recent 'sync(contract):' commits in last 10"
+    fi
   fi
 
   # 11. Meta-parity: the parity step ITSELF must be declared in SKILL.md.
