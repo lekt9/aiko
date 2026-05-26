@@ -979,6 +979,16 @@ fn appendJsonEscaped(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), s: [
 /// locally. Single error-handling site at the call site — every internal
 /// step propagates via `try`, callers surface the verb with one evidence
 /// line.
+///
+/// Cache-layer hook (contract acd38039 — docker-layer-only-resolution):
+/// after the declared row lands, compute the signature chain for this id
+/// and emit a cache_check event so the pointer-keyed cache surface fires
+/// on EVERY cloud-mirrored declare, not just on locally-spawned rows.
+/// A bare cloud-mirror row has no children yet so the chain returns null;
+/// emit cache_check{verdict=miss, current="", recorded=""} which honestly
+/// surfaces "no chain yet, no prior snapshot." When children later land
+/// and the row gets satisfied via backfill, the existing cache_resolved
+/// path fires automatically.
 fn writeCloudMirrorRow(
     allocator: std.mem.Allocator,
     env: std.process.Environ,
@@ -1009,6 +1019,25 @@ fn writeCloudMirrorRow(
 
     const path = try ledger.appendRow(allocator, env, row.items);
     allocator.free(path);
+
+    // Bridge cache layer: compute the signature chain (typically null for
+    // a fresh mirror with no children) and emit cache_check. Failure here
+    // is non-fatal — the mirror row landed; cache visibility is best-effort.
+    const chain_opt = contract.cache.computeSignatureChain(allocator, env, id) catch null;
+    const recorded_opt = contract.cache.findLatestResolvedSnapshot(allocator, env, id) catch null;
+    defer if (chain_opt) |c| allocator.free(c);
+    defer if (recorded_opt) |r| allocator.free(r);
+    const current_hex: []const u8 = if (chain_opt) |c| c else "";
+    const recorded_hex: []const u8 = if (recorded_opt) |r| r else "";
+    const verdict: contract.cache.Verdict = blk: {
+        if (chain_opt == null) break :blk .miss;
+        if (recorded_opt) |r| {
+            if (std.mem.eql(u8, r, current_hex)) break :blk .hit;
+            break :blk .miss;
+        }
+        break :blk .miss;
+    };
+    contract.cache.appendCacheCheckRow(allocator, env, id, verdict, current_hex, recorded_hex) catch {};
 }
 
 /// Chain-agnostic wallet derivation. Same root_seed feeds two algorithm
