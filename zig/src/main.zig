@@ -2426,20 +2426,6 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
     };
     const rc = try resolveLineage(allocator, env, cid);
     if (rc == 0) {
-        if (hookId(env, "CONTRACT_POSTHOOK_ID", "CONTRACT_POSTHOOK")) |posthook| {
-            const rows2 = try parseRows(allocator, env);
-            defer allocator.free(rows2);
-            if (isLocalContract(rows2, posthook)) {
-                _ = try resolveLineage(allocator, env, posthook);
-            } else {
-                // Remote posthook: route via lineage-mesh encrypted envelope.
-                const tree = buildAncestorTree(allocator, rows2, cid) catch try allocator.dupe(u8, "[]");
-                defer allocator.free(tree);
-                meshEmitRemoteHook(allocator, env, cid, posthook, tree) catch |e| {
-                    errPrint("mesh hook skipped: {s}\n", .{@errorName(e)});
-                };
-            }
-        }
     }
     // Backfill: every declare sweeps the un-resolved tail of the ledger.
     backfillUnresolved(allocator, env, cid) catch |e| {
