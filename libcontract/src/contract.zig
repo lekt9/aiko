@@ -22,6 +22,11 @@ pub const payload_crypto = @import("payload_crypto.zig");
 // (action `word:<tok>`, layer 0). Wired from cmdDeclare so each declare
 // fans out automatically.
 pub const words = @import("words.zig");
+// Comptime pattern enforcement. Importing this module triggers the
+// @compileError checks in pattern.zig — if the 1..6/7/8 layer pattern
+// is violated, THIS BINARY DOES NOT COMPILE. Only the root /contract
+// wallet (via repo write access + signed source) can evolve the shape.
+pub const pattern = @import("pattern.zig");
 
 /// Re-export so consumers of libcontract can verify chains without rewiring
 /// the build graph.
