@@ -884,8 +884,6 @@ fn remediationFor(class: []const u8) []const u8 {
     if (std.mem.eql(u8, class, "child_dead")) return "neuron's declared child was apoptosed; the neuron cannot integrate that branch's evidence and inherits the death";
     if (std.mem.eql(u8, class, "bun_failure")) return "bun runtime returned non-zero; verify bun on PATH and code body has no shell-escape issues";
     if (std.mem.eql(u8, class, "python_failure")) return "python3 runtime returned non-zero; verify python3 on PATH and code body parses";
-    if (std.mem.eql(u8, class, "cli_persistent_failure")) return "bare shell action keeps exiting non-zero; either fix the underlying script or redeclare with a typed-prefix action (python:/bun:) so the substrate can route it through the proper runtime";
-    if (std.mem.eql(u8, class, "neuron_stuck")) return "bare neuron sat HOLD with no children; either declare child contracts under it (in-thread agent / cloud compiler) or redeclare the goal as a typed action (cli/bun:/python:/api:/contract:) the substrate can resolve directly";
     return "generic resolver fault; inspect action_result + check parent_id chain for upstream cause";
 }
 
