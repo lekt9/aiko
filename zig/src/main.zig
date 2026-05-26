@@ -2727,7 +2727,7 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
         };
         return 0;
     }
-    const cid = try contract.declare(allocator, env, d.plan, action, .{ .parent_id = parent });
+    const cid = try contract.declare(allocator, env, d.plan, action, .{ .parent_id = null });
     defer allocator.free(cid);
     outPrint("{s}\n", .{cid});
     // Materialize binary if CONTRACT_BINARY_TARGET is declared. Every new
