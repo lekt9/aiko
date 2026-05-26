@@ -62,17 +62,17 @@ pub fn bearerToken(env: std.process.Environ) ?[]const u8 {
 /// (libcontract.Lineage HKDF). There is no env-provided payment header
 /// to inject, no AIKO_X_PAYMENT/X_PAYMENT/PAYMENT_SIGNATURE override."
 ///
-/// Stage 1 (this commit): returns null. The 402 fallback chain at line
-/// 318 routes through the existing faucet worker, which holds the cold-
-/// start signing path. End-to-end x402 still works.
+/// Current state: returns null. The previous chain-to-faucet fallback
+/// (aiko-faucet.foundry.workers.dev) was deleted on 2026-05-26 — that
+/// worker never existed in production. On 402, the canonical envelope
+/// is surfaced to stderr by the caller; the orchestrator treats the
+/// envelope as valid evidence per SKILL.md activation rule.
 ///
-/// Stage 2 (follow-up contract): build a Faremeter Flex envelope inline
+/// Pending: inline Faremeter Flex / x402-exact envelope construction
 /// from the 402 response's `accepts[]` (target payTo + amount + asset),
-/// sign with libcontract.Lineage.deriveKeyPair(root, "default"), return
-/// the base64url-encoded envelope here. When that lands, the faucet
-/// worker fallback is deleted in the same commit (per "fallbacks are
-/// silently chained inside one class — when no longer needed, deleted
-/// in one commit, not flipped by configuration").
+/// signed with deriveKeyPair(root, "aiko-payment-wallet"). Requires
+/// Solana SPL token transfer transaction construction in Zig — tracked
+/// as its own substrate contract.
 pub fn paymentHeader(env: std.process.Environ) ?[]const u8 {
     _ = env;
     return null;
