@@ -3663,11 +3663,10 @@ fn cmdOpenAi(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
     //    fails — we don't fall back; per canon the public surface is
     //    always Unbrowse-backed.
     const action = actionFromPlan(safe_plan);
-    const parent = ambientParent(env);
     var tool_calls_json: ?[]u8 = null;
     defer if (tool_calls_json) |t| allocator.free(t);
     const result_text = blk: {
-        const body_json = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, null, null, null, null, null, null) catch |e| {
+        const body_json = client.declareRemoteAiko(allocator, env, safe_plan, action, null, null, null, null, null, null, null) catch |e| {
             const msg = switch (e) {
                 // Per SKILL.md "Native onramp is the cloud's obligation" — when the
                 // wallet 402s, the server-side onramp adapter contract is responsible
