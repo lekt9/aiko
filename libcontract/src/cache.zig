@@ -446,46 +446,107 @@ pub fn findDeclaredParentSignature(
     return null;
 }
 
-/// Walk the ledger and return every `child_id` whose row has parent_id
-/// equal to `parent`. Caller owns the outer slice; each inner slice is
-/// duped. Order: ascending by appearance, then sorted for determinism.
-pub fn collectChildIds(
+/// Walk the ledger and return every contract id `target` depends on:
+///
+///   1. parent_id-children (declared rows whose parent_id == target)
+///   2. typed synapse refs in target's own declared row's plan+action:
+///        - contract:<8hex>   — explicit pointer dependency
+///        - blocked_by:<8hex> — strict ordering wait
+///        - prehook:<8hex>    — fires before target's resolution
+///
+/// Other synapse kinds (inhibits/posthook/at/repeat/modality) are NOT
+/// dependencies in the Genesis sense — they don't block target's
+/// resolution. Only the three above gate "Day N must wait on Day N-1".
+///
+/// Returns sorted+deduped owned slice. Caller frees each inner + outer.
+/// Empty result is valid (a leaf contract with no deps — Day 1).
+pub fn collectDependencyIds(
     allocator: std.mem.Allocator,
     env: std.process.Environ,
-    parent: []const u8,
+    target: []const u8,
 ) ![][]u8 {
     const body = ledger.readAll(allocator, env) catch return try allocator.alloc([]u8, 0);
     defer allocator.free(body);
 
-    var children: std.ArrayList([]u8) = .empty;
+    var deps: std.ArrayList([]u8) = .empty;
     errdefer {
-        for (children.items) |ch| allocator.free(ch);
-        children.deinit(allocator);
+        for (deps.items) |d| allocator.free(d);
+        deps.deinit(allocator);
     }
-    var seen: std.ArrayList([]const u8) = .empty;
-    defer seen.deinit(allocator);
 
-    var iter = std.mem.tokenizeAny(u8, body, "\n");
-    while (iter.next()) |line| {
+    const appendUnique = struct {
+        fn call(alloc: std.mem.Allocator, list: *std.ArrayList([]u8), cand: []const u8) !void {
+            for (list.items) |existing| if (std.mem.eql(u8, existing, cand)) return;
+            try list.append(alloc, try alloc.dupe(u8, cand));
+        }
+    }.call;
+
+    // Pass 1 — parent_id-children.
+    var iter1 = std.mem.tokenizeAny(u8, body, "\n");
+    while (iter1.next()) |line| {
         if (line.len < 2) continue;
         const ev = extractStringField(line, "event") orelse continue;
         if (!std.mem.eql(u8, ev, "declared")) continue;
         const pid = extractStringField(line, "parent_id") orelse continue;
-        if (!std.mem.eql(u8, pid, parent)) continue;
+        if (!std.mem.eql(u8, pid, target)) continue;
         const cid = extractStringField(line, "id") orelse continue;
-        // dedupe — same child id may appear multiple times if re-declared
-        var dup = false;
-        for (seen.items) |s| if (std.mem.eql(u8, s, cid)) {
-            dup = true;
-            break;
-        };
-        if (dup) continue;
-        try seen.append(allocator, cid);
-        try children.append(allocator, try allocator.dupe(u8, cid));
+        try appendUnique(allocator, &deps, cid);
     }
 
-    const owned = try children.toOwnedSlice(allocator);
-    // Stable sort by id for determinism (mirrors main.zig computeInputHash).
+    // Pass 2 — synapse refs from target's own declared row (latest).
+    // Scan plan + action text — same surface declare() processed when
+    // extracting Synapse rows. The typed prefixes are extracted by the
+    // canonical pointer.extractContractRefs / extractTypedRefs helpers.
+    var target_plan: ?[]const u8 = null;
+    var target_action: ?[]const u8 = null;
+    var iter2 = std.mem.tokenizeAny(u8, body, "\n");
+    while (iter2.next()) |line| {
+        if (line.len < 2) continue;
+        const ev = extractStringField(line, "event") orelse continue;
+        if (!std.mem.eql(u8, ev, "declared")) continue;
+        const rid = extractStringField(line, "id") orelse continue;
+        if (!std.mem.eql(u8, rid, target)) continue;
+        if (extractStringField(line, "plan")) |p| target_plan = p;
+        if (extractStringField(line, "action")) |a| target_action = a;
+        // Don't break — later occurrences are re-declarations of the
+        // same id (idempotent via inputs_hash cache); we want the
+        // latest, so keep overwriting.
+    }
+
+    if (target_plan != null or target_action != null) {
+        var scan_buf: std.ArrayList(u8) = .empty;
+        defer scan_buf.deinit(allocator);
+        if (target_plan) |p| try scan_buf.appendSlice(allocator, p);
+        try scan_buf.append(allocator, ' ');
+        if (target_action) |a| try scan_buf.appendSlice(allocator, a);
+
+        // contract:<8hex>
+        const ptr_refs = try pointer.extractContractRefs(allocator, scan_buf.items);
+        defer {
+            for (ptr_refs) |r| allocator.free(r);
+            allocator.free(ptr_refs);
+        }
+        for (ptr_refs) |r| try appendUnique(allocator, &deps, r);
+
+        // blocked_by:<8hex>
+        const block_refs = try pointer.extractTypedRefs(allocator, scan_buf.items, "blocked_by:");
+        defer {
+            for (block_refs) |r| allocator.free(r);
+            allocator.free(block_refs);
+        }
+        for (block_refs) |r| try appendUnique(allocator, &deps, r);
+
+        // prehook:<8hex>
+        const pre_refs = try pointer.extractTypedRefs(allocator, scan_buf.items, "prehook:");
+        defer {
+            for (pre_refs) |r| allocator.free(r);
+            allocator.free(pre_refs);
+        }
+        for (pre_refs) |r| try appendUnique(allocator, &deps, r);
+    }
+
+    const owned = try deps.toOwnedSlice(allocator);
+    // Stable sort by id for determinism.
     std.mem.sort([]u8, owned, {}, struct {
         fn lt(_: void, a: []u8, b: []u8) bool {
             return std.mem.order(u8, a, b) == .lt;
