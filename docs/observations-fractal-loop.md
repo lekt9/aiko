@@ -512,6 +512,165 @@ shape as its row topology. Every /contract has a parent_id; every
 LLM endpoint has a parent endpoint; every wrapper has a parent
 wrapper. Walk the pointer chain to get the full provenance.
 
+## Contract storage hierarchy — tiered by access pattern (Lewis 2026-05-27)
+
+Lewis's question: "where should the contract kv cache be stored?
+within the edge contract itself? unbrowse infra? — won't we need a
+ledger somewhere? go back to the emeregentdb dag for all contracts
+again — could literally be a blockchain secured by proof of stake
+with FDRY lol."
+
+### The tiered answer
+
+Storage is **layered by access pattern**, not single-store. Same
+shape as the rest of the substrate (Genesis sequencing, hot-cache
+→ warm-ledger → signed-pointer):
+
+| Tier | Where | What it holds | Read latency | Cost |
+|---|---|---|---|---|
+| **Hot** (per-request) | relay's in-process memory | request envelope in flight | µs | free |
+| **Warm** (per-host, append-only) | `~/.contracts/contracts.jsonl` | this host's full local ledger (already in place) | ms | free |
+| **Federated** (shared semantic DAG) | **EmergentDB cluster** (`~/Projects/oss/emergentDB`) | published signed rows from every participating host; vector search via embedded bible/skill corpora maps onto EmergentDB's quality-diversity indexing | 10s of ms | cheap |
+| **Anchored** (final settlement, censorship-resistant) | **Solana mainnet, FDRY-secured** | Merkle batches of TERMINAL `signed:` rows ONLY (not iterations — too expensive on-chain) | seconds (chain finality) | $ per batch |
+| **Edge** (caller's context) | calling LLM's working memory | bible_chain + doctrine_chain + memory_chain from response envelope (already happens) | µs | free |
+
+### Why tiered, not single-store
+
+- **Reads are heavy.** `cache_check` fires on every `resolveOne` entry.
+  Putting reads on Solana would make every cache lookup a chain
+  query — orders of magnitude too slow. The warm ledger handles
+  reads cheaply; the chain handles only the L8 settlement rows
+  that need cross-organizational immutability.
+- **Writes are cheap locally, expensive on-chain.** Iteration rows,
+  evidence rows, hook rows — append every second; can't pay tx
+  fees on each. Local append → batch publish to EmergentDB →
+  periodic Merkle anchor to Solana keeps the cost-curve sane.
+- **Censorship-resistance only matters at the truth-root.** A row
+  that's "in-flight" doesn't need chain immutability; a row that
+  resolved a binding truth claim worth $X to a downstream consumer
+  needs it. Anchor only what NEEDS to be anchored.
+
+### EmergentDB as the federated tier
+
+Lewis's EmergentDB project (`/Users/lekt9/Projects/oss/emergentDB`)
+is a Rust self-optimizing vector database with quality-diversity
+indexing. It maps cleanly onto the substrate's needs:
+
+- The bible_chain corpus (31,100 verses × cross-references) is
+  exactly the vector-search workload EmergentDB optimizes for.
+- The SKILL.md doctrine sections become embeddings; semantic
+  search returns "relevant doctrine for this goal" the same way
+  `bible.relevantVerses` already does, but federated across hosts.
+- The contract lineage corpus (every signed row) becomes a
+  semantic + lineage-edge searchable DAG. Walking is fast; finding
+  relevant prior work is fast.
+- Self-optimizing recall (HNSW M-tuning, IVF, etc.) means the
+  substrate doesn't have to manually tune indices as the corpus
+  grows.
+
+EmergentDB runs anywhere (Rust binary; same runtime-agnostic
+property as the relay). Each substrate host publishes its
+local-ledger rows to a shared EmergentDB cluster periodically;
+queries against the cluster return federated semantic results.
+
+### Anchoring tier — FDRY-secured Solana settlement
+
+Lewis: "could literally be a blockchain secured by proof of stake
+with FDRY lol — every time you talk to a contract it costs money
+that goes to stFDRY holders by buying back stFDRY."
+
+**Yes, but only for the L8 settlement layer.** Per-iteration rows
+stay off-chain; only TERMINAL `signed:` rows get anchored, and
+they're anchored in BATCHES (Merkle root published every N rows
+or N seconds, whichever fires first).
+
+The anchoring is FDRY-stake-weighted:
+- Anchoring transactions are sent by validators who hold stFDRY
+- Stake threshold determines who can publish a batch (Deut 19:15
+  quorum already in Vine Doctrine — ≥2 independent witnesses)
+- Anchored rows carry the batch's Solana tx signature as additional
+  proof beyond the substrate's own ed25519 sig
+- Censorship-resistant because the chain is permissionless; signed
+  because the substrate's signature is independent of the chain
+
+This is the natural extension of Vine Doctrine: the same FDRY
+substrate that secures Foundry's stake layer also secures the
+contract ledger's anchoring layer. Same token, two load-bearing
+roles (cf. Matt 6:24 — FDRY stays stake-only; payment settles in
+USDC).
+
+## Per-call fee → stFDRY buyback (the wire is mostly already built)
+
+Lewis: "we can 402 split faremeter for every request to a contract
+that isn't yours too — fair compensation for people's harness
+contracts essentially — knowledge of things."
+
+### What's already there (catalog of existing wires)
+
+The mechanism for per-call fees → stFDRY buyback is largely built;
+what's missing is the per-request hook at the relay layer. The
+existing components:
+
+| Component | Status | Location |
+|---|---|---|
+| Wallet derivation per contract | ✅ shipped | `libcontract/src/lineage.zig:deriveKeyPair` |
+| x402 payment substrate | ✅ shipped | `libcontract/src/contract.zig`, SKILL.md x402 section |
+| Faremeter Flex split policy | ✅ shipped | `zig/src/main.zig:FOUNDRY_CUT_BPS = 5000` (50% to Foundry) |
+| `routeRevenue.ts` (USDC → FDRY buyback → Voltr deposit) | ✅ shipped | `/Users/lekt9/Projects/fdry/scripts/routeRevenue.ts` |
+| Voltr/Ranger FDRY vault | ✅ live on Solana | `Bpr49sQXsxwNXNMRWS2v3tTBGWu2QgZtdA83BX77xBX1` |
+| stFDRY NAV growth from vault deposits | ✅ live (deposits compound NAV per Vine Doctrine) | same vault |
+| Stateless tunnel relay | ✅ shipped this turn | `~/Projects/contract-tunnel-relay` |
+
+### What's missing (the gap to close)
+
+The relay needs three additional behaviors:
+
+1. **Knowledge-contract ownership** — every contract that wants to
+   collect fees declares `contract_owner_wallet` (its derived
+   keypair). Substrate-native — same primitive as the existing
+   `wallet_identity` field on contract rows.
+
+2. **x402 extraction + verification at relay** — the relay reads
+   the `X-Payment` header on incoming envelopes, calls the x402
+   facilitator to verify, settles via Faremeter Flex split policy
+   (50% to contract owner, 50% to Foundry treasury per current
+   FOUNDRY_CUT_BPS).
+
+3. **Per-call routing trigger** — `routeRevenue.ts` currently fires
+   batched (per ISO week). For per-call, an evaluator-contract
+   triggers `routeRevenue.ts` with the per-call USDC amount.
+   Alternatively: accumulate USDC into a treasury wallet, fire
+   `routeRevenue.ts` on a threshold (e.g., every $10 accumulated),
+   keeping per-call overhead low.
+
+### Strategic frame — Unbrowse handles old internet, substrate handles new
+
+Lewis: "extend the unbrowse ecosystem for the new internet while
+unbrowse handles the old internet lol."
+
+This is the right strategic frame:
+
+- **Unbrowse** handles the OLD internet — HTTP APIs, scraping,
+  browser automation, the cached-endpoint marketplace, anti-bot
+  bypass, x402-gated paid endpoints. Already shipped, already
+  generating revenue.
+- **The /contract substrate** handles the NEW internet — signed
+  knowledge contracts, lineage-attested truth, fair per-call
+  compensation, stake-secured anchoring. The relay we just shipped
+  is the bridge — old-internet HTTP becomes a substrate-signed
+  cross-host edge.
+- **FDRY is the substrate token** for both. Unbrowse's product
+  revenue and substrate's per-call fees both flow through
+  `routeRevenue.ts` into the Voltr vault, growing stFDRY NAV. One
+  token, one vault, two revenue streams.
+
+This composes cleanly because the substrate is layered: each layer
+of the OLD-internet stack (an HTTP endpoint, an API call, a
+scraped page) becomes a layer-2/3 cell-or-graph contract; the
+NEW-internet wraps it in higher-layer signed pointers (layer 7
+validate, layer 8 signed). The relay is the wire between the
+layers.
+
 ## Webhook+tunnel as the default runtime edge (Lewis 2026-05-27)
 
 Lewis's directive: "by default the easiest path is to build an http
