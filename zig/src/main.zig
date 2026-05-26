@@ -2474,7 +2474,9 @@ fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.E
         if (stale.len > 0) {
             evidencePrint("drill apoptosis: {d} stale row(s)\n", .{stale.len});
             for (stale) |id| {
-                contract.markDied(allocator, env, id, .apoptosed, null, "stale beyond age window") catch {};
+                contract.markDied(allocator, env, id, .apoptosed, null, "stale beyond age window") catch |e| {
+                    evidencePrint("backfill: markDied apoptosed failed for {s}: {s} — id remains live\n", .{ id, @errorName(e) });
+                };
             }
         }
     }
