@@ -2155,9 +2155,22 @@ fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, sk
         evidencePrint("sabbath: evaluation tier — pacemaker paused at unix {d}, in-flight work continues\n", .{ts_now});
         // Emit a sabbath_evaluation called row so downstream tooling can
         // see exactly when the rest began and resume at the next day.
-        const target = std.fmt.allocPrint(allocator, "sabbath:evaluation:ts={d}", .{ts_now}) catch return;
-        defer allocator.free(target);
-        contract.appendCalledRow(allocator, env, skip_id, target, "sabbath-evaluation") catch {};
+        // Resolve antipattern:NotASynapsePointer — declare the evaluation
+        // payload as its own contract row first, then pass `contract:<id>`.
+        const sabbath_claim = std.fmt.allocPrint(allocator, "sabbath:evaluation ts={d}", .{ts_now}) catch return;
+        defer allocator.free(sabbath_claim);
+        const sabbath_id_opt: ?[]u8 = contract.declare(allocator, env, sabbath_claim, "", .{}) catch |decl_err| blk: {
+            evidencePrint("sabbath: declare-evaluation failed: {s} — skipping called row\n", .{@errorName(decl_err)});
+            break :blk null;
+        };
+        if (sabbath_id_opt) |sid| {
+            defer allocator.free(sid);
+            const target = std.fmt.allocPrint(allocator, "contract:{s}", .{sid}) catch return;
+            defer allocator.free(target);
+            contract.appendCalledRow(allocator, env, skip_id, target, "sabbath-evaluation") catch |err| {
+                evidencePrint("sabbath: appendCalledRow failed: {s} — no observable evaluation edge\n", .{@errorName(err)});
+            };
+        }
         return;
     }
     const max_passes: u32 = 8;
