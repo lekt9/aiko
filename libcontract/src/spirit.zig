@@ -273,7 +273,7 @@ pub fn verifyAttestation(
     // hands its `init.environ`; runtime callers pass theirs); we never
     // synthesize an empty Environ struct since std.process.Environ
     // requires a `block` field that only the process-loader populates.
-    const root_key = lineage.loadOrInitRootKey(allocator, env_caller) catch
+    const root_key = lineage.loadOrInitRootKey(allocator, env) catch
         return SpiritError.AttestationSignatureInvalid;
     const root_kp = lineage.deriveKeyPair(root_key, "") catch
         return SpiritError.AttestationSignatureInvalid;
