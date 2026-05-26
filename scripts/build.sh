@@ -497,8 +497,8 @@ step_parity() {
   # and prehook were removed because the signature chain mechanically
   # subsumes their ordering semantics (zero ledger usage proved the
   # collapse safe).
-  if ! grep -qF '"contract:"' "$LIB_DIR/src/cache.zig"; then
-    _fail "doctrine[Genesis sequencing]: collectDependencyIds in cache.zig must walk \"contract:\" synapse refs from the row's plan+action — Genesis order requires the dependency edge contribute to the signature chain"
+  if ! grep -q 'pointer.extractContractRefs(allocator, scan_buf.items)' "$LIB_DIR/src/cache.zig"; then
+    _fail "doctrine[Genesis sequencing]: collectDependencyIds in cache.zig must call pointer.extractContractRefs(allocator, scan_buf.items) — the canonical walk for contract: synapse refs that the signature chain depends on"
   fi
   if ! grep -q '## Genesis sequencing' "$REPO/SKILL.md"; then
     _fail "doctrine[Genesis sequencing]: SKILL.md is missing the '### Genesis sequencing' section that declares strict-order resolution as the substrate invariant (Day N waits on Day N-1)"
