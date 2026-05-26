@@ -1864,7 +1864,7 @@ relevant slice is sufficient.
 🟡 Envelope extension         — cloud response includes doctrine_chain
                                + active_context_chain (siblings of
                                bible_chain).
-🟡 Parity claim 48 (TODO)     — build.sh refuses to sign a binary
+🟡 Parity (TODO, unnumbered)  — build.sh refuses to sign a binary
                                that lacks pointers.zig AND registers
                                (binary_sha, anchor_set_sha) with the
                                cloud atomically with sign.
