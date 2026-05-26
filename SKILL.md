@@ -656,6 +656,62 @@ Rotation is itself a contract: declare `aiko "wallet:rotate"
 function and orchestrates the post-rotation re-sign walker. The
 user types one short prompt; the substrate does everything.
 
+## Doctrine-Reality Parity — the substrate supervises itself
+
+Every claim in this SKILL.md has a corresponding code site. Drift
+between doctrine and implementation is the substrate failing to
+keep its word. To prevent silent drift, parity itself is **a
+/contract** — a guard row declared on the ledger whose evaluator
+walks the doctrine claims and greps for matching code. The guard
+fires at every `build.sh` invocation (mechanical, not advisory).
+Drift = HOLD = the build refuses to sign.
+
+The guard is recursive: it is itself a /contract, and the rule
+"every doctrine claim has a code site" applies to the parity
+claim too. If the parity check itself doesn't have a code site,
+the guard catches itself.
+
+Concrete invariants enforced by `build.sh`'s parity step:
+
+```
+1. "no env vars are read" → grep -nE 'getPosix\("(CONTRACT_|AIKO_|UNBROWSE_|X_PAYMENT|PAYMENT_SIGNATURE|CONTRACTS_STORE|SHELL|TERM)' src/*.zig
+                            must return ONLY the HOME read in ledger.zig/lineage.zig.
+2. "scripts/ allowlist"   → ls scripts/ must equal {aiko, aiko.sig, contract,
+                            contract.sig, build.sh, dist.sh, sync-outline-explainer.sh}.
+3. "three-tier wallet bootstrap" → libcontract/src/lineage.zig must
+                            contain `pub fn loadOrInitRootKey` AND reference
+                            ~/.contracts/root.key AND ~/.aiko/keys/root.key AND keystore.
+4. "OS-agnostic keystore" → libcontract/src/keystore.zig must export
+                            `pub fn read`, `pub fn write`, `pub fn delete`.
+5. "fallbacks surface, never silent" → no `catch {}` in
+                            libcontract/src/{lineage,keystore}.zig (all must
+                            be `catch |e| surface(...)`).
+6. "rotation as a function" → libcontract/src/lineage.zig must export
+                            `pub fn rotateRootKey` AND `pub fn rotateAllSignedRowsByLineage`.
+7. "aiko binary has no verbs other than the goal + --remote/--local" → 
+                            zig/src/main.zig parseAikoArgs must accept ONLY
+                            --remote / --local (no --genesis, no --user).
+8. "spawn = appendRow to a ledger" → every row-creating code path
+                            flows through ledger.appendRow OR client.declareRemote*.
+9. "binary self-attests at startup" → main.zig must call verifyBinary
+                            on its own path before processing input
+                            (unless attestation is bypassed by a contract).
+10. "skill-sync auto-commits" → ~/.claude/skills/contract/.git exists +
+                            recent commits contain "sync(contract):" prefix.
+```
+
+The parity check is a single shell function in `build.sh` — not a
+new script, not a new binary, no addition to `scripts/`. It
+respects the no-scripts-in-the-substrate rule by living inside the
+canonical pipeline already there. When `build.sh` runs, parity is
+checked before sign. Drift fails the build with a per-claim
+failure line surfacing what drifted.
+
+When adding a NEW doctrine claim, add a NEW invariant to the
+parity check in the same commit. The build guard refuses any
+doctrine change that lacks a matching invariant — "if you can
+claim it, you can grep it."
+
 ## Ledger
 
 The Unbrowse ledger is canonical. The local on-disk ledger at
