@@ -1850,12 +1850,7 @@ fn redactAikoPlan(allocator: std.mem.Allocator, plan: []const u8) ![]u8 {
 }
 
 fn ambientParent(env: std.process.Environ) ?[]const u8 {
-    if (env.getPosix("CONTRACT_PARENT_ID")) |v| {
-        if (v.len > 0) return v;
-    }
-    if (env.getPosix("CONTRACT_PARENT")) |v| {
-        if (v.len > 0) return v;
-    }
+    _ = env;
     return null;
 }
 
