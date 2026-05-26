@@ -1403,6 +1403,102 @@ The standing contract:
 This is the same pattern as channel registry, picker, escalation:
 **the responsibility is a /contract, not a script.**
 
+## Pointer-keyed truthy cache — the deterministic self-resolve substrate
+
+Lewis 2026-05-26 (Granola 988cf805, contract `89b5888b`): "It's caching
+the key value to the pointer value itself. So the point of value changes,
+right? Then we know it's evaluated and we have to redo it again." + "It
+resolves it and then resolves the cash to be true."
+
+The cache is NOT a side-table. It is three event-row kinds appended to the
+canonical ledger so cache verdicts survive process exit and the
+deterministic self-resolve loop is reconstructible from the append-only
+trace (Pointers-Over-Anything Clause B — stateless trace).
+
+```
+cache_check        — appended on every resolveOne entry; carries
+                     verdict ∈ {hit, miss, stale, legacy}
+                     + current_snapshot (pointer-value hash at this instant)
+                     + recorded_snapshot (latest cache_resolved hash)
+cache_resolved     — appended on satisfied; pins the pointer snapshot
+                     that held when the contract resolved true.
+                     The canonical "resolves the cash to be true" row.
+cache_invalidated  — appended when a pointer the contract depended on
+                     acquires a new terminal event AFTER cache_resolved;
+                     carries source_id (which pointer flipped) + reason.
+```
+
+### The self-resolve loop (deterministic, in-binary)
+
+1. resolveOne entry → `computeInputHash(id, depth=0)` walks the contract's
+   DAG and folds in every descendant's content recursively, producing
+   the current 64-char pointer-value snapshot.
+2. `cache.findLatestResolvedSnapshot(id)` reads the most recent
+   cache_resolved row for the same id.
+3. Compare:
+   - `current == recorded` AND no cache_invalidated since →
+     emit `cache_check{verdict=hit}` → short-circuit, return 0.
+   - `current != recorded` →
+     emit `cache_check{verdict=miss}` → fall through, re-evaluate.
+   - satisfied without recorded snapshot (pre-cache rows) →
+     emit `cache_check{verdict=stale}` → fall through.
+   - legacy row with no hash discipline →
+     emit `cache_check{verdict=legacy}` → short-circuit (honors prior
+     contract).
+4. On `markSatisfied(id)` → emit `cache_resolved{snapshot=current_hash}`
+   so the next resolveOne pass has a snapshot to compare against.
+5. When any pointer the contract depends on acquires a new terminal
+   event → the next `computeInputHash` walks the descendant DAG, the
+   snapshot drifts, the next resolveOne fires `cache_check{verdict=miss}`
+   and re-evaluates. The invalidation cascades up the DAG by recursion;
+   no explicit walker is required (Pointers-Over-Anything Clause C —
+   DAG recompute as a pure function of the ledger).
+
+Pointer value = the recursive Blake2s256 of the contract's plan +
+action + sorted child snapshots, computed by `computeInputHash`
+(main.zig). Terminal events on dependencies (`satisfied`, `died`,
+`iterated`) participate by the recursion picking up the latest
+declared content of every descendant. Empty pointer set → snapshot is
+the empty hash (deterministic).
+
+### Substrate location
+
+```
+libcontract/src/cache.zig     — three appenders + two readers + tests
+libcontract/src/contract.zig  — re-export: pub const cache = @import("cache.zig")
+zig/src/main.zig:resolveOne   — wires cache_check on entry,
+                                 cache_resolved on satisfaction
+```
+
+### What the cache is NOT
+
+- Not an in-memory map. Process exit drops the map; the ledger does not.
+- Not a verb the caller invokes. `aiko "<goal>"` consults the cache
+  transparently; the cache rows surface in the ledger as evidence.
+- Not LLM-judged. The hit/miss verdict is a deterministic byte equality
+  check on the snapshot hex. The LLM compiler chooses what to declare;
+  the cache decides whether the declaration's previous resolution is
+  still good.
+- Not a side-script. The cache is a /contract — one substrate row per
+  consultation, one substrate row per truth-pinning, one substrate row
+  per invalidation. No bash wrapper. No env knobs.
+
+### Why this is load-bearing
+
+Per Lewis: "Because now you don't rely on values, but we don't have
+pointers" + "It just resolves itself because there's a caching layer.
+It resolves everything on the crest when all the time." The cache is
+the mechanism by which the parallel-spawned DAG converges without
+re-firing the whole graph on every iteration. Without it, every
+declaration is O(N) where N is the descendant count; with it,
+unchanged sub-DAGs short-circuit at O(1) per node.
+
+The substrate's whole "context-efficient because it only needs to
+resolve the ones that are not resolved yet" property
+(Granola 988cf805, transcript idx 38-39) depends on this cache being
+correct, ledger-backed, and deterministic. The parity invariant in
+build.sh refuses to sign a binary that drifts from this section.
+
 ## Doctrine-Reality Parity — the substrate supervises itself
 
 Every claim in this SKILL.md has a corresponding code site. Drift
