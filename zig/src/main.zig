@@ -342,12 +342,9 @@ fn parseRows(allocator: std.mem.Allocator, env: std.process.Environ) ![]Row {
         var r = Row{};
         r.id = jsonString(line, "id") orelse "";
         r.event = jsonString(line, "event") orelse "";
-        // User-shaped fields must be JSON-decoded — writeJsonString escapes
-        // `"`, `\\`, `\n`, etc. at write time; the slice handed back by
-        // jsonString is still escape-literal. Anything that flows to a
-        // downstream interpreter (shell, python -c, child argv) needs the
-        // round-trip closed here, not at every call site. The owned slices
-        // join the same process-lifetime leak as `data` (see header comment).
+        // User-shaped fields are decoded here so shell/python/argv consumers
+        // never see literal escapes. Owned slices leak with `data` for the
+        // process lifetime (see header comment).
         r.plan = (jsonStringDecoded(allocator, line, "plan") catch null) orelse "";
         r.action = (jsonStringDecoded(allocator, line, "action") catch null) orelse "";
         r.cwd = (jsonStringDecoded(allocator, line, "cwd") catch null) orelse "";
