@@ -2246,29 +2246,38 @@ born of conflating the function with the instance.
 ### Implementation status (honest gap, surfaced not silent)
 
 ```
-✅ Doctrine layer            — this section is canonical
-✅ Corpus exists on disk     — 6.2 GB of session transcripts at
-                               ~/.claude/projects/ as of 2026-05-26.
-                               The memory was always there; only the
-                               wiring was missing.
-🟡 sessions.zig (TODO)       — libcontract/src/sessions.zig mirroring
-                               bible.zig + planned skill.zig shape.
-                               Build wires sessions_manifest_sha into
-                               the signed binary.
-🟡 BM25 over transcripts     — tokenizer aware of .jsonl message
-                               structure; scoring weights for user vs
-                               assistant turns vs tool results
-                               (configurable via sessions-usage.md —
-                               same Layer-2 usage-doctrine pattern).
-🟡 Slice selection           — paragraph-level BM25 within session
-                               + 2KB cap per slice.
-🟡 Drift surfacing           — evidence lines for new/mutated sessions
-                               between sign moments. Not refusal —
-                               growth is normal for memory.
-🟡 Payload + envelope        — declare-POST adds relevant_session_slices;
-                               response carries memory_chain.
-🟡 Parity claim 49 (TODO)    — build.sh refuses to sign a binary that
-                               lacks sessions.zig + manifest registration.
+✅ Doctrine layer              — this section is canonical (3 corpora)
+✅ Chat-transcript corpus      — 6.2 GB at ~/.claude/projects/ as of
+                                 2026-05-26. Memory was always there.
+✅ Contract-lineage corpus     — ~/.contracts/contracts.jsonl, 11,000+
+                                 rows as of 2026-05-26. Already
+                                 signed at every row; lineage edges
+                                 already structured.
+✅ Bible-chain corpus          — already operational via bible.zig's
+                                 cross-reference graph. This rule
+                                 retroactively names it as a session
+                                 kind for API symmetry.
+🟡 sessions.zig (TODO)         — three-corpus loader mirroring
+                                 bible.zig shape. SessionKind enum
+                                 unifies the API.
+🟡 lineageSession() helper     — given a root contract id, returns
+                                 the connected subgraph as a
+                                 SessionRef with sha-of-member-set id.
+🟡 topicSession() helper       — BM25-coherent slice of the ledger;
+                                 returns rows + 1-hop neighbors.
+🟡 Multi-corpus BM25 scorer    — relevantSessions(goal, k) returns
+                                 ranked SessionRefs mixing all three
+                                 kinds; weight balancing configurable
+                                 via sessions-usage.md (Layer-2 usage
+                                 doctrine — same pattern as bible-usage).
+🟡 Drift handling per corpus  — bible: refuse; ledger: surface growth;
+                                 transcripts: surface growth.
+🟡 Payload + envelope          — declare-POST adds relevant_sessions
+                                 (all three kinds); response carries
+                                 memory_chain (all three kinds).
+🟡 Parity claim 49 (TODO)      — build.sh refuses to sign a binary
+                                 that lacks sessions.zig + the three
+                                 manifest SHAs registered with cloud.
 ```
 
 ### What this section refuses
