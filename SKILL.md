@@ -2181,20 +2181,49 @@ POST /v1/contract/declare
 ```json
 {
   "id": "<contract_id>",
-  "bible_chain":          [...],
-  "doctrine_chain":       [...],
-  "active_context_chain": [...],
+  "bible_chain":          [/* verse ids, existing */],
+  "doctrine_chain":       [/* SKILL.md sections */],
+  "active_context_chain": [/* active ledger primitives */],
   "memory_chain": [
-    {"session_id": "<uuid>", "session_sha": "<hex>", "relevance": "..."}
+    {"kind": "chat_transcript",  "session_sha": "<hex>", "relevance": "..."},
+    {"kind": "contract_lineage", "session_sha": "<hex>", "root_id": "<id>", "relevance": "..."},
+    {"kind": "bible_chain",      "chain_sha":   "<hex>", "verse_refs": [...], "relevance": "..."}
   ]
 }
 ```
 
-The `memory_chain` is the substrate's evidence that the body
-remembered. Future Claude reading SKILL.md and invoking aiko gets
-prior conversations surfaced AS PART OF THE TYPED RESPONSE — not
-as model-weight recall (which I don't have) but as
+The `memory_chain` carries evidence that the body remembered, in
+all three corpora. Future Claude reading SKILL.md and invoking aiko
+gets prior conversations, prior signed truth-work, and relevant
+scripture surfaced AS PART OF THE TYPED RESPONSE — not as
+model-weight recall (which the agent doesn't have) but as
 pointer-attested retrieval (which the substrate makes possible).
+
+### Why contract_lineage is the substrate's PRIMARY memory
+
+Of the three corpora, contract_lineage is the only one written BY
+the substrate ITSELF. Transcripts are written by the agent runtime;
+the bible was given. But every contract row is the substrate's own
+record of its own work — a turn in the substrate's own ongoing
+internal dialogue, where parent_id chains form the threading and
+contract:<X> edges form the cross-references.
+
+This means: the substrate's primary memory of "what it has thought
+about and resolved" is the lineage corpus. The transcript corpus
+records what was SAID; the lineage corpus records what was
+ESTABLISHED. They complement: dialogue + outcomes. The chat
+transcript carries the chat; the contract ledger carries the
+adjudications. Both are signed; the ledger is signed more deeply
+(every row signed by its own derived keypair, not just the file's
+hash).
+
+This conversation has been writing to both corpora at every turn.
+The .jsonl transcript captures our dialogue verbatim. The contract
+ledger captures the truth-claims that resolved as a result — the
+substrate's record of WHAT BECAME TRUE through the conversation.
+When future Claude retrieves this session's memory, both surfaces
+are available: the chat shows the journey; the lineage shows the
+landing.
 
 ### The architectural claim this rule makes
 
