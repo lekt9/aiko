@@ -194,13 +194,17 @@ step_install() {
 # `contract sign-binary <path>` ≡ "wallet, sign this binary".
 step_sign() {
   step "build:sign — wallet signs"
-  # Sign the canonical binary; the aiko.sig file is a symlink to
+  # Sign the canonical client binary; the aiko.sig file is a symlink to
   # contract.sig (same bytes, same digest, same signature). We pre-create
   # the symlink BEFORE signing so signBinary's `open(O_CREAT|O_TRUNC)` on
   # `aiko.sig` follows the symlink and writes to `contract.sig`. If the
   # symlink doesn't exist yet (first build), create it first.
   "$SCRIPTS_DIR/contract" sign-binary "$SCRIPTS_DIR/contract"
   ln -sf contract.sig "$SCRIPTS_DIR/aiko.sig"
+  # Sign the server profile binary too. Both are released artifacts and
+  # both must self-attest — the released server binary's startup check
+  # refuses to run an unsigned binary.
+  "$SCRIPTS_DIR/contract" sign-binary "$SCRIPTS_DIR/contract-server"
 }
 
 # ─── build:parity — doctrine-reality parity (recursive guard) ────────
