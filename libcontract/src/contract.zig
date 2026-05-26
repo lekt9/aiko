@@ -603,13 +603,9 @@ pub fn appendBreakAboveRow(
 /// guarding tissue that resists the same insult thereafter. Substrate
 /// equivalent: every classified failure leaves a guard row; high-use
 /// guards Hebbian-promote to primitive (canon 182b11c6 threshold=7).
-/// Append an `evidence` event row — a pointer-not-payload record of the
-/// binary's own observation stream (interoception, modulator, env
-/// fingerprint, resolver evidence lines) captured during this invocation.
-/// Body bytes live in a content-addressed blob next to the ledger; only the
-/// pointer + size + scope land in the row. Privacy axis: scope "private"
-/// means the blob must never leave this machine; "shared" means the bytes
-/// were redacted at capture time and may be replicated to the cloud tier.
+/// Pointer-not-payload row for the binary's own observation stream.
+/// Bytes live in a content-addressed blob beside the ledger; scope is
+/// "private" (host-local) or "shared" (cloud-replicable).
 pub fn appendEvidenceRow(
     allocator: std.mem.Allocator,
     env: std.process.Environ,
