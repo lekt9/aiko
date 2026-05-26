@@ -1232,6 +1232,26 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
     const action = r.action;
     const ptype = pointer.inferPointerType(action);
 
+    // ─── drill: — the continuous resolver primitive ─────────────────────
+    // A contract whose action is `drill:all-unresolved` (or any `drill:<scope>`
+    // for future scoping) triggers a DEEP backfill over the whole ledger:
+    // budget 1024 rows per pass × max 32 passes, skip-id pinned to this very
+    // row so the driller doesn't recurse on itself. This is the substrate's
+    // standing-resolver primitive — declare once with a `repeat:` synapse
+    // and the substrate drills every fire of the pacemaker. The action is
+    // intentionally idempotent: re-firing on an already-settled ledger emits
+    // "ledger settled after 0 pass(es)" and returns satisfied.
+    if (std.mem.startsWith(u8, action, "drill:")) {
+        _ = rows; // backfill re-parses the ledger live; the snapshot is stale by then.
+        evidencePrint("drill: action fired (scope={s}) — full-ledger backfill begins\n", .{action["drill:".len..]});
+        backfillUnresolvedDeep(allocator, env, r.id) catch |e| {
+            evidencePrint("  result: HOLD — drill errored: {s}\n", .{@errorName(e)});
+            return .{ .rc = 1, .result = "hold" };
+        };
+        evidence("  result: FIRE — drill completed; standing resolver remains armed\n");
+        return .{ .rc = 0, .result = "fire" };
+    }
+
     if (std.mem.eql(u8, ptype, "neuron")) {
         const ids = try childIds(allocator, rows, r.id);
         defer allocator.free(ids);
