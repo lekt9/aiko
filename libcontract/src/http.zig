@@ -31,7 +31,6 @@ pub const Headers = struct {
     bearer_token: ?[]const u8 = null,
     payment: ?[]const u8 = null,
     client: ?[]const u8 = null,
-    payment_provider: ?[]const u8 = null,
     payment_scheme: ?[]const u8 = null,
     idempotency_key: ?[]const u8 = null,
 };
