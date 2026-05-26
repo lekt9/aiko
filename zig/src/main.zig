@@ -2046,12 +2046,7 @@ fn resolveLineage(allocator: std.mem.Allocator, env: std.process.Environ, id: []
     // pass yields zero new satisfies (the DAG settled) or budget exhausts.
     // The declared id is re-attempted on each pass so a parent that HOLDs
     // because of pending children fires once those children later resolve.
-    var max_passes: u32 = 8;
-    if (env.getPosix("CONTRACT_RESOLVE_PASSES")) |s| {
-        max_passes = std.fmt.parseInt(u32, s, 10) catch 8;
-        if (max_passes == 0) max_passes = 1;
-        if (max_passes > 64) max_passes = 64;
-    }
+    const max_passes: u32 = 8;
     var declared_rc: u8 = 1;
     var pass: u32 = 0;
     while (pass < max_passes) : (pass += 1) {
