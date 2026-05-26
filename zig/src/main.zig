@@ -3443,15 +3443,9 @@ fn resolveBlobsDir(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8
     return try std.fs.path.join(allocator, &.{ home, ".contracts", "blobs" });
 }
 
-/// Flush the armed stderr tape to a content-addressed blob + append a single
-/// `evidence` row to the ledger pointing at it. `scope` is the privacy axis:
-/// "private" (blob never leaves this host) or "shared" (caller has already
-/// run the bytes through the privacy redactor and the cloud tier may mirror
-/// them). Idempotent on the blob path — same bytes hash to the same name
-/// across invocations, write skipped if the file already exists. Never
-/// throws to the caller: a failure here surfaces as an evidence line to
-/// stderr (still cheap) and the binary continues, because losing observation
-/// is strictly less bad than losing the actual goal resolution.
+/// Idempotent: same bytes hash to the same blob path; write skipped if
+/// already present. Never throws — losing observation must not block goal
+/// resolution.
 fn flushStderrTapeAsEvidence(
     allocator: std.mem.Allocator,
     env: std.process.Environ,
