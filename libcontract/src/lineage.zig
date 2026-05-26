@@ -101,59 +101,34 @@ fn backfillMirrors(
     }
 }
 
-// ────────── macOS Keychain shellout ──────────
+// ────────── OS keystore (delegates to keystore.zig) ──────────
 //
-// We shell out to /usr/bin/security instead of linking Security.framework
-// directly. Reasons: (a) cross-target portability — same source compiles to
-// linux where these calls become no-ops via the popen->error.NotFound path;
-// (b) zero-FFI surface; (c) avoids the macOS code-signing identity dance for
-// linking system frameworks from a self-signed binary.
-
-extern fn popen(command: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
-extern fn pclose(stream: *anyopaque) c_int;
-extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: *anyopaque) usize;
-extern fn system(command: [*:0]const u8) c_int;
+// Lineage no longer carries platform-specific shellouts — `keystore.zig`
+// owns the per-OS backend dispatch (darwin Keychain, linux libsecret,
+// windows stub, fallback ChaCha20Poly1305 file). This keeps lineage focused
+// on the cryptographic primitives and lets new platforms land by adding
+// one backend to the keystore module rather than touching lineage.
 
 const KEYCHAIN_SVC: []const u8 = "aiko.root.ed25519.seed";
 
 fn readKeychainSeed(allocator: std.mem.Allocator) ![32]u8 {
-    // `security` is darwin-only; on linux the binary just won't be on PATH.
-    var cmd_buf: [256]u8 = undefined;
-    const cmd = try std.fmt.bufPrintZ(
-        &cmd_buf,
-        "security find-generic-password -s {s} -w 2>/dev/null",
-        .{KEYCHAIN_SVC},
-    );
-    const fp = popen(cmd.ptr, "r") orelse return error.NotFound;
-    var buf: [128]u8 = undefined;
-    const n = fread(&buf, 1, buf.len, fp);
-    const rc = pclose(fp);
-    if (rc != 0 or n < ROOT_KEY_HEX_LEN) return error.NotFound;
-    var end: usize = n;
-    while (end > 0 and (buf[end - 1] == '\n' or buf[end - 1] == '\r' or buf[end - 1] == ' ')) end -= 1;
+    const stored = (try keystore.read(allocator, KEYCHAIN_SVC)) orelse return error.NotFound;
+    defer std.heap.page_allocator.free(stored); // matches keystore.read's alloc
+
+    // Trim any trailing whitespace just in case (keystore already trims, but
+    // legacy keychain entries from before this refactor may carry newlines).
+    var end: usize = stored.len;
+    while (end > 0 and (stored[end - 1] == '\n' or stored[end - 1] == '\r' or stored[end - 1] == ' ')) end -= 1;
     if (end < ROOT_KEY_HEX_LEN) return error.NotFound;
     var out: [32]u8 = undefined;
-    parseHex(buf[0..ROOT_KEY_HEX_LEN], &out) catch return error.NotFound;
-    _ = allocator;
+    parseHex(stored[0..ROOT_KEY_HEX_LEN], &out) catch return error.NotFound;
     return out;
 }
 
 fn writeKeychainSeed(allocator: std.mem.Allocator, seed: *const [32]u8) !void {
     var hex: [ROOT_KEY_HEX_LEN]u8 = undefined;
     bytesToHex(seed, &hex);
-    // -U updates if present; -a root pins the account; -D / -j are human
-    // labels. ACL: allow `security` and the running binary itself.
-    var cmd_buf: [512]u8 = undefined;
-    const cmd = try std.fmt.bufPrintZ(
-        &cmd_buf,
-        "security add-generic-password -a root -s {s} " ++
-            "-D 'aiko HD root seed (ed25519, 32B hex)' " ++
-            "-j 'Canonical root for /contract lineage + binary signing.' " ++
-            "-w '{s}' -U 2>/dev/null",
-        .{ KEYCHAIN_SVC, hex },
-    );
-    _ = system(cmd.ptr);
-    _ = allocator;
+    try keystore.write(allocator, KEYCHAIN_SVC, &hex);
 }
 
 /// HKDF-derive a 32-byte private seed, then build the ed25519 keypair.
