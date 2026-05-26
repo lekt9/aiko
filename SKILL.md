@@ -1683,18 +1683,21 @@ A contract resolves only when every dependency it declared has a
 terminal output_signature on the ledger.
 ```
 
-The dependency set walked by `cache.collectDependencyIds(id)` is:
+The dependency set walked by `cache.collectDependencyIds(id)` is the
+**minimum** set sufficient for Genesis order:
 
 1. **parent_id-children** — every row whose `parent_id == id`
 2. **`contract:<X>` synapse refs** in id's own declared plan+action
-3. **`blocked_by:<X>` synapse refs** — strict ordering wait
-4. **`prehook:<X>` synapse refs** — fires before id resolves
 
-If ANY of these has no terminal output_signature, the chain returns
-null. The resolver short-circuits via `Verdict.legacy` (honoring
-prior satisfaction if any) or falls through to runAction. There is
-no out-of-order resolution path; Day N's chain is permanently null
-until Day N-1 has signed off.
+That's it. `blocked_by:` and `prehook:` previously appeared here too
+— they were redundant (the signature chain enforces ordering
+mechanically once any kind of dependency is named), and the empirical
+ledger audit showed zero uses across 7000+ rows. See "Synapse-kind
+minimum" section below for the collapse doctrine. If ANY remaining
+dep has no terminal output_signature, the chain returns null. The
+resolver short-circuits via `Verdict.legacy` (honoring prior
+satisfaction if any) or falls through to runAction. Day N's chain is
+permanently null until Day N-1 has signed off.
 
 This is **deterministic topological order**, not semantic search.
 Semantic search (the `contract search --context` verb) is the right
