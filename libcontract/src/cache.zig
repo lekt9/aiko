@@ -339,6 +339,220 @@ pub fn hasInvalidationAfter(
     return false;
 }
 
+// ─── Signature-chain snapshot — pointer-only, no raw value bytes ─────────
+
+/// Extract a JSON string field's value from one ledger line. Returns the
+/// slice INTO the line (no allocation). Tolerates `"key": "v"` and
+/// `"key":"v"`. Returns null if absent.
+fn extractStringField(line: []const u8, key: []const u8) ?[]const u8 {
+    var needle_buf: [128]u8 = undefined;
+    const needle1 = std.fmt.bufPrint(&needle_buf, "\"{s}\": \"", .{key}) catch return null;
+    var start: usize = 0;
+    if (std.mem.indexOf(u8, line, needle1)) |p| {
+        start = p + needle1.len;
+    } else {
+        const needle2 = std.fmt.bufPrint(&needle_buf, "\"{s}\":\"", .{key}) catch return null;
+        if (std.mem.indexOf(u8, line, needle2)) |p| {
+            start = p + needle2.len;
+        } else return null;
+    }
+    const end = std.mem.indexOfScalarPos(u8, line, start, '"') orelse return null;
+    return line[start..end];
+}
+
+/// Walk the ledger backward for `id`. Returns the latest row's
+/// `output_signature` (newest terminal event wins — satisfied or died,
+/// whichever came last). Returns null if no terminal row has a
+/// signature. Caller-owned slice.
+///
+/// "Latest terminal" semantics matches the temporal-coherence fix on
+/// isSatisfied (claim 32): truth is what holds NOW. A satisfied-then-
+/// died row chain returns the DIED signature; the cache rightly sees
+/// a different snapshot and re-evaluates.
+pub fn findLatestTerminalSignature(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+) !?[]u8 {
+    const body = ledger.readAll(allocator, env) catch return null;
+    defer allocator.free(body);
+
+    // Collect line offsets (cheap) so we can walk newest-first.
+    var offsets: std.ArrayList(usize) = .empty;
+    defer offsets.deinit(allocator);
+    try offsets.append(allocator, 0);
+    var i: usize = 0;
+    while (i < body.len) : (i += 1) {
+        if (body[i] == '\n' and i + 1 < body.len) try offsets.append(allocator, i + 1);
+    }
+
+    var k: usize = offsets.items.len;
+    while (k > 0) : (k -= 1) {
+        const start = offsets.items[k - 1];
+        const end = std.mem.indexOfScalarPos(u8, body, start, '\n') orelse body.len;
+        const line = body[start..end];
+        if (line.len < 2) continue;
+        // Match id first.
+        const row_id = extractStringField(line, "id") orelse continue;
+        if (!std.mem.eql(u8, row_id, id)) continue;
+        // Accept satisfied OR died (terminal events).
+        const ev = extractStringField(line, "event") orelse continue;
+        const is_terminal = std.mem.eql(u8, ev, "satisfied") or std.mem.eql(u8, ev, "died");
+        if (!is_terminal) continue;
+        const sig = extractStringField(line, "output_signature") orelse return null;
+        return try allocator.dupe(u8, sig);
+    }
+    return null;
+}
+
+/// Walk the ledger backward for `id`. Returns the latest declared row's
+/// `parent_signature` — the contract's own identity signature. Returns
+/// null if no signed declared row exists. Caller-owned slice.
+pub fn findDeclaredParentSignature(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+) !?[]u8 {
+    const body = ledger.readAll(allocator, env) catch return null;
+    defer allocator.free(body);
+
+    var offsets: std.ArrayList(usize) = .empty;
+    defer offsets.deinit(allocator);
+    try offsets.append(allocator, 0);
+    var i: usize = 0;
+    while (i < body.len) : (i += 1) {
+        if (body[i] == '\n' and i + 1 < body.len) try offsets.append(allocator, i + 1);
+    }
+
+    var k: usize = offsets.items.len;
+    while (k > 0) : (k -= 1) {
+        const start = offsets.items[k - 1];
+        const end = std.mem.indexOfScalarPos(u8, body, start, '\n') orelse body.len;
+        const line = body[start..end];
+        if (line.len < 2) continue;
+        const row_id = extractStringField(line, "id") orelse continue;
+        if (!std.mem.eql(u8, row_id, id)) continue;
+        const ev = extractStringField(line, "event") orelse continue;
+        if (!std.mem.eql(u8, ev, "declared")) continue;
+        const sig = extractStringField(line, "parent_signature") orelse return null;
+        return try allocator.dupe(u8, sig);
+    }
+    return null;
+}
+
+/// Walk the ledger and return every `child_id` whose row has parent_id
+/// equal to `parent`. Caller owns the outer slice; each inner slice is
+/// duped. Order: ascending by appearance, then sorted for determinism.
+pub fn collectChildIds(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    parent: []const u8,
+) ![][]u8 {
+    const body = ledger.readAll(allocator, env) catch return try allocator.alloc([]u8, 0);
+    defer allocator.free(body);
+
+    var children: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (children.items) |c| allocator.free(c);
+        children.deinit(allocator);
+    }
+    var seen: std.ArrayList([]const u8) = .empty;
+    defer seen.deinit(allocator);
+
+    var iter = std.mem.tokenizeAny(u8, body, "\n");
+    while (iter.next()) |line| {
+        if (line.len < 2) continue;
+        const ev = extractStringField(line, "event") orelse continue;
+        if (!std.mem.eql(u8, ev, "declared")) continue;
+        const pid = extractStringField(line, "parent_id") orelse continue;
+        if (!std.mem.eql(u8, pid, parent)) continue;
+        const cid = extractStringField(line, "id") orelse continue;
+        // dedupe — same child id may appear multiple times if re-declared
+        var dup = false;
+        for (seen.items) |s| if (std.mem.eql(u8, s, cid)) {
+            dup = true;
+            break;
+        };
+        if (dup) continue;
+        try seen.append(allocator, cid);
+        try children.append(allocator, try allocator.dupe(u8, cid));
+    }
+
+    const owned = try children.toOwnedSlice(allocator);
+    // Stable sort by id for determinism (mirrors main.zig computeInputHash).
+    std.mem.sort([]u8, owned, {}, struct {
+        fn lt(_: void, a: []u8, b: []u8) bool {
+            return std.mem.order(u8, a, b) == .lt;
+        }
+    }.lt);
+    return owned;
+}
+
+/// Compute the pointer-only snapshot for `id` — the canonical "everything
+/// is a pointer to another pointer" cache key. Per Lewis 2026-05-26:
+/// "treat the binary signed signatures of outputs as the hash" + "the
+/// cache must rely only on pointers".
+///
+/// The snapshot is SHA256-hex of:
+///
+///   parent_signature(id)  ‖  for each child c (sorted):
+///                              child_id  ‖  terminal_signature(c)
+///
+/// where every concatenated component is a CRYPTOGRAPHIC POINTER — an
+/// ed25519 signature value bound to a derived keypair. No raw plan
+/// bytes, no raw action bytes, no value-derived hashes participate.
+/// The signatures are themselves pointers: each one resolves (via
+/// keypair derivation from the root + verify) to a truth-claim.
+///
+/// **Defensive**: returns null if ANY required signature is missing —
+/// either the contract's declared parent_signature OR any child's
+/// latest terminal output_signature. The substrate REFUSES to assert
+/// a cache verdict from an incomplete pointer chain; the resolver
+/// emits cache_check{verdict=signature_incomplete} and falls through
+/// to re-evaluate. Never silently substitutes content bytes for the
+/// missing pointer (the load-bearing first-principle invariant).
+pub fn computeSignatureChain(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+) !?[]u8 {
+    const self_sig = try findDeclaredParentSignature(allocator, env, id);
+    if (self_sig == null) return null;
+    defer if (self_sig) |s| allocator.free(s);
+
+    const child_ids = try collectChildIds(allocator, env, id);
+    defer {
+        for (child_ids) |c| allocator.free(c);
+        allocator.free(child_ids);
+    }
+
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update(self_sig.?);
+    for (child_ids) |child| {
+        const child_sig = try findLatestTerminalSignature(allocator, env, child);
+        if (child_sig == null) {
+            // Defensive cascade: any missing child signature breaks the
+            // pointer chain. Refuse to assert a verdict.
+            return null;
+        }
+        defer allocator.free(child_sig.?);
+        hasher.update(&.{0});
+        hasher.update(child);
+        hasher.update(&.{0});
+        hasher.update(child_sig.?);
+    }
+    var digest: [32]u8 = undefined;
+    hasher.final(&digest);
+
+    const hex_chars = "0123456789abcdef";
+    var out_hex: [64]u8 = undefined;
+    for (digest, 0..) |b, i| {
+        out_hex[i * 2] = hex_chars[b >> 4];
+        out_hex[i * 2 + 1] = hex_chars[b & 0x0F];
+    }
+    return try allocator.dupe(u8, &out_hex);
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────
 
 test "Verdict.jsonName covers every variant" {
