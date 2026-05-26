@@ -21,6 +21,8 @@ const std = @import("std");
 const http = @import("http.zig");
 const env_fingerprint = @import("env_fingerprint.zig");
 const verses = @import("verses.zig");
+const lineage = @import("lineage.zig");
+const contract_mod = @import("contract.zig");
 
 // liveEnv/getenv removed — env-driven admin bypass + payment overrides stripped.
 
