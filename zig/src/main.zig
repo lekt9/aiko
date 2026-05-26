@@ -3148,18 +3148,20 @@ fn buildBibleChain(allocator: std.mem.Allocator, env: std.process.Environ, promp
 /// (the python shim adds the surrounding HTTP framing). Final marker is
 /// "data: [DONE]\n\n". Currently chunks by word boundary; future hook into
 /// real upstream streaming when the cloud aiko exposes it.
-fn writeOpenAiStream(allocator: std.mem.Allocator, content: []const u8) !void {
+fn writeOpenAiStream(allocator: std.mem.Allocator, content: []const u8, bible_chain: []const u8) !void {
     const ts: i64 = time(null);
     const stream_id = try std.fmt.allocPrint(allocator, "chatcmpl-aiko-{d}", .{ts});
     defer allocator.free(stream_id);
 
     // First chunk: role=assistant, no content yet (OpenAI convention).
+    // bible_chain is emitted on the first chunk so observers see the cited
+    // verse contract ids immediately; subsequent delta chunks omit it.
     {
         const first = try std.fmt.allocPrint(allocator,
-            \\data: {{"id":"{s}","object":"chat.completion.chunk","created":{d},"model":"{s}","persona":"{s}","ca":"{s}","choices":[{{"index":0,"delta":{{"role":"assistant"}},"finish_reason":null}}]}}
+            \\data: {{"id":"{s}","object":"chat.completion.chunk","created":{d},"model":"{s}","persona":"{s}","ca":"{s}","bible_chain":{s},"choices":[{{"index":0,"delta":{{"role":"assistant"}},"finish_reason":null}}]}}
             \\
             \\
-        , .{ stream_id, ts, AIKO_PERSONA_MODEL_ID, AIKO_PERSONA_NAME, AIKO_PERSONA_CA });
+        , .{ stream_id, ts, AIKO_PERSONA_MODEL_ID, AIKO_PERSONA_NAME, AIKO_PERSONA_CA, bible_chain });
         defer allocator.free(first);
         out(first);
     }
