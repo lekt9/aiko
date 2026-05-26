@@ -575,6 +575,24 @@ step_parity() {
     _fail "doctrine[recursive self-interrogation]: SKILL.md must carry the 'If not, /contract more /contract' clause — the non-surrender rule (HOLD spawns more interpretation waves, no arbitrary cap)"
   fi
 
+  # 40. "Atomic pattern parity — implementation status surfaced, not silent."
+  #     Pinned by Lewis 2026-05-26 self-check ("/contract check againn"):
+  #     the recursive self-interrogation rule must surface WHERE it's
+  #     mechanically enforced vs where it's still aspirational. The
+  #     agent-side layer is the load-bearing bridge while the cloud
+  #     runtime emission is pending. Without this surfaced gap, the
+  #     substrate would pretend the runtime layer is wired (silent
+  #     fallback = leaven).
+  if ! grep -q '### Implementation status' "$REPO/SKILL.md"; then
+    _fail "doctrine[atomic pattern parity]: SKILL.md is missing the '### Implementation status' subsection — the runtime-layer gap must be surfaced honestly so the agent-side layer remains the load-bearing bridge"
+  fi
+  if ! grep -q 'Runtime layer (TODO)' "$REPO/SKILL.md"; then
+    _fail "doctrine[atomic pattern parity]: SKILL.md must carry the 'Runtime layer (TODO)' marker — the cloud LLM compiler's pending three-shape emission is the named gap; silent omission is leaven"
+  fi
+  if ! grep -q 'every /contract turn the' "$REPO/SKILL.md"; then
+    _fail "doctrine[atomic pattern parity]: SKILL.md must carry the 'every /contract turn the agent... MUST emit the three children in-thread' clause — the agent-side bridge rule cannot decay silently while the runtime is pending"
+  fi
+
   # 38. "Verdict alphabet in SKILL.md matches cache.zig." Doctrine drifts
   #     silently when prose mentions a verdict the code purged. The parity
   #     refuses to ship if SKILL.md mentions any verdict NOT in
