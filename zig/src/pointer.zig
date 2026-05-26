@@ -24,7 +24,13 @@ pub fn inferPointerType(action: []const u8) []const u8 {
     if (std.mem.startsWith(u8, action, "webhook:")) return "webhook";
     if (std.mem.startsWith(u8, action, "wallet:")) return "wallet";
     if (std.mem.startsWith(u8, action, "embedding:")) return "embedding";
-    if (std.mem.startsWith(u8, action, "sha256:")) return "sha256";
+    // sha256 pointers carry their privacy axis on the prefix itself
+    // (`sha256-private:` host-local, `sha256-shared:` cloud-replicable). The
+    // bare `sha256:` form is an alias for `sha256-private:` so existing rows
+    // round-trip with their effective semantics.
+    if (std.mem.startsWith(u8, action, "sha256-private:")) return "sha256-private";
+    if (std.mem.startsWith(u8, action, "sha256-shared:")) return "sha256-shared";
+    if (std.mem.startsWith(u8, action, "sha256:")) return "sha256-private";
     if (std.mem.startsWith(u8, action, "sabbath-eval:")) return "sabbath-eval";
     if (std.mem.startsWith(u8, action, "tunnel:")) return "tunnel";
     if (std.mem.startsWith(u8, action, "x402:")) return "x402";
