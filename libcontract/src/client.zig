@@ -18,10 +18,15 @@
 //!   - client only: build pointer payload, POST, render response
 
 const std = @import("std");
-const http = @import("http.zig");
-const env_fingerprint = @import("env_fingerprint.zig");
-const verses = @import("verses.zig");
-const lineage = @import("contract").lineage;
+// Route shared low-level files through the contract module (one canonical
+// owner) so Zig 0.16's "file ∈ one module" rule is honored. Direct file
+// imports here would create duplicates across the contract / contract_client
+// module boundary.
+const contract_mod = @import("contract");
+const http = contract_mod.http;
+const env_fingerprint = contract_mod.env_fingerprint;
+const verses = contract_mod.verses;
+const lineage = contract_mod.lineage;
 
 // liveEnv/getenv removed — env-driven admin bypass + payment overrides stripped.
 
