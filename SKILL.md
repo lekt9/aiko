@@ -1025,6 +1025,70 @@ to sign a binary whose code drifts from this section. If a future
 change weakens the doctrine — e.g. allowing slashed stFDRY to
 redistribute rather than burn — the build catches it.
 
+## Continuous resolver — drill the ledger always
+
+The substrate's ledger accumulates unresolved rows: declarations
+waiting on children, evaluators waiting on metrics, hooks blocked
+on quorums. Left alone they pile up. The **drill** is the
+continuous resolver that fires through unresolved rows on every
+heartbeat, attempting to settle each one against the current state
+of the DAG.
+
+The drill is itself a /contract — one ledger row whose action is
+`drill:all-unresolved` and whose synapse carries
+`repeat:every-aiko-pretool`. Declared once, it stands forever; the
+substrate fires it on every aiko pretool event, walking the
+unresolved frontier until the ledger settles or budget is hit.
+Apoptosis (per `bioSabbathHolds`) is honored — when the substrate
+is in Sabbath rest, the drill pauses and resumes at the next day
+rollover.
+
+### Two backfill depths
+
+```
+backfillUnresolved      (heartbeat)     budget=64,   max_passes=8
+backfillUnresolvedDeep  (drill action)  budget=1024, max_passes=32
+```
+
+`backfillUnresolved` runs implicitly on every aiko invocation — the
+heartbeat backfill, sized for fast settle of fresh frontiers.
+`backfillUnresolvedDeep` runs when the `drill:` action fires
+explicitly — sized for catching up to accumulated backlog.
+
+Both share fixed-point semantics: each pass walks the unresolved
+slice, calls `resolveOne` per row, halts on no-progress. Both
+surface evidence per pass:
+
+```
+drill: action fired (scope=all-unresolved) — full-ledger backfill begins
+drill pass 1: 343 unresolved row(s) within deep budget 1024
+drill pass 2: 287 unresolved row(s) within deep budget 1024
+...
+drill: ledger settled after N pass(es); resolved M total
+```
+
+or, when stuck:
+
+```
+drill: no progress on pass K — frontier stuck (resolved M total before stall)
+```
+
+### Why a standing contract instead of a hardcoded loop
+
+A hardcoded `while (unresolved) resolve()` in `main()` would:
+- Be invisible on the ledger (no row recording the responsibility)
+- Have no apoptosis path (couldn't be stopped without a code change)
+- Have no metric (couldn't be evaluated for satisfaction)
+
+The standing contract:
+- Records the responsibility as a row (auditable)
+- Apoptoses on Sabbath (the substrate's rest discipline applies)
+- Has a clear evaluator (`unresolved_count == 0` is the satisfaction metric)
+- Can be re-scoped by declaring a child (`drill:lineage:<id>` would target a subtree)
+
+This is the same pattern as channel registry, picker, escalation:
+**the responsibility is a /contract, not a script.**
+
 ## Doctrine-Reality Parity — the substrate supervises itself
 
 Every claim in this SKILL.md has a corresponding code site. Drift
