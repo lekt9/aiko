@@ -17,6 +17,7 @@ pub fn inferPointerType(action: []const u8) []const u8 {
     if (std.mem.startsWith(u8, action, "wallet:")) return "wallet";
     if (std.mem.startsWith(u8, action, "embedding:")) return "embedding";
     if (std.mem.startsWith(u8, action, "sha256:")) return "sha256";
+    if (std.mem.startsWith(u8, action, "sabbath-eval:")) return "sabbath-eval";
     if (std.mem.startsWith(u8, action, "tunnel:")) return "tunnel";
     if (std.mem.startsWith(u8, action, "x402:")) return "x402";
     if (std.mem.startsWith(u8, action, "agent:")) return "agent";
