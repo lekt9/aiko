@@ -2256,6 +2256,25 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
                 evidencePrint("apoptosis: markDied failed for cli {s}: {s}\n", .{ id, @errorName(e) });
             };
             evidencePrint("  -> apoptosed (cli_persistent_failure — 3+ failed iterations with no transient class)\n", .{});
+        } else if (std.mem.eql(u8, r.action, "neuron") and latestWave(rows, id) >= 3) {
+            // Bare `neuron` action (not a guard follow-up) that HOLDs 3+
+            // times because no child evidence ever landed. The neuron is
+            // the canonical NL-goal shape: declared, then either an
+            // in-thread agent declares sub-contracts under it OR the
+            // cloud compiler returns a tree. If neither happens within
+            // a few backfill passes the substrate is honest about it:
+            // the goal stays unresolved because no one is working on it.
+            // Apoptose so the frontier doesn't cycle the same root forever.
+            // Guard follow-ups already apoptose via the guard-specific
+            // branch above at 2+ HOLDs; user roots get one extra pass.
+            const child_count = childIds(allocator, rows, id) catch &[_][]const u8{};
+            defer if (child_count.len > 0) allocator.free(child_count);
+            if (child_count.len == 0) {
+                contract.markDied(allocator, env, id, .apoptosed, null, "neuron_stuck — bare neuron HOLD'd 3+ times with no fired child evidence; no agent or compiler declared sub-contracts to integrate, the substrate cannot synthesize children unaided") catch |e| {
+                    evidencePrint("apoptosis: markDied failed for neuron {s}: {s}\n", .{ id, @errorName(e) });
+                };
+                evidencePrint("  -> apoptosed (neuron_stuck — 3+ HOLDs with no child evidence)\n", .{});
+            }
         }
         return 1;
     }
