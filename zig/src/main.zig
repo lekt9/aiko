@@ -3470,13 +3470,22 @@ fn flushStderrTapeAsEvidence(
         return;
     };
     defer allocator.free(dir);
-    const dir_z = allocator.dupeZ(u8, dir) catch return;
+    const dir_z = allocator.dupeZ(u8, dir) catch |e| {
+        substrateEvidence("evidence: dupeZ dir failed: {s} — tape not persisted\n", .{@errorName(e)});
+        return;
+    };
     defer allocator.free(dir_z);
     _ = std.c.mkdir(dir_z.ptr, 0o755);
 
-    const blob_path = std.fs.path.join(allocator, &.{ dir, hex }) catch return;
+    const blob_path = std.fs.path.join(allocator, &.{ dir, hex }) catch |e| {
+        substrateEvidence("evidence: path.join blob failed: {s} — tape not persisted\n", .{@errorName(e)});
+        return;
+    };
     defer allocator.free(blob_path);
-    const blob_path_z = allocator.dupeZ(u8, blob_path) catch return;
+    const blob_path_z = allocator.dupeZ(u8, blob_path) catch |e| {
+        substrateEvidence("evidence: dupeZ blob_path failed: {s} — tape not persisted\n", .{@errorName(e)});
+        return;
+    };
     defer allocator.free(blob_path_z);
 
     var bst: c_stat = .{};
