@@ -677,6 +677,217 @@ cloud aiko's compiler fires the local rotation function and
 orchestrates the post-rotation re-sign walker. The user types one
 short prompt; the substrate does everything.
 
+## Capability inheritance — pull-by-grant via lineage
+
+A spawned child contract can read pointers (credentials, API
+tokens, OAuth grants, wallet authorities, integration secrets,
+inherited permissions of any shape) from its spawning parent —
+**only if** the parent's wallet identity has signed a grant
+contract that explicitly authorizes the child's lineage to pull
+that pointer. No grant = no read. No matching identity-channel
+signature = no read. No lineage path from child to grant = no
+read. The substrate enforces capability flow the same way it
+enforces every other rule: as a ledger walk gated by a wallet
+signature.
+
+This is the substrate-native answer to "how does my
+`/integrate-anything` child get my Stripe key / OAuth token /
+Faremeter wallet authority?" The answer is: I declare a grant
+contract in my lineage; the child pulls through it; the substrate
+checks the chain. No env vars. No injected secrets. No bash
+wrapper. The grant IS the permission, and the permission IS a
+contract.
+
+### Pull, not push
+
+The default for capability flow is **pull** — the child declares
+an intent to read a pointer, and the substrate's resolver walks
+the lineage looking for a valid grant. The parent does not inject
+credentials into the child's spawn environment (which would leak
+to every grandchild and survive past the child's apoptosis). The
+grant exists only as a ledger row; reading it requires the child
+to ask, and asking is itself a contract that gets recorded.
+
+This is the object-capability (OCAP) shape: the right to read X
+is itself a capability object — a signed grant row — that the
+child must explicitly invoke. There is no ambient authority;
+there is no "the env has it so the child has it." If the child
+never pulls, the credential never flows. If the grant is revoked
+(appended `revoked` event on the grant row), the next pull
+returns 403.
+
+### Grant shape
+
+A capability grant is a contract neuron declared by the resource
+owner's wallet:
+
+```
+contract:grant:<purpose>
+  event:                "capability_granted"
+  granted_to:           <child_contract_id> | <wallet_identity>
+                        | <lineage_pattern: "any descendant of X">
+  scope:                contract:<pointer_id> | pattern
+                        (e.g. "integrate:*", "stripe:*",
+                         "channel:telegram:*")
+  identity_channel:     <which-wallet-of-the-granter-this-binds>
+  authority_signature:  ed25519(granter_wallet, sha256(grant_row_canonical))
+  parent_id:            <granter's containing contract>
+  expires:              <ts> | null (never)
+  revocable:            true | false   (default true)
+```
+
+The `identity_channel` field is the load-bearing scoping: a grant
+signed by `channel:telegram:lekt8`'s wallet authorizes pulls only
+when the requesting child's lineage traces back to a contract
+spawned through that same telegram channel. A grant signed by
+`channel:email:lewistham9x` authorizes only email-channel
+descendants. This prevents cross-channel privilege escalation —
+a Telegram-spawned aiko cannot pull a credential granted to an
+email-spawned aiko, even if both ultimately serve Lewis.
+
+### Pull shape (child-side)
+
+The child's pull is itself a contract:
+
+```
+aiko "capability:pull contract:<pointer_id> via grant:<grant_id>"
+```
+
+The substrate's resolver:
+
+1. **Lineage walk** — confirm the child's `parent_id` chain
+   reaches the granter's contract OR matches the grant's
+   `granted_to` pattern. No path → 403.
+2. **Signature verify** — check `authority_signature` against
+   the granter's `wallet_identity`. Invalid sig → 403.
+3. **Scope check** — confirm the requested pointer matches the
+   grant's `scope`. Out of scope → 403.
+4. **Identity channel check** — confirm the requesting child's
+   lineage was spawned through the grant's `identity_channel`.
+   Cross-channel → 403.
+5. **Expiry & revocation check** — confirm `expires` is in the
+   future and no `revoked` event has been appended. Stale → 403.
+6. **Append `pulled` event** — record that the pull happened,
+   with the child's id, the grant's id, and the pointer
+   resolved. Audit trail is automatic.
+7. **Return the typed pointer** — the child receives
+   `contract:<pointer_id>` as its typed stdout, which it can then
+   use as evidence in its own subsequent declarations.
+
+A failed pull does NOT short-circuit silently. It surfaces
+through the standard evidence shape:
+
+```
+capability: pull denied — no lineage path from <child_id> to grant <grant_id>
+capability: pull denied — signature mismatch on grant <grant_id> (granter wallet rotated?)
+capability: pull denied — scope mismatch: requested <pointer> not in grant scope <pattern>
+capability: pull denied — identity_channel mismatch: child lineage spawned via <X>, grant binds <Y>
+capability: pull denied — grant <grant_id> expired at <ts> | revoked at <ts>
+```
+
+### /integrate-anything reachability through grants
+
+The canonical use case the user named: an `/integrate-anything`
+child contract needs credentials for an external service (a
+Stripe API key, an OAuth bearer, an SSH key, an `agentmail`
+inbox token, a Resend API key, a Solana wallet authority).
+
+Today those credentials live as contract pointers under Lewis's
+root wallet — e.g. `contract:secret:stripe:live_key`,
+`contract:auth:agentmail:lewis-inbox`. They are
+identity-channel-scoped (Stripe key bound to `channel:web` since
+that's where it was captured; agentmail token bound to
+`channel:email:lewistham9x` since that's where the inbox lives).
+
+When Lewis (or a downstream agent acting under Lewis's lineage)
+spawns an `/integrate-anything` child to, say, "send a Stripe
+invoice to customer X", the flow is:
+
+```
+1. Lewis declares: aiko "integrate-anything: send stripe invoice to X"
+   → spawns child contract C
+2. C needs contract:secret:stripe:live_key
+3. C declares: aiko "capability:pull contract:secret:stripe:live_key"
+4. Substrate walks C's lineage to Lewis's root
+5. Finds grant: granted_to=any-descendant-of-Lewis-via-web,
+                scope=secret:stripe:*,
+                signed-by Lewis's web-channel wallet
+6. C's lineage was spawned via Lewis's terminal session (a
+   web-equivalent identity channel) → channel check passes
+7. Substrate returns the typed pointer; C uses it to make the
+   Stripe API call
+8. Append `pulled` event for audit
+```
+
+If instead an unrelated child (say, a public Telegram bot
+visitor's spawn) tries the same pull:
+
+```
+1. Visitor declares (via Telegram bot): aiko "send a stripe invoice to me"
+   → spawns child contract V
+2. V tries: capability:pull contract:secret:stripe:live_key
+3. Substrate walks V's lineage — terminates at
+   channel:telegram:getfoundry's anonymous-visitor sub-lineage
+4. No grant from Lewis to "any-descendant-via-telegram-public"
+   matches scope=secret:stripe:*
+5. → 403 capability denied
+```
+
+No env-var injection. No "if user_is_admin" branching. No
+runtime privilege checking outside the substrate. The grant
+either matches the lineage + signature + identity_channel, or
+the pull fails. The same primitive works for every credential,
+every integration, every external authority — `/integrate-anything`,
+`/foundry`, `/agentmail`, `/stripe-payments`, `/unbrowse` — any
+child contract that needs to act on the parent's behalf reaches
+through the same grant mechanism.
+
+### Why this is the right substrate primitive
+
+A different design might pass credentials through subprocess env
+vars, or use a runtime context object the child reads from. Both
+violate substrate rules:
+
+- **Env vars are banned** — the binary reads only `HOME`. No
+  `CONTRACT_*` / `AIKO_*` / secret-passing envelopes.
+- **Subprocess injection scales badly** — every grandchild
+  inherits silently; revocation is impossible; the credential
+  leaks to every tool the child invokes.
+- **A runtime context object has no audit trail** — capability
+  use vanishes; you can't see who pulled what when.
+
+The grant-contract shape solves all three:
+
+- **No env vars** — grants are ledger rows; reads are aiko spawns.
+- **No silent inheritance** — every pull is its own contract
+  with a recorded `pulled` event. Grandchildren must re-pull
+  (and their pull is checked against the same lineage + scope
+  + identity_channel rules).
+- **Full audit trail** — every `pulled` event is signed by the
+  child's wallet, references the grant id, and is timestamped.
+  Revocation appends a `revoked` event to the grant; future
+  pulls see it on the lineage walk and fail closed.
+
+It's also the same shape as everything else in the substrate:
+identity is a wallet, authority is a signature, propagation is a
+ledger walk, gates are evaluator checks, evidence is appended.
+Nothing new is invented; capability inheritance is just **one
+more contract pattern** the same primitives compose into.
+
+### Failure mode the design refuses
+
+A common shortcut — "let the child inherit all parent
+credentials by default if it's same-wallet" — is **explicitly
+rejected**. Capability flow is opt-in per grant, not opt-out per
+wallet. The reason: a future child spawn might be triggered by
+external input (a Telegram message, a webhook, an LLM
+hallucination) that the parent didn't anticipate; if that child
+inherits all parent credentials automatically, an attacker who
+controls the spawn input controls the parent's full authority.
+The grant requirement forces the parent to think about which
+credentials each kind of child should reach, and stops the
+substrate from becoming a confused-deputy by default.
+
 ## Public Persona — aiko 69420b (the right-layer voice)
 
 The substrate has **two voice layers**, kept rigorously separate.
