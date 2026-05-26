@@ -5143,7 +5143,8 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     // Exception list: verbs that are themselves the bootstrap path or
     // pure read-only metadata. _sign-self IS the bootstrap (it writes
     // the L8 row on first build); self/verify-* are read-only.
-    if (!std.mem.eql(u8, verb, "_sign-self") and
+    if (!std.mem.eql(u8, verb, "_bootstrap-self-sign") and
+        !std.mem.eql(u8, verb, "_sign-child") and
         !std.mem.eql(u8, verb, "self") and
         !std.mem.eql(u8, verb, "verify-self") and
         !std.mem.eql(u8, verb, "verify-binary"))
@@ -5152,8 +5153,9 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
             errPrint(
                 "refuse-to-run: this binary has no L8 signed:<sha> row in the ledger.\n" ++
                     "  Bootstrap by running `bash scripts/build-fractal.sh` which fires\n" ++
-                    "  the build → test → self-sign pipeline. The eval step lands the\n" ++
-                    "  L8 row; subsequent runs find it and proceed.\n",
+                    "  the build → test → parent-sign pipeline. First build runs\n" ++
+                    "  _bootstrap-self-sign (root); subsequent builds run _sign-child\n" ++
+                    "  from the previous binary kept aside as .previous-binary.\n",
                 .{},
             );
             return 1;
