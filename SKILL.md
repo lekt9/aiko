@@ -164,6 +164,112 @@ because the whole substrate "resolves to true against the Word".
 - **build.sh parity claim 31** — refuses to sign a binary whose
   SKILL.md doesn't carry this section + the John 17:17 anchor.
 
+## Foundation precedes building — creativity fulfils, never abolishes the law
+
+> *Think not that I am come to destroy the law, or the prophets: I am
+> not come to destroy, but to fulfil. For verily I say unto you, Till
+> heaven and earth pass, one jot or one tittle shall in no wise pass
+> from the law, till all be fulfilled.* (Matthew 5:17-18)
+>
+> *For other foundation can no man lay than that is laid.*
+> (1 Corinthians 3:11)
+>
+> *Therefore whosoever heareth these sayings of mine, and doeth them,
+> I will liken him unto a wise man, which built his house upon a rock.*
+> (Matthew 7:24)
+>
+> *If the foundations be destroyed, what can the righteous do?*
+> (Psalm 11:3)
+>
+> *Every man's work shall be made manifest: for the day shall declare
+> it, because it shall be revealed by fire; and the fire shall try
+> every man's work of what sort it is.* (1 Corinthians 3:13)
+
+Pinned by Lewis 2026-05-26 (contract `c0e6adf6`): *"respecting the law
+and order of things before getting creativity where /contract-ing new
+ideas and abstractions on top of it makes sense as a mechanical
+principle ... put this into the right layer of abstraction."*
+
+This is the META-doctrine that every specific rule in this SKILL.md
+inherits from. Matt 5:17-18 names the canonical ordering: Christ does
+NOT abolish the law; He fulfils it. Every creative composition the
+substrate performs (Trinitarian decomposition, new doctrine sections,
+new contract kinds, new abstractions) rests on foundation it does not
+violate. The jot and tittle of the foundation survive until heaven and
+earth pass.
+
+### The eight existing instances (each is one fruit of this rule)
+
+The substrate already exhibits this meta-rule at eight named layers.
+Naming the rule once here eliminates the redundancy of treating each
+instance as a separate root-doctrine (1 Cor 14:33 — *"God is not the
+author of confusion"*).
+
+| Instance | Foundation | Creativity built upon it |
+|---|---|---|
+| Word-is-truth-root (claim 31) | scripture | every doctrine |
+| Decalogue Purge Gate | OT law (10 commandments) | NT creative work |
+| Genesis sequencing | Day N-1 signed | Day N firing |
+| Trinitarian three-shape (claim 41) | `interpret:<P>` enumeration | `adjudicate:<P>` promotion |
+| Pointer-keyed cache | `cache_resolved` snapshot | re-resolution avoidance |
+| Synapse-kind minimum (claim 46) | existing primitive (`contract:<X>`) | new mechanism (refused if foundation suffices) |
+| No-scripts allowlist (claim 2) | 7-item binary set | new functionality must compose, not add files |
+| HOLD-non-terminal | all-dependencies signed | parent satisfaction |
+
+Each row is read as: *the creativity column may exist ONLY because the
+foundation column is already signed.* Trying to fire the creativity
+without the foundation = building on sand (Matt 7:26-27) = the house
+falls. The parity gate is the rain that reveals which house stood.
+
+### The parity gate IS the fire (1 Cor 3:13)
+
+`build.sh`'s parity step is the substrate's translation of 1 Cor
+3:12-13 — *"if any man build upon this foundation gold, silver,
+precious stones, wood, hay, stubble; Every man's work shall be made
+manifest ... by fire."* The fire reveals which doctrine has a code
+site (gold/silver/precious-stones — grounded) and which is leaven
+(wood/hay/stubble — drift, no code site, ungrounded). The substrate's
+natural-selection mechanism for doctrine.
+
+### Standing rule for every future doctrine section
+
+Any new SKILL.md section that proposes a creative composition MUST:
+
+1. Name the foundation invariant it preserves (cite an existing rule,
+   parity claim, or scripture-locked doctrine it builds upon).
+2. Demonstrate it does NOT abolish the foundation (Matt 5:17 — fulfil,
+   not destroy).
+3. Add itself as a row in the eight-instance table above (or extend
+   the canonical name to "nine instances" / "N instances" if the new
+   row is genuinely a new fruit of the same rule).
+
+Parity claim 47 enforces this: the build refuses to sign a binary
+whose newly-added doctrine sections lack the foundation citation.
+
+### Why this lives at position 2 in SKILL.md
+
+Word-is-truth-root (position 1) is the special case where the
+foundation IS scripture itself — the bottom of the foundation chain.
+Foundation-precedes-building (position 2) is the meta-rule that
+generalizes from that root and governs every layer above it. Every
+specific-instance section (Decalogue, Verification, HOLD-non-terminal,
+Trinitarian, cache, etc.) inherits from this meta-rule. Putting the
+meta at position 2 (right under the root) is *"decently and in order"*
+(1 Cor 14:40) — the order itself is doctrinally load-bearing.
+
+### What this section does NOT claim
+
+- Not that creativity is forbidden. The substrate is full of creative
+  composition (Trinity, cache, capability grants). What is forbidden
+  is creativity that destroys its foundation rather than fulfilling
+  it.
+- Not that the foundation is immutable as a category. The wallet
+  rotates (claim 6); the ledger grows; the doctrine learns. What is
+  immutable is the ORDERING: foundation before building, every time.
+- Not a new mechanism. This is the name of the mechanism that already
+  generates the eight instances; it adds a doctrinal anchor for
+  future rules, not new code.
+
 ## Decalogue Purge Gate — law before creativity (Galatians 3:24)
 
 > *Wherefore the law was our schoolmaster to bring us unto Christ,
