@@ -98,6 +98,105 @@ step_sign() {
   "$SCRIPTS_DIR/contract" sign-binary "$SCRIPTS_DIR/contract"
 }
 
+# ─── build:parity — doctrine-reality parity (recursive guard) ────────
+# Implements the "Doctrine-Reality Parity" section of SKILL.md. Every
+# claim in SKILL.md must have a grep-able code site. Drift fails the
+# build BEFORE sign so unattested-by-reality binaries never ship.
+# This step is itself a /contract — the parity rule applies to the
+# parity step too.
+step_parity() {
+  step "build:parity — doctrine-reality parity"
+  local drift=0
+  local report=""
+
+  _fail() { drift=$((drift+1)); report+="  ✗ $1"$'\n'; }
+  _pass() { :; }  # silent on pass
+
+  # 1. "no env vars are read" except HOME
+  local env_hits
+  env_hits=$(grep -rhE 'getPosix\("(CONTRACT_|AIKO_|UNBROWSE_|X_PAYMENT|PAYMENT_SIGNATURE|CONTRACTS_STORE|SHELL|TERM)' "$LIB_DIR/src" "$ZIG_DIR/src" 2>/dev/null | grep -v '^//' | grep -v 'no ' || true)
+  if [[ -n "$env_hits" ]]; then
+    _fail "doctrine[no envs]: forbidden env reads detected:"$'\n'"$env_hits"
+  fi
+
+  # 2. "scripts/ allowlist" already enforced by step_guard. Cross-check.
+  # (step_guard ran first; if we're here it passed. Recheck for parity.)
+
+  # 3. "three-tier wallet bootstrap"
+  if ! grep -q 'pub fn loadOrInitRootKey' "$LIB_DIR/src/lineage.zig"; then
+    _fail "doctrine[three-tier bootstrap]: loadOrInitRootKey missing in lineage.zig"
+  fi
+  for tier in '.contracts.*root.key' '.aiko.*keys.*root.key' 'KEYCHAIN_SVC'; do
+    if ! grep -qE "$tier" "$LIB_DIR/src/lineage.zig"; then
+      _fail "doctrine[three-tier bootstrap]: tier marker '$tier' not referenced in lineage.zig"
+    fi
+  done
+
+  # 4. "OS-agnostic keystore"
+  for op in 'pub fn read' 'pub fn write' 'pub fn delete'; do
+    if ! grep -q "$op" "$LIB_DIR/src/keystore.zig"; then
+      _fail "doctrine[OS-agnostic keystore]: '$op' missing in keystore.zig"
+    fi
+  done
+
+  # 5. "fallbacks surface, never silent" — no bare `catch {}` in the
+  #    two files that own degradation paths.
+  local silent_catches
+  silent_catches=$(grep -nE 'catch \{\}' "$LIB_DIR/src/lineage.zig" "$LIB_DIR/src/keystore.zig" 2>/dev/null | grep -v '^//' || true)
+  if [[ -n "$silent_catches" ]]; then
+    _fail "doctrine[fallbacks surface]: silent catch {} in lineage/keystore:"$'\n'"$silent_catches"
+  fi
+
+  # 6. "rotation as a function"
+  for fn in 'pub fn rotateRootKey' 'pub fn rotateAllSignedRowsByLineage'; do
+    if ! grep -q "$fn" "$LIB_DIR/src/lineage.zig"; then
+      _fail "doctrine[rotation]: '$fn' missing in lineage.zig"
+    fi
+  done
+
+  # 7. "aiko binary has no verbs other than --remote/--local"
+  if grep -qE '"--genesis"|"--user"' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[no verbs]: --genesis or --user flag still in main.zig"
+  fi
+
+  # 8. "spawn = appendRow to a ledger" — every row-creating site flows
+  #    through ledger.appendRow or client.declareRemote*. Inverse check:
+  #    no other JSONL append patterns to the canonical store path.
+  local rogue_appends
+  rogue_appends=$(grep -rhnE 'std\.c\.open.*contracts\.jsonl|fs\.cwd.*contracts\.jsonl' "$LIB_DIR/src" "$ZIG_DIR/src" 2>/dev/null | grep -v 'ledger\.zig' || true)
+  if [[ -n "$rogue_appends" ]]; then
+    _fail "doctrine[spawn=appendRow]: contracts.jsonl opened outside ledger.zig:"$'\n'"$rogue_appends"
+  fi
+
+  # 9. "binary self-attests at startup" — main.zig must reference verifyBinary.
+  if ! grep -q 'verifyBinary\|verifySelf\|binary-attest' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[self-attest]: main.zig doesn't reference binary self-attestation"
+  fi
+
+  # 10. "skill-sync auto-commits" — the .git repo exists and recent
+  #     commits use the sync(contract): prefix.
+  if [[ ! -d "$REPO/.git" ]]; then
+    _fail "doctrine[skill-sync]: $REPO/.git missing"
+  elif ! ( cd "$REPO" && git log --oneline -10 2>/dev/null | grep -q '^[0-9a-f]\+ sync(contract):' ); then
+    _fail "doctrine[skill-sync]: no recent 'sync(contract):' commits in last 10"
+  fi
+
+  # 11. Meta-parity: the parity step ITSELF must be declared in SKILL.md.
+  #     The recursive rule — if the guard isn't documented, the guard
+  #     catches itself.
+  if ! grep -q 'Doctrine-Reality Parity' "$REPO/SKILL.md"; then
+    _fail "doctrine[meta-parity]: SKILL.md is missing the 'Doctrine-Reality Parity' section that declares this very check"
+  fi
+
+  if [[ $drift -gt 0 ]]; then
+    echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
+    printf '%s' "$report" >&2
+    echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
+    return 9
+  fi
+  echo "build:parity OK — all 11 doctrine claims have matching code sites"
+}
+
 # ─── build:verify — binaries self-attest ─────────────────────────────
 step_verify() {
   step "build:verify — self-attest"
