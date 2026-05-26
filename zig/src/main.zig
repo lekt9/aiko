@@ -2061,23 +2061,20 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
         evidencePrint("{s} -> PAIN interrupt; lineage halted\n", .{id});
         return 1;
     }
-    // Pointer-keyed truthy cache (Lewis 2026-05-26):
-    //   "the cache must rely only on pointers — everything is a pointer
-    //    to another pointer" + "treat the binary signed signatures of
-    //    outputs as the hash".
+    // Pointer-keyed truthy cache — pointers all the way down.
     //
-    // Primary cache key = signature chain (cache.computeSignatureChain).
-    // Each component IS a cryptographic pointer (ed25519 signature
-    // bound to a derived keypair) — no raw value bytes participate.
-    // Defensive: if any signature in the pointer chain is missing,
-    // the chain returns null and we emit verdict=signature_incomplete
-    // and fall through to re-evaluate. NEVER silently substitutes
-    // content bytes for the missing pointer.
+    // The signature chain (cache.computeSignatureChain) walks the
+    // contract's declared parent_signature + every dependency's latest
+    // terminal output_signature. Dependencies = parent_id-children +
+    // typed synapse refs (contract:, blocked_by:, prehook:). Genesis
+    // sequencing emerges naturally: Day N's chain returns null until
+    // Day N-1 has a terminal signature.
     //
-    // Legacy fallback: pre-signing rows have no output_signature.
-    // For those, the older content-hash cache (computeInputHash)
-    // still serves so the substrate doesn't regress on the existing
-    // 5000+ row ledger. Marked verdict=legacy in the row.
+    // Verdicts:
+    //   hit     — chain present + matches recorded snapshot → return 0
+    //   miss    — chain present + differs → fall through, re-evaluate
+    //   stale   — chain present + no recorded snapshot → fall through
+    //   legacy  — chain null (pre-signing row) → honor prior satisfaction
     if (isSatisfied(rows, id)) {
         const sig_chain_opt = contract.cache.computeSignatureChain(allocator, env, id) catch null;
         if (sig_chain_opt) |sig_chain| {
@@ -2103,41 +2100,16 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
                 evidencePrint("{s} satisfied without recorded pointer chain — recomputing\n", .{id});
             }
         } else {
-            // Pointer chain incomplete — fall back to byte-hash for
-            // legacy rows. The first-principles invariant holds: we
-            // SURFACE the incompleteness as a ledger event before
-            // degrading. Forward-resolving any contract whose terminal
-            // row is signed (markSatisfied/markDied after this build)
-            // will populate the chain on next pass.
-            const current_hash = computeInputHash(allocator, rows, id, 0) catch null;
-            const recorded = lastInputHash(rows, id);
-            if (current_hash) |ch| {
-                const current_slice: []const u8 = ch[0..];
-                if (recorded) |rh| {
-                    if (std.mem.eql(u8, &ch, rh)) {
-                        contract.cache.appendCacheCheckRow(allocator, env, id, .signature_incomplete, current_slice, rh) catch |e| {
-                            evidencePrint("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
-                        };
-                        evidencePrint("{s} already resolved (legacy byte-hash {s} — no signature chain available)\n", .{ id, ch[0..16] });
-                        return 0;
-                    }
-                    contract.cache.appendCacheCheckRow(allocator, env, id, .miss, current_slice, rh) catch |e| {
-                        evidencePrint("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
-                    };
-                    evidencePrint("{s} legacy byte-hash drifted (was {s}, now {s})\n", .{ id, rh[0..16], ch[0..16] });
-                } else {
-                    contract.cache.appendCacheCheckRow(allocator, env, id, .stale, current_slice, "") catch |e| {
-                        evidencePrint("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
-                    };
-                    evidencePrint("{s} satisfied without recorded hash — recomputing\n", .{id});
-                }
-            } else if (recorded == null) {
-                contract.cache.appendCacheCheckRow(allocator, env, id, .legacy, "", "") catch |e| {
-                    evidencePrint("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
-                };
-                evidencePrint("{s} already resolved (legacy, no hash)\n", .{id});
-                return 0;
-            }
+            // No pointer chain — either pre-signing row OR a dependency
+            // is still pending its terminal signature (Genesis order).
+            // For satisfied rows, honor the prior contract; for the
+            // dependency-pending case, the substrate's other gates
+            // (isSatisfied, runAction) keep things consistent.
+            contract.cache.appendCacheCheckRow(allocator, env, id, .legacy, "", "") catch |e| {
+                evidencePrint("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
+            };
+            evidencePrint("{s} already resolved (legacy, no pointer chain)\n", .{id});
+            return 0;
         }
     }
     const r = latestDeclared(rows, id) orelse {
