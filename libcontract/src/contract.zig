@@ -15,6 +15,7 @@ pub const lineage = @import("lineage.zig");
 pub const http = @import("http.zig");
 pub const env_fingerprint = @import("env_fingerprint.zig");
 pub const verses = @import("verses.zig");
+pub const bible = @import("bible.zig");
 
 /// Re-export so consumers of libcontract can verify chains without rewiring
 /// the build graph.
