@@ -90,39 +90,47 @@ pub fn read(allocator: std.mem.Allocator, svc: []const u8) !?[]u8 {
 }
 
 /// Upsert `value` (opaque bytes) under `svc`. Best-effort across backends —
-/// if the native backend fails the fallback file is written.
+/// if the native backend fails the fallback file is written, and the fall-
+/// through is surfaced to stderr.
 pub fn write(allocator: std.mem.Allocator, svc: []const u8, value: []const u8) !void {
     try validateSvc(svc);
     switch (builtin.os.tag) {
         .macos => {
-            darwinWrite(allocator, svc, value) catch {
+            darwinWrite(allocator, svc, value) catch |e| {
+                surface("darwin write failed for svc={s}: {s} — falling back to encrypted file", .{ svc, @errorName(e) });
                 return try fallbackWrite(allocator, svc, value);
             };
         },
         .linux => {
-            linuxWrite(allocator, svc, value) catch {
+            linuxWrite(allocator, svc, value) catch |e| {
+                surface("linux secret-tool write failed for svc={s}: {s} — falling back to encrypted file", .{ svc, @errorName(e) });
                 return try fallbackWrite(allocator, svc, value);
             };
         },
         .windows => {
             // STUB — real impl: PowerShell PasswordVault.Add(new PasswordCredential(svc, "root", value)).
+            surface("windows backend is a STUB — using fallback encrypted file for svc={s}", .{svc});
             return try fallbackWrite(allocator, svc, value);
         },
-        else => return try fallbackWrite(allocator, svc, value),
+        else => {
+            surface("os.tag={s} has no native backend — using fallback encrypted file for svc={s}", .{ @tagName(builtin.os.tag), svc });
+            return try fallbackWrite(allocator, svc, value);
+        },
     }
 }
 
-/// Best-effort delete. Never errors on a missing entry.
+/// Best-effort delete. Never errors on a missing entry. Per-tier failures
+/// surface to stderr so observers see partial-state risk.
 pub fn delete(allocator: std.mem.Allocator, svc: []const u8) !void {
     validateSvc(svc) catch return;
     switch (builtin.os.tag) {
-        .macos => darwinDelete(allocator, svc) catch {},
-        .linux => linuxDelete(allocator, svc) catch {},
-        .windows => {}, // STUB
+        .macos => darwinDelete(allocator, svc) catch |e| surface("darwin delete error for svc={s}: {s}", .{ svc, @errorName(e) }),
+        .linux => linuxDelete(allocator, svc) catch |e| surface("linux delete error for svc={s}: {s}", .{ svc, @errorName(e) }),
+        .windows => {}, // STUB — nothing to delete on the native side
         else => {},
     }
     // Always also clean up the fallback file (defense in depth).
-    fallbackDelete(allocator, svc) catch {};
+    fallbackDelete(allocator, svc) catch |e| surface("fallback file delete error for svc={s}: {s}", .{ svc, @errorName(e) });
 }
 
 // ─────────────── svc sanitizer ───────────────
