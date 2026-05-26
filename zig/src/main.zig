@@ -1018,7 +1018,7 @@ fn writeCloudMirrorRow(
     // a fresh mirror with no children) and emit cache_check. Failure here
     // is non-fatal — the mirror row landed; cache visibility is best-effort.
     const chain_opt = contract.cache.computeSignatureChain(allocator, env, id) catch |e| blk: {
-        evidencePrint("cache: computeSignatureChain failed for {s}: {s} — treating as miss\n", .{ id, @errorName(e) });
+        substrateEvidence("cache: computeSignatureChain failed for {s}: {s} — treating as miss\n", .{ id, @errorName(e) });
         break :blk null;
     };
     const recorded_opt = contract.cache.findLatestResolvedSnapshot(allocator, env, id) catch |e| blk: {
