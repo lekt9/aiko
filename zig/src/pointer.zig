@@ -160,6 +160,7 @@ test "inferPointerType exposes only native shapes plus cell/api" {
     try std.testing.expectEqualStrings("tunnel", inferPointerType("tunnel:wg0"));
     try std.testing.expectEqualStrings("x402", inferPointerType("x402:/v1/credits/debit"));
     try std.testing.expectEqualStrings("agent", inferPointerType("agent:lewis"));
+    try std.testing.expectEqualStrings("agent-judges", inferPointerType("agent-judges"));
     try std.testing.expectEqualStrings("machine", inferPointerType("machine:mlx"));
     try std.testing.expectEqualStrings("inhibits", inferPointerType("inhibits:deadbeef"));
     try std.testing.expectEqualStrings("bind", inferPointerType("bind:deadbeef"));
