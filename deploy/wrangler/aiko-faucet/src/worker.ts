@@ -327,19 +327,51 @@ async function signFaremeterEnvelope(env: Env, accepts: any, amount: bigint): Pr
   return btoa(JSON.stringify(envelope));
 }
 
+// Catch-all so unfunded-wallet errors, malformed env, or @solana/web3.js
+// imports failing in the Workers runtime surface as a clean 503 with a
+// hint, not as Cloudflare's opaque "error code: 1101" black-box crash.
+// Fallbacks are visible, never silent (per contract substrate doctrine).
+async function guarded<T extends Response>(
+  label: string,
+  fn: () => Promise<T>,
+): Promise<Response> {
+  try {
+    return await fn();
+  } catch (e: any) {
+    const msg = String(e?.message || e || "unknown");
+    const stack = String(e?.stack || "").split("\n").slice(0, 4).join(" | ");
+    return Response.json({
+      ok: false,
+      error: `${label}_threw`,
+      detail: msg,
+      stack_head: stack,
+      hint: msg.toLowerCase().includes("insufficient") || msg.toLowerCase().includes("balance")
+        ? "FAUCET_PRIVATE_KEY wallet needs SOL (gas) + USDC. Fund 7pXTsYwHsfeLkMVhfBdFU8qAqo69DgdqHRCiY3iGt6VV."
+        : msg.toLowerCase().includes("secret")
+          ? "wrangler secret put FAUCET_PRIVATE_KEY (base58 64-byte keypair)"
+          : "uncaught exception — see detail+stack_head",
+    }, { status: 503 });
+  }
+}
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     const ip = req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for")?.split(",")[0] || "0.0.0.0";
 
-    if (url.pathname === "/v1/faucet/claim" && req.method === "POST") return handleClaim(req, env, ip);
-    if (url.pathname === "/v1/faucet/balance" && req.method === "GET") return handleBalance(env, ip);
-    if (url.pathname === "/v1/contract/declare" && req.method === "POST") return handleDeclare(req, env, ip);
+    if (url.pathname === "/v1/faucet/claim" && req.method === "POST")
+      return guarded("claim", () => handleClaim(req, env, ip));
+    if (url.pathname === "/v1/faucet/balance" && req.method === "GET")
+      return guarded("balance", () => handleBalance(env, ip));
+    if (url.pathname === "/v1/contract/declare" && req.method === "POST")
+      return guarded("declare", () => handleDeclare(req, env, ip));
 
     return Response.json({
       service: "aiko-faucet",
       doctrine: "Manna (Exodus 16:4) — daily ration from one source.",
       endpoints: ["POST /v1/faucet/claim", "GET /v1/faucet/balance", "POST /v1/contract/declare"],
+      faucet_wallet: "7pXTsYwHsfeLkMVhfBdFU8qAqo69DgdqHRCiY3iGt6VV",
+      fund_with: "USDC + ~0.01 SOL on Solana mainnet",
     });
   },
 };
