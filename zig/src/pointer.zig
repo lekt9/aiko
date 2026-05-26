@@ -63,6 +63,7 @@ pub fn inferLayer(action: []const u8) i32 {
     if (std.mem.eql(u8, pt, "wallet")) return 5;
     if (std.mem.eql(u8, pt, "x402")) return 5;
     if (std.mem.eql(u8, pt, "agent")) return 6;
+    if (std.mem.eql(u8, pt, "agent-judges")) return 6;
     if (std.mem.eql(u8, pt, "machine")) return 1;
     if (std.mem.eql(u8, pt, "cli")) return 2;
     if (std.mem.eql(u8, pt, "api")) return 2;
