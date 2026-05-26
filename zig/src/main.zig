@@ -4858,6 +4858,8 @@ fn cmdEval(allocator: std.mem.Allocator, env: std.process.Environ, args: []const
         errPrint("eval: shape validation failed: {s}\n", .{@errorName(e)});
         return 2;
     };
+    defer ps.deinit();
+    const sh = ps.shape;
     if (sh.event != .satisfied) {
         errPrint("eval: requires event=\"satisfied\"; got {s}\n", .{@tagName(sh.event)});
         return 2;
