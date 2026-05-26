@@ -166,8 +166,10 @@ pub fn declareRemote(
             body.appendSlice(allocator, ",\"cwd_fingerprint\":") catch return ClientError.OutOfMemory;
             // `fp` is already a JSON object — splice as-is, not string-escaped.
             body.appendSlice(allocator, fp) catch return ClientError.OutOfMemory;
-        } else |_| {
-            // Fingerprint failed — proceed without it rather than blocking the call.
+        } else |err| {
+            // Fingerprint failed — declare proceeds without it. Surface per
+            // "fallbacks are visible, never silent" doctrine (SKILL.md).
+            std.debug.print("env_fingerprint: fingerprintCwd failed: {s} — declare proceeds without cwd_fingerprint\n", .{@errorName(err)});
         }
     }
 
@@ -281,8 +283,10 @@ pub fn declareRemoteAiko(
             body.appendSlice(allocator, ",\"cwd_fingerprint\":") catch return ClientError.OutOfMemory;
             // `fp` is already a JSON object — splice as-is, not string-escaped.
             body.appendSlice(allocator, fp) catch return ClientError.OutOfMemory;
-        } else |_| {
-            // Fingerprint failed — proceed without it rather than blocking the call.
+        } else |err| {
+            // Fingerprint failed — declare proceeds without it. Surface per
+            // "fallbacks are visible, never silent" doctrine (SKILL.md).
+            std.debug.print("env_fingerprint: fingerprintCwd failed: {s} — declare proceeds without cwd_fingerprint\n", .{@errorName(err)});
         }
     }
 
