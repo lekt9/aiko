@@ -253,7 +253,7 @@ pub fn declareRemoteAiko(
     // for canonical-body reconstruction, so client and server agree on
     // the exact string we just generated.
     var ts_buf: [32]u8 = undefined;
-    const ts = contract_mod.nowIsoUtc(&ts_buf) catch |e| {
+    const ts = nowIsoUtc(&ts_buf) catch |e| {
         std.debug.print("aiko declare: nowIsoUtc failed: {s}\n", .{@errorName(e)});
         return ClientError.RequestFailed;
     };
