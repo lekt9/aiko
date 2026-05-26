@@ -1882,7 +1882,11 @@ it ships the fix. The ledger itself is now the canonical work-tracker.
 | gap-relay-sign-and-verify — SDK signEnvelope + relay verifier wiring; end-to-end signed cross-host webhook | `27f42009` | neuron:gap-relay-sign-and-verify |
 | gap-relay-deploy-unbrowse — mount @contract/tunnel-relay on unbrowse backend; substrate wrapper:webhook-relay points at /relay endpoint | `65471ff2` | neuron:gap-relay-deploy-unbrowse |
 | gap-bus-auto-declare — auto-declare default render-history bus on session start; descendants inherit fractally | `23f5fcae` | neuron:gap-bus-auto-declare |
-| gap-relay-x402-per-request — deferred per Lewis; native paywall on cross-host edges via existing wallet primitives | `294e642f` | neuron:gap-relay-x402-per-request |
+| ~~gap-relay-x402-per-request~~ (SUPERSEDED by gap-relay-x402-extract below) | ~~`294e642f`~~ | replaced by concrete wire spec |
+| gap-emergentdb-federated-tier — sibling bridge publishes substrate rows to EmergentDB cluster; federated semantic search | `091d5e24` | neuron:gap-emergentdb-federated-tier |
+| gap-solana-fdry-anchoring — Merkle-batch L8 rows to Solana memo from stFDRY-stake-gated wallet; Deut 19:15 quorum | `89af4db7` | neuron:gap-solana-fdry-anchoring |
+| gap-contract-owner-wallet — extend declared row with contract_owner_wallet for per-call fee routing | `ca626bfa` | neuron:gap-contract-owner-wallet |
+| gap-relay-x402-extract — relay extracts + verifies X-Payment header; routes Faremeter split; accumulates to routeRevenue.ts threshold | `058301a9` | neuron:gap-relay-x402-extract |
 | gap-dereferencers — sibling-repo runtimes per environment | `234555df` | neuron:gap-environment-dereferencers |
 | gap-deref-spec — document the dereferencer contract per prefix | `9265afb4` | neuron:gap-dereferencer-spec |
 | gap-edge-wire — signed cross-machine wire primitive (wireguard-style) | `f7f193b8` | neuron:gap-edge-wire |
