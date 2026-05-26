@@ -300,8 +300,6 @@ extern fn popen(command: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
 extern fn pclose(stream: *anyopaque) c_int;
 extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: *anyopaque) usize;
 extern fn feof(stream: *anyopaque) c_int;
-extern fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
-extern fn unsetenv(name: [*:0]const u8) c_int;
 extern fn getentropy(buf: [*]u8, len: usize) c_int;
 // macOS stat: we only need st_mode (u16 on Darwin) — declare a minimal stat
 // struct in C ABI. Use _DARWIN_FEATURE_64_BIT_INODE via stat$INODE64 on
