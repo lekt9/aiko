@@ -19,8 +19,8 @@
 #                      `contract` wallet-tool's sign-binary verb
 #   build:verify     — binaries self-attest against their .sig sidecars
 #
-# Without the sign step's signature, aiko's --remote path refuses to run
-# (the integrity gate). Sign or stay local.
+# Without the sign step's signature, aiko's shared-visibility path refuses
+# to run (the integrity gate). Sign or stay private.
 #
 # Each step exits non-zero on failure; the parent contract holds.
 
