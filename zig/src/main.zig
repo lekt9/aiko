@@ -3119,67 +3119,310 @@ fn extractFileRefsAndHash(
     return try allocator.dupe(u8, &hex_buf);
 }
 
-/// Walk a locally-compiled AikoCompiledContract JSON tree and declare each
-/// node onto the local ledger. The root declares with no parent; evaluators
-/// and children declare with their parent's id as parent_id, preserving
-/// the tree shape that the cloud compiler would have written. Returns the
-/// root contract id (caller frees) or null on any parse/declare failure.
-fn declareLocalNode(
+// ─── Pending-declare retry queue (Wave-1 replacement for llm_fallback) ───
+//
+// When a SHARED declare hits the cloud and the response is 402 (wallet
+// empty), the prior path compiled the goal locally with a weak Qwen
+// 0.8B and wrote canonical rows to the on-disk ledger as if the cloud
+// had answered. That was leaven: the cloud's authoritative graph and
+// this host's view permanently disagreed. The replacement is a
+// hard-fail-closed queue:
+//
+//   1. queuePendingDeclare writes the to-be-declared payload to
+//      ~/.contracts/pending-declares/<sha-prefix>.json with an
+//      attempt_count.
+//   2. retryQueuedDeclares is called at the top of main, BEFORE any
+//      other dispatch, on every aiko invocation. Each queued payload
+//      is re-POSTed to the cloud; on 2xx the file is deleted, on 402
+//      the attempt_count increments, and after 10 attempts the file
+//      is moved under pending-declares/abandoned/.
+//   3. The original invocation that 402'd exits with status 2 + an
+//      evidence line naming the queued sha-prefix, so the caller sees
+//      the deferral honestly.
+//
+// --private declares do NOT pass through this queue: by doctrine
+// (Lewis 2026-05-26) they are fully local and must never cross the
+// wire. The queue is for shared (default) declares only.
+
+/// Resolve `~/.contracts/pending-declares` (and optionally a sub-dir).
+/// Caller frees. Returns error.NoHome when $HOME is unset.
+fn resolvePendingDir(
     allocator: std.mem.Allocator,
     env: std.process.Environ,
-    node: std.json.Value,
-    parent_id: ?[]const u8,
-) ?[]u8 {
-    if (node != .object) return null;
-    const obj = node.object;
-    const prompt_val = obj.get("prompt") orelse return null;
-    if (prompt_val != .string) return null;
-    const prompt = prompt_val.string;
-    if (prompt.len == 0) return null;
-
-    const id = contract.declare(allocator, env, prompt, "", .{
-        .parent_id = parent_id,
-    }) catch |decl_err| {
-        errPrint("local-llm declare failed: {s}\n", .{@errorName(decl_err)});
-        return null;
-    };
-
-    // Evaluators: each is a sibling-shaped declaration with this node as parent.
-    if (obj.get("evaluators")) |ev_val| {
-        if (ev_val == .array) {
-            for (ev_val.array.items) |ev| {
-                if (declareLocalNode(allocator, env, ev, id)) |child_id| {
-                    allocator.free(child_id);
-                }
-            }
-        }
+    sub: ?[]const u8,
+) ![]u8 {
+    const home = env.getPosix("HOME") orelse return error.NoHome;
+    if (sub) |s| {
+        return try std.fs.path.join(allocator, &.{ home, ".contracts", "pending-declares", s });
     }
-
-    // Children: recursive.
-    if (obj.get("children")) |ch_val| {
-        if (ch_val == .array) {
-            for (ch_val.array.items) |ch| {
-                if (declareLocalNode(allocator, env, ch, id)) |child_id| {
-                    allocator.free(child_id);
-                }
-            }
-        }
-    }
-
-    return id;
+    return try std.fs.path.join(allocator, &.{ home, ".contracts", "pending-declares" });
 }
 
-fn declareLocalTree(
+/// Best-effort `mkdir -p` for a 3-level path. Silent on already-exists;
+/// `_ = std.c.mkdir` returns -1+EEXIST for existing dirs and we don't
+/// care which level created it.
+fn ensurePendingDirs(allocator: std.mem.Allocator, env: std.process.Environ) !void {
+    const home = env.getPosix("HOME") orelse return error.NoHome;
+    const a = try std.fs.path.join(allocator, &.{ home, ".contracts" });
+    defer allocator.free(a);
+    const b = try std.fs.path.join(allocator, &.{ home, ".contracts", "pending-declares" });
+    defer allocator.free(b);
+    const c = try std.fs.path.join(allocator, &.{ home, ".contracts", "pending-declares", "abandoned" });
+    defer allocator.free(c);
+    const az = try allocator.dupeZ(u8, a);
+    defer allocator.free(az);
+    const bz = try allocator.dupeZ(u8, b);
+    defer allocator.free(bz);
+    const cz = try allocator.dupeZ(u8, c);
+    defer allocator.free(cz);
+    _ = std.c.mkdir(az.ptr, 0o700);
+    _ = std.c.mkdir(bz.ptr, 0o700);
+    _ = std.c.mkdir(cz.ptr, 0o700);
+}
+
+/// Sha256(plan|ts|wallet_pubkey) → 16-hex prefix. The prefix is the queue
+/// idempotency key: two invocations of the same goal with the same wallet
+/// at the same instant collide cleanly into one queued payload.
+fn pendingShaPrefix(plan: []const u8, ts: []const u8, wallet_pubkey: []const u8, out_hex: *[16]u8) []const u8 {
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update(plan);
+    hasher.update("|");
+    hasher.update(ts);
+    hasher.update("|");
+    hasher.update(wallet_pubkey);
+    var digest: [32]u8 = undefined;
+    hasher.final(&digest);
+    const tab = "0123456789abcdef";
+    var i: usize = 0;
+    while (i < 8) : (i += 1) {
+        out_hex[i * 2] = tab[digest[i] >> 4];
+        out_hex[i * 2 + 1] = tab[digest[i] & 0x0f];
+    }
+    return out_hex[0..16];
+}
+
+/// Queue a shared declare that 402'd. Writes
+/// ~/.contracts/pending-declares/<sha>.json with `{plan, action, ts,
+/// wallet_pubkey, attempt_count: 0}`. Surfaces ONE evidence line on
+/// success; silent on filesystem failure (the caller has bigger
+/// problems). Never throws to the caller — losing the queued envelope
+/// is strictly less bad than crashing the invocation that already
+/// gracefully reported PaymentRequired.
+fn queuePendingDeclare(
     allocator: std.mem.Allocator,
     env: std.process.Environ,
-    tree_json: []const u8,
-) ?[]u8 {
-    const parsed = std.json.parseFromSlice(std.json.Value, allocator, tree_json, .{}) catch |e| {
-        errPrint("local-llm tree parse failed: {s}\n", .{@errorName(e)});
-        return null;
+    plan: []const u8,
+    action: []const u8,
+    wallet_pubkey: []const u8,
+) void {
+    ensurePendingDirs(allocator, env) catch |e| {
+        evidencePrint("pending-queue: mkdir failed: {s} — declare not queued\n", .{@errorName(e)});
+        return;
     };
+
+    var ts_buf: [64]u8 = undefined;
+    const ts = contract.nowIsoUtc(&ts_buf) catch {
+        evidencePrint("pending-queue: nowIsoUtc failed — declare not queued\n", .{});
+        return;
+    };
+
+    var sha_buf: [16]u8 = undefined;
+    const sha_hex = pendingShaPrefix(plan, ts, wallet_pubkey, &sha_buf);
+
+    const fname = std.fmt.allocPrint(allocator, "{s}.json", .{sha_hex}) catch {
+        evidencePrint("pending-queue: oom — declare not queued\n", .{});
+        return;
+    };
+    defer allocator.free(fname);
+
+    const path = resolvePendingDir(allocator, env, fname) catch {
+        evidencePrint("pending-queue: path resolve failed — declare not queued\n", .{});
+        return;
+    };
+    defer allocator.free(path);
+    const path_z = allocator.dupeZ(u8, path) catch return;
+    defer allocator.free(path_z);
+
+    // Build the JSON body. `appendJsonEscaped` already handles the
+    // load-bearing escapes (quotes, backslash, control chars).
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    buf.appendSlice(allocator, "{\"plan\":") catch return;
+    appendJsonEscaped(allocator, &buf, plan) catch return;
+    buf.appendSlice(allocator, ",\"action\":") catch return;
+    appendJsonEscaped(allocator, &buf, action) catch return;
+    buf.appendSlice(allocator, ",\"ts\":") catch return;
+    appendJsonEscaped(allocator, &buf, ts) catch return;
+    buf.appendSlice(allocator, ",\"wallet_pubkey\":") catch return;
+    appendJsonEscaped(allocator, &buf, wallet_pubkey) catch return;
+    buf.appendSlice(allocator, ",\"attempt_count\":0}\n") catch return;
+
+    var wflags: std.c.O = .{};
+    wflags.ACCMODE = .WRONLY;
+    wflags.CREAT = true;
+    wflags.TRUNC = true;
+    const fd = std.c.open(path_z.ptr, wflags, @as(c_uint, 0o600));
+    if (fd < 0) {
+        evidencePrint("pending-queue: open {s} failed — declare not queued\n", .{path});
+        return;
+    }
+    _ = std.c.write(fd, buf.items.ptr, buf.items.len);
+    _ = std.c.close(fd);
+
+    evidencePrint(
+        "aiko: cloud declare returned 402; payload queued at pending-declares/{s} — will retry on next funded invocation\n",
+        .{sha_hex},
+    );
+}
+
+/// Try one queued payload: re-POST via `client.declareRemoteAiko`. On
+/// 2xx → delete the file, surface success line, return true. On 402 →
+/// increment `attempt_count` (or move to abandoned/ at 10). On other
+/// error → leave the file unchanged (transport failure ≠ permanent
+/// payment failure; let the next sweep try again).
+fn retryOneQueuedDeclare(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    file_path: []const u8,
+    file_name: []const u8,
+) void {
+    const path_z = allocator.dupeZ(u8, file_path) catch return;
+    defer allocator.free(path_z);
+
+    var st: c_stat = .{};
+    if (stat(path_z.ptr, &st) != 0) return;
+    if ((st.st_mode & 0o170000) != 0o100000) return; // not a regular file
+
+    // Read the JSON. 16 KB is plenty — declare bodies are tens of
+    // bytes; if a future payload grows beyond this we'll see it.
+    const fd = std.c.open(path_z.ptr, .{ .ACCMODE = .RDONLY }, @as(c_uint, 0));
+    if (fd < 0) return;
+    var raw = std.ArrayList(u8){};
+    defer raw.deinit(allocator);
+    var chunk: [4096]u8 = undefined;
+    while (true) {
+        const n = std.c.read(fd, &chunk, chunk.len);
+        if (n <= 0) break;
+        const got: usize = @intCast(n);
+        raw.appendSlice(allocator, chunk[0..got]) catch {
+            _ = std.c.close(fd);
+            return;
+        };
+        if (raw.items.len > 65536) break; // sanity cap
+    }
+    _ = std.c.close(fd);
+    if (raw.items.len == 0) return;
+
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, raw.items, .{}) catch return;
     defer parsed.deinit();
-    return declareLocalNode(allocator, env, parsed.value, null);
+    if (parsed.value != .object) return;
+    const obj = parsed.value.object;
+    const plan_v = obj.get("plan") orelse return;
+    if (plan_v != .string) return;
+    const action_v = obj.get("action") orelse return;
+    if (action_v != .string) return;
+    const plan = plan_v.string;
+    const action = action_v.string;
+    const attempt_count: i64 = if (obj.get("attempt_count")) |a| (if (a == .integer) a.integer else 0) else 0;
+
+    // Re-POST. The wallet binding is taken from the host's current
+    // keystore (the queued JSON intentionally does not carry the
+    // signed body — the signature would be stale anyway, and the
+    // canonical body must be rebuilt at retry time).
+    const body = client.declareRemoteAiko(allocator, env, plan, action, null, null, null, null, null, null, null) catch |e| {
+        if (e == error.PaymentRequired) {
+            // Still 402. Increment attempt_count; abandon at 10.
+            const next_attempt = attempt_count + 1;
+            if (next_attempt >= 10) {
+                const abandoned_path = resolvePendingDir(allocator, env, file_name) catch return;
+                defer allocator.free(abandoned_path);
+                const abandoned_full = std.fs.path.join(allocator, &.{ abandoned_path[0 .. abandoned_path.len - file_name.len], "abandoned", file_name }) catch return;
+                defer allocator.free(abandoned_full);
+                const abandoned_z = allocator.dupeZ(u8, abandoned_full) catch return;
+                defer allocator.free(abandoned_z);
+                if (std.c.rename(path_z.ptr, abandoned_z.ptr) == 0) {
+                    const sha_label = if (file_name.len > 5) file_name[0 .. file_name.len - 5] else file_name;
+                    evidencePrint("aiko: pending declare {s} abandoned after 10 attempts\n", .{sha_label});
+                }
+                return;
+            }
+            // Rewrite with incremented attempt_count. Same JSON shape.
+            var buf: std.ArrayList(u8) = .empty;
+            defer buf.deinit(allocator);
+            buf.appendSlice(allocator, "{\"plan\":") catch return;
+            appendJsonEscaped(allocator, &buf, plan) catch return;
+            buf.appendSlice(allocator, ",\"action\":") catch return;
+            appendJsonEscaped(allocator, &buf, action) catch return;
+            if (obj.get("ts")) |t| {
+                if (t == .string) {
+                    buf.appendSlice(allocator, ",\"ts\":") catch return;
+                    appendJsonEscaped(allocator, &buf, t.string) catch return;
+                }
+            }
+            if (obj.get("wallet_pubkey")) |w| {
+                if (w == .string) {
+                    buf.appendSlice(allocator, ",\"wallet_pubkey\":") catch return;
+                    appendJsonEscaped(allocator, &buf, w.string) catch return;
+                }
+            }
+            const tail = std.fmt.allocPrint(allocator, ",\"attempt_count\":{d}}}\n", .{next_attempt}) catch return;
+            defer allocator.free(tail);
+            buf.appendSlice(allocator, tail) catch return;
+            var wflags: std.c.O = .{};
+            wflags.ACCMODE = .WRONLY;
+            wflags.CREAT = true;
+            wflags.TRUNC = true;
+            const wfd = std.c.open(path_z.ptr, wflags, @as(c_uint, 0o600));
+            if (wfd < 0) return;
+            _ = std.c.write(wfd, buf.items.ptr, buf.items.len);
+            _ = std.c.close(wfd);
+            return;
+        }
+        // Transport / other error: leave the file alone, next sweep retries.
+        return;
+    };
+    defer allocator.free(body);
+
+    // 2xx — success. Delete the queue file and surface the new id.
+    if (jsonString(body, "id")) |new_id| {
+        const sha_label = if (file_name.len > 5) file_name[0 .. file_name.len - 5] else file_name;
+        evidencePrint("aiko: pending declare {s} retried successfully, row id {s}\n", .{ sha_label, new_id });
+    }
+    _ = std.c.unlink(path_z.ptr);
+}
+
+/// Sweep `~/.contracts/pending-declares/` once at the top of `main`.
+/// Skips the `abandoned/` subdir. Never throws — a transport failure
+/// or a missing dir is silently survived.
+fn retryQueuedDeclares(allocator: std.mem.Allocator, env: std.process.Environ) void {
+    const dir_path = resolvePendingDir(allocator, env, null) catch return;
+    defer allocator.free(dir_path);
+    const dir_path_z = allocator.dupeZ(u8, dir_path) catch return;
+    defer allocator.free(dir_path_z);
+
+    // opendir + readdir via libc. Keeps the same C-stdlib shape as the
+    // rest of this file (no std.fs.openDir alloc churn).
+    const dirp = opendir(dir_path_z.ptr);
+    if (dirp == null) return;
+    defer _ = closedir(dirp);
+
+    while (true) {
+        const entry = readdir(dirp);
+        if (entry == null) break;
+        const e = entry.?;
+        const name_ptr: [*:0]const u8 = @ptrCast(&e.d_name);
+        const name_len = std.mem.indexOfSentinel(u8, 0, name_ptr);
+        const name = name_ptr[0..name_len];
+        if (name.len == 0) continue;
+        if (name[0] == '.') continue; // skip ., .., dotfiles
+        if (std.mem.eql(u8, name, "abandoned")) continue;
+        // Only process *.json files.
+        if (!std.mem.endsWith(u8, name, ".json")) continue;
+
+        const full = std.fs.path.join(allocator, &.{ dir_path, name }) catch continue;
+        defer allocator.free(full);
+        retryOneQueuedDeclare(allocator, env, full, name);
+    }
 }
 
 /// Days 1-3 always fire. Days 4-7 are conditional on truth holding. A held day
