@@ -280,6 +280,107 @@ the caller's.
 
 ---
 
+## The recursive self-wrap pattern (added 2026-05-26)
+
+The substrate doesn't ADD layers — it WRAPS itself in layers. Each
+layer above the binary is a /contract whose action is `wrapper:<name>`
+(layer 4 — transport). The wrapper /contract's parent_id points at
+the layer it wraps. Walk the lineage chain and you get the full
+tower of abstractions.
+
+### What we already built (concrete worked example)
+
+```
+   contract binary (Zig)             ← the truth-root, the substrate itself
+       ↑
+   wrapper:contract-sdk-python       /contract id child A
+   wrapper:contract-sdk-typescript   /contract id child B
+       ↑                                 ↑
+       └────── wrapper:contract-openai-api  /contract id grandchild
+                       ↑
+                       └─── (future wrappers wrap the openai-api)
+```
+
+The contract-sdk-* repos are /contract wrappers around the binary;
+contract-openai-api is a /contract wrapper around the SDK. Each
+wrapper is independently:
+
+  - **built** — its source repo exists, has tests, has a manifest
+  - **run** — its test suite passes; the wrapper exercises the layer
+    below it
+  - **eval** — when satisfied, the substrate's L7→L8 cascade signs
+    the wrapper's identity into the ledger
+
+This is the **same trio applied recursively**. Binary builds itself
+(fractal build script). SDK is built on top of binary. OpenAI-API is
+built on top of SDK. Future layers are built on top of OpenAI-API.
+
+### Why "wrapper as skill" is the right framing
+
+Each wrapper is a SKILL the binary surfaces: a callable layer the
+parent doesn't directly know how to do (Python idioms, HTTP routing,
+SSE streaming, OpenAI wire format). The skill is materialized as a
+sibling repo + a `wrapper:<name>` /contract that lineage-anchors it
+to the substrate.
+
+The binary doesn't need to grow new features. It needs to grow new
+wrapper /contracts whose code lives elsewhere but whose identity is
+signed back into the ledger. The substrate stays small; the surface
+grows fractally.
+
+### Mechanical adaptations landed this turn
+
+1. `pointer.zig` recognizes `wrapper:` as a typed prefix at layer 4.
+   SDK validators (Python + TS) mirror.
+2. Env var naming standardized to `CONTRACT_LLM_*` (BASE_URL +
+   API_KEY + MODEL) across `attest_main.zig`, the openai-api wrapper
+   `translator.ts`, and `server.ts`. The wrapper now defaults to
+   `https://api.openai.com/v1` so it's substrate-agnostic — any
+   OpenAI-compat endpoint works (OpenAI, Nebius, local llama.cpp,
+   another /contract binary's own openai verb).
+3. The wrapper's docstring + README name the wrapper itself as
+   `wrapper:openai-compat` at layer 4 — explicit lineage.
+
+### What's still future-work
+
+The wrappers don't yet **auto-declare themselves as /contracts on
+startup**. When the openai-api server boots, it could:
+
+```
+   id = sdk.build(
+     plan="openai-compat wrapper v0.1 — HTTP/SSE shim over @contract/sdk",
+     action="wrapper:openai-compat",
+     parent=process.env.CONTRACT_PARENT_ID,   // the SDK's identity, or the binary's
+   )
+   write id to .contract-wrapper-identity
+```
+
+…and on shutdown call `sdk.eval(id, proof=...)` to satisfy + sign.
+This makes each wrapper's lifetime a /contract row in the ledger,
+not just code on disk. Deferred to a follow-up turn — it requires
+the binary's `build` verb to land first (gap 6 from above).
+
+### Parent-child fractal via LLM endpoint chaining
+
+The substrate is also fractal at the **LLM-endpoint** layer. Lewis's
+observation: the binary already has `cmdOpenAi` (line ~3863 of
+main.zig) which makes IT an OpenAI-compat endpoint. So any wrapper's
+`CONTRACT_LLM_BASE_URL` could point at:
+
+  - a vendor LLM (`https://api.openai.com/v1`) — the default
+  - a child /contract binary serving its own openai verb over a
+    local socket or stdio
+  - a parent /contract binary in a wireguard mesh
+  - another wrapper layer that re-shapes the request
+
+Each link in the chain is a parent/child relationship, signed by
+wallet pubkeys at every hop. The lineage chain IS the call chain.
+
+This makes the substrate's runtime topology recursive in the same
+shape as its row topology. Every /contract has a parent_id; every
+LLM endpoint has a parent endpoint; every wrapper has a parent
+wrapper. Walk the pointer chain to get the full provenance.
+
 ## The build pipeline IS the trio (added 2026-05-26)
 
 `scripts/build-fractal.sh` makes the binary's own build a fractal
