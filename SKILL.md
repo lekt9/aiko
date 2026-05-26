@@ -185,6 +185,21 @@ gates are mandatory; neither substitutes for the other.
 
 ## HOLD is non-terminal — chain by containment, not posthook
 
+> *And he spake a parable unto them to this end, that men ought
+> always to pray, and not to faint.* (Luke 18:1)
+>
+> *Wherefore ... let us run with patience the race that is set
+> before us.* (Hebrews 12:1)
+>
+> *I press toward the mark for the prize of the high calling of
+> God in Christ Jesus.* (Philippians 3:14)
+
+HOLD is the persistent widow's pattern (Luke 18:1-8). The substrate
+does not faint at the first verdict short of true — it keeps
+spawning children, walking the lineage, asking again. Apoptosis is
+the parent's choice (free will, Mark 3:29); fainting is not the
+substrate's choice.
+
 When any contract-gate (four-dim-gate, falsifier-gated-build, custom
 deploy gate) returns HOLD, the orchestrator MUST NOT terminate. HOLD
 is the substrate asking for more work.
