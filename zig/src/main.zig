@@ -906,6 +906,20 @@ fn remediationFor(class: []const u8) []const u8 {
 
 /// Has a guard row already been emitted for source_id? Idempotent —
 /// repeated same-class failures from same source only emit one guard.
+/// True when a sabbath:evaluate child already exists for this parent id.
+/// Idempotent: re-running resolveOne after a parked wave-7 must not spawn
+/// another evaluation contract on every backfill pass.
+fn hasSabbathEvaluationChild(rows: []const Row, parent_id: []const u8) bool {
+    for (rows) |r| {
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        if (r.parent_id) |p| {
+            if (!std.mem.eql(u8, p, parent_id)) continue;
+        } else continue;
+        if (std.mem.startsWith(u8, r.plan, "sabbath:evaluate ")) return true;
+    }
+    return false;
+}
+
 fn hasGuardRow(rows: []const Row, source_id: []const u8) bool {
     for (rows) |r| {
         if (!std.mem.eql(u8, r.event, "guard")) continue;
