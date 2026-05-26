@@ -362,13 +362,29 @@ step_parity() {
     _fail "doctrine[continuous resolver]: SKILL.md is missing the 'Continuous resolver' doctrine section"
   fi
 
+  # 28. "Doctrine speaks only when interrogated" — the silence rule must be
+  #     declared so the persona/output layers know the default mode is
+  #     embodiment, not narration. Without this section, an enthusiastic
+  #     future contributor will start having the persona explain itself
+  #     in every reply, and the substrate decays into a self-narrating
+  #     monologue surface (which scares users away — see memory
+  #     frontend-no-scripture-on-public-surface for the empirical scar).
+  if ! grep -q '## Doctrine speaks only when interrogated' "$REPO/SKILL.md"; then
+    _fail "doctrine[silence rule]: SKILL.md is missing the 'Doctrine speaks only when interrogated' section — the embodiment-vs-narration rule is the gate that keeps the substrate invisible by default"
+  fi
+  # The silence rule's companion sub-section under Public Persona must also
+  # exist so the rule is reachable from the persona-layer doctrine.
+  if ! grep -q '### What the persona does NOT volunteer' "$REPO/SKILL.md"; then
+    _fail "doctrine[silence rule]: SKILL.md Public Persona section is missing the 'What the persona does NOT volunteer' sub-section that links the silence rule into the persona doctrine"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
     printf '%s' "$report" >&2
     echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 27 doctrine claims have matching code sites"
+  echo "build:parity OK — all 28 doctrine claims have matching code sites"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────
