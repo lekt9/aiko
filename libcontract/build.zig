@@ -30,6 +30,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
+    shim_mod.addEmbedPath(b.path("data"));
     const shim = b.addExecutable(.{
         .name = "contract-lib-shim",
         .root_module = shim_mod,
