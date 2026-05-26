@@ -3502,15 +3502,9 @@ fn flushStderrTapeAsEvidence(
 }
 
 fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
-    // Arm the stderr tape — every byte that this invocation writes to
-    // fd 2 is mirrored into a process-local buffer; on return we hash
-    // it, write the bytes to a content-addressed blob next to the
-    // ledger, and append a single `evidence` row pointing at the blob.
-    // Pointer-not-payload: the row carries sha256:<hex> + size + scope.
     armStderrTape(allocator);
-    // Stack buffers so the deferred flush reads the current value at
-    // unwind time — `cid` / `body` are owned + freed by inner defers
-    // that run BEFORE this one (LIFO), so we cannot hold borrowed slices.
+    // Stack buffers because the deferred flush reads at unwind time, after
+    // inner defers free `cid` / `body`. LIFO order forbids borrowed slices.
     var root_id_buf: [40]u8 = undefined;
     var root_id_len: usize = 0;
     var scope_buf: [16]u8 = undefined;
