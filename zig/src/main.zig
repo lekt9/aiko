@@ -1332,10 +1332,7 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
             for (rows) |row| {
                 if (std.mem.eql(u8, row.event, "pattern_use") and std.mem.eql(u8, row.id, target)) use_count += 1;
             }
-            var threshold: u32 = 7;
-            if (env.getPosix("CONTRACT_PRIMITIVE_THRESHOLD")) |s| {
-                threshold = std.fmt.parseInt(u32, s, 10) catch 7;
-            }
+            const threshold: u32 = 7;
             const already_primitive = blk2: {
                 for (rows) |row| {
                     if (std.mem.eql(u8, row.event, "primitive") and std.mem.eql(u8, row.id, target)) break :blk2 true;
