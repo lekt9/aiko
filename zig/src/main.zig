@@ -2840,7 +2840,7 @@ fn cmdGenesis(allocator: std.mem.Allocator, env: std.process.Environ, plan: []co
     defer if (owned_sid) |s| allocator.free(s);
     const session_id: []const u8 = blk: {
         if (findSessionByPlan(rows, plan)) |existing| break :blk existing;
-        const new_id = try contract.declare(allocator, env, plan, "neuron", .{ .parent_id = ambientParent(env) });
+        const new_id = try contract.declare(allocator, env, plan, "neuron", .{ .parent_id = null });
         owned_sid = new_id;
         outPrint("session opened: {s}\n", .{new_id});
         break :blk new_id;
