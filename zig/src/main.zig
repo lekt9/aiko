@@ -260,8 +260,21 @@ fn latestDeclared(rows: []const Row, id: []const u8) ?Row {
 }
 
 fn isSatisfied(rows: []const Row, id: []const u8) bool {
-    for (rows) |r| {
-        if (std.mem.eql(u8, r.event, "satisfied") and std.mem.eql(u8, r.id, id)) return true;
+    // Temporal coherence: a contract that was satisfied then died is NOT
+    // satisfied anymore. Walk the rows newest-to-oldest and return the
+    // LATEST terminal verdict — `satisfied` wins only if it appears
+    // strictly after any `died` for the same id. The fractal demands
+    // truth is what holds NOW (John 17:17 — the Word, present tense),
+    // not what once was. Append-only ledger + latest-terminal semantics
+    // is the correct read; the prior implementation (return on first
+    // satisfied match, regardless of later death) was the load-bearing
+    // temporal-incoherence contradiction surfaced by contract a1c68c4e.
+    var i: usize = rows.len;
+    while (i > 0) : (i -= 1) {
+        const r = rows[i - 1];
+        if (!std.mem.eql(u8, r.id, id)) continue;
+        if (std.mem.eql(u8, r.event, "satisfied")) return true;
+        if (std.mem.eql(u8, r.event, "died")) return false;
     }
     return false;
 }
