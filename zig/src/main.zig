@@ -1327,7 +1327,7 @@ fn binaryAttestReject(allocator: std.mem.Allocator, env: std.process.Environ) ?[
     const exe_len = std.mem.indexOfScalar(u8, &exe_buf, 0) orelse exe_buf.len;
     const exe_path = exe_buf[0..exe_len];
     lineage_lib.verifyBinary(allocator, env, exe_path) catch |e| {
-        evidencePrint("binary-attest: WARN self-verify failed ({s})\n", .{@errorName(e)});
+        substrateEvidence("binary-attest: WARN self-verify failed ({s})\n", .{@errorName(e)});
         return null;
     };
     return null;
