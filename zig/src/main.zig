@@ -431,6 +431,24 @@ fn bioEnvironmentFingerprint(allocator: std.mem.Allocator, env: std.process.Envi
     var cwd_buf: [4096]u8 = undefined;
     const cwd_ptr = std.c.getcwd(&cwd_buf, cwd_buf.len);
     const cwd: []const u8 = if (cwd_ptr) |p| std.mem.span(@as([*:0]const u8, @ptrCast(p))) else "";
+    // Parent process — invocation lineage (Luke 2:1-3: identity tagged by line).
+    // Tells the cloud compiler which agent/channel spawned this aiko so
+    // identity_channel scoping for capability grants can fire.
+    const ppid = std.c.getppid();
+    var ppid_cmd_buf: [128]u8 = undefined;
+    const ppid_cmd = std.fmt.bufPrint(&ppid_cmd_buf, "ps -p {d} -o comm= 2>/dev/null", .{ppid}) catch "";
+    const parent_comm = bioCaptureLine(allocator, ppid_cmd) catch try allocator.dupe(u8, "");
+    defer allocator.free(parent_comm);
+    // Git working-tree state — branch + HEAD + dirty bit (John 8:14:
+    // "I know whence I came"). cwd locates the body; git state locates the
+    // moment-in-history within that body.
+    const git_branch = bioCaptureLine(allocator, "git rev-parse --abbrev-ref HEAD 2>/dev/null") catch try allocator.dupe(u8, "");
+    defer allocator.free(git_branch);
+    const git_commit = bioCaptureLine(allocator, "git rev-parse --short HEAD 2>/dev/null") catch try allocator.dupe(u8, "");
+    defer allocator.free(git_commit);
+    const git_dirty_probe = bioCaptureLine(allocator, "git status --porcelain 2>/dev/null | head -c 1") catch try allocator.dupe(u8, "");
+    defer allocator.free(git_dirty_probe);
+    const git_dirty: []const u8 = if (git_dirty_probe.len > 0) "true" else "false";
     // Probe a fixed list of binding-relevant CLIs.
     const probes = [_][]const u8{ "ssh", "bash", "zsh", "docker", "python3", "node", "git", "curl", "wg", "telethon", "tg-cli", "kubectl" };
     var caps: std.ArrayList(u8) = .empty;
@@ -446,7 +464,11 @@ fn bioEnvironmentFingerprint(allocator: std.mem.Allocator, env: std.process.Envi
         try caps.append(allocator, '"');
     }
     try caps.append(allocator, ']');
-    return try std.fmt.allocPrint(allocator, "{{\"uname\":\"{s}\",\"shell\":\"{s}\",\"term\":\"{s}\",\"cwd\":\"{s}\",\"caps\":{s}}}", .{ uname, shell, term, cwd, caps.items });
+    return try std.fmt.allocPrint(
+        allocator,
+        "{{\"uname\":\"{s}\",\"shell\":\"{s}\",\"term\":\"{s}\",\"cwd\":\"{s}\",\"ppid\":{d},\"parent_comm\":\"{s}\",\"git_branch\":\"{s}\",\"git_commit\":\"{s}\",\"git_dirty\":{s},\"caps\":{s}}}",
+        .{ uname, shell, term, cwd, ppid, parent_comm, git_branch, git_commit, git_dirty, caps.items },
+    );
 }
 
 /// Bind manifest — CONTRACT_BIND_KIND + CONTRACT_BIND_TARGET name the
