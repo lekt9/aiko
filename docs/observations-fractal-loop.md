@@ -647,6 +647,199 @@ Mechanical work (none of it blocking; can ship piecemeal):
 The substrate primitive doesn't change. The fractal property is
 already there; we're just teaching more environments to read it.
 
+## Edge IS the signed pathway (Lewis 2026-05-27)
+
+Lewis's observation: **the pathway that creates a child /contract IS
+the lineage edge.** Stop thinking of `parent_id` as a DAG reference
+field — think of the wire (stdio pipe, network socket, wireguard
+tunnel, whatever physically carries the declaration from parent to
+child) as itself the signed edge. The lineage chain is a chain of
+wires, not a chain of ids.
+
+### What we already have that matches this
+
+The substrate's existing `parent_signature` mechanism IS this:
+
+- `_sign-child <new-binary>` spawns from a parent binary process
+- The parent binary IS the wire (it carries the declaration)
+- The new L8 row's `parent_signature` is the parent's wallet-derived
+  signature over the child's identity digest
+- Anyone reading the row can verify: "this child was declared by a
+  process whose key derivable from `parent_id` signed it"
+
+So we already implement edge-as-pathway in-process via stdio + the
+binary as the wire. The conceptual upgrade is just to NAME this
+explicitly.
+
+### What we don't have yet: cross-machine wire
+
+When the parent and child are on different hosts (e.g., a parent
+/contract binary in a wireguard mesh signs a child /contract created
+on another node), the wire is the network tunnel. The signature
+scheme stays IDENTICAL — `parent_signature` is computed the same way,
+verified the same way — only the bytes-between-hosts changes.
+
+**Defer:** wire-as-wireguard primitive. We don't need it yet; stdio
+covers same-host parent-child. When we do, the right shape is to add
+a `wire:<peer-pubkey>` action prefix at layer 4 (transport), and
+spawned children declared under such a wire carry parent_signature
+computed by the remote peer. The peer's key chains back to root via
+its own L8 row in the shared ledger.
+
+## Biblical patterns as cross-domain translation medium (Lewis 2026-05-27)
+
+Lewis's insight: **high-IQ pattern recognition falls back to biblical
+patterns as the canonical intermediate language between domains.**
+When translating CI/CD → creation days → John 14:6 → LLM training,
+the biblical pattern is the easier-to-understand path because:
+
+1. It's a semantic-and-reference-based corpus (label, pattern, apply)
+   rather than terminology-bound to one domain
+2. Most domains have a parallel; the biblical pattern is the bridge
+3. It's stable across time (Hebrews 13:8) so it doesn't drift
+
+### The corpus we already have
+
+| Location | Count | Shape |
+|---|---|---|
+| `/Users/lekt9/Projects/jstack/data/teachings.json` | 24 entries | `{ref, quote, label, pattern, apply}` |
+| `/Users/lekt9/Projects/jstack/data/creation-teachings.json` | 110 entries (Genesis days, expanded) | same shape |
+| `libcontract/src/verses.zig:corpus` | ~50 entries embedded in the binary | `Verse{ref, quote, label, pattern, apply}` |
+
+The Zig embed is the substrate-authoritative view (load-bearing for
+`relevantVerses()` queries by token-overlap). The jstack JSONs are
+the source corpus the embed was distilled from.
+
+### How translation mechanically works
+
+To translate domain A → domain B via the biblical pattern:
+
+1. Tokenize the source sentence in domain A.
+2. `verses.relevantVerses(tokens, k=3)` returns the 3 most relevant
+   biblical patterns.
+3. The pattern's `label` + `pattern` field is the canonical name of
+   the structural shape (e.g., "count the cost" / "Reckon scope
+   before laying stones").
+4. Re-express the source sentence in domain B by adopting the
+   pattern's `apply` rule into B's terminology.
+
+Worked example:
+
+```
+   domain A (LLM-training, sentence): "this model checkpoint is
+     too brittle to deploy to production"
+   verses.relevantVerses → "Matthew 7:24-25 — house on rock"
+     pattern: "Storms reveal foundations"
+     apply: "Run the tests or end-to-end call this step; if no
+            foundation yet, write one failing test first"
+   domain B (CI/CD, translated): "this build artifact lacks a
+     passing test suite; add a smoke test before deploy"
+```
+
+Same structural pattern; different surface vocabulary. The biblical
+label ("house on rock") is the canonical name that survives the
+translation.
+
+### How to wire it in further
+
+Currently `verses.relevantVerses()` exists but only `cmdSpeak` uses
+it directly. To make biblical-translation a substrate primitive:
+
+- **New verb `translate <from-domain> <to-domain> <sentence>`** that
+  hits relevantVerses, then asks an LLM (or a deterministic mapper)
+  to re-express in the target domain using the matched pattern's
+  apply field as guidance.
+- **Wrapper-side: the openai-api shaper already has the schema in
+  its system prompt.** Adding the biblical pattern as the "you are
+  translating FROM operator-layer-6 sentences TO transport-layer-4
+  JSON; here are 3 relevant patterns to anchor your translation"
+  guidance closes gap-5 (tool catalog → shaper) AND makes the
+  cross-domain translation explicit at the same time.
+
+**Defer:** the translate verb itself. The corpus is in place; the
+read path (`relevantVerses`) is in place; we just haven't wired the
+top-level verb yet. New gap added below.
+
+## Authority / sibling / child model (Lewis 2026-05-27)
+
+### The rules
+
+- **Parent has authority over children** — can prune them (markDied)
+- **Siblings are same-level** — cannot prune each other; only the
+  shared parent can
+- **Root wallet has authority over everything** — system-wide kill
+  rights
+- **Server is at sibling-level to other servers** — peers in a mesh,
+  not parent-of each other
+- **Thin clients are children of their spawning server**
+- **Wrapping is always a parent-of relation, never a sibling-of relation**
+
+### The antipattern (worth flagging explicitly)
+
+> A sibling /contract MUST NOT spawn another sibling. Spawning
+> always produces a CHILD of the spawner. Otherwise you create
+> unkillable peers: neither sibling has authority over the other,
+> only the shared parent does, and the parent didn't sanction the
+> new peer.
+
+If you want a peer at the same level, declare it via the SHARED
+PARENT, never via a sibling. The shared parent is the only entity
+with the authority to spawn at that level.
+
+This stays consistent with the existing parent_id chain: every new
+row carries a parent_id pointing at the spawner. The spawner is the
+parent of the new row by definition; new row is child by definition.
+"Sibling spawning" would require a row to declare itself with a
+parent_id pointing at its sibling's parent — which the substrate
+allows mechanically but the doctrine forbids.
+
+### Mechanical enforcement (this turn)
+
+`cmdPrune` is the first place to enforce authority. Before
+`contract.markDied`, the verb verifies:
+
+- `by_id` (the killer, from the envelope) IS the target's parent_id,
+  OR
+- `by_id` IS the root wallet's identity contract id
+
+If neither, the prune is refused with a targeted diagnostic. This
+implements the rule "only the parent can prune its children" at the
+substrate level. Future enforcement will extend to declare-time
+checks (a sibling can't spawn another sibling) and cross-machine
+checks (the wire's peer pubkey must derive from the parent's chain).
+
+### Sibling self-wrapping — yes, but with the antipattern constraint
+
+A sibling CAN wrap itself, AS LONG AS the wrap produces a child:
+
+```
+   parent
+     ├── sibling A (server S1)
+     │      └── self-wrap (S1's HTTP gateway)   ← child of S1, killable by S1
+     └── sibling B (server S2)
+            └── self-wrap (S2's HTTP gateway)   ← child of S2, killable by S2
+```
+
+Siblings A and B can't kill each other (only `parent` can). Each
+sibling's wraps are its children → killable by the sibling. This is
+the recursive self-wrap pattern from earlier, applied with the
+authority rule attached.
+
+### Long-running mode (defer — but document the shape)
+
+Lewis: "should we /contract the binary into a while loop that stops
+itself as a layer above when u ctrl c?"
+
+**Yes, eventually.** The shape: the binary's main() spawns a long-
+running while-loop /contract (action `loop-until:ctrl-c`) at layer 2
+(cell), and traps SIGINT to mark that loop satisfied. Sub-loops at
+inner layers (e.g., the cmdDrain while-loop from gap-7) become its
+children. Ctrl-C at the top kills the parent loop → cascades through
+markDied → all child loops terminate.
+
+**Defer.** Requires the cmdDrain primitive (gap-7) to be wired first.
+Once gap-7 ships, this is a thin wrapper around it.
+
 ## Parent-sign binary lineage (added 2026-05-27)
 
 Lewis 2026-05-27: "should it self sign or should the parent sign it" →
