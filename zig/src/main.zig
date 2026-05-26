@@ -2671,25 +2671,23 @@ fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, sk
             return;
         }
         evidencePrint("backfill pass {d}: {d} unresolved row(s) within budget {d}\n", .{ pass + 1, candidates.items.len, budget });
-        const rows_before = rows.len;
+        const terminals_before = countTerminalEvents(rows);
         var satisfied_any = false;
         for (candidates.items) |cid| {
             const rc = resolveOne(allocator, env, cid) catch continue;
             if (rc == 0) satisfied_any = true;
         }
-        // Progress signal includes apoptosis cascade: if any candidate
-        // returned non-zero AND the ledger grew (a `died` row landed), the
-        // NEXT pass will see those rows filtered out of candidates AND any
-        // parent rows now able to apoptose via child_dead inheritance. So
-        // we re-parse and treat ledger growth as progress, not just `rc==0`.
-        // Without this, a guard:generic:neuron that apoptoses on pass 1 would
-        // never propagate `child_dead` to its parent until the next aiko
-        // invocation — the frontier looked stuck but was just one pass shy
-        // of cascading the death up the tree.
+        // Progress includes a terminal verdict landing on ANY row — death by
+        // inherent-impossibility (command_not_found / stage_dead / child_dead)
+        // counts even when no satisfaction happened, because the next pass
+        // sees those rows filtered out of candidates and any parent rows now
+        // able to apoptose via child_dead inheritance. HOLDs alone do not
+        // count (otherwise the frontier could spin without convergence).
         const rows_after = try parseRows(allocator, env);
         defer allocator.free(rows_after);
-        const ledger_grew = rows_after.len > rows_before;
-        if (!satisfied_any and !ledger_grew) {
+        const terminals_after = countTerminalEvents(rows_after);
+        const terminals_landed = terminals_after > terminals_before;
+        if (!satisfied_any and !terminals_landed) {
             evidencePrint("backfill: no progress on pass {d} — frontier stuck\n", .{pass + 1});
             return;
         }
