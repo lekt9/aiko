@@ -214,9 +214,10 @@ main() {
   step_tests
   step_compile
   step_install
+  step_parity       # doctrine ↔ code parity check BEFORE sign — drift refuses to ship
   step_sign
   step_verify
-  printf '\nbuild.sh: done — substrate is fresh, signed, attested.\n'
+  printf '\nbuild.sh: done — substrate is fresh, signed, attested, parity-checked.\n'
 }
 
 main "$@"
