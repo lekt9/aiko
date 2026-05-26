@@ -806,10 +806,33 @@ fn computeInputHash(allocator: std.mem.Allocator, rows: []const Row, cid: []cons
         }
     }.lt);
     for (sorted) |child| {
+        // Each child contributes ONE "layer" to the parent's hash — Docker-
+        // image style. The layer bytes are (child_id ‖ child_recursive_hash
+        // ‖ child_resolution_state ‖ child_terminal_input_hash). When the
+        // child satisfies/dies/iterates, the resolution_state byte flips,
+        // the layer hash flips, the parent's snapshot drifts, cache_check
+        // misses, and the parent re-evaluates. Pointer-keyed truthy cache
+        // (Lewis 2026-05-26 Granola 988cf805) — "the image layers are all
+        // resolving kv style to pointers that resolve to true against
+        // itself". The byte alphabet is intentionally small + opaque so
+        // future terminal kinds extend cleanly:
+        //   'S' satisfied | 'D' died | 'P' pending (declared, not terminal)
         const child_hex = try computeInputHash(allocator, rows, child, depth + 1);
         hasher.update(child);
         hasher.update(&.{0});
         hasher.update(&child_hex);
+        hasher.update(&.{0});
+        const state_byte: u8 = if (isSatisfied(rows, child))
+            'S'
+        else if (isDead(rows, child))
+            'D'
+        else
+            'P';
+        hasher.update(&[_]u8{state_byte});
+        hasher.update(&.{0});
+        if (lastInputHash(rows, child)) |term_hash| {
+            hasher.update(term_hash);
+        }
         hasher.update(&.{0});
     }
     var digest: [32]u8 = undefined;
