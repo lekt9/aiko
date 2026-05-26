@@ -191,7 +191,7 @@ step_parity() {
   #     commits use the sync(contract): prefix.
   if [[ ! -d "$REPO/.git" ]]; then
     _fail "doctrine[skill-sync]: $REPO/.git missing"
-  elif ! ( cd "$REPO" && git log --oneline -10 2>/dev/null | grep -q '^[0-9a-f]\+ sync(contract):' ); then
+  elif ! ( cd "$REPO" && git log --oneline -10 2>/dev/null | grep -qE '^[0-9a-f]+ sync\(contract\):' ); then
     _fail "doctrine[skill-sync]: no recent 'sync(contract):' commits in last 10"
   fi
 
