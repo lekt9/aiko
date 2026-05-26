@@ -140,7 +140,7 @@ pub fn compileLocallyJson(
     defer _ = pclose(f);
 
     var out_buf: std.ArrayList(u8) = .empty;
-    errdefer out_buf.deinit(allocator);
+    defer out_buf.deinit(allocator);
     var chunk: [4096]u8 = undefined;
     while (true) {
         const got = fread(&chunk, 1, chunk.len, f);
@@ -149,12 +149,8 @@ pub fn compileLocallyJson(
     }
 
     // Extract the first balanced { … } from the model's output.
-    const json_slice = extractFirstJsonObject(out_buf.items) orelse {
-        out_buf.deinit(allocator);
-        return Error.NoJsonInOutput;
-    };
+    const json_slice = extractFirstJsonObject(out_buf.items) orelse return Error.NoJsonInOutput;
     const owned = allocator.dupe(u8, json_slice) catch return Error.OutOfMemory;
-    out_buf.deinit(allocator);
     return owned;
 }
 
