@@ -1141,10 +1141,15 @@ fn runShellCapture(allocator: std.mem.Allocator, action: []const u8, cwd: []cons
     else
         try allocator.dupe(u8, "");
     defer allocator.free(timeout_prefix);
+    // Wrap the action in parens so the `2>&1` redirect attaches to the
+    // WHOLE subshell, not just the rightmost command in a pipeline.
+    // Without the parens, an action like `python3 A | python3 B 2>&1`
+    // only captures B's stderr — A's stderr (e.g. BrokenPipeError from
+    // a closed downstream pipe) escapes to the calling terminal.
     const cmd_plain = if (cwd.len > 0)
-        try std.fmt.allocPrint(allocator, "cd \"{s}\" && {s}{s} 2>&1", .{ cwd, timeout_prefix, action })
+        try std.fmt.allocPrint(allocator, "cd \"{s}\" && {s}( {s} ) 2>&1", .{ cwd, timeout_prefix, action })
     else
-        try std.fmt.allocPrint(allocator, "{s}{s} 2>&1", .{ timeout_prefix, action });
+        try std.fmt.allocPrint(allocator, "{s}( {s} ) 2>&1", .{ timeout_prefix, action });
     defer allocator.free(cmd_plain);
     const cmd = try allocator.dupeZ(u8, cmd_plain);
     defer allocator.free(cmd);
