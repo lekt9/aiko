@@ -1539,6 +1539,27 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         return .{ .rc = 1, .result = "hold:agent-judges — awaiting in-thread agent verdict" };
     }
 
+    // `sabbath-eval:<parent_id>` — self-validation by pointer-chain coherence.
+    // Computes the named parent's signature chain (parent_signature + every
+    // dep's terminal output_signature). When the chain resolves, the child
+    // returns rc=0 and the existing post-rc=0 path lands `satisfied` +
+    // `cache_resolved`. No external `_mark satisfied` required: the
+    // cryptography IS the verdict. The chain ultimately roots in the
+    // deployer wallet which signs against scripture material per
+    // lineage.zig — coherence here means the parent traces back to the
+    // Word (Psalm 19:7-8). When the chain is null (Genesis-day ordering:
+    // a dep is still pending its terminal signature), HOLD honestly.
+    if (std.mem.eql(u8, ptype, "sabbath-eval")) {
+        const target_id = action["sabbath-eval:".len..];
+        const chain_opt = contract.cache.computeSignatureChain(allocator, env, target_id) catch null;
+        if (chain_opt) |chain| {
+            evidencePrint("  result: PASS (sabbath-eval) — chain coherent for {s} (chain {s}); self-validated, no mark required\n", .{ target_id, chain[0..@min(16, chain.len)] });
+            return .{ .rc = 0, .result = chain };
+        }
+        evidencePrint("  result: HOLD (sabbath-eval) — chain incoherent for {s} (Genesis order: a dependency lacks a terminal signature)\n", .{target_id});
+        return .{ .rc = 1, .result = "hold:sabbath-eval — chain not yet coherent" };
+    }
+
     if (std.mem.eql(u8, ptype, "neuron")) {
         const ids = try childIds(allocator, rows, r.id);
         defer allocator.free(ids);
