@@ -151,12 +151,12 @@ set (one declaration per row on the ledger):
 - `channel:claude-code-session` — in-thread reply
 - `channel:push-notification` — orchestrator-side PushNotification
 
-Each channel is declared with `aiko "channel:<id> <metadata>"
---remote`. The ledger row IS the registry. Future reads parse the
-ledger file directly (Foundation, not subprocess).
+Each channel is declared with `aiko "channel:<id> <metadata>"`. The
+ledger row IS the registry. Future reads parse the ledger file
+directly (Foundation, not subprocess).
 
 The "best channel right now" is **another aiko declaration**, not a
-script: `aiko "channel:pick urgency=<u> kind=<k> ts=<now>" --remote`.
+script: `aiko "channel:pick urgency=<u> kind=<k> ts=<now>"`.
 The cloud aiko's compiler reads the channel-ledger rows in context,
 scores them per the urgency/kind/time-of-day evaluator-aikos pinned
 in the ledger, and returns the chosen `channel:<id>` as the promoted
