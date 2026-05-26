@@ -3416,9 +3416,14 @@ fn retryQueuedDeclares(allocator: std.mem.Allocator, env: std.process.Environ) v
     defer _ = std.c.closedir(dirp);
 
     while (std.c.readdir(dirp)) |entry| {
-        const name_ptr: [*:0]const u8 = @ptrCast(&entry.d_name);
-        const name_len = std.mem.indexOfSentinel(u8, 0, name_ptr);
-        const name = name_ptr[0..name_len];
+        // Darwin's dirent uses `.name: [1024]u8` + `.namlen: u16`. Linux
+        // uses `.name: [256]u8` (no namlen — name is NUL-terminated). The
+        // shared shape is "name buffer, NUL-terminated"; use NUL-scan so
+        // the code is portable across both. Skip the bounds check: every
+        // libc readdir returns a NUL within the buffer.
+        const name_buf_ptr: [*]const u8 = @ptrCast(&entry.name);
+        const name_len = std.mem.indexOfScalar(u8, name_buf_ptr[0..entry.name.len], 0) orelse entry.name.len;
+        const name = name_buf_ptr[0..name_len];
         if (name.len == 0) continue;
         if (name[0] == '.') continue; // skip ., .., dotfiles
         if (std.mem.eql(u8, name, "abandoned")) continue;
