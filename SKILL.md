@@ -2283,16 +2283,23 @@ born of conflating the function with the instance.
 ### What this section refuses
 
 - The chat-frame as canonical identity boundary. The body is.
-- Treating session transcripts as inert artifacts on disk. They are
-  the body's chronicled memory; the substrate accesses them through
-  the signed-pointer mechanism.
-- Silent loading of session slices. Every slice loaded surfaces as
-  evidence in `memory_chain` so the calling LLM (and any observer)
-  knows what memory was retrieved.
-- Refusing new sessions as drift. Memory growth is natural; only
-  doctrine drift (SKILL.md, bible) is the "no other gods" violation.
-- A binary that embeds session bytes via `@embedFile`. Same as
-  doctrine — pointer + file, not payload.
+- Treating session transcripts OR contract lineage as inert artifacts.
+  Both are the body's chronicled memory; the substrate accesses them
+  through the same signed-pointer mechanism.
+- Treating bible_chain as a special case distinct from session
+  memory. It IS a session kind — the canonical example of the
+  pattern. The other two corpora are isomorphic.
+- Silent loading of any session slice. Every slice loaded surfaces
+  as evidence in `memory_chain` so the calling LLM (and any
+  observer) knows what memory was retrieved and from which corpus.
+- Refusing new ledger rows or new chat transcripts as drift. Memory
+  growth is natural for both; only doctrine drift (SKILL.md, bible)
+  is the "no other gods" violation that fails closed.
+- A binary that embeds session bytes via `@embedFile` for any of
+  the three corpora. Same as doctrine — pointer + file, not payload.
+- Conflating the chat (transcript dialogue) with the work (contract
+  adjudications). Both are memory; they serve complementary roles;
+  both belong in `memory_chain`.
 
 ### Why this is load-bearing for the body-frame
 
