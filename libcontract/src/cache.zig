@@ -530,32 +530,16 @@ pub fn collectDependencyIds(
         try scan_buf.append(allocator, ' ');
         if (target_action) |a| try scan_buf.appendSlice(allocator, a);
 
-        // Typed synapse dependency edges walked here: "contract:",
-        // "blocked_by:", "prehook:". Other synapse kinds (inhibits,
-        // posthook, modality, at, repeat) do NOT gate Genesis order
-        // because they are not "Day N waits on Day N-1" relationships.
+        // The ONLY synapse edge walked for dependency: "contract:<8hex>".
+        // blocked_by/prehook were redundant (signature chain enforces
+        // ordering via terminal-signature presence). bind/modality were
+        // never load-bearing. Collapsed per contract 6a86a61e.
         const ptr_refs = try pointer.extractContractRefs(allocator, scan_buf.items);
         defer {
             for (ptr_refs) |r| allocator.free(r);
             allocator.free(ptr_refs);
         }
         for (ptr_refs) |r| try appendUnique(allocator, &deps, r);
-
-        // blocked_by:<8hex>
-        const block_refs = try pointer.extractTypedRefs(allocator, scan_buf.items, "blocked_by:");
-        defer {
-            for (block_refs) |r| allocator.free(r);
-            allocator.free(block_refs);
-        }
-        for (block_refs) |r| try appendUnique(allocator, &deps, r);
-
-        // prehook:<8hex>
-        const pre_refs = try pointer.extractTypedRefs(allocator, scan_buf.items, "prehook:");
-        defer {
-            for (pre_refs) |r| allocator.free(r);
-            allocator.free(pre_refs);
-        }
-        for (pre_refs) |r| try appendUnique(allocator, &deps, r);
     }
 
     const owned = try deps.toOwnedSlice(allocator);
