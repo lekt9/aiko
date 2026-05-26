@@ -49,8 +49,11 @@ pub const EventKind = enum {
     }
 };
 
-/// Validated /contract shape. Slices borrow from the input bytes; the
-/// caller must keep the input alive while reading these.
+/// Validated /contract shape. String slices borrow from the parsed
+/// JSON value held in ParsedShape — accessing them after that
+/// wrapper's deinit is use-after-free. Callers should use
+/// `validateShape` (returns ParsedShape) rather than constructing
+/// Shape directly.
 pub const Shape = struct {
     event: EventKind,
     id: ?[]const u8 = null,
@@ -60,6 +63,18 @@ pub const Shape = struct {
     parent_id: ?[]const u8 = null,
     wave: ?u32 = null,
     proof: ?[]const u8 = null,
+};
+
+/// Wraps the std.json parser's owned tree plus the projected Shape
+/// view over it. The Shape's string slices live for as long as
+/// `parsed` is alive; call `deinit` exactly once when done.
+pub const ParsedShape = struct {
+    parsed: std.json.Parsed(std.json.Value),
+    shape: Shape,
+
+    pub fn deinit(self: *ParsedShape) void {
+        self.parsed.deinit();
+    }
 };
 
 fn is8Hex(s: []const u8) bool {
