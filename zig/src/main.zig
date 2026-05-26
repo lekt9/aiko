@@ -421,10 +421,9 @@ fn bioEnvironmentFingerprint(allocator: std.mem.Allocator, env: std.process.Envi
 /// surfaces the manifest as evidence; the actual channel-attach is a
 /// server-side adapter contract (per substrate canon).
 fn bioBindManifest(allocator: std.mem.Allocator, env: std.process.Environ) ?[]u8 {
-    const kind = env.getPosix("CONTRACT_BIND_KIND") orelse return null;
-    if (kind.len == 0) return null;
-    const target = env.getPosix("CONTRACT_BIND_TARGET") orelse "";
-    return std.fmt.allocPrint(allocator, "{{\"kind\":\"{s}\",\"target\":\"{s}\"}}", .{ kind, target }) catch null;
+    _ = allocator;
+    _ = env;
+    return null;
 }
 
 /// ───────────── biology kit ─────────────
