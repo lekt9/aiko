@@ -36,6 +36,45 @@ GCACHE="/tmp/contract-zig-global-cache"
 
 step() { printf '\n=== %s ===\n' "$*"; }
 
+# ─── Build-queue lock ─────────────────────────────────────────────────
+# Concurrent build.sh invocations race on the Zig compile cache
+# (/tmp/contract-zig-cache) and the deployer wallet's signing — a second
+# build mid-flight previously wedged the first (cache wipe + parallel
+# zig invocations deadlocked). Serialize via a directory-mkdir mutex
+# (POSIX-atomic, no flock dep). Reclaims stale locks whose owner pid
+# is dead. Surfaces wait state to stderr per the visible-fallbacks rule.
+BUILD_LOCKDIR="/tmp/contract-build.lock"
+BUILD_PIDFILE="$BUILD_LOCKDIR/pid"
+BUILD_LOCK_MAX_WAIT="${BUILD_LOCK_MAX_WAIT:-1800}"  # seconds
+
+acquire_build_lock() {
+  local waited=0
+  local announced=0
+  while ! mkdir "$BUILD_LOCKDIR" 2>/dev/null; do
+    local owner=""
+    [[ -f "$BUILD_PIDFILE" ]] && owner="$(cat "$BUILD_PIDFILE" 2>/dev/null || true)"
+    if [[ -n "$owner" ]] && ! kill -0 "$owner" 2>/dev/null; then
+      echo "build.sh: stale lock from dead pid=$owner — reclaiming" >&2
+      rm -rf "$BUILD_LOCKDIR"
+      continue
+    fi
+    if (( announced == 0 )); then
+      echo "build.sh: another build in progress (pid=${owner:-?}) — queued, waiting..." >&2
+      announced=1
+    fi
+    sleep 2
+    waited=$((waited + 2))
+    if (( waited >= BUILD_LOCK_MAX_WAIT )); then
+      echo "build.sh: lock wait exceeded ${BUILD_LOCK_MAX_WAIT}s (pid=${owner:-?}) — refusing to proceed" >&2
+      return 7
+    fi
+  done
+  trap 'rm -rf "$BUILD_LOCKDIR"' EXIT INT TERM HUP
+  echo $$ > "$BUILD_PIDFILE"
+  (( announced == 1 )) && echo "build.sh: lock acquired (waited ${waited}s) — proceeding" >&2
+  return 0
+}
+
 # ─── build:guard — doctrine-as-data folder allowlist ─────────────────
 step_guard() {
   step "build:guard — scripts/ allowlist"
