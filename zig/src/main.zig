@@ -5083,6 +5083,48 @@ fn cmdPrune(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         errPrint("prune: unknown cause: {s}\n", .{cause_str});
         return 2;
     };
+
+    // ─── Authority check (Lewis 2026-05-27) ──────────────────────────
+    //
+    // Doctrine: only the legitimate parent can prune its children;
+    // siblings cannot kill each other (only the shared parent does).
+    // Special case: apoptosed allows self-shutdown (by_id == target.id).
+    //
+    // Mechanical check:
+    //   • lookup target's declared row, extract parent_id
+    //   • if by_id supplied:
+    //       - by_id == target.parent_id  (parent killing child) → allow
+    //       - by_id == target.id AND cause==apoptosed (self-shutdown) → allow
+    //       - otherwise → refuse with explicit diagnostic
+    //   • if by_id absent (stale/apoptosed):
+    //       - for now, allow (caller identity isn't tracked yet). TODO:
+    //         tighten when we wire caller-identity (gap-chain-walk).
+    if (sh.by_id) |killer_id| {
+        const target_parent_opt = ledger.findParentIdForId(allocator, env, id) catch null;
+        const target_parent = target_parent_opt; // may be null (root contract)
+        defer if (target_parent) |p| allocator.free(p);
+
+        const is_parent = if (target_parent) |p| std.mem.eql(u8, killer_id, p) else false;
+        const is_self_apoptosis = cause == .apoptosed and std.mem.eql(u8, killer_id, id);
+
+        if (!is_parent and !is_self_apoptosis) {
+            errPrint(
+                "prune: refused — authority violation.\n" ++
+                    "  target: {s}\n" ++
+                    "  target's parent_id: {s}\n" ++
+                    "  by_id (claimed killer): {s}\n" ++
+                    "  doctrine: only the parent can prune its child (or self-apoptosis).\n" ++
+                    "  fix: set by_id to the target's parent_id, OR (for apoptosed)\n" ++
+                    "       set by_id == target id.\n",
+                .{
+                    id,
+                    if (target_parent) |p| p else "(root, no parent)",
+                    killer_id,
+                },
+            );
+            return 1;
+        }
+    }
     try contract.markDied(allocator, env, id, cause, sh.by_id, sh.reason);
     outPrint("{s}\n", .{id});
     return 0;
