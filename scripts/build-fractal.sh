@@ -153,7 +153,11 @@ while true; do
     rm -f "$BUILD_LOG"
     exit 1
   fi
-  if ! "$ATTEST_BINARY"; then
+  # aiko-attest walks up from cwd looking for libcontract/ + zig/ as
+  # siblings (the repo root). Force cwd to REPO_ROOT so the walk-up
+  # always lands on the right ledger path regardless of where the
+  # operator invoked the build script.
+  if ! ( cd "$REPO_ROOT" && "$ATTEST_BINARY" ); then
     log_fail "aiko-attest exited non-zero — see its output above. The LLM either"
     log_fail "  could not be reached, or returned a FAIL verdict for one or more"
     log_fail "  files. Inspect .contract-spirit-attest.jsonl for the latest rows."
