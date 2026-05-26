@@ -1022,7 +1022,7 @@ fn writeCloudMirrorRow(
         break :blk null;
     };
     const recorded_opt = contract.cache.findLatestResolvedSnapshot(allocator, env, id) catch |e| blk: {
-        evidencePrint("cache: findLatestResolvedSnapshot failed for {s}: {s} — treating as miss\n", .{ id, @errorName(e) });
+        substrateEvidence("cache: findLatestResolvedSnapshot failed for {s}: {s} — treating as miss\n", .{ id, @errorName(e) });
         break :blk null;
     };
     defer if (chain_opt) |c| allocator.free(c);
