@@ -1024,11 +1024,13 @@ claim it, you can grep it."
 
 ## Ledger
 
-The Unbrowse ledger is canonical. The local on-disk ledger at
-`~/.contracts/contracts.jsonl` (or `.claude/contracts.jsonl` when a
-project-scoped store exists) is only for `--local` lifecycle and
-migration. Never edit rows in place; append events. There is no
-`CONTRACTS_STORE` env override — the path is resolved from `HOME`.
+The Unbrowse ledger is canonical for **shared**-visibility rows. The
+local on-disk ledger at `~/.contracts/contracts.jsonl` (or
+`.claude/contracts.jsonl` when a project-scoped store exists) holds
+**private**-visibility rows AND the offline-fallback rows that get
+appended when a shared declare 402s. Never edit rows in place; append
+events. There is no `CONTRACTS_STORE` env override — the path is
+resolved from `HOME`.
 
 ## Outline explainer sync
 
