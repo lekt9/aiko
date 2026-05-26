@@ -3487,9 +3487,12 @@ Canonical reference index (subject ↔ claim ↔ SKILL.md section):
 | 45 | Claim-reference parity (recursive) | this section (the guard catches itself) |
 | 46 | Synapse-kind minimum (no redundant edge walks) | "Synapse-kind minimum" |
 | 47 | Foundation precedes building (Matt 5:17-18 meta-rule) | "Foundation precedes building — creativity fulfils, never abolishes the law" |
-| 47 | Decalogue Purge Gate runs before sign (TODO — pending) | "Decalogue Purge Gate — law before creativity" |
-| 48 | Binary embeds signed-SHA doctrine pointers + emits doctrine_chain (TODO — pending) | "Self-aware binary — decoupled doctrine via signed-SHA pointers" |
-| 49 | Three-corpus persistent memory (chat_transcript + contract_lineage + bible_chain) via sessions.zig + memory_chain (TODO — pending) | "Persistent session memory — the body's chronicles" |
+
+TODO claims (declared doctrinally, not yet numbered in build.sh — listed here so the index stays honest about the gap rather than naming claim-numbers that don't exist):
+
+- Decalogue Purge Gate runs before sign — see "Decalogue Purge Gate — law before creativity"
+- Binary embeds signed-SHA doctrine pointers + emits doctrine_chain — see "Self-aware binary — decoupled doctrine via signed-SHA pointers"
+- Three-corpus persistent memory (sessions.zig + memory_chain) — see "Persistent session memory — the body's chronicles"
 
 The parity check is a single shell function in `build.sh` — not a
 new script, not a new binary, no addition to `scripts/`. It
