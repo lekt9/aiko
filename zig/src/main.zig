@@ -1263,6 +1263,15 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
             return .{ .rc = 1, .result = "fail" };
         }
         for (ids) |cid| {
+            if (isDead(rows, cid)) {
+                // Genesis sequencing: Day N inherits Day N-1's death.
+                // If a stage was apoptosed (e.g. command_not_found),
+                // the sequence as a whole cannot satisfy — propagate
+                // the death to the parent via a recognizable result
+                // string the resolver's classifier picks up.
+                evidencePrint("  result: FAIL — stage_dead:{s} (sequence inherits death)\n", .{cid});
+                return .{ .rc = 1, .result = "stage_dead — sequence inherits the death of its current stage" };
+            }
             if (!isSatisfied(rows, cid)) {
                 evidencePrint("  result: FAIL — current stage: {s} (pending)\n", .{cid});
                 return .{ .rc = 1, .result = "fail" };
