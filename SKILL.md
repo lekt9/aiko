@@ -455,15 +455,20 @@ selects a contract outside the caller's lineage, it must declare
 later. Search discovers pointers, payment replicates them, and execution calls
 the paid local copy.
 
-Network durability is also a contract pointer. WireGuard/Tailscale/WARP-style
-tunnelling belongs behind `network_tunnel_contract_id` and
-`network_tunnel_kind`, not as another user mode. The tunnel adapter contract
-keeps the spawned environment reachable; aiko still exposes only goal + mode.
+Network durability is also a contract pointer.
+WireGuard/Tailscale/WARP-style tunnelling belongs behind
+`network_tunnel_contract_id` and `network_tunnel_kind`, declared as
+ledger rows, not as another user mode. The tunnel adapter contract
+keeps the spawned environment reachable; aiko still exposes only goal
++ mode.
 
 ## Ledger
 
-The Unbrowse ledger is canonical. `CONTRACTS_STORE` exists only for scoped
-local tests and migrations. Never edit rows in place; append events.
+The Unbrowse ledger is canonical. The local on-disk ledger at
+`~/.contracts/contracts.jsonl` (or `.claude/contracts.jsonl` when a
+project-scoped store exists) is only for `--local` lifecycle and
+migration. Never edit rows in place; append events. There is no
+`CONTRACTS_STORE` env override — the path is resolved from `HOME`.
 
 ## Outline explainer sync
 
