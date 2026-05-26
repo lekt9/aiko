@@ -611,15 +611,15 @@ pub fn rotateAllSignedRowsByLineage(
         if (std.mem.indexOf(u8, line, "\"event\": \"declared\"") == null and
             std.mem.indexOf(u8, line, "\"event\":\"declared\"") == null) continue;
 
-        const id = (try extractJsonStringField(line, "id")) orelse continue;
+        const id = (try extractJsonStringField(allocator, line, "id")) orelse continue;
         defer allocator.free(id);
-        const env_pubkey = (try extractJsonStringField(line, "env_pubkey")) orelse continue;
+        const env_pubkey = (try extractJsonStringField(allocator, line, "env_pubkey")) orelse continue;
         defer allocator.free(env_pubkey);
-        const parent_sig = (try extractJsonStringField(line, "parent_signature")) orelse continue;
+        const parent_sig = (try extractJsonStringField(allocator, line, "parent_signature")) orelse continue;
         defer allocator.free(parent_sig);
-        const plan = (try extractJsonStringField(line, "plan")) orelse continue;
+        const plan = (try extractJsonStringField(allocator, line, "plan")) orelse continue;
         defer allocator.free(plan);
-        const parent_id_opt = try extractJsonStringField(line, "parent_id");
+        const parent_id_opt = try extractJsonStringField(allocator, line, "parent_id");
         defer if (parent_id_opt) |p| allocator.free(p);
         const parent_or_root: []const u8 = if (parent_id_opt) |p| p else ROOT_PARENT_SENTINEL;
 
