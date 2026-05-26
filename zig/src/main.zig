@@ -3551,7 +3551,7 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             // backfillUnresolved / cache walks can see the row on this host
             // and so the substrate's interoception counter reflects reality.
             // Failure is non-fatal but ALWAYS surfaced (fallbacks-visible).
-            writeCloudMirrorRow(allocator, env, id, safe_plan, action, parent) catch |e| {
+            writeCloudMirrorRow(allocator, env, id, safe_plan, action, null) catch |e| {
                 errPrint("cloud-mirror: append failed: {s} — local ledger view will lag the cloud canonical row\n", .{@errorName(e)});
             };
             backfillUnresolved(allocator, env, id) catch |e| {
