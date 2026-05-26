@@ -2224,6 +2224,73 @@ fn resolveLineage(allocator: std.mem.Allocator, env: std.process.Environ, id: []
 /// This is the in-binary realisation of contract:3600ca96 + contract:410bceea:
 /// every declaration sweeps the un-backfilled tail so accumulated learnings
 /// catch up to the live frontier without a separate script.
+/// Deep variant of backfillUnresolved — wider budget + more passes for the
+/// standing `drill:all-unresolved` contract. Same fixed-point semantics: halts
+/// on no-progress or budget exhaustion, surfaces evidence on every pass.
+/// Used by the `drill:` action handler so the substrate's continuous resolver
+/// reaches further per fire than the heartbeat backfill does.
+fn backfillUnresolvedDeep(allocator: std.mem.Allocator, env: std.process.Environ, skip_id: []const u8) !void {
+    return backfillUnresolvedWithBudget(allocator, env, skip_id, 1024, 32);
+}
+
+fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.Environ, skip_id: []const u8, budget: u32, max_passes: u32) !void {
+    if (bioSabbathHolds(env)) {
+        const ts_now: i64 = time(null);
+        evidencePrint("sabbath: drill paused at unix {d}\n", .{ts_now});
+        return;
+    }
+    // Apoptosis sweep before resolver passes (same shape as backfillUnresolved).
+    {
+        const rows_for_apop = try parseRows(allocator, env);
+        defer allocator.free(rows_for_apop);
+        const stale = try bioStaleIds(allocator, env, rows_for_apop);
+        defer allocator.free(stale);
+        if (stale.len > 0) {
+            evidencePrint("drill apoptosis: {d} stale row(s)\n", .{stale.len});
+            for (stale) |id| {
+                contract.markDied(allocator, env, id, .apoptosed, null, "stale beyond age window") catch {};
+            }
+        }
+    }
+    var pass: u32 = 0;
+    var total_resolved: u32 = 0;
+    while (pass < max_passes) : (pass += 1) {
+        const rows = try parseRows(allocator, env);
+        defer allocator.free(rows);
+        var seen: std.StringHashMap(void) = .init(allocator);
+        defer seen.deinit();
+        var candidates: std.ArrayList([]const u8) = .empty;
+        defer candidates.deinit(allocator);
+        var i: usize = rows.len;
+        while (i > 0) : (i -= 1) {
+            const r = rows[i - 1];
+            if (std.mem.eql(u8, r.id, skip_id)) continue;
+            if (seen.contains(r.id)) continue;
+            try seen.put(r.id, {});
+            if (isDead(rows, r.id)) continue;
+            if (isSatisfied(rows, r.id)) continue;
+            try candidates.append(allocator, r.id);
+            if (candidates.items.len >= budget) break;
+        }
+        if (candidates.items.len == 0) {
+            evidencePrint("drill: ledger settled after {d} pass(es); resolved {d} total\n", .{ pass, total_resolved });
+            return;
+        }
+        evidencePrint("drill pass {d}: {d} unresolved row(s) within deep budget {d}\n", .{ pass + 1, candidates.items.len, budget });
+        var progressed: u32 = 0;
+        for (candidates.items) |cid| {
+            const rc = resolveOne(allocator, env, cid) catch continue;
+            if (rc == 0) progressed += 1;
+        }
+        total_resolved += progressed;
+        if (progressed == 0) {
+            evidencePrint("drill: no progress on pass {d} — frontier stuck (resolved {d} total before stall)\n", .{ pass + 1, total_resolved });
+            return;
+        }
+    }
+    evidencePrint("drill: deep passes exhausted at {d} (resolved {d} total)\n", .{ max_passes, total_resolved });
+}
+
 fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, skip_id: []const u8) !void {
     const budget: u32 = 64;
     if (bioSabbathHolds(env)) {
