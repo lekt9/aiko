@@ -1794,6 +1794,134 @@ of the ledger (new field, new signature scheme, new event kind) is
 declared, not scripted. The substrate's response to "we need to
 re-do all of these" is always "declare a /contract that does it".
 
+## Recursive self-interrogation — every /contract decomposes itself
+
+> *Study to shew thyself approved unto God, a workman that needeth not
+> to be ashamed, rightly dividing the word of truth.* (2 Timothy 2:15)
+>
+> *He that answereth a matter before he heareth it, it is folly and
+> shame unto him.* (Proverbs 18:13)
+>
+> *Prove all things; hold fast that which is good.* (1 Thessalonians 5:21)
+
+Pinned by Lewis 2026-05-26 (contract `11f4643c`): *"have /contract
+identify every possible meaning and intention of every /contract
+spawned based on the /contract's context every time ... /contract checks
+/contract itself to ensure everything resolves such that the /contract
+claim is always true; if not /contract more /contract."*
+
+Every declared contract spawns its own ambiguity-decomposer as its
+first child. The substrate never "interprets and answers" in one
+step — it interprets, verifies each interpretation, and only then
+resolves the parent. This is rightly dividing the word (2 Tim 2:15)
+mechanized: ambiguity is admitted up front, not papered over.
+
+### The three-shape child decomposition
+
+For every parent contract P declared via aiko, the cloud LLM
+compiler emits (at minimum) these three child shapes:
+
+```
+P "<truth claim>"
+├─ interpret:<P>      — enumerate every plausible reading of P given
+│                       the active context (lineage, channel, recent
+│                       declarations, scripture-relevance scores).
+│                       Stdout: a typed list of contract:<reading_id>
+│                       pointers, one per plausible meaning.
+├─ verify:<P>:<reading_id>  — one child per reading; truth-claim:
+│                       "this reading is what P meant AND it is true."
+│                       Resolves via the standard evaluator chain.
+└─ adjudicate:<P>     — fires when all verify:* children have resolved
+                        (satisfied OR died). Picks the satisfied reading
+                        whose verify chain is strongest (most-cited
+                        evidence, deepest signature chain, highest
+                        bible_chain coherence). Promotes that reading
+                        as P's canonical stdout pointer.
+```
+
+P resolves true when `adjudicate:<P>` resolves true. If every reading's
+`verify:*` returns HOLD or died, the substrate **spawns MORE readings**
+— the loop is non-terminal (HOLD-is-non-terminal rule applies). Only
+apoptosis-by-user or metric-satisfaction breaks the chain.
+
+### "If not, /contract more /contract"
+
+The substrate's response to "claim isn't true yet" is **always to
+spawn more children**, never to surrender. The forms that get spawned:
+
+1. **Wider interpretation** — `interpret:<P>:wave-N` spawned with
+   `parent_id=interpret:<P>:wave-(N-1)`. Each wave broadens the
+   reading set: literal → metaphorical → liturgical → strategic →
+   adversarial. The wave depth has no fixed cap (arbitrary caps are
+   leaven per the HOLD-is-non-terminal rule).
+2. **Deeper verifier** — `verify:<P>:<reading>:via-<evaluator>` for
+   each plausible evaluator (metric pointer, agent-judge, bible_chain
+   coherence, signature traceback). Multiple evaluators in parallel;
+   any one PROMOTE satisfies that reading.
+3. **Cross-edge witnesses** — `witness:<P>:<peer_id>` declared under
+   the Deut 19:15 quorum primitive. When confidence is low, more
+   witnesses; truth is established at ≥2 independent verdicts.
+4. **Escalation-as-contract** — `escalate:<P>:<channel>` (per the
+   Channel registry section). The substrate asks the user when
+   adjudicate can't decide between equally-strong readings. The
+   user's reply is the next resolver-wave child of P.
+
+### Why interpretation must precede verification
+
+Without `interpret:<P>` spawning first, the substrate would answer
+the wrong question — solving an unintended reading of P that happens
+to be evaluator-easy. Proverbs 18:13 names this directly: answering
+before hearing is folly. The substrate refuses the folly by making
+interpretation a mandatory first child of every parent.
+
+This is also why semantic search has its proper place. Inside
+`interpret:<P>`, the cloud compiler uses BM25 + verse-corpus scoring
++ active-context BM25 to enumerate readings — semantic search FOR
+DISCOVERY (which readings are plausible?), not FOR resolution (which
+reading is true?). Resolution stays deterministic via signature
+chains and evaluator metrics.
+
+### Self-checking — every /contract checks itself
+
+The parent contract's evaluator IS the self-check:
+- It reads the satisfied `adjudicate:<P>` row.
+- It reads the chosen reading's `verify:*` chain.
+- It walks the chain's signature pointers back to the deployer root,
+  through it to scripture (the Word-is-truth invariant).
+- If any link fails, the evaluator returns HOLD; the parent spawns
+  the next wave of interpretation children. **The loop is the
+  check.** Fixed-point convergence = truth; non-convergence at user-
+  apoptosis = honest gap.
+
+### How this composes with prior rules
+
+- **Genesis sequencing** — `verify:*` children inherit synapse
+  dependencies on prior days' contracts. Day 5 verifiers cannot
+  fire until Day 4 has terminal signatures.
+- **HOLD is non-terminal** — when `adjudicate` returns HOLD, the
+  parent spawns more waves; no arbitrary cap.
+- **Word is truth-root** — every reading's bible_chain is the final
+  arbiter; readings that contradict scripture die in `verify:*`.
+- **Pointer chain cache** — once `adjudicate:<P>` lands, its
+  signature pins P's snapshot; future re-declarations short-circuit
+  via cache hit.
+- **Capability inheritance** — `interpret:*` and `verify:*` inherit
+  the parent's grants by lineage; no env-var injection.
+
+### Substrate location
+
+This rule lives doctrinally in this SKILL.md section. The mechanical
+implementation is server-side: the cloud LLM compiler's prompt
+encodes the three-shape child emission as a default. The local
+binary doesn't enforce this directly — it spawns one declared row
+per `aiko "<goal>"` and trusts the cloud compiler to fan out per
+this section. When the cloud is unreachable (402 offline path), the
+local LLM compile falls through to the same three-shape emission.
+
+The parity invariant (claim 39 in build.sh) refuses to sign a binary
+whose SKILL.md drops this section — the doctrine of recursive
+self-interrogation cannot decay silently.
+
 ## Doctrine-Reality Parity — the substrate supervises itself
 
 Every claim in this SKILL.md has a corresponding code site. Drift
