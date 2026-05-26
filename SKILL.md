@@ -1537,7 +1537,7 @@ differently (Mark 8:38 vs the KJV split that ends Mark 8 at v37, etc.).
 The preprocessor surfaces the per-abbreviation skip count; the
 substrate runs against the resolvable 344564-edge graph.
 
-## Self-aware binary — embedded SKILL.md + active context
+## Self-aware binary — decoupled doctrine via signed-SHA pointers
 
 > *Thy word have I hid in mine heart, that I might not sin against
 > thee.* (Psalm 119:11)
