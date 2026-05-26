@@ -329,6 +329,22 @@ step_parity() {
     _fail "doctrine[bible_chain]: main.zig must emit \"bible_chain\" in at least 2 sites (streaming first chunk + non-streaming envelope)"
   fi
 
+  # 25. "no user-facing env-var instructions" — the substrate stripped all
+  #     env knobs (claim #1). User-facing strings must NOT tell users to set
+  #     AIKO_X_PAYMENT / X_PAYMENT / UNBROWSE_BASE / CONTRACT_* / FAUCET_BASE
+  #     etc. as something the operator/user does manually. Per the "Native
+  #     onramp is the cloud's obligation" doctrine, wallet provisioning and
+  #     transport configuration are server-side, not user-do-it-yourself.
+  #     Allow-list: comments (lines starting with //) and code-removed
+  #     markers ("removed" / "no longer read" / "is removed") are descriptive,
+  #     not instructive.
+  local env_instructions
+  env_instructions=$(grep -nE '"[^"]*(set |export |configure )[^"]*(AIKO_X_PAYMENT|X_PAYMENT|FAUCET_BASE|UNBROWSE_BASE|CONTRACT_SABBATH_DAY|CONTRACT_SHELL_STRICT|CONTRACT_AGENT|AIKO_REMOTE|AIKO_ADMIN_)[^"]*"' "$ZIG_DIR/src/main.zig" "$LIB_DIR/src/"*.zig 2>/dev/null \
+    | grep -v 'removed\|no longer\|previously\|stripped\|was an env\|^[^:]*:[0-9]*: *//' || true)
+  if [[ -n "$env_instructions" ]]; then
+    _fail "doctrine[no env-var user instructions]: user-facing strings tell users to set/export/configure stripped env vars:"$'\n'"$env_instructions"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
     printf '%s' "$report" >&2
