@@ -131,6 +131,14 @@ pub fn inferLayer(action: []const u8) i32 {
     if (std.mem.eql(u8, pt, "prehook")) return 4;
     if (std.mem.eql(u8, pt, "modality")) return 4;
     if (std.mem.eql(u8, pt, "wrapper")) return 4;
+    // Environment-typed runtimes — wasm/binary/browser-script are
+    // cell-level executables (layer 2 — atomic compute); telegram
+    // and email are transport-level (layer 4 — carriage to a host).
+    if (std.mem.eql(u8, pt, "wasm")) return 2;
+    if (std.mem.eql(u8, pt, "binary")) return 2;
+    if (std.mem.eql(u8, pt, "browser-script")) return 2;
+    if (std.mem.eql(u8, pt, "telegram")) return 4;
+    if (std.mem.eql(u8, pt, "email")) return 4;
     if (std.mem.eql(u8, pt, "embedding")) return 3;
     if (std.mem.eql(u8, pt, "sha256-private")) return 4;
     if (std.mem.eql(u8, pt, "sha256-shared")) return 4;
