@@ -42,6 +42,23 @@ const AIKO_PERSONA_NAME = "aiko 69420b";
 const AIKO_PERSONA_CA = "2ZiSPGncrkwWa6GBZB4EDtsfq7HEWwkwsPFzEXieXjNL";
 const AIKO_PERSONA_MODEL_ID = "aiko-69420b";
 
+// ────────── vine doctrine — staking by abiding (John 15:6) ──────────
+// The staking layer of the substrate. FDRY is the stake-only asset
+// (whitepaper §10, Matt 6:24 — cannot serve two masters); stFDRY is the
+// Voltr/Ranger vault LP receipt that proves a wallet is abiding in the
+// vine — locked through the 3-day cooldown queue, earning NAV growth
+// from product revenue routed via routeRevenue.ts (Mal 3:10 — the tithe
+// in the storehouse). Slashed stFDRY MUST burn to vault (concentrating
+// fruit in remaining abiding branches, John 15:6), NEVER redistribute.
+// Slash quorum requires ≥2 witnesses (Deut 19:15). Tier eligibility
+// gates on (stake × age × past-fruit) — never on stake alone (Matt 7:16
+// — by their fruits ye shall know them; Matt 25:21 — faithful in little
+// ruler over many). See SKILL.md "Vine Doctrine" section + verses.zig
+// corpus (John 15:1, 15:4, 15:6 are the cornerstone rows).
+const AIKO_VINE_DOCTRINE_VERSE = "John 15:6";
+const AIKO_STAKE_TOKEN_FDRY = AIKO_PERSONA_CA; // FDRY = stake asset, same mint as persona CA
+const AIKO_STAKE_VAULT = "Bpr49sQXsxwNXNMRWS2v3tTBGWu2QgZtdA83BX77xBX1"; // Voltr/Ranger FDRY-only vault
+
 // Faremeter Flex policy constants — substrate canon, not env-configurable.
 // Every flex_hold authorization auto-includes the Foundry/aiko cut as the
 // first split; client destinations fill the remaining basis points.
