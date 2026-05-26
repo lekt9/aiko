@@ -3414,8 +3414,6 @@ fn retryQueuedDeclares(allocator: std.mem.Allocator, env: std.process.Environ) v
 
 /// Days 1-3 always fire. Days 4-7 are conditional on truth holding. A held day
 /// returns exit 1; the row stays pending until a future speech ratifies it.
-/// Hex-encode a 32-byte SHA-256 digest into the caller-provided buffer.
-/// `dst.len` must be ≥ 64; returns the slice that actually holds the hex.
 fn sha256Hex(digest: [32]u8, dst: []u8) []const u8 {
     const tab = "0123456789abcdef";
     var i: usize = 0;
