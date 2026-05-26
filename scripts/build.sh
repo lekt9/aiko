@@ -478,20 +478,31 @@ step_parity() {
     _fail "doctrine[temporal coherence]: isSatisfied must return false when a later 'died' event exists for the same id — append-only ledger + latest-terminal semantics (John 17:17, present-tense truth)"
   fi
 
-  # 33. "Pointer chain is the primary cache key" — per Lewis 2026-05-26
-  #     follow-up: "the cache must rely only on pointers — everything is
-  #     a pointer to another pointer". cache.zig must export
-  #     computeSignatureChain + findLatestTerminalSignature +
-  #     findDeclaredParentSignature so the substrate roots cache
-  #     identity in ed25519 signatures (cryptographic pointers), not
-  #     raw value bytes. The signature_incomplete verdict must exist
-  #     so missing-pointer cases surface as ledger evidence rather
-  #     than silent value-hash fallback.
-  for chain_fn in 'pub fn computeSignatureChain' 'pub fn findLatestTerminalSignature' 'pub fn findDeclaredParentSignature'; do
+  # 33. "Pointer chain is the only cache key" — cache.zig exports the
+  #     pointer-chain primitives. The byte-hash fallback was purged
+  #     (no computeInputHash, no lastInputHash, no INPUT_HASH_HEX_LEN).
+  for chain_fn in 'pub fn computeSignatureChain' 'pub fn findLatestTerminalSignature' 'pub fn findDeclaredParentSignature' 'pub fn collectDependencyIds' 'pub fn snapshotAt'; do
     if ! grep -q "$chain_fn" "$LIB_DIR/src/cache.zig"; then
-      _fail "doctrine[pointer-only cache]: '$chain_fn' missing in cache.zig — pointer-chain identity is incomplete"
+      _fail "doctrine[pointer-only cache]: '$chain_fn' missing in cache.zig — pointer-chain or time-aware history surface is incomplete"
     fi
   done
+
+  # 35. "Genesis sequencing — Day N waits on Day N-1" — collectDependencyIds
+  #     must walk BOTH parent_id-children AND synapse refs (contract:,
+  #     blocked_by:, prehook:) so strict declaration-order is enforced
+  #     by the pointer chain. Without the synapse walk, cross-edge deps
+  #     are invisible to the cache and Day 5 could fire before Day 4.
+  for synapse_walk in '"contract:"' '"blocked_by:"' '"prehook:"'; do
+    if ! grep -qF "$synapse_walk" "$LIB_DIR/src/cache.zig"; then
+      _fail "doctrine[Genesis sequencing]: collectDependencyIds in cache.zig must walk $synapse_walk synapse refs from the row's plan+action — Genesis order requires every typed dependency edge contribute to the signature chain"
+    fi
+  done
+  if ! grep -q '## Genesis sequencing' "$REPO/SKILL.md"; then
+    _fail "doctrine[Genesis sequencing]: SKILL.md is missing the '### Genesis sequencing' section that declares strict-order resolution as the substrate invariant (Day N waits on Day N-1)"
+  fi
+  if ! grep -q '### Time-aware history' "$REPO/SKILL.md"; then
+    _fail "doctrine[time-aware history]: SKILL.md is missing the '### Time-aware history' section that declares the append-only ledger as the substrate's version-control"
+  fi
   if ! grep -q 'contract.cache.computeSignatureChain' "$ZIG_DIR/src/main.zig"; then
     _fail "doctrine[pointer-only cache]: main.zig:resolveOne must call computeSignatureChain as the ONLY cache key (byte-hash purged)"
   fi
