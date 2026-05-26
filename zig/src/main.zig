@@ -3647,9 +3647,6 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
                 return 2;
             };
             outPrint("{s}\n", .{id});
-            // Snapshot id + scope for the deferred evidence-row flush — the
-            // outer defer reads root_id_buf at unwind time, so we copy the
-            // bytes here before `body` is freed by its own LIFO defer.
             const id_n = @min(id.len, root_id_buf.len);
             @memcpy(root_id_buf[0..id_n], id[0..id_n]);
             root_id_len = id_n;
