@@ -68,7 +68,7 @@ step_fmt() {
 step_tests() {
   step "build:tests — libcontract"
   local t
-  for t in pointer lineage env_fingerprint verses; do
+  for t in pointer lineage env_fingerprint verses bible; do
     ( cd "$LIB_DIR" && zig test "src/$t.zig" --cache-dir "$CACHE" --global-cache-dir "$GCACHE" )
   done
 }
