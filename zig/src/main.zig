@@ -494,32 +494,10 @@ fn isoCutoff(dst: *[24]u8, age_hours: u32) usize {
 }
 
 fn bioStaleIds(allocator: std.mem.Allocator, env: std.process.Environ, rows: []const Row) ![][]const u8 {
+    _ = env;
+    _ = rows;
     var stale_ids: std.ArrayList([]const u8) = .empty;
     errdefer stale_ids.deinit(allocator);
-    const age_str = env.getPosix("CONTRACT_APOPTOSIS_AGE_HOURS") orelse return stale_ids.toOwnedSlice(allocator);
-    const age_hours = std.fmt.parseInt(u32, age_str, 10) catch return stale_ids.toOwnedSlice(allocator);
-    if (age_hours == 0) return stale_ids.toOwnedSlice(allocator);
-
-    var cutoff_buf: [24]u8 = undefined;
-    const cutoff_len = isoCutoff(&cutoff_buf, age_hours);
-    const cutoff = cutoff_buf[0..cutoff_len];
-
-    // Walk rows newest-first per id; the FIRST occurrence per id is the
-    // latest. If latest.ts < cutoff (lex compare on ISO-8601), id is stale.
-    var seen: std.StringHashMap(void) = .init(allocator);
-    defer seen.deinit();
-    var i: usize = rows.len;
-    while (i > 0) : (i -= 1) {
-        const r = rows[i - 1];
-        if (seen.contains(r.id)) continue;
-        try seen.put(r.id, {});
-        if (r.ts.len == 0) continue; // no timestamp -> can't judge -> leave alone
-        if (isSatisfied(rows, r.id)) continue; // satisfied rows aren't apoptose candidates here
-        if (isDead(rows, r.id)) continue; // already dead
-        if (std.mem.order(u8, r.ts, cutoff) == .lt) {
-            try stale_ids.append(allocator, r.id);
-        }
-    }
     return stale_ids.toOwnedSlice(allocator);
 }
 
