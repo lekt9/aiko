@@ -436,14 +436,18 @@ such as cells, funnels, loops, harnesses, quorums, sequences, and
 contract references are internal server-side wiring, not
 caller-facing flags.
 
-When `--remote`, the local binary POSTs the declaration to the
-hardcoded Unbrowse base at `/v1/contract/declare`, where Unbrowse
-may spawn more contracts on Unbrowse infra. The server-side LLM is
-the integrator: it reads the active context, chooses which child
-environments/verifiers to spawn, and returns only typed contract
-pointers to the local executor. When `--local`, the same neuron
-shape runs the one-shot lifecycle against the on-disk ledger; a
-neuron with no child/evidence rows fails closed.
+Under **shared** visibility (default), the local binary POSTs the
+declaration to the hardcoded Unbrowse base at `/v1/contract/declare`,
+where Unbrowse may spawn more contracts on Unbrowse infra. The
+server-side LLM is the integrator: it reads the active context,
+chooses which child environments/verifiers to spawn, and returns only
+typed contract pointers to the local executor. If the cloud declare
+returns 402 (wallet empty), the substrate transparently falls back to
+local LLM compile + local declare so thinking continues offline —
+same JSON tree shape, just compiled and stored on this machine. Under
+**`--private`** visibility, the cloud declare is never attempted; the
+same neuron shape runs the one-shot lifecycle against the on-disk
+ledger; a neuron with no child/evidence rows fails closed.
 
 The LLM layer is the compiler from arbitrary prompt text into this contract
 shape. The user's prompt remains the root contract declaration in words. The
