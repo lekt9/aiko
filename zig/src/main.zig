@@ -723,14 +723,14 @@ fn bioClassifyRoadblock(result: []const u8, action: []const u8) RoadblockClass {
 /// Map an error_class to its canonical remediation hint. Future aikos
 /// matching the same class auto-install this hint as their prehook plan.
 fn remediationFor(class: []const u8) []const u8 {
-    if (std.mem.eql(u8, class, "payment_required")) return "ensure FAUCET_BASE chain is reachable + within IP rate limit; AIKO_X_PAYMENT pre-signed envelope is the cold-start fallback";
+    if (std.mem.eql(u8, class, "payment_required")) return "wallet unfunded; server-side onramp adapter contract funds this wallet on the next route — retry in a moment";
     if (std.mem.eql(u8, class, "rate_limit")) return "back off + wait Retry-After seconds; substrate auto-paces via Sabbath day-7 pause";
-    if (std.mem.eql(u8, class, "upstream_5xx")) return "wrangler-proxy retries 3x with exponential backoff; if persistent, declare incident contract";
+    if (std.mem.eql(u8, class, "upstream_5xx")) return "transport retries with exponential backoff; if persistent, declare incident contract";
     if (std.mem.eql(u8, class, "schema_mismatch")) return "cloud compiler version drifted; rebuild client against /v1/contract/declare's latest x402PaymentPayload type";
     if (std.mem.eql(u8, class, "pain")) return "honor pain interrupt; do not re-fire until source pain row is resolved or apoptosed";
-    if (std.mem.eql(u8, class, "sabbath")) return "pacemaker rests on day 7; re-fire after CONTRACT_SABBATH_DAY change or next day rollover";
+    if (std.mem.eql(u8, class, "sabbath")) return "pacemaker rests on day 7; re-fires at next day rollover";
     if (std.mem.eql(u8, class, "pending_children")) return "fixed-point loop will re-fire once children satisfy; ensure no orphan child without action";
-    if (std.mem.eql(u8, class, "shell_injection")) return "CONTRACT_SHELL_STRICT=1 rejected ; | & ` $ < > — use code:/python:/bun: typed prefixes instead";
+    if (std.mem.eql(u8, class, "shell_injection")) return "shell-strict gate rejected ; | & ` $ < > — use code:/python:/bun: typed prefixes instead";
     if (std.mem.eql(u8, class, "wallet_mode")) return "chmod 600 ~/.contracts/root.key — wallet must not be group/world-readable";
     if (std.mem.eql(u8, class, "command_not_found")) return "missing binary on PATH; declare depends_on:<runtime>:<pkg> sidecar contract first";
     if (std.mem.eql(u8, class, "bun_failure")) return "bun runtime returned non-zero; verify bun on PATH and code body has no shell-escape issues";
