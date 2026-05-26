@@ -29,6 +29,7 @@
 
 const std = @import("std");
 const ledger = @import("ledger.zig");
+const pointer = @import("pointer.zig");
 
 const c = std.c;
 
