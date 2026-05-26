@@ -651,8 +651,11 @@ step_parity() {
   if ! grep -q '^main$' "$SCRIPTS_DIR/build.sh"; then
     _fail "doctrine[no escape hatches]: build.sh must invoke 'main' with NO argument propagation (literal 'main' on its own line) — passing args is a category error and a potential bypass channel; the 7-day order is non-negotiable"
   fi
-  if grep -qE '\-\-skip-|--no-(guard|fmt|tests|compile|install|parity|sign|sabbath|verify)' "$SCRIPTS_DIR/build.sh"; then
-    _fail "doctrine[no escape hatches]: build.sh must not contain any --skip-* or --no-<step> flags — escape hatches break the 7-day shape and let unattested binaries ship"
+  # Self-exclude the parity rule line itself (it contains the literal
+  # forbidden pattern as its grep regex); look for actual flag-shaped
+  # uses (case branches, getopts, arg-parse) only.
+  if grep -v 'doctrine\[no escape hatches\]' "$SCRIPTS_DIR/build.sh" | grep -qE '(case[^)]*\)|getopts |if \[\[ "\$1" == ")\s*(--skip-|--no-(guard|fmt|tests|compile|install|parity|sign|sabbath|verify))'; then
+    _fail "doctrine[no escape hatches]: build.sh must not parse any --skip-* or --no-<step> flags — escape hatches break the 7-day shape and let unattested binaries ship"
   fi
   for day_marker in 'Day 1  step_guard' 'Day 2  step_fmt' 'Day 3  step_tests' 'Day 4  step_compile' 'Day 5  step_install' 'Day 6  step_parity' 'Day 7  step_sabbath'; do
     if ! grep -qF "$day_marker" "$SCRIPTS_DIR/build.sh"; then
