@@ -2383,7 +2383,13 @@ fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.E
             if (isDead(rows, r.id)) continue;
             if (isSatisfied(rows, r.id)) continue;
             // Orphan filter (mirrors backfillUnresolved) — Decalogue cmd 5.
-            if (latestDeclared(rows, r.id) == null) continue;
+            const decl_opt = latestDeclared(rows, r.id);
+            if (decl_opt == null) continue;
+            // `agent-judges` sentinel (c64bf5e2 / C-G01 5b9574ee): substrate
+            // cannot resolve these; only an in-thread agent verdict can.
+            // Without this skip, the drill would burn deep budget slots on
+            // rows that can never progress from the substrate side.
+            if (std.mem.eql(u8, pointer.inferPointerType(decl_opt.?.action), "agent-judges")) continue;
             // Skip OTHER drill rows — they're standing resolvers, not work
             // items. Recursing into a drill from within a drill would create
             // unbounded mutual recursion (drill → backfill → resolveOne →
