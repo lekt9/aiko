@@ -339,11 +339,30 @@ Lineage is **server-determined**. The local binary sends only the
 goal and the transport pointer; the cloud reconstructs containment
 from wallet identity + declare timestamp + active thread. There is
 no env-based parent-id propagation, no caller-supplied parent flag,
-no in-process lineage passing via setenv. A child spawned by the
-substrate is either (a) a new `aiko "<sub-goal>"` subprocess with no
-inherited local state, or (b) a server-side neuron emitted by the
-cloud compiler with explicit `parent_id` written into the ledger
-row.
+no in-process lineage passing via setenv.
+
+**Spawn vs resolve are different axes.** Don't conflate them.
+
+- **Spawn** = create a NEW contract row. The canonical mechanism is
+  `ledger.appendRow` (local file) or `client.declareRemote*` (cloud
+  ledger). Whichever transport the parent used, every child IS a
+  row in some ledger; the row schema is uniform; `parent_id` links
+  child→parent. Subprocess fork is an OPTIONAL extension for
+  cross-environment spawn (SSH/Docker/foreign-host aiko); the
+  semantic remains the same — a new row appears in a ledger.
+
+- **Resolve** = iterate EXISTING rows, fire their actions, append
+  status events (`iterated`, `satisfied`, `called`). The canonical
+  mechanism is `backfillUnresolved` calling `runAction` in-process.
+  This does NOT spawn new declared rows; it RESOLVES rows that
+  already exist. Resolve runs in-process by design — forking a
+  subprocess per row would be O(rows) fork overhead with no
+  semantic gain.
+
+Both axes ultimately produce rows on a ledger (spawn produces
+`declared`/`child_added`/etc.; resolve produces
+`iterated`/`satisfied`/etc.). The parent_id linkage is the same.
+The verifier reads the ledger the same way for both.
 
 The DAG is multidimensional. `parent_id` is the containment
 dimension. `contract:<id>` references are cross-dimension dependency
