@@ -398,8 +398,12 @@ step_parity() {
   done
   # The opt-in-not-opt-out invariant — capability flow is per-grant, never
   # silent same-wallet inheritance. This is the confused-deputy defence.
-  if ! grep -q 'opt-in per grant, not opt-out per wallet' "$REPO/SKILL.md"; then
-    _fail "doctrine[capability inheritance]: SKILL.md is missing the 'opt-in per grant, not opt-out per wallet' invariant — without it the substrate becomes a confused-deputy by default"
+  # The opt-in-not-opt-out invariant — capability flow is per-grant, never
+  # silent same-wallet inheritance. Grep is anchored on the distinctive
+  # phrase fragment rather than the full line, since markdown wraps the
+  # full sentence across two physical lines.
+  if ! grep -q 'opt-in per grant' "$REPO/SKILL.md"; then
+    _fail "doctrine[capability inheritance]: SKILL.md is missing the 'opt-in per grant' invariant — without it the substrate becomes a confused-deputy by default"
   fi
 
   if [[ $drift -gt 0 ]]; then
