@@ -125,25 +125,14 @@ fn usage() void {
     errPrint("{s} {s}\n\nUsage:\n", .{ BINARY_NAME, VERSION });
     if (AIKO_DECLARE_ONLY) {
         errPrint(
-            \\  {s} "<truth claim>"
+            \\  {s} "<truth claim>" [--remote|--local]
             \\
-            \\Dimension resolves from the environment. Set UNBROWSE_BASE /
-            \\AIKO_X_PAYMENT / X_PAYMENT to route to Unbrowse; else the local
-            \\ledger receives the Word and walks 9 days (Genesis-shaped).
+            \\Default routes to the Unbrowse substrate; --local runs the
+            \\one-shot lifecycle against the on-disk ledger.
             \\
-            \\Overrides (rarely needed):
-            \\  {s} "<truth>" --remote     route to Unbrowse explicitly
-            \\  {s} "<truth>" --local      one-shot local lifecycle (no day walk)
-            \\  {s} "<truth>" --genesis    force 9-day Fib walk on local ledger
             \\  {s} declare "<truth>"      compat alias
             \\
-            \\Empathic translation:
-            \\  {s} "<truth>" --user <user-aiko-id>
-            \\    Bind the spawn against the user's context aiko so the Word's
-            \\    compiler shapes output against what the user has already
-            \\    satisfied / encountered / declared as audience level.
-            \\
-        , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
+        , .{ BINARY_NAME, BINARY_NAME });
         return;
     }
     errPrint(
