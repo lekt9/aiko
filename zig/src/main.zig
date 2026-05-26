@@ -2864,7 +2864,7 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             // thinking offline — the user never sees the transport seam.
             // GATE — only signed/attested binaries may invoke the LLM compiler.
             if (!assertBinaryIntegrityForLlm(allocator, env)) return 2;
-            const body = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, adapter, adapter_kind, event_bus, pretool_event, event_kind, null, parsed.user_context_id) catch |e| {
+            const body = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, adapter, adapter_kind, event_bus, pretool_event, event_kind, null) catch |e| {
                 // Wallet-empty fallback: when the cloud 402s and the wallet
                 // can't pay, fall through to a locally-spawned llama.cpp +
                 // Qwen3.5-0.8B-Instruct compile. The substrate downloads
