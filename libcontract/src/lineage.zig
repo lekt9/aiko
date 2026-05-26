@@ -113,7 +113,7 @@ const KEYCHAIN_SVC: []const u8 = "aiko.root.ed25519.seed";
 
 fn readKeychainSeed(allocator: std.mem.Allocator) ![32]u8 {
     const stored = (try keystore.read(allocator, KEYCHAIN_SVC)) orelse return error.NotFound;
-    defer std.heap.page_allocator.free(stored); // matches keystore.read's alloc
+    defer allocator.free(stored);
 
     // Trim any trailing whitespace just in case (keystore already trims, but
     // legacy keychain entries from before this refactor may carry newlines).
