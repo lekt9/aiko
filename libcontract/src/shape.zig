@@ -93,14 +93,14 @@ fn is8Hex(s: []const u8) bool {
 pub fn validateShape(
     allocator: std.mem.Allocator,
     json_bytes: []const u8,
-) ShapeError!Shape {
+) ShapeError!ParsedShape {
     var parsed = std.json.parseFromSlice(
         std.json.Value,
         allocator,
         json_bytes,
         .{},
     ) catch return ShapeError.BadJson;
-    defer parsed.deinit();
+    errdefer parsed.deinit();
     const root = parsed.value;
     if (root != .object) return ShapeError.NotAnObject;
     const obj = root.object;
