@@ -185,6 +185,17 @@ fn evidencePrint(comptime fmt: []const u8, args: anytype) void {
     errPrint(fmt, args);
 }
 
+/// purge:bb70d7a3 — single evidence-writer that funnels both
+/// errPrint and evidencePrint to stderr with a single shape.
+/// Allows the future collapse: all evidence flows through this
+/// one writer; substrate-attested evidence rows can replace it
+/// when the cloud's ledger.appendEvidencePrintRow lands.
+fn substrateEvidence(comptime fmt: []const u8, args: anytype) void {
+    var buf: [8192]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, fmt, args) catch return;
+    err(s);
+}
+
 fn usage() void {
     errPrint("{s} {s}\n\nUsage:\n", .{ BINARY_NAME, VERSION });
     if (AIKO_DECLARE_ONLY) {
