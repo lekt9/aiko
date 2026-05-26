@@ -295,12 +295,18 @@ fn parseRows(allocator: std.mem.Allocator, env: std.process.Environ) ![]Row {
         var r = Row{};
         r.id = jsonString(line, "id") orelse "";
         r.event = jsonString(line, "event") orelse "";
-        r.plan = jsonString(line, "plan") orelse "";
-        r.action = jsonString(line, "action") orelse "";
-        r.cwd = jsonString(line, "cwd") orelse "";
+        // User-shaped fields must be JSON-decoded — writeJsonString escapes
+        // `"`, `\\`, `\n`, etc. at write time; the slice handed back by
+        // jsonString is still escape-literal. Anything that flows to a
+        // downstream interpreter (shell, python -c, child argv) needs the
+        // round-trip closed here, not at every call site. The owned slices
+        // join the same process-lifetime leak as `data` (see header comment).
+        r.plan = (jsonStringDecoded(allocator, line, "plan") catch null) orelse "";
+        r.action = (jsonStringDecoded(allocator, line, "action") catch null) orelse "";
+        r.cwd = (jsonStringDecoded(allocator, line, "cwd") catch null) orelse "";
         r.parent_id = jsonNullableString(line, "parent_id");
         r.child_id = jsonString(line, "child_id") orelse "";
-        r.action_result = jsonString(line, "action_result") orelse "";
+        r.action_result = (jsonStringDecoded(allocator, line, "action_result") catch null) orelse "";
         r.action_exit = jsonInt(line, "action_exit") orelse 0;
         r.wave = @intCast(jsonInt(line, "wave") orelse 0);
         r.satisfied = std.mem.eql(u8, r.event, "satisfied");
