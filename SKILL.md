@@ -1604,31 +1604,60 @@ from an incomplete pointer chain. `resolveOne` emits
 re-evaluate. The cache layer is **explicitly defensive** — it never
 silently substitutes value bytes for the missing pointer.
 
-### Legacy byte-hash fallback (transitional, for the existing ledger)
+### Genesis sequencing — Day N waits on Day N-1 (strict order)
 
-The 5000+ rows that existed BEFORE the signOutput change carry no
-`output_signature`. Their signature chains are incomplete. For these
-rows, `resolveOne` falls back to the older `computeInputHash`
-content-snapshot — but the cache_check row is tagged
-`verdict=signature_incomplete` so observers see the legacy mode.
+> *And the evening and the morning were the first day. ... And the
+> evening and the morning were the second day. ...* (Genesis 1:5, 1:8, 1:13, 1:19, 1:23, 1:31)
 
-The next time any of those contracts is re-resolved, `markSatisfied`
-writes a signed terminal row; the next pass after that produces a
-complete signature chain; the substrate self-heals onto the
-pointer-only path. **Forward-resolving any contract migrates it
-from byte-hash to signature-chain.**
+The Genesis pattern is **strict order by dependency**. Day 4's sun
+cannot precede Day 1's light; Day 5's birds cannot precede Day 2's
+firmament; Day 6's man cannot precede Day 3's land + plants. The
+substrate enforces the same shape, automatically, via the signature
+chain:
 
-### What the substrate refuses by design
+```
+A contract resolves only when every dependency it declared has a
+terminal output_signature on the ledger.
+```
 
-- A `satisfied` row without `output_signature` (when the root key is
-  available). signOutput's failure path is the only way an unsigned
-  satisfied row reaches the ledger — and it surfaces evidence to
-  stderr before doing so.
-- A cache_resolved snapshot derived from raw plan/action bytes when
-  a signature chain was available. The if/else in `resolveOne`'s
-  satisfied-side path picks signature chain first; byte-hash second.
-- A silent fallback. Every fallback surfaces as a tagged ledger row
-  (`verdict=signature_incomplete` or `verdict=legacy`).
+The dependency set walked by `cache.collectDependencyIds(id)` is:
+
+1. **parent_id-children** — every row whose `parent_id == id`
+2. **`contract:<X>` synapse refs** in id's own declared plan+action
+3. **`blocked_by:<X>` synapse refs** — strict ordering wait
+4. **`prehook:<X>` synapse refs** — fires before id resolves
+
+If ANY of these has no terminal output_signature, the chain returns
+null. The resolver short-circuits via `Verdict.legacy` (honoring
+prior satisfaction if any) or falls through to runAction. There is
+no out-of-order resolution path; Day N's chain is permanently null
+until Day N-1 has signed off.
+
+This is **deterministic topological order**, not semantic search.
+Semantic search (the `contract search --context` verb) is the right
+primitive for DISCOVERY — finding contracts similar to one you're
+about to declare. Sequencing is exact graph traversal.
+
+### Time-aware history via cache_resolved (the ledger IS version control)
+
+The append-only ledger IS the version control. Every `cache_resolved`
+row carries `ts + wave + snapshot` — a commit in the substrate's
+content-addressable history. To query "what was X's pointer-state
+at time T", walk forward to the latest cache_resolved row for X
+whose `ts ≤ T`. Git's content-addressable model, applied to
+contracts.
+
+The substrate surfaces this with one helper:
+
+```
+cache.snapshotAt(id, as_of_ts_iso) -> ?[]u8
+  // null if no cache_resolved row for id with ts ≤ cutoff;
+  // empty cutoff means "latest".
+```
+
+No new storage; no separate version-control layer. The history is
+already there — `snapshotAt` is just the deterministic forward-walk
+of cache_resolved rows. **Time IS pointer-history**.
 
 ### Substrate location
 
