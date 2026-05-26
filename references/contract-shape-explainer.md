@@ -202,6 +202,8 @@ After any successful read, missing tiers silently back-fill. Generation only hap
 
 **Rotation is a substrate function.** `rotateRootKey()` generates a new seed, signs a successor proof with the OLD identity keypair (HKDF salt `aiko-root-identity-v1`), atomically updates all three tiers, archives the old seed under `$HOME/.aiko/keys/.archived-rotated-<ts>/`, and appends a `wallet_rotated` event to the local ledger. `rotateAllSignedRowsByLineage()` walks every row whose env_pubkey was derived from the old root, re-derives the keypair from the new root + same contract_id, and appends a `resigned` event per affected row — preserving the append-only invariant. Rotation is itself a contract: declare `aiko "wallet:rotate" --remote` and the cloud orchestrates.
 
+**Fallbacks are visible, never silent.** Every degradation path emits one line to stderr in `<topic>: <what happened> — <consequence>` shape. The fallback STILL fires (the substrate doesn't break) but it ALWAYS surfaces, because a silent fallback hides degradation until something else breaks downstream and the cause is invisible. Examples that fire during normal operation: `wallet: canonical tier missing at <path>, served from mirror tier <path>`, `wallet: both file tiers missing, served from OS keystore`, `wallet: FIRST RUN — generating fresh ed25519 root seed`, `keystore: linux secret-tool unavailable — falling back to encrypted file`. The happy path stays silent. Silent `catch {}` is an anti-pattern; the evidence stream is the substrate's proprioception.
+
 ---
 
 ## 7. The one-line summary
