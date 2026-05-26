@@ -2690,19 +2690,13 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
         bioFirstRunWalletGuidance(allocator, env);
     }
     const action = actionFromPlan(d.plan);
-    const parent = ambientParent(env);
-    const adapter = ambientAdapter(env);
-    const adapter_kind = ambientAdapterKind(env);
-    const event_bus = ambientEventBus(env);
-    const pretool_event = ambientPretoolEvent(env);
-    const event_kind = ambientEventKind(env);
     if (AIKO_DECLARE_ONLY) {
         const safe_plan = redactAikoPlan(allocator, d.plan) catch |e| {
             errPrint("aiko privacy guard failed: {s}\n", .{@errorName(e)});
             return 2;
         };
         defer allocator.free(safe_plan);
-        const body = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, adapter, adapter_kind, event_bus, pretool_event, event_kind, null) catch |e| {
+        const body = client.declareRemoteAiko(allocator, env, safe_plan, action, null, null, null, null, null, null, null) catch |e| {
             errPrint("aiko declare failed against Unbrowse: {s}\n", .{@errorName(e)});
             return 2;
         };
