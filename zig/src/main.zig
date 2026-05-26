@@ -3133,6 +3133,104 @@ fn declareLocalTree(
 
 /// Days 1-3 always fire. Days 4-7 are conditional on truth holding. A held day
 /// returns exit 1; the row stays pending until a future speech ratifies it.
+/// Hex-encode a 32-byte SHA-256 digest into the caller-provided buffer.
+/// `dst.len` must be ≥ 64; returns the slice that actually holds the hex.
+fn sha256Hex(digest: [32]u8, dst: []u8) []const u8 {
+    const tab = "0123456789abcdef";
+    var i: usize = 0;
+    while (i < 32) : (i += 1) {
+        dst[i * 2 + 0] = tab[digest[i] >> 4];
+        dst[i * 2 + 1] = tab[digest[i] & 0x0f];
+    }
+    return dst[0..64];
+}
+
+/// Resolve the directory that should hold content-addressed blob sidecars
+/// for the current ledger. Follows the same project-vs-global axis as
+/// `ledger.resolvePath`: `<cwd>/.claude/blobs/` when the project ledger is
+/// in use, `~/.contracts/blobs/` otherwise. Caller frees the returned slice.
+fn resolveBlobsDir(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
+    var cwd_buf: [4096]u8 = undefined;
+    const cwd_ptr = std.c.getcwd(&cwd_buf, cwd_buf.len) orelse return error.GetCwdFailed;
+    const cwd_len = std.mem.indexOfScalar(u8, &cwd_buf, 0) orelse cwd_buf.len;
+    const cwd = cwd_buf[0..cwd_len];
+    _ = cwd_ptr;
+    const project_dir = try std.fs.path.join(allocator, &.{ cwd, ".claude" });
+    defer allocator.free(project_dir);
+    var st: c_stat = .{};
+    const project_dir_z = try allocator.dupeZ(u8, project_dir);
+    defer allocator.free(project_dir_z);
+    if (stat(project_dir_z.ptr, &st) == 0 and ((st.st_mode & 0o170000) == 0o040000)) {
+        return try std.fs.path.join(allocator, &.{ cwd, ".claude", "blobs" });
+    }
+    const home = env.getPosix("HOME") orelse return error.NoHome;
+    return try std.fs.path.join(allocator, &.{ home, ".contracts", "blobs" });
+}
+
+/// Flush the armed stderr tape to a content-addressed blob + append a single
+/// `evidence` row to the ledger pointing at it. `scope` is the privacy axis:
+/// "private" (blob never leaves this host) or "shared" (caller has already
+/// run the bytes through the privacy redactor and the cloud tier may mirror
+/// them). Idempotent on the blob path — same bytes hash to the same name
+/// across invocations, write skipped if the file already exists. Never
+/// throws to the caller: a failure here surfaces as an evidence line to
+/// stderr (still cheap) and the binary continues, because losing observation
+/// is strictly less bad than losing the actual goal resolution.
+fn flushStderrTapeAsEvidence(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    root_id: []const u8,
+    scope: []const u8,
+) void {
+    if (!stderr_tape_armed) return;
+    const buf = if (stderr_tape_buf) |*b| b else return;
+    if (buf.items.len == 0) return;
+
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(buf.items, &digest, .{});
+    var hex_buf: [64]u8 = undefined;
+    const hex = sha256Hex(digest, &hex_buf);
+
+    const dir = resolveBlobsDir(allocator, env) catch |e| {
+        evidencePrint("evidence: resolveBlobsDir failed: {s} — tape not persisted\n", .{@errorName(e)});
+        return;
+    };
+    defer allocator.free(dir);
+    const dir_z = allocator.dupeZ(u8, dir) catch return;
+    defer allocator.free(dir_z);
+    _ = std.c.mkdir(dir_z.ptr, 0o755);
+
+    const blob_path = std.fs.path.join(allocator, &.{ dir, hex }) catch return;
+    defer allocator.free(blob_path);
+    const blob_path_z = allocator.dupeZ(u8, blob_path) catch return;
+    defer allocator.free(blob_path_z);
+
+    var bst: c_stat = .{};
+    const already_present = stat(blob_path_z.ptr, &bst) == 0;
+    if (!already_present) {
+        var wflags: std.c.O = .{};
+        wflags.ACCMODE = .WRONLY;
+        wflags.CREAT = true;
+        wflags.TRUNC = true;
+        const fd = std.c.open(blob_path_z.ptr, wflags, @as(c_uint, 0o600));
+        if (fd < 0) {
+            evidencePrint("evidence: open blob failed for {s} — tape not persisted\n", .{hex});
+            return;
+        }
+        _ = std.c.write(fd, buf.items.ptr, buf.items.len);
+        _ = std.c.close(fd);
+    }
+
+    var ptr_buf: [80]u8 = undefined;
+    const pointer_str = std.fmt.bufPrint(&ptr_buf, "sha256:{s}", .{hex}) catch return;
+    contract.appendEvidenceRow(allocator, env, root_id, pointer_str, scope, buf.items.len) catch |e| {
+        evidencePrint("evidence: appendEvidenceRow failed: {s} — blob persisted at {s}\n", .{ @errorName(e), blob_path });
+        return;
+    };
+    // Disarm so any later writes don't accumulate into a stale buffer.
+    stderr_tape_armed = false;
+}
+
 fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
     const parsed = parseAikoArgs(allocator, args) catch |e| {
         errPrint("aiko argument error: {s}\n", .{@errorName(e)});
