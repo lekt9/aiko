@@ -3684,9 +3684,6 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             });
             defer allocator.free(cid);
             outPrint("{s}\n", .{cid});
-            // Snapshot id for the deferred evidence-row flush — scope stays
-            // "private" (the initialized default) because --private's whole
-            // point is that nothing about this invocation crosses the wire.
             const id_n = @min(cid.len, root_id_buf.len);
             @memcpy(root_id_buf[0..id_n], cid[0..id_n]);
             root_id_len = id_n;
