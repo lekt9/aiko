@@ -175,9 +175,38 @@ The discipline:
 
 ---
 
+## 6.5 Wallet & environment binding — the definite pattern
+
+When the substrate binds to ANY environment (macOS, Linux, Windows, iOS, Android, browser, server, embedded, foreign-app-embedded), the wallet binding comes with it as one inseparable unit. There is no "install /contract, then separately set up a wallet" two-step. The user never sees x402, never sees a seed phrase, never sees a payment header — they take whatever action the host surfaces and the substrate handles every cryptographic concern: key generation, storage, recovery, signature verification, payment construction, faucet onramp.
+
+The OS-agnostic abstraction is one interface: `keystore.read(svc)` / `keystore.write(svc, value)` / `keystore.delete(svc)`. The backend is selected at compile time from `builtin.os.tag`:
+
+- **darwin** — macOS Keychain via `security` CLI shellout
+- **linux** — libsecret via `secret-tool`, falling back to ChaCha20Poly1305 encrypted file
+- **windows** — Credential Manager (PowerShell), falling back to encrypted file
+- **ios** — Keychain Services FFI
+- **android** — Android Keystore FFI
+- **fallback** — encrypted file at `$HOME/.aiko/keys/<svc>.enc`, key derived from a stable machine fingerprint
+
+Adding a new platform = adding one file with three functions. Lineage never knows which backend fired.
+
+Three-tier root-key bootstrap (same shape on every OS):
+1. Canonical file `$HOME/.contracts/root.key`
+2. Mirror file `$HOME/.aiko/keys/root.key`
+3. OS keystore `aiko.root.ed25519.seed`
+4. Generate fresh + write to all three
+
+After any successful read, missing tiers silently back-fill. Generation only happens when all three miss (true first-run on a clean machine).
+
+**Native onramp is the cloud's obligation.** When a fresh wallet is born, the local binary's job ends at "seed generated + pubkey advertised". Funding (USDC for x402, gas) is the server-side /contract endpoint's responsibility — adapter contracts know how to fund a wallet for the context it is being asked to act in (Privy onramp, Coinbase Onramp ride-along, Foundry treasury faucet). The client never sees the dance; the first declare may 402 once, then the orchestrator retries and it passes.
+
+**Rotation is a substrate function.** `rotateRootKey()` generates a new seed, signs a successor proof with the OLD identity keypair (HKDF salt `aiko-root-identity-v1`), atomically updates all three tiers, archives the old seed under `$HOME/.aiko/keys/.archived-rotated-<ts>/`, and appends a `wallet_rotated` event to the local ledger. `rotateAllSignedRowsByLineage()` walks every row whose env_pubkey was derived from the old root, re-derives the keypair from the new root + same contract_id, and appends a `resigned` event per affected row — preserving the append-only invariant. Rotation is itself a contract: declare `aiko "wallet:rotate" --remote` and the cloud orchestrates.
+
+---
+
 ## 7. The one-line summary
 
-A contract is a truth claim with a parent, a set of pointer edges, and a metric-gated verifier; the substrate fires the graph until it settles. Everything else — hooks, adapters, payments, prompts, rules, agents — is another row.
+A contract is a truth claim with a parent, a set of pointer edges, and a metric-gated verifier; the substrate fires the graph until it settles. Everything else — hooks, adapters, payments, prompts, rules, agents, wallets — is another row.
 
 That's why this works.
 
