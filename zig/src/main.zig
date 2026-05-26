@@ -2025,26 +2025,42 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
         evidencePrint("{s} -> PAIN interrupt; lineage halted\n", .{id});
         return 1;
     }
-    // Content-addressed cache: only treat a satisfied row as "already
-    // resolved" if its current input_hash still matches the input_hash
-    // recorded by the last iteration. When upstream rules or child results
-    // change, the hash differs and we fall through to re-run — that's the
-    // self-enforcing propagation primitive.
+    // Pointer-keyed truthy cache (Lewis 2026-05-26 Granola 988cf805):
+    // "It's caching the key value to the pointer value itself. So the
+    // point of value changes, right? Then we know it's evaluated and we
+    // have to redo it again." + "It resolves it and then resolves the
+    // cash to be true." The verdict is appended as a `cache_check` ledger
+    // row so the hit/miss timeline is reconstructible from the append-
+    // only trace (Pointers-Over-Anything Clause B — stateless trace) —
+    // not just stderr evidence that dies with the process.
     const current_hash = computeInputHash(allocator, rows, id, 0) catch null;
     if (isSatisfied(rows, id)) {
         const recorded = lastInputHash(rows, id);
         if (current_hash) |ch| {
+            const current_slice: []const u8 = ch[0..];
             if (recorded) |rh| {
                 if (std.mem.eql(u8, &ch, rh)) {
+                    contract.cache.appendCacheCheckRow(allocator, env, id, .hit, current_slice, rh) catch |e| {
+                        evidencePrint("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
+                    };
                     evidencePrint("{s} already resolved (hash {s})\n", .{ id, ch[0..16] });
                     return 0;
                 }
+                contract.cache.appendCacheCheckRow(allocator, env, id, .miss, current_slice, rh) catch |e| {
+                    evidencePrint("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
+                };
                 evidencePrint("{s} cache invalidated (was {s}, now {s})\n", .{ id, rh[0..16], ch[0..16] });
             } else {
+                contract.cache.appendCacheCheckRow(allocator, env, id, .stale, current_slice, "") catch |e| {
+                    evidencePrint("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
+                };
                 evidencePrint("{s} satisfied without recorded hash — recomputing\n", .{id});
             }
         } else if (recorded == null) {
             // Legacy row with no hash discipline; honor the old contract.
+            contract.cache.appendCacheCheckRow(allocator, env, id, .legacy, "", "") catch |e| {
+                evidencePrint("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
+            };
             evidencePrint("{s} already resolved (legacy, no hash)\n", .{id});
             return 0;
         }
