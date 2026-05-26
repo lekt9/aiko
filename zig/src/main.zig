@@ -2702,7 +2702,14 @@ fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.E
             if (seen.contains(r.id)) continue;
             try seen.put(r.id, {});
             if (isDead(rows, r.id)) continue;
-            if (isSatisfied(rows, r.id)) continue;
+            // Stale-satisfied check (Lewis 2026-05-27 gap `abe3c445`):
+            // a satisfied row whose latest cache_invalidated timestamp
+            // is AFTER its latest cache_resolved timestamp is stale —
+            // a descendant value changed and the row needs to
+            // re-resolve. Without this check, descendant value-changes
+            // never cascade up to satisfied ancestors (commandment-9
+            // silent-drift in waiting).
+            if (isSatisfied(rows, r.id) and !isStaleSatisfied(allocator, env, r.id)) continue;
             // Orphan filter (mirrors backfillUnresolved) — Decalogue cmd 5.
             const decl_opt = latestDeclared(rows, r.id);
             if (decl_opt == null) continue;
