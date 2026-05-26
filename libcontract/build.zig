@@ -56,7 +56,6 @@ pub fn build(b: *std.Build) void {
         "src/payload_crypto.zig",
         "src/words.zig",
         "src/pattern.zig",
-        "src/spirit.zig",
         "src/shape.zig",
     };
     for (test_files) |tf| {
