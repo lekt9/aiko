@@ -3020,8 +3020,12 @@ fn cmdOpenAi(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
     const result_text = blk: {
         const body_json = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, null, null, null, null, null, null) catch |e| {
             const msg = switch (e) {
-                error.PaymentRequired => "i'm gated by an x402 paywall right now — set AIKO_X_PAYMENT (signed Solana x402 envelope) or route through a wrangler proxy that injects it",
-                error.NoUnbrowseBase => "no UNBROWSE_BASE configured — point me at an aiko-compatible upstream",
+                // Per SKILL.md "Native onramp is the cloud's obligation" — when the
+                // wallet 402s, the server-side onramp adapter contract is responsible
+                // for funding it. The user never sees a wallet UX or env-var prompt;
+                // the orchestrator retries and the next route passes.
+                error.PaymentRequired => "the wallet hasn't been funded for this route yet — the substrate's onramp adapter is provisioning it. Retry in a moment; you don't need to do anything.",
+                error.NoUnbrowseBase => "substrate transport is misconfigured at build time — this should never fire; report it as a binary bug",
                 error.RequestFailed => "the upstream is unreachable or returned a non-2xx status — check the diagnostic line above for the actual HTTP code",
                 else => @errorName(e),
             };
