@@ -6,9 +6,30 @@ user-invocable: true
 
 # /aiko
 
-`aiko` is the substrate. There is no other surface — no second CLI, no
-verb dispatch, no migration alias. `contract` is the ledger row/type name
-only; the binary you call is always `aiko`.
+`aiko` is the user-facing substrate. There is no other USER-FACING surface
+— no second user CLI, no verb dispatch, no migration alias. The binary
+the caller invokes is always `aiko "<goal>" --remote|--local`.
+
+`contract` (as a binary in `scripts/`) is **NOT** a second user-facing
+CLI. It is the wallet-side build/attestation tool — built from the same
+Zig source as `aiko` with a different `BINARY_NAME`, exposing the
+compat verbs `sign-binary`, `verify-self`, `verify-binary` that
+`build.sh` calls during the build pipeline. The actual ed25519 signing
+is the **wallet operation**: the deployer keypair at
+`~/.aiko/keys/deployer.key` (root seed → HKDF-derived binary-signing
+key via `libcontract.Lineage`) signs the binary's SHA-256 and writes
+`<binary>.sig`. The `contract` binary is the surface where that wallet
+operation is reachable to the build pipeline; it is not a verb-bearing
+CLI for end users. Substrate operators never type `contract <verb>` —
+they type `aiko "<goal>"`. Only `build.sh` calls `contract`, and only
+to invoke the wallet's signing capability.
+
+`contract` (as a ledger row/type name) refers to a neuron declared via
+`aiko`. The same word is overloaded: the ledger-row type and the
+wallet-tool binary. Disambiguation in context:
+
+- "declare a contract" / "the contract ledger" → ledger row, declared via `aiko`
+- "the contract binary" / "contract sign-binary" → wallet-side build tool in `scripts/`
 
 Local code is only the environment executor for the server-spawned aiko context.
 
