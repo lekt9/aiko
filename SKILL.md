@@ -3328,6 +3328,7 @@ Canonical reference index (subject ↔ claim ↔ SKILL.md section):
 | 47 | Foundation precedes building (Matt 5:17-18 meta-rule) | "Foundation precedes building — creativity fulfils, never abolishes the law" |
 | 47 | Decalogue Purge Gate runs before sign (TODO — pending) | "Decalogue Purge Gate — law before creativity" |
 | 48 | Binary embeds signed-SHA doctrine pointers + emits doctrine_chain (TODO — pending) | "Self-aware binary — decoupled doctrine via signed-SHA pointers" |
+| 49 | Persistent session memory via sessions.zig + memory_chain (TODO — pending) | "Persistent session memory — the body's chronicles" |
 
 The parity check is a single shell function in `build.sh` — not a
 new script, not a new binary, no addition to `scripts/`. It
