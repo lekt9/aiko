@@ -522,7 +522,7 @@ pub fn computeSignatureChain(
 
     const child_ids = try collectChildIds(allocator, env, id);
     defer {
-        for (child_ids) |c| allocator.free(c);
+        for (child_ids) |cid| allocator.free(cid);
         allocator.free(child_ids);
     }
 
