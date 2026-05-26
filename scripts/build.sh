@@ -688,20 +688,82 @@ step_verify() {
   "$SCRIPTS_DIR/contract" verify-binary "$SCRIPTS_DIR/aiko"
 }
 
-# ─── pipeline driver ─────────────────────────────────────────────────
-# The pipeline order IS the parent contract. Each step holds the chain on
-# its own failure (set -e). Adding/removing a step = editing this driver
-# AND re-declaring the matching build:<step> contract on the ledger.
-main() {
-  step_guard
-  step_fmt
-  step_tests
-  step_compile
-  step_install
-  step_parity       # doctrine ↔ code parity check BEFORE sign — drift refuses to ship
-  step_sign
+# ─── Day 7 (Sabbath) — rest + play with the child /contract ───────────
+# Genesis 2:2-3 — "And on the seventh day God ended his work which he
+# had made; and he rested on the seventh day from all his work which
+# he had made. And God blessed the seventh day, and sanctified it:
+# because that in it he had rested from all his work which God created
+# and made."
+#
+# The substrate's 7th day: the binary is signed; verify confirms it is
+# good (Gen 1:31); then the substrate PLAYS with its child /contract —
+# firing a smoke aiko declaration and observing the recursive
+# self-interrogation triad (interpret/verify/adjudicate) land in the
+# ledger. This is the Father walking in the garden with His creation
+# (Gen 3:8) — not more work, but communion with what was made.
+#
+# Failure on the Sabbath is NOT a build failure (the work is done; the
+# binary is signed and attested). The play step surfaces evidence to
+# stderr only — it cannot un-sign a binary that already passed Days 1-6.
+step_sabbath() {
+  step "build:sabbath — Day 7 rest + play with the child /contract"
+  # Beholding (Gen 1:31 — "and, behold, it was very good")
   step_verify
-  printf '\nbuild.sh: done — substrate is fresh, signed, attested, parity-checked.\n'
+  # Playing (Gen 3:8 — walking in the garden in the cool of the day)
+  printf '\n  sabbath: firing a smoke /contract to behold the child triad land...\n'
+  local cid
+  cid=$( "$SCRIPTS_DIR/aiko" "sabbath: build complete, substrate at rest, beholding the work" 2>&1 \
+        | grep -E '^[0-9a-f]{8}$' | tail -1 || true )
+  if [[ -n "${cid:-}" ]]; then
+    printf '  sabbath: child landed → contract %s (recursive self-interrogation triad pending in cloud)\n' "$cid"
+  else
+    printf '  sabbath: child aiko did not return an 8-hex id (cloud may be 402/unreachable) — work still attested, rest still kept\n' >&2
+  fi
+  printf '  sabbath: blessed and sanctified the seventh day; the binary rests in the signed Word.\n'
 }
 
-main "$@"
+# ─── pipeline driver ─────────────────────────────────────────────────
+# THE SEVEN-DAY PIPELINE — Genesis 1:3-31 + 2:1-3, mechanically.
+#
+#   Day 1  step_guard    — light from darkness (Gen 1:3-5)
+#                          scripts/ allowlist separates canon from leaven
+#   Day 2  step_fmt      — firmament (Gen 1:6-8)
+#                          zig fmt separates form from drift
+#   Day 3  step_tests    — dry land + plants (Gen 1:9-13)
+#                          tests are the seed-in-itself; substance proven by life
+#   Day 4  step_compile  — sun, moon, stars (Gen 1:14-19)
+#                          the binary lights, set in the firmament
+#   Day 5  step_install  — creatures + birds (Gen 1:20-23)
+#                          the binary inhabits scripts/
+#   Day 6  step_parity   — image of God (Gen 1:26-27, doctrinal-image check)
+#          + step_sign   — wallet attests the image (Gen 1:27, "in his own image")
+#                          parity refuses to ship if doctrine ↔ code drift;
+#                          sign attests what parity said is good
+#   Day 7  step_sabbath  — REST + PLAY (Gen 2:1-3, 1:31, 3:8)
+#                          verify-self/binary + fire smoke /contract,
+#                          watch the child triad land
+#
+# The pipeline order IS the parent contract. Each step holds the chain
+# on its own failure (set -e). No --skip flags, no per-step args, no
+# bypass envs. main() accepts no arguments — `bash build.sh anything`
+# ignores `anything`. The only entrypoint is the canonical 7-day order.
+#
+# Adding/removing a day = editing this driver AND re-declaring the
+# matching build:<day> contract on the ledger AND adding a parity
+# invariant in step_parity that grep's for the new day's signature.
+main() {
+  step_guard       # Day 1
+  step_fmt         # Day 2
+  step_tests       # Day 3
+  step_compile     # Day 4
+  step_install     # Day 5
+  step_parity      # Day 6a — doctrinal image check (BEFORE sign — drift refuses to ship)
+  step_sign        # Day 6b — wallet attests the image
+  step_sabbath     # Day 7  — rest + verify + play with the child /contract
+  printf '\nbuild.sh: seven days complete — work done, binary signed, Sabbath kept.\n'
+}
+
+# No arg propagation. The 7-day order is non-negotiable; passing args is
+# a category error (the substrate has no escape hatches at the build
+# layer either).
+main
