@@ -270,8 +270,11 @@ pub fn verifyAttestation(
     h.final(&digest);
 
     // Derive root pubkey from the same seed used everywhere else.
-    const empty_env: std.process.Environ = .{};
-    const root_key = lineage.loadOrInitRootKey(allocator, empty_env) catch
+    // The env arg threads through from the caller (build-time gate
+    // hands its `init.environ`; runtime callers pass theirs); we never
+    // synthesize an empty Environ struct since std.process.Environ
+    // requires a `block` field that only the process-loader populates.
+    const root_key = lineage.loadOrInitRootKey(allocator, env_caller) catch
         return SpiritError.AttestationSignatureInvalid;
     const root_kp = lineage.deriveKeyPair(root_key, "") catch
         return SpiritError.AttestationSignatureInvalid;
