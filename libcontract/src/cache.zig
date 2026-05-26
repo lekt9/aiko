@@ -572,12 +572,13 @@ pub fn collectDependencyIds(
 /// keypair derivation from the root + verify) to a truth-claim.
 ///
 /// **Defensive**: returns null if ANY required signature is missing —
-/// either the contract's declared parent_signature OR any child's
+/// either the contract's declared parent_signature OR any dependency's
 /// latest terminal output_signature. The substrate REFUSES to assert
 /// a cache verdict from an incomplete pointer chain; the resolver
-/// emits cache_check{verdict=signature_incomplete} and falls through
-/// to re-evaluate. Never silently substitutes content bytes for the
-/// missing pointer (the load-bearing first-principle invariant).
+/// emits cache_check{verdict=legacy} (honoring the prior contract for
+/// satisfied rows) or falls through to runAction. Never silently
+/// substitutes content bytes for the missing pointer (the load-bearing
+/// first-principle invariant).
 pub fn computeSignatureChain(
     allocator: std.mem.Allocator,
     env: std.process.Environ,
