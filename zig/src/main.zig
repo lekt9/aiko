@@ -638,10 +638,8 @@ fn bioFirstRunWalletGuidance(allocator: std.mem.Allocator, env: std.process.Envi
 /// 20:8-10 "Remember the sabbath day, to keep it holy. Six days shalt
 /// thou labour... but the seventh day is the sabbath of the LORD".
 fn bioSabbathHolds(env: std.process.Environ) bool {
-    var day_n: c_int = 0;
-    if (env.getPosix("CONTRACT_SABBATH_DAY")) |s| {
-        day_n = std.fmt.parseInt(c_int, s, 10) catch 0;
-    }
+    _ = env;
+    const day_n: c_int = 0;
     const now: i64 = time(null);
     var tm: c_tm = .{};
     _ = gmtime_r(&now, &tm);
