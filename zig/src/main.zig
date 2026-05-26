@@ -1318,7 +1318,9 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
                 break :blk2 false;
             };
             if (use_count >= threshold and !already_primitive) {
-                contract.appendPrimitiveRow(allocator, env, target, use_count) catch {};
+                contract.appendPrimitiveRow(allocator, env, target, use_count) catch |err| {
+                    evidencePrint("hebbian: primitive append failed for {s}: {s} — promotion not durable\n", .{ target, @errorName(err) });
+                };
                 evidencePrint("  hebbian-promotion: pattern:{s} use_count={d} >= threshold={d} -> baked as primitive\n", .{ target, use_count, threshold });
             }
         }
