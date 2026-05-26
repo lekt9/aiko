@@ -133,13 +133,16 @@ pub fn compileLocallyJson(
 
     // -n 256:       compiled trees are small; 1024 was wasteful.
     // -t 4:         cap thread count so we don't pin every core.
-    // -no-cnv:      single-shot mode — exit after generating instead of
-    //               sitting at an interactive `>` prompt waiting for the
-    //               next user turn (this caused popen to block forever).
-    // --single-turn: belt-and-braces — guarantee exit after one response.
+    // --single-turn: exit after generating one response (otherwise llama-cli
+    //               sits at an interactive `>` prompt forever).
+    // 2>&1:         llama-cli writes the GENERATED text to stderr, not stdout
+    //               (only the loading spinner goes to stdout). Merge them so
+    //               popen captures the actual JSON output. The
+    //               extractFirstJsonObject pass finds the JSON in the
+    //               merged stream — banner/footer noise is tolerated.
     const cmd_slice = std.fmt.allocPrint(
         allocator,
-        "'{s}' -m '{s}' --grammar-file '{s}' -f '{s}' -n 256 -t 4 --temp 0.1 --no-display-prompt -no-cnv --single-turn 2>/dev/null",
+        "'{s}' -m '{s}' --grammar-file '{s}' -f '{s}' -n 256 -t 4 --temp 0.1 --no-display-prompt --single-turn 2>&1",
         .{ llama_cli, model_path, grammar_path, prompt_path },
     ) catch return Error.OutOfMemory;
     defer allocator.free(cmd_slice);
