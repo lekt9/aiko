@@ -70,6 +70,14 @@ pub const Shape = struct {
     cause: ?[]const u8 = null,
     by_id: ?[]const u8 = null,
     reason: ?[]const u8 = null,
+    // Optional contract_owner_wallet (Lewis 2026-05-27 gap `ca626bfa`):
+    // 8-hex contract id of the wallet that collects per-call fees when
+    // this contract is invoked by a non-owner. Substrate-native — same
+    // primitive as wallet_identity but bound to the contract itself
+    // rather than the row's signer. Relay routes x402 payments to this
+    // address (minus Foundry split per FOUNDRY_CUT_BPS) on every
+    // cross-host call.
+    contract_owner_wallet: ?[]const u8 = null,
 };
 
 /// Wraps the std.json parser's owned tree plus the projected Shape
