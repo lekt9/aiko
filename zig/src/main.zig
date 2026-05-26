@@ -2230,11 +2230,14 @@ fn resolveLineage(allocator: std.mem.Allocator, env: std.process.Environ, id: []
 /// on no-progress or budget exhaustion, surfaces evidence on every pass.
 /// Used by the `drill:` action handler so the substrate's continuous resolver
 /// reaches further per fire than the heartbeat backfill does.
-fn backfillUnresolvedDeep(allocator: std.mem.Allocator, env: std.process.Environ, skip_id: []const u8) !void {
+///
+/// Returns `anyerror!void` (explicit, not inferred) to break the inferred
+/// error-set cycle: runAction → backfillUnresolvedDeep → resolveOne → runAction.
+fn backfillUnresolvedDeep(allocator: std.mem.Allocator, env: std.process.Environ, skip_id: []const u8) anyerror!void {
     return backfillUnresolvedWithBudget(allocator, env, skip_id, 1024, 32);
 }
 
-fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.Environ, skip_id: []const u8, budget: u32, max_passes: u32) !void {
+fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.Environ, skip_id: []const u8, budget: u32, max_passes: u32) anyerror!void {
     if (bioSabbathHolds(env)) {
         const ts_now: i64 = time(null);
         evidencePrint("sabbath: drill paused at unix {d}\n", .{ts_now});
