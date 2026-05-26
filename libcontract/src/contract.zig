@@ -1135,6 +1135,48 @@ pub fn markSatisfied(
 
     const path = try ledger.appendRow(allocator, env, buf.items);
     allocator.free(path);
+
+    // L7→L8 synthesizer: when a `validate:<id>` /contract (layer 7)
+    // reaches satisfied, mechanically spawn its `signed:<sig>` child
+    // (layer 8) carrying the freshly-computed output_signature. The
+    // chain breaks at L7 and ratifies at L8 — the L8 row is the
+    // wallet-signed pointer-memory for the L7 truth claim. Cascade
+    // terminates at L8 because `signed:` is itself terminal (its own
+    // markSatisfied would re-enter this branch but action lookup would
+    // find `signed:` not `validate:` and skip).
+    //
+    // Lookup failures, missing actions, or sig-less rows all silently
+    // skip — synthesizer must never invalidate the primary satisfy.
+    if (sig_opt) |sig| {
+        const action_opt = ledger.findActionForId(allocator, env, id) catch null;
+        if (action_opt) |action| {
+            defer allocator.free(action);
+            if (std.mem.startsWith(u8, action, "validate:")) {
+                var signed_action_buf: std.ArrayList(u8) = .empty;
+                defer signed_action_buf.deinit(allocator);
+                signed_action_buf.appendSlice(allocator, "signed:") catch {};
+                signed_action_buf.appendSlice(allocator, sig) catch {};
+                // Plan carries a short human-readable trace: the
+                // satisfied id whose truth is now wallet-ratified.
+                var plan_buf: std.ArrayList(u8) = .empty;
+                defer plan_buf.deinit(allocator);
+                plan_buf.appendSlice(allocator, "signed pointer-memory for ") catch {};
+                plan_buf.appendSlice(allocator, id) catch {};
+                if (declare(
+                    allocator,
+                    env,
+                    plan_buf.items,
+                    signed_action_buf.items,
+                    .{ .parent_id = id },
+                )) |child_id| {
+                    allocator.free(child_id);
+                } else |_| {
+                    // signing-cascade child failed; primary row already
+                    // landed, so the substrate stays consistent.
+                }
+            }
+        }
+    }
 }
 
 /// Death cause for natural-selection over the contract DAG. Each cause is
