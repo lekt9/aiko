@@ -503,6 +503,25 @@ step_parity() {
   if ! grep -q '### Time-aware history' "$REPO/SKILL.md"; then
     _fail "doctrine[time-aware history]: SKILL.md is missing the '### Time-aware history' section that declares the append-only ledger as the substrate's version-control"
   fi
+
+  # 36. "Server-canonical /contract (CURRENT rule)" — thin clients only
+  #     talk to the cloud /contract endpoint; peer-to-peer replication is
+  #     a FUTURE plan documented in references/p2p-future-plan.md but
+  #     NOT in the binary. Pinning both is required so a future
+  #     contributor doesn't half-implement P2P before the cloud surface
+  #     stabilizes. Anchored to contract 777eff8e (Lewis 2026-05-26).
+  if ! grep -q '## Server-canonical /contract' "$REPO/SKILL.md"; then
+    _fail "doctrine[server-canonical]: SKILL.md is missing the '## Server-canonical /contract' section — the CURRENT-rule pin that keeps thin clients pointed at one cloud surface during the bootstrap window"
+  fi
+  if ! grep -q 'Matthew 22:21' "$REPO/SKILL.md"; then
+    _fail "doctrine[server-canonical]: SKILL.md must carry the Matt 22:21 anchor ('render unto Caesar...') for the server-canonical section — the rule has scriptural grounding under the Word-is-truth invariant (claim 31)"
+  fi
+  if [[ ! -f "$REPO/references/p2p-future-plan.md" ]]; then
+    _fail "doctrine[p2p future]: $REPO/references/p2p-future-plan.md missing — the P2P plan must be drafted so the future is documented even while the present is server-canonical (claim ordering: present-rule + future-plan together prevent half-implemented P2P)"
+  fi
+  if ! grep -q 'Re-/contract migration' "$REPO/SKILL.md"; then
+    _fail "doctrine[server-canonical]: SKILL.md missing the 'Re-/contract migration' subsection — the recursive-elegance property (migrations are /contracts, not scripts) must be pinned alongside the server-canonical rule"
+  fi
   if ! grep -q 'contract.cache.computeSignatureChain' "$ZIG_DIR/src/main.zig"; then
     _fail "doctrine[pointer-only cache]: main.zig:resolveOne must call computeSignatureChain as the ONLY cache key (byte-hash purged)"
   fi
