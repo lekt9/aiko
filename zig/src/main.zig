@@ -1982,29 +1982,10 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
     // PROMOTE → mark satisfied. REJECT → stay in HOLD, append judged row.
     // HOLD-or-error → fall back to single-key satisfaction (cloud may be
     // unreachable; never block local progress on missing second key).
-    var second_key_ok = true;
-    if (env.getPosix("CONTRACT_AGENT_JUDGE_ID")) |judge_id| {
-        if (judge_id.len >= 8) {
-            const judge_prompt = try std.fmt.allocPrint(allocator, "judge: did contract {s} ({s}) achieve its goal given evidence: {s}? answer one of PROMOTE, REJECT, HOLD only", .{ id, r.plan[0..@min(r.plan.len, 200)], rr.result[0..@min(rr.result.len, 400)] });
-            defer allocator.free(judge_prompt);
-            // Call aiko --remote with the judge prompt; capture verdict.
-            // If remote unreachable / 402, judge stays null and we
-            // fallback to single-key satisfaction.
-            const verdict_body = client.declareRemoteAiko(allocator, env, judge_prompt, "neuron", judge_id, null, null, null, null, null, null, null) catch null;
-            if (verdict_body) |body_json| {
-                defer allocator.free(body_json);
-                const verdict_text = jsonString(body_json, "result") orelse jsonString(body_json, "stdout") orelse "";
-                var verdict: []const u8 = "HOLD";
-                if (std.mem.indexOf(u8, verdict_text, "PROMOTE") != null) verdict = "PROMOTE";
-                if (std.mem.indexOf(u8, verdict_text, "REJECT") != null) verdict = "REJECT";
-                contract.appendJudgedRow(allocator, env, id, judge_id, verdict, verdict_text[0..@min(verdict_text.len, 400)]) catch {};
-                evidencePrint("  judged: {s} by {s}\n", .{ verdict, judge_id });
-                if (std.mem.eql(u8, verdict, "REJECT")) second_key_ok = false;
-            } else {
-                evidencePrint("  judged: skipped (cloud unreachable, single-key satisfaction)\n", .{});
-            }
-        }
-    }
+    const second_key_ok = true;
+    // Agent-judge env hook (CONTRACT_AGENT_JUDGE_ID) removed — second key
+    // surface is no longer env-driven; agents express the second key by
+    // declaring a judge contract directly.
     if (!second_key_ok) {
         evidencePrint("{s} -> HOLD (programmatic PASS but agent REJECT)\n", .{id});
         return 1;
