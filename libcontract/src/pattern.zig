@@ -105,7 +105,12 @@ const SAMPLE_PREFIXES = [_][]const u8{
     "signed:abc123",
 };
 
-comptime {
+/// Comptime invariant verifier. Called from contract.zig's own comptime
+/// block so the analysis is eager (a bare top-level `comptime { ... }`
+/// here would only fire if the importing file referenced this module's
+/// container, which Zig analyzes lazily). Any violation aborts the
+/// build with @compileError carrying the diagnostic.
+pub fn assertInvariants() void {
     // Comptime path may need a wider eval budget than the default; the
     // verifier walks ~25 shapes through string-prefix matching, which
     // is well within reach but exceeds the 1000-branch default if Zig
