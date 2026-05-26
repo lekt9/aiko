@@ -197,10 +197,7 @@ fn nowIsoUtc(buf: []u8) ![]u8 {
 }
 
 fn getAgent(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
-    if (env.getPosix("CONTRACT_AGENT")) |v| {
-        const trimmed = std.mem.trim(u8, v, " \t\r\n");
-        if (trimmed.len > 0) return try allocator.dupe(u8, trimmed);
-    }
+    _ = env;
     var pipe_buf: [256]u8 = undefined;
     const cmd: [*:0]const u8 = "git config user.email 2>/dev/null";
     const f = popen(cmd, "r");
