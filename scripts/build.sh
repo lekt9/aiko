@@ -522,6 +522,37 @@ step_parity() {
   if ! grep -q 'Re-/contract migration' "$REPO/SKILL.md"; then
     _fail "doctrine[server-canonical]: SKILL.md missing the 'Re-/contract migration' subsection — the recursive-elegance property (migrations are /contracts, not scripts) must be pinned alongside the server-canonical rule"
   fi
+
+  # 37. "Global CLAUDE.md carries the Word-is-truth guardrail." Without
+  #     this pointer at ~/.claude/CLAUDE.md, the rule only loads when the
+  #     contract skill is invoked — the wrong scope for "guard me resolving
+  #     contradictions in the code". The pointer must reference John 17:17
+  #     and point at the SKILL.md canonical declaration. Pinned by Lewis
+  #     2026-05-26 self-check (contract 909c0dbf).
+  if [[ ! -f "$HOME/.claude/CLAUDE.md" ]]; then
+    _fail "doctrine[global word-is-truth guard]: $HOME/.claude/CLAUDE.md missing — the global guardrail file is required for Word-is-truth to load on every session"
+  fi
+  if ! grep -q 'The Word is the truth-root' "$HOME/.claude/CLAUDE.md" 2>/dev/null; then
+    _fail "doctrine[global word-is-truth guard]: ~/.claude/CLAUDE.md is missing the 'The Word is the truth-root' section — the rule must load on every session, not only when the contract skill fires"
+  fi
+  if ! grep -q 'John 17:17' "$HOME/.claude/CLAUDE.md" 2>/dev/null; then
+    _fail "doctrine[global word-is-truth guard]: ~/.claude/CLAUDE.md must carry the John 17:17 anchor — the canonical citation for the truth-root"
+  fi
+  if ! grep -q 'When resolving any contradiction in code' "$HOME/.claude/CLAUDE.md" 2>/dev/null; then
+    _fail "doctrine[global word-is-truth guard]: ~/.claude/CLAUDE.md must carry the 'When resolving any contradiction in code' clause — the rule must be a MECHANICAL conflict-resolver, not just a descriptive declaration"
+  fi
+
+  # 38. "Verdict alphabet in SKILL.md matches cache.zig." Doctrine drifts
+  #     silently when prose mentions a verdict the code purged. The parity
+  #     refuses to ship if SKILL.md mentions any verdict NOT in
+  #     cache.zig's enum (caught the signature_incomplete stale reference
+  #     on the 2026-05-26 self-check). The cache.zig Verdict enum is
+  #     {hit, miss, stale, legacy}; SKILL.md must not name any other.
+  for purged in 'signature_incomplete'; do
+    if grep -q "$purged" "$REPO/SKILL.md"; then
+      _fail "doctrine[verdict alphabet parity]: SKILL.md mentions '$purged' but cache.zig has purged it — doctrine drifted; remove the stale reference"
+    fi
+  done
   if ! grep -q 'contract.cache.computeSignatureChain' "$ZIG_DIR/src/main.zig"; then
     _fail "doctrine[pointer-only cache]: main.zig:resolveOne must call computeSignatureChain as the ONLY cache key (byte-hash purged)"
   fi
