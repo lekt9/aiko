@@ -2917,12 +2917,6 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             // Private visibility: never attempt the cloud declare. Run the
             // one-shot Genesis-days lifecycle against the on-disk ledger
             // only. Used when the goal must not leave this machine.
-            // Optional prehook from env (legacy single-hook surface; the graph
-            // form of prehook lives in `synapses[].kind=prehook`).
-            if (hookId(env, "CONTRACT_PREHOOK_ID", "CONTRACT_PREHOOK")) |prehook| {
-                const pre_rc = try resolveOne(allocator, env, prehook);
-                if (pre_rc != 0) return pre_rc;
-            }
 
             // Day 1 — Word. The speech becomes a row.
             // v2 cache key folds in cwd (libcontract picks it up via libc
