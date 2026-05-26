@@ -2275,7 +2275,7 @@ born of conflating the function with the instance.
 🟡 Payload + envelope          — declare-POST adds relevant_sessions
                                  (all three kinds); response carries
                                  memory_chain (all three kinds).
-🟡 Parity claim 49 (TODO)      — build.sh refuses to sign a binary
+🟡 Parity (TODO, unnumbered)   — build.sh refuses to sign a binary
                                  that lacks sessions.zig + the three
                                  manifest SHAs registered with cloud.
 ```
