@@ -4874,6 +4874,59 @@ fn cmdEval(allocator: std.mem.Allocator, env: std.process.Environ, args: []const
     return 0;
 }
 
+/// `aiko prune` — read a /contract JSON envelope (event=died) from
+/// stdin, mark the target died with the given cause. Implements the
+/// 4th verb in the substrate's user-facing surface (build / run /
+/// eval / prune) per Lewis 2026-05-26.
+///
+/// Doctrinally this is John 15:2 ("every branch that beareth not
+/// fruit he taketh away"). The spirit corpus (10 commandments via
+/// libcontract/src/spirit.zig) is the judge applied OUTSIDE the
+/// substrate; this verb is the mechanical removal once the judge has
+/// rendered its verdict. Cause is one of:
+///   superseded — newer /contract supersedes; by_id names it
+///   contradicts — violates an established root principle; by_id names
+///                  the rule contract
+///   stale — no evidence, no path to satisfaction
+///   apoptosed — programmed self-shutdown
+///
+/// Cascade: died is terminal — no L7→L8 signed row spawns. The row
+/// stays in the append-only ledger; the projector treats it as gone.
+fn cmdPrune(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    _ = args;
+    const json = try readStdinJson(allocator);
+    defer allocator.free(json);
+    var ps = contract.shape.validateShape(allocator, json) catch |e| {
+        errPrint("prune: shape validation failed: {s}\n", .{@errorName(e)});
+        return 2;
+    };
+    defer ps.deinit();
+    const sh = ps.shape;
+    if (sh.event != .died) {
+        errPrint("prune: requires event=\"died\"; got {s}\n", .{@tagName(sh.event)});
+        return 2;
+    }
+    const id = sh.id orelse {
+        errPrint("prune: missing id after validation (substrate bug)\n", .{});
+        return 2;
+    };
+    const cause_str = sh.cause orelse {
+        errPrint("prune: missing cause after validation (substrate bug)\n", .{});
+        return 2;
+    };
+    const cause: contract.DeathCause = blk: {
+        if (std.mem.eql(u8, cause_str, "superseded")) break :blk .superseded;
+        if (std.mem.eql(u8, cause_str, "contradicts")) break :blk .contradicts;
+        if (std.mem.eql(u8, cause_str, "stale")) break :blk .stale;
+        if (std.mem.eql(u8, cause_str, "apoptosed")) break :blk .apoptosed;
+        errPrint("prune: unknown cause: {s}\n", .{cause_str});
+        return 2;
+    };
+    try contract.markDied(allocator, env, id, cause, sh.by_id, sh.reason);
+    outPrint("{s}\n", .{id});
+    return 0;
+}
+
 fn cmdSelf(args: []const []const u8) u8 {
     if (args.len > 1 or (args.len == 1 and !std.mem.eql(u8, args[0], "--json"))) {
         err("self accepts no args or --json\n");
