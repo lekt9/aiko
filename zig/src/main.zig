@@ -2110,6 +2110,18 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
                 }
             }
         }
+        // Permanently-unresolvable classes apoptose immediately so they
+        // exit the candidate pool instead of cycling on every backfill
+        // pass. command_not_found = Decalogue commandment 2 (graven image:
+        // the action names a binary outside the substrate's allowlist —
+        // an image of an executor that does not exist). Retrying the
+        // missing binary cannot succeed; the row is mechanically dead.
+        if (std.mem.eql(u8, cls.class, "command_not_found")) {
+            contract.markDied(allocator, env, id, .apoptosed, null, "command_not_found — purged by Decalogue commandment 2 (action names executor outside the substrate's allowlist)") catch |e| {
+                evidencePrint("apoptosis: markDied failed for {s}: {s} — row will continue to cycle\n", .{ id, @errorName(e) });
+            };
+            evidencePrint("  -> apoptosed (command_not_found is permanently unresolvable)\n", .{});
+        }
         return 1;
     }
 
