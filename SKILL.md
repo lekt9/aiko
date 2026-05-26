@@ -2144,20 +2144,32 @@ POST /v1/contract/declare
   "goal": "<sanitized truth claim>",
   "wallet_identity": "<pubkey>",
   "doctrine_anchor": {
-    "skill_md_sha256":            "<hex>",
-    "bible_kjv_sha256":           "<hex>",
-    "sessions_manifest_sha256":   "<hex>",
-    "relevant_sections":          [...],
-    "relevant_session_slices": [
+    "skill_md_sha256":              "<hex>",
+    "bible_kjv_sha256":             "<hex>",
+    "transcripts_manifest_sha256":  "<hex>",
+    "contract_lineage_manifest_sha256": "<hex>",
+    "relevant_sections":            [/* SKILL.md slices */],
+    "relevant_sessions": [
       {
-        "project_slug":   "<slug>",
-        "session_id":     "<uuid>",
-        "session_sha":    "<hex>",
-        "slice_range":    [start_byte, end_byte],
-        "slice_sha":      "<hex>",
-        "score":          0.74,
-        "ts_first":       "<iso>",
-        "ts_last":        "<iso>"
+        "kind":          "chat_transcript",
+        "project_slug":  "<slug>",
+        "session_id":    "<uuid>",
+        "session_sha":   "<hex>",
+        "slice_range":   [start_byte, end_byte],
+        "score":         0.74
+      },
+      {
+        "kind":          "contract_lineage",
+        "root_id":       "<contract_id>",
+        "session_sha":   "<hex of sorted-member-row-id-set>",
+        "member_count":  17,
+        "score":         0.81
+      },
+      {
+        "kind":          "bible_chain",
+        "verse_ids":     ["<id>", "<id>", ...],
+        "chain_sha":     "<hex>",
+        "score":         0.68
       }
     ]
   }
