@@ -2118,12 +2118,7 @@ fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, sk
         contract.appendCalledRow(allocator, env, skip_id, target, "sabbath-evaluation") catch {};
         return;
     }
-    var max_passes: u32 = 8;
-    if (env.getPosix("CONTRACT_BACKFILL_PASSES")) |s| {
-        max_passes = std.fmt.parseInt(u32, s, 10) catch 8;
-        if (max_passes == 0) max_passes = 1;
-        if (max_passes > 64) max_passes = 64;
-    }
+    const max_passes: u32 = 8;
     // Fixed-point loop: keep sweeping until a full pass yields zero new
     // satisfies (whole ledger settled) or budget exhausts. Each pass takes
     // the newest-first slice of still-unresolved rows.
