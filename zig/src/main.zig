@@ -2225,14 +2225,29 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
     }
 
     try contract.markSatisfied(allocator, env, id, wave, "native resolver reached mechanical true");
-    // Pin the pointer-value snapshot the contract was true AGAINST so the
-    // next resolveOne pass can decide hit/miss/invalidated deterministically
-    // from the ledger alone (Lewis 2026-05-26: "resolves the cash to be
-    // true"). The check above reads the most recent cache_resolved row's
-    // snapshot field via contract.cache.findLatestResolvedSnapshot.
-    if (hash_str.len > 0) {
+    // Pin the pointer-chain snapshot the contract was true AGAINST so the
+    // next resolveOne pass can decide hit/miss deterministically from the
+    // ledger alone (Lewis 2026-05-26: "resolves the cash to be true" +
+    // "treat the binary signed signatures of outputs as the hash").
+    //
+    // Primary snapshot = signature chain (pointer-only). markSatisfied
+    // above just wrote a signed satisfied row, so the chain for `id`
+    // is now complete on this pass. Legacy fallback = byte-hash for
+    // contracts whose root key cannot be resolved (signOutput returns
+    // null, satisfied row lands unsigned, signature chain returns null).
+    const chain_opt = contract.cache.computeSignatureChain(allocator, env, id) catch null;
+    if (chain_opt) |chain| {
+        defer allocator.free(chain);
+        contract.cache.appendCacheResolvedRow(allocator, env, id, wave, chain) catch |e| {
+            evidencePrint("cache_resolved: append failed for {s}: {s} — signature chain not pinned, next pass will recompute\n", .{ id, @errorName(e) });
+        };
+    } else if (hash_str.len > 0) {
+        // Legacy substrate path — byte-hash snapshot. The cache_check on
+        // the next pass will surface this as signature_incomplete and
+        // re-evaluate; the next satisfied row (post-signOutput) lands a
+        // chain and the substrate self-heals onto the pointer-only path.
         contract.cache.appendCacheResolvedRow(allocator, env, id, wave, hash_str) catch |e| {
-            evidencePrint("cache_resolved: append failed for {s}: {s} — snapshot not pinned, next pass will recompute\n", .{ id, @errorName(e) });
+            evidencePrint("cache_resolved: append failed for {s}: {s} — legacy byte-hash snapshot not pinned\n", .{ id, @errorName(e) });
         };
     }
     evidencePrint("{s} -> resolved (hash {s})\n", .{ id, if (hash_str.len >= 16) hash_str[0..16] else hash_str });
