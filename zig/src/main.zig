@@ -1636,7 +1636,23 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         defer allocator.free(guide);
         out(guide);
         out("\n");
-        contract.appendCalledRow(allocator, env, r.id, "wallet:setup-complete:multichain", "wallet-setup") catch {};
+        // Resolve antipattern:NotASynapsePointer — declare the
+        // wallet-setup-complete payload as its own contract row first, then
+        // point the called row at it via `contract:<id>` (canonical pattern,
+        // see flex:budget refactor above).
+        const wallet_claim = "wallet:setup-complete kind=multichain ed25519+secp256k1";
+        const wallet_id_opt: ?[]u8 = contract.declare(allocator, env, wallet_claim, "", .{}) catch |decl_err| blk: {
+            evidencePrint("wallet-setup: declare-complete failed: {s} — skipping called row\n", .{@errorName(decl_err)});
+            break :blk null;
+        };
+        if (wallet_id_opt) |wid| {
+            defer allocator.free(wid);
+            const target = try std.fmt.allocPrint(allocator, "contract:{s}", .{wid});
+            defer allocator.free(target);
+            contract.appendCalledRow(allocator, env, r.id, target, "wallet-setup") catch |err| {
+                evidencePrint("wallet-setup: appendCalledRow failed: {s} — no observable edge from {s}\n", .{ @errorName(err), r.id });
+            };
+        }
         return .{ .rc = 0, .result = "wallet-setup-done-multichain" };
     }
 
