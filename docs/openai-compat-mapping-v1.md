@@ -12,6 +12,27 @@ mapping at startup, applies it on every request, and emits OpenAI-
 shaped JSON. There is no logic in the wrapper that is not encoded
 here as a child /contract — the wrapper is a walker, not a translator.
 
+## The trio: build / run / eval
+
+Every translation rule below is one composition of the canonical
+trio Lewis named for the user-facing surface (2026-05-26). The trio
+parallels the John 14:6 pattern surfaced in
+`libcontract/verses.zig:line 76` ("the way, the truth, and the life
+— distinct functions within one unity"):
+
+| Verb  | Role     | John 14:6 | Substrate primitive |
+|-------|----------|-----------|---------------------|
+| build | truth    | the truth | `contract.declare`  |
+| run   | runtime  | the life  | iteration child     |
+| eval  | routing  | the way   | `markSatisfied` + walk to L8 signed |
+
+The trio applies **fractally**: every nested /contract is built,
+run, evaluated; every iteration is itself a /contract (a fresh build
+under its parent); every chunk of a stream IS a run; the final
+eval cascades through layer-7 validate → layer-8 signed. There is
+no fourth verb — every operation in the substrate decomposes into
+the trio applied at a finer grain.
+
 ## Invariants
 
 1. **One conversation = one root /contract.** The HTTP request body
