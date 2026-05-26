@@ -168,14 +168,18 @@ step_compile() {
 }
 
 # ─── build:install — installed binaries land in scripts/ ─────────────
-# ONE binary is installed (`contract`); `aiko` is a symlink to it. The
-# persona is selected at runtime from argv[0]'s basename inside main.zig.
-# Pre-refactor this step installed two byte-different binaries built from
-# the same source with different `build_options.binary_name` — Lewis
-# 2026-05-26: "bind it so aiko is contract itself so theres no confusion".
+# TWO binaries are installed after the Wave-1 client/server split
+# (2026-05-26): `contract` (the client profile, what `aiko -> contract`
+# symlinks to) and `contract-server` (the server profile). Currently
+# byte-different but functionally identical — only `cmdSelf --json`
+# reads the profile constant. Heavy code-path divergence (cmdSearch/
+# cmdDiscover/bio*/runAction graph branches → RPC wrappers in client
+# profile) sequences after the Worker side adds the matching
+# /v1/contract endpoints. See references/client-server-split.md.
 step_install() {
   step "build:install — install -m 755 + symlink"
-  install -m 755 "$ZIG_DIR/zig-out/bin/contract-zig" "$SCRIPTS_DIR/contract"
+  install -m 755 "$ZIG_DIR/zig-out/bin/contract-zig"        "$SCRIPTS_DIR/contract"
+  install -m 755 "$ZIG_DIR/zig-out/bin/contract-zig-server" "$SCRIPTS_DIR/contract-server"
   # `ln -sf` replaces any prior independent binary at scripts/aiko with the
   # canonical symlink. The relative target keeps the link valid no matter
   # where the scripts/ folder lives.
