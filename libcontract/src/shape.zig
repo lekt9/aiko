@@ -196,6 +196,14 @@ pub fn validateShape(
         if (pf == .string) shape.proof = pf.string;
     }
 
+    // contract_owner_wallet — optional 8-hex (per-call-fee routing target)
+    if (obj.get("contract_owner_wallet")) |cw| {
+        if (cw == .string) {
+            if (!is8Hex(cw.string)) return ShapeError.BadIdShape;
+            shape.contract_owner_wallet = cw.string;
+        }
+    }
+
     // died-event extras: cause / by_id / reason. cause is required on
     // died events; by_id is required when cause is superseded /
     // contradicts (death must name its agent); reason is optional text.
