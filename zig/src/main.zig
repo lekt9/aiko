@@ -2485,7 +2485,15 @@ fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, sk
             // whose parent declaration never landed. Skip silently — the
             // row that referenced this orphan still resolves via its own
             // evaluator (not via the orphan's resolution).
-            if (latestDeclared(rows, r.id) == null) continue;
+            const decl_opt = latestDeclared(rows, r.id);
+            if (decl_opt == null) continue;
+            // `agent-judges` sentinel (c64bf5e2 / C-G01 5b9574ee): substrate
+            // cannot resolve these; only an in-thread agent verdict can.
+            // Adding them to the candidate set burns a budget slot and (pre-
+            // sentinel-branch) emitted `command not found` pollution into the
+            // ledger every pass. Skip silently — they remain pending until a
+            // `_mark satisfied` / `corroborate` lands from an agent in-thread.
+            if (std.mem.eql(u8, pointer.inferPointerType(decl_opt.?.action), "agent-judges")) continue;
             if (isSatisfied(rows, r.id)) {
                 // Chain-stale satisfied rows re-enter — that's the
                 // cache-invalidation propagation channel. Same pointer
