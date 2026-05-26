@@ -1520,7 +1520,7 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         };
         // Derive client destination from current identity's Solana addr.
         const root = lineage_lib.loadOrInitRootKey(allocator, env) catch return .{ .rc = 1, .result = "no-root-key" };
-        const identity = env.getPosix("CONTRACT_INSTANCE_ID") orelse r.id;
+        const identity = r.id;
         const kp = lineage_lib.deriveKeyPair(root, identity) catch return .{ .rc = 1, .result = "derive-failed" };
         var client_b58: [64]u8 = undefined;
         const client_n = b58encode(&kp.public_key.bytes, &client_b58);
