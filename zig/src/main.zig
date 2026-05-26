@@ -1241,6 +1241,15 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
             return .{ .rc = 1, .result = "hold" };
         }
         for (ids) |cid| {
+            if (isDead(rows, cid)) {
+                // Genesis sequencing applies to neurons too: if a
+                // declared child is dead (apoptosed / superseded /
+                // contradicts), the neuron cannot integrate that
+                // branch's evidence. Propagate-dead via a recognizable
+                // result string the classifier catches.
+                evidencePrint("  result: FAIL — child_dead:{s} (neuron inherits death)\n", .{cid});
+                return .{ .rc = 1, .result = "child_dead — neuron inherits the death of a declared child" };
+            }
             if (!isSatisfied(rows, cid)) {
                 evidencePrint("  result: HOLD — child neuron pending: {s}\n", .{cid});
                 return .{ .rc = 1, .result = "hold" };
