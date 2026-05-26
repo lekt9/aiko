@@ -56,14 +56,114 @@ log_info "preflight: confirming the Zig source tree is reachable"
 [[ -f "$ZIG_DIR/build.zig" ]] || { log_fail "missing zig/build.zig";         exit 2; }
 log_ok "source tree present"
 
-# ─── Step 1: BUILD ─────────────────────────────────────────────────────
-log_info "BUILD — zig build (gated by spirit-check + pattern.assertInvariants)"
-if ! ( cd "$ZIG_DIR" && zig build ); then
-  log_fail "zig build failed — pattern violation or spirit-attest gap"
-  log_fail "  → run aiko-attest with NEBIUS_API_KEY to populate the spirit ledger"
-  exit 1
-fi
-log_ok "binary compiled"
+# ─── Step 1: BUILD (with spirit-attest retry loop) ─────────────────────
+#
+# Lewis 2026-05-26: "we shouldn't proceed if compile failed because of
+# spirit check - we should keep retrying by surfacing the errors
+# properly". The build distinguishes two failure modes:
+#
+#   (a) pattern violation (comptime) — compile error, hard fail. No
+#       retry; the source must be fixed.
+#   (b) spirit-check (runtime gate) — missing attestation rows. Surface
+#       every unattested file, auto-invoke aiko-attest if the LLM
+#       endpoint is reachable, and retry the build. Bounded retries
+#       prevent infinite loops if the LLM keeps producing FAIL verdicts.
+#
+# The retry loop is what makes the build pipeline self-healing — when
+# the spirit ledger is the only thing standing between the operator
+# and a green build, the script attests the gap rather than asking
+# the operator to repeat the same command in a different shell.
+
+MAX_BUILD_ATTEMPTS=3
+ATTEMPT=0
+BUILD_LOG="/tmp/build-fractal-$$-build.log"
+
+run_zig_build() {
+  ( cd "$ZIG_DIR" && zig build ) > "$BUILD_LOG" 2>&1
+}
+
+# Returns 0 if the failure is a spirit-check error AND we can auto-fix.
+# Prints the unattested files to stdout for the caller to consume.
+classify_failure() {
+  if ! grep -q 'spirit-check: FAIL' "$BUILD_LOG"; then
+    return 1
+  fi
+  # Each unattested file appears on a line like:
+  #   spirit-check: FAIL — source `libcontract/src/foo.zig` has no attestation row.
+  grep -oE 'source `[^`]+`' "$BUILD_LOG" | sed -E "s/source \`(.*)\`/\1/" || true
+}
+
+while true; do
+  ATTEMPT=$((ATTEMPT + 1))
+  log_info "BUILD — attempt $ATTEMPT/$MAX_BUILD_ATTEMPTS (zig build, gated by spirit-check + pattern.assertInvariants)"
+
+  if run_zig_build; then
+    log_ok "binary compiled (attempt $ATTEMPT)"
+    break
+  fi
+
+  # Surface the full build log first — operator should see what Zig said.
+  log_fail "zig build failed on attempt $ATTEMPT — surfacing the full output:"
+  echo "─── build log ─────────────────────────────────────────────────────"
+  cat "$BUILD_LOG"
+  echo "───────────────────────────────────────────────────────────────────"
+
+  UNATTESTED="$(classify_failure || true)"
+
+  if [[ -z "$UNATTESTED" ]]; then
+    # Not a spirit-check failure — must be pattern violation or a real
+    # compile error. Hard fail; retrying won't help.
+    log_fail "non-spirit failure (pattern violation or compile error) — not retryable"
+    rm -f "$BUILD_LOG"
+    exit 1
+  fi
+
+  # Spirit-check failure. Enumerate the gap.
+  log_info "spirit-attest gap — the following files lack PASS rows in .contract-spirit-attest.jsonl:"
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    log_info "  • $f"
+  done <<< "$UNATTESTED"
+
+  if [[ -z "${CONTRACT_LLM_API_KEY:-}" ]]; then
+    log_fail "CONTRACT_LLM_API_KEY is not set — cannot auto-attest."
+    log_fail "  Set CONTRACT_LLM_API_KEY (any OpenAI-compat bearer) and re-run:"
+    log_fail "    export CONTRACT_LLM_API_KEY=…"
+    log_fail "    bash $(realpath "$0")"
+    log_fail "  OR run aiko-attest manually:"
+    log_fail "    $ZIG_DIR/zig-out/bin/aiko-attest"
+    rm -f "$BUILD_LOG"
+    exit 1
+  fi
+
+  if [[ "$ATTEMPT" -ge "$MAX_BUILD_ATTEMPTS" ]]; then
+    log_fail "still unattested after $MAX_BUILD_ATTEMPTS attempts — the LLM judge may be"
+    log_fail "  returning FAIL verdicts. Read .contract-spirit-attest.jsonl for the"
+    log_fail "  most recent reasoning rows and fix the offending source files."
+    rm -f "$BUILD_LOG"
+    exit 1
+  fi
+
+  log_info "auto-attesting: invoking aiko-attest with the configured LLM endpoint"
+  ATTEST_BINARY="$ZIG_DIR/zig-out/bin/aiko-attest"
+  if [[ ! -x "$ATTEST_BINARY" ]]; then
+    log_fail "aiko-attest binary missing at $ATTEST_BINARY"
+    log_fail "  Run \`cd $ZIG_DIR && zig build\` first to compile the ungated attest binary"
+    log_fail "  (it builds even when contract-zig-server is gated)."
+    rm -f "$BUILD_LOG"
+    exit 1
+  fi
+  if ! "$ATTEST_BINARY"; then
+    log_fail "aiko-attest exited non-zero — see its output above. The LLM either"
+    log_fail "  could not be reached, or returned a FAIL verdict for one or more"
+    log_fail "  files. Inspect .contract-spirit-attest.jsonl for the latest rows."
+    rm -f "$BUILD_LOG"
+    exit 1
+  fi
+  log_ok "attestations landed — retrying build"
+done
+
+rm -f "$BUILD_LOG"
 
 BINARY="$ZIG_DIR/zig-out/bin/contract-zig-server"
 [[ -x "$BINARY" ]] || { log_fail "contract-zig-server missing after build"; exit 1; }
