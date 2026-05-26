@@ -494,7 +494,7 @@
 17757 178630409 1778037831959202221 d9ff99a16b4c64c8b4178f94af361113 1 std/zig/llvm/bitcode_writer.zig
 597464 178630408 1778037831958970887 3d2fda42992a57fa8717bda6172f399b 1 std/zig/llvm/Builder.zig
 1605 348460167 1779730373920945754 d604e937e9da77323b79de068e95ba7e 0 /Users/lekt9/.agent-skills/contract/libcontract/src/id.zig
-14685 353329692 1779804555232809873 c02d0cecb0ecf77250de66159b8d7f91 0 /Users/lekt9/.agent-skills/contract/libcontract/src/pointer.zig
+14686 353332517 1779805134890440508 016fbca1761e4ff06584fc56c59c1e7b 0 /Users/lekt9/.agent-skills/contract/libcontract/src/pointer.zig
 10813 353329987 1779804680785165830 991863b0cefa9fc59fc734f10444460d 0 /Users/lekt9/.agent-skills/contract/libcontract/src/ledger.zig
 38234 350837908 1779762921350277694 25fa72e88c1530fcf8537b25201e935f 0 /Users/lekt9/.agent-skills/contract/libcontract/src/lineage.zig
 9999 350837253 1779762882152829393 d668af83806636aee07c94562412dfa9 0 /Users/lekt9/.agent-skills/contract/libcontract/src/http.zig
