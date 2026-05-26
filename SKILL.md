@@ -244,8 +244,8 @@ into the ledger.
 The user-facing surface is exactly:
 
 ```bash
-aiko "<goal>" --remote
-aiko "<goal>" --local
+aiko "<goal>"            # shared visibility (default)
+aiko "<goal>" --private  # never leaves this machine
 ```
 
 No verbs. There is no `declare`, `iterate`, `_mark`, `status`, `list`,
@@ -254,16 +254,39 @@ the caller can reach for. The substrate is stateless — state lives in
 the append-only ledger, not in a CLI surface — so a "compatibility verb"
 is meaningless. If a caller needs to *read* substrate state, it parses
 the canonical ledger file directly (Foundation, not subprocess); if it
-needs to *write*, it spawns `aiko "<goal>" --mode`. That is the entire
-write API.
+needs to *write*, it spawns `aiko "<goal>" [--private]`. That is the
+entire write API.
 
-`aiko` is the Zig neuron substrate with the smallest local surface. It
-accepts one goal and an optional `--remote|--local` transport pointer.
-`--remote` routes to the Unbrowse contract ledger at the hardcoded base
-`https://beta-api.unbrowse.ai` — there is no env override. `--local`
-uses the same neuron shape against the local scoped ledger at
-`~/.contracts/contracts.jsonl` (resolved from `HOME`, the one POSIX
-identity read the binary makes).
+### Visibility, not transport
+
+The flag chooses **visibility** (who else can see the row), not transport
+(where the bits travel). Transport is the substrate's concern: it picks
+HTTP, local-file, or future federation paths based on wallet state and
+network reachability. The caller doesn't see that decision.
+
+- **`aiko "<goal>"`** (no flag, default) → **shared** visibility. The row
+  joins the substrate's shared graph: Unbrowse cloud declare at the
+  hardcoded base `https://beta-api.unbrowse.ai`, with transparent fallback
+  to local-LLM + local-declare when the wallet 402s. The substrate keeps
+  thinking offline; the user never sees the seam.
+
+- **`aiko "<goal>" --private`** → **private** visibility. Skips the cloud
+  declare entirely. Runs the one-shot Genesis-days lifecycle against the
+  local scoped ledger at `~/.contracts/contracts.jsonl` (resolved from
+  `HOME`, the one POSIX identity read the binary makes). Use when the
+  goal contains PII, secrets, or anything the operator does not want
+  federated.
+
+### Deprecated aliases (still honored)
+
+- `--remote` ≡ default (shared). The substrate continues to accept it
+  silently for backwards compatibility with legacy orchestrator patterns
+  that explicitly pass `--remote`.
+- `--local` ≡ `--private`. Same semantic; new call sites use `--private`.
+
+Both will be removed in a future commit when no remaining call sites
+depend on them. The visibility/transport reframe is the doctrine —
+`--remote/--local` was a transport-layer leak in the user-facing API.
 
 `aiko` is x402-native. Faremeter Flex payment, when required, is
 satisfied by the wallet derived from the binary's deployer keypair
