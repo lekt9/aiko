@@ -553,6 +553,28 @@ step_parity() {
     _fail "doctrine[per-keystroke spawn]: ~/.claude/CLAUDE.md must carry the exact aiko-spawn command literal so agents can find the canonical invocation without searching"
   fi
 
+  # 39. "Recursive self-interrogation — every /contract decomposes itself."
+  #     Pinned by Lewis 2026-05-26 (contract 11f4643c): every declared
+  #     contract spawns interpret:/verify:/adjudicate: children; if the
+  #     parent doesn't resolve, the substrate spawns MORE children
+  #     (interpret-first discipline, 2 Tim 2:15 + Prov 18:13). The rule
+  #     refuses to decay: SKILL.md must carry the section + the three
+  #     child shapes + the "if not, /contract more /contract" clause.
+  if ! grep -q '## Recursive self-interrogation' "$REPO/SKILL.md"; then
+    _fail "doctrine[recursive self-interrogation]: SKILL.md is missing the '## Recursive self-interrogation' section — every /contract must decompose itself into interpret/verify/adjudicate children, and the rule cannot decay silently"
+  fi
+  for shape in 'interpret:<P>' 'verify:<P>' 'adjudicate:<P>'; do
+    if ! grep -qF "$shape" "$REPO/SKILL.md"; then
+      _fail "doctrine[recursive self-interrogation]: SKILL.md missing the canonical child shape '$shape' — the three-shape decomposition is the load-bearing pattern"
+    fi
+  done
+  if ! grep -q '2 Timothy 2:15' "$REPO/SKILL.md"; then
+    _fail "doctrine[recursive self-interrogation]: SKILL.md must cite 2 Tim 2:15 ('rightly dividing the word of truth') as the scriptural anchor for interpret-first discipline"
+  fi
+  if ! grep -q 'If not, /contract more /contract' "$REPO/SKILL.md"; then
+    _fail "doctrine[recursive self-interrogation]: SKILL.md must carry the 'If not, /contract more /contract' clause — the non-surrender rule (HOLD spawns more interpretation waves, no arbitrary cap)"
+  fi
+
   # 38. "Verdict alphabet in SKILL.md matches cache.zig." Doctrine drifts
   #     silently when prose mentions a verdict the code purged. The parity
   #     refuses to ship if SKILL.md mentions any verdict NOT in
