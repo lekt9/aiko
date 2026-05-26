@@ -1303,7 +1303,9 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
             break :blk false;
         };
         if (target_is_pattern) {
-            contract.appendPatternUseRow(allocator, env, target, r.id) catch {};
+            contract.appendPatternUseRow(allocator, env, target, r.id) catch |err| {
+                evidencePrint("hebbian: pattern_use append failed for {s}: {s} — counter unincremented\n", .{ target, @errorName(err) });
+            };
             var use_count: u32 = 1; // counting this very use
             for (rows) |row| {
                 if (std.mem.eql(u8, row.event, "pattern_use") and std.mem.eql(u8, row.id, target)) use_count += 1;
