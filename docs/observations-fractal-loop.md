@@ -290,7 +290,37 @@ the caller's.
 
 ---
 
-## What's not a gap (worth saying explicitly)
+## The build pipeline IS the trio (added 2026-05-26)
+
+`scripts/build-fractal.sh` makes the binary's own build a fractal
+application of the trio:
+
+  - **BUILD** — `zig build` compiles the binary. Gated by spirit-attest
+    and `pattern.assertInvariants` (the comptime 0..8 layer check).
+    Build refusing == truth claim refused.
+  - **RUN** — `zig build test` exercises the runtime. libcontract's
+    inline tests fire (shape validator, pattern enforcer, etc.). The
+    binary IS its iteration; the test pass IS the run.
+  - **EVAL** — the fresh binary is fed back into itself: a `validate:
+    <binary-sha8>` /contract (layer 7) is declared, then immediately
+    satisfied. The substrate's L7→L8 cascade automatically spawns a
+    `signed:<wallet-sig>` child (layer 8). The wallet-signed row IS
+    the binary's pointer-memory.
+
+The pipeline is short-circuit: BUILD fails → no RUN. RUN fails → no
+EVAL. Each step is mechanically gated on the prior; nothing is
+skipped silently. The L8 signed row at the end is the cryptographic
+witness that this exact binary (by sha256) was built, tested, and
+ratified by the root wallet.
+
+**Why this matters:** the substrate enforces the trio on every
+/contract; the build pipeline is itself a /contract, so it enforces
+the trio on itself. Turtles all the way down — the same pattern at
+every scale. A binary that doesn't pass this pipeline doesn't get a
+signed row, and the ledger walker sees no L8 row to verify against.
+The substrate refuses to use unsigned binaries downstream.
+
+
 
 These are aspects of the model that ARE faithfully implemented today:
 
