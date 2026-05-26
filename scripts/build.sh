@@ -378,13 +378,37 @@ step_parity() {
     _fail "doctrine[silence rule]: SKILL.md Public Persona section is missing the 'What the persona does NOT volunteer' sub-section that links the silence rule into the persona doctrine"
   fi
 
+  # 29. "Capability inheritance — pull-by-grant via lineage" — the substrate's
+  #     answer to credential/permission flow from parent /contract to spawned
+  #     child /contract. Without this section, child contracts have no
+  #     canonical way to reach parent-owned pointers (Stripe keys, OAuth
+  #     tokens, /integrate-anything credentials, wallet authorities) and the
+  #     gap will be filled by env-var injection or subprocess-context hacks —
+  #     both banned. The rule must be declared so the grant/pull/lineage-walk
+  #     pattern is the load-bearing path.
+  if ! grep -q '## Capability inheritance' "$REPO/SKILL.md"; then
+    _fail "doctrine[capability inheritance]: SKILL.md is missing the '## Capability inheritance' section — child contracts have no canonical path to pull pointers from spawning parents, and the gap will be filled by banned shortcuts"
+  fi
+  # The grant-shape, pull-shape, and identity_channel scoping must all be
+  # named so future implementors don't reinvent the discipline.
+  for cap_anchor in '### Grant shape' '### Pull shape' '### /integrate-anything reachability'; do
+    if ! grep -qF "$cap_anchor" "$REPO/SKILL.md"; then
+      _fail "doctrine[capability inheritance]: SKILL.md is missing the '$cap_anchor' sub-section — the capability primitive is incomplete without it"
+    fi
+  done
+  # The opt-in-not-opt-out invariant — capability flow is per-grant, never
+  # silent same-wallet inheritance. This is the confused-deputy defence.
+  if ! grep -q 'opt-in per grant, not opt-out per wallet' "$REPO/SKILL.md"; then
+    _fail "doctrine[capability inheritance]: SKILL.md is missing the 'opt-in per grant, not opt-out per wallet' invariant — without it the substrate becomes a confused-deputy by default"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
     printf '%s' "$report" >&2
     echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 28 doctrine claims have matching code sites"
+  echo "build:parity OK — all 29 doctrine claims have matching code sites"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────
