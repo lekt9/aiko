@@ -3361,6 +3361,13 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
                         if (declareLocalTree(allocator, env, json)) |root_id| {
                             defer allocator.free(root_id);
                             outPrint("{s}\n", .{root_id});
+                            // 402-fallback compiled the tree locally — the
+                            // bytes never crossed the wire. Treat the
+                            // evidence row as private even though the
+                            // user asked for shared.
+                            const id_n = @min(root_id.len, root_id_buf.len);
+                            @memcpy(root_id_buf[0..id_n], root_id[0..id_n]);
+                            root_id_len = id_n;
                             return 0;
                         }
                         errPrint("local-llm compiled tree but failed to declare onto local ledger\n", .{});
