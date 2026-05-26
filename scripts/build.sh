@@ -727,6 +727,29 @@ PYAUDIT
     fi
   done
 
+  # 45. "Claim-reference parity (recursive)" — pinned by Lewis 2026-05-26
+  #     (contract 086aaceb): every `claim N` reference inside SKILL.md
+  #     MUST point at a real claim N in build.sh. Stale references are
+  #     themselves drift — the prose says "claim 19 below" but the
+  #     actual claim 19 has moved to something else. This guard catches
+  #     itself: claim 45 is referenced from SKILL.md's "Canonical
+  #     reference index", and the index must list claim 45 too.
+  local missing_claims=""
+  for ref in $(grep -oE 'claim [0-9]+' "$REPO/SKILL.md" | sort -u | awk '{print $2}'); do
+    # Does build.sh contain a "# N." comment numbered ref?
+    if ! grep -qE "^  # ${ref}\." "$SCRIPTS_DIR/build.sh"; then
+      missing_claims+="${ref} "
+    fi
+  done
+  if [[ -n "$missing_claims" ]]; then
+    _fail "doctrine[claim-reference parity]: SKILL.md references claim numbers that don't exist in build.sh: $missing_claims — every 'claim N' in prose must point at a real numbered parity block"
+  fi
+  # The Canonical reference index in SKILL.md must list this very claim
+  # (45) — the guard catches itself, recursively.
+  if ! grep -q '| 45 | Claim-reference parity' "$REPO/SKILL.md"; then
+    _fail "doctrine[claim-reference parity]: SKILL.md's 'Canonical reference index' table must list claim 45 itself — the guard is recursive; if claim 45 isn't named in the table, the table is stale and claim 45 catches itself"
+  fi
+
   # 38. "Verdict alphabet in SKILL.md matches cache.zig." Doctrine drifts
   #     silently when prose mentions a verdict the code purged. The parity
   #     refuses to ship if SKILL.md mentions any verdict NOT in
