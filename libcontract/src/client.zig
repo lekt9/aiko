@@ -316,11 +316,6 @@ pub fn declareRemoteAiko(
         body.appendSlice(allocator, ",\"agent\":") catch return ClientError.OutOfMemory;
         writeJsonString(&body, allocator, a) catch return ClientError.OutOfMemory;
     }
-    if (user_context_id) |u| {
-        body.appendSlice(allocator, ",\"user_context_id\":") catch return ClientError.OutOfMemory;
-        writeJsonString(&body, allocator, u) catch return ClientError.OutOfMemory;
-    }
-
     // cwd_fingerprint: sanitized projection of the local environment so the
     // server's word→tree compiler can pick the right adapter family
     // (Swift app? notch? Convex backend? Cloudflare Worker?). Pure pattern
