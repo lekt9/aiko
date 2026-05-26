@@ -1956,6 +1956,24 @@ fn ambientAction(env: std.process.Environ) []const u8 {
     return "neuron";
 }
 
+/// Auto-derive the row's `action` from the plan when the plan starts with a
+/// known typed-action prefix (`drill:`, `channel:`, `sabbath:`, `resolver:`).
+/// Falls back to the ambient default ("neuron") otherwise. Substrate-faithful:
+/// typed prefixes are load-bearing and must propagate into the action field
+/// without env knobs so the corresponding handler in `runAction` fires on
+/// heartbeat backfill. Returns a slice borrowed from `plan` — caller must not
+/// free; lifetime is the plan's lifetime.
+fn actionFromPlan(plan: []const u8) []const u8 {
+    const known_prefixes = [_][]const u8{ "drill:", "channel:", "sabbath:", "resolver:" };
+    for (known_prefixes) |pfx| {
+        if (std.mem.startsWith(u8, plan, pfx)) {
+            const end = std.mem.indexOfScalar(u8, plan, ' ') orelse plan.len;
+            return plan[0..end];
+        }
+    }
+    return "neuron";
+}
+
 fn ambientAdapter(env: std.process.Environ) ?[]const u8 {
     _ = env;
     return null;
