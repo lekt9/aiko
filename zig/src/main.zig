@@ -2146,7 +2146,7 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
                 evidencePrint("apoptosis: markDied failed for {s}: {s} — sequence will continue to cycle\n", .{ id, @errorName(e) });
             };
             evidencePrint("  -> apoptosed (sequence inherits stage death)\n", .{});
-        } else if (std.mem.startsWith(u8, r.plan, "guard:") and std.mem.eql(u8, r.action, "neuron") and iterCount(rows, id) >= 2) {
+        } else if (std.mem.startsWith(u8, r.plan, "guard:") and std.mem.eql(u8, r.action, "neuron") and latestWave(rows, id) >= 2) {
             // guard:generic:neuron rows declared by the scar-tissue
             // remediator stay HOLD forever because the `neuron` action
             // returns HOLD until child evidence fires — but guard rows
