@@ -2413,6 +2413,7 @@ Canonical reference index (subject ↔ claim ↔ SKILL.md section):
 | 43 | Seven-day Sabbath pipeline | build.sh structure (the pipeline itself) |
 | 44 | Scriptural-anchor coverage | every doctrine section (this rule) |
 | 45 | Claim-reference parity (recursive) | this section (the guard catches itself) |
+| 46 | Synapse-kind minimum (no redundant edge walks) | "Synapse-kind minimum" |
 
 The parity check is a single shell function in `build.sh` — not a
 new script, not a new binary, no addition to `scripts/`. It
