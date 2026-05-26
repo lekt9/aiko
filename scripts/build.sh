@@ -492,11 +492,13 @@ step_parity() {
       _fail "doctrine[pointer-only cache]: '$chain_fn' missing in cache.zig — pointer-chain identity is incomplete"
     fi
   done
-  if ! grep -q 'signature_incomplete' "$LIB_DIR/src/cache.zig"; then
-    _fail "doctrine[pointer-only cache]: Verdict.signature_incomplete missing in cache.zig — defensive incomplete-chain verdict is required so missing pointers surface as ledger evidence"
-  fi
   if ! grep -q 'contract.cache.computeSignatureChain' "$ZIG_DIR/src/main.zig"; then
-    _fail "doctrine[pointer-only cache]: main.zig:resolveOne must call computeSignatureChain as the PRIMARY cache key (byte-hash is legacy fallback only)"
+    _fail "doctrine[pointer-only cache]: main.zig:resolveOne must call computeSignatureChain as the ONLY cache key (byte-hash purged)"
+  fi
+  # Verdict.signature_incomplete was collapsed into Verdict.legacy when the
+  # byte-hash fallback was purged. Refuse to resurrect the dead variant.
+  if grep -q 'signature_incomplete' "$LIB_DIR/src/cache.zig"; then
+    _fail "doctrine[pointer-only purge]: Verdict.signature_incomplete resurrected in cache.zig — collapsed into Verdict.legacy with the byte-hash purge; do not re-introduce"
   fi
 
   # 34. "Terminal events carry output_signature" — markSatisfied and
