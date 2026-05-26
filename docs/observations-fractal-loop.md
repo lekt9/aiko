@@ -512,6 +512,141 @@ shape as its row topology. Every /contract has a parent_id; every
 LLM endpoint has a parent endpoint; every wrapper has a parent
 wrapper. Walk the pointer chain to get the full provenance.
 
+## Tools as environment-typed pointers (Lewis 2026-05-27)
+
+**The substrate has no "tool" abstraction.** Every "tool" in any
+context (an OpenAI function call, a browser-script, a CLI command, a
+telegram bot reply, a WASM module, a webhook) is just a /contract
+whose `action` prefix names the runtime that dereferences it. The
+prefix is the environment selector; the rest of the row is the
+arguments.
+
+The OpenAI `tool_calls[] / tool` message-pair wire shape becomes a
+thin serialization over /contract envelopes:
+
+```
+   OpenAI wire shape                  /contract shape
+   ──────────────────                 ───────────────────────────
+   assistant.tool_calls[i]            event:declared,
+     function.name = "fetch_user"       action:<env>:<payload>,
+     function.arguments = {id:42}       plan:<sentence describing call>,
+                                        parent_id:<conversation root>
+
+   tool.content = "<result>"          event:satisfied on that id,
+                                        proof:<result>
+                                      → auto L7→L8 cascade signs
+                                        the result as a pointer-memory
+```
+
+### Environment-typed action prefixes
+
+The substrate's existing typed-pointer set generalizes per-environment.
+Adding a runtime = adding a prefix to `pointer.zig:isKnownAction` +
+the SDK validator tables (or, when gap 2 closes, just to pointer.zig
+since SDKs read the canonical manifest).
+
+| Prefix | Runtime | Where it executes | Layer |
+|---|---|---|---|
+| `cli:<cmd>` | shell | host OS | 2 (cell) |
+| `wasm:<sha>` | wasm runtime | browser / wasmtime / wasmer | 2 (cell) |
+| `binary:<sha>` | native ELF/Mach-O | host OS, sandbox, container | 2 (cell) |
+| `browser-script:<sha>` | JS sandbox | browser devtools / extension | 2 (cell) |
+| `webhook:<url>` | HTTP POST | network | 4 (transport) |
+| `telegram:<chat>:<cmd>` | bot API | telegram | 4 (transport) |
+| `email:<addr>:<template>` | SMTP | mail | 4 (transport) |
+| `wallet:<addr>` | signing | local keystore | 5 (value) |
+| `x402:<endpoint>` | paywall fulfillment | payment rail | 5 (value) |
+| `contract:<id>` | another /contract | this ledger | 3 (graph) |
+| `agent:<id>` | human-in-the-loop | wherever the operator is | 6 (operator) |
+
+The **same /contract id** can surface as different prefixes per host:
+the row in the ledger says `action: wasm:<sha>`, but the WASM blob's
+sha can correspond to a binary's sha on a different host, or to a
+telegram command on a phone. Each host's dereferencer picks the right
+prefix from the row — the lineage chain stays identical.
+
+### Stdio is the universal lineage channel
+
+Lewis's insight: **the lineage chain is mechanical and stateless,
+exactly like stdio piping.** Each hop reads input, produces output,
+no shared state between hops. The substrate's parent_signature does
+for /contract rows what stdio does for processes — it's the
+verification at the seam between producer and consumer.
+
+This means:
+
+```
+   wasm-module → produces sha of output (pointer A)
+                  ↓ (stdio-like; signed as L8 row)
+   native-binary → reads sha A, fetches blob, runs, produces sha B
+                   ↓ (stdio-like; signed as L8 row, parent_id=A's row)
+   telegram-bot → reads sha B, formats, sends to chat
+                  ↓ (stdio-like; signed as L8 row, parent_id=B's row)
+   browser-script → reads bot message id, updates DOM
+                    ↓ (stdio-like; signed as L8 row, parent_id=bot's row)
+```
+
+Each hop is a different runtime in a different environment. Each is
+a /contract row. The chain has one parent_id walk back to root, one
+signature per hop, full provenance from the user's DOM update back
+to the original WASM module's sha — all reconstructible from the
+ledger alone, no live processes required.
+
+### The fractal property — three directions at once
+
+1. **Vertically (across layers):** word → cell → graph → transport →
+   value → operator → break → emerge. Each layer's action prefix
+   points down to the next layer's terminology. Already enforced by
+   pattern.zig comptime invariants.
+
+2. **Horizontally (across environments):** same /contract id, different
+   dereferencer per host. A `wasm:<sha>` row on a browser host is
+   equivalent to a `binary:<sha>` row on an OS host when the WASM
+   compiles down to that sha — the substrate doesn't care which
+   environment dereferences the pointer, only that the lineage chain
+   verifies.
+
+3. **Recursively (pointers to pointers):** a tool result is a /contract
+   whose `proof` field can itself be (or point at) another /contract
+   id. Walking the DAG yields pointers all the way down — each one
+   another fractal pattern of reality in its own environment.
+
+### Implication for the openai-api wrapper
+
+The wrapper becomes even thinner. Its job is:
+
+1. Receive OpenAI request.
+2. Per-message, ask the LLM-shaper to emit /contract JSON (already done).
+3. Per assistant `tool_calls[i]`, the shaper emits a row with an
+   environment-typed action prefix. The client (browser, OS, bot)
+   reads the prefix and knows which runtime to invoke.
+4. The runtime's output flows back as `tool` message content → wrapper
+   calls `eval(tool_call_id, proof=output)`.
+5. L7→L8 cascade signs. Next iteration of the conversation can
+   reference the signed pointer-memory by id.
+
+No special-casing per tool kind. The wrapper just relays /contract
+envelopes; the environment-typed action prefix is what teaches the
+host which runtime to dispatch.
+
+### What needs to change to land this
+
+Mechanical work (none of it blocking; can ship piecemeal):
+
+- Add `wasm:`, `binary:`, `telegram:`, `email:`, `browser-script:`
+  to `pointer.zig:isKnownAction` (and to the SDK validator tables —
+  or close gap 2 first so it's one source).
+- Document the dereferencer contract per prefix (what arguments each
+  runtime expects, what proof shape it returns).
+- A reference dereferencer per environment: a tiny WASM runtime
+  loader for browser, a thin native-binary runner for OS, a
+  telegram-bot adapter. Each is its own sibling repo; each registers
+  via `wrapper:<env-name>` (layer 4) so the substrate sees the
+  available environments via the ledger.
+
+The substrate primitive doesn't change. The fractal property is
+already there; we're just teaching more environments to read it.
+
 ## Parent-sign binary lineage (added 2026-05-27)
 
 Lewis 2026-05-27: "should it self sign or should the parent sign it" →
