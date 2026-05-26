@@ -2042,7 +2042,6 @@ fn parseAikoArgs(allocator: std.mem.Allocator, args: []const []const u8) !AikoAr
     while (i < args.len) : (i += 1) {
         const arg = args[i];
         // The only flag is --private. Absence = shared (the default).
-        // Visibility, not transport — and no deprecated aliases.
         if (std.mem.eql(u8, arg, "--private")) {
             if (mode != null) return error.DuplicateMode;
             mode = .private_only;
