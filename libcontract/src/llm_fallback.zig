@@ -126,11 +126,13 @@ pub fn compileLocallyJson(
     defer allocator.free(combined);
     try writeFile(allocator, prompt_path, combined);
 
-    const cmd_z = std.fmt.allocPrintZ(
+    const cmd_slice = std.fmt.allocPrint(
         allocator,
         "'{s}' -m '{s}' --grammar-file '{s}' -f '{s}' -n 1024 --temp 0.1 --no-display-prompt 2>/dev/null",
         .{ llama_cli, model_path, grammar_path, prompt_path },
     ) catch return Error.OutOfMemory;
+    defer allocator.free(cmd_slice);
+    const cmd_z = allocator.dupeZ(u8, cmd_slice) catch return Error.OutOfMemory;
     defer allocator.free(cmd_z);
 
     const f = popen(cmd_z.ptr, "r") orelse return Error.SpawnFailed;
