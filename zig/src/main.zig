@@ -1865,7 +1865,6 @@ fn parseAikoArgs(allocator: std.mem.Allocator, args: []const []const u8) !AikoAr
     return .{
         .plan = plan,
         .mode = mode orelse .shared,
-        .user_context_id = null,
     };
 }
 
