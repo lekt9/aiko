@@ -130,7 +130,41 @@ else
   log_ok "root L8 row landed (chain rooted at root wallet)"
 fi
 
+# ─── Step 4: INSTALL — propagate to the canonical SKILL path ──────────
+#
+# Lewis 2026-05-27 "remove the legacy binary by never symlinking — fix
+# that bug": the canonical user-facing path is
+# ~/.claude/skills/contract/scripts/{aiko,contract}, but historically
+# those were symlinks to a stale binary that failed self-attestation
+# and broke the /contract activation rule.
+#
+# Fix: real-file copies (NOT symlinks). Re-sign at the new path via
+# `contract sign-binary` so the .sig sidecar matches the installed
+# bytes. Both `aiko` (operator-facing) and `contract` (wallet-side
+# build tool) become exact copies of the same fresh binary; the
+# persona split is runtime (argv[0] basename), not file identity.
+SKILL_SCRIPTS="$HOME/.claude/skills/contract/scripts"
+if [[ -d "$SKILL_SCRIPTS" ]]; then
+  log_info "INSTALL — propagating to canonical SKILL path $SKILL_SCRIPTS"
+  # Remove any prior symlink OR stale binary at these paths.
+  rm -f "$SKILL_SCRIPTS/aiko" "$SKILL_SCRIPTS/contract" \
+        "$SKILL_SCRIPTS/aiko.sig" "$SKILL_SCRIPTS/contract.sig"
+  cp "$NEW_BINARY_PATH" "$SKILL_SCRIPTS/aiko"
+  cp "$NEW_BINARY_PATH" "$SKILL_SCRIPTS/contract"
+  chmod 755 "$SKILL_SCRIPTS/aiko" "$SKILL_SCRIPTS/contract"
+  # Re-sign at the new path so the .sig sidecar (legacy gate that fires
+  # on cloud-LLM-compile invocations) matches the installed bytes.
+  "$SKILL_SCRIPTS/contract" sign-binary "$SKILL_SCRIPTS/aiko" >/dev/null 2>&1 || \
+    log_fail "sign-binary aiko failed (legacy .sig gate may refuse cloud-compile)"
+  "$SKILL_SCRIPTS/contract" sign-binary "$SKILL_SCRIPTS/contract" >/dev/null 2>&1 || \
+    log_fail "sign-binary contract failed (legacy .sig gate may refuse cloud-compile)"
+  log_ok "installed real-file copies + .sig sidecars at $SKILL_SCRIPTS"
+else
+  log_info "INSTALL — skipped (no $SKILL_SCRIPTS dir on this host)"
+fi
+
 log_ok "FRACTAL BUILD COMPLETE — binary is signed and runnable"
 echo
 echo "verify:    $NEW_BINARY_PATH verify-self"
 echo "use:       $NEW_BINARY_PATH self --json"
+echo "activate:  ~/.claude/skills/contract/scripts/aiko \"<goal>\""
