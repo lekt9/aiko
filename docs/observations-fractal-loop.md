@@ -512,6 +512,117 @@ shape as its row topology. Every /contract has a parent_id; every
 LLM endpoint has a parent endpoint; every wrapper has a parent
 wrapper. Walk the pointer chain to get the full provenance.
 
+## Radix-prefix cache — sglang RadixAttention applied to /contract (Lewis 2026-05-27)
+
+Lewis: "is there a better way to kv cache contract style that check
+to pointers only — how does kv caching in llm work maybe in sglang"
+
+### What sglang does (RadixAttention, briefly)
+
+sglang's KV cache stores attention key-value tensors in a **radix
+tree keyed by token-sequence prefixes**. Multiple requests sharing
+a prompt prefix share the cached KV — only the diverging suffix
+gets computed fresh. Eviction is LRU on tree nodes; reference
+counting keeps shared prefixes alive while any request references
+them. Result: 5-10x throughput on prefix-heavy workloads.
+
+### How it maps to /contract
+
+The substrate's `parent_id` chain IS a radix tree already — each
+contract is a node; siblings share a parent prefix; deep descendants
+share long chain prefixes. The current `cache.zig` doesn't exploit
+this — every `computeSignatureChain` walks the descendant DAG fresh,
+even when 90% of the chain hasn't changed.
+
+| sglang concept | substrate equivalent |
+|---|---|
+| token sequence (prompt prefix) | `parent_id` chain (lineage prefix) |
+| KV tensor cached at a tree node | signature chain cached at a contract node |
+| RadixAttention prefix-match lookup | walk `parent_id` upward looking for cached prefix |
+| LRU eviction by tree node | LRU eviction by cached signature, refcounted by descendants |
+| reference counting (shared prefixes) | descendants point at ancestors via `parent_id` — natural ref count |
+| token-level granularity | row-level granularity |
+| pure-prefix lookup (no value reads) | pure-pointer lookup (signature chain, no payload bytes) |
+
+### Concrete substrate translation
+
+Current `cache.zig` flow per resolveOne entry:
+
+```
+1. computeSignatureChain(id) walks ALL descendants  →  O(N)
+2. compare against findLatestResolvedSnapshot(id)   →  O(1) row lookup
+3. miss → re-eval; hit → short-circuit
+```
+
+Radix-cache flow (same primitives, smarter lookup):
+
+```
+1. walk parent_id chain UP from id looking for the deepest cached
+   prefix that's STILL VALID (no descendant has appended
+   cache_invalidated since its cache_resolved ts)
+2. found cached prefix P at depth K? compose:
+       sig(id) = cached_prefix_sig(P) || delta(P → id)
+   where delta only walks the K hops between P and id
+   →  O(depth_below_cache) instead of O(N descendants)
+3. miss everywhere → fall through to current full walk
+```
+
+### Why this is genuinely better
+
+- **Pointer-only by design** — every cache key is a `parent_signature`
+  (ed25519 pointer); every lookup is a `parent_id` pointer walk;
+  nothing value-derived crosses the cache boundary. The current
+  cache.zig is already pointer-keyed; the radix pattern just makes
+  the LOOKUP itself a pointer walk rather than a single-row hash
+  lookup.
+- **Prefix sharing for free** — sibling contracts under the same
+  parent reuse the parent's cached chain. The substrate's natural
+  fanout (Trinitarian decomposition spawns siblings constantly)
+  becomes O(1)-amortized per sibling rather than O(N) each.
+- **Automatic cascade** — when a descendant's value changes
+  (cache_invalidated lands), the next lookup from any ancestor sees
+  the descendant's prefix is invalid, walks UP for its own valid
+  ancestor, recomputes only the affected delta. The cache-
+  invalidated-cascade gap (`abe3c445`) becomes free: the radix
+  lookup IS the cascade. No separate drill walker needed.
+- **LRU eviction without breaking append-only** — cache rows stay
+  on the ledger forever (append-only invariant); an `cache_evicted`
+  row marks a cached prefix as no-longer-fast-path; the next lookup
+  bypasses it and re-walks. Eviction is a tombstone, not a delete.
+  Same shape as the substrate's death events.
+
+### What it composes with
+
+This EXTENDS cache.zig, not replaces:
+
+- Keep `cache_check` / `cache_resolved` / `cache_invalidated` event
+  kinds (already substrate-faithful)
+- Add `cache_evicted` event for the eviction surface (fallbacks
+  visible, never silent rule preserves)
+- Change `findLatestResolvedSnapshot(id)` →
+  `findDeepestValidCachedPrefix(id)` which walks UP parent_id rather
+  than reading a single row
+- `computeSignatureChain(id)` learns to short-circuit at the deepest
+  valid cached prefix and only walk the delta below
+
+### Why this turn declares it as a gap rather than ships it
+
+The radix-cache restructuring touches:
+- `cache.zig` (new `findDeepestValidCachedPrefix` + lookup walker)
+- `cache.zig` (new `appendCacheEvictedRow`)
+- `cache.zig` (refactor `computeSignatureChain` to use prefix-cache)
+- ledger reads bound by depth (sane O(depth) on hot path)
+- LRU tracking (in-process map, since the ledger is append-only)
+- The mid-flight `gap-cache-invalidated-cascade` (`abe3c445`) is
+  subsumed by this work — closing that gap by half-fixing the drill
+  skip is the wrong move when the radix pattern obviates the drill
+  walker entirely
+
+That's substantial — a multi-turn job to do right. Declared as
+`gap-radix-prefix-cache` for follow-up; supersedes
+`gap-cache-invalidated-cascade` per Decalogue commandment 8 (don't
+double-implement what one well-shaped primitive subsumes).
+
 ## Contract storage hierarchy — tiered by access pattern (Lewis 2026-05-27)
 
 Lewis's question: "where should the contract kv cache be stored?
