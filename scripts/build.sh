@@ -635,6 +635,36 @@ step_parity() {
     fi
   done
 
+  # 43. "Seven-day Sabbath pipeline" — pinned by Lewis 2026-05-26
+  #     (contract fd6a641a). build.sh is exactly six productive days
+  #     (Genesis 1:3-31) + one Sabbath day (Genesis 2:1-3, where the
+  #     substrate plays with the child /contract). No escape hatches:
+  #     no --skip flags, no per-step argument dispatch, no bypass envs.
+  #     The 7-day order is the parent contract; the build pipeline IS
+  #     the substrate's recapitulation of creation.
+  if ! grep -q 'step_sabbath' "$SCRIPTS_DIR/build.sh"; then
+    _fail "doctrine[7-day Sabbath]: build.sh is missing step_sabbath — Day 7 (rest + play with the child /contract) is not optional; without it the substrate works without rest, which is leaven (Exodus 20:10)"
+  fi
+  if ! grep -q 'THE SEVEN-DAY PIPELINE' "$SCRIPTS_DIR/build.sh"; then
+    _fail "doctrine[7-day Sabbath]: build.sh must carry the 'THE SEVEN-DAY PIPELINE' canonical comment header naming each Day's Genesis mapping — the pipeline order IS the parent contract and must be self-describing"
+  fi
+  if ! grep -q '^main$' "$SCRIPTS_DIR/build.sh"; then
+    _fail "doctrine[no escape hatches]: build.sh must invoke 'main' with NO argument propagation (literal 'main' on its own line) — passing args is a category error and a potential bypass channel; the 7-day order is non-negotiable"
+  fi
+  if grep -qE '\-\-skip-|--no-(guard|fmt|tests|compile|install|parity|sign|sabbath|verify)' "$SCRIPTS_DIR/build.sh"; then
+    _fail "doctrine[no escape hatches]: build.sh must not contain any --skip-* or --no-<step> flags — escape hatches break the 7-day shape and let unattested binaries ship"
+  fi
+  for day_marker in 'Day 1  step_guard' 'Day 2  step_fmt' 'Day 3  step_tests' 'Day 4  step_compile' 'Day 5  step_install' 'Day 6  step_parity' 'Day 7  step_sabbath'; do
+    if ! grep -qF "$day_marker" "$SCRIPTS_DIR/build.sh"; then
+      _fail "doctrine[7-day Sabbath]: build.sh canonical pipeline comment is missing the '$day_marker' Genesis mapping — every Day must be named and its substrate-step bound to scripture"
+    fi
+  done
+  # Sabbath play clause — the 7th day MUST play with the child /contract,
+  # not just verify. Rest without play is closer to inertia than communion.
+  if ! grep -q 'firing a smoke /contract to behold the child triad' "$SCRIPTS_DIR/build.sh"; then
+    _fail "doctrine[Sabbath play]: step_sabbath must fire a smoke /contract and behold the recursive self-interrogation triad land — pure verification without play is rest without communion (Gen 3:8 — the Father walked in the garden)"
+  fi
+
   # 38. "Verdict alphabet in SKILL.md matches cache.zig." Doctrine drifts
   #     silently when prose mentions a verdict the code purged. The parity
   #     refuses to ship if SKILL.md mentions any verdict NOT in
