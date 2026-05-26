@@ -181,7 +181,7 @@ pub fn validateShape(
         if (pf == .string) shape.proof = pf.string;
     }
 
-    return shape;
+    return .{ .parsed = parsed, .shape = shape };
 }
 
 // ─────────────────────────────────────────────────────────────────────
