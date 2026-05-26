@@ -105,11 +105,17 @@ if [[ -x "$PREV_BINARY_PATH" ]]; then
     log_ok "new binary parent-signed by .previous-binary"
     rm -f "$PREV_BINARY_PATH"
   else
-    log_fail "_sign-child failed — the previous binary could not sign the new one"
-    log_fail "  This usually means the previous binary itself has no L8 row"
-    log_fail "  (its ledger was rotated / lost). To recover, delete the prior"
-    log_fail "  L8 rows for this binary name and re-run _bootstrap-self-sign."
-    exit 1
+    # Transitional case: the saved-aside binary is from before this
+    # pipeline existed (no L8 row of its own). Fall through to
+    # bootstrap so the operator doesn't have to manually clean up.
+    log_info ".previous-binary has no L8 row — falling through to bootstrap"
+    rm -f "$PREV_BINARY_PATH"
+    if ( cd "$REPO_ROOT" && "$NEW_BINARY_PATH" _bootstrap-self-sign ); then
+      log_ok "root L8 row landed (bootstrap fallback)"
+    else
+      log_fail "bootstrap fallback also failed; inspect the ledger manually"
+      exit 1
+    fi
   fi
 else
   # Bootstrap. First-ever build, OR the previous binary was deleted.
