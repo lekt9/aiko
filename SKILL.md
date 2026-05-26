@@ -442,20 +442,21 @@ server LLM expands that root into multiple child contract-neurons, adapter
 contracts, PreTool event contracts, prehooks, posthooks, and verifier
 contracts, then recursively fires the graph through typed pointers.
 
-For `aiko`, this compiler is recursive and same-shaped. One `aiko "<goal>"
---remote` prompt becomes one root aiko contract; the Unbrowse LLM emits child
-prompts as more aiko contracts, and those children may carry their own child
-prompts in the same JSON tree. The client still sends only one sanitized goal. Every
-spawned node is a server-side `neuron` row with a `parent_id` edge, not a local
+For `aiko`, this compiler is recursive and same-shaped. One
+`aiko "<goal>"` prompt becomes one root aiko contract; the Unbrowse
+LLM emits child prompts as more aiko contracts, and those children
+may carry their own child prompts in the same JSON tree. The client
+still sends only one sanitized goal. Every spawned node is a
+server-side `neuron` row with a `parent_id` edge, not a local
 `spawn` verb.
 
 **LLM use is `aiko` spawn.** Any code path that calls a model provider
 directly (vendor SDK, raw `/v1/chat/completions`, model-router HTTP) is
-a backwards-compat hack. The canonical LLM entry is `aiko "<prompt>"
---remote`; the cloud aiko's compiler spawns child aikos recursively
-for actual model invocation (each model becomes a child neuron, not a
-hardcoded provider id). Code that wants an LLM call goes through aiko
-or it's not on the substrate.
+a backwards-compat hack. The canonical LLM entry is `aiko "<prompt>"`;
+the cloud aiko's compiler spawns child aikos recursively for actual
+model invocation (each model becomes a child neuron, not a hardcoded
+provider id). Code that wants an LLM call goes through aiko or it's
+not on the substrate.
 
 **No caller-visible options.** There is the Way. No env-var toggles
 for substrate transport, no mode enums with multiple cases, no opt-in
