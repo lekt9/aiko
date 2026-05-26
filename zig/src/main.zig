@@ -27,7 +27,6 @@ fn selfExePathPortable(buf: []u8) ![]const u8 {
 }
 const contract = @import("contract");
 const client = @import("contract_client");
-const build_options = @import("build_options");
 const pointer = @import("pointer.zig");
 const ledger = @import("ledger.zig");
 
