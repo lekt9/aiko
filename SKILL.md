@@ -793,6 +793,74 @@ The persona layer remote-aiko deployed on the server IS the public
 voice; the local-aiko binary is its mechanical hand. Both are the
 same substrate; only the layer they're firing into differs.
 
+## Bible as canonical /contract corpus
+
+The substrate carries the **entire King James Bible** as a baked-in
+/contract corpus. KJV is the chosen edition because it is **public
+domain** — ESV is copyrighted (Crossway forbids embedding); KJV
+ships freely with no license-friction.
+
+```
+libcontract/data/bible-kjv.json     ← source (aruljohn/Bible-kjv mirror)
+libcontract/data/cross-references.txt ← openbible.info CC-BY 4.0 graph
+libcontract/data/bible.dat          ← packed verses (one-shot preprocess)
+libcontract/data/bible-xrefs.dat    ← packed xref edges
+libcontract/data/bible-xrefs-idx.dat ← per-verse edge index
+libcontract/src/bible.zig           ← @embedFile + lookup + scoring + id derivation
+```
+
+- **66 books, 31100 verses, 344564 cross-references** (the BibleViz
+  graph, sorted by from-verse for O(1) lookup).
+- **Every verse is a /contract row**. Its deterministic id is
+  `HKDF(deployer_root, "verse:<abbrev>.<chapter>.<verse>")` truncated
+  to 16 hex chars (the same HKDF lineage used for every other
+  contract keypair — `lineage.deriveKeyPair`). The root wallet
+  derives the verse keypair; the verse keypair signs / authorizes
+  cross-references on the verse's behalf.
+- **Cross-references are typed edges** between verse contracts:
+  `contract:<verse_id>` references with `votes` as the edge weight.
+  The openbible.info graph is the initial seed corpus; new edges land
+  by declaring new aiko contracts that carry `contract:<verse_id>`
+  pointers.
+- **Voice canon** (Galatians 5:22-23, Philippians 4:8, Proverbs 15:1)
+  is scored from the bible corpus alongside the curated 33-verse
+  harness corpus in `verses.zig`. The curated corpus has primacy
+  (load-bearing fruits-of-spirit doctrine); when the caller asks for
+  k > 5 OR the curated corpus has no positive-score match, scoring
+  falls through to bible.zig's open 31100-verse surface.
+- **Response envelopes carry `bible_chain`** — the top-K bible refs
+  the substrate scored as evidence for the prompt, each with its
+  verse contract id. Both streaming and non-streaming OpenAI-shaped
+  responses carry the array on the first chunk / on the envelope.
+  Verifiers re-derive each verse keypair from `(deployer_root,
+  verse_ref)` to confirm the chain traces back to the root wallet.
+
+### Stop-hook signature traceback (Wave 2 shape, server-side firing)
+
+At session end an orchestrator may declare a contract whose action is
+`stop:trace` carrying the recent response envelope's `bible_chain`.
+The substrate then walks:
+
+```
+root pubkey
+  → response contract id
+    → bible_chain verse contract ids
+      → confirm verseId(root, ref) == id   for every entry
+```
+
+Wave 1+2 ships the SHAPE and the verifier helper:
+`bible.verifyChain(root, chain) -> bool` confirms every entry's id
+matches `verseId(root, ref)`. The actual Stop-hook firing is
+server-side / Claude-Code-harness work and lands in a future wave.
+
+### Skipped cross-reference edges (calibrated, surfaced, not silent)
+
+235 of the 344800 openbible cross-references (≈0.07%) reference
+gospel-chapter verse divisions that the aruljohn KJV JSON splits
+differently (Mark 8:38 vs the KJV split that ends Mark 8 at v37, etc.).
+The preprocessor surfaces the per-abbreviation skip count; the
+substrate runs against the resolvable 344564-edge graph.
+
 ## Vine Doctrine — staking by abiding
 
 The substrate's stake layer is not a new primitive. It is a name for
