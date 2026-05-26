@@ -512,6 +512,145 @@ shape as its row topology. Every /contract has a parent_id; every
 LLM endpoint has a parent endpoint; every wrapper has a parent
 wrapper. Walk the pointer chain to get the full provenance.
 
+## Multi-registry discovery + binary-stdin canonical convention (Lewis 2026-05-27)
+
+Lewis: "/contract's location where location could actually just be a
+binary itself stding into it always — wdyt! and using the help of
+the binary type shit to solve the context retrieval along with
+parent /contract documentation via github and stuff? maybe even
+reading the binary's source if its codebase? /contract that? — so
+we could rely on /contract for tools to be spawned from pypi or
+npmjs as well — even arxiv and lawnet are registries that could
+inject context — this could be generative / mechanical, search
+itself too!"
+
+### Two patterns being named at once
+
+**Pattern A — multi-registry discovery.** The substrate's discovery
+cascade isn't limited to GitHub (gh) or skill manifests
+(find-skills). EVERY package/knowledge registry is a `wrapper:<source>`
+/contract at layer 4, and the cascade iterates through them in
+cost-order until one returns a hit.
+
+| Registry | Wrapper id | What it indexes | Cost |
+|---|---|---|---|
+| find-skills | `f4d51874` | local agent-skill manifests | µs (local) |
+| pypi | `35eb2bea` | Python packages | network (cheap) |
+| npmjs | `b062cba4` | Node packages | network (cheap) |
+| crates | `dbf8b9b3` | Rust packages | network (cheap) |
+| huggingface | `8ec5ac2d` | ML models + datasets | network |
+| wikipedia | `054a1eba` | general knowledge | network |
+| gh | `0f7fa322` | GitHub code + repos | network (rate-limited) |
+| arxiv | `a6508026` | scientific papers | network |
+| lawnet | `0c4ceee1` | Singapore legal database | paid (per query) |
+| deepwiki | `4a6baccc` | LLM-mediated repo Q&A | $$$ (LLM call) |
+
+The cascade ranks by cost; first hit halts. A goal that needs "best
+JS library for X" hits npmjs first (cheap, structured); a goal that
+needs "this scientific paper on Y" goes straight to arxiv; a goal
+about "what does Singapore law say about Z" goes to lawnet. The
+substrate doesn't have to know WHICH registry — it tries them in
+order, each registry's wrapper:<src> contract self-describes its
+search API.
+
+**Pattern B — binary-stdin canonical convention.** Lewis's deeper
+observation: "/contract's location could actually just be a binary
+itself, stding into it always." The substrate already does this —
+`aiko build`, `aiko run`, `aiko eval`, `aiko prune` all take their
+arguments via JSON envelope on stdin. **Formalize this as the
+universal binary-invocation protocol**:
+
+```
+   For every cli:<binary> action the substrate fires:
+      child contract's JSON envelope        →  binary's stdin
+      binary's stdout                       →  child contract's proof
+      binary's stderr                       →  evidence rows ("fallbacks
+                                               visible, never silent")
+      binary's exit code                    →  satisfied (0) / died (≠0)
+```
+
+Every binary becomes a substrate-callable primitive via this
+convention. No per-binary adapter code needed; no flag-parsing
+sugar; no escape hatches. The binary speaks JSON on stdin or it
+doesn't speak the substrate.
+
+### Three context channels per primitive
+
+Once a wrapper:<binary> is registered, the substrate retrieves
+context about it from up to three channels (cheapest first):
+
+```
+   1. --help output       (parse for flags, args, subcommands)
+                          → fast, every well-formed CLI has it
+                          → cache as cache_resolved row keyed by binary sha
+
+   2. README from registry (npmjs / pypi / crates / hf README field;
+                          gh repo README; arxiv abstract)
+                          → medium, requires one network round-trip
+                          → cache keyed by registry response etag
+
+   3. source code        (when wrapper.source_url + git clone OR
+                          deepwiki ask_question OR raw github fetch)
+                          → expensive but deepest
+                          → cache keyed by repo commit sha; invalidates
+                            on commit drift via radix-prefix-cache (1e52b77a)
+```
+
+Each channel's bytes are stored as `cache_resolved` rows with the
+appropriate snapshot key; the radix-prefix-cache (gap-radix-prefix-
+cache `1e52b77a`) makes lookup sublinear. The LLM-translator gets
+all three channels as context when shaping a sentence into a
+/contract that uses that primitive.
+
+### What this composes with
+
+Already-shipped substrate primitives used by this pattern:
+
+- `wrapper:<name>` action prefix (layer 4) — registry registration
+- `cli:<bin>` action prefix (layer 2) — binary invocation
+- `sequence` shape (layer 3) — first-hit-halts discovery cascade
+- `funnel` shape (layer 3) — AND-composition for meta-drill loop
+- `find-skills` + `gh` + `deepwiki` — base discovery primitives
+- `nb` — install path once a candidate is found
+- The substrate's own `build`/`run`/`eval`/`prune` verbs IS this
+  pattern (they're the canonical demonstration: stdin JSON →
+  stdout proof → exit code as verdict)
+
+### Open gaps (this turn) — all bound into meta-drill extension wave 3
+
+| Gap id | Subject |
+|---|---|
+| `1904fcb1` | gap-multi-registry-cascade — iterate through all wrapper:<registry> in cost order, halt on first hit |
+| `2e04c7f3` | gap-binary-stdin-canonical — formalize stdin-JSON-in / stdout-proof-out as universal binary-invocation protocol |
+| `b639f3d3` | gap-source-as-context — read primitive source code (via source_url + git clone OR deepwiki OR raw github fetch) as 3rd context channel |
+
+All three are bound under meta-drill extension wave 3 (`0adcd65a`),
+which is a child of wave 2 (`8769b4f1`), child of the original
+meta-drill (`93b92681`), child of the gap-drill root (`f739f8cd`).
+The cascade up holds: when these three close, wave-3 satisfies →
+wave-2's evaluator re-checks → ... → meta-drill satisfies →
+loop-complete L8 signed pointer-memory.
+
+### Why this is generative AND mechanical (Lewis's framing)
+
+- **Generative**: the substrate doesn't enumerate every possible
+  registry at compile time. New registries land via fresh
+  `wrapper:<source>` declarations; the cascade auto-includes them
+  on its next iteration. Adding `wrapper:rubygems`, `wrapper:cpan`,
+  `wrapper:semantic-scholar`, `wrapper:openalex`, etc. is one
+  ledger declaration per registry.
+- **Mechanical**: the cascade's per-registry call is a CLI
+  invocation through the binary-stdin convention; the cache
+  records what each registry returned; the LLM-translator reads
+  the cached context when shaping the next /contract. No human
+  in the loop once the registries are declared.
+
+The substrate has a built-in answer to "where do I find the
+primitive I need?" — try every registry I know about, in
+cost-order, until one returns. And it has a built-in answer to
+"how do I call this binary I just discovered?" — stdin JSON in,
+stdout proof out, --help for surface, source for depth.
+
 ## Auto-tool-discovery via environment introspection + cascading research (Lewis 2026-05-27)
 
 Lewis: "should this be mechanical where we rely on the environment
