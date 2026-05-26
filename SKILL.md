@@ -1597,12 +1597,14 @@ The signature IS the canonical pointer to that terminal verdict.
 
 **Defensive invariant**: `computeSignatureChain` returns `null` if
 ANY signature in the chain is missing — either the contract's
-declared `parent_signature` OR any child's latest terminal
+declared `parent_signature` OR any dependency's latest terminal
 `output_signature`. The substrate REFUSES to assert a cache verdict
 from an incomplete pointer chain. `resolveOne` emits
-`cache_check{verdict=signature_incomplete}` and falls through to
-re-evaluate. The cache layer is **explicitly defensive** — it never
-silently substitutes value bytes for the missing pointer.
+`cache_check{verdict=legacy}` (honoring prior satisfaction for
+already-satisfied rows) or falls through to runAction. The cache
+layer is **explicitly defensive** — it never silently substitutes
+value bytes for the missing pointer (the byte-hash fallback was
+purged; only the pointer-chain path remains).
 
 ### Genesis sequencing — Day N waits on Day N-1 (strict order)
 
