@@ -3475,12 +3475,6 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     }
 
     const action = actionFromPlan(parsed.plan);
-    const parent = ambientParent(env);
-    const adapter = ambientAdapter(env);
-    const adapter_kind = ambientAdapterKind(env);
-    const event_bus = ambientEventBus(env);
-    const pretool_event = ambientPretoolEvent(env);
-    const event_kind = ambientEventKind(env);
 
     const effective_mode: AikoMode = parsed.mode;
 
