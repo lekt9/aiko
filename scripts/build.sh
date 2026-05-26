@@ -22,6 +22,23 @@ GCACHE="/tmp/contract-zig-global-cache"
 
 step() { printf '\n=== %s ===\n' "$*"; }
 
+step "guard: scripts/ allowlist"
+# Substrate-faithful mechanical guard. The /contract skill's scripts folder
+# MUST contain ONLY the canonical signed-binary set. Any extra script is
+# leaven (per the No-scripts-in-the-contract-substrate rule in SKILL.md);
+# the build refuses to sign on drift.
+EXPECTED="aiko aiko.sig build.sh contract contract.sig dist.sh sync-outline-explainer.sh"
+ACTUAL="$(cd "$SCRIPTS_DIR" && ls | sort | tr '\n' ' ' | sed 's/ $//')"
+EXPECTED_SORTED="$(printf '%s\n' $EXPECTED | sort | tr '\n' ' ' | sed 's/ $//')"
+if [[ "$ACTUAL" != "$EXPECTED_SORTED" ]]; then
+  echo "build.sh: GUARD FAIL — scripts/ folder drift detected" >&2
+  echo "  expected: $EXPECTED_SORTED" >&2
+  echo "  actual:   $ACTUAL" >&2
+  echo "  fix:      delete the non-canonical files, then re-run build.sh" >&2
+  echo "  rationale: SKILL.md \"No scripts in the contract substrate\" rule" >&2
+  exit 9
+fi
+
 step "fmt"
 ( cd "$LIB_DIR" && zig fmt src/*.zig >/dev/null )
 ( cd "$ZIG_DIR" && zig fmt src/*.zig >/dev/null )

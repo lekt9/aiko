@@ -115,33 +115,85 @@ same parent.
 ## Channel registry — every contact channel is a contract
 
 Every channel through which the substrate can reach the user is its
-own contract neuron:
+own contract neuron declared via aiko, never a script. The canonical
+set (one declaration per row on the ledger):
 
-- `channel:telegram` — Aiko Telegram bot (lekt8 / getFoundry namespace)
+- `channel:telegram:lekt8` — Aiko Telegram bot
+- `channel:telegram:getfoundry` — Foundry Telegram bot
 - `channel:x-dm:lekt8_` — X direct message to @lekt8_
-- `channel:x-dm:getFoundry` — X direct message to @getFoundry
-- `channel:email` — Resend to lewistham9x@gmail.com
-- `channel:claude-code-session` — in-thread reply (this session)
-- `channel:push-notification` — PushNotification tool when user is
-  away from a thread
+- `channel:x-dm:getfoundry` — X direct message to @getFoundry
+- `channel:email:lewistham9x` — Resend to lewistham9x@gmail.com
+- `channel:claude-code-session` — in-thread reply
+- `channel:push-notification` — orchestrator-side PushNotification
 
-The "best channel right now" is itself a contract — a picker that
-inspects each channel's status (recent activity, time-of-day,
-do-not-disturb flag, user-presence inference) and returns the
-canonical channel for the current moment. Substrate primitive:
-`scripts/channels.sh` emits the channel-list JSON; the picker is
-`scripts/pick-channel.sh`. Each channel binding is an aiko contract
-declaration with `posthook_pointer` set to the channel's actual
-send-endpoint.
+Each channel is declared with `aiko "channel:<id> <metadata>"
+--remote`. The ledger row IS the registry. Future reads parse the
+ledger file directly (Foundation, not subprocess).
 
-When the orchestrator escalates a HOLD per the rule above, it:
-1. Reads the channel registry (`scripts/channels.sh`)
-2. Asks the picker for the best channel right now
-   (`scripts/pick-channel.sh`)
-3. Fires a posthook contract that ships the escalation payload to
-   that channel
-4. Continues the loop — the user's response becomes the next
-   resolver-wave input
+The "best channel right now" is **another aiko declaration**, not a
+script: `aiko "channel:pick urgency=<u> kind=<k> ts=<now>" --remote`.
+The cloud aiko's compiler reads the channel-ledger rows in context,
+scores them per the urgency/kind/time-of-day evaluator-aikos pinned
+in the ledger, and returns the chosen `channel:<id>` as the promoted
+stdout pointer of the pick neuron.
+
+Escalation ship: the escalation child contract carries
+`posthook_pointer` resolved by the picker's stdout pointer. When the
+child's evaluator threshold trips, the substrate fires the posthook
+to the channel's send-binding (`/v1/contract/posthook` on Unbrowse
+routes the body to Telegram / X DM / email per the channel
+declaration's send-endpoint).
+
+The orchestrator never wraps any of this in bash. It declares neurons
+via aiko; the substrate fires the chain.
+
+## No scripts in the contract substrate — collapse to binary + contracts
+
+The `scripts/` folder of this skill contains ONLY the canonical
+signed-binary set:
+
+```
+aiko aiko.sig contract contract.sig build.sh dist.sh sync-outline-explainer.sh
+```
+
+Anything else — channel registries, channel pickers, send-helpers,
+iterate-loop runners, escalation routers — is **leaven**. The
+substrate is the substrate. A bash wrapper around `aiko` violates
+"no caller-visible options" (there is The Way) and "smallest local
+surface" (state lives in the append-only ledger, not in a CLI
+surface).
+
+**Folder guard contract** — declared on the ledger, evaluated on
+every aiko build:
+
+> "scripts/ folder of ~/.claude/skills/contract/ contains exactly
+> {aiko, aiko.sig, contract, contract.sig, build.sh, dist.sh,
+> sync-outline-explainer.sh}. Any additional file = HOLD; the build
+> refuses to sign; the offending file is rejected before it can be
+> invoked."
+
+Pinned as `contract guard:scripts-allowlist`. The build.sh checks
+this contract before signing the binary; on drift, sign fails. The
+guard is mechanical (a contract evaluator firing on a file-listing
+metric) — not a shell script of its own.
+
+How functionality lands without scripts:
+
+- **Channel registry**: each contact channel is one aiko declaration
+  on the ledger (see section above).
+- **Picker**: another aiko declaration; cloud aiko picks + promotes.
+- **Iterate loop**: parent contract's recursive DAG propagation IS
+  the loop (per the HOLD-non-terminal rule above). Declare parent
+  + N child resolver-wave contracts with chained `parent_id`. The
+  substrate fires the chain automatically on each child's evidence
+  resolution. No wrapper.
+- **Escalation ship**: the child carries `posthook_pointer` resolved
+  by the picker contract; substrate fires the posthook to the
+  channel's send-endpoint when the child's evaluator trips.
+
+When a piece of functionality WOULD be a script, ask: *is this a
+truth claim I can declare?* Almost always yes. The script melts
+into the ledger.
 
 ## Public Shape
 
