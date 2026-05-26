@@ -38,7 +38,7 @@ TTL_SECONDS = "86400"
 
 [[kv_namespaces]]
 binding = "AIKO_FAUCET_KV"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "73be6aa35e49400db54e20cf2f74c651"
 
 # Required secrets (`wrangler secret put <NAME>`):
 #   FAUCET_PRIVATE_KEY    base58 Solana keypair (64 bytes) — owns the escrow + session key
