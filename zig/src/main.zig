@@ -3400,17 +3400,13 @@ fn retryQueuedDeclares(allocator: std.mem.Allocator, env: std.process.Environ) v
     const dir_path_z = allocator.dupeZ(u8, dir_path) catch return;
     defer allocator.free(dir_path_z);
 
-    // opendir + readdir via libc. Keeps the same C-stdlib shape as the
+    // opendir + readdir via std.c. Keeps the same C-stdlib shape as the
     // rest of this file (no std.fs.openDir alloc churn).
-    const dirp = opendir(dir_path_z.ptr);
-    if (dirp == null) return;
-    defer _ = closedir(dirp);
+    const dirp = std.c.opendir(dir_path_z.ptr) orelse return;
+    defer _ = std.c.closedir(dirp);
 
-    while (true) {
-        const entry = readdir(dirp);
-        if (entry == null) break;
-        const e = entry.?;
-        const name_ptr: [*:0]const u8 = @ptrCast(&e.d_name);
+    while (std.c.readdir(dirp)) |entry| {
+        const name_ptr: [*:0]const u8 = @ptrCast(&entry.d_name);
         const name_len = std.mem.indexOfSentinel(u8, 0, name_ptr);
         const name = name_ptr[0..name_len];
         if (name.len == 0) continue;
