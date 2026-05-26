@@ -406,13 +406,42 @@ step_parity() {
     _fail "doctrine[capability inheritance]: SKILL.md is missing the 'opt-in per grant' invariant — without it the substrate becomes a confused-deputy by default"
   fi
 
+  # 30. "Pointer-keyed truthy cache" — Lewis 2026-05-26 (Granola 988cf805):
+  #     the deterministic self-resolve substrate. cache.zig must export the
+  #     three event-row appenders; resolveOne must emit cache_check + cache_resolved
+  #     rows; SKILL.md must declare the cache doctrine. Drift here decays the
+  #     substrate back to stderr-only cache verdicts that die with the process —
+  #     violates "keep everything within the ledger based".
+  if [[ ! -f "$LIB_DIR/src/cache.zig" ]]; then
+    _fail "doctrine[truthy cache]: libcontract/src/cache.zig missing — the canonical pointer-keyed cache module"
+  else
+    local cache_fn
+    for cache_fn in 'pub fn appendCacheCheckRow' 'pub fn appendCacheResolvedRow' 'pub fn appendCacheInvalidatedRow' 'pub fn findLatestResolvedSnapshot' 'pub fn hasInvalidationAfter'; do
+      if ! grep -q "$cache_fn" "$LIB_DIR/src/cache.zig"; then
+        _fail "doctrine[truthy cache]: '$cache_fn' missing in cache.zig"
+      fi
+    done
+  fi
+  if ! grep -q 'pub const cache = @import("cache.zig")' "$LIB_DIR/src/contract.zig"; then
+    _fail "doctrine[truthy cache]: contract.zig must declare pub const cache = @import(\"cache.zig\") so consumers reach the cache primitives"
+  fi
+  if ! grep -q 'contract.cache.appendCacheCheckRow' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[truthy cache]: main.zig:resolveOne must emit cache_check rows on entry (hit/miss/stale/legacy verdicts visible in the ledger)"
+  fi
+  if ! grep -q 'contract.cache.appendCacheResolvedRow' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[truthy cache]: main.zig:resolveOne must emit cache_resolved rows alongside markSatisfied to pin the pointer-value snapshot — Lewis's 'resolves the cash to be true'"
+  fi
+  if ! grep -q '## Pointer-keyed truthy cache' "$REPO/SKILL.md"; then
+    _fail "doctrine[truthy cache]: SKILL.md is missing the '## Pointer-keyed truthy cache' section that declares the deterministic self-resolve substrate"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
     printf '%s' "$report" >&2
     echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 29 doctrine claims have matching code sites"
+  echo "build:parity OK — all 30 doctrine claims have matching code sites"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────
