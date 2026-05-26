@@ -772,6 +772,57 @@ PYAUDIT
     _fail "doctrine[synapse minimum]: SKILL.md Canonical reference index must list claim 46 itself"
   fi
 
+  # 47. "Foundation precedes building — creativity fulfils, never
+  #     abolishes the law." Pinned by Lewis 2026-05-26 (contract
+  #     c0e6adf6). The META-doctrine that every specific rule inherits
+  #     from. Matt 5:17-18 IS Christ's self-witness on the ordering:
+  #     law first, fulfilment after; the jot and tittle survive till
+  #     heaven and earth pass. The substrate's eight named instances
+  #     (Word-truth-root, Decalogue, Genesis, Trinity, cache, dedup,
+  #     no-scripts, HOLD-non-terminal) are fruits of this one rule.
+  #     The build refuses to sign without:
+  #       (a) the section title at SKILL.md position 2 (right after
+  #           "The Word is the truth-root"),
+  #       (b) the Matt 5:17-18 anchor,
+  #       (c) the eight-instance table,
+  #       (d) the 1 Cor 3:13 fire-reveals-grounded-work clause,
+  #       (e) the Canonical reference index listing claim 47 itself
+  #           (the guard is recursive).
+  if ! grep -q '## Foundation precedes building' "$REPO/SKILL.md"; then
+    _fail "doctrine[foundation precedes building]: SKILL.md is missing the '## Foundation precedes building' section — the META-doctrine (Lewis 2026-05-26, contract c0e6adf6) that every specific rule inherits from; without it the substrate has creativity-rules with no named foundation"
+  fi
+  if ! grep -q 'Matthew 5:17-18' "$REPO/SKILL.md"; then
+    _fail "doctrine[foundation precedes building]: SKILL.md must cite Matthew 5:17-18 ('I am not come to destroy, but to fulfil ... one jot or one tittle shall in no wise pass from the law') — the canonical scriptural lock for the meta-rule"
+  fi
+  if ! grep -q '1 Corinthians 3:11' "$REPO/SKILL.md"; then
+    _fail "doctrine[foundation precedes building]: SKILL.md must cite 1 Corinthians 3:11 ('other foundation can no man lay than that is laid') — the foundation-immutability anchor"
+  fi
+  if ! grep -q 'eight existing instances\|eight named instances\|eight-instance table\|The eight existing instances' "$REPO/SKILL.md"; then
+    _fail "doctrine[foundation precedes building]: SKILL.md must carry the eight-instance index that names the existing fruits of this meta-rule (Word-truth-root, Decalogue, Genesis, Trinity, cache, dedup, no-scripts, HOLD-non-terminal); without the table the meta-rule has no demonstrated reach"
+  fi
+  if ! grep -q '1 Cor 3:13\|1 Corinthians 3:13' "$REPO/SKILL.md"; then
+    _fail "doctrine[foundation precedes building]: SKILL.md must cite 1 Corinthians 3:13 ('revealed by fire') — the metaphor for the parity gate as the substrate's natural-selection mechanism for doctrine"
+  fi
+  # Ordering invariant: Foundation-precedes-building must appear AFTER
+  # "The Word is the truth-root" (position 1, the special case) and
+  # BEFORE every specific-instance section. Position 2 is doctrinally
+  # load-bearing (1 Cor 14:40 — decently and in order). We check the
+  # ordering by line number: Word-is-truth-root header must come
+  # before Foundation header, which must come before Decalogue header.
+  local word_line foundation_line decalogue_line
+  word_line=$(grep -n '^## The Word is the truth-root' "$REPO/SKILL.md" | head -1 | cut -d: -f1)
+  foundation_line=$(grep -n '^## Foundation precedes building' "$REPO/SKILL.md" | head -1 | cut -d: -f1)
+  decalogue_line=$(grep -n '^## Decalogue Purge Gate' "$REPO/SKILL.md" | head -1 | cut -d: -f1)
+  if [[ -n "$word_line" && -n "$foundation_line" && -n "$decalogue_line" ]]; then
+    if [[ "$foundation_line" -le "$word_line" || "$foundation_line" -ge "$decalogue_line" ]]; then
+      _fail "doctrine[foundation precedes building]: SKILL.md section ordering violated — 'Foundation precedes building' (line $foundation_line) must appear AFTER 'The Word is the truth-root' (line $word_line) and BEFORE 'Decalogue Purge Gate' (line $decalogue_line); position 2 is doctrinally load-bearing (1 Cor 14:40)"
+    fi
+  fi
+  # The Canonical reference index must list claim 47 itself (recursive guard).
+  if ! grep -q '| 47 | Foundation precedes building' "$REPO/SKILL.md"; then
+    _fail "doctrine[foundation precedes building]: SKILL.md Canonical reference index must list claim 47 itself — the guard is recursive; if claim 47 isn't named in the table, the table is stale and claim 47 catches itself"
+  fi
+
   # 38. "Verdict alphabet in SKILL.md matches cache.zig." Doctrine drifts
   #     silently when prose mentions a verdict the code purged. The parity
   #     refuses to ship if SKILL.md mentions any verdict NOT in
