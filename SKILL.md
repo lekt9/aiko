@@ -2797,13 +2797,93 @@ No new storage; no separate version-control layer. The history is
 already there — `snapshotAt` is just the deterministic forward-walk
 of cache_resolved rows. **Time IS pointer-history**.
 
+### Stigmergic timestamp index — the ledger IS the KV index
+
+Pinned by Lewis 2026-05-26 (contracts `8fb3e7fe` → `b553c5cf`):
+*"does each ledger have timestamps for /contract so that we know when
+it was created and last executed and modified? so that we can kv that
+properly as proper cache that can invalidate based on the contract?"*
+
+The answer is YES — and the indexing pattern is **stigmergic**, not
+sidecar. Nature's design parallels named the shape:
+
+| Nature | Substrate analog |
+|---|---|
+| **Stigmergy** (ants leave pheromone trails; the environment IS the index) | The ledger IS the index. `cache_resolved` IS the pheromone deposit; `cache_invalidated` IS evaporation. No sidecar can desync because there IS no sidecar. |
+| **Epigenetics** (methylation marks appended TO the chromatin, not a parallel store) | Every event row's `ts` is the epigenetic mark — appended to the ledger itself; the next mark for the same id supersedes the prior via newest-first walk. |
+| **Action potentials** (a neuron's "when did I last fire?" is the spike train itself, not a register) | `cache.latestEventTs(id)` walks the spike train. The events ARE the timestamps. |
+| **Working memory** (PFC keeps a volatile lookup; long-term storage is cortical, reconstructible) | Process-local memoization, when needed, is the caller's concern. The ledger remains the canonical reconstructible truth. |
+
+The mechanical surface:
+
+```
+cache.latestEventTs(allocator, env, id)    -> ?[]u8  (ISO-8601 ts)
+cache.latestEventKind(allocator, env, id)  -> ?[]u8  ("declared"|"iterated"|"satisfied"|...)
+```
+
+Together they answer "when did X last change, and what kind of change
+was it?" without a `state_changed` schema bolt-on. Every existing
+event kind — `declared`, `iterated`, `satisfied`, `died`, `purged`,
+`child_added`, `cache_check`, `cache_resolved`, `cache_invalidated`,
+`resigned`, `wallet_rotated`, `pulled`, `capability_granted` — already
+carries `ts`. The walker pattern subsumes every "when was X touched"
+query.
+
+**Why no sidecar KV index** (Option A from the design discussion):
+the second-source-of-truth that nature avoids. A separate
+`ts-index.kv` mirroring the ledger creates exactly the
+cache-invalidation problem the substrate refuses elsewhere (Matt
+5:37 — yea/nay; whatsoever more cometh of evil). If a hot-path
+caller needs O(1) lookup, it memoizes at its own layer and
+invalidates on observed `appendRow`. The substrate provides the
+canonical walker; no parallel storage.
+
+### Payload encryption — values sealed, pointers public
+
+Pinned by Lewis 2026-05-26 (contracts `8fb3e7fe` → `896f0abd`):
+*"noone else can access any value down the chain without owning the
+private key?"* The honest answer was: the chain itself is publicly
+readable (Pointers-Over-Anything Clause B — stateless trace), but
+the `plan` and `action` field bytes can carry PII / secrets the
+operator never granted to readers. This module seals those bytes
+per row.
+
+```
+libcontract/src/payload_crypto.zig — deriveRowKey / seal / open / buildAad
+```
+
+Per-row 32-byte AEAD key = `HKDF-SHA256(salt="aiko-payload-encrypt-v1",
+ikm=deployer_root, info=contract_id || "\x00payload")`. Same HKDF
+substrate as `lineage.deriveKeyPair` (different salt — keyspaces
+cannot collide). AEAD is XChaCha20-Poly1305 with 24-byte random
+nonce; AAD binds the row's `(contract_id, event_kind)` so a sealed
+payload cannot be replayed onto a different row.
+
+**The signature chain is orthogonal.** `cache.computeSignatureChain`
+operates on signatures, not values. Encryption gates VALUE access;
+the substrate's truth-resolution does not depend on values. A
+verifier without the deployer key can still:
+- walk parent_id chains (`parent_id` stays plaintext)
+- traverse synapses (`contract:<X>` refs stay plaintext)
+- verify signatures (`env_pubkey`, `parent_signature`, `output_signature` stay plaintext)
+- compute cache hits via signature chain
+
+But cannot recover the `plan` / `action` value bytes.
+
+Wave-1 ships the primitives standalone (tested, signed, importable).
+Wave-2 wires `ledger.appendRow` to seal on write + readers to open on
+load when the key is derivable. Decalogue commandment 8 (thou shalt
+not steal) is the doctrinal lock — readable plaintext payloads on a
+shared ledger leak authority that was never granted.
+
 ### Substrate location
 
 ```
-libcontract/src/cache.zig     — three appenders + two readers + tests
-libcontract/src/contract.zig  — re-export: pub const cache = @import("cache.zig")
-zig/src/main.zig:resolveOne   — wires cache_check on entry,
-                                 cache_resolved on satisfaction
+libcontract/src/cache.zig          — appenders + readers + walker + tests
+libcontract/src/payload_crypto.zig — HKDF-derive + XChaCha20-Poly1305 seal/open + tests
+libcontract/src/contract.zig       — re-export: pub const cache, pub const payload_crypto
+zig/src/main.zig:resolveOne        — wires cache_check on entry,
+                                      cache_resolved on satisfaction
 ```
 
 ### What the cache is NOT
