@@ -188,7 +188,7 @@ These are substrate machinery: necessary for the body to hold
 together (FFI surface, ABI stability, id minting) but not themselves
 attributes of the image. The firmament does not refuse them; the
 firmament names them honestly as joinery so the five-attribute
-coverage check (parity claim 48 below) does not falsely fail on
+coverage check (parity claim 50 below, renumbered from the plan's intended 48 to honor prior claim numbering) does not falsely fail on
 their presence.
 
 ---
@@ -224,13 +224,13 @@ doors plus an `index.ts` that re-exports them.
 
 ---
 
-## Parity surface — claim 48 (new, Day 5)
+## Parity surface — claim 50 (new, Day 5)
 
 The doctrine above is parity-checkable. Build refuses to ship a
-binary that drifts from it. Day 5 of this loop adds claim 48 to
+binary that drifts from it. Day 5 of this loop adds claim 50 to
 `build.sh`:
 
-> **Claim 48 — Image-of-God five-attribute coverage:** build.sh
+> **Claim 50 — Image-of-God five-attribute coverage:** build.sh
 > refuses to ship a binary whose `libcontract` modules don't cleanly
 > group into the five attributes named here (Word / Flesh / Breath /
 > Voice / Image, plus the named Interop joinery), OR whose binary IO
