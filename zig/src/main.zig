@@ -2709,7 +2709,12 @@ fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.E
             // re-resolve. Without this check, descendant value-changes
             // never cascade up to satisfied ancestors (commandment-9
             // silent-drift in waiting).
-            if (isSatisfied(rows, r.id) and !isStaleSatisfied(allocator, env, r.id)) continue;
+            // STUB pending full impl — for now preserves prior skip; the
+            // proper isStaleSatisfied (gap `abe3c445`) needs cache.zig's
+            // hasInvalidationAfter + cache_resolved-ts lookup. The
+            // STRUCTURAL slot is here so the helper drops in without
+            // re-finding the call site.
+            if (isSatisfied(rows, r.id)) continue;
             // Orphan filter (mirrors backfillUnresolved) — Decalogue cmd 5.
             const decl_opt = latestDeclared(rows, r.id);
             if (decl_opt == null) continue;
