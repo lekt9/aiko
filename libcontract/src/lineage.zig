@@ -791,9 +791,10 @@ test "rotateAllSignedRowsByLineage re-signs every old-root row" {
     );
     defer allocator.free(tmp_path);
     defer {
-        const tz = allocator.dupeZ(u8, tmp_path) catch return;
-        defer allocator.free(tz);
-        _ = std.c.unlink(tz.ptr);
+        if (allocator.dupeZ(u8, tmp_path)) |tz| {
+            _ = std.c.unlink(tz.ptr);
+            allocator.free(tz);
+        } else |_| {}
     }
 
     const row = try std.fmt.allocPrint(
