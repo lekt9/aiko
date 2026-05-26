@@ -3396,40 +3396,10 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             // row carrying source="cloud-mirror" so future resolveOne /
             // backfillUnresolved / cache walks can see the row on this host
             // and so the substrate's interoception counter reflects reality.
-            // Failure is surfaced but non-fatal — the cloud already accepted.
-            mirror: {
-                var ts_buf: [64]u8 = undefined;
-                const ts = contract.nowIsoUtc(&ts_buf) catch |e| {
-                    errPrint("cloud-mirror: nowIsoUtc failed: {s} — skipping local mirror\n", .{@errorName(e)});
-                    break :mirror;
-                };
-                var row: std.ArrayList(u8) = .empty;
-                defer row.deinit(allocator);
-                row.appendSlice(allocator, "{\"event\": \"declared\", \"source\": \"cloud-mirror\", \"id\": ") catch |e| {
-                    errPrint("cloud-mirror: row build failed: {s}\n", .{@errorName(e)});
-                    break :mirror;
-                };
-                appendJsonEscaped(allocator, &row, id) catch |e| {
-                    errPrint("cloud-mirror: row build failed: {s}\n", .{@errorName(e)});
-                    break :mirror;
-                };
-                row.appendSlice(allocator, ", \"plan\": ") catch break :mirror;
-                appendJsonEscaped(allocator, &row, safe_plan) catch break :mirror;
-                row.appendSlice(allocator, ", \"action\": ") catch break :mirror;
-                appendJsonEscaped(allocator, &row, action) catch break :mirror;
-                if (parent) |p| {
-                    row.appendSlice(allocator, ", \"parent_id\": ") catch break :mirror;
-                    appendJsonEscaped(allocator, &row, p) catch break :mirror;
-                }
-                row.appendSlice(allocator, ", \"ts\": ") catch break :mirror;
-                appendJsonEscaped(allocator, &row, ts) catch break :mirror;
-                row.append(allocator, '}') catch break :mirror;
-                const path = ledger.appendRow(allocator, env, row.items) catch |e| {
-                    errPrint("cloud-mirror: appendRow failed: {s} — local ledger may be read-only\n", .{@errorName(e)});
-                    break :mirror;
-                };
-                allocator.free(path);
-            }
+            // Failure is non-fatal but ALWAYS surfaced (fallbacks-visible).
+            writeCloudMirrorRow(allocator, env, id, safe_plan, action, parent) catch |e| {
+                errPrint("cloud-mirror: append failed: {s} — local ledger view will lag the cloud canonical row\n", .{@errorName(e)});
+            };
             backfillUnresolved(allocator, env, id) catch |e| {
                 errPrint("backfill skipped: {s}\n", .{@errorName(e)});
             };
