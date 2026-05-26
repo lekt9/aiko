@@ -689,8 +689,9 @@ fn appendBytesToFile(allocator: std.mem.Allocator, path: []const u8, bytes: []co
 }
 
 /// Tolerant extractor: matches `"key": "value"` or `"key":"value"`. Returns
-/// null when the key is absent OR when its value is JSON `null`. Caller frees.
-fn extractJsonStringField(line: []const u8, key: []const u8) !?[]u8 {
+/// null when the key is absent OR when its value is JSON `null`. Caller frees
+/// the returned slice using `alloc`.
+fn extractJsonStringField(alloc: std.mem.Allocator, line: []const u8, key: []const u8) !?[]u8 {
     var key_buf: [128]u8 = undefined;
     const k1 = try std.fmt.bufPrint(&key_buf, "\"{s}\": \"", .{key});
     const k1_len = k1.len;
@@ -700,7 +701,6 @@ fn extractJsonStringField(line: []const u8, key: []const u8) !?[]u8 {
         if (std.mem.indexOf(u8, line, k2)) |p| break :blk p + k2.len;
         return null;
     };
-    // Find unescaped closing quote.
     var i: usize = start;
     while (i < line.len) : (i += 1) {
         if (line[i] == '\\' and i + 1 < line.len) {
@@ -710,7 +710,7 @@ fn extractJsonStringField(line: []const u8, key: []const u8) !?[]u8 {
         if (line[i] == '"') break;
     }
     if (i >= line.len) return null;
-    return try std.heap.page_allocator.dupe(u8, line[start..i]);
+    return try alloc.dupe(u8, line[start..i]);
 }
 
 test "deterministic derivation + sign + verify round-trip" {
