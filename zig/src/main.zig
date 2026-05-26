@@ -1853,8 +1853,8 @@ fn parseAikoArgs(allocator: std.mem.Allocator, args: []const []const u8) !AikoAr
         if (std.mem.eql(u8, arg, "--private")) {
             if (mode != null) return error.DuplicateMode;
             mode = .private_only;
-        // Deprecated aliases — silently honored so legacy callers keep
-        // working. `--remote` ≡ shared (the default). `--local` ≡ private.
+            // Deprecated aliases — silently honored so legacy callers keep
+            // working. `--remote` ≡ shared (the default). `--local` ≡ private.
         } else if (std.mem.eql(u8, arg, "--remote")) {
             if (mode != null) return error.DuplicateMode;
             mode = .shared;
