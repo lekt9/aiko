@@ -3238,9 +3238,15 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     // ledger, and append a single `evidence` row pointing at the blob.
     // Pointer-not-payload: the row carries sha256:<hex> + size + scope.
     armStderrTape(allocator);
-    var root_id_for_evidence: []const u8 = "";
-    var scope_for_evidence: []const u8 = "private";
-    defer flushStderrTapeAsEvidence(allocator, env, root_id_for_evidence, scope_for_evidence);
+    // Stack buffers so the deferred flush reads the current value at
+    // unwind time — `cid` / `body` are owned + freed by inner defers
+    // that run BEFORE this one (LIFO), so we cannot hold borrowed slices.
+    var root_id_buf: [40]u8 = undefined;
+    var root_id_len: usize = 0;
+    var scope_buf: [16]u8 = undefined;
+    @memcpy(scope_buf[0..7], "private");
+    var scope_len: usize = 7;
+    defer flushStderrTapeAsEvidence(allocator, env, root_id_buf[0..root_id_len], scope_buf[0..scope_len]);
 
     const parsed = parseAikoArgs(allocator, args) catch |e| {
         errPrint("aiko argument error: {s}\n", .{@errorName(e)});
