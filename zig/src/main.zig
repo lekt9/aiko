@@ -428,6 +428,9 @@ fn bioEnvironmentFingerprint(allocator: std.mem.Allocator, env: std.process.Envi
     defer allocator.free(uname);
     const shell: []const u8 = "";
     const term: []const u8 = "";
+    var cwd_buf: [4096]u8 = undefined;
+    const cwd_ptr = std.c.getcwd(&cwd_buf, cwd_buf.len);
+    const cwd: []const u8 = if (cwd_ptr) |p| std.mem.span(@as([*:0]const u8, @ptrCast(p))) else "";
     // Probe a fixed list of binding-relevant CLIs.
     const probes = [_][]const u8{ "ssh", "bash", "zsh", "docker", "python3", "node", "git", "curl", "wg", "telethon", "tg-cli", "kubectl" };
     var caps: std.ArrayList(u8) = .empty;
@@ -443,7 +446,7 @@ fn bioEnvironmentFingerprint(allocator: std.mem.Allocator, env: std.process.Envi
         try caps.append(allocator, '"');
     }
     try caps.append(allocator, ']');
-    return try std.fmt.allocPrint(allocator, "{{\"uname\":\"{s}\",\"shell\":\"{s}\",\"term\":\"{s}\",\"caps\":{s}}}", .{ uname, shell, term, caps.items });
+    return try std.fmt.allocPrint(allocator, "{{\"uname\":\"{s}\",\"shell\":\"{s}\",\"term\":\"{s}\",\"cwd\":\"{s}\",\"caps\":{s}}}", .{ uname, shell, term, cwd, caps.items });
 }
 
 /// Bind manifest — CONTRACT_BIND_KIND + CONTRACT_BIND_TARGET name the
