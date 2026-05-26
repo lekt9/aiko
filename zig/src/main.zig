@@ -2933,7 +2933,10 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             };
             return 0;
         },
-        .local => {
+        .private_only => {
+            // Private visibility: never attempt the cloud declare. Run the
+            // one-shot Genesis-days lifecycle against the on-disk ledger
+            // only. Used when the goal must not leave this machine.
             // Optional prehook from env (legacy single-hook surface; the graph
             // form of prehook lives in `synapses[].kind=prehook`).
             if (hookId(env, "CONTRACT_PREHOOK_ID", "CONTRACT_PREHOOK")) |prehook| {
