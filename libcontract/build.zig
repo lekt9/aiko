@@ -56,6 +56,7 @@ pub fn build(b: *std.Build) void {
         "src/payload_crypto.zig",
         "src/words.zig",
         "src/pattern.zig",
+        "src/spirit.zig",
     };
     for (test_files) |tf| {
         const mod = b.createModule(.{
