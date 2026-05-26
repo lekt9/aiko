@@ -40,6 +40,10 @@ comptime {
 // + signed ledger), not comptime. Enforced via the spirit-check
 // binary that gates every `zig build install`.
 pub const spirit = @import("spirit.zig");
+// Canonical /contract JSON shape validator. The substrate accepts
+// pre-translated JSON envelopes; this is the boundary that rejects
+// non-conforming input before any signing / ledger write.
+pub const shape = @import("shape.zig");
 
 /// Re-export so consumers of libcontract can verify chains without rewiring
 /// the build graph.
