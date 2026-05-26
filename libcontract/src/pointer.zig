@@ -61,7 +61,8 @@ pub fn inferLayer(action: []const u8) i32 {
     if (std.mem.eql(u8, pt, "prehook")) return 4;
     if (std.mem.eql(u8, pt, "modality")) return 4;
     if (std.mem.eql(u8, pt, "embedding")) return 3;
-    if (std.mem.eql(u8, pt, "sha256")) return 4;
+    if (std.mem.eql(u8, pt, "sha256-private")) return 4;
+    if (std.mem.eql(u8, pt, "sha256-shared")) return 4;
     if (std.mem.eql(u8, pt, "sabbath-eval")) return 3;
     if (std.mem.eql(u8, pt, "webhook")) return 4;
     if (std.mem.eql(u8, pt, "tunnel")) return 4;
