@@ -131,9 +131,13 @@ pub fn compileLocallyJson(
     defer allocator.free(combined);
     try writeFile(allocator, prompt_path, combined);
 
+    // -n 256: compiled trees are small (a typical AikoCompiledContract
+    //         fits comfortably). 1024 was wasteful.
+    // -t 4:   cap thread count so the local fallback doesn't pin every
+    //         core when the user is doing other work concurrently.
     const cmd_slice = std.fmt.allocPrint(
         allocator,
-        "'{s}' -m '{s}' --grammar-file '{s}' -f '{s}' -n 1024 --temp 0.1 --no-display-prompt 2>/dev/null",
+        "'{s}' -m '{s}' --grammar-file '{s}' -f '{s}' -n 256 -t 4 --temp 0.1 --no-display-prompt 2>/dev/null",
         .{ llama_cli, model_path, grammar_path, prompt_path },
     ) catch return Error.OutOfMemory;
     defer allocator.free(cmd_slice);
