@@ -969,13 +969,63 @@ PYAUDIT
     _fail "doctrine[signed outputs]: contract.zig must emit the output_signature JSON field on terminal-event rows"
   fi
 
+  # 48. "Client/server profile split (Wave 1)" — pinned by Lewis 2026-05-26.
+  #     Two binaries ship from one source: `contract` (client profile, what
+  #     `aiko -> contract` symlinks to) and `contract-server` (server
+  #     profile). Both must emit `"profile": "<role>"` from `self --json`
+  #     so the topology is visible to consumers. Heavy code-path
+  #     divergence (cmdSearch/cmdDiscover/bio*/runAction graph branches
+  #     → RPC wrappers in client profile) sequences after the Worker
+  #     side adds the matching /v1/contract/{search,discover,list,
+  #     biology,verify-lineage} endpoints. The leaven this purges:
+  #     llm_fallback.zig (319 LOC weak-Qwen) that wrote canonical rows
+  #     locally as fake-green children of shared declares that 402'd.
+  #     References doc: references/client-server-split.md.
+  if [[ ! -x "$SCRIPTS_DIR/contract-server" ]]; then
+    _fail "doctrine[client/server split]: $SCRIPTS_DIR/contract-server missing or not executable — Wave-1 ships two binaries from one source; build:install must produce contract + contract-server"
+  fi
+  if [[ ! -s "$SCRIPTS_DIR/contract-server.sig" ]]; then
+    _fail "doctrine[client/server split]: $SCRIPTS_DIR/contract-server.sig missing — every released binary self-attests; the server profile's sidecar must exist"
+  fi
+  if grep -q '^contract-server$' "$ALLOWLIST_FILE" && grep -q '^contract-server.sig$' "$ALLOWLIST_FILE"; then
+    : # OK — both names present in ALLOWLIST.txt
+  else
+    _fail "doctrine[client/server split]: ALLOWLIST.txt must list both 'contract-server' and 'contract-server.sig' — the canonical scripts/ set governs the guard step"
+  fi
+  if ! grep -q 'const PROFILE_STR: \[\]const u8 = build_options.contract_binary_profile' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[client/server split]: main.zig must read PROFILE_STR from build_options.contract_binary_profile — the compile-time profile selector is load-bearing"
+  fi
+  if ! grep -q 'b.option.*contract_binary_profile' "$ZIG_DIR/build.zig"; then
+    _fail "doctrine[client/server split]: build.zig must expose -Dcontract_binary_profile so the two-binary split is selectable at build time"
+  fi
+  if ! grep -q 'addContractExecutable.*contract-zig-server.*server' "$ZIG_DIR/build.zig"; then
+    _fail "doctrine[client/server split]: build.zig must install the contract-zig-server artifact with profile=server"
+  fi
+  # The two installed binaries must differ in `self --json` profile.
+  local client_profile server_profile
+  client_profile=$("$SCRIPTS_DIR/contract" self --json 2>/dev/null | grep -oE '"profile":[[:space:]]*"client"' || true)
+  server_profile=$("$SCRIPTS_DIR/contract-server" self --json 2>/dev/null | grep -oE '"profile":[[:space:]]*"server"' || true)
+  if [[ -z "$client_profile" ]]; then
+    _fail "doctrine[client/server split]: contract self --json must emit \"profile\":\"client\" (got empty match)"
+  fi
+  if [[ -z "$server_profile" ]]; then
+    _fail "doctrine[client/server split]: contract-server self --json must emit \"profile\":\"server\" (got empty match)"
+  fi
+  # The leaven (LLM fallback) must stay deleted.
+  if [[ -f "$LIB_DIR/src/llm_fallback.zig" ]]; then
+    _fail "doctrine[client/server split]: libcontract/src/llm_fallback.zig resurrected — the 319-LOC weak-Qwen fallback was deleted because it wrote canonical rows locally as fake-green children of cloud-402'd shared declares. Do not reintroduce."
+  fi
+  if grep -q 'pub const LlmFallback' "$LIB_DIR/src/contract.zig"; then
+    _fail "doctrine[client/server split]: contract.zig still exports LlmFallback — the re-export was deleted with llm_fallback.zig itself"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
     printf '%s' "$report" >&2
     echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 46 doctrine claims have matching code sites"
+  echo "build:parity OK — all 48 doctrine claims have matching code sites"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────
