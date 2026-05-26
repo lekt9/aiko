@@ -29,6 +29,16 @@ const contract = @import("contract");
 const client = @import("contract_client");
 const pointer = @import("pointer.zig");
 const ledger = @import("ledger.zig");
+// Wave-1 client/server split: compile-time profile selector. The two
+// installed binaries (`contract` + `contract-server`) currently differ
+// only by this constant — the heavy gating (cmdSearch/cmdDiscover/
+// bio*/runAction graph branches → RPC wrappers in client profile)
+// sequences in a later wave once the Worker side ships the matching
+// /v1/contract/{search,discover,list,biology,verify-lineage} endpoints.
+// See references/client-server-split.md.
+const build_options = @import("build_options");
+const PROFILE_STR: []const u8 = build_options.contract_binary_profile;
+const IS_SERVER_PROFILE: bool = std.mem.eql(u8, PROFILE_STR, "server");
 
 const VERSION = "0.4.0-guarded-native-shape";
 
