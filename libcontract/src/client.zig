@@ -295,10 +295,8 @@ pub fn declareRemoteAiko(
     writeJsonString(&body, allocator, plan) catch return ClientError.OutOfMemory;
     body.appendSlice(allocator, ",\"action\":") catch return ClientError.OutOfMemory;
     writeJsonString(&body, allocator, action) catch return ClientError.OutOfMemory;
-    // payment_provider="corbits" purged in 2026-05-26 cleanup — main server's
-    // Corbits codepath was removed in v6.16 Phase 5; we send only the scheme
-    // (the canonical Faremeter Flex identifier). The server doesn't read
-    // payment_provider; emitting a stale provider name was leaven.
+    // Send only the canonical Faremeter Flex payment scheme; the server does
+    // not read a payment_provider field.
     body.appendSlice(allocator, ",\"client\":\"aiko\",\"payment_scheme\":\"@faremeter/flex\"") catch return ClientError.OutOfMemory;
     if (parent_id) |p| {
         body.appendSlice(allocator, ",\"parent_id\":") catch return ClientError.OutOfMemory;
