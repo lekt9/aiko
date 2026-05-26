@@ -2273,6 +2273,12 @@ fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.E
             try seen.put(r.id, {});
             if (isDead(rows, r.id)) continue;
             if (isSatisfied(rows, r.id)) continue;
+            // Skip OTHER drill rows — they're standing resolvers, not work
+            // items. Recursing into a drill from within a drill would create
+            // unbounded mutual recursion (drill → backfill → resolveOne →
+            // runAction → drill → ...). Standing drills fire on their own
+            // pacemaker tick, not as a target of another drill.
+            if (std.mem.startsWith(u8, r.action, "drill:")) continue;
             try candidates.append(allocator, r.id);
             if (candidates.items.len >= budget) break;
         }
