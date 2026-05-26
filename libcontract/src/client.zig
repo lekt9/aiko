@@ -228,6 +228,52 @@ pub fn declareRemoteAiko(
     url_buf.appendSlice(allocator, base) catch return ClientError.OutOfMemory;
     url_buf.appendSlice(allocator, "/v1/contract/declare") catch return ClientError.OutOfMemory;
 
+    // ─── Signed-declare prep — SKILL.md "Lineage is server-determined" ───
+    //
+    // The cloud reconstructs containment from wallet identity + declare
+    // timestamp. The binary advertises both, signed with the deployer
+    // keypair's HKDF-derived "aiko-declare-identity" subkey. Server
+    // verifies via declare-signature.ts; on success the row is trusted
+    // and the wallet identity is bound to it for onramp routing.
+    //
+    // No env hatches — wallet is derived from root.key per the three-tier
+    // bootstrap; signing is deterministic given the root + the identity
+    // string. Same caller, same wallet, every invocation.
+    const root = lineage.loadOrInitRootKey(allocator, env) catch |e| {
+        std.debug.print("aiko declare: loadOrInitRootKey failed: {s} — declare proceeds unsigned (will be coerced to agent=anonymous server-side)\n", .{@errorName(e)});
+        return declareRemoteAikoUnsigned(allocator, env, plan, action, parent_id, adapter_contract_id, adapter_kind, event_bus_contract_id, pretool_event_contract_id, event_kind, agent, user_context_id);
+    };
+    const declare_kp = lineage.deriveKeyPair(root, "aiko-declare-identity") catch |e| {
+        std.debug.print("aiko declare: deriveKeyPair failed: {s} — declare proceeds unsigned\n", .{@errorName(e)});
+        return declareRemoteAikoUnsigned(allocator, env, plan, action, parent_id, adapter_contract_id, adapter_kind, event_bus_contract_id, pretool_event_contract_id, event_kind, agent, user_context_id);
+    };
+    var wid_hex: [64]u8 = undefined;
+    lineage.bytesToHex(&declare_kp.public_key.bytes, &wid_hex);
+
+    // ts — ISO 8601 UTC with us precision. Server reads req.ts verbatim
+    // for canonical-body reconstruction, so client and server agree on
+    // the exact string we just generated.
+    var ts_buf: [32]u8 = undefined;
+    const ts = contract_mod.nowIsoUtc(&ts_buf) catch |e| {
+        std.debug.print("aiko declare: nowIsoUtc failed: {s} — declare proceeds unsigned\n", .{@errorName(e)});
+        return declareRemoteAikoUnsigned(allocator, env, plan, action, parent_id, adapter_contract_id, adapter_kind, event_bus_contract_id, pretool_event_contract_id, event_kind, agent, user_context_id);
+    };
+
+    // Canonical body — byte-for-byte match of server's canonicalizeDeclareBody
+    // (declare-signature.ts): JSON.stringify with the six keys in fixed order,
+    // null literals for missing parent_id/agent.
+    var canon: std.ArrayList(u8) = .empty;
+    defer canon.deinit(allocator);
+    buildCanonicalDeclareBody(&canon, allocator, plan, action, parent_id, agent, &wid_hex, ts) catch return ClientError.OutOfMemory;
+
+    // Sign the canonical bytes with ed25519.
+    const sig = declare_kp.sign(canon.items, null) catch |e| {
+        std.debug.print("aiko declare: sign failed: {s} — declare proceeds unsigned\n", .{@errorName(e)});
+        return declareRemoteAikoUnsigned(allocator, env, plan, action, parent_id, adapter_contract_id, adapter_kind, event_bus_contract_id, pretool_event_contract_id, event_kind, agent, user_context_id);
+    };
+    var sig_hex: [128]u8 = undefined;
+    lineage.bytesToHex(&sig.toBytes(), &sig_hex);
+
     var body: std.ArrayList(u8) = .empty;
     defer body.deinit(allocator);
     body.appendSlice(allocator, "{\"plan\":") catch return ClientError.OutOfMemory;
