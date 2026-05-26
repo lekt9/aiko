@@ -328,6 +328,18 @@ fn jsonStringDecoded(allocator: std.mem.Allocator, line: []const u8, key: []cons
     return try unescapeJsonValue(allocator, raw);
 }
 
+/// Count `satisfied` + `died` events across all rows. Used as the
+/// progress signal for backfill: HOLDs alone don't count, only terminal
+/// verdicts (satisfaction or inherent-impossibility apoptosis).
+fn countTerminalEvents(rows: []const Row) usize {
+    var n: usize = 0;
+    for (rows) |r| {
+        if (std.mem.eql(u8, r.event, "satisfied")) n += 1;
+        if (std.mem.eql(u8, r.event, "died")) n += 1;
+    }
+    return n;
+}
+
 fn parseRows(allocator: std.mem.Allocator, env: std.process.Environ) ![]Row {
     const data = try ledger.readAll(allocator, env);
     // Rows intentionally borrow slices from `data`. The native CLI is a
