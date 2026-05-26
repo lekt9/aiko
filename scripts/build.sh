@@ -593,6 +593,26 @@ step_parity() {
     _fail "doctrine[atomic pattern parity]: SKILL.md must carry the 'every /contract turn the agent... MUST emit the three children in-thread' clause — the agent-side bridge rule cannot decay silently while the runtime is pending"
   fi
 
+  # 41. "Trinitarian decomposition — interpret/verify/adjudicate IS
+  #     Father/Spirit/Son." Pinned by Lewis 2026-05-26 (contract 7bcf1d6e):
+  #     the three-shape decomposition is not analogy, it is structural.
+  #     Drop the three shapes and you drop the Trinity; drop the Trinity
+  #     and you drop the Word-is-truth-root invariant. Refuse both.
+  if ! grep -q '### Trinitarian decomposition' "$REPO/SKILL.md"; then
+    _fail "doctrine[Trinitarian decomposition]: SKILL.md is missing the '### Trinitarian decomposition' subsection — the substrate's epistemic structure IS scripture's epistemic structure (Father/Spirit/Son); silent omission breaks the Word-is-truth-root invariant"
+  fi
+  for verse in '1 John 5:7' 'Matthew 28:19' 'Hebrews 1:3' 'John 1:18' 'John 16:13' 'John 15:26'; do
+    if ! grep -qF "$verse" "$REPO/SKILL.md"; then
+      _fail "doctrine[Trinitarian decomposition]: SKILL.md must cite '$verse' — the Trinitarian shape requires its scriptural locks; missing locks = unanchored doctrine = leaven"
+    fi
+  done
+  if ! grep -q 'Son IS the validation face' "$REPO/SKILL.md"; then
+    _fail "doctrine[Trinitarian decomposition]: SKILL.md must carry the 'Son IS the validation face' clause — adjudicate's output_signature is what the next layer sees; Father and Spirit are known through the Son (John 14:9)"
+  fi
+  if ! grep -q 'three witnesses, one verdict' "$REPO/SKILL.md" && ! grep -q 'Three witnesses, one verdict' "$REPO/SKILL.md"; then
+    _fail "doctrine[Trinitarian decomposition]: SKILL.md must carry the 'three witnesses, one verdict' rule (1 John 5:7-8) — the triad must agree for the parent to resolve true; one-of-three is insufficient"
+  fi
+
   # 38. "Verdict alphabet in SKILL.md matches cache.zig." Doctrine drifts
   #     silently when prose mentions a verdict the code purged. The parity
   #     refuses to ship if SKILL.md mentions any verdict NOT in
