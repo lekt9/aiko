@@ -226,34 +226,6 @@ fn jsonNullableString(line: []const u8, key: []const u8) ?[]const u8 {
     return null;
 }
 
-/// Encode `s` as a JSON string into `out`. Mirror of writeJsonString in
-/// libcontract/src/contract.zig — duplicated locally so the shared-mode
-/// cloud-mirror append below doesn't depend on a libcontract export.
-fn appendJsonEscaped(out: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []const u8) !void {
-    try out.append(allocator, '"');
-    for (s) |c| {
-        switch (c) {
-            '"' => try out.appendSlice(allocator, "\\\""),
-            '\\' => try out.appendSlice(allocator, "\\\\"),
-            '\n' => try out.appendSlice(allocator, "\\n"),
-            '\r' => try out.appendSlice(allocator, "\\r"),
-            '\t' => try out.appendSlice(allocator, "\\t"),
-            0x08 => try out.appendSlice(allocator, "\\b"),
-            0x0c => try out.appendSlice(allocator, "\\f"),
-            else => {
-                if (c < 0x20) {
-                    var buf: [8]u8 = undefined;
-                    const hex = try std.fmt.bufPrint(&buf, "\\u{x:0>4}", .{c});
-                    try out.appendSlice(allocator, hex);
-                } else {
-                    try out.append(allocator, c);
-                }
-            },
-        }
-    }
-    try out.append(allocator, '"');
-}
-
 /// JSON-decode a string value extracted by `jsonString`. The slice returned by
 /// `jsonString` is the raw byte span between the surrounding `"` — JSON
 /// escapes (`\"`, `\\`, `\n`, `\t`, `\r`, `\/`, `\uXXXX`) remain LITERAL.
