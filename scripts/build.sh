@@ -75,6 +75,55 @@ acquire_build_lock() {
   return 0
 }
 
+# ─── Quiescence debounce ──────────────────────────────────────────────
+# Wait until source dirs stop changing for BUILD_QUIET_SECONDS (default
+# 10s) before the seven-day pipeline kicks off. Lets a burst of edits
+# coalesce into one build instead of triggering the compile+sign chain
+# per save. Cap at BUILD_QUIET_MAX_WAIT to avoid wedging on a noisy
+# filesystem watcher.
+BUILD_QUIET_SECONDS="${BUILD_QUIET_SECONDS:-10}"
+BUILD_QUIET_MAX_WAIT="${BUILD_QUIET_MAX_WAIT:-180}"
+BUILD_QUIET_POLL_INTERVAL="${BUILD_QUIET_POLL_INTERVAL:-2}"
+
+wait_for_quiescence() {
+  local watch_paths=(
+    "$ZIG_DIR/src"
+    "$LIB_DIR/src"
+    "$SCRIPTS_DIR"
+    "$REPO/SKILL.md"
+    "$REPO/CLAUDE.md"
+  )
+  local waited=0
+  local announced=0
+  while (( waited < BUILD_QUIET_MAX_WAIT )); do
+    local now newest delta
+    now="$(date +%s)"
+    # macOS stat uses -f '%m'; gnu stat uses -c '%Y'. Try macOS first.
+    newest="$(find "${watch_paths[@]}" -type f -print0 2>/dev/null \
+              | xargs -0 stat -f '%m' 2>/dev/null \
+              | sort -n | tail -1)"
+    if [[ -z "$newest" ]]; then
+      newest="$(find "${watch_paths[@]}" -type f -print0 2>/dev/null \
+                | xargs -0 stat -c '%Y' 2>/dev/null \
+                | sort -n | tail -1)"
+    fi
+    newest="${newest:-0}"
+    delta=$(( now - newest ))
+    if (( delta >= BUILD_QUIET_SECONDS )); then
+      (( announced == 1 )) && echo "build.sh: source quiesced (last edit ${delta}s ago) — proceeding" >&2
+      return 0
+    fi
+    if (( announced == 0 )); then
+      echo "build.sh: source still settling (last edit ${delta}s ago, need ${BUILD_QUIET_SECONDS}s quiet) — debouncing..." >&2
+      announced=1
+    fi
+    sleep "$BUILD_QUIET_POLL_INTERVAL"
+    waited=$(( waited + BUILD_QUIET_POLL_INTERVAL ))
+  done
+  echo "build.sh: quiescence wait exceeded ${BUILD_QUIET_MAX_WAIT}s — proceeding anyway (noisy filesystem)" >&2
+  return 0
+}
+
 # ─── build:guard — doctrine-as-data folder allowlist ─────────────────
 step_guard() {
   step "build:guard — scripts/ allowlist"
