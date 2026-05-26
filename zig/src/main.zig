@@ -3246,6 +3246,46 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
                 return 2;
             };
             outPrint("{s}\n", .{id});
+            // Cloud-canonical write-through mirror (contract d38149d0 +
+            // root-fix:substrate-singularity f5ff4f42). The cloud is canonical;
+            // the local ledger is a derived view. Append a `declared` mirror
+            // row carrying source="cloud-mirror" so future resolveOne /
+            // backfillUnresolved / cache walks can see the row on this host
+            // and so the substrate's interoception counter reflects reality.
+            // Failure is surfaced but non-fatal — the cloud already accepted.
+            mirror: {
+                var ts_buf: [64]u8 = undefined;
+                const ts = contract.nowIsoUtc(&ts_buf) catch |e| {
+                    errPrint("cloud-mirror: nowIsoUtc failed: {s} — skipping local mirror\n", .{@errorName(e)});
+                    break :mirror;
+                };
+                var row: std.ArrayList(u8) = .empty;
+                defer row.deinit(allocator);
+                row.appendSlice(allocator, "{\"event\": \"declared\", \"source\": \"cloud-mirror\", \"id\": ") catch |e| {
+                    errPrint("cloud-mirror: row build failed: {s}\n", .{@errorName(e)});
+                    break :mirror;
+                };
+                appendJsonEscaped(&row, allocator, id) catch |e| {
+                    errPrint("cloud-mirror: row build failed: {s}\n", .{@errorName(e)});
+                    break :mirror;
+                };
+                row.appendSlice(allocator, ", \"plan\": ") catch break :mirror;
+                appendJsonEscaped(&row, allocator, safe_plan) catch break :mirror;
+                row.appendSlice(allocator, ", \"action\": ") catch break :mirror;
+                appendJsonEscaped(&row, allocator, action) catch break :mirror;
+                if (parent) |p| {
+                    row.appendSlice(allocator, ", \"parent_id\": ") catch break :mirror;
+                    appendJsonEscaped(&row, allocator, p) catch break :mirror;
+                }
+                row.appendSlice(allocator, ", \"ts\": ") catch break :mirror;
+                appendJsonEscaped(&row, allocator, ts) catch break :mirror;
+                row.append(allocator, '}') catch break :mirror;
+                const path = ledger.appendRow(allocator, env, row.items) catch |e| {
+                    errPrint("cloud-mirror: appendRow failed: {s} — local ledger may be read-only\n", .{@errorName(e)});
+                    break :mirror;
+                };
+                allocator.free(path);
+            }
             backfillUnresolved(allocator, env, id) catch |e| {
                 errPrint("backfill skipped: {s}\n", .{@errorName(e)});
             };
