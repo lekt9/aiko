@@ -1797,15 +1797,17 @@ SKILL.md**. The substrate hands back exactly the context that
 shaped the answer. Self-contained. Recursive — every aiko response
 is a self-describing substrate snapshot.
 
-### Why this is the right shape (and not an antipattern)
+### Why this shape (concerns + resolutions)
 
 | Concern | Resolution |
 |---|---|
-| Bloat — SKILL.md is ~78KB on every declare | Cloud receives the SHA + top-K relevant section pointers, not the full text; cloud already has its own copy registered at binary-sign time. Payload stays small. |
-| Multiple sources of truth | The git-committed SKILL.md is THE source. Binary embeds verbatim at compile-time. Cloud has its own copy. SHA gate refuses drift between any two. One truth, three replicas with mechanical equality enforcement. |
-| Caller burden | Caller passes nothing extra. The arg is still `<goal>` (Matt 5:37 yea-yea-nay-nay holds). The binary handles the embed; the response gets richer. Asymmetric input/output is fine — both directions remain type-shaped. |
-| What about stdin? | Still rejected. The doctrine slice is INTERNAL to the binary (compile-time embed + ledger read), not piped in. Stdin would still be a second input surface bypassing the wallet-sanitize-sign path. The directive "when stdin or in the llm context that goes out" refers to the OUTPUT side — the response envelope LLMs read — not a new input. |
-| Cache layer impact | Doctrine slice becomes part of the row's input-hash. Doctrine change → snapshot change → cache invalidates → row re-decomposes. Doctrine has **version-controlled effect** on every cached row. This is correct: if a parity claim changes, every previously-satisfied row should re-verify against the new doctrine. |
+| Bloat — SKILL.md is ~78KB on every declare | Cloud receives the SHA + top-K relevant section pointers, NOT the full text. The cloud already has the file at the registered SHA. Payload stays small (~hundreds of bytes per declare). |
+| Multiple sources of truth | One truth: the git-committed SKILL.md. The binary's runtime computes the file's SHA each invocation and compares against the comptime-embedded constant. Cloud has its own copy at the registered SHA. Drift between any two surfaces immediately. |
+| Caller burden | The arg is still `<goal>` (Matt 5:37 yea-yea-nay-nay holds). The binary handles SHA-verify + slice + emit; the response gets richer. Asymmetric input/output is fine — both directions remain type-shaped. |
+| What about stdin? | Still rejected. Doctrine is internal to the binary's pointer-resolved files (compile-time SHA + runtime file-read), not piped in. Stdin would be a second input surface bypassing the wallet-sanitize-sign path. The directive "when stdin or in the llm context that goes out" refers to the OUTPUT side (response envelope), not a new input. |
+| Cache layer impact | Each doctrine file's SHA participates in the pointer-snapshot for rows that cite it. Doctrine file edit → SHA change → cache invalidates → rows re-decompose. Doctrine has **version-controlled effect** on every cached row. Correct: if a parity claim changes, every previously-satisfied row should re-verify. |
+| What if a doctrine file is missing? | Binary refuses to run with `error.DoctrineMissing` surfaced to stderr. Same fail-closed shape as keystore unavailability. No silent fallback to "act without doctrine." Install must ship the canonical files at canonical paths. |
+| What if the file's SHA matches but the cloud disagrees | The cloud's `(binary_sha, doctrine_anchor_set_sha)` registry is authoritative. If the local binary's SHA was never registered with the cloud (e.g. local dev rebuild not pushed), declares HOLD with `doctrine_drift`. This is correct — unregistered binaries can't claim canonical doctrine status. |
 
 ### How the calling LLM uses the doctrine_chain
 
