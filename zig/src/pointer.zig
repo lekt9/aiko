@@ -6,6 +6,14 @@ const std = @import("std");
 /// a cell unless it is plainly a URL/API action.
 pub fn inferPointerType(action: []const u8) []const u8 {
     if (std.mem.eql(u8, action, "neuron")) return "neuron";
+    // `agent-judges` is the canonical doctrine sentinel (contract c64bf5e2 /
+    // C-G01 5b9574ee): the verdict is rendered by an agent in-thread, never
+    // by a binary. The substrate must NOT shell-exec it. Pointer type kept
+    // distinct so runAction can emit a clean HOLD and the backfill can skip
+    // these rows from the candidate set (they will never resolve from the
+    // substrate side; only `_mark satisfied` / `corroborate` from an agent
+    // can advance them).
+    if (std.mem.eql(u8, action, "agent-judges")) return "agent-judges";
     if (std.mem.eql(u8, action, "children-satisfy") or std.mem.eql(u8, action, "funnel")) return "funnel";
     if (std.mem.eql(u8, action, "funnel-first")) return "funnel-first";
     if (std.mem.eql(u8, action, "sequence")) return "sequence";
