@@ -1828,27 +1828,51 @@ relevant slice is sufficient.
 ### Implementation status (honest gap, surfaced not silent)
 
 ```
-✅ Doctrine layer        — this section is canonical
-🟡 Embed module (TODO)   — libcontract/src/skill.zig with
-                           @embedFile("../../SKILL.md") +
-                           relevantSections() function. Build wires
-                           skill_md_sha into the signed binary.
-🟡 Payload extension      — local binary's declare-POST adds
-                           doctrine_anchor + active_context_chain
-                           fields. Cloud /contract accepts and
-                           verifies SHA.
-🟡 Envelope extension     — cloud /contract response includes
-                           doctrine_chain + active_context_chain.
-                           Same shape as bible_chain.
-🟡 Parity claim 48 (TODO) — build.sh refuses to sign a binary that
-                           doesn't embed SKILL.md AND registers the
-                           binary's skill_md_sha with the cloud
-                           endpoint atomically with sign.
-🟡 Agent-side bridge      — agents reading SKILL.md continue doing so;
-                           when they invoke aiko, they verify the
-                           response's skill_md_sha256 matches the
-                           SKILL.md they read. Mismatch surfaces in
-                           evidence lines.
+✅ Doctrine layer            — this section is canonical
+🟡 pointers.zig (TODO)       — libcontract/src/pointers.zig with
+                               comptime SHA constants for 7 files
+                               (SKILL.md, skill-usage.md, bible-kjv,
+                               bible.dat, bible-xrefs, bible-xrefs-idx,
+                               bible-usage.md). Bytes discarded after
+                               hash computation.
+🟡 doctrine loader (TODO)    — libcontract/src/doctrine.zig with
+                               loadDoctrine(allocator, kind) that reads
+                               from canonical path, hashes, verifies
+                               against pointers.zig constant, surfaces
+                               drift evidence, refuses on mismatch.
+🟡 skill section scorer      — libcontract/src/skill.zig with
+                               relevantSections(goal, k) BM25 over
+                               loaded SKILL.md. Reads via doctrine
+                               loader, not @embedFile.
+🟡 bible refactor            — current bible.zig migrates from
+                               @embedFile to doctrine-loader-based
+                               loading. Preserves API; changes only
+                               the byte source.
+🟡 Usage doctrine seeds      — first commit creates skill-usage.md
+                               and bible-usage.md at canonical paths
+                               with the current hardcoded rules
+                               (scoring weights, citation format,
+                               chain depth). The binary's logic then
+                               READS these rules rather than hardcoding.
+🟡 Payload extension          — local binary's declare-POST adds
+                               doctrine_anchor.{skill_md,skill_usage,
+                               bible_kjv,bible_usage}_sha256 +
+                               relevant_sections + active_context_chain.
+🟡 Cloud verification         — /v1/contract/declare maintains
+                               (binary_sha, doctrine_anchor_set_sha)
+                               registry; rejects unregistered combos.
+🟡 Envelope extension         — cloud response includes doctrine_chain
+                               + active_context_chain (siblings of
+                               bible_chain).
+🟡 Parity claim 48 (TODO)     — build.sh refuses to sign a binary
+                               that lacks pointers.zig AND registers
+                               (binary_sha, anchor_set_sha) with the
+                               cloud atomically with sign.
+🟡 Agent-side bridge          — agents reading SKILL.md continue doing
+                               so; when they invoke aiko, they verify
+                               the response's skill_md_sha256 matches
+                               the SKILL.md they read. Mismatch surfaces
+                               in evidence lines.
 ```
 
 Same disclosure pattern as Trinitarian decomposition and Decalogue
