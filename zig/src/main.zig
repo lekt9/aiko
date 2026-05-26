@@ -2150,6 +2150,16 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
     }
 
     try contract.markSatisfied(allocator, env, id, wave, "native resolver reached mechanical true");
+    // Pin the pointer-value snapshot the contract was true AGAINST so the
+    // next resolveOne pass can decide hit/miss/invalidated deterministically
+    // from the ledger alone (Lewis 2026-05-26: "resolves the cash to be
+    // true"). The check above reads the most recent cache_resolved row's
+    // snapshot field via contract.cache.findLatestResolvedSnapshot.
+    if (hash_str.len > 0) {
+        contract.cache.appendCacheResolvedRow(allocator, env, id, wave, hash_str) catch |e| {
+            evidencePrint("cache_resolved: append failed for {s}: {s} — snapshot not pinned, next pass will recompute\n", .{ id, @errorName(e) });
+        };
+    }
     evidencePrint("{s} -> resolved (hash {s})\n", .{ id, if (hash_str.len >= 16) hash_str[0..16] else hash_str });
 
     // Pattern extraction — per meta-law 410bceea: every resolved aiko emits
