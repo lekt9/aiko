@@ -177,7 +177,6 @@ fn darwinDelete(allocator: std.mem.Allocator, svc: []const u8) !void {
 // ─────────────── linux (secret-tool / libsecret) ───────────────
 
 fn linuxRead(allocator: std.mem.Allocator, svc: []const u8) !?[]u8 {
-    _ = allocator;
     // If secret-tool isn't on PATH this returns rc=127; caller falls through.
     var cmd_buf: [512]u8 = undefined;
     const cmd = try std.fmt.bufPrintZ(
@@ -194,7 +193,7 @@ fn linuxRead(allocator: std.mem.Allocator, svc: []const u8) !?[]u8 {
     var end: usize = n;
     while (end > 0 and (buf[end - 1] == '\n' or buf[end - 1] == '\r' or buf[end - 1] == ' ')) end -= 1;
     if (end == 0) return null;
-    return try std.heap.page_allocator.dupe(u8, buf[0..end]);
+    return try allocator.dupe(u8, buf[0..end]);
 }
 
 fn linuxWrite(allocator: std.mem.Allocator, svc: []const u8, value: []const u8) !void {
