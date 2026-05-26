@@ -13,10 +13,10 @@
 //!      with the root /contract wallet (lineage.zig).
 //!   4. Append a `spirit_attested` row to the attestation ledger.
 //!
-//! Environment:
-//!   NEBIUS_API_KEY       (REQUIRED) — bearer token for the LLM API.
-//!   NEBIUS_MODEL         (optional) — model id; default Kimi-K2.
-//!   NEBIUS_URL           (optional) — chat-completions URL.
+//! Environment (substrate-agnostic — any OpenAI-compat endpoint):
+//!   CONTRACT_LLM_API_KEY    (REQUIRED) bearer token for the LLM.
+//!   CONTRACT_LLM_MODEL      (optional) model id; default Kimi-K2.
+//!   CONTRACT_LLM_BASE_URL   (optional) endpoint URL.
 //!
 //! Exit codes:
 //!   0  every source attested (PASS).
