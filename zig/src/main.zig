@@ -4787,6 +4787,26 @@ fn cmdBuild(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         errPrint("build: missing action after validation (substrate bug)\n", .{});
         return 2;
     };
+    // ─── Root-only self-verify (Lewis 2026-05-27 correction) ──────────
+    //
+    // Per Lewis: "self verify works only on the root contract". A
+    // child declaration (parent_id set) inherits verification via the
+    // lineage walk to the parent's signed L8 row. Only a brand-new
+    // ROOT declaration (parent_id absent) requires this binary itself
+    // to carry a signed L8 row — otherwise the root would be rooted
+    // in an unverified compiler.
+    if (sh.parent_id == null) {
+        if (!isSelfSignedInLedger(allocator, env)) {
+            errPrint(
+                "build: refused root-level declaration — this binary has no L8 signed:<sha> row in the ledger.\n" ++
+                    "  A child declare (parent_id set) inherits verification by lineage walk; a root\n" ++
+                    "  declare requires THIS binary's sha to be signed. Bootstrap by running\n" ++
+                    "  `bash scripts/build-fractal.sh` to fire build → test → parent-sign.\n",
+                .{},
+            );
+            return 1;
+        }
+    }
     var opts: contract.DeclareOptions = .{};
     if (sh.parent_id) |p| opts.parent_id = p;
     const cid = try contract.declare(allocator, env, plan, action, opts);
