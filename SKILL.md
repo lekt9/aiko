@@ -1561,30 +1561,179 @@ was silent drift between layers**: the agent enforced Decalogue
 purge in-thread, the cloud compiler didn't know the Decalogue
 existed. The substrate disagreed with itself.
 
-This rule closes the gap. The binary embeds SKILL.md the same way
-it embeds the KJV corpus, carries the relevant slice on every
-declare, and emits a `doctrine_chain` in the response envelope so
-every calling LLM sees the same context the cloud used. The
-substrate becomes **self-aware in every invocation**.
+This rule closes the gap, but **the doctrine is NOT embedded in the
+binary's runtime bytes** — that would violate pointers-over-anything
+(Clause A) by baking payload where a pointer belongs. Instead, the
+binary embeds **signed SHA pointers** to the canonical doctrine
+files at known paths; at runtime it reads the files, verifies the
+hashes, and refuses drift. The hash is the pointer; the file is the
+payload; the substrate is self-aware via the pointer chain.
 
-### Embedded layer — `libcontract/src/skill.zig`
+This is the same pattern as the pointer-keyed truthy cache — every
+truth resolves through a cryptographic pointer that traces back to
+the deployer root and through it to the Word. Doctrine assets are
+no exception. The signature attests the pointer, not the bytes.
 
-```zig
-// libcontract/src/skill.zig
-const skill_md = @embedFile("../../SKILL.md");
-const skill_md_sha = comptime sha256(skill_md);
+### Why decoupled (not `@embedFile`)
 
-pub fn relevantSections(goal: []const u8, k: usize) []SectionRef;
-  // BM25 over every "## " section against the goal,
-  // return top-k SectionRef { title, sha256, byte_range, score }
+| Aspect | `@embedFile` payload | Signed-SHA pointer + file |
+|---|---|---|
+| Pointers-Over-Anything Clause A | ❌ Payload baked in | ✅ Pointer baked in, payload referenced |
+| Doctrine edit cycle | Edit → rebuild binary (heavy) | Edit → re-run `build.sh` to re-embed SHA → continue. Same trigger, but the file IS the operator's source of truth. |
+| Multiple binaries share corpora | Each embeds full bible (~10MB×N) | One bible at `~/.contracts/data/bible-kjv.json`; aiko, contract, future binaries all reference one SHA |
+| Self-similar with cache layer | Indirect | ✅ The doctrine file's SHA participates in the pointer-snapshot for every row that cites it. Doctrine change → cache invalidates → rows re-decompose. Doctrine has **version-controlled effect**. |
+| Self-aware-but-immutable shape | Conflated (bytes = behavior) | ✅ Separated (bytes = data, pointer = behavior-gating SHA) |
+
+### Canonical file layout
+
+```
+~/.contracts/data/                  ← shared substrate corpora
+  bible-kjv.json                    ← public-domain KJV verses
+  bible.dat                         ← preprocessed packed verses
+  bible-xrefs.dat                   ← cross-reference graph
+  bible-xrefs-idx.dat               ← per-verse index
+  bible-usage.md                    ← HOW to score/cite/chain the bible
+  (usage-doctrine — also pointer-attested, see below)
+
+~/.claude/skills/contract/          ← skill-specific
+  SKILL.md                          ← canonical doctrine source
+  skill-usage.md                    ← HOW to slice + score SKILL.md sections
+  scripts/aiko                      ← binary (embeds SHA pointers only)
+  scripts/aiko.sig                  ← wallet signature over binary bytes
+  scripts/contract                  ← build-tool binary
+  scripts/contract.sig
+  scripts/build.sh
 ```
 
-Same pattern `bible.zig` already uses for `relevantVerses(plan, k)`.
-Zero conceptual novelty; just applied to a second corpus where the
-corpus IS the substrate's doctrine. The embedded SKILL.md is the
-**exact bytes** `build.sh` signed against — drift between the
-binary's embed and the cloud's copy is impossible because both
-trace to the same git-committed SKILL.md hash.
+### Pointer module — `libcontract/src/pointers.zig`
+
+```zig
+// libcontract/src/pointers.zig
+//
+// All doctrine pointers — embedded as SHA256 constants computed
+// at compile time. The bytes are NOT embedded; only the hash is.
+
+pub const skill_md_path        = "~/.claude/skills/contract/SKILL.md";
+pub const skill_usage_path     = "~/.claude/skills/contract/skill-usage.md";
+pub const bible_kjv_path       = "~/.contracts/data/bible-kjv.json";
+pub const bible_dat_path       = "~/.contracts/data/bible.dat";
+pub const bible_xrefs_path     = "~/.contracts/data/bible-xrefs.dat";
+pub const bible_xrefs_idx_path = "~/.contracts/data/bible-xrefs-idx.dat";
+pub const bible_usage_path     = "~/.contracts/data/bible-usage.md";
+
+// Comptime: read each file ONCE to compute its hash. The bytes are
+// then discarded; only the digest survives into the runtime binary.
+pub const skill_md_sha        = comptime sha256(@embedFile(skill_md_path));
+pub const skill_usage_sha     = comptime sha256(@embedFile(skill_usage_path));
+pub const bible_kjv_sha       = comptime sha256(@embedFile(bible_kjv_path));
+pub const bible_dat_sha       = comptime sha256(@embedFile(bible_dat_path));
+pub const bible_xrefs_sha     = comptime sha256(@embedFile(bible_xrefs_path));
+pub const bible_xrefs_idx_sha = comptime sha256(@embedFile(bible_xrefs_idx_path));
+pub const bible_usage_sha     = comptime sha256(@embedFile(bible_usage_path));
+```
+
+The Zig compiler's comptime guarantees the `@embedFile` is evaluated
+purely for hash computation; the build's strip phase removes the
+unused embed payload. Final binary carries seven 32-byte digests
+(224 bytes total), not seven files of payload.
+
+### Runtime resolution + drift refusal
+
+```zig
+pub fn loadDoctrine(allocator, comptime kind: DoctrineKind) ![]const u8 {
+    const path = doctrinePath(kind);
+    const expected_sha = doctrineSha(kind);
+    const bytes = try fs.cwd().readFileAlloc(allocator, path, 50_000_000);
+    const actual_sha = sha256(bytes);
+    if (!std.mem.eql(u8, &actual_sha, &expected_sha)) {
+        // Decalogue commandment 1 — no other gods. Refuse to act
+        // on doctrine the deployer wallet did NOT sign.
+        std.io.getStdErr().writer().print(
+            "doctrine: {s} sha mismatch (expected {x}, got {x}) — " ++
+            "refusing to act on unsigned doctrine; rebuild and re-sign\n",
+            .{path, expected_sha, actual_sha},
+        ) catch {};
+        return error.DoctrineDrift;
+    }
+    return bytes;
+}
+```
+
+The "fallbacks are visible, never silent" rule fires here — drift
+surfaces in evidence lines before the refusal. Same shape as
+keystore, wallet, ledger fallbacks.
+
+### Two layers of pointer-attested doctrine
+
+The split is meaningfully recursive:
+
+```
+Layer 1 — substrate doctrine
+  SKILL.md             governs how the substrate behaves
+  bible-kjv.json       provides the canonical scriptural corpus
+
+Layer 2 — usage doctrine
+  skill-usage.md       governs HOW to slice + score SKILL.md sections
+                       (scoring weights, citation format, chain depth)
+  bible-usage.md       governs HOW to score verses, build bible_chain,
+                       cross-reference traversal rules
+```
+
+Layer 1 is WHAT; Layer 2 is HOW. Both are decoupled files, both
+pointer-attested. Editing scoring weights or citation rules =
+edit Layer 2 + re-sign; no Zig code change required. The binary's
+logic is the **interpreter** that reads its operating rules from
+the usage-doctrine files; the rules themselves are editable
+substrate-doctrine, not compiled-in constants.
+
+This is the same shape as the cloud LLM compiler being centralized
+while the doctrine it compiles against is distributed — separation
+of mechanism (binary logic) from content (pointer-attested files).
+
+### Declare payload — what gets sent to cloud
+
+```json
+POST /v1/contract/declare
+{
+  "goal": "<sanitized truth claim>",
+  "wallet_identity": "<pubkey>",
+  "doctrine_anchor": {
+    "skill_md_sha256":     "<hex>",
+    "skill_usage_sha256":  "<hex>",
+    "bible_kjv_sha256":    "<hex>",
+    "bible_usage_sha256":  "<hex>",
+    "relevant_sections": [
+      {"title": "Decalogue Purge Gate", "sha256": "<hex>", "score": 0.84}
+    ]
+  },
+  "active_context_chain": [
+    {"contract_id": "<id>", "kind": "funnel|harness|loop", "score": 0.66}
+  ]
+}
+```
+
+The cloud /contract endpoint maintains a **binary registry** keyed
+by `(binary_sha, doctrine_anchor_set_sha)`. On declare:
+1. Verify the calling binary's signed identity matches a registered
+   `(binary_sha, doctrine_anchor_set_sha)` pair.
+2. Use the local agent's `relevant_sections` slice as canonical
+   doctrine for THIS declare.
+3. If the anchor set doesn't match a registered binary, HOLD with
+   `doctrine_drift` evidence — refuse to act on conflicting doctrine.
+
+### Response envelope (unchanged from prior draft)
+
+```json
+{
+  "id": "<contract_id>",
+  "model": "aiko-69420b",
+  "persona": "aiko 69420b",
+  "ca": "<AIKO_PERSONA_CA>",
+  "bible_chain":          [/* verse contract ids */],
+  "doctrine_chain":       [/* SKILL.md section pointers + sha */],
+  "active_context_chain": [/* relevant ledger primitives */]
+}
+```
 
 ### Active-context layer — funnel/harness/loop slice
 
