@@ -742,6 +742,7 @@ fn bioClassifyRoadblock(result: []const u8, action: []const u8) RoadblockClass {
     if (std.mem.indexOf(u8, result, "shell-strict") != null) return .{ .class = "shell_injection", .layer = "executor" };
     if (std.mem.indexOf(u8, result, "wallet-strict") != null) return .{ .class = "wallet_mode", .layer = "wallet" };
     if (std.mem.indexOf(u8, result, "command not found") != null) return .{ .class = "command_not_found", .layer = "executor" };
+    if (std.mem.indexOf(u8, result, "stage_dead") != null) return .{ .class = "stage_dead", .layer = "sequence" };
     if (std.mem.indexOf(u8, result, "not found") != null) return .{ .class = "command_not_found", .layer = "executor" };
     if (std.mem.startsWith(u8, action, "bun:")) return .{ .class = "bun_failure", .layer = "runtime" };
     if (std.mem.startsWith(u8, action, "python:")) return .{ .class = "python_failure", .layer = "runtime" };
