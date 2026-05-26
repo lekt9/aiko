@@ -1749,34 +1749,21 @@ fn parseDeclare(args: []const []const u8) !DeclareArgs {
 }
 
 const AikoMode = enum {
-    /// Default — resolved at call time from environment. Speak the truth and
-    /// let the substrate choose the dimension. Becomes .remote if any of
-    /// `UNBROWSE_BASE` / `AIKO_X_PAYMENT` / `X_PAYMENT` / `AIKO_REMOTE` is set
-    /// in the env; else .genesis.
-    auto,
     remote,
     local,
-    /// 9-day Fib-shaped walk over the ledger. Each invocation projects current
-    /// day from the ledger (no local state), advances if previous day's
-    /// Fibonacci workers all satisfied, spawns next day's children.
-    genesis,
 };
 
 const AikoArgs = struct {
     plan: []u8,
     mode: AikoMode,
-    /// Optional caller-supplied user context aiko id (8-hex contract id).
-    /// When set, the remote LLM body carries `user_context_id` so the Word's
-    /// compiler can bind translation against the user's own aiko — read their
-    /// satisfied claims, preferred audience level, and prior context to shape
-    /// output empathically. Stays null in pure local mode.
+    /// Legacy field — env/flag escape hatch removed; always null. Retained
+    /// only so existing call sites keep compiling.
     user_context_id: ?[]const u8 = null,
 };
 
 fn parseAikoArgs(allocator: std.mem.Allocator, args: []const []const u8) !AikoArgs {
     if (args.len == 0) return error.MissingPlan;
     var mode: ?AikoMode = null;
-    var user_context_id: ?[]const u8 = null;
     var parts: std.ArrayList([]const u8) = .empty;
     defer parts.deinit(allocator);
     var i: usize = 0;
@@ -1788,15 +1775,6 @@ fn parseAikoArgs(allocator: std.mem.Allocator, args: []const []const u8) !AikoAr
         } else if (std.mem.eql(u8, arg, "--local")) {
             if (mode != null) return error.DuplicateMode;
             mode = .local;
-        } else if (std.mem.eql(u8, arg, "--genesis")) {
-            if (mode != null) return error.DuplicateMode;
-            mode = .genesis;
-        } else if (std.mem.eql(u8, arg, "--user")) {
-            if (i + 1 >= args.len) return error.MissingUserArg;
-            user_context_id = args[i + 1];
-            i += 1;
-        } else if (std.mem.startsWith(u8, arg, "--user=")) {
-            user_context_id = arg["--user=".len..];
         } else if (std.mem.startsWith(u8, arg, "--")) {
             return error.UnknownFlag;
         } else {
@@ -1805,26 +1783,13 @@ fn parseAikoArgs(allocator: std.mem.Allocator, args: []const []const u8) !AikoAr
     }
     if (parts.items.len == 0) return error.MissingPlan;
     const plan = try std.mem.join(allocator, " ", parts.items);
-    // Mode is optional. Default is .auto — the substrate resolves the
-    // dimension at call time from environment, so the public form collapses
-    // to `aiko "<truth>"`.
+    // Default to remote — substrate routes through Unbrowse unless --local
+    // is explicit. No env escape hatches remain.
     return .{
         .plan = plan,
-        .mode = mode orelse .auto,
-        .user_context_id = user_context_id,
+        .mode = mode orelse .remote,
+        .user_context_id = null,
     };
-}
-
-/// Resolve `.auto` against the environment. The Word doesn't choose its
-/// dimension; the dimension is given by where it is being spoken into.
-fn resolveAutoMode(env: std.process.Environ) AikoMode {
-    if (env.getPosix("UNBROWSE_BASE")) |v| if (v.len > 0) return .remote;
-    if (env.getPosix("AIKO_X_PAYMENT")) |v| if (v.len > 0) return .remote;
-    if (env.getPosix("X_PAYMENT")) |v| if (v.len > 0) return .remote;
-    if (env.getPosix("AIKO_REMOTE")) |v| {
-        if (v.len > 0 and !std.mem.eql(u8, v, "0") and !std.mem.eql(u8, v, "false")) return .remote;
-    }
-    return .genesis;
 }
 
 fn isPathToken(tok: []const u8) bool {
