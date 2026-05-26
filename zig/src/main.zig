@@ -1836,9 +1836,6 @@ const AikoMode = enum {
 const AikoArgs = struct {
     plan: []u8,
     mode: AikoMode,
-    /// Legacy field — env/flag escape hatch removed; always null. Retained
-    /// only so existing call sites keep compiling.
-    user_context_id: ?[]const u8 = null,
 };
 
 fn parseAikoArgs(allocator: std.mem.Allocator, args: []const []const u8) !AikoArgs {
