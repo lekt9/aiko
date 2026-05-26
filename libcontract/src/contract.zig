@@ -7,7 +7,10 @@ const std = @import("std");
 const id_mod = @import("id.zig");
 const pointer = @import("pointer.zig");
 const ledger = @import("ledger.zig");
-const lineage = @import("lineage.zig");
+// Re-exported as pub so client.zig (in the contract_client module) can reach
+// lineage primitives through `@import("contract").lineage` rather than
+// cross-importing the file (which Zig 0.16 forbids — one file = one module).
+pub const lineage = @import("lineage.zig");
 
 /// Re-export so consumers of libcontract can verify chains without rewiring
 /// the build graph.
