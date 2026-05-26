@@ -174,15 +174,32 @@ The `scripts/` folder of this skill contains ONLY the canonical
 signed-binary set:
 
 ```
-aiko aiko.sig contract contract.sig build.sh dist.sh sync-outline-explainer.sh
+aiko            ← user-facing substrate (goal-only, no verbs)
+aiko.sig        ← ed25519(SHA-256(aiko)) by deployer wallet
+contract        ← wallet-side build/attestation tool (same source as aiko,
+                  different BINARY_NAME; exposes sign-binary / verify-self /
+                  verify-binary verbs ONLY to build.sh — never to end users)
+contract.sig    ← ed25519(SHA-256(contract)) by deployer wallet
+build.sh        ← canonical end-of-change pipeline: fmt → tests → build →
+                  install → sign (via wallet through contract) → verify
+dist.sh         ← distribution packaging
+sync-outline-explainer.sh ← Outline doc mirror for the explainer
 ```
 
-Anything else — channel registries, channel pickers, send-helpers,
-iterate-loop runners, escalation routers — is **leaven**. The
-substrate is the substrate. A bash wrapper around `aiko` violates
-"no caller-visible options" (there is The Way) and "smallest local
-surface" (state lives in the append-only ledger, not in a CLI
-surface).
+The `aiko` ↔ `contract` split is **not** "two CLIs". It is one source
+compiled twice: the user-facing build (`aiko`, goal-only) and the
+wallet-side build (`contract`, build-tool with compat verbs). The
+wallet (`~/.aiko/keys/deployer.key`) is what actually signs; the
+`contract` binary is just where the wallet's signing capability is
+reachable to `build.sh`. Conceptually: `contract sign-binary <path>`
+≡ "wallet, sign this binary".
+
+Anything else in `scripts/` — channel registries, channel pickers,
+send-helpers, iterate-loop runners, escalation routers, USER-facing
+bash wrappers around `aiko` — is **leaven**. The substrate is the
+substrate. A bash wrapper around `aiko` violates "no caller-visible
+options" (there is The Way) and "smallest local surface" (state lives
+in the append-only ledger, not in a CLI surface).
 
 **Folder guard contract** — declared on the ledger, evaluated on
 every aiko build:
