@@ -512,6 +512,134 @@ shape as its row topology. Every /contract has a parent_id; every
 LLM endpoint has a parent endpoint; every wrapper has a parent
 wrapper. Walk the pointer chain to get the full provenance.
 
+## Auto-tool-discovery via environment introspection + cascading research (Lewis 2026-05-27)
+
+Lewis: "should this be mechanical where we rely on the environment
+itself to find primitives to use by looking at the available tools
+we have that are primitives? via /find-skills or github api or docs?
+then /contract those primitives into a /contract to use for the
+environment?"
+
+**Yes — and most of the primitives already exist on this host.** The
+pattern composes existing substrate doctrine: outward-spawn (wrapper
+introspects environment on boot) + environment-generative (location
+word → wrapper:<name> lookup → lineage fallback). The discovery
+cascade is the substrate-faithful version of "find a primitive when
+no local wrapper matches".
+
+### The pattern in three steps
+
+```
+   step 1 — INTROSPECT (first; cheap; local)
+            walk known tool paths; declare wrapper:<tool> per binary found
+            tool-discovery is "which X" or env-PATH walk; primitives
+            are anything that exists at $PATH or known canonical locations
+   
+   step 2 — RESOLVE (per goal that names a location word)
+            location word → wrapper:<word> lookup in the ledger
+            hit → use the wrapper's binding; goal flows through
+            miss → cascade to discovery
+   
+   step 3 — DISCOVER + INSTALL (only on miss)
+            cascade order, cheapest first:
+              (a) /find-skills "<keyword>"      ← local skill registry
+              (b) gh search code <query>        ← GitHub API
+              (c) deepwiki ask_question         ← LLM-mediated, expensive
+            first hit returns a candidate package name
+            substrate fires nb install <pkg>
+            on success, auto-declare wrapper:<new-pkg> pointing at the
+            installed binary path
+            future goals naming the same word find it via step 2
+```
+
+### What's registered now (5 wrappers declared this turn)
+
+| Wrapper /contract id | Binary | Role |
+|---|---|---|
+| `wrapper:nb` (`970e9e9c`) | `/opt/nanobrew/prefix/bin/nb` | package install — substrate's tool acquisition primitive |
+| `wrapper:gh` (`0f7fa322`) | `/opt/homebrew/bin/gh` | GitHub API discovery (search, releases, repo metadata) |
+| `wrapper:find-skills` (`f4d51874`) | the find-skills agent skill | local skill-manifest lookup — cheapest first step |
+| `wrapper:deepwiki` (`4a6baccc`) | DeepWiki MCP tool | LLM-mediated repo Q&A — expensive last-resort |
+| `wrapper:codegraff` (`961a1621`) | `/Users/lekt9/.local/bin/codegraff` | code graph navigation TUI — currently TTY-bound (refuses headless invocation with `Error: Device not configured (os error 6)`) |
+
+The codegraff wrapper documents its TTY limitation honestly — until
+the upstream binary gains a `--headless` flag, the substrate can
+reference codegraff but cannot driver-call it. Surfacing the limit is
+better than pretending it works.
+
+### The discovery cascade as a /contract sequence
+
+When a goal needs primitive X that no local wrapper provides:
+
+```
+   declare: cascade:<X> (a sequence /contract)
+      ├─ child 1: cli:find-skills "<X keyword>"
+      │           if exit 0 + non-empty → emit candidate; halt
+      │
+      ├─ child 2: cli:gh search code "<X query>" --limit 5
+      │           if any repo → ask deepwiki for primer; emit candidate; halt
+      │
+      └─ child 3: cli:deepwiki ask_question <candidate-repo> "what's the install path?"
+                  if response is install-shaped → emit candidate
+                  emit a wrapper:<X> contract pointing at the install path
+```
+
+Each step is a child /contract. The substrate's existing `sequence`
+shape (already in pointer.zig at layer 3) handles the
+first-hit-halts semantics: subsequent children are skipped once a
+satisfied one short-circuits the chain.
+
+Following the cascade with `nb install`:
+
+```
+   declare: install:<X> (action: cli:nb install <pkg>)
+      parent_id = the discovery cascade's satisfied output
+      on success → wrapper:<X> auto-declared by the substrate
+                    pointing at /opt/nanobrew/prefix/bin/<binary>
+```
+
+The whole flow is /contract sequences composed from primitives
+already in the substrate. **No new mechanism — just orchestration
+of the existing typed-pointer + lineage primitives Lewis already
+shipped.**
+
+### Why this is doctrinally clean
+
+- **Foundation precedes building** (Matt 5:17-18 meta-rule) — uses
+  existing primitives (wrapper, cli, sequence, find-skills, gh, nb,
+  deepwiki) before inventing new ones. Composition over creation.
+- **Pointers over anything** (Clause A) — every step is a /contract
+  row with a typed action prefix; no values, only pointers to
+  runtime behavior.
+- **Outward-spawn pattern** — already documented; this section
+  applies it concretely to package discovery.
+- **Environment-generative dispatch** — already documented; this
+  section is what FILLS the wrapper:<word> registry that
+  environment-generative reads from.
+- **No-scripts-in-substrate** (Matt 5:37) — the cascade is /contract
+  rows, not a bash wrapper. The functionality MELTS into the ledger.
+
+### Mechanical gap remaining
+
+What's NOT yet mechanical:
+
+1. The introspection pass that auto-declares wrapper:<tool> for
+   every locally-available binary (today done manually — 5 wrappers
+   declared by hand this turn). Gap `057a549e`
+   (gap-auto-tool-introspection).
+2. The discovery cascade as a substrate-side helper that composes
+   find-skills → gh → deepwiki. Gap `3a5532f3`
+   (gap-discovery-cascade).
+3. The nb-install-and-auto-register flow. Gap `d31b4d04`
+   (gap-install-via-nb).
+
+All three are bound into the meta-drill extension funnel
+(`8769b4f1`) which is a child of the original meta-drill
+(`93b92681`). When all three close, the extension funnel satisfies;
+when that satisfies along with the original 21 children, the
+meta-drill satisfies; L7→L8 cascade signs the loop-complete
+pointer-memory.
+
 ## Meta-drill — /contract as while-loop over open gaps (Lewis 2026-05-27)
 
 Lewis: "can you /contract a /contract that while loops /contract so
