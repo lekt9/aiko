@@ -209,13 +209,43 @@ step_parity() {
     _fail "doctrine[meta-parity]: SKILL.md is missing the 'Doctrine-Reality Parity' section that declares this very check"
   fi
 
+  # 12. "public persona aiko 69420b" — constants present with exact values.
+  if ! grep -q 'AIKO_PERSONA_NAME = "aiko 69420b"' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[persona]: AIKO_PERSONA_NAME != 'aiko 69420b' in main.zig"
+  fi
+  if ! grep -q 'AIKO_PERSONA_MODEL_ID = "aiko-69420b"' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[persona]: AIKO_PERSONA_MODEL_ID != 'aiko-69420b' in main.zig"
+  fi
+  if ! grep -q 'AIKO_PERSONA_CA = "2ZiSPGncrkwWa6GBZB4EDtsfq7HEWwkwsPFzEXieXjNL"' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[persona]: AIKO_PERSONA_CA mismatch in main.zig"
+  fi
+
+  # 13. "persona surfaced in chat completion JSON output" — both streaming
+  #     and non-streaming responses must carry the persona + ca fields so
+  #     the public-facing client sees the right-layer identity on every call.
+  local persona_emits
+  persona_emits=$(grep -cE '"persona":"\{s\}","ca":"\{s\}"' "$ZIG_DIR/src/main.zig" 2>/dev/null || echo 0)
+  if [[ "$persona_emits" -lt 2 ]]; then
+    _fail "doctrine[persona]: chat completion output emits persona+ca fewer than 2 times in main.zig (expected: 1 streaming + 1 non-streaming)"
+  fi
+
+  # 14. "fruits of the spirit verse in corpus" — Galatians 5:22-23 must be a
+  #     canonical entry in libcontract/src/verses.zig so the cloud LLM scores
+  #     it against user prompts when shaping public-facing voice.
+  if ! grep -q 'Galatians 5:22-23' "$LIB_DIR/src/verses.zig"; then
+    _fail "doctrine[persona voice]: Galatians 5:22-23 missing from verses.zig corpus — fruits-of-spirit voice constraint cannot be surfaced"
+  fi
+  if ! grep -q 'fruits of the spirit' "$LIB_DIR/src/verses.zig"; then
+    _fail "doctrine[persona voice]: 'fruits of the spirit' label missing from verses.zig (verse exists but lacks the canonical label)"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
     printf '%s' "$report" >&2
     echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 11 doctrine claims have matching code sites"
+  echo "build:parity OK — all 14 doctrine claims have matching code sites"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────
