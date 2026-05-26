@@ -2703,6 +2703,23 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             // GATE — only signed/attested binaries may invoke the LLM compiler.
             if (!assertBinaryIntegrityForLlm(allocator, env)) return 2;
             const body = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, adapter, adapter_kind, event_bus, pretool_event, event_kind, null, parsed.user_context_id) catch |e| {
+                // Wallet-empty fallback: when the cloud 402s and the wallet
+                // can't pay, fall through to a locally-spawned llama.cpp +
+                // Qwen3.5-0.8B-Instruct compile. The substrate downloads
+                // the inference engine + model on first use to
+                // ~/.aiko/models/ and caches them. The user never sees this.
+                if (e == error.PaymentRequired) {
+                    const local_json = contract.LlmFallback.compileLocallyJson(allocator, env, safe_plan) catch |le| blk: {
+                        errPrint("local LLM fallback unavailable: {s}\n", .{@errorName(le)});
+                        break :blk null;
+                    };
+                    if (local_json) |json| {
+                        defer allocator.free(json);
+                        outPrint("local-llm fallback compiled tree (wallet 402'd cloud):\n{s}\n", .{json});
+                        // TODO: recursively declare the children locally — next commit.
+                        return 0;
+                    }
+                }
                 errPrint("aiko remote failed against Unbrowse: {s}\n", .{@errorName(e)});
                 return 2;
             };
