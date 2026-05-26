@@ -168,9 +168,12 @@ step_parity() {
     fi
   done
 
-  # 7. "aiko binary has no verbs other than --remote/--local"
-  if grep -qE '"--genesis"|"--user"' "$ZIG_DIR/src/main.zig"; then
-    _fail "doctrine[no verbs]: --genesis or --user flag still in main.zig"
+  # 7. "aiko binary has no verbs other than the goal + --private"
+  if grep -qE '"--genesis"|"--user"|"--remote"|"--local"' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[no verbs]: forbidden flag literal (--genesis/--user/--remote/--local) still in main.zig"
+  fi
+  if ! grep -qE '"--private"' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[no verbs]: --private flag missing from parseAikoArgs"
   fi
 
   # 8. "spawn = appendRow to a ledger" — every row-creating site flows
