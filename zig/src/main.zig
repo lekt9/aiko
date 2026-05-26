@@ -4981,11 +4981,27 @@ fn isSelfSignedInLedger(allocator: std.mem.Allocator, env: std.process.Environ) 
     var sha_buf: [64]u8 = undefined;
     const sha8 = ownSha8(allocator, &sha_buf) catch return false;
     const id_opt = findOwnL8RowId(allocator, env, sha8) catch return false;
-    if (id_opt) |id| {
-        allocator.free(id);
-        return true;
-    }
-    return false;
+    const l8_id = id_opt orelse return false;
+    defer allocator.free(l8_id);
+
+    // Chain-walk-to-root verification (Lewis 2026-05-27 gap `3f74d3cf`):
+    // existence of an L8 row is necessary but not sufficient — a forged
+    // or broken parent_signature anywhere up the chain breaks the trust.
+    // Walk parent_id from this L8 row up to a root-sentinel parent, and
+    // call verify-lineage internally on the chain. If any link fails,
+    // refuse. Conservative on errors: a missing parent verifies-pass on
+    // a chain whose root_id is well-known means the binary should be
+    // refused; rotated-key migrations are the only legit exception and
+    // they produce `resigned` rows the chain walker is already aware of.
+    contract.lineage.verifyChainToRoot(allocator, env, l8_id) catch {
+        // Surface as evidence — fallbacks visible, never silent.
+        substrateEvidence(
+            "chain-verify: refusing run — L8 row {s} exists but parent_signature chain to root failed verification\n",
+            .{l8_id},
+        );
+        return false;
+    };
+    return true;
 }
 
 /// `_sign-child <child-binary-path>` — the running (parent) binary
