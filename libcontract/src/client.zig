@@ -440,6 +440,48 @@ pub fn statusRemote(
     return resp.body;
 }
 
+/// Build the canonical signed body for a declare. Byte-for-byte match of
+/// the server's canonicalizeDeclareBody (unbrowse-dev/backend/src/services/
+/// declare-signature.ts): JSON.stringify with the six keys in fixed order
+/// (plan, action, parent_id, agent, wallet_identity, ts), null literals
+/// for missing parent_id/agent.
+///
+/// Same Zig writeJsonString escape rules used in the request body — both
+/// sides agree on the bytes-on-wire, so ed25519 verification round-trips.
+fn buildCanonicalDeclareBody(
+    out: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    plan: []const u8,
+    action: []const u8,
+    parent_id: ?[]const u8,
+    agent: ?[]const u8,
+    wallet_identity_hex: []const u8,
+    ts: []const u8,
+) !void {
+    try out.append(allocator, '{');
+    try out.appendSlice(allocator, "\"plan\":");
+    try writeJsonString(out, allocator, plan);
+    try out.appendSlice(allocator, ",\"action\":");
+    try writeJsonString(out, allocator, action);
+    try out.appendSlice(allocator, ",\"parent_id\":");
+    if (parent_id) |p| {
+        try writeJsonString(out, allocator, p);
+    } else {
+        try out.appendSlice(allocator, "null");
+    }
+    try out.appendSlice(allocator, ",\"agent\":");
+    if (agent) |a| {
+        try writeJsonString(out, allocator, a);
+    } else {
+        try out.appendSlice(allocator, "null");
+    }
+    try out.appendSlice(allocator, ",\"wallet_identity\":");
+    try writeJsonString(out, allocator, wallet_identity_hex);
+    try out.appendSlice(allocator, ",\"ts\":");
+    try writeJsonString(out, allocator, ts);
+    try out.append(allocator, '}');
+}
+
 /// Minimal JSON-string escaper matching contract.zig's writeJsonString.
 fn writeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []const u8) !void {
     try out.append(allocator, '"');
