@@ -230,6 +230,51 @@ pub fn findActionForId(
     return null;
 }
 
+/// Look up the parent_id of the declared row for `id`. Returns an
+/// owned slice on hit; null if the row is a root (parent_id absent
+/// or null) OR if the row is unknown. Used by the prune authority
+/// check — refuses to mark died unless the caller is the legitimate
+/// parent (or self, for apoptosed cases).
+pub fn findParentIdForId(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+) !?[]u8 {
+    const body = readAll(allocator, env) catch return null;
+    defer allocator.free(body);
+    var iter = std.mem.tokenizeAny(u8, body, "\n");
+    while (iter.next()) |line| {
+        if (line.len < 2) continue;
+        if (std.mem.indexOf(u8, line, "\"event\": \"declared\"") == null and
+            std.mem.indexOf(u8, line, "\"event\":\"declared\"") == null) continue;
+        var id_needle_buf: [128]u8 = undefined;
+        const id_needle = std.fmt.bufPrint(&id_needle_buf, "\"id\": \"{s}\"", .{id}) catch continue;
+        if (std.mem.indexOf(u8, line, id_needle) == null) {
+            const id_needle2 = std.fmt.bufPrint(&id_needle_buf, "\"id\":\"{s}\"", .{id}) catch continue;
+            if (std.mem.indexOf(u8, line, id_needle2) == null) continue;
+        }
+        // Found the row. Pull parent_id; "null" or absent → root.
+        const p_marker = "\"parent_id\": \"";
+        const p_marker2 = "\"parent_id\":\"";
+        const p_start = blk: {
+            if (std.mem.indexOf(u8, line, p_marker)) |p| break :blk p + p_marker.len;
+            if (std.mem.indexOf(u8, line, p_marker2)) |p| break :blk p + p_marker2.len;
+            return null; // declared row with no parent_id field → treat as root
+        };
+        // Value is a JSON string; walk until closing quote.
+        var i: usize = p_start;
+        while (i < line.len) : (i += 1) {
+            if (line[i] == '\\') {
+                i += 1;
+                continue;
+            }
+            if (line[i] == '"') return try allocator.dupe(u8, line[p_start..i]);
+        }
+        return null;
+    }
+    return null;
+}
+
 /// Slurp the entire resolved ledger file. Returns an owned []u8 (empty when
 /// the file doesn't exist). 16 MiB cap is way above the largest ledger ever
 /// observed (the global ledger is ~3 MB after months of use).
