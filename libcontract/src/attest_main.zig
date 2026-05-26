@@ -233,16 +233,16 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     const allocator = arena.allocator();
     const env = init.environ;
 
-    const api_key = env.getPosix("NEBIUS_API_KEY") orelse {
+    const api_key = env.getPosix("CONTRACT_LLM_API_KEY") orelse {
         std.debug.print(
-            "aiko-attest: NEBIUS_API_KEY env not set.\n" ++
-                "  Export NEBIUS_API_KEY (or any OpenAI-compatible bearer) and re-run.\n",
+            "aiko-attest: CONTRACT_LLM_API_KEY env not set.\n" ++
+                "  Export CONTRACT_LLM_API_KEY (any OpenAI-compatible bearer) and re-run.\n",
             .{},
         );
         return 2;
     };
-    const model = env.getPosix("NEBIUS_MODEL") orelse DEFAULT_MODEL;
-    const url = env.getPosix("NEBIUS_URL") orelse DEFAULT_URL;
+    const model = env.getPosix("CONTRACT_LLM_MODEL") orelse DEFAULT_MODEL;
+    const url = env.getPosix("CONTRACT_LLM_BASE_URL") orelse DEFAULT_URL;
 
     const ledger_path = spirit.attestationLedgerPath(allocator) catch |e| {
         std.debug.print("aiko-attest: cannot resolve attestation ledger path: {s}\n", .{@errorName(e)});
