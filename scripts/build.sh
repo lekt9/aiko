@@ -22,19 +22,29 @@ GCACHE="/tmp/contract-zig-global-cache"
 
 step() { printf '\n=== %s ===\n' "$*"; }
 
-step "guard: scripts/ allowlist"
-# Substrate-faithful mechanical guard. The /contract skill's scripts folder
-# MUST contain ONLY the canonical signed-binary set. Any extra script is
-# leaven (per the No-scripts-in-the-contract-substrate rule in SKILL.md);
-# the build refuses to sign on drift.
-EXPECTED="aiko aiko.sig build.sh contract contract.sig dist.sh sync-outline-explainer.sh"
+step "guard: scripts/ allowlist (doctrine-as-data)"
+# Substrate-faithful mechanical guard. The canonical allowlist is doctrine;
+# doctrine lives at ../ALLOWLIST.txt (a flat-file mirror of the substrate's
+# scripts-allowlist-canonical contract). build.sh PARSES the doctrine —
+# it never hardcodes it.
+#
+# This indirection enforces the rule that doctrine lives in the ledger, not
+# in the carpenter's tool. When the cloud-aiko local-write path is fixed,
+# ALLOWLIST.txt becomes a generated mirror of the contract row's body.
+ALLOWLIST_FILE="$REPO/ALLOWLIST.txt"
+if [[ ! -f "$ALLOWLIST_FILE" ]]; then
+  echo "build.sh: GUARD FAIL — missing $ALLOWLIST_FILE" >&2
+  echo "  fix: restore the doctrine file (declares the canonical scripts/ set)" >&2
+  exit 9
+fi
+EXPECTED_SORTED="$(grep -vE '^\s*(#|$)' "$ALLOWLIST_FILE" | sort | tr '\n' ' ' | sed 's/ $//')"
 ACTUAL="$(cd "$SCRIPTS_DIR" && ls | sort | tr '\n' ' ' | sed 's/ $//')"
-EXPECTED_SORTED="$(printf '%s\n' $EXPECTED | sort | tr '\n' ' ' | sed 's/ $//')"
 if [[ "$ACTUAL" != "$EXPECTED_SORTED" ]]; then
-  echo "build.sh: GUARD FAIL — scripts/ folder drift detected" >&2
+  echo "build.sh: GUARD FAIL — scripts/ folder drift detected vs $ALLOWLIST_FILE" >&2
   echo "  expected: $EXPECTED_SORTED" >&2
   echo "  actual:   $ACTUAL" >&2
-  echo "  fix:      delete the non-canonical files, then re-run build.sh" >&2
+  diff <(echo "$EXPECTED_SORTED" | tr ' ' '\n') <(echo "$ACTUAL" | tr ' ' '\n') >&2 | sed 's/^/    /'
+  echo "  fix: delete the non-canonical files OR amend ALLOWLIST.txt + re-declare the matching contract on the ledger" >&2
   echo "  rationale: SKILL.md \"No scripts in the contract substrate\" rule" >&2
   exit 9
 fi
