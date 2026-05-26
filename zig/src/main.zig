@@ -2146,7 +2146,13 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
     };
     const wave = latestWave(rows, id) + 1;
     const rr = try runAction(allocator, env, rows, r);
-    const hash_str: []const u8 = if (current_hash) |*ch| ch[0..] else "";
+    // Legacy content-hash for recordIterationWithHash. Computed here
+    // (rather than at function entry) because the satisfied-side block
+    // above now drives off the signature chain; the byte-hash is only
+    // needed for the iterated row's input_hash field, which the legacy
+    // cache fallback consumes when no signature chain is available.
+    const fallback_hash = computeInputHash(allocator, rows, id, 0) catch null;
+    const hash_str: []const u8 = if (fallback_hash) |*ch| ch[0..] else "";
     try contract.recordIterationWithHash(allocator, env, id, wave, rr.rc, rr.result, hash_str);
     if (rr.rc != 0) {
         // SELF-HEALING SCAR TISSUE — classify the roadblock, emit a guard
