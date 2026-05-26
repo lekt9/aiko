@@ -142,13 +142,26 @@ fn usage() void {
     errPrint("{s} {s}\n\nUsage:\n", .{ BINARY_NAME, VERSION });
     if (AIKO_DECLARE_ONLY) {
         errPrint(
-            \\  {s} "<truth claim>" [--remote|--local]
+            \\  {s} "<truth claim>" [--private]
             \\
             \\No verbs, no env knobs, no escape hatches. The substrate
-            \\reads only the goal and the mode pointer; lineage,
-            \\hooks, adapters, and child neurons are server-determined.
-            \\Default routes to Unbrowse; --local runs the one-shot
-            \\lifecycle against the on-disk ledger.
+            \\reads only the goal and an optional visibility flag;
+            \\lineage, hooks, adapters, and child neurons are
+            \\server-determined.
+            \\
+            \\Default (no flag) → shared visibility. The row joins the
+            \\substrate's shared graph: cloud declare via Unbrowse,
+            \\transparent fallback to local LLM + local declare on
+            \\wallet-402 so the substrate keeps thinking offline.
+            \\
+            \\--private → never leaves this machine. Runs the one-shot
+            \\Genesis-days lifecycle against the on-disk ledger only.
+            \\Use when the goal contains PII, secrets, or anything the
+            \\operator does not want federated.
+            \\
+            \\Deprecated aliases (still honored): --remote ≡ default
+            \\(shared), --local ≡ --private. The vocabulary is
+            \\visibility, not transport.
             \\
         , .{BINARY_NAME});
         return;
