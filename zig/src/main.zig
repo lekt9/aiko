@@ -4673,6 +4673,3 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     usage();
     return 2;
 }
-    _ = env;
-    return null;
-}
