@@ -55,11 +55,41 @@ pub fn bearerToken(env: std.process.Environ) ?[]const u8 {
     return null;
 }
 
-/// Payment header env hatches removed — the substrate signs payments inline
-/// from the wallet (x402 envelope generated at request time).
+/// Payment header — substrate-canonical x402 envelope source.
+///
+/// Reads `~/.contracts/x402-envelope.b64` if present and returns its contents.
+/// This is the cold-start path: Lewis (or any operator) signs an x402
+/// envelope against the faucet:donee (contract b53380ec — Solana addr
+/// 7gKDinaGLd2qzHKHfAc8aZQwbw52msXBZHVNbkEC5FCp, USDC-SPL) using whatever
+/// Faremeter/Corbits tooling they have, then writes the base64url payload to
+/// that file. The binary then forwards it as X-PAYMENT on every declare until
+/// the file is rotated.
+///
+/// File location is intentionally stable (not an env var) — the substrate
+/// doctrine: pointers live on the ledger / canonical paths, not env hatches.
+/// To rotate: `aiko "faucet:fund-event tx=<sig> amount=<n>" --remote` then
+/// regenerate + drop a fresh envelope.
+///
+/// Returns null (caller falls through to 402 → faucet chain at line 318)
+/// when the file is missing, empty, or unreadable.
 pub fn paymentHeader(env: std.process.Environ) ?[]const u8 {
-    _ = env;
-    return null;
+    const home = env.getPosix("HOME") orelse return null;
+    var path_buf: [512]u8 = undefined;
+    const path = std.fmt.bufPrintZ(&path_buf, "{s}/.contracts/x402-envelope.b64", .{home}) catch return null;
+    const fd = std.c.open(path.ptr, .{ .ACCMODE = .RDONLY }, @as(std.c.mode_t, 0));
+    if (fd < 0) return null;
+    defer _ = std.c.close(fd);
+    // Static buffer — keeps the substrate stateless; the envelope is small
+    // (Faremeter Flex payloads are ~600-1200 bytes base64url-encoded).
+    const buf = struct {
+        var bytes: [4096]u8 = undefined;
+    };
+    const n = std.c.read(fd, &buf.bytes, buf.bytes.len);
+    if (n <= 0) return null;
+    var end: usize = @intCast(n);
+    while (end > 0 and (buf.bytes[end - 1] == '\n' or buf.bytes[end - 1] == '\r' or buf.bytes[end - 1] == ' ')) end -= 1;
+    if (end == 0) return null;
+    return buf.bytes[0..end];
 }
 
 /// Env-driven remote-mode override removed; the runtime mode is carried by
