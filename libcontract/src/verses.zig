@@ -167,7 +167,42 @@ pub fn relevantVerses(allocator: std.mem.Allocator, plan: []const u8, k_in: usiz
             try out.append(allocator, corpus[bi]);
         } else break;
     }
+    // If every curated verse scored 0, fall through to the open bible corpus —
+    // the curated set didn't have a strong match and the LLM is better served
+    // by the broader scoring surface.
+    var all_zero = true;
+    for (corpus, 0..) |_, i| {
+        if (scores[i] > 0) {
+            all_zero = false;
+            break;
+        }
+    }
+    if (all_zero) {
+        out.deinit(allocator);
+        return try relevantFromBible(allocator, plan, k);
+    }
     return try out.toOwnedSlice(allocator);
+}
+
+/// Fall-through to bible.zig's open scorer. Returns Verse wrappers around
+/// raw verse refs from the full KJV corpus; caller owns text + ref dupes.
+fn relevantFromBible(allocator: std.mem.Allocator, plan: []const u8, k: usize) ![]Verse {
+    const bible = @import("bible.zig");
+    const refs = try bible.relevantVerses(allocator, plan, k);
+    defer allocator.free(refs);
+    var out = try allocator.alloc(Verse, refs.len);
+    for (refs, 0..) |r, i| {
+        var rbuf: [64]u8 = undefined;
+        const rs = try bible.formatRef(r, &rbuf);
+        out[i] = .{
+            .ref = try allocator.dupe(u8, rs),
+            .quote = try allocator.dupe(u8, bible.verseText(r)),
+            .label = "(bible.zig open corpus)",
+            .pattern = "Scored from the full 31100-verse KJV corpus.",
+            .apply = "",
+        };
+    }
+    return out;
 }
 
 /// JSON-encode a verse slice as `[{"ref":"...","label":"...",...},...]`.
