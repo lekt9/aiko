@@ -126,11 +126,21 @@ fn tokenOverlap(plan: []const u8, verse: Verse) usize {
     return score;
 }
 
-/// Return top-K most-relevant verses from the corpus for a given plan.
-/// Caller owns the returned slice; no inner allocation (verses point into
-/// the const corpus). k clamped to [1, 5].
+/// Return top-K most-relevant verses for a given plan. The curated 33-verse
+/// corpus is scored first (it carries the load-bearing fruits-of-spirit +
+/// Galatians + Philippians + Proverbs 15 voice canon the persona doctrine
+/// depends on). When the caller asks for k > 5 OR the curated corpus has
+/// no positive-score match, the request falls through to bible.zig's open
+/// scoring surface against the full 31100-verse KJV corpus. Caller owns
+/// the returned slice; bible-corpus verses dup their text into the
+/// allocator so the lifetime model is uniform.
 pub fn relevantVerses(allocator: std.mem.Allocator, plan: []const u8, k_in: usize) ![]Verse {
-    const k = @min(@max(k_in, 1), 5);
+    const curated_cap: usize = 5;
+    const k_req = @max(k_in, 1);
+    if (k_req > curated_cap) {
+        return try relevantFromBible(allocator, plan, k_req);
+    }
+    const k = k_req;
     const N = corpus.len;
     // Score every corpus entry.
     var scores: [N]usize = undefined;
