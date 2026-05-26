@@ -731,3 +731,113 @@ test "deterministic derivation + sign + verify round-trip" {
     try signDigest(kp1, digest, &sig_hex);
     try verifyDigest(&sig_hex, &pubkey_hex, digest);
 }
+
+test "rotateRootKey produces verifiable successor proof" {
+    // We don't drive the full filesystem path (would clobber the dev
+    // machine's real root key). Instead we exercise the successor-proof
+    // math: derive old + new identity keypairs, build the same message
+    // rotateRootKey signs, verify the sig with the old pubkey.
+    const old_root: [32]u8 = .{0x11} ** 32;
+    const new_root: [32]u8 = .{0x22} ** 32;
+    const old_kp = try deriveIdentityKeyPair(old_root);
+    const new_kp = try deriveIdentityKeyPair(new_root);
+    var old_pubkey_hex: [PUBKEY_HEX_LEN]u8 = undefined;
+    bytesToHex(&old_kp.public_key.bytes, &old_pubkey_hex);
+    var new_pubkey_hex: [PUBKEY_HEX_LEN]u8 = undefined;
+    bytesToHex(&new_kp.public_key.bytes, &new_pubkey_hex);
+
+    const ts: i64 = 1700000000;
+    var ts_buf: [32]u8 = undefined;
+    const ts_str = try std.fmt.bufPrint(&ts_buf, "{d}", .{ts});
+
+    var hasher = sha256.init(.{});
+    hasher.update("wallet_rotated|");
+    hasher.update(&old_pubkey_hex);
+    hasher.update(&new_pubkey_hex);
+    hasher.update(ts_str);
+    var digest: [32]u8 = undefined;
+    hasher.final(&digest);
+
+    var sig_hex: [SIG_HEX_LEN]u8 = undefined;
+    try signDigest(old_kp, digest, &sig_hex);
+
+    // Verifiable against OLD pubkey.
+    try verifyDigest(&sig_hex, &old_pubkey_hex, digest);
+    // NOT verifiable against NEW pubkey (would be the wrong signer).
+    try std.testing.expectError(error.SignatureVerificationFailed, verifyDigest(&sig_hex, &new_pubkey_hex, digest));
+}
+
+test "rotateAllSignedRowsByLineage re-signs every old-root row" {
+    const allocator = std.testing.allocator;
+    const old_root: [32]u8 = .{0x33} ** 32;
+    const new_root: [32]u8 = .{0x44} ** 32;
+    const cid = "abcd1234";
+    const plan = "rotation walker test plan";
+
+    // Forge a `declared` row signed by old_root + cid.
+    const old_kp = try deriveKeyPair(old_root, cid);
+    var old_pubkey_hex: [PUBKEY_HEX_LEN]u8 = undefined;
+    bytesToHex(&old_kp.public_key.bytes, &old_pubkey_hex);
+    var digest: [32]u8 = undefined;
+    signingDigest(cid, &old_pubkey_hex, plan, ROOT_PARENT_SENTINEL, &digest);
+    var old_sig_hex: [SIG_HEX_LEN]u8 = undefined;
+    try signDigest(old_kp, digest, &old_sig_hex);
+
+    // Write the row to a tmp ledger file.
+    const tmp_path = try std.fmt.allocPrint(
+        allocator,
+        "/tmp/contract-rotation-test-{d}.jsonl",
+        .{std.time.milliTimestamp()},
+    );
+    defer allocator.free(tmp_path);
+    defer {
+        const tz = allocator.dupeZ(u8, tmp_path) catch return;
+        defer allocator.free(tz);
+        _ = std.c.unlink(tz.ptr);
+    }
+
+    const row = try std.fmt.allocPrint(
+        allocator,
+        "{{\"event\": \"declared\", \"id\": \"{s}\", \"plan\": \"{s}\", \"parent_id\": null, \"env_pubkey\": \"{s}\", \"parent_signature\": \"{s}\"}}\n",
+        .{ cid, plan, old_pubkey_hex, old_sig_hex },
+    );
+    defer allocator.free(row);
+    try appendBytesToFile(allocator, tmp_path, row);
+
+    // Run the walker.
+    var env = std.process.Environ.init(&.{});
+    defer env.deinit(allocator);
+    const count = try rotateAllSignedRowsByLineage(allocator, env, old_root, new_root, tmp_path, "rotate-evt-1");
+    try std.testing.expectEqual(@as(u32, 1), count);
+
+    // Read back, find the resigned row, verify its new_parent_signature.
+    const body = try readFileAll(allocator, tmp_path);
+    defer allocator.free(body);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"event\": \"resigned\"") != null);
+
+    // Extract new_env_pubkey + new_parent_signature from the resigned row.
+    var resigned_line: []const u8 = "";
+    var it = std.mem.tokenizeAny(u8, body, "\n");
+    while (it.next()) |line| {
+        if (std.mem.indexOf(u8, line, "\"event\": \"resigned\"") != null) {
+            resigned_line = line;
+            break;
+        }
+    }
+    try std.testing.expect(resigned_line.len > 0);
+    const new_pub = (try extractJsonStringField(allocator, resigned_line, "new_env_pubkey")).?;
+    defer allocator.free(new_pub);
+    const new_sig = (try extractJsonStringField(allocator, resigned_line, "new_parent_signature")).?;
+    defer allocator.free(new_sig);
+
+    // Confirm pubkey matches deriveKeyPair(new_root, cid).
+    const new_kp = try deriveKeyPair(new_root, cid);
+    var expected_new_hex: [PUBKEY_HEX_LEN]u8 = undefined;
+    bytesToHex(&new_kp.public_key.bytes, &expected_new_hex);
+    try std.testing.expectEqualSlices(u8, &expected_new_hex, new_pub);
+
+    // Recompute digest with new pubkey and verify the new signature.
+    var new_digest: [32]u8 = undefined;
+    signingDigest(cid, new_pub, plan, ROOT_PARENT_SENTINEL, &new_digest);
+    try verifyDigest(new_sig, new_pub, new_digest);
+}
