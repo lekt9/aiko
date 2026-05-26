@@ -3505,7 +3505,10 @@ fn flushStderrTapeAsEvidence(
     }
 
     var ptr_buf: [80]u8 = undefined;
-    const pointer_str = std.fmt.bufPrint(&ptr_buf, "sha256:{s}", .{hex}) catch return;
+    const pointer_str = std.fmt.bufPrint(&ptr_buf, "sha256:{s}", .{hex}) catch |e| {
+        substrateEvidence("evidence: bufPrint sha256 pointer failed: {s} — row not appended\n", .{@errorName(e)});
+        return;
+    };
     contract.appendEvidenceRow(allocator, env, root_id, pointer_str, scope, buf.items.len) catch |e| {
         evidencePrint("evidence: appendEvidenceRow failed: {s} — blob persisted at {s}\n", .{ @errorName(e), blob_path });
         return;
