@@ -223,55 +223,55 @@ fn jsonNullableString(line: []const u8, key: []const u8) ?[]const u8 {
 /// literal `d[\"thread\"]` bytes and the interpreter rejects it. Symmetric to
 /// `writeJsonString` in libcontract/src/contract.zig.
 fn unescapeJsonValue(allocator: std.mem.Allocator, src: []const u8) ![]u8 {
-    var out: std.ArrayList(u8) = .empty;
-    errdefer out.deinit(allocator);
+    var buf: std.ArrayList(u8) = .empty;
+    errdefer buf.deinit(allocator);
     var i: usize = 0;
     while (i < src.len) : (i += 1) {
         if (src[i] != '\\' or i + 1 >= src.len) {
-            try out.append(allocator, src[i]);
+            try buf.append(allocator, src[i]);
             continue;
         }
         switch (src[i + 1]) {
-            'n' => try out.append(allocator, '\n'),
-            't' => try out.append(allocator, '\t'),
-            'r' => try out.append(allocator, '\r'),
-            '"' => try out.append(allocator, '"'),
-            '\\' => try out.append(allocator, '\\'),
-            '/' => try out.append(allocator, '/'),
-            'b' => try out.append(allocator, 0x08),
-            'f' => try out.append(allocator, 0x0c),
+            'n' => try buf.append(allocator, '\n'),
+            't' => try buf.append(allocator, '\t'),
+            'r' => try buf.append(allocator, '\r'),
+            '"' => try buf.append(allocator, '"'),
+            '\\' => try buf.append(allocator, '\\'),
+            '/' => try buf.append(allocator, '/'),
+            'b' => try buf.append(allocator, 0x08),
+            'f' => try buf.append(allocator, 0x0c),
             'u' => {
                 if (i + 5 >= src.len) {
-                    try out.append(allocator, src[i]);
-                    try out.append(allocator, src[i + 1]);
+                    try buf.append(allocator, src[i]);
+                    try buf.append(allocator, src[i + 1]);
                     i += 1;
                     continue;
                 }
                 const hex = src[i + 2 .. i + 6];
                 const cp = std.fmt.parseInt(u21, hex, 16) catch {
-                    try out.append(allocator, src[i]);
-                    try out.append(allocator, src[i + 1]);
+                    try buf.append(allocator, src[i]);
+                    try buf.append(allocator, src[i + 1]);
                     i += 1;
                     continue;
                 };
                 var ubuf: [4]u8 = undefined;
                 const n = std.unicode.utf8Encode(cp, &ubuf) catch {
-                    try out.append(allocator, src[i]);
-                    try out.append(allocator, src[i + 1]);
+                    try buf.append(allocator, src[i]);
+                    try buf.append(allocator, src[i + 1]);
                     i += 1;
                     continue;
                 };
-                try out.appendSlice(allocator, ubuf[0..n]);
+                try buf.appendSlice(allocator, ubuf[0..n]);
                 i += 4;
             },
             else => {
-                try out.append(allocator, src[i]);
-                try out.append(allocator, src[i + 1]);
+                try buf.append(allocator, src[i]);
+                try buf.append(allocator, src[i + 1]);
             },
         }
         i += 1;
     }
-    return out.toOwnedSlice(allocator);
+    return buf.toOwnedSlice(allocator);
 }
 
 /// Convenience: locate a JSON string value by key AND decode its escapes.
