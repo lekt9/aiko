@@ -1455,11 +1455,22 @@ cache_invalidated  — appended when a pointer the contract depended on
    DAG recompute as a pure function of the ledger).
 
 Pointer value = the recursive Blake2s256 of the contract's plan +
-action + sorted child snapshots, computed by `computeInputHash`
-(main.zig). Terminal events on dependencies (`satisfied`, `died`,
-`iterated`) participate by the recursion picking up the latest
-declared content of every descendant. Empty pointer set → snapshot is
-the empty hash (deterministic).
+action + each sorted child's layer-tuple, computed by
+`computeInputHash` (main.zig). Each child contributes ONE layer to
+the parent's hash — Docker-image style — and the layer bytes are:
+
+```
+(child_id ‖ child_recursive_hash ‖ child_resolution_state ‖ child_terminal_input_hash)
+```
+
+where `child_resolution_state ∈ {S satisfied | D died | P pending}`.
+When the child satisfies, dies, or iterates with a new terminal
+input_hash, the layer hash flips, the parent's snapshot drifts,
+`cache_check` misses, and the parent re-evaluates. This is the
+"image layers are all resolving kv style to pointers that resolve to
+true against itself" property — each layer's hash IS a pointer whose
+value tracks the child's truth. Empty pointer set → snapshot is the
+empty hash (deterministic).
 
 ### Substrate location
 
