@@ -1101,13 +1101,26 @@ PYAUDIT
     _fail "doctrine[client/server split]: contract.zig still exports LlmFallback — the re-export was deleted with llm_fallback.zig itself"
   fi
 
+  # 49. "purge:allowlist-as-flat-file (724f792a)" — pinned by Lewis
+  #     2026-05-26 Day 5 worker A. The canonical scripts/ set was lifted
+  #     off ALLOWLIST.txt and onto the ledger as a declared /contract
+  #     row (guard:scripts-allowlist-canonical). step_guard must read
+  #     the ledger directly per the "Foundation, not subprocess"
+  #     doctrine. The flat-file remains as the visible fallback when
+  #     the ledger row is absent (first build after migration), but
+  #     the load-bearing path is the ledger read. Refuse to ship a
+  #     build whose step_guard cannot reach the ledger.
+  if ! grep -q '~/.contracts/contracts.jsonl\|HOME/.contracts/contracts.jsonl' "$SCRIPTS_DIR/build.sh"; then
+    _fail "doctrine[purge:allowlist-as-flat-file]: build.sh step_guard must reference ~/.contracts/contracts.jsonl — the canonical ledger read path proving the scripts/ allowlist lives as a /contract row, not a flat file (purge target 724f792a)"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
     printf '%s' "$report" >&2
     echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 48 doctrine claims have matching code sites"
+  echo "build:parity OK — all 49 doctrine claims have matching code sites"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────
