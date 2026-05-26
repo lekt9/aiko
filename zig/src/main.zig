@@ -3424,10 +3424,7 @@ fn sha256Hex(digest: [32]u8, dst: []u8) []const u8 {
     return dst[0..64];
 }
 
-/// Resolve the directory that should hold content-addressed blob sidecars
-/// for the current ledger. Follows the same project-vs-global axis as
-/// `ledger.resolvePath`: `<cwd>/.claude/blobs/` when the project ledger is
-/// in use, `~/.contracts/blobs/` otherwise. Caller frees the returned slice.
+/// Project/global axis mirrors `ledger.resolvePath`.
 fn resolveBlobsDir(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
     var cwd_buf: [4096]u8 = undefined;
     const cwd_ptr = std.c.getcwd(&cwd_buf, cwd_buf.len) orelse return error.GetCwdFailed;
