@@ -186,10 +186,12 @@ pub fn declareRemote(
                 body.appendSlice(allocator, verses_json) catch return ClientError.OutOfMemory;
                 body.appendSlice(allocator, ",\"verse_store_kind\":") catch return ClientError.OutOfMemory;
                 writeJsonString(&body, allocator, verses.resolveKind(env).jsonName()) catch return ClientError.OutOfMemory;
-            } else |_| {}
+            } else |err| {
+                std.debug.print("verses: toJsonArray failed: {s} — LLM call proceeds without relevant_verses field\n", .{@errorName(err)});
+            }
         }
-    } else |_| {
-        // Verse adapter failure must never block the LLM call.
+    } else |err| {
+        std.debug.print("verses: relevantVerses failed: {s} — LLM call proceeds without verse RAG context\n", .{@errorName(err)});
     }
     body.append(allocator, '}') catch return ClientError.OutOfMemory;
 
