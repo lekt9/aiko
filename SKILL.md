@@ -320,7 +320,7 @@ Every declaration is a contract neuron:
 
 ```text
 truth claim
--> inherit lineage from CONTRACT_PARENT_ID / CONTRACT_PARENT
+-> server-side lineage assignment from wallet identity + declare timestamp
 -> integrate child evidence
 -> run the server-selected harness/funnel/loop verifier
 -> fire when its threshold resolves true
@@ -328,83 +328,74 @@ truth claim
 -> stop when the DAG settles or evidence is missing
 ```
 
-`parent_id` is the containment edge. It means one environment owns and wraps
-another environment, not merely that one task is listed under another. The
-fractal hierarchy is atom -> cell -> tissue -> organ -> organism in the same
-mechanical sense: each child contract runs inside the environmental field
-created by its parent, and that parent can itself be a child of a larger
-environment.
+`parent_id` is the containment edge. It means one environment owns
+and wraps another environment, not merely that one task is listed
+under another. The fractal hierarchy is atom -> cell -> tissue ->
+organ -> organism in the same mechanical sense: each child contract
+runs inside the environmental field created by its parent, and that
+parent can itself be a child of a larger environment.
 
-The DAG is multidimensional. `parent_id` is the containment dimension.
-`contract:<id>` references are cross-dimension dependency edges. When a neuron
-fires, the substrate recursively fires contained child neurons, containment
-ancestors, and dependent cross-edge neurons until no newly-true signal
-propagates.
+Lineage is **server-determined**. The local binary sends only the
+goal and the transport pointer; the cloud reconstructs containment
+from wallet identity + declare timestamp + active thread. There is
+no env-based parent-id propagation, no caller-supplied parent flag,
+no in-process lineage passing via setenv. A child spawned by the
+substrate is either (a) a new `aiko "<sub-goal>"` subprocess with no
+inherited local state, or (b) a server-side neuron emitted by the
+cloud compiler with explicit `parent_id` written into the ledger
+row.
 
-Hooks are contracts too. A prehook is another contract-neuron that gets the
-spawned environment context and may hold execution before the declared neuron is
-created. A posthook is another contract-neuron that fires after the declared
-neuron resolves. They are carried by environment, not public flags:
+The DAG is multidimensional. `parent_id` is the containment
+dimension. `contract:<id>` references are cross-dimension dependency
+edges. When a neuron fires, the substrate recursively fires
+contained child neurons, containment ancestors, and dependent
+cross-edge neurons until no newly-true signal propagates.
 
-```text
-CONTRACT_PREHOOK_ID / CONTRACT_PREHOOK
-CONTRACT_POSTHOOK_ID / CONTRACT_POSTHOOK
-```
+Hooks are contracts too. A prehook is another contract-neuron that
+gets the spawned environment context and may hold execution before
+the declared neuron is created. A posthook is another contract-neuron
+that fires after the declared neuron resolves. Hooks are **declared
+as ledger rows** (with `posthook_pointer` / equivalent prehook
+field), not configured by local environment variables. Attaching a
+hook means writing a contract row that points at the target neuron;
+there is no `CONTRACT_PREHOOK_ID` / `CONTRACT_POSTHOOK_ID` envelope
+to set, and the executor-level posthook default is an anti-pattern
+(contract `82399fbd`).
 
-Each hook is a breakpoint: if it cannot resolve, propagation waits there with
-ledger evidence. The same shape applies whether the environment is an API call,
-a Telegram bot contract, a local Mac executor, a VM, a Turbobox, or another
-Unbrowse-spawned environment.
+Each hook is a breakpoint: if it cannot resolve, propagation waits
+there with ledger evidence. The same shape applies whether the
+environment is an API call, a Telegram bot contract, a local Mac
+executor, a VM, a Turbobox, or another Unbrowse-spawned environment.
 
-**Posthooks are opt-in per call. Setting `CONTRACT_POSTHOOK_ID` as an
-executor-level default is an anti-pattern:** non-applicable spawns
-(executor declarations, identity rows, auto-chain meta-contracts) have
-no shape-matched output for the hook to consume, so propagation hangs
-at the breakpoint forever; the hook's own handler chain spawning
-`aiko` inherits the same id, risking infinite recursion. A caller
-sets `CONTRACT_POSTHOOK_ID` in its own scope only when its spawn's
-output shape matches what the hook handles. Break mechanisms when a
-hook misbehaves: (a) per-call opt-out — the default; don't set it;
-(b) declare a contract that `contract merge`s the misbehaving hook
-into a no-op, superseding it without violating append-only; (c)
-server-side posthook resolver enforces a deadline and a recursion
-guard (strip `CONTRACT_POSTHOOK_ID` before spawning the handler
-chain). Rule is contract `82399fbd`.
+PreTool context is also contract-shaped. Every PreTool event becomes
+a server-side ledger event contract appended to the bus when the
+runtime emits it. The local binary does NOT read or pass PreTool
+state through env (no `CONTRACT_EVENT_BUS_ID` / `CONTRACT_PRETOOL_*`
+/ `CONTRACT_EVENT_KIND` are honored) — the bus and the events are
+server-side rows the substrate looks up by contract id when
+integrating evidence.
 
-PreTool context is also contract-shaped. Every contract surfaced in PreTool
-context is a server-side ledger event contract, projected into context by a
-stateless event bus. Local PreTool code does not own memory; it forwards
-pointers:
+Adapters are contracts too, and they live on the server side. There
+is no `CONTRACT_ADAPTER_ID` / `CONTRACT_ADAPTER_KIND` /
+`CONTRACT_ENVIRONMENT_KIND` env to set. API, Telegram, local Mac,
+VM, Turbobox, and Unbrowse executors are server-owned adapter
+contracts that decide how to spawn and constrain the local executor.
+The local binary advertises its environment fingerprint (uname +
+available CLIs) as evidence; the server picks the adapter.
 
-```text
-CONTRACT_EVENT_BUS_ID / CONTRACT_EVENT_BUS
-CONTRACT_PRETOOL_EVENT_ID / CONTRACT_PRETOOL_EVENT
-CONTRACT_EVENT_KIND / CONTRACT_PRETOOL_KIND
-```
+The public row uses the `neuron` shape. Typed verifier mechanics
+such as cells, funnels, loops, harnesses, quorums, sequences, and
+contract references are internal server-side wiring, not
+caller-facing flags.
 
-The server ledger is the bus. A PreTool event can become a contract-neuron, feed
-context to another contract-neuron, or hold as a breakpoint, but it is always
-append-only ledger state on Unbrowse, not local mutable hook state.
-
-Adapters are contracts too, and they live on the server side. The local
-environment may carry `CONTRACT_ADAPTER_ID` / `CONTRACT_ADAPTER` and
-`CONTRACT_ADAPTER_KIND` / `CONTRACT_ENVIRONMENT_KIND`, but those values are
-pointers to server-side adapter contract-neurons. API, Telegram, local Mac, VM,
-Turbobox, and Unbrowse executors are not local modes; they are server-owned
-adapter contracts that decide how to spawn and constrain the local executor.
-
-The public row uses the `neuron` shape. Typed verifier mechanics such as cells,
-funnels, loops, harnesses, quorums, sequences, and contract references are
-internal server-side wiring, not caller-facing flags.
-
-In server-spawned environments, Unbrowse may provide private verifier wiring via
-`CONTRACT_NEURON_ACTION` while the public command remains `aiko "<goal>"
---remote|--local`. In local scoped test mode, a neuron with no child/evidence
-rows fails closed. In server mode, `UNBROWSE_BASE` routes declarations to
-`/v1/contract/declare`, where Unbrowse may spawn more contracts on Unbrowse
-infra. The server-side LLM is the integrator: it reads the active context,
-chooses which child environments/verifiers to spawn, and returns only typed
-contract pointers to the local executor.
+When `--remote`, the local binary POSTs the declaration to the
+hardcoded Unbrowse base at `/v1/contract/declare`, where Unbrowse
+may spawn more contracts on Unbrowse infra. The server-side LLM is
+the integrator: it reads the active context, chooses which child
+environments/verifiers to spawn, and returns only typed contract
+pointers to the local executor. When `--local`, the same neuron
+shape runs the one-shot lifecycle against the on-disk ledger; a
+neuron with no child/evidence rows fails closed.
 
 The LLM layer is the compiler from arbitrary prompt text into this contract
 shape. The user's prompt remains the root contract declaration in words. The
