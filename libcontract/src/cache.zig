@@ -41,6 +41,14 @@ pub const Verdict = enum {
     miss,
     stale,
     legacy,
+    /// Signature chain incomplete — at least one row in the contract's
+    /// pointer chain (declared parent_signature OR a child's
+    /// output_signature) is missing. Defensive: the cache layer refuses
+    /// to assert a verdict from raw bytes when the pointer-resolved
+    /// chain is broken. resolveOne falls through to re-evaluate; the
+    /// next satisfaction lands a signed terminal row and the chain
+    /// becomes complete on the following pass.
+    signature_incomplete,
 
     pub fn jsonName(self: Verdict) []const u8 {
         return switch (self) {
@@ -48,6 +56,7 @@ pub const Verdict = enum {
             .miss => "miss",
             .stale => "stale",
             .legacy => "legacy",
+            .signature_incomplete => "signature_incomplete",
         };
     }
 };
