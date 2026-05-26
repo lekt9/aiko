@@ -124,6 +124,10 @@ pub fn build(b: *std.Build) void {
 /// Create one contract-zig executable with the given profile constant
 /// baked in via build_options. Shared between the client and server
 /// install targets — only the executable name + profile string differ.
+///
+/// `gate_step` is an optional dependency edge: the install step for
+/// the produced executable depends on `gate_step` succeeding. Used to
+/// route every install through the spirit-check verifier.
 fn addContractExecutable(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -132,6 +136,7 @@ fn addContractExecutable(
     client: *std.Build.Module,
     exe_name: []const u8,
     profile: []const u8,
+    gate_step: ?*std.Build.Step,
 ) void {
     const root = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -151,5 +156,7 @@ fn addContractExecutable(
         .name = exe_name,
         .root_module = root,
     });
-    b.installArtifact(exe);
+    const install_step = b.addInstallArtifact(exe, .{});
+    if (gate_step) |gs| install_step.step.dependOn(gs);
+    b.getInstallStep().dependOn(&install_step.step);
 }
