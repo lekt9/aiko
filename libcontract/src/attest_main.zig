@@ -245,7 +245,15 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         return 2;
     };
     const model = env.getPosix("CONTRACT_LLM_MODEL") orelse DEFAULT_MODEL;
-    const url = env.getPosix("CONTRACT_LLM_BASE_URL") orelse DEFAULT_URL;
+    const base_url = env.getPosix("CONTRACT_LLM_BASE_URL") orelse DEFAULT_BASE_URL;
+    // Trim trailing slash and append the chat-completions path. Keeps
+    // env-var shape parallel to translator.ts (base URL, not full URL).
+    const base_clean = if (base_url.len > 0 and base_url[base_url.len - 1] == '/')
+        base_url[0 .. base_url.len - 1]
+    else
+        base_url;
+    const url = try std.fmt.allocPrint(allocator, "{s}/chat/completions", .{base_clean});
+    defer allocator.free(url);
 
     const ledger_path = spirit.attestationLedgerPath(allocator) catch |e| {
         std.debug.print("aiko-attest: cannot resolve attestation ledger path: {s}\n", .{@errorName(e)});
