@@ -2243,6 +2243,18 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
                 evidencePrint("apoptosis: markDied failed for guard {s}: {s}\n", .{ id, @errorName(e) });
             };
             evidencePrint("  -> apoptosed (guard:generic:neuron with no fired children after 2+ iterations)\n", .{});
+        } else if (actionIsBareCli(r.action) and latestWave(rows, id) >= 3) {
+            // Bare shell action that has failed 3+ times with no classifier
+            // match (not command_not_found, not stage_dead, not child_dead,
+            // not a guard:generic:neuron). The substrate has tried as many
+            // times as is honest; the action is either broken or names a
+            // condition the resolver cannot bring about. Apoptose so the
+            // backfill frontier advances instead of cycling the same row
+            // every pass. Matches the existing 2-HOLD guard-neuron rule.
+            contract.markDied(allocator, env, id, .apoptosed, null, "cli_persistent_failure — bare shell action exited non-zero 3+ times with no classifiable transient cause; the substrate cannot make a failing command pass") catch |e| {
+                evidencePrint("apoptosis: markDied failed for cli {s}: {s}\n", .{ id, @errorName(e) });
+            };
+            evidencePrint("  -> apoptosed (cli_persistent_failure — 3+ failed iterations with no transient class)\n", .{});
         }
         return 1;
     }
