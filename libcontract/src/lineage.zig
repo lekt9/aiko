@@ -833,7 +833,10 @@ test "rotateAllSignedRowsByLineage re-signs every old-root row" {
         if (allocator.dupeZ(u8, tmp_path)) |tz| {
             _ = std.c.unlink(tz.ptr);
             allocator.free(tz);
-        } else |_| {}
+        } else |_| {
+            // silent: defer-cleanup of a /tmp test artifact; if dupeZ OOMs the
+            // process is already failing — tmp file leak is acceptable.
+        }
     }
 
     const row = try std.fmt.allocPrint(

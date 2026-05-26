@@ -80,7 +80,10 @@ pub fn compileLocallyJson(
     // Resolve cache paths.
     const models_dir = try std.fmt.allocPrint(allocator, "{s}/.aiko/models", .{home});
     defer allocator.free(models_dir);
-    const llama_cli = try std.fmt.allocPrint(allocator, "{s}/llama-cli/llama-cli", .{models_dir});
+    // The release tarball extracts to <models_dir>/llama-cli/llama-<TAG>/...
+    // Keep the binary INSIDE its companion-dylib directory so @rpath resolves
+    // (libllama.dylib, libggml.dylib, etc. all sit next to llama-cli).
+    const llama_cli = try std.fmt.allocPrint(allocator, "{s}/llama-cli/llama-{s}/llama-cli", .{ models_dir, LLAMA_CPP_TAG });
     defer allocator.free(llama_cli);
     const model_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ models_dir, MODEL_FILE });
     defer allocator.free(model_path);
