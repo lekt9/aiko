@@ -131,13 +131,15 @@ pub fn compileLocallyJson(
     defer allocator.free(combined);
     try writeFile(allocator, prompt_path, combined);
 
-    // -n 256: compiled trees are small (a typical AikoCompiledContract
-    //         fits comfortably). 1024 was wasteful.
-    // -t 4:   cap thread count so the local fallback doesn't pin every
-    //         core when the user is doing other work concurrently.
+    // -n 256:       compiled trees are small; 1024 was wasteful.
+    // -t 4:         cap thread count so we don't pin every core.
+    // -no-cnv:      single-shot mode — exit after generating instead of
+    //               sitting at an interactive `>` prompt waiting for the
+    //               next user turn (this caused popen to block forever).
+    // --single-turn: belt-and-braces — guarantee exit after one response.
     const cmd_slice = std.fmt.allocPrint(
         allocator,
-        "'{s}' -m '{s}' --grammar-file '{s}' -f '{s}' -n 256 -t 4 --temp 0.1 --no-display-prompt 2>/dev/null",
+        "'{s}' -m '{s}' --grammar-file '{s}' -f '{s}' -n 256 -t 4 --temp 0.1 --no-display-prompt -no-cnv --single-turn 2>/dev/null",
         .{ llama_cli, model_path, grammar_path, prompt_path },
     ) catch return Error.OutOfMemory;
     defer allocator.free(cmd_slice);
