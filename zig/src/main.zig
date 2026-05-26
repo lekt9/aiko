@@ -2120,11 +2120,6 @@ fn redactAikoPlan(allocator: std.mem.Allocator, plan: []const u8) ![]u8 {
     return buf.toOwnedSlice(allocator);
 }
 
-fn ambientParent(env: std.process.Environ) ?[]const u8 {
-    _ = env;
-    return null;
-}
-
 /// Auto-derive the row's `action` from the plan when the plan starts with a
 /// known typed-action prefix (`drill:`, `channel:`, `sabbath:`, `resolver:`).
 /// Falls back to the ambient default ("neuron") otherwise. Substrate-faithful:
