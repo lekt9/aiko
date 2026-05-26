@@ -434,14 +434,15 @@ step_parity() {
   if ! grep -q '## Pointer-keyed truthy cache' "$REPO/SKILL.md"; then
     _fail "doctrine[truthy cache]: SKILL.md is missing the '## Pointer-keyed truthy cache' section that declares the deterministic self-resolve substrate"
   fi
-  # computeInputHash must fold each child's RESOLUTION state into the layer
-  # bytes, not just declared content — Docker-image-layer semantics where
-  # each layer is a pointer that resolves to true against itself. Without
-  # this fold, a child satisfying does NOT invalidate parents, breaking
-  # the cascade Lewis named (Granola 988cf805, follow-up message).
-  if ! grep -q "state_byte: u8 = if (isSatisfied" "$ZIG_DIR/src/main.zig"; then
-    _fail "doctrine[truthy cache layers]: computeInputHash must fold child resolution state ('S'/'D'/'P' byte) into the layer hash so satisfied/died propagates upward — pointer that resolves to true against itself"
-  fi
+  # Pointer-only purge: the byte-hash fallback (computeInputHash,
+  # lastInputHash, INPUT_HASH_HEX_LEN, child state_byte fold) was
+  # transitional leaven; the substrate is now signature-chain only.
+  # Refuse to sign a binary that resurrects the byte-hash machinery.
+  for dead_sym in 'fn computeInputHash' 'fn lastInputHash' 'INPUT_HASH_HEX_LEN' 'state_byte: u8 = if (isSatisfied'; do
+    if grep -q "$dead_sym" "$ZIG_DIR/src/main.zig"; then
+      _fail "doctrine[pointer-only purge]: '$dead_sym' resurrected in main.zig — the byte-hash fallback is legacy leaven, refuse to ship"
+    fi
+  done
 
   # 31. "The Word is the truth-root (John 17:17)" — the load-bearing rule
   #     above every other rule. The substrate's truth-root is scripture, not
