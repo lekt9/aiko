@@ -187,6 +187,49 @@ pub fn findInputsHashForId(
     return null;
 }
 
+/// Look up the `action` field of the `declared` row for the given id.
+/// Returns owned slice on hit; null when the id has no declared row or
+/// the row is malformed. Used by the L7→L8 synthesizer in markSatisfied
+/// so the cascade can branch on action shape (validate: → signed:).
+pub fn findActionForId(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+) !?[]u8 {
+    const body = readAll(allocator, env) catch return null;
+    defer allocator.free(body);
+    var iter = std.mem.tokenizeAny(u8, body, "\n");
+    while (iter.next()) |line| {
+        if (line.len < 2) continue;
+        if (std.mem.indexOf(u8, line, "\"event\": \"declared\"") == null and
+            std.mem.indexOf(u8, line, "\"event\":\"declared\"") == null) continue;
+        var id_needle_buf: [128]u8 = undefined;
+        const id_needle = std.fmt.bufPrint(&id_needle_buf, "\"id\": \"{s}\"", .{id}) catch continue;
+        if (std.mem.indexOf(u8, line, id_needle) == null) {
+            const id_needle2 = std.fmt.bufPrint(&id_needle_buf, "\"id\":\"{s}\"", .{id}) catch continue;
+            if (std.mem.indexOf(u8, line, id_needle2) == null) continue;
+        }
+        const a_marker = "\"action\": \"";
+        const a_marker2 = "\"action\":\"";
+        const a_start = blk: {
+            if (std.mem.indexOf(u8, line, a_marker)) |p| break :blk p + a_marker.len;
+            if (std.mem.indexOf(u8, line, a_marker2)) |p| break :blk p + a_marker2.len;
+            return null;
+        };
+        // Action value is a JSON-escaped string; walk until unescaped closing quote.
+        var i: usize = a_start;
+        while (i < line.len) : (i += 1) {
+            if (line[i] == '\\') {
+                i += 1;
+                continue;
+            }
+            if (line[i] == '"') return try allocator.dupe(u8, line[a_start..i]);
+        }
+        return null;
+    }
+    return null;
+}
+
 /// Slurp the entire resolved ledger file. Returns an owned []u8 (empty when
 /// the file doesn't exist). 16 MiB cap is way above the largest ledger ever
 /// observed (the global ledger is ~3 MB after months of use).
