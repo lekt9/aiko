@@ -995,6 +995,67 @@ pub fn recordIterationWithHash(
     allocator.free(path);
 }
 
+/// Compute the canonical message hashed for output_signature:
+///   sha256(id || event_kind || wave_decimal || payload || ts)
+/// `payload` is the event-specific bytes (proof for satisfied,
+/// cause for died). All concatenated as raw bytes; result is 32 bytes.
+/// This is the terminal-event analogue of lineage.signingDigest.
+fn outputSigningDigest(
+    id: []const u8,
+    event_kind: []const u8,
+    wave: u32,
+    payload: []const u8,
+    ts: []const u8,
+    out: *[32]u8,
+) void {
+    var wave_buf: [16]u8 = undefined;
+    const wave_str = std.fmt.bufPrint(&wave_buf, "{d}", .{wave}) catch "?";
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update(id);
+    hasher.update(&.{0});
+    hasher.update(event_kind);
+    hasher.update(&.{0});
+    hasher.update(wave_str);
+    hasher.update(&.{0});
+    hasher.update(payload);
+    hasher.update(&.{0});
+    hasher.update(ts);
+    hasher.final(out);
+}
+
+/// Sign a terminal event (satisfied/died) with the contract's derived
+/// keypair. Returns the 128-char hex signature (caller-owned) or null
+/// when the root key cannot be resolved (constrained env). Per Lewis
+/// 2026-05-26 "treat the binary signed signatures of outputs as the
+/// hash" — the signature IS the pointer-to-truth for the cache layer,
+/// not a content digest of arbitrary bytes.
+fn signOutput(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+    event_kind: []const u8,
+    wave: u32,
+    payload: []const u8,
+    ts: []const u8,
+) !?[]u8 {
+    const root = lineage.loadOrInitRootKey(allocator, env) catch |e| {
+        std.debug.print("signOutput: loadOrInitRootKey failed for {s}/{s}: {s} — row emitted unsigned, cache will fall back to content hash\n", .{ id, event_kind, @errorName(e) });
+        return null;
+    };
+    const kp = lineage.deriveKeyPair(root, id) catch |e| {
+        std.debug.print("signOutput: deriveKeyPair failed for {s}/{s}: {s} — row emitted unsigned, cache will fall back to content hash\n", .{ id, event_kind, @errorName(e) });
+        return null;
+    };
+    var digest: [32]u8 = undefined;
+    outputSigningDigest(id, event_kind, wave, payload, ts, &digest);
+    var sig_hex: [lineage.SIG_HEX_LEN]u8 = undefined;
+    lineage.signDigest(kp, digest, &sig_hex) catch |e| {
+        std.debug.print("signOutput: signDigest failed for {s}/{s}: {s} — row emitted unsigned, cache will fall back to content hash\n", .{ id, event_kind, @errorName(e) });
+        return null;
+    };
+    return try allocator.dupe(u8, &sig_hex);
+}
+
 /// Append a `satisfied` event row.
 pub fn markSatisfied(
     allocator: std.mem.Allocator,
@@ -1008,6 +1069,10 @@ pub fn markSatisfied(
 
     const agent = try getAgent(allocator, env);
     defer allocator.free(agent);
+
+    const payload: []const u8 = if (proof) |p| p else "";
+    const sig_opt = try signOutput(allocator, env, id, "satisfied", wave, payload, ts);
+    defer if (sig_opt) |s| allocator.free(s);
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
@@ -1023,6 +1088,10 @@ pub fn markSatisfied(
     if (proof) |p| {
         try buf.appendSlice(allocator, ", \"proof\": ");
         try writeJsonString(&buf, allocator, p);
+    }
+    if (sig_opt) |s| {
+        try buf.appendSlice(allocator, ", \"output_signature\": ");
+        try writeJsonString(&buf, allocator, s);
     }
     try buf.appendSlice(allocator, ", \"agent\": ");
     try writeJsonString(&buf, allocator, agent);
