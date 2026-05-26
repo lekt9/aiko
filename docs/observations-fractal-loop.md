@@ -1984,7 +1984,7 @@ it ships the fix. The ledger itself is now the canonical work-tracker.
 | gap-4 — 7-step Genesis harness | `a4e700c6` | neuron:gap-seven-step-harness |
 | gap-5 — tool catalog → shaper | `a5042704` | neuron:gap-tool-catalog-shaper |
 | gap-7 — cmdDrain while-loop driver | `1d46c413` | neuron:gap-cmddrain-while-loop |
-| gap-chain-walk — verify chain back to root wallet | `3f74d3cf` | neuron:gap-chain-walk-verify |
+| ~~gap-chain-walk~~ (CLOSED 2026-05-27) | ~~`3f74d3cf`~~ | walkChainToRoot bounded-depth integrity walker landed; falsifier passes |
 | ~~gap-env-prefixes~~ (SUPERSEDED 2026-05-27, pruned by parent) | ~~`7847a188`~~ | premise wrong: hardcoded prefix table binds runtime to compile time |
 | gap-env-generative — location word in plan → wrapper:<word> lookup → fallback to parent env via lineage | `379afd78` | neuron:gap-env-generative |
 | gap-payload-seal-on-write — wire payload_crypto.seal into ledger.appendRow; render-without-seeing becomes end-to-end | `2670d670` | neuron:gap-payload-seal-on-write |
