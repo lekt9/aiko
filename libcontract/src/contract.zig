@@ -1154,9 +1154,15 @@ pub fn appendCalledRow(
             if (lineage.signDigest(kp, digest, &sig_hex)) {
                 lineage.bytesToHex(&kp.public_key.bytes, &pubkey_hex);
                 signed = true;
-            } else |_| {}
-        } else |_| {}
-    } else |_| {}
+            } else |err| {
+                std.debug.print("called-row: signDigest failed for source {s}: {s} — row emitted unsigned, posthook recipients cannot verify provenance\n", .{ source_id, @errorName(err) });
+            }
+        } else |err| {
+            std.debug.print("called-row: deriveKeyPair failed for source {s}: {s} — row emitted unsigned, posthook recipients cannot verify provenance\n", .{ source_id, @errorName(err) });
+        }
+    } else |err| {
+        std.debug.print("called-row: loadOrInitRootKey failed: {s} — row emitted unsigned, posthook recipients cannot verify provenance\n", .{@errorName(err)});
+    }
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
