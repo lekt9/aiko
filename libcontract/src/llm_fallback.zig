@@ -232,34 +232,61 @@ fn writeFile(allocator: std.mem.Allocator, path: []const u8, body: []const u8) E
     }
 }
 
+/// Find the LAST balanced top-level `{...}` in the captured llama-cli
+/// output. We can't use the first one because llama-cli echoes the
+/// user prompt (which includes our system-prompt schema, with `{...}`
+/// braces and an internal "(truncated)" marker that leaves the echoed
+/// braces unbalanced). The model's actual response is always the LAST
+/// complete `{...}` in the stream.
 fn extractFirstJsonObject(haystack: []const u8) ?[]const u8 {
-    var depth: i32 = 0;
-    var start: ?usize = null;
-    var in_string = false;
-    var escape = false;
-    for (haystack, 0..) |c, i| {
-        if (in_string) {
-            if (escape) {
-                escape = false;
-            } else if (c == '\\') {
-                escape = true;
-            } else if (c == '"') {
-                in_string = false;
+    var best_start: ?usize = null;
+    var best_end: ?usize = null;
+
+    var i: usize = 0;
+    while (i < haystack.len) : (i += 1) {
+        if (haystack[i] != '{') continue;
+        // Try to scan a balanced object starting here. If it doesn't close
+        // cleanly, skip and try the next `{`.
+        var depth: i32 = 0;
+        var in_string = false;
+        var escape = false;
+        var j: usize = i;
+        while (j < haystack.len) : (j += 1) {
+            const c = haystack[j];
+            if (in_string) {
+                if (escape) {
+                    escape = false;
+                } else if (c == '\\') {
+                    escape = true;
+                } else if (c == '"') {
+                    in_string = false;
+                }
+                continue;
             }
-            continue;
+            switch (c) {
+                '"' => in_string = true,
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if (depth == 0) {
+                        best_start = i;
+                        best_end = j + 1;
+                        // Advance the outer scan past this object — it might
+                        // be followed by ANOTHER complete object (in which
+                        // case the latter wins), but never re-enter this one.
+                        i = j;
+                        break;
+                    }
+                },
+                else => {},
+            }
         }
-        switch (c) {
-            '"' => in_string = true,
-            '{' => {
-                if (depth == 0) start = i;
-                depth += 1;
-            },
-            '}' => {
-                depth -= 1;
-                if (depth == 0 and start != null) return haystack[start.? .. i + 1];
-            },
-            else => {},
-        }
+        // If we hit EOF without closing, just move on; the outer `i += 1`
+        // (via `: (i += 1)` continue) advances past this `{`.
+    }
+
+    if (best_start) |s| {
+        if (best_end) |e| return haystack[s..e];
     }
     return null;
 }
