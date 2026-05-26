@@ -3019,7 +3019,7 @@ fn cmdOpenAi(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
     var tool_calls_json: ?[]u8 = null;
     defer if (tool_calls_json) |t| allocator.free(t);
     const result_text = blk: {
-        const body_json = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, null, null, null, null, null, null, null) catch |e| {
+        const body_json = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, null, null, null, null, null, null) catch |e| {
             const msg = switch (e) {
                 error.PaymentRequired => "i'm gated by an x402 paywall right now — set AIKO_X_PAYMENT (signed Solana x402 envelope) or route through a wrangler proxy that injects it",
                 error.NoUnbrowseBase => "no UNBROWSE_BASE configured — point me at an aiko-compatible upstream",
