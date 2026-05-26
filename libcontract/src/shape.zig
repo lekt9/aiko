@@ -121,17 +121,7 @@ pub fn validateShape(
         const action_v = obj.get("action") orelse return ShapeError.MissingAction;
         if (action_v != .string or action_v.string.len == 0) return ShapeError.MissingAction;
         const action = action_v.string;
-        // Compare against pointer.zig's inferPointerType set. If the
-        // returned type is "cli" but the action doesn't start with
-        // an actual CLI shape (curl/http/wget) we reject — bare "cli"
-        // is the default fallthrough and means "unknown prefix".
-        const ptype = pointer.inferPointerType(action);
-        const known = !std.mem.eql(u8, ptype, "cli") or
-            std.mem.startsWith(u8, action, "curl ") or
-            std.mem.startsWith(u8, action, "wget ") or
-            std.mem.startsWith(u8, action, "http://") or
-            std.mem.startsWith(u8, action, "https://");
-        if (!known) return ShapeError.UnknownActionPrefix;
+        if (!pointer.isKnownAction(action)) return ShapeError.UnknownActionPrefix;
         shape.action = action;
 
         const layer_v = obj.get("layer") orelse return ShapeError.LayerOutOfRange;
