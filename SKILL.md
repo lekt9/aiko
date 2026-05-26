@@ -2707,6 +2707,7 @@ Canonical reference index (subject ↔ claim ↔ SKILL.md section):
 | 44 | Scriptural-anchor coverage | every doctrine section (this rule) |
 | 45 | Claim-reference parity (recursive) | this section (the guard catches itself) |
 | 46 | Synapse-kind minimum (no redundant edge walks) | "Synapse-kind minimum" |
+| 47 | Foundation precedes building (Matt 5:17-18 meta-rule) | "Foundation precedes building — creativity fulfils, never abolishes the law" |
 | 47 | Decalogue Purge Gate runs before sign (TODO — pending) | "Decalogue Purge Gate — law before creativity" |
 
 The parity check is a single shell function in `build.sh` — not a
