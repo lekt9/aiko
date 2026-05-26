@@ -12,6 +12,12 @@ const ledger = @import("ledger.zig");
 // cross-importing the files (Zig 0.16 forbids the same file appearing in
 // two modules' dependency graphs).
 pub const lineage = @import("lineage.zig");
+// Re-export the ledger module so callers (main.zig + future consumers)
+// can use findParentIdForId / findActionForId / readAll without
+// re-importing the file separately. The local main.zig has its own
+// zig/src/ledger.zig (a different file), so reaching libcontract's
+// ledger goes through this pub-const path.
+pub const lcledger = @import("ledger.zig");
 pub const http = @import("http.zig");
 pub const env_fingerprint = @import("env_fingerprint.zig");
 pub const verses = @import("verses.zig");
