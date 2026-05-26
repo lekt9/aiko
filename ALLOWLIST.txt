@@ -17,6 +17,8 @@ aiko
 aiko.sig
 build.sh
 contract
+contract-server
+contract-server.sig
 contract.sig
 dist.sh
 sync-outline-explainer.sh
