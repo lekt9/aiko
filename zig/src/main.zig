@@ -3571,7 +3571,7 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             // layer behavior: same plan + same cwd + same referenced files
             // + same parent → cached id; any layer changes → fresh id.
             const cid = try contract.declare(allocator, env, safe_plan, action, .{
-                .parent_id = parent,
+                .parent_id = null,
                 .inputs_file_refs_digest = file_refs_digest_opt,
             });
             defer allocator.free(cid);
