@@ -1922,6 +1922,42 @@ The parity invariant (claim 39 in build.sh) refuses to sign a binary
 whose SKILL.md drops this section — the doctrine of recursive
 self-interrogation cannot decay silently.
 
+### Implementation status (honest gap, surfaced not silent)
+
+Per the "fallbacks visible, never silent" invariant, the substrate
+surfaces where the rule is mechanically enforced vs where it is
+still aspirational:
+
+```
+✅ Doctrine layer        — SKILL.md carries this section (claim 39)
+✅ Parity layer          — build.sh refuses to ship without the section
+                          and the three child shape literals (claim 39)
+✅ Agent-side layer      — agents reading SKILL.md perform the
+                          interpret/verify/adjudicate decomposition
+                          in-thread on every /contract turn (demonstrated
+                          on contract 11f4643c with children 345ccdf6,
+                          50a1ded7, 81330820, f9b12e03, 715c53b4, cabd7814)
+🟡 Runtime layer (TODO)  — cloud LLM compiler is not yet updated to
+                          auto-emit interpret:<P>/verify:<P>/adjudicate:<P>
+                          on every aiko declare. Until it is, agents
+                          must do the decomposition in-thread (the
+                          agent-side layer covers the gap honestly).
+                          Tracked via the ledger-level parity claim 40.
+```
+
+The runtime-layer gap is **explicitly surfaced** rather than
+silently waiting to be discovered. The agent-side layer is not a
+permanent substitute — it is the load-bearing bridge until the
+cloud compiler ships the runtime emission. When the cloud compiler
+lands, the agent-side decomposition becomes redundant (cache_hit
+on inputs_hash idempotency); until then, **every /contract turn the
+agent reads this section MUST emit the three children in-thread**.
+
+This is the same pattern as the byte-hash legacy fallback that was
+purged: a transitional path that surfaces its own degradation,
+then deletes itself when no longer needed. The substrate refuses
+to pretend the runtime layer is wired when it isn't.
+
 ## Doctrine-Reality Parity — the substrate supervises itself
 
 Every claim in this SKILL.md has a corresponding code site. Drift
