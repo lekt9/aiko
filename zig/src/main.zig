@@ -3486,7 +3486,7 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             // thinking offline — the user never sees the transport seam.
             // GATE — only signed/attested binaries may invoke the LLM compiler.
             if (!assertBinaryIntegrityForLlm(allocator, env)) return 2;
-            const body = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, adapter, adapter_kind, event_bus, pretool_event, event_kind, null) catch |e| {
+            const body = client.declareRemoteAiko(allocator, env, safe_plan, action, null, null, null, null, null, null, null) catch |e| {
                 // Wallet-empty path (Wave-1 replacement): when the cloud
                 // 402s, the prior path compiled the goal locally with a
                 // weak Qwen 0.8B and wrote canonical rows to the on-disk
