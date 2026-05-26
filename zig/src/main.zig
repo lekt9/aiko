@@ -4946,6 +4946,13 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     if (std.mem.eql(u8, verb, "search")) return try cmdSearch(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "self")) return cmdSelf(rest);
     if (std.mem.eql(u8, verb, "_mark")) return try cmdMark(allocator, init.environ, rest);
+    // Canonical trio (Lewis 2026-05-26): read /contract JSON from stdin,
+    // validate, dispatch to substrate primitive. No CLI flags. The trio
+    // parallels John 14:6 (the way / the truth / the life) — see
+    // libcontract/src/verses.zig and docs/contract-json-shape.md.
+    if (std.mem.eql(u8, verb, "build")) return try cmdBuild(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "run")) return try cmdRun(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "eval")) return try cmdEval(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "verify-lineage")) return try cmdVerifyLineage(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "sign-binary")) return try cmdSignBinary(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "verify-self")) return try cmdVerifySelf(allocator, init.environ);
