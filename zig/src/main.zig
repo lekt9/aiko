@@ -390,10 +390,11 @@ fn bioCaptureLine(allocator: std.mem.Allocator, shell_cmd: []const u8) ![]u8 {
 }
 
 fn bioEnvironmentFingerprint(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
+    _ = env;
     const uname = bioCaptureLine(allocator, "uname -srm") catch try allocator.dupe(u8, "unknown");
     defer allocator.free(uname);
-    const shell = env.getPosix("SHELL") orelse "";
-    const term = env.getPosix("TERM") orelse "";
+    const shell: []const u8 = "";
+    const term: []const u8 = "";
     // Probe a fixed list of binding-relevant CLIs.
     const probes = [_][]const u8{ "ssh", "bash", "zsh", "docker", "python3", "node", "git", "curl", "wg", "telethon", "tg-cli", "kubectl" };
     var caps: std.ArrayList(u8) = .empty;
