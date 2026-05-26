@@ -8,7 +8,9 @@ user-invocable: true
 
 `aiko` is the user-facing substrate. There is no other USER-FACING surface
 — no second user CLI, no verb dispatch, no migration alias. The binary
-the caller invokes is always `aiko "<goal>" --remote|--local`.
+the caller invokes is `aiko "<goal>"` — optionally with `--private` when
+the goal must not leave the local machine. The vocabulary is **visibility**
+(who else can see this row), not transport (where the bits travel).
 
 `contract` (as a binary in `scripts/`) is **NOT** a second user-facing
 CLI. It is the wallet-side build/attestation tool — built from the same
