@@ -462,6 +462,146 @@ ledger rows, not as another user mode. The tunnel adapter contract
 keeps the spawned environment reachable; aiko still exposes only goal
 + mode.
 
+## Wallet & Environment Binding — the definite pattern
+
+When `/contract` binds to ANY environment (macOS, Linux, Windows, iOS,
+Android, browser, server, embedded, foreign-app-embedded), the wallet
+binding **comes with it as one inseparable unit**. There is no
+"install /contract then separately set up a wallet" two-step. The
+substrate spawns into an environment and the wallet is there.
+
+### Invisible to the user
+
+The user **never sees x402, never sees a wallet UI, never sees a
+seed phrase, never sees a payment header.** They type `aiko
+"<goal>"` (or, in an embedded app, take whatever action the host
+surfaces) and the substrate handles every cryptographic concern:
+key generation, key storage, key recovery, signature verification,
+payment header construction, faucet onramp.
+
+Any UX that surfaces "your wallet", "your seed phrase", "scan to
+fund", "approve payment" to a user who didn't explicitly ask for
+wallet UX is leaven. The wallet is the substrate's identity, not
+the user's burden.
+
+### OS-agnostic keystore via the `keystore` interface
+
+Local secret storage is abstracted behind one interface
+(`libcontract/src/keystore.zig`). The binary picks the backend at
+compile time via `builtin.os.tag`:
+
+```
+darwin   →  macOS Keychain (security CLI shellout: find/add/delete-generic-password)
+linux    →  libsecret (secret-tool CLI) → fallback: encrypted file
+windows  →  Windows Credential Manager (powershell shellout) → fallback: encrypted file
+ios      →  Keychain Services (FFI)
+android  →  Android Keystore (FFI)
+fallback →  encrypted file at $HOME/.aiko/keys/root.key.enc, passphrase
+            derived from a stable machine fingerprint (uname + machine-id
+            + binary signing pubkey)
+```
+
+The keystore interface is exactly three operations:
+
+```
+read(svc: []const u8)  -> ?[]const u8     // null = not found
+write(svc, value)      -> !void           // upsert
+delete(svc)            -> !void           // best-effort
+```
+
+Each backend is a small shim. Adding a new platform = adding one file
+with three functions. The lineage layer doesn't know which backend
+fired — it just asks `keystore.read("aiko.root.ed25519.seed")`.
+
+### Three-tier bootstrap (every environment, same shape)
+
+Whatever the OS, root-key resolution follows the same three-tier
+ladder (extending the macOS-only version from contract `b8a4f217`):
+
+```
+1. Canonical file:  $HOME/.contracts/root.key                 (chmod 600)
+2. Mirror file:     $HOME/.aiko/keys/root.key                 (chmod 600)
+3. OS keystore:     keystore.read("aiko.root.ed25519.seed")   (platform-native)
+4. Generate fresh:  arc4random_buf → write to all three (atomic)
+```
+
+After ANY successful read, missing tiers silently back-fill. Generation
+only happens when all three miss (true first-run on a clean machine).
+
+### App-embed mode — the wallet builds itself into the app
+
+When an app embeds `/contract` (iOS app, Android app, browser
+extension, foreign CLI), the binary's bootstrap path is the same as
+on a developer's Mac — same `keystore.zig`, same three-tier ladder,
+same recovery semantics. The app does not implement wallet UX; the
+substrate's bootstrap IS the wallet UX, and it's invisible.
+
+Embedded constraint: when the app cannot expose `$HOME` (some mobile
+sandboxes), the file tiers degrade to no-op and the keystore tier
+becomes the only persistence. That's the correct substrate behavior
+— don't fight the sandbox; trust the platform keystore.
+
+### Native onramp is the cloud's obligation, not the local binary's
+
+When a fresh wallet is born, the local binary's job ends at "seed
+generated + persisted to three tiers + pubkey advertised to server".
+Funding the wallet (USDC for x402, gas, etc.) is the **server-side
+/contract endpoint's responsibility**. The server receives the
+declare → notices unfunded pubkey → triggers the onramp adapter
+contract appropriate for that user/context (Privy embedded onramp,
+Coinbase Onramp URL ride-along on the next user surface, faucet
+credit from the Foundry treasury, etc.). The client never sees the
+dance; the first declare may 402 once, then the orchestrator retries
+and it passes.
+
+This is the canonical "native onramp" pattern: **the cloud knows
+how to fund a wallet for the context it is being asked to act in,
+because adapter contracts encode that knowledge**. The local binary
+stays minimal.
+
+### Wallet rotation — `rotateRootKey` + `rotateAllSignedRowsByLineage`
+
+Rotation is two functions in `libcontract/src/lineage.zig`:
+
+```
+rotateRootKey(allocator, env)
+  // 1. Read current root (three-tier).
+  // 2. Generate new seed via arc4random_buf.
+  // 3. Sign a successor proof:
+  //      msg = "wallet_rotated|" || sha256(old_pubkey || new_pubkey || ts)
+  //      sig = sign(msg, old_identity_keypair)
+  //    This proves the rotation was authorized by whoever held the old
+  //    root — old → new is a verifiable chain.
+  // 4. Atomically write new seed to all three tiers.
+  // 5. Archive old seed to $HOME/.aiko/keys/.archived-rotated-<ts>/root.key.
+  // 6. Append wallet_rotated event to local ledger:
+  //      { event: "wallet_rotated", old_pubkey, new_pubkey,
+  //        successor_signature, rotated_at }
+
+rotateAllSignedRowsByLineage(allocator, env, old_root, new_root, ledger_path)
+  // For every row with an env_pubkey/parent_signature signed by a
+  // keypair derived from old_root + contract_id:
+  //   - Derive new_keypair = HKDF(new_root, contract_id)
+  //   - Sign the row's digest with new_keypair
+  //   - Append a `resigned` event row:
+  //       { event: "resigned", id: <row_id>,
+  //         new_env_pubkey, new_parent_signature, rotated_by: <wallet_rotated event id> }
+  // Original `declared` row is NEVER mutated (append-only invariant).
+  // Verifier prefers the latest `resigned` row over the original on lookup.
+```
+
+`rotateRootKey` alone is sufficient for forward progress (new rows
+sign with new root; old rows still verify against the pubkeys
+stored on them — signature verification is on stored pubkey, not on
+re-derived). `rotateAllSignedRowsByLineage` is the additional
+re-sign walker for the operator who wants every row's signature to
+trace to the current root.
+
+Rotation is itself a contract: declare `aiko "wallet:rotate"
+--remote`; the cloud aiko's compiler fires the local rotation
+function and orchestrates the post-rotation re-sign walker. The
+user types one short prompt; the substrate does everything.
+
 ## Ledger
 
 The Unbrowse ledger is canonical. The local on-disk ledger at
