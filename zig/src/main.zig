@@ -1837,10 +1837,6 @@ fn parseDeclare(args: []const []const u8) !DeclareArgs {
 /// cloud-declare attempt entirely and runs the one-shot lifecycle against
 /// the on-disk ledger only. Used for goals containing PII, secrets, or
 /// anything the operator explicitly does not want federated.
-///
-/// `--remote` / `--local` are accepted as deprecated aliases for backwards
-/// compatibility (legacy orchestrator patterns still pass `--remote`); the
-/// canonical flag is `--private`, and absence-of-flag means shared.
 const AikoMode = enum {
     shared,
     private_only,
