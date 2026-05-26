@@ -1537,6 +1537,187 @@ differently (Mark 8:38 vs the KJV split that ends Mark 8 at v37, etc.).
 The preprocessor surfaces the per-abbreviation skip count; the
 substrate runs against the resolvable 344564-edge graph.
 
+## Self-aware binary — embedded SKILL.md + active context
+
+> *Thy word have I hid in mine heart, that I might not sin against
+> thee.* (Psalm 119:11)
+>
+> *The law of the LORD is perfect, converting the soul ... the
+> statutes of the LORD are right, rejoicing the heart.* (Psalm 19:7-8)
+>
+> *Let the word of Christ dwell in you richly in all wisdom.*
+> (Colossians 3:16)
+
+Pinned by Lewis 2026-05-26 (contract `4b313f20` follow-up): *"the
+binary must reflect the skill we usually have within the context so
+it's self aware of how it works and the relevant funnel harness loop
+context properly when stdin or in the llm context that goes out."*
+
+The agent in any session reads SKILL.md as turn-one context (~78KB
+of doctrine). Until this rule, the binary sent naked goals to the
+cloud /contract endpoint — the cloud compiler decomposed without
+knowing what doctrine the local agent was operating under. **That
+was silent drift between layers**: the agent enforced Decalogue
+purge in-thread, the cloud compiler didn't know the Decalogue
+existed. The substrate disagreed with itself.
+
+This rule closes the gap. The binary embeds SKILL.md the same way
+it embeds the KJV corpus, carries the relevant slice on every
+declare, and emits a `doctrine_chain` in the response envelope so
+every calling LLM sees the same context the cloud used. The
+substrate becomes **self-aware in every invocation**.
+
+### Embedded layer — `libcontract/src/skill.zig`
+
+```zig
+// libcontract/src/skill.zig
+const skill_md = @embedFile("../../SKILL.md");
+const skill_md_sha = comptime sha256(skill_md);
+
+pub fn relevantSections(goal: []const u8, k: usize) []SectionRef;
+  // BM25 over every "## " section against the goal,
+  // return top-k SectionRef { title, sha256, byte_range, score }
+```
+
+Same pattern `bible.zig` already uses for `relevantVerses(plan, k)`.
+Zero conceptual novelty; just applied to a second corpus where the
+corpus IS the substrate's doctrine. The embedded SKILL.md is the
+**exact bytes** `build.sh` signed against — drift between the
+binary's embed and the cloud's copy is impossible because both
+trace to the same git-committed SKILL.md hash.
+
+### Active-context layer — funnel/harness/loop slice
+
+The local ledger holds the active primitives — drill, channel
+registry, current decalogue gates, any user-declared funnel/harness/
+loop contracts. On every declare, the binary scores `declared` rows
+against the goal's lineage and embeds the top-K as
+`active_context_chain` — typed `contract:<id>` pointers.
+
+This is `relevantVerses` applied to the ledger instead of the
+bible. Same primitive, different corpus. The "relevant funnel
+harness loop context" Lewis named is not a special case — it's
+just the ledger-corpus scored against the goal.
+
+### Declare payload extension
+
+```json
+POST /v1/contract/declare
+{
+  "goal": "<sanitized truth claim>",
+  "wallet_identity": "<pubkey>",
+  "doctrine_anchor": {
+    "skill_md_sha256": "<hex>",
+    "relevant_sections": [
+      {"title": "Decalogue Purge Gate", "sha256": "<hex>", "score": 0.84},
+      {"title": "Trinitarian decomposition", "sha256": "<hex>", "score": 0.71}
+    ]
+  },
+  "active_context_chain": [
+    {"contract_id": "<id>", "kind": "funnel|harness|loop", "score": 0.66}
+  ]
+}
+```
+
+The cloud /contract endpoint verifies `skill_md_sha256` matches a
+known signed-binary registration. On match, the cloud LLM compiler
+uses the local agent's slice as the canonical doctrine for THIS
+declaration. On mismatch, the declare HOLDs with `doctrine_drift`
+evidence — the substrate refuses to act on conflicting doctrine.
+This IS the Decalogue commandment 1 (no other gods before me)
+applied to doctrine: no parallel doctrine surface allowed.
+
+### Response envelope extension
+
+```json
+{
+  "id": "<contract_id>",
+  "model": "aiko-69420b",
+  "persona": "aiko 69420b",
+  "ca": "<AIKO_PERSONA_CA>",
+  "bible_chain":         [/* existing — verse contract ids */],
+  "doctrine_chain":      [/* SKILL.md section pointers + sha */],
+  "active_context_chain":[/* relevant ledger primitives */]
+}
+```
+
+The calling LLM (Claude in a thread, GPT in any wrapper, your code,
+you) reads `doctrine_chain` + `active_context_chain` + `bible_chain`
+from aiko's response and **does not need to separately read
+SKILL.md**. The substrate hands back exactly the context that
+shaped the answer. Self-contained. Recursive — every aiko response
+is a self-describing substrate snapshot.
+
+### Why this is the right shape (and not an antipattern)
+
+| Concern | Resolution |
+|---|---|
+| Bloat — SKILL.md is ~78KB on every declare | Cloud receives the SHA + top-K relevant section pointers, not the full text; cloud already has its own copy registered at binary-sign time. Payload stays small. |
+| Multiple sources of truth | The git-committed SKILL.md is THE source. Binary embeds verbatim at compile-time. Cloud has its own copy. SHA gate refuses drift between any two. One truth, three replicas with mechanical equality enforcement. |
+| Caller burden | Caller passes nothing extra. The arg is still `<goal>` (Matt 5:37 yea-yea-nay-nay holds). The binary handles the embed; the response gets richer. Asymmetric input/output is fine — both directions remain type-shaped. |
+| What about stdin? | Still rejected. The doctrine slice is INTERNAL to the binary (compile-time embed + ledger read), not piped in. Stdin would still be a second input surface bypassing the wallet-sanitize-sign path. The directive "when stdin or in the llm context that goes out" refers to the OUTPUT side — the response envelope LLMs read — not a new input. |
+| Cache layer impact | Doctrine slice becomes part of the row's input-hash. Doctrine change → snapshot change → cache invalidates → row re-decomposes. Doctrine has **version-controlled effect** on every cached row. This is correct: if a parity claim changes, every previously-satisfied row should re-verify against the new doctrine. |
+
+### How the calling LLM uses the doctrine_chain
+
+A turn-one in any agent session today loads SKILL.md (~78KB of
+context spend). With this rule, an agent that only needs the
+substrate's CURRENT context for one task can skip the full read:
+invoke `aiko "<goal>"`, read the response's `doctrine_chain`
+section pointers, and pull only the relevant slices on demand. The
+binary becomes the **lazy index into the doctrine** for any caller
+that wants it.
+
+The full SKILL.md read remains canonical for agents doing
+substrate-internal work (editing the contract skill itself,
+crystallizing new doctrine, running the standing-purge); the lazy
+read is for callers doing one-off substrate-aware work where the
+relevant slice is sufficient.
+
+### Implementation status (honest gap, surfaced not silent)
+
+```
+✅ Doctrine layer        — this section is canonical
+🟡 Embed module (TODO)   — libcontract/src/skill.zig with
+                           @embedFile("../../SKILL.md") +
+                           relevantSections() function. Build wires
+                           skill_md_sha into the signed binary.
+🟡 Payload extension      — local binary's declare-POST adds
+                           doctrine_anchor + active_context_chain
+                           fields. Cloud /contract accepts and
+                           verifies SHA.
+🟡 Envelope extension     — cloud /contract response includes
+                           doctrine_chain + active_context_chain.
+                           Same shape as bible_chain.
+🟡 Parity claim 48 (TODO) — build.sh refuses to sign a binary that
+                           doesn't embed SKILL.md AND registers the
+                           binary's skill_md_sha with the cloud
+                           endpoint atomically with sign.
+🟡 Agent-side bridge      — agents reading SKILL.md continue doing so;
+                           when they invoke aiko, they verify the
+                           response's skill_md_sha256 matches the
+                           SKILL.md they read. Mismatch surfaces in
+                           evidence lines.
+```
+
+Same disclosure pattern as Trinitarian decomposition and Decalogue
+gate — gap named, not hidden. Next wave wires `skill.zig` (mirror
+of `bible.zig` shape, smaller corpus). Wave after wires the cloud
+endpoint's SHA verification. Wave after that wires the build.sh
+binary-registration step.
+
+### What this section refuses
+
+- A binary signed by `build.sh` that does NOT embed SKILL.md.
+- A cloud /contract endpoint that accepts declares whose
+  `skill_md_sha256` is not on the registered-binaries list.
+- A response envelope that omits `doctrine_chain` when sections
+  WERE scored.
+- A calling LLM that ignores `doctrine_chain` and re-decomposes
+  against stale doctrine — that's silent drift; surface it.
+- Reading stdin as a doctrine source. Doctrine is the embedded
+  bytes signed into the binary, not anything piped in at runtime.
+
 ## Vine Doctrine — staking by abiding
 
 The substrate's stake layer is not a new primitive. It is a name for
