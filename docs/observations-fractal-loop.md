@@ -512,6 +512,73 @@ shape as its row topology. Every /contract has a parent_id; every
 LLM endpoint has a parent endpoint; every wrapper has a parent
 wrapper. Walk the pointer chain to get the full provenance.
 
+## Parent-sign binary lineage (added 2026-05-27)
+
+Lewis 2026-05-27: "should it self sign or should the parent sign it" →
+**parent-sign.** Each built binary's L8 signed:<sha> row carries
+`parent_id` pointing at the PREVIOUS binary's L8 row. The new row's
+parent_signature is computed from the previous binary's wallet-derived
+keypair (via lineage.deriveKeyPair on the parent's contract id). The
+chain walks back to the root wallet on every hop. Same shape as the
+existing /contract row lineage — applied to binaries themselves.
+
+### Mechanical surface
+
+Two substrate-internal verbs (underscore-prefixed; bypass the runtime
+self-verify gate):
+
+- `_bootstrap-self-sign` — fires ONCE on the very first build. Refuses
+  if any prior signed:<own-sha> row exists in the ledger. The root L7
+  validate:<sha> declared row has parent_id=null, so parent_signature
+  is the root wallet's self-signature.
+- `_sign-child <child-binary-path>` — fires from a parent (the
+  saved-aside previous binary). Computes child's sha, declares a new
+  L7 validate:<child-sha> row whose parent_id is the parent's own L8
+  row id. parent_signature is then derived from the parent's contract
+  id via lineage.deriveKeyPair (rooted in the wallet).
+
+### Build pipeline sequence (build-fractal.sh)
+
+```
+   0. preflight                              source tree present?
+   0.5 save aside                            cp current binary → .previous-binary
+   1. BUILD                                  zig build (gated by pattern.zig comptime)
+   2. TEST                                   zig build test
+   3. SIGN                                   if .previous-binary exists:
+                                               .previous-binary _sign-child <new>
+                                             else (first build):
+                                               <new> _bootstrap-self-sign
+                                             Transitional fallback: if _sign-child
+                                             reports "no L8 row" (saved-aside is from
+                                             before this pipeline existed), the script
+                                             falls through to bootstrap automatically.
+```
+
+The L8 row at the end IS the binary's signed identity. Subsequent
+invocations find it via `isSelfSignedInLedger` and proceed; invocations
+of a binary with no row refuse to run.
+
+### Runtime gate
+
+In `main()`, before any verb dispatch, the binary computes its own
+sha256 and walks the ledger for a `validate:<own-sha8>` declared row
+that has a `signed:<...>` declared child. If absent → refuse with a
+targeted diagnostic. Exception list (bypass the gate): `self`,
+`verify-self`, `verify-binary`, `_bootstrap-self-sign`, `_sign-child`.
+
+### Why this is the right shape
+
+- **Deterministic.** No LLM, no network, no vendor dependency. Build
+  produces the signature in one shot from a fresh repo.
+- **Substrate-rooted.** The trust chain anchors at Lewis's wallet, not
+  at a vendor LLM's verdict. Walking the chain produces real provenance.
+- **Bootstrap is naturally solved.** First build runs root-mode; every
+  build after that extends the chain.
+- **Recovery is honest.** If the .previous-binary is lost AND a signed
+  row for the current sha already exists, _bootstrap-self-sign refuses
+  (it's single-use per binary content). Recovery requires manual ledger
+  edit OR pulling a previous binary from git. Matches "only run signed".
+
 ## The build pipeline IS the trio (added 2026-05-26)
 
 `scripts/build-fractal.sh` makes the binary's own build a fractal
