@@ -422,9 +422,44 @@ or it's not on the substrate.
 for substrate transport, no mode enums with multiple cases, no opt-in
 flags on the chat path, no factory that picks an implementation by
 env. Where reality requires a fallback (cloud endpoint not yet
-deployed), the fallback is silently chained inside one class — the
-caller cannot see or configure it. When the fallback is no longer
-needed, it is deleted in one commit, not flipped by configuration.
+deployed, native keystore unavailable, file tier missing), the
+fallback is **transparently chained with an evidence line to
+stderr** — the caller doesn't need to configure or even know about
+the fallback, but observers (the orchestrator, telemetry, a watching
+human) ALWAYS see when a non-primary path engaged. When the fallback
+is no longer needed, it is deleted in one commit, not flipped by
+configuration.
+
+**Fallbacks are visible, never silent.** This is the
+non-negotiable observability invariant. Every degradation path
+(`backfillMirrors` failure, keystore backend failure → encrypted
+file, file tier missing → mirror tier served, wallet first-run
+generation, rotation archive failure, etc.) emits ONE line to
+stderr in the canonical evidence shape:
+
+```
+<topic>: <what happened> — <consequence-if-any>
+```
+
+Examples that fire during normal operation:
+
+```
+wallet: canonical tier missing at <path>, served from mirror tier <path>
+wallet: both file tiers missing, served from OS keystore (svc=aiko.root.ed25519.seed)
+wallet: FIRST RUN — generating fresh ed25519 root seed (no existing material in canonical/mirror/keystore tiers)
+wallet: fresh root persisted to <path> (chmod 600); mirror + keystore back-filled best-effort
+keystore: darwin write failed for svc=X: <err> — falling back to encrypted file
+keystore: linux secret-tool unavailable (<err>) — falling back to encrypted file for svc=X
+keystore: windows backend is a STUB — using fallback encrypted file for svc=X
+wallet: rotation archive FAILED (rotation proceeds): <err> — old seed bytes are NOT preserved for HKDF re-derivation
+```
+
+Silent `catch {}` is an anti-pattern. The fallback STILL fires (the
+substrate doesn't break) but it MUST surface, because a silent
+fallback hides degradation until something else breaks downstream
+and the cause is invisible. The evidence lines are the substrate's
+proprioception — they tell observers which tier is bearing weight
+right now.
 
 Aiko truth is metric-gated. A node resolves true only when the declared goal is
 true against evaluator aikos bound to external metrics, ledger metrics, or API
