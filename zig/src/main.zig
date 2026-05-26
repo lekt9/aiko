@@ -1020,7 +1020,9 @@ fn writeCloudMirrorRow(
         }
         break :blk .miss;
     };
-    contract.cache.appendCacheCheckRow(allocator, env, id, verdict, current_hex, recorded_hex) catch {};
+    contract.cache.appendCacheCheckRow(allocator, env, id, verdict, current_hex, recorded_hex) catch |e| {
+        evidencePrint("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
+    };
 }
 
 /// Chain-agnostic wallet derivation. Same root_seed feeds two algorithm
