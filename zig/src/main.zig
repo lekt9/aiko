@@ -761,18 +761,6 @@ fn hasGuardRow(rows: []const Row, source_id: []const u8) bool {
     return false;
 }
 
-fn lastInputHash(rows: []const Row, cid: []const u8) ?[]const u8 {
-    var i: usize = rows.len;
-    while (i > 0) : (i -= 1) {
-        const r = rows[i - 1];
-        if (!std.mem.eql(u8, r.id, cid)) continue;
-        if (!std.mem.eql(u8, r.event, "iterated")) continue;
-        if (r.input_hash.len == 0) continue;
-        return r.input_hash;
-    }
-    return null;
-}
-
 fn declaredRow(rows: []const Row, cid: []const u8) ?Row {
     var i: usize = rows.len;
     while (i > 0) : (i -= 1) {
@@ -782,76 +770,6 @@ fn declaredRow(rows: []const Row, cid: []const u8) ?Row {
         return r;
     }
     return null;
-}
-
-fn computeInputHash(allocator: std.mem.Allocator, rows: []const Row, cid: []const u8, depth: u8) ![INPUT_HASH_HEX_LEN]u8 {
-    var out_hex: [INPUT_HASH_HEX_LEN]u8 = undefined;
-    if (depth > 32) {
-        // Cycle guard. Hash just the id deterministically.
-        var h: [32]u8 = undefined;
-        Blake2s256.hash(cid, &h, .{});
-        lineage_lib.bytesToHex(&h, &out_hex);
-        return out_hex;
-    }
-    var hasher = Blake2s256.init(.{});
-    const r = declaredRow(rows, cid) orelse {
-        // Unknown contract — hash the bare id; treat it as a stable leaf.
-        var h: [32]u8 = undefined;
-        Blake2s256.hash(cid, &h, .{});
-        lineage_lib.bytesToHex(&h, &out_hex);
-        return out_hex;
-    };
-    hasher.update(r.plan);
-    hasher.update(&.{0});
-    hasher.update(r.action);
-    hasher.update(&.{0});
-
-    // Collect direct child ids, sort them so the hash is determinate
-    // regardless of declaration order.
-    const child_ids = try childIds(allocator, rows, cid);
-    defer allocator.free(child_ids);
-    var sorted = try allocator.alloc([]const u8, child_ids.len);
-    defer allocator.free(sorted);
-    for (child_ids, 0..) |c, i| sorted[i] = c;
-    std.mem.sort([]const u8, sorted, {}, struct {
-        fn lt(_: void, a: []const u8, b: []const u8) bool {
-            return std.mem.order(u8, a, b) == .lt;
-        }
-    }.lt);
-    for (sorted) |child| {
-        // Each child contributes ONE "layer" to the parent's hash — Docker-
-        // image style. The layer bytes are (child_id ‖ child_recursive_hash
-        // ‖ child_resolution_state ‖ child_terminal_input_hash). When the
-        // child satisfies/dies/iterates, the resolution_state byte flips,
-        // the layer hash flips, the parent's snapshot drifts, cache_check
-        // misses, and the parent re-evaluates. Pointer-keyed truthy cache
-        // (Lewis 2026-05-26 Granola 988cf805) — "the image layers are all
-        // resolving kv style to pointers that resolve to true against
-        // itself". The byte alphabet is intentionally small + opaque so
-        // future terminal kinds extend cleanly:
-        //   'S' satisfied | 'D' died | 'P' pending (declared, not terminal)
-        const child_hex = try computeInputHash(allocator, rows, child, depth + 1);
-        hasher.update(child);
-        hasher.update(&.{0});
-        hasher.update(&child_hex);
-        hasher.update(&.{0});
-        const state_byte: u8 = if (isSatisfied(rows, child))
-            'S'
-        else if (isDead(rows, child))
-            'D'
-        else
-            'P';
-        hasher.update(&[_]u8{state_byte});
-        hasher.update(&.{0});
-        if (lastInputHash(rows, child)) |term_hash| {
-            hasher.update(term_hash);
-        }
-        hasher.update(&.{0});
-    }
-    var digest: [32]u8 = undefined;
-    hasher.final(&digest);
-    lineage_lib.bytesToHex(&digest, &out_hex);
-    return out_hex;
 }
 
 /// Check if `cid` appears anywhere in the local ledger as a declared row.
