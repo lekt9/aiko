@@ -2939,6 +2939,20 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
     const cid = try contract.declare(allocator, env, d.plan, action, .{ .parent_id = null });
     defer allocator.free(cid);
     outPrint("{s}\n", .{cid});
+    // Every word in the plan is itself a /contract — fan out one
+    // `word:<tok>` child per unique token, lineage-signed under cid.
+    // The substrate is recursive: a sentence-contract is a /contract of
+    // /contracts that are words. Cache hits via inputs_hash_v2 make
+    // repeat emissions idempotent. Failures here must not invalidate
+    // the parent declared row, so we swallow the error.
+    if (contract.words.emitWordChildren(allocator, env, cid, d.plan)) |stats| {
+        evidencePrint(
+            "words: emitted={d} skipped={d} failed={d}\n",
+            .{ stats.emitted, stats.skipped, stats.failed },
+        );
+    } else |e| {
+        evidencePrint("words skipped: {s}\n", .{@errorName(e)});
+    }
     // Materialize binary if CONTRACT_BINARY_TARGET is declared. Every new
     // contract can spawn its own signed thin-client at the declared target.
     bioMaterializeBinary(allocator, env, cid) catch |e| {
