@@ -493,17 +493,24 @@ pub fn rotateRootKey(allocator: std.mem.Allocator, env: std.process.Environ) !Ro
     var sig_hex: [SIG_HEX_LEN]u8 = undefined;
     try signDigest(old_kp, digest, &sig_hex);
 
-    // 8. Archive prior canonical seed (best-effort).
-    archiveRoot(allocator, home, canonical, rotated_at) catch {};
+    // 8. Archive prior canonical seed (best-effort, but surface failures —
+    //    rotation succeeds without it; observer learns the recovery path is
+    //    degraded so they can intervene before the next rotation).
+    archiveRoot(allocator, home, canonical, rotated_at) catch |e|
+        surface("rotation archive FAILED (rotation proceeds): {s} — old seed bytes are NOT preserved for HKDF re-derivation", .{@errorName(e)});
 
     // 9. Atomic three-way write: canonical FIRST (authoritative). Mirror +
     //    keystore are best-effort. If canonical write fails, we leave the
     //    prior root in place across all three tiers — no half-rotated state.
     try writeHexFile(allocator, canonical, &new_root);
-    backfillMirrors(allocator, &new_root, canonical, mirror) catch {};
+    backfillMirrors(allocator, &new_root, canonical, mirror) catch |e|
+        surface("rotation backfill of mirror/keystore FAILED: {s} — new root lives only in canonical tier", .{@errorName(e)});
 
     // 10. Append wallet_rotated ledger row (signed by OLD identity sig).
-    appendWalletRotatedRow(allocator, env, &old_pubkey_hex, &new_pubkey_hex, &sig_hex, rotated_at) catch {};
+    appendWalletRotatedRow(allocator, env, &old_pubkey_hex, &new_pubkey_hex, &sig_hex, rotated_at) catch |e|
+        surface("wallet_rotated ledger row append FAILED: {s} — rotation effective in-memory but unrecorded; replay-recovery will be ambiguous", .{@errorName(e)});
+
+    surface("ROTATED root key: old_pubkey={s} → new_pubkey={s} (successor proof attached to ledger event)", .{ old_pubkey_hex[0..16], new_pubkey_hex[0..16] });
 
     return .{
         .old_pubkey_hex = old_pubkey_hex,
