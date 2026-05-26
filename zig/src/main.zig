@@ -3099,12 +3099,49 @@ fn cmdOpenAi(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
     const humanized = try humanizePersona(allocator, result_text);
     defer allocator.free(humanized);
 
+    // Bible-chain: score the user prompt against bible.zig's open corpus and
+    // emit verse contract ids derived from the deployer root. The cloud
+    // aiko may override the chain in its actual response; this is the
+    // local default. Failure is non-fatal (emit empty chain, surface to
+    // stderr) — bible_chain is observability, not flow control.
+    const bible_chain = buildBibleChain(allocator, env, safe_plan) catch |e| blk: {
+        var ebuf: [256]u8 = undefined;
+        const ln = std.fmt.bufPrint(&ebuf, "bible: chain build failed ({s}); emitting empty chain\n", .{@errorName(e)}) catch break :blk @as([]u8, &.{});
+        _ = std.c.write(std.c.STDERR_FILENO, ln.ptr, ln.len);
+        break :blk try allocator.dupe(u8, "[]");
+    };
+    defer allocator.free(bible_chain);
+
     if (wants_stream) {
-        try writeOpenAiStream(allocator, humanized);
+        try writeOpenAiStream(allocator, humanized, bible_chain);
     } else {
-        try writeOpenAiCompletionExt(allocator, humanized, tool_calls_json);
+        try writeOpenAiCompletionExt(allocator, humanized, tool_calls_json, bible_chain);
     }
     return 0;
+}
+
+/// Construct the bible_chain JSON array: top-K bible refs for the prompt,
+/// each carrying its verse_idx and HKDF-derived 16-hex contract id.
+/// Returns "[]" on no relevant verses. Caller frees.
+fn buildBibleChain(allocator: std.mem.Allocator, env: std.process.Environ, prompt: []const u8) ![]u8 {
+    const bible = @import("contract").bible;
+    const root = try lineage_lib.loadOrInitRootKey(allocator, env);
+    const refs = try bible.relevantVerses(allocator, prompt, 3);
+    defer allocator.free(refs);
+
+    var buf: std.ArrayList(u8) = .empty;
+    errdefer buf.deinit(allocator);
+    try buf.append(allocator, '[');
+    for (refs, 0..) |r, i| {
+        if (i > 0) try buf.append(allocator, ',');
+        var rbuf: [64]u8 = undefined;
+        const rs = try bible.formatRef(r, &rbuf);
+        var id_hex: [16]u8 = undefined;
+        try bible.verseId(root, r, &id_hex);
+        try buf.writer(allocator).print("{{\"ref\":\"{s}\",\"verse_idx\":{d},\"id\":\"{s}\"}}", .{ rs, r.verse_idx, id_hex[0..] });
+    }
+    try buf.append(allocator, ']');
+    return try buf.toOwnedSlice(allocator);
 }
 
 /// SSE-shaped chunked emission. Each chunk is one line "data: {json}\n\n"
