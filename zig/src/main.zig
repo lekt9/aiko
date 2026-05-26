@@ -3138,7 +3138,9 @@ fn buildBibleChain(allocator: std.mem.Allocator, env: std.process.Environ, promp
         const rs = try bible.formatRef(r, &rbuf);
         var id_hex: [16]u8 = undefined;
         try bible.verseId(root, r, &id_hex);
-        try buf.writer(allocator).print("{{\"ref\":\"{s}\",\"verse_idx\":{d},\"id\":\"{s}\"}}", .{ rs, r.verse_idx, id_hex[0..] });
+        const entry = try std.fmt.allocPrint(allocator, "{{\"ref\":\"{s}\",\"verse_idx\":{d},\"id\":\"{s}\"}}", .{ rs, r.verse_idx, id_hex[0..] });
+        defer allocator.free(entry);
+        try buf.appendSlice(allocator, entry);
     }
     try buf.append(allocator, ']');
     return try buf.toOwnedSlice(allocator);
