@@ -66,22 +66,12 @@ const SYSTEM_PROMPT =
     \\Every node and evaluator is an aiko declaration prompt. A goal is true only when its evaluator metrics resolve true. No prose outside JSON.
 ;
 
-/// Env vtable matching what other libcontract modules expect.
-pub const Env = struct {
-    posix: *const fn (ctx: *anyopaque, key: []const u8) ?[]const u8,
-    ctx: *anyopaque,
-
-    pub fn getPosix(self: Env, key: []const u8) ?[]const u8 {
-        return self.posix(self.ctx, key);
-    }
-};
-
 /// Public entry: produce the local-LLM-compiled AikoCompiledContract JSON
 /// for `plan`, or null if local compile is unavailable on this platform.
 /// Caller owns the returned slice.
 pub fn compileLocallyJson(
     allocator: std.mem.Allocator,
-    env: Env,
+    env: std.process.Environ,
     plan: []const u8,
 ) Error!?[]u8 {
     const home = env.getPosix("HOME") orelse return Error.HomeMissing;
