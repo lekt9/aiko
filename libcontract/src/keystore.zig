@@ -66,26 +66,45 @@ pub const KeystoreError = error{
 
 /// Read the secret stored under `svc`. Returns `null` when not found.
 /// Caller frees the returned slice using the same allocator passed in.
+///
+/// Fall-through to the fallback encrypted file is ALWAYS surfaced to stderr
+/// so observers see when the native keystore was bypassed (machine-bound .enc
+/// file is not portable — surfacing matters for recovery / debugging).
 pub fn read(allocator: std.mem.Allocator, svc: []const u8) !?[]u8 {
     try validateSvc(svc);
     switch (builtin.os.tag) {
         .macos => {
             if (try darwinRead(allocator, svc)) |v| return v;
-            return try fallbackRead(allocator, svc);
+            // Darwin keychain returned no entry — try the fallback file before
+            // declaring not-found. If the fallback hits, surface it.
+            if (try fallbackRead(allocator, svc)) |v| {
+                surface("darwin keychain missed svc={s}, served from fallback encrypted file", .{svc});
+                return v;
+            }
+            return null;
         },
         .linux => {
             if (linuxRead(allocator, svc)) |maybe| {
                 if (maybe) |v| return v;
-                return try fallbackRead(allocator, svc);
-            } else |_| {
+                if (try fallbackRead(allocator, svc)) |v| {
+                    surface("linux secret-tool missed svc={s}, served from fallback encrypted file", .{svc});
+                    return v;
+                }
+                return null;
+            } else |e| {
+                surface("linux secret-tool unavailable ({s}) — falling back to encrypted file for svc={s}", .{ @errorName(e), svc });
                 return try fallbackRead(allocator, svc);
             }
         },
         .windows => {
             // STUB — would call PowerShell [Windows.Security.Credentials.PasswordVault].
+            surface("windows backend is a STUB — using fallback encrypted file for svc={s}", .{svc});
             return try fallbackRead(allocator, svc);
         },
-        else => return try fallbackRead(allocator, svc),
+        else => {
+            surface("os.tag={s} has no native backend — using fallback encrypted file for svc={s}", .{ @tagName(builtin.os.tag), svc });
+            return try fallbackRead(allocator, svc);
+        },
     }
 }
 
