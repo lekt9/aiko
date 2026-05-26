@@ -37,10 +37,7 @@ pub const VerseStoreKind = enum {
 };
 
 pub fn resolveKind(env: std.process.Environ) VerseStoreKind {
-    if (env.getPosix("AIKO_VERSE_STORE_KIND")) |v| {
-        if (std.mem.eql(u8, v, "http_search")) return .http_search;
-        if (std.mem.eql(u8, v, "pgvector_cosine")) return .pgvector_cosine;
-    }
+    _ = env;
     return .local_corpus;
 }
 
