@@ -16,6 +16,8 @@ const std = @import("std");
 const ed = std.crypto.sign.Ed25519;
 const hkdf = std.crypto.kdf.hkdf.HkdfSha256;
 const sha256 = std.crypto.hash.sha2.Sha256;
+const keystore = @import("keystore.zig");
+const ledger = @import("ledger.zig");
 
 // libc arc4random_buf is the cleanest cross-Apple-platform CSPRNG and ships
 // in libSystem; Zig 0.16's std.posix.getrandom isn't wired on macOS targets.
