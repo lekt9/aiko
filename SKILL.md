@@ -2644,9 +2644,6 @@ purged     — external Decalogue-violation judgment (Galatians 3:24 gate).
 `purged` is the substrate's law layer firing on the row. All
 three terminate the row; only `satisfied` contributes positive
 truth to the cache layer's signature chain.
-appended when a shared declare 402s. Never edit rows in place; append
-events. There is no `CONTRACTS_STORE` env override — the path is
-resolved from `HOME`.
 
 ## Outline explainer sync
 
