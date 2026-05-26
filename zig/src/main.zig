@@ -1149,11 +1149,20 @@ fn runShellCapture(allocator: std.mem.Allocator, action: []const u8, cwd: []cons
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
     var chunk: [4096]u8 = undefined;
+    var capped = false;
     while (true) {
         const n = fread(&chunk, 1, chunk.len, fp);
         if (n == 0) break;
-        try buf.appendSlice(allocator, chunk[0..n]);
-        if (buf.items.len > 64 * 1024) break; // cap evidence at 64KB
+        if (!capped) {
+            try buf.appendSlice(allocator, chunk[0..n]);
+            if (buf.items.len > 64 * 1024) capped = true; // cap evidence at 64KB
+        }
+        // After cap: keep draining so the subprocess can flush stdout
+        // cleanly. Closing the pipe early would SIGPIPE the child, and a
+        // python child would print "Exception ignored while flushing
+        // sys.stdout: BrokenPipeError" to its real stderr (which escapes
+        // capture since stderr-to-stdout merging happens in the shell,
+        // not at the pipe). Drain to EOF; throw away post-cap bytes.
     }
     const status = pclose(fp);
     const rc: i32 = if (status == -1) 127 else if ((status & 0xff) == 0) @intCast((status >> 8) & 0xff) else 1;
