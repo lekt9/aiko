@@ -1515,8 +1515,8 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         // whose target_pointer carries payload (see appendCalledRow validator).
         const budget_claim = try std.fmt.allocPrint(allocator, "flex:budget lamports={s} mint={s}", .{ budget_lamports, mint });
         defer allocator.free(budget_claim);
-        const budget_id_opt: ?[]u8 = contract.declare(allocator, env, budget_claim, "", .{}) catch |err| blk: {
-            evidencePrint("  flex:budget declare failed: {s} — skipping called row\n", .{@errorName(err)});
+        const budget_id_opt: ?[]u8 = contract.declare(allocator, env, budget_claim, "", .{}) catch |decl_err| blk: {
+            evidencePrint("  flex:budget declare failed: {s} — skipping called row\n", .{@errorName(decl_err)});
             break :blk null;
         };
         if (budget_id_opt) |bid| {
