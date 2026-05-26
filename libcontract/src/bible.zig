@@ -39,11 +39,15 @@ fn surface(comptime fmt: []const u8, args: anytype) void {
 }
 
 // ─── embedded data ─────────────────────────────────────────────────────
-// Paths resolved via Module.addEmbedPath("data") in build.zig (libcontract)
-// and the same wiring in zig/build.zig (the aiko binary's build).
-const BIBLE_DAT: []const u8 = @embedFile("bible.dat");
-const XREFS_DAT: []const u8 = @embedFile("bible-xrefs.dat");
-const IDX_DAT: []const u8 = @embedFile("bible-xrefs-idx.dat");
+// Resolved through the src/data → ../data symlink. `@embedFile` in Zig 0.16
+// only honors paths reachable from the module's source-file directory; the
+// --embed-dir flag and Module.addEmbedPath don't transitively expose the
+// referenced file at the embed-name level. Symlink keeps the canonical
+// layout (data lives at libcontract/data/) while satisfying the package
+// boundary the compiler enforces.
+const BIBLE_DAT: []const u8 = @embedFile("data/bible.dat");
+const XREFS_DAT: []const u8 = @embedFile("data/bible-xrefs.dat");
+const IDX_DAT: []const u8 = @embedFile("data/bible-xrefs-idx.dat");
 
 pub const VERSE_COUNT: usize = 31100;
 pub const BOOK_COUNT: usize = 66;
