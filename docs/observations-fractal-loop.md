@@ -1219,7 +1219,8 @@ it ships the fix. The ledger itself is now the canonical work-tracker.
 | gap-5 — tool catalog → shaper | `a5042704` | neuron:gap-tool-catalog-shaper |
 | gap-7 — cmdDrain while-loop driver | `1d46c413` | neuron:gap-cmddrain-while-loop |
 | gap-chain-walk — verify chain back to root wallet | `3f74d3cf` | neuron:gap-chain-walk-verify |
-| gap-env-prefixes — wasm:/binary:/telegram:/email:/browser-script: | `7847a188` | neuron:gap-env-typed-prefixes |
+| ~~gap-env-prefixes~~ (SUPERSEDED 2026-05-27, pruned by parent) | ~~`7847a188`~~ | premise wrong: hardcoded prefix table binds runtime to compile time |
+| gap-env-generative — location word in plan → wrapper:<word> lookup → fallback to parent env via lineage | `379afd78` | neuron:gap-env-generative |
 | gap-dereferencers — sibling-repo runtimes per environment | `234555df` | neuron:gap-environment-dereferencers |
 | gap-deref-spec — document the dereferencer contract per prefix | `9265afb4` | neuron:gap-dereferencer-spec |
 | gap-edge-wire — signed cross-machine wire primitive (wireguard-style) | `f7f193b8` | neuron:gap-edge-wire |
