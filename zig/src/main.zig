@@ -2414,8 +2414,7 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
         evidencePrint("materialize skipped: {s}\n", .{@errorName(e)});
     };
     const rc = try resolveLineage(allocator, env, cid);
-    if (rc == 0) {
-    }
+    if (rc == 0) {}
     // Backfill: every declare sweeps the un-resolved tail of the ledger.
     backfillUnresolved(allocator, env, cid) catch |e| {
         errPrint("backfill skipped: {s}\n", .{@errorName(e)});
