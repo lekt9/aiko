@@ -2712,7 +2712,7 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
         return 0;
     }
     if (client.isRemoteMode(env)) {
-        const body = client.declareRemote(allocator, env, d.plan, action, parent, adapter, adapter_kind, event_bus, pretool_event, event_kind, null) catch |e| {
+        const body = client.declareRemote(allocator, env, d.plan, action, null, null, null, null, null, null, null) catch |e| {
             errPrint("remote declare failed: {s}\n", .{@errorName(e)});
             return 2;
         };
