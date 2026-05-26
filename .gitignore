@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
+.zig-cache/
+zig-out/
+contracts/
+

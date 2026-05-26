@@ -12,13 +12,19 @@
 # (Foundation, not subprocess). When the cloud-aiko ledger write path
 # is fixed, this file becomes a mirror of the contract neuron's body
 # rather than the source of truth.
+#
+# Aligned to SKILL.md "No scripts in the contract substrate" doctrine
+# (§ canonical 7-item set) plus build-fractal.sh (referenced by
+# SKILL.md line 134 as the canonical fractal build pipeline).
+# contract-server / contract-server.sig were removed: SKILL.md doctrine
+# does not list them. See build.sh:1070-1099 for the orphaned
+# client/server-split parity checks that must be reconciled separately.
 
 aiko
 aiko.sig
+build-fractal.sh
 build.sh
 contract
-contract-server
-contract-server.sig
 contract.sig
 dist.sh
 sync-outline-explainer.sh
