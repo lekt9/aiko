@@ -3232,6 +3232,16 @@ fn flushStderrTapeAsEvidence(
 }
 
 fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    // Arm the stderr tape — every byte that this invocation writes to
+    // fd 2 is mirrored into a process-local buffer; on return we hash
+    // it, write the bytes to a content-addressed blob next to the
+    // ledger, and append a single `evidence` row pointing at the blob.
+    // Pointer-not-payload: the row carries sha256:<hex> + size + scope.
+    armStderrTape(allocator);
+    var root_id_for_evidence: []const u8 = "";
+    var scope_for_evidence: []const u8 = "private";
+    defer flushStderrTapeAsEvidence(allocator, env, root_id_for_evidence, scope_for_evidence);
+
     const parsed = parseAikoArgs(allocator, args) catch |e| {
         errPrint("aiko argument error: {s}\n", .{@errorName(e)});
         usage();
