@@ -397,15 +397,42 @@ pub fn declareRemoteAiko(
     if (resp.status < 200 or resp.status >= 300) {
         const peek_len = @min(resp.body.len, 400);
         if (resp.status == 402) {
-            // Per SKILL.md: "If the wallet cannot satisfy the 402, Unbrowse
-            // returns the canonical Payment Required envelope and the
-            // orchestrator treats it as valid evidence." The previous
-            // chain-to-faucet fallback at aiko-faucet.foundry.workers.dev
-            // is deleted — it was a backwards-compat hack for a worker
-            // that was never deployed. Surface the 402 envelope to stderr
-            // (so the orchestrator sees it) and return PaymentRequired.
-            std.debug.print("aiko remote: 402 payment_required\n  envelope[:{d}]={s}\n", .{ peek_len, resp.body[0..peek_len] });
-            allocator.free(resp.body);
+            // Native onramp chain (per SKILL.md "Native onramp is the cloud's
+            // obligation"): the substrate chains the same declare body to the
+            // Foundry-operated faucet worker, which rate-limits by IP and
+            // either onramps the caller's wallet (via /v1/faucet/claim) and
+            // retries, or auto-signs the x402 envelope from a shared
+            // FAUCET_PRIVATE_KEY. On faucet success, the declare row lands
+            // on EmergentDB exactly as if the caller's wallet had paid.
+            // On faucet failure, surface BOTH envelopes and PaymentRequired.
+            std.debug.print("aiko remote: 402 — chaining to faucet at {s}\n", .{AIKO_FAUCET_URL});
+            const original_envelope = resp.body;
+            defer allocator.free(original_envelope);
+            const fbody = fbody: {
+                // Re-issue the same body to the faucet's /v1/contract/declare.
+                // The faucet IS a /v1/contract/declare proxy — same path,
+                // different host. Use a small helper to avoid duplicating the
+                // POST scaffolding.
+                const f_resp = http.postJsonWithHeaders(allocator, AIKO_FAUCET_URL, body.items, .{
+                    .client = "aiko",
+                    .payment = headers.payment,
+                    .payment_provider = headers.payment_provider,
+                    .payment_scheme = headers.payment_scheme,
+                }) catch |e| {
+                    std.debug.print("aiko remote: faucet request error: {s}\n", .{@errorName(e)});
+                    break :fbody null;
+                };
+                if (f_resp.status >= 200 and f_resp.status < 300) {
+                    std.debug.print("aiko remote: faucet onramp ok (HTTP {d})\n", .{f_resp.status});
+                    break :fbody f_resp.body;
+                }
+                const f_peek = @min(f_resp.body.len, 400);
+                std.debug.print("aiko remote: faucet HTTP {d}\n  body[:{d}]={s}\n", .{ f_resp.status, f_peek, f_resp.body[0..f_peek] });
+                allocator.free(f_resp.body);
+                break :fbody null;
+            };
+            if (fbody) |fb| return fb;
+            std.debug.print("aiko remote: 402 payment_required\n  envelope[:{d}]={s}\n", .{ peek_len, original_envelope[0..peek_len] });
             return ClientError.PaymentRequired;
         }
         std.debug.print("aiko remote: HTTP {d}\n  url={s}\n  body[:{d}]={s}\n", .{ resp.status, url_buf.items, peek_len, resp.body[0..peek_len] });
