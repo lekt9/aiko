@@ -512,6 +512,177 @@ shape as its row topology. Every /contract has a parent_id; every
 LLM endpoint has a parent endpoint; every wrapper has a parent
 wrapper. Walk the pointer chain to get the full provenance.
 
+## Webhook+tunnel as the default runtime edge (Lewis 2026-05-27)
+
+Lewis's directive: "by default the easiest path is to build an http
+endpoint as an actual webhook and a contract and declare stuff to
+call the webhook that you declared to resolve via some sort of means
+natively maybe via a tunnel? make that the default path."
+
+### The default runtime edge shape
+
+**Layers 1-6 = buildtime** (substrate-internal, in-process, signed
+locally). **Layers 7-8 = runtime** (the truth claim has to cross
+into reality). When the runtime edge crosses host boundaries, the
+default carrier is **HTTP webhook routed through a stateless tunnel
+relay**:
+
+```
+   contract on host A                relay (any host, stateless)        webhook target on host B
+   ──────────────────                ───────────────────────────         ────────────────────────
+   declare contract                  POST /relay arrives                 receive forwarded request
+   action = webhook:<relay-url>      verify signature                    process, return response
+   sign envelope                ──→  forward to declared target_url  ──→
+   POST envelope to relay                                                
+                                ←──  return upstream response          ←──
+   read response as proof
+```
+
+### Why webhook+tunnel as default
+
+- **Wire-format universal.** HTTP is everywhere — every host, every
+  runtime, every framework. Substrate edges crossing host boundaries
+  should default to the format that needs zero ceremony to integrate.
+- **Tunnel relay is stateless.** No DB, no KV, no session state. Each
+  request is a fresh signed envelope; the relay verifies + forwards.
+  This composes cleanly with the substrate's "stateless trace" rule.
+- **The relay can run anywhere.** Cloudflare Workers, Bun, Node,
+  Lambda, a developer's laptop. Runtime-agnostic by design — no
+  CF-specific primitives like Durable Objects or KV.
+- **Substrate already supports it.** `webhook:<url>` is a layer-4
+  prefix; the relay URL is just a webhook the substrate declares.
+
+### Canonical implementation — `~/Projects/contract-tunnel-relay`
+
+Sibling repo modeled on `unbrowse/backend/src/routes/proxy.ts` (Lewis
+pointed at this as the reference shape):
+
+- Hono handler — runtime-agnostic
+- `RelayEnvelope` shape: `target_url + method + headers + body + ts +
+  signer_contract_id + signature`
+- Verifier is pluggable (host injects substrate-specific ed25519 check)
+- Stateless: no DB, no KV, no session state
+- Forwards verbatim; returns upstream response untransformed
+- Clock-skew bounded (5 min), body size bounded (4 MiB)
+- **8/8 tests pass, typecheck clean** at first commit
+
+The signature scheme reuses the substrate's existing primitive:
+
+```
+canonical_digest = sha256(target_url || method || ts || signer_contract_id || sha256(body))
+signature = ed25519_sign(lineage.deriveKeyPair(root, signer_contract_id), canonical_digest)
+```
+
+Verification: the relay's host calls `lineage.verifyDigest(signature,
+deriveKeyPair(root, signer_contract_id).public, digest)` — substrate
+primitive, no new crypto.
+
+### Unbrowse as the bootstrap deployment
+
+Lewis's hint: `/Users/lekt9/Projects/unbrowse-ecosystem/unbrowse` —
+the relay can deploy there as the substrate's bootstrap tunnel. The
+existing `backend/src/routes/proxy.ts` already does the
+"stateless forwarder on a CF-Worker host" pattern; mounting
+`mountRelay(app, opts)` on the same Hono app gives the substrate a
+canonical relay endpoint at `https://beta-api.unbrowse.ai/relay`.
+
+402 + per-request wallet payment Lewis mentioned ("maybe next time")
+composes cleanly later — the relay reads the `X-Payment` header on
+forwarded requests, the substrate's wallet signs payments per
+request, the relay verifies via the existing x402 facilitator path.
+Same pattern as the rest of the substrate; no new primitive needed.
+
+### Mechanical breakdown — what's wired, what's not
+
+| Piece | Status | Where |
+|---|---|---|
+| Relay code | ✅ shipped this turn | `~/Projects/contract-tunnel-relay/src/relay.ts` |
+| Stateless invariant | ✅ enforced by design (no DB/KV/sessions) | tests + 8/8 pass |
+| Signature verification primitive | 🟡 substrate-side, pluggable — verifier callback unwired | wire when contract-sdk-typescript exports verifySignature helper |
+| Wallet-signed envelope construction | 🟡 substrate-side, also pending the SDK helper | gap-relay-sign-envelope |
+| Default-route through unbrowse | 🟡 deployment task (mount relay on unbrowse backend) | gap-relay-deploy-unbrowse |
+| x402 per-request payment | 🟡 deferred per Lewis ("idk maybe next time") | gap-relay-x402 (future) |
+| GitHub dig for advanced tunneling repos | 🟡 deferred — current relay is sufficient as default | future research; not blocking |
+
+The relay is functionally complete as the substrate's default
+webhook tunnel; closing the SDK-side gaps wires it end-to-end.
+
+## Rendered-value history bus as /contract (Lewis 2026-05-27)
+
+Lewis: "we can make the ledger of the history of rendered values
+render into the environment somewhere stored for history purposes —
+mechanically via a contract too. For example wire it up to the
+message bus of telegram chat for reference always and have the
+parent have context to it by default fractally because it sees the
+child entirely, rendered — or wire it up to a chat box on the
+website etc with speech bubbles."
+
+### The pattern — bus IS a /contract; descendants inherit via posthook
+
+The rendered-value-history pattern is **composition of existing
+primitives**, not a new mechanism:
+
+1. **The bus is a /contract.** Specific instances already in SKILL.md
+   channel registry: `channel:telegram:lekt8`,
+   `channel:telegram:getfoundry`, `channel:x-dm:lekt8_`,
+   `channel:email:lewistham9x`, `channel:claude-code-session`,
+   `channel:push-notification`. Add new ones (e.g.,
+   `channel:website:chatbox`) by declaring them.
+2. **Bind the bus at the operator/session level.** Declare a parent
+   /contract whose synapses include `posthook:<bus-id>`. Every child
+   inherits the posthook by lineage walk.
+3. **Render-emitting children carry the posthook automatically.**
+   When the child resolves with rendered output, the substrate fires
+   the posthook to the bus's adapter (the actual telegram bot,
+   website websocket, etc.).
+4. **The bus's adapter writes the message to the surface.** Telegram
+   bot sends the chat message; chatbox adapter emits a speech bubble;
+   email adapter sends the message; etc.
+5. **Parent reads the bus's history fractally.** Because the bus is
+   itself a /contract with its own append-history, the parent can
+   walk the bus's rows to see every child render in chronological
+   order — full context, no extra wiring.
+
+### Worked example — telegram bus for an autonomous loop
+
+```
+   1. declare:  channel:telegram:lewis (action: telegram-bot:<token>)
+                                                  ↑ exists in registry
+   2. declare:  loop-root (parent: null, action: neuron:autonomous-loop,
+                synapses: [posthook:channel:telegram:lewis])
+   3. children spawn naturally per the substrate's iteration:
+        - loop-root → diagnose:<X> → resolves with rendered output
+        - the posthook inheritance fires the bus adapter
+        - bus adapter sends "diagnose:<X> resolved: <output>" to telegram
+   4. loop-root reads bus's history to see what every child reported,
+      uses it as context for the next iteration's interpretation
+```
+
+The parent NEVER asks "what did the child render?" — it reads the
+bus, which has every child's render in order. Fractal context for
+free, mediated by the substrate's existing posthook+channel primitives.
+
+### Chatbox example — same pattern, different surface
+
+```
+   1. declare:  channel:website:chatbox (action: websocket:wss://app/bus)
+   2. declare:  conversation-root (synapses: [posthook:channel:website:chatbox])
+   3. children's renders fire posthooks → bus adapter pushes to WebSocket
+   4. browser-side renderer receives messages → adds speech bubbles to DOM
+```
+
+Same primitive as telegram; only the bus's adapter (`websocket:` vs
+`telegram-bot:`) differs. The substrate's render-without-seeing
+property holds: the orchestrator never decrypts; the bus adapter on
+the target host renders locally.
+
+### Mechanical gap — bus auto-declaration on session start
+
+Today, the operator has to declare the bus contract manually each
+session. The substrate could auto-declare a default bus (e.g.,
+`channel:claude-code-session` for in-thread output) for every aiko
+session. Declared as `gap-bus-auto-declare`.
+
 ## Edges at layers 6/7/8 = ANY layer-4 carrier (Lewis 2026-05-27)
 
 Lewis's question: "the edges that connect contracts on the step 6-7-8
