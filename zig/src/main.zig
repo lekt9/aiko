@@ -1575,9 +1575,8 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         wflags.TRUNC = true;
         const fd = std.c.open(tmp_z.ptr, wflags, @as(c_uint, 0o600));
         if (fd < 0) return .{ .rc = 1, .result = "python: temp open failed" };
-        const unesc = codeUnescape(allocator, code) catch code;
-        defer if (unesc.ptr != code.ptr) allocator.free(unesc);
-        _ = std.c.write(fd, unesc.ptr, unesc.len);
+        // `code` arrives JSON-decoded courtesy of parseRows → jsonStringDecoded.
+        _ = std.c.write(fd, code.ptr, code.len);
         _ = std.c.close(fd);
         const cmd_text = try std.fmt.allocPrint(allocator, "python3 {s}", .{tmp});
         defer allocator.free(cmd_text);
