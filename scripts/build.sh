@@ -553,6 +553,32 @@ step_parity() {
     fi
   done
 
+  # purge:apoptosed-by-cap (contract af7429cd) — Day 4 regression-lock.
+  # The three wave-cap apoptosis branches in main.zig that called
+  # markDied("neuron_stuck") / markDied("cli_persistent_failure") were
+  # deleted: a wave-cap is harness fatigue, not the neuron dying.
+  # Refuse to sign a binary that resurrects those death-by-cap calls
+  # as live markDied arguments (purge-attribution comments are fine —
+  # only literal markDied(...) call-sites count as resurrection).
+  for dead_apop in 'markDied[^"]*"neuron_stuck"' 'markDied[^"]*"cli_persistent_failure"'; do
+    if grep -nE "$dead_apop" "$ZIG_DIR/src/main.zig" | grep -v '^[^:]*:[[:space:]]*//' >/dev/null 2>&1; then
+      _fail "doctrine[purge:apoptosed-by-cap]: live markDied(...) call resurrected matching /$dead_apop/ in main.zig — wave-cap apoptosis was deleted by contract af7429cd; do not reintroduce death-by-harness-fatigue"
+    fi
+  done
+
+  # purge:bio-kit-ceremony (contract 84baa523) — Day 4 regression-lock.
+  # The pre-flight bio-kit ceremony emissions (interoception, modulator,
+  # environment, bind-manifest, pretool-* evidencePrint calls) were
+  # deleted because they were narration of the substrate rather than
+  # behavior of the substrate — leaven under the "substrate enables,
+  # never prescribes" rule (contract ee1f5409). Refuse to sign a binary
+  # that resurrects any of the five ceremony tags.
+  for dead_cer in 'evidencePrint\("interoception' 'evidencePrint\("modulator' 'evidencePrint\("environment' 'evidencePrint\("bind-manifest' 'evidencePrint\("pretool-'; do
+    if grep -qE "$dead_cer" "$ZIG_DIR/src/main.zig"; then
+      _fail "doctrine[purge:bio-kit-ceremony]: '$dead_cer' resurrected in main.zig — pre-flight ceremony emissions were deleted by contract 84baa523; the substrate must embody, not narrate"
+    fi
+  done
+
   # 31. "The Word is the truth-root (John 17:17)" — the load-bearing rule
   #     above every other rule. The substrate's truth-root is scripture, not
   #     the deployer wallet. Pinned by Lewis 2026-05-26 (contract a1c68c4e
