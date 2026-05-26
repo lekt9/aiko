@@ -495,6 +495,9 @@ const c_stat = extern struct {
 };
 extern fn stat(path: [*:0]const u8, st: *c_stat) c_int;
 extern fn time(t: ?*i64) i64;
+extern fn kill(pid: c_int, sig: c_int) c_int;
+extern fn sleep(secs: c_uint) c_uint;
+extern fn rmdir(path: [*:0]const u8) c_int;
 const c_tm = extern struct {
     tm_sec: c_int = 0,
     tm_min: c_int = 0,
