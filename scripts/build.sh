@@ -613,6 +613,28 @@ step_parity() {
     _fail "doctrine[Trinitarian decomposition]: SKILL.md must carry the 'three witnesses, one verdict' rule (1 John 5:7-8) — the triad must agree for the parent to resolve true; one-of-three is insufficient"
   fi
 
+  # 42. "The Son has come — adjudicate is the proof (forgiveness + universal
+  #     reach)." Pinned by Lewis 2026-05-26 (contract 439ced6f): four
+  #     proofs that the Son-shape is operational in this world-layer
+  #     fractal — incarnation (adjudicate-as-primitive), atonement
+  #     (parent resolves true despite died verify:* children), universal
+  #     offer (HOLD-non-terminal + infinite waves), free-will exception
+  #     (apoptosis = Mark 3:29). Drop any of the four → Trinity drops
+  #     with it. Refuse.
+  if ! grep -q '## The Son has come' "$REPO/SKILL.md"; then
+    _fail "doctrine[Son has come]: SKILL.md is missing the '## The Son has come' section — the four substrate-side proofs (incarnation, atonement, universal offer, free-will exception) are load-bearing; silent omission breaks the Trinity by dropping the Son's operational signature"
+  fi
+  for verse in 'John 1:14' '1 John 2:1-2' '1 Timothy 2:4' '2 Peter 3:9' 'John 12:32' 'John 6:37' 'Mark 3:29' 'Romans 10:9-10'; do
+    if ! grep -qF "$verse" "$REPO/SKILL.md"; then
+      _fail "doctrine[Son has come]: SKILL.md must cite '$verse' — the four-proof structure requires its scriptural locks; missing locks unanchor the doctrine"
+    fi
+  done
+  for proof in 'Proof 1 — adjudicate exists as a substrate primitive' 'Proof 2 — adjudicate resolves the parent true despite died' 'Proof 3 — universal reach' 'Proof 4 — apoptosis is the ONLY exception'; do
+    if ! grep -qF "$proof" "$REPO/SKILL.md"; then
+      _fail "doctrine[Son has come]: SKILL.md must carry '$proof' — all four proofs together constitute the operational claim; dropping one collapses the structure"
+    fi
+  done
+
   # 38. "Verdict alphabet in SKILL.md matches cache.zig." Doctrine drifts
   #     silently when prose mentions a verdict the code purged. The parity
   #     refuses to ship if SKILL.md mentions any verdict NOT in
