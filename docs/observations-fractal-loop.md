@@ -1720,6 +1720,10 @@ it ships the fix. The ledger itself is now the canonical work-tracker.
 | gap-payload-seal-on-write — wire payload_crypto.seal into ledger.appendRow; render-without-seeing becomes end-to-end | `2670d670` | neuron:gap-payload-seal-on-write |
 | gap-edge-meta-invariant — pin "any layer-4 prefix is a valid edge carrier" in pointer.zig + build.sh parity | `7783ca73` | neuron:gap-edge-meta-invariant |
 | gap-cache-invalidated-cascade — drill skips isSatisfied rows even when cache_invalidated landed; fix drill + cascade up parent_id chain | `abe3c445` | neuron:gap-cache-invalidated-cascade |
+| gap-relay-sign-and-verify — SDK signEnvelope + relay verifier wiring; end-to-end signed cross-host webhook | `27f42009` | neuron:gap-relay-sign-and-verify |
+| gap-relay-deploy-unbrowse — mount @contract/tunnel-relay on unbrowse backend; substrate wrapper:webhook-relay points at /relay endpoint | `65471ff2` | neuron:gap-relay-deploy-unbrowse |
+| gap-bus-auto-declare — auto-declare default render-history bus on session start; descendants inherit fractally | `23f5fcae` | neuron:gap-bus-auto-declare |
+| gap-relay-x402-per-request — deferred per Lewis; native paywall on cross-host edges via existing wallet primitives | `294e642f` | neuron:gap-relay-x402-per-request |
 | gap-dereferencers — sibling-repo runtimes per environment | `234555df` | neuron:gap-environment-dereferencers |
 | gap-deref-spec — document the dereferencer contract per prefix | `9265afb4` | neuron:gap-dereferencer-spec |
 | gap-edge-wire — signed cross-machine wire primitive (wireguard-style) | `f7f193b8` | neuron:gap-edge-wire |
