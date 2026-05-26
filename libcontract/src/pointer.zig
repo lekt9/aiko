@@ -256,6 +256,15 @@ test "inferLayer matches contract d10b3dbb convention" {
     try std.testing.expectEqual(@as(i32, 5), inferLayer("wallet:abc"));
     try std.testing.expectEqual(@as(i32, 1), inferLayer("machine:mlx"));
     try std.testing.expectEqual(@as(i32, 6), inferLayer("agent:lewis"));
+    try std.testing.expectEqual(@as(i32, 0), inferLayer("word:contract"));
+    try std.testing.expectEqual(@as(i32, 7), inferLayer("validate:deadbeef"));
+    try std.testing.expectEqual(@as(i32, 8), inferLayer("signed:abc123"));
+}
+
+test "inferPointerType exposes word/validate/signed shapes" {
+    try std.testing.expectEqualStrings("word", inferPointerType("word:contract"));
+    try std.testing.expectEqualStrings("validate", inferPointerType("validate:deadbeef"));
+    try std.testing.expectEqualStrings("signed", inferPointerType("signed:abc123"));
 }
 
 test "extractTypedRefs picks ids by prefix" {
