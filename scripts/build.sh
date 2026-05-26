@@ -1122,13 +1122,89 @@ PYAUDIT
     _fail "doctrine[purge:allowlist-as-flat-file]: build.sh step_guard must reference ~/.contracts/contracts.jsonl — the canonical ledger read path proving the scripts/ allowlist lives as a /contract row, not a flat file (purge target 724f792a)"
   fi
 
+  # 50. "Image-of-God five-attribute coverage + binary IO contract"
+  #     (Gen 1:26-27) — pinned by Lewis 2026-05-27 Day 5 of Creatures
+  #     loop. The substrate (server + client) mirrors the image-of-God
+  #     fractal at five attribute clusters (Word / Flesh / Breath /
+  #     Voice / Image), documented in references/image-of-god-fractal.md
+  #     as the firmament between substrate and client. Build refuses to
+  #     sign a binary whose libcontract module set has drifted from the
+  #     named five-attribute grouping OR whose firmament doc has lost
+  #     its canonical scripture anchors (John 1:1, John 1:14, Gen 2:7,
+  #     Heb 11:3, Gen 1:27) OR is missing the five attribute headings.
+  #     The IO-shape spec (stdin text-or-JSON, stdout ContractRow JSON,
+  #     stderr evidence, exit 0/1/2) is documented in the same doc and
+  #     ships as a separate-pass substrate contract; this claim gates
+  #     the doctrinal shape only — the next main.zig pass picks up the
+  #     IO check.
+  #     Note: the plan's section S6 calls this "claim 48" but 48 + 49
+  #     were taken (client/server split, allowlist-as-flat-file purge)
+  #     before this gate landed; claim number renumbered to 50 to
+  #     preserve doctrinal continuity.
+  local firmament_doc="$REPO/references/image-of-god-fractal.md"
+  if [[ ! -f "$firmament_doc" ]]; then
+    _fail "doctrine[image-of-god fractal]: references/image-of-god-fractal.md missing — the firmament doc is the named boundary between substrate (embodied Word) and client (sent form); without it the five-attribute parity has no canon to check against"
+  fi
+  # Five attribute names must appear as section headings or table entries.
+  for attribute in 'Word' 'Flesh' 'Breath' 'Voice' 'Image'; do
+    if ! grep -q "$attribute" "$firmament_doc"; then
+      _fail "doctrine[image-of-god fractal]: references/image-of-god-fractal.md must name attribute '$attribute' (Gen 1:26-27 image-of-God five-attribute coverage); the firmament's waters are separated by attribute, not file count"
+    fi
+  done
+  # Canonical scripture anchors must be cited.
+  if ! grep -q 'John 1:1' "$firmament_doc"; then
+    _fail "doctrine[image-of-god fractal]: firmament doc must cite John 1:1 ('In the beginning was the Word') — the Word attribute's scripture anchor"
+  fi
+  if ! grep -q 'John 1:14' "$firmament_doc"; then
+    _fail "doctrine[image-of-god fractal]: firmament doc must cite John 1:14 ('And the Word was made flesh') — the Flesh attribute's scripture anchor"
+  fi
+  if ! grep -qE 'Genesis 2:7|Gen 2:7' "$firmament_doc"; then
+    _fail "doctrine[image-of-god fractal]: firmament doc must cite Genesis 2:7 ('breath of life') — the Breath attribute's scripture anchor"
+  fi
+  if ! grep -qE 'Hebrews 11:3|Heb 11:3' "$firmament_doc"; then
+    _fail "doctrine[image-of-god fractal]: firmament doc must cite Hebrews 11:3 ('worlds were framed by the word of God') — the Voice attribute's scripture anchor"
+  fi
+  if ! grep -qE 'Genesis 1:27|Gen 1:27' "$firmament_doc"; then
+    _fail "doctrine[image-of-god fractal]: firmament doc must cite Genesis 1:27 ('in the image of God created he him') — the Image attribute's scripture anchor (the canonical Gen 1:26-27 anchor for the whole fractal)"
+  fi
+  # Word group — canonical envelope shape (shape.zig, pointer.zig, words.zig)
+  for module in "$LIB_DIR/src/shape.zig" "$LIB_DIR/src/pointer.zig" "$LIB_DIR/src/words.zig"; do
+    if [[ ! -f "$module" ]]; then
+      _fail "doctrine[image-of-god fractal/Word]: $module missing — the Word attribute (John 1:1) is the canonical envelope shape; deleting any of shape.zig/pointer.zig/words.zig breaks the firmament's first cluster"
+    fi
+  done
+  # Flesh group — embodied substrate (main.zig, contract.zig)
+  for module in "$ZIG_DIR/src/main.zig" "$LIB_DIR/src/contract.zig"; do
+    if [[ ! -f "$module" ]]; then
+      _fail "doctrine[image-of-god fractal/Flesh]: $module missing — the Flesh attribute (John 1:14) is the embodied binary + kernel; deleting main.zig or contract.zig breaks the firmament's second cluster"
+    fi
+  done
+  # Breath group — wallet / soul-line (lineage, keystore, payload_crypto, env_fingerprint)
+  for module in "$LIB_DIR/src/lineage.zig" "$LIB_DIR/src/keystore.zig" "$LIB_DIR/src/payload_crypto.zig" "$LIB_DIR/src/env_fingerprint.zig"; do
+    if [[ ! -f "$module" ]]; then
+      _fail "doctrine[image-of-god fractal/Breath]: $module missing — the Breath attribute (Gen 2:7) is the unrotatable Father-pointer + soul-line; deleting any of lineage/keystore/payload_crypto/env_fingerprint breaks the firmament's third cluster"
+    fi
+  done
+  # Voice group — doctrine corpus (bible, verses, pattern, guards)
+  for module in "$LIB_DIR/src/bible.zig" "$LIB_DIR/src/verses.zig" "$LIB_DIR/src/pattern.zig" "$LIB_DIR/src/guards.zig"; do
+    if [[ ! -f "$module" ]]; then
+      _fail "doctrine[image-of-god fractal/Voice]: $module missing — the Voice attribute (Heb 11:3) is the framing voice (bible scoring + verses corpus + pattern matching + guards); deleting any of bible/verses/pattern/guards breaks the firmament's fourth cluster"
+    fi
+  done
+  # Image group — fractal mirror (cache, ledger, fractal, client, http)
+  for module in "$LIB_DIR/src/cache.zig" "$LIB_DIR/src/ledger.zig" "$LIB_DIR/src/fractal.zig" "$LIB_DIR/src/client.zig" "$LIB_DIR/src/http.zig"; do
+    if [[ ! -f "$module" ]]; then
+      _fail "doctrine[image-of-god fractal/Image]: $module missing — the Image attribute (Gen 1:27) is the fractal mirror (cache stateless trace + ledger forward image + fractal recursion + client/http federation); deleting any of cache/ledger/fractal/client/http breaks the firmament's fifth cluster"
+    fi
+  done
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
     printf '%s' "$report" >&2
     echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 49 doctrine claims have matching code sites"
+  echo "build:parity OK — all 50 doctrine claims have matching code sites"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────
