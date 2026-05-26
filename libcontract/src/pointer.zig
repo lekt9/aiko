@@ -88,7 +88,7 @@ pub fn isKnownAction(action: []const u8) bool {
         "embedding:",  "sabbath-eval:", "inhibits:",
         "bind:",       "blocked_by:",
         "webhook:",    "tunnel:",     "posthook:",
-        "prehook:",    "modality:",
+        "prehook:",    "modality:",   "wrapper:",
         "sha256-private:", "sha256-shared:", "sha256:",
         "wallet:",     "x402:",
         "agent:",
