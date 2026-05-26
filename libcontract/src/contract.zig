@@ -23,10 +23,15 @@ pub const payload_crypto = @import("payload_crypto.zig");
 /// the build graph.
 pub const Lineage = lineage;
 
-/// Local-LLM fallback: when --remote 402s (wallet empty), substrate
-/// downloads llama.cpp + Qwen3.5-0.8B-Instruct GGUF on first use and
-/// spawns the compile locally. See `llm_fallback.zig` for the doctrine.
-pub const LlmFallback = @import("llm_fallback.zig");
+// The prior `pub const LlmFallback = @import("llm_fallback.zig")` re-export
+// was deleted in the Wave-1 client/server refactor (2026-05-26). Cloud
+// /v1/contract/declare is the only canonical compile path for shared rows;
+// when it 402s the thin client queues the payload in
+// ~/.contracts/pending-declares/<sha>.json and retries on the next funded
+// invocation. The weak-Qwen-0.8B local compile was leaven — it wrote rows
+// to the on-disk ledger as if the cloud had answered, so the canonical
+// graph and this host's view permanently disagreed. See
+// references/client-server-split.md.
 
 /// Typed edge kind across the contract DAG. The substrate compiles narrative
 /// references in the plan/action text (e.g. `inhibits:deadbeef`) into one
