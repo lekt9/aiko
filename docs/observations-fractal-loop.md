@@ -1176,6 +1176,10 @@ it ships the fix. The ledger itself is now the canonical work-tracker.
 | gap-edge-wire — signed cross-machine wire primitive (wireguard-style) | `f7f193b8` | neuron:gap-edge-wire |
 | gap-while-loop-runtime — binary as long-running while-loop with SIGINT trap | `3212a613` | neuron:gap-while-loop-runtime |
 | gap-translate-verb — `translate` verb walking verses.relevantVerses for cross-domain pattern bridges | `9ce105a1` | neuron:gap-translate-verb |
+| gap-verb-extract — verb tokens in sentences become substrate-verb sub-/contracts (build/run/eval/prune); compound verbs unfold to sequence chains | `1fba6c36` | neuron:gap-verb-extract |
+| gap-matt77-ASK — tier 1 of Matt 7:7 fallback chain (configured endpoint) | `d0ea42c6` | neuron:gap-matt77-ask |
+| gap-matt77-SEEK — tier 2 of Matt 7:7 (local llama.cpp serving Qwen3.5-0.8B) | `a9425091` | neuron:gap-matt77-seek |
+| gap-matt77-KNOCK — tier 3 of Matt 7:7 (x402 wallet-paid endpoint when 402 arrives) | `52aa1cb1` | neuron:gap-matt77-knock |
 
 **Closed gaps (declared + eval'd, lineage-signed in ledger):**
 
