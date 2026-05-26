@@ -444,6 +444,11 @@ test "keystore round-trip on this platform" {
 
     // Ensure clean slate.
     try delete(allocator, svc);
+    // silent: defer cleanup in a test — svc is unique per run (random suffix);
+    // any platform that fails delete here is already covered by the explicit
+    // `try delete(allocator, svc)` at line 455 inside the test. Surfacing here
+    // would emit a benign line on every test run without telling the user
+    // anything they can act on.
     defer delete(allocator, svc) catch {};
 
     try write(allocator, svc, payload);
