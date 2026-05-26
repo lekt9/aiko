@@ -307,29 +307,16 @@ pub fn declareRemoteAiko(
             ikey_buf[i * 2 + 1] = hex_chars[b & 0x0F];
         }
     }
-    // Admin bypass — sign a short challenge with the root-admin identity's
-    // ed25519 key. Server checks the pubkey against its allowlist; if it
-    // matches, 402 is skipped. The pubkey is deterministic per AIKO_ROOT_KEY
-    // (Lewis's pubkey BQkw7At4hL528s3K713hLskRqeRhKtmQb2QDYf254PwC on
-    // mainnet for identity="root-admin"). No env toggle — every caller who
-    // possesses the root.key automatically signs as admin; allowlist is
-    // server-side.
-    // Admin bypass triple read from LIVE libc env (zig's env.getPosix
-    // snapshots at startup so it misses runtime setenv calls from
-    // main.zig's bioAdminBypassPreflight).
-    const admin_pubkey_opt = liveEnv("AIKO_ADMIN_PUBKEY");
-    const admin_ts_opt = liveEnv("AIKO_ADMIN_TS");
-    const admin_sig_opt = liveEnv("AIKO_ADMIN_SIGNATURE");
-
+    // Admin bypass triple removed — it was an env escape hatch (AIKO_ADMIN_*).
     const resp = http.postJsonWithHeaders(allocator, url_buf.items, body.items, .{
         .payment = paymentHeader(env),
         .client = "aiko",
         .payment_provider = "corbits",
         .payment_scheme = "@faremeter/flex",
         .idempotency_key = &ikey_buf,
-        .admin_pubkey = admin_pubkey_opt,
-        .admin_ts = admin_ts_opt,
-        .admin_signature = admin_sig_opt,
+        .admin_pubkey = null,
+        .admin_ts = null,
+        .admin_signature = null,
     }) catch |e| {
         std.debug.print("aiko remote: transport error: {s}\n", .{@errorName(e)});
         return ClientError.RequestFailed;
