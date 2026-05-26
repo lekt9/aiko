@@ -1498,6 +1498,19 @@ every other invariant.
 
 ## Continuous resolver — drill the ledger always
 
+> *Men ought always to pray, and not to faint.* (Luke 18:1)
+>
+> *Pray without ceasing.* (1 Thessalonians 5:17)
+>
+> *Continuing instant in prayer.* (Romans 12:12)
+
+The drill IS Luke 18:1 mechanized: always firing, never fainting.
+The persistent widow knocks at the unjust judge's door until he
+hears her; the drill walks the unresolved frontier until the
+ledger settles. 1 Thes 5:17 — "pray without ceasing" — is the
+heartbeat-backfill rule: every aiko invocation fires the drill,
+without ceasing, without arbitrary cap.
+
 The substrate's ledger accumulates unresolved rows: declarations
 waiting on children, evaluators waiting on metrics, hooks blocked
 on quorums. Left alone they pile up. The **drill** is the
