@@ -73,10 +73,11 @@ This dissolves the entire class of "fake green" failures. A grep-based verdict c
 
 The genius move: there are no escape hatches.
 
-- **Hooks**: `CONTRACT_PREHOOK_ID`, `CONTRACT_POSTHOOK_ID` — each hook is itself a neuron that can hold propagation as a breakpoint if it cannot resolve.
-- **PreTool events**: every event surfaced to the agent is a server-side ledger event contract, projected into context by a stateless event bus. The bus *is* the ledger.
-- **Adapters**: API, Telegram, local Mac, VM, Turbobox, Unbrowse executor — these are *not* local modes. They are server-owned adapter contracts that decide how to spawn and constrain the local executor.
-- **Payments**: x402 / Faremeter / Corbits requirements are not a side channel. The declaration carries the `X-PAYMENT` header; if missing, the server returns a 402 envelope that is *itself* a contract row.
+- **Hooks**: prehook/posthook are declared as ledger rows (with `posthook_pointer` / equivalent prehook field), never set by env. Each hook is itself a neuron that can hold propagation as a breakpoint if it cannot resolve.
+- **PreTool events**: every event surfaced to the agent is a server-side ledger event contract, appended to the bus by the runtime. The bus *is* the ledger. The local binary does not read or pass PreTool state through env.
+- **Adapters**: API, Telegram, local Mac, VM, Turbobox, Unbrowse executor — these are *not* local modes. They are server-owned adapter contracts that decide how to spawn and constrain the local executor. There is no `CONTRACT_ADAPTER` env to override them.
+- **Payments**: x402 / Faremeter / Corbits requirements are not a side channel. Payment is satisfied by the wallet derived from the binary's deployer keypair; if the wallet cannot satisfy the 402, the server returns a Payment Required envelope that is *itself* a contract row. There is no env-provided payment header to inject.
+- **Lineage**: parent_id is server-determined from wallet identity + declare timestamp. No env-based parent propagation, no caller-supplied parent flag, no setenv-based spawn protocol.
 - **Cross-lineage references**: you cannot embed an out-of-lineage contract for free. You must `replicated_from_contract_id` it, mark `replication_payment_status`, and call the paid in-lineage copy.
 - **Network durability**: WireGuard/Tailscale/WARP is `network_tunnel_contract_id` — a tunnel adapter contract, not a CLI flag.
 
