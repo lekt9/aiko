@@ -1564,23 +1564,71 @@ cache_invalidated  — appended when a pointer the contract depended on
    no explicit walker is required (Pointers-Over-Anything Clause C —
    DAG recompute as a pure function of the ledger).
 
-Pointer value = the recursive Blake2s256 of the contract's plan +
-action + each sorted child's layer-tuple, computed by
-`computeInputHash` (main.zig). Each child contributes ONE layer to
-the parent's hash — Docker-image style — and the layer bytes are:
+### Pointer chain is the primary key (everything is a pointer to another pointer)
+
+Per Lewis 2026-05-26 follow-up: *"the cache must rely only on
+pointers — by first principles, everything is a pointer to another
+pointer — this needs to be explicitly and defensively programmed"*
++ *"treat the binary signed signatures of outputs as the hash"*.
+
+**Primary cache key** = `cache.computeSignatureChain(id)`, which is
 
 ```
-(child_id ‖ child_recursive_hash ‖ child_resolution_state ‖ child_terminal_input_hash)
+sha256(
+  parent_signature(id)               ← contract's identity-signature
+  ‖ for each child c (sorted by id):
+       c_id ‖ terminal_signature(c)  ← child's latest satisfied/died sig
+)
 ```
 
-where `child_resolution_state ∈ {S satisfied | D died | P pending}`.
-When the child satisfies, dies, or iterates with a new terminal
-input_hash, the layer hash flips, the parent's snapshot drifts,
-`cache_check` misses, and the parent re-evaluates. This is the
-"image layers are all resolving kv style to pointers that resolve to
-true against itself" property — each layer's hash IS a pointer whose
-value tracks the child's truth. Empty pointer set → snapshot is the
-empty hash (deterministic).
+Every component is a **cryptographic pointer** — an ed25519 signature
+bound to a derived keypair via `lineage.deriveKeyPair(root, id)`. No
+raw plan bytes, no raw action bytes, no value-derived hashes
+participate. The signatures themselves resolve (via keypair derivation
++ verify) back to the deployer root and through it to the Word — the
+truth-substrate. Every cache hit is a pointer chain that traces all
+the way down.
+
+**Terminal-event signatures** (`output_signature` on satisfied / died
+rows) are written by `contract.signOutput` over
+`sha256(id ‖ event_kind ‖ wave ‖ payload ‖ ts)`. The signer is the
+contract's own derived keypair (`lineage.deriveKeyPair(root, id)`).
+The signature IS the canonical pointer to that terminal verdict.
+
+**Defensive invariant**: `computeSignatureChain` returns `null` if
+ANY signature in the chain is missing — either the contract's
+declared `parent_signature` OR any child's latest terminal
+`output_signature`. The substrate REFUSES to assert a cache verdict
+from an incomplete pointer chain. `resolveOne` emits
+`cache_check{verdict=signature_incomplete}` and falls through to
+re-evaluate. The cache layer is **explicitly defensive** — it never
+silently substitutes value bytes for the missing pointer.
+
+### Legacy byte-hash fallback (transitional, for the existing ledger)
+
+The 5000+ rows that existed BEFORE the signOutput change carry no
+`output_signature`. Their signature chains are incomplete. For these
+rows, `resolveOne` falls back to the older `computeInputHash`
+content-snapshot — but the cache_check row is tagged
+`verdict=signature_incomplete` so observers see the legacy mode.
+
+The next time any of those contracts is re-resolved, `markSatisfied`
+writes a signed terminal row; the next pass after that produces a
+complete signature chain; the substrate self-heals onto the
+pointer-only path. **Forward-resolving any contract migrates it
+from byte-hash to signature-chain.**
+
+### What the substrate refuses by design
+
+- A `satisfied` row without `output_signature` (when the root key is
+  available). signOutput's failure path is the only way an unsigned
+  satisfied row reaches the ledger — and it surfaces evidence to
+  stderr before doing so.
+- A cache_resolved snapshot derived from raw plan/action bytes when
+  a signature chain was available. The if/else in `resolveOne`'s
+  satisfied-side path picks signature chain first; byte-hash second.
+- A silent fallback. Every fallback surfaces as a tagged ledger row
+  (`verdict=signature_incomplete` or `verdict=legacy`).
 
 ### Substrate location
 
