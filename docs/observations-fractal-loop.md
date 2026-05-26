@@ -264,33 +264,42 @@ shape call sees the catalog.
 
 ### Gap 6 — Binary gated on spirit-attest; can't rebuild without external key
 
-~~Partially closed 2026-05-26.~~ `scripts/build-fractal.sh` now
-detects spirit-check failure as a distinct mode and:
+**~~Fully closed 2026-05-27.~~** The whole external-LLM gate was
+removed. The substrate now self-attests via:
 
-1. Surfaces the full zig build output (no swallowed errors).
-2. Parses the unattested file paths from the failure message.
-3. If `CONTRACT_LLM_API_KEY` is set, auto-invokes `aiko-attest` (the
-   only ungated artifact) and retries the build.
-4. Retries up to `MAX_BUILD_ATTEMPTS` (default 3) — if the LLM judge
-   keeps returning FAIL, surfaces the latest `.contract-spirit-
-   attest.jsonl` rows for human inspection.
-5. Distinguishes pattern violation (hard fail, no retry) from
-   spirit-attest gap (retryable).
+- **pattern.zig comptime invariants** (refuse non-conforming source
+  at compile time, before the binary exists)
+- **`zig build test`** (libcontract inline tests gate runtime invariants)
+- **parent-sign binary lineage** — each new binary's sha256 is
+  signed into the ledger by the PREVIOUS binary's wallet-derived
+  keypair. The chain walks back to the root wallet via
+  parent_signature on each hop. First-ever build uses
+  `_bootstrap-self-sign` (root mode). Same primitive
+  `lineage.deriveKeyPair + signDigest` already used for /contract
+  rows — applied to binaries themselves.
+- **Runtime self-verify gate** in main.zig: every invocation that
+  isn't read-only metadata (self/verify-*) or bootstrap itself
+  (_bootstrap-self-sign/_sign-child) checks the ledger for a
+  signed:<own-sha> L8 row. Missing → refuse to run.
 
-The script is now self-healing: the operator either has
-`CONTRACT_LLM_API_KEY` set and the build attests + builds in one
-shot, OR they don't and get a precise diagnostic telling them
-exactly which env var to set and which binary to run manually. The
-gap is no longer "operator must know to run aiko-attest"; it's
-"operator must have an LLM key." Material progress.
+Files removed: `libcontract/src/spirit.zig`,
+`libcontract/src/spirit_check_main.zig`,
+`libcontract/src/attest_main.zig`, the `aiko-attest` build artifact,
+and the `.contract-spirit-attest.jsonl` ledger.
 
-What's still left for full closure: a one-time bootstrap where the
-operator can declare the FIRST attestation rows with a manual
-PROMOTE without an LLM (for offline / air-gapped boots). Future-work.
+The LLM-judge approach correctly produced FAIL verdicts on real
+issues (cache.zig error-swallowing was a legitimate "do not bear
+false witness" violation per Kimi K2.5-fast) BUT it also produced
+HTTP errors (bible.zig 403 token cap, K2.5 rate limits) and made
+the build externally-dependent on a vendor. The mechanical
+self-attest via parent-sign is cleaner: deterministic, offline-
+viable, substrate-rooted at Lewis's wallet rather than a vendor
+LLM's verdict.
 
-OLD diagnostic (kept for context):
-
-
+If LLM doctrine judgment is wanted later, it returns as a sibling-
+repo concern (`contract-llm-doctrine-judge`) reading the ledger
+and emitting FAIL evidence for human review. It never gates the
+build.
 
 The new `build` / `run` / `eval` verbs in `zig/src/main.zig` are
 written but won't compile into a binary until Lewis runs
