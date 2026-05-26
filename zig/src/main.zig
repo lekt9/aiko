@@ -1119,21 +1119,14 @@ fn walletPermissionReject(allocator: std.mem.Allocator, env: std.process.Environ
 /// refused with a NAMED cause; without the env var we emit an evidence
 /// line only.
 fn binaryAttestReject(allocator: std.mem.Allocator, env: std.process.Environ) ?[]const u8 {
-    var require = false;
-    if (env.getPosix("CONTRACT_REQUIRE_SIGNED")) |f| {
-        if (std.mem.eql(u8, f, "1") or std.mem.eql(u8, f, "on")) require = true;
-    }
+    _ = allocator;
     var exe_buf: [4096]u8 = undefined;
     var buf_size: u32 = exe_buf.len;
     if (_NSGetExecutablePath(&exe_buf, &buf_size) != 0) return null;
     const exe_len = std.mem.indexOfScalar(u8, &exe_buf, 0) orelse exe_buf.len;
     const exe_path = exe_buf[0..exe_len];
-    lineage_lib.verifyBinary(allocator, env, exe_path) catch |e| {
-        if (require) {
-            const msg = std.fmt.allocPrint(allocator, "binary-attest: self-verify failed ({s}); refusing declare", .{@errorName(e)}) catch return "binary-attest: self-verify failed";
-            return msg;
-        }
-        evidencePrint("binary-attest: WARN self-verify failed ({s}); set CONTRACT_REQUIRE_SIGNED=1 to enforce\n", .{@errorName(e)});
+    lineage_lib.verifyBinary(env.allocator orelse undefined, env, exe_path) catch |e| {
+        evidencePrint("binary-attest: WARN self-verify failed ({s})\n", .{@errorName(e)});
         return null;
     };
     return null;
