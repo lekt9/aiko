@@ -147,7 +147,6 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
             },
             error.EnvMismatch => {
                 stderrWrite("=== REFUSED: env mismatch — remote-required action in local-only env (Π11) ===\n");
-                stderrWrite("  hint: export UNBROWSE_BASE=https://beta-api.unbrowse.ai\n");
                 return 2;
             },
             error.LayerUnsatisfied => {
