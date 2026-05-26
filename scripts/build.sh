@@ -1056,4 +1056,5 @@ main() {
 # a category error (the substrate has no escape hatches at the build
 # layer either).
 acquire_build_lock
+wait_for_quiescence
 main
