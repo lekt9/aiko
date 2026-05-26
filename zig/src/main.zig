@@ -5100,7 +5100,7 @@ fn cmdPrune(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     //       - for now, allow (caller identity isn't tracked yet). TODO:
     //         tighten when we wire caller-identity (gap-chain-walk).
     if (sh.by_id) |killer_id| {
-        const target_parent_opt = ledger.findParentIdForId(allocator, env, id) catch null;
+        const target_parent_opt = contract.lcledger.findParentIdForId(allocator, env, id) catch null;
         const target_parent = target_parent_opt; // may be null (root contract)
         defer if (target_parent) |p| allocator.free(p);
 
