@@ -345,6 +345,23 @@ step_parity() {
     _fail "doctrine[no env-var user instructions]: user-facing strings tell users to set/export/configure stripped env vars:"$'\n'"$env_instructions"
   fi
 
+  # 26. "drill: action handler exists" — the continuous resolver primitive
+  #     must be reachable via the drill: action prefix in runAction. Without
+  #     it, the standing drill contract has no dispatch site and the perpetual
+  #     resolver doesn't actually fire.
+  if ! grep -q 'startsWith(u8, action, "drill:")' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[continuous resolver]: drill: action handler missing in runAction (main.zig)"
+  fi
+  if ! grep -q 'fn backfillUnresolvedDeep' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[continuous resolver]: backfillUnresolvedDeep function missing in main.zig"
+  fi
+
+  # 27. "Continuous resolver doctrine section in SKILL.md" — the standing-drill
+  #     pattern must be declared, not just implemented.
+  if ! grep -q '## Continuous resolver' "$REPO/SKILL.md"; then
+    _fail "doctrine[continuous resolver]: SKILL.md is missing the 'Continuous resolver' doctrine section"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
     printf '%s' "$report" >&2
