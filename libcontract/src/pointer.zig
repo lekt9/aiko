@@ -35,6 +35,13 @@ pub fn inferPointerType(action: []const u8) []const u8 {
     if (std.mem.startsWith(u8, action, "prehook:")) return "prehook";
     if (std.mem.startsWith(u8, action, "blocked_by:")) return "blocked_by";
     if (std.mem.startsWith(u8, action, "modality:")) return "modality";
+    // `wrapper:<name>` — a substrate wrapper layer that surfaces the
+    // binary at a higher level of abstraction (the SDK wraps the
+    // binary; the openai-compat HTTP server wraps the SDK; future
+    // adapters wrap that). Each wrapper is itself a /contract whose
+    // parent_id is the layer it wraps. Layer 4 (transport) — wrappers
+    // carry calls between layers without changing the truth claim.
+    if (std.mem.startsWith(u8, action, "wrapper:")) return "wrapper";
     // Recursive truth-substrate (this turn): every word in a plan is itself
     // a /contract pointer, and the layer-7 validator → layer-8 signed
     // pointer-memory cascade is mechanical. `word:<tok>` is a sub-cell
