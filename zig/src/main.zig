@@ -4773,6 +4773,8 @@ fn cmdBuild(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         errPrint("build: shape validation failed: {s}\n", .{@errorName(e)});
         return 2;
     };
+    defer ps.deinit();
+    const sh = ps.shape;
     if (sh.event != .declared) {
         errPrint("build: requires event=\"declared\"; got {s}\n", .{@tagName(sh.event)});
         return 2;
