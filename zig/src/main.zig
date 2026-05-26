@@ -3128,7 +3128,7 @@ fn cmdOpenAi(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
     // 4. Route to remote declare. If UNBROWSE_BASE is missing the call
     //    fails — we don't fall back; per canon the public surface is
     //    always Unbrowse-backed.
-    const action = actionFromPlan(d.plan);
+    const action = actionFromPlan(safe_plan);
     const parent = ambientParent(env);
     var tool_calls_json: ?[]u8 = null;
     defer if (tool_calls_json) |t| allocator.free(t);
