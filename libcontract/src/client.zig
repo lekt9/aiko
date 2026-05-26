@@ -439,6 +439,32 @@ pub fn statusRemote(
     return resp.body;
 }
 
+/// Format current UTC time as ISO 8601 with microsecond precision —
+/// matches the shape `new Date().toISOString()` produces (though with us
+/// precision instead of ms; server reads our ts verbatim so both sides
+/// agree on the bytes). Inlined here because libcontract's module
+/// topology forbids client.zig importing contract.zig.
+fn nowIsoUtc(buf: []u8) ![]u8 {
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    const secs_total: i64 = @intCast(tv.sec);
+    const us_remainder: i64 = @intCast(tv.usec);
+    const epoch_secs = std.time.epoch.EpochSeconds{ .secs = @intCast(secs_total) };
+    const epoch_day = epoch_secs.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const day_secs = epoch_secs.getDaySeconds();
+    return try std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>6}Z", .{
+        year_day.year,
+        month_day.month.numeric(),
+        month_day.day_index + 1,
+        day_secs.getHoursIntoDay(),
+        day_secs.getMinutesIntoHour(),
+        day_secs.getSecondsIntoMinute(),
+        @as(u64, @intCast(us_remainder)),
+    });
+}
+
 /// Build the canonical signed body for a declare. Byte-for-byte match of
 /// the server's canonicalizeDeclareBody (unbrowse-dev/backend/src/services/
 /// declare-signature.ts): JSON.stringify with the six keys in fixed order
