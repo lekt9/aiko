@@ -2175,8 +2175,8 @@ fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, sk
             defer allocator.free(sid);
             const target = std.fmt.allocPrint(allocator, "contract:{s}", .{sid}) catch return;
             defer allocator.free(target);
-            contract.appendCalledRow(allocator, env, skip_id, target, "sabbath-evaluation") catch |err| {
-                evidencePrint("sabbath: appendCalledRow failed: {s} — no observable evaluation edge\n", .{@errorName(err)});
+            contract.appendCalledRow(allocator, env, skip_id, target, "sabbath-evaluation") catch |called_err| {
+                evidencePrint("sabbath: appendCalledRow failed: {s} — no observable evaluation edge\n", .{@errorName(called_err)});
             };
         }
         return;
