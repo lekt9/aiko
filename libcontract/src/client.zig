@@ -423,13 +423,12 @@ pub fn declareRemoteAiko(
             const fbody = fbody: {
                 // Re-issue the same body to the faucet's /v1/contract/declare.
                 // The faucet IS a /v1/contract/declare proxy — same path,
-                // different host. Use a small helper to avoid duplicating the
-                // POST scaffolding.
+                // different host. The faucet attaches its own x402 envelope
+                // from FAUCET_PRIVATE_KEY when its rate-limit allows; we just
+                // forward the body and an aiko client tag.
                 const f_resp = http.postJsonWithHeaders(allocator, AIKO_FAUCET_URL, body.items, .{
                     .client = "aiko",
-                    .payment = headers.payment,
-                    .payment_provider = headers.payment_provider,
-                    .payment_scheme = headers.payment_scheme,
+                    .payment_scheme = "@faremeter/flex",
                 }) catch |e| {
                     std.debug.print("aiko remote: faucet request error: {s}\n", .{@errorName(e)});
                     break :fbody null;
