@@ -374,6 +374,345 @@ fn writeHexFile(allocator: std.mem.Allocator, path: []const u8, bytes: *const [3
     if (n < @as(isize, with_nl.len)) return error.WriteFailed;
 }
 
+// ────────── identity keypair (root-wallet identity, distinct from per-contract derivation) ──────────
+
+/// Salt used to derive the ROOT wallet's identity keypair — the keypair
+/// whose pubkey IS the wallet identity advertised on the wire. Distinct
+/// from BINARY_SIGNING_SALT and from the per-contract HKDF salt so the
+/// three derivations are cryptographically independent.
+pub const IDENTITY_SALT: []const u8 = "aiko-root-identity-v1";
+
+pub fn deriveIdentityKeyPair(root: [32]u8) !ed.KeyPair {
+    const prk = hkdf.extract(IDENTITY_SALT, &root);
+    var seed: [32]u8 = undefined;
+    hkdf.expand(&seed, "identity", prk);
+    return try ed.KeyPair.generateDeterministic(seed);
+}
+
+// ────────── wallet rotation ──────────
+
+pub const RotationResult = struct {
+    old_pubkey_hex: [PUBKEY_HEX_LEN]u8,
+    new_pubkey_hex: [PUBKEY_HEX_LEN]u8,
+    /// Signature by the OLD identity keypair over the successor message —
+    /// proves the rotation was authorized by whoever held the prior root.
+    successor_sig_hex: [SIG_HEX_LEN]u8,
+    rotated_at: i64,
+};
+
+/// Rotate the wallet's root key. Atomic-as-possible three-way write
+/// (canonical file is authoritative; mirror and keystore are best-effort
+/// back-fills, same shape as `loadOrInitRootKey`). Archives the prior
+/// canonical seed under `$HOME/.aiko/keys/.archived-rotated-<ts>/root.key`.
+/// Emits a signed `wallet_rotated` row to the local ledger so the chain of
+/// custody is auditable.
+pub fn rotateRootKey(allocator: std.mem.Allocator, env: std.process.Environ) !RotationResult {
+    const home = env.getPosix("HOME") orelse return error.NoHome;
+    const canonical = try std.fs.path.join(allocator, &.{ home, ".contracts", "root.key" });
+    defer allocator.free(canonical);
+    const mirror = try std.fs.path.join(allocator, &.{ home, ".aiko", "keys", "root.key" });
+    defer allocator.free(mirror);
+
+    // 1. Read the current root. We do NOT generate here — if the keystore
+    //    really is empty, loadOrInitRootKey would generate a fresh seed and
+    //    we'd be rotating a key the caller never had. Detect that by
+    //    checking the canonical tier exists BEFORE the call.
+    const had_canonical = if (readHexFile(canonical)) |_| true else |err| switch (err) {
+        error.FileNotFound => false,
+        else => false,
+    };
+    const had_mirror = if (readHexFile(mirror)) |_| true else |err| switch (err) {
+        error.FileNotFound => false,
+        else => false,
+    };
+    if (!had_canonical and !had_mirror) {
+        // Keystore tier may still have it; only fail if all three miss.
+        if (readKeychainSeed(allocator)) |_| {} else |_| return error.NoPriorRoot;
+    }
+    const old_root = try loadOrInitRootKey(allocator, env);
+
+    // 2-3. Derive OLD identity + pubkey hex.
+    const old_kp = try deriveIdentityKeyPair(old_root);
+    var old_pubkey_hex: [PUBKEY_HEX_LEN]u8 = undefined;
+    bytesToHex(&old_kp.public_key.bytes, &old_pubkey_hex);
+
+    // 4-5. Generate NEW seed + derive NEW identity.
+    var new_root: [32]u8 = undefined;
+    arc4random_buf(&new_root, new_root.len);
+    const new_kp = try deriveIdentityKeyPair(new_root);
+    var new_pubkey_hex: [PUBKEY_HEX_LEN]u8 = undefined;
+    bytesToHex(&new_kp.public_key.bytes, &new_pubkey_hex);
+
+    // 6. Successor message digest:
+    //    sha256("wallet_rotated|" || old_pubkey_hex || new_pubkey_hex || ts_ascii)
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    const rotated_at: i64 = @intCast(tv.sec);
+    var ts_buf: [32]u8 = undefined;
+    const ts_str = try std.fmt.bufPrint(&ts_buf, "{d}", .{rotated_at});
+
+    var hasher = sha256.init(.{});
+    hasher.update("wallet_rotated|");
+    hasher.update(&old_pubkey_hex);
+    hasher.update(&new_pubkey_hex);
+    hasher.update(ts_str);
+    var digest: [32]u8 = undefined;
+    hasher.final(&digest);
+
+    // 7. Sign with OLD identity.
+    var sig_hex: [SIG_HEX_LEN]u8 = undefined;
+    try signDigest(old_kp, digest, &sig_hex);
+
+    // 8. Archive prior canonical seed (best-effort).
+    archiveRoot(allocator, home, canonical, rotated_at) catch {};
+
+    // 9. Atomic three-way write: canonical FIRST (authoritative). Mirror +
+    //    keystore are best-effort. If canonical write fails, we leave the
+    //    prior root in place across all three tiers — no half-rotated state.
+    try writeHexFile(allocator, canonical, &new_root);
+    backfillMirrors(allocator, &new_root, canonical, mirror) catch {};
+
+    // 10. Append wallet_rotated ledger row (signed by OLD identity sig).
+    appendWalletRotatedRow(allocator, env, &old_pubkey_hex, &new_pubkey_hex, &sig_hex, rotated_at) catch {};
+
+    return .{
+        .old_pubkey_hex = old_pubkey_hex,
+        .new_pubkey_hex = new_pubkey_hex,
+        .successor_sig_hex = sig_hex,
+        .rotated_at = rotated_at,
+    };
+}
+
+fn archiveRoot(allocator: std.mem.Allocator, home: []const u8, canonical: []const u8, ts: i64) !void {
+    var ts_buf: [32]u8 = undefined;
+    const ts_str = try std.fmt.bufPrint(&ts_buf, "{d}", .{ts});
+    const dir = try std.fmt.allocPrint(
+        allocator,
+        "{s}/.aiko/keys/.archived-rotated-{s}",
+        .{ home, ts_str },
+    );
+    defer allocator.free(dir);
+    // mkdir -p
+    var i: usize = 0;
+    while (i < dir.len) : (i += 1) {
+        if (dir[i] == '/' and i > 0) {
+            const partial = try allocator.dupeZ(u8, dir[0..i]);
+            defer allocator.free(partial);
+            _ = std.c.mkdir(partial.ptr, 0o755);
+        }
+    }
+    const full = try allocator.dupeZ(u8, dir);
+    defer allocator.free(full);
+    _ = std.c.mkdir(full.ptr, 0o700);
+
+    const dst = try std.fs.path.join(allocator, &.{ dir, "root.key" });
+    defer allocator.free(dst);
+
+    const src_z = try allocator.dupeZ(u8, canonical);
+    defer allocator.free(src_z);
+    var rflags: std.c.O = .{};
+    rflags.ACCMODE = .RDONLY;
+    const src_fd = std.c.open(src_z.ptr, rflags, @as(c_uint, 0));
+    if (src_fd < 0) return; // nothing to archive
+    defer _ = std.c.close(src_fd);
+    var buf: [256]u8 = undefined;
+    const n = std.c.read(src_fd, &buf, buf.len);
+    if (n <= 0) return;
+
+    const dst_z = try allocator.dupeZ(u8, dst);
+    defer allocator.free(dst_z);
+    var wflags: std.c.O = .{};
+    wflags.ACCMODE = .WRONLY;
+    wflags.CREAT = true;
+    wflags.TRUNC = true;
+    const dst_fd = std.c.open(dst_z.ptr, wflags, @as(c_uint, 0o600));
+    if (dst_fd < 0) return;
+    defer _ = std.c.close(dst_fd);
+    _ = std.c.write(dst_fd, &buf, @intCast(n));
+}
+
+fn appendWalletRotatedRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    old_pubkey_hex: []const u8,
+    new_pubkey_hex: []const u8,
+    sig_hex: []const u8,
+    rotated_at: i64,
+) !void {
+    // 8-hex event id from CSPRNG.
+    var idr: [4]u8 = undefined;
+    arc4random_buf(&idr, idr.len);
+    var event_id: [8]u8 = undefined;
+    const alpha = "0123456789abcdef";
+    for (idr, 0..) |b, i| {
+        event_id[i * 2] = alpha[b >> 4];
+        event_id[i * 2 + 1] = alpha[b & 0x0f];
+    }
+    var iso_buf: [64]u8 = undefined;
+    const iso = try nowIsoUtc(&iso_buf);
+
+    const row = try std.fmt.allocPrint(
+        allocator,
+        "{{\"event\": \"wallet_rotated\", \"id\": \"{s}\", \"old_pubkey\": \"{s}\", \"new_pubkey\": \"{s}\", \"successor_signature\": \"{s}\", \"rotated_at\": {d}, \"ts\": \"{s}\"}}",
+        .{ event_id, old_pubkey_hex, new_pubkey_hex, sig_hex, rotated_at, iso },
+    );
+    defer allocator.free(row);
+    const path = try ledger.appendRow(allocator, env, row);
+    allocator.free(path);
+}
+
+fn nowIsoUtc(buf: []u8) ![]u8 {
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    const secs_total: i64 = @intCast(tv.sec);
+    const us_remainder: i64 = @intCast(tv.usec);
+    const epoch_secs = std.time.epoch.EpochSeconds{ .secs = @intCast(secs_total) };
+    const epoch_day = epoch_secs.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const day_secs = epoch_secs.getDaySeconds();
+    return try std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>6}Z", .{
+        year_day.year,
+        month_day.month.numeric(),
+        month_day.day_index + 1,
+        day_secs.getHoursIntoDay(),
+        day_secs.getMinutesIntoHour(),
+        day_secs.getSecondsIntoMinute(),
+        @as(u64, @intCast(us_remainder)),
+    });
+}
+
+// ────────── lineage re-sign walker ──────────
+
+/// Walk every `declared` row carrying env_pubkey/parent_signature whose
+/// signature was produced by a keypair derived from `old_root + contract_id`.
+/// For each match, append a `resigned` event row carrying the NEW pubkey +
+/// NEW parent_signature. Original `declared` rows are NEVER mutated —
+/// verifiers prefer the latest `resigned` row over the original.
+///
+/// Returns the count of rows re-signed. Rows missing either field are skipped
+/// silently (function returns 0 cleanly on a ledger without signed rows).
+pub fn rotateAllSignedRowsByLineage(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    old_root: [32]u8,
+    new_root: [32]u8,
+    ledger_path: []const u8,
+    rotated_by_event_id: []const u8,
+) !u32 {
+    _ = env;
+    const body = readFileAll(allocator, ledger_path) catch return 0;
+    defer allocator.free(body);
+
+    var count: u32 = 0;
+    var iter = std.mem.tokenizeAny(u8, body, "\n");
+    while (iter.next()) |line| {
+        if (line.len < 2) continue;
+        if (std.mem.indexOf(u8, line, "\"event\": \"declared\"") == null and
+            std.mem.indexOf(u8, line, "\"event\":\"declared\"") == null) continue;
+
+        const id = (try extractJsonStringField(line, "id")) orelse continue;
+        defer allocator.free(id);
+        const env_pubkey = (try extractJsonStringField(line, "env_pubkey")) orelse continue;
+        defer allocator.free(env_pubkey);
+        const parent_sig = (try extractJsonStringField(line, "parent_signature")) orelse continue;
+        defer allocator.free(parent_sig);
+        const plan = (try extractJsonStringField(line, "plan")) orelse continue;
+        defer allocator.free(plan);
+        const parent_id_opt = try extractJsonStringField(line, "parent_id");
+        defer if (parent_id_opt) |p| allocator.free(p);
+        const parent_or_root: []const u8 = if (parent_id_opt) |p| p else ROOT_PARENT_SENTINEL;
+
+        // Is this row's env_pubkey what we'd derive from old_root + id?
+        const expected_old_kp = deriveKeyPair(old_root, id) catch continue;
+        var expected_old_hex: [PUBKEY_HEX_LEN]u8 = undefined;
+        bytesToHex(&expected_old_kp.public_key.bytes, &expected_old_hex);
+        if (!std.mem.eql(u8, env_pubkey, &expected_old_hex)) continue;
+
+        // Derive NEW keypair, recompute digest with NEW pubkey, sign.
+        const new_kp = deriveKeyPair(new_root, id) catch continue;
+        var new_pubkey_hex: [PUBKEY_HEX_LEN]u8 = undefined;
+        bytesToHex(&new_kp.public_key.bytes, &new_pubkey_hex);
+        var digest: [32]u8 = undefined;
+        signingDigest(id, &new_pubkey_hex, plan, parent_or_root, &digest);
+        var new_sig_hex: [SIG_HEX_LEN]u8 = undefined;
+        signDigest(new_kp, digest, &new_sig_hex) catch continue;
+
+        var iso_buf: [64]u8 = undefined;
+        const iso = try nowIsoUtc(&iso_buf);
+        const row = try std.fmt.allocPrint(
+            allocator,
+            "{{\"event\": \"resigned\", \"id\": \"{s}\", \"new_env_pubkey\": \"{s}\", \"new_parent_signature\": \"{s}\", \"rotated_by\": \"{s}\", \"ts\": \"{s}\"}}\n",
+            .{ id, new_pubkey_hex, new_sig_hex, rotated_by_event_id, iso },
+        );
+        defer allocator.free(row);
+        // Append directly to the named ledger path (function takes an
+        // explicit path so a test or migration tool can drive any file).
+        try appendBytesToFile(allocator, ledger_path, row);
+        count += 1;
+    }
+    return count;
+}
+
+fn readFileAll(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    const path_z = try allocator.dupeZ(u8, path);
+    defer allocator.free(path_z);
+    var flags: std.c.O = .{};
+    flags.ACCMODE = .RDONLY;
+    const fd: c_int = std.c.open(path_z.ptr, flags, @as(c_uint, 0));
+    if (fd < 0) return error.FileNotFound;
+    defer _ = std.c.close(fd);
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    var chunk: [8192]u8 = undefined;
+    while (true) {
+        const n = std.c.read(fd, &chunk, chunk.len);
+        if (n <= 0) break;
+        try out.appendSlice(allocator, chunk[0..@intCast(n)]);
+        if (out.items.len > 32 * 1024 * 1024) return error.LedgerTooLarge;
+    }
+    return try out.toOwnedSlice(allocator);
+}
+
+fn appendBytesToFile(allocator: std.mem.Allocator, path: []const u8, bytes: []const u8) !void {
+    const path_z = try allocator.dupeZ(u8, path);
+    defer allocator.free(path_z);
+    var flags: std.c.O = .{};
+    flags.ACCMODE = .WRONLY;
+    flags.CREAT = true;
+    flags.APPEND = true;
+    const fd: c_int = std.c.open(path_z.ptr, flags, @as(c_uint, 0o644));
+    if (fd < 0) return error.OpenFailed;
+    defer _ = std.c.close(fd);
+    const n = std.c.write(fd, bytes.ptr, bytes.len);
+    if (n < @as(isize, @intCast(bytes.len))) return error.WriteFailed;
+}
+
+/// Tolerant extractor: matches `"key": "value"` or `"key":"value"`. Returns
+/// null when the key is absent OR when its value is JSON `null`. Caller frees.
+fn extractJsonStringField(line: []const u8, key: []const u8) !?[]u8 {
+    var key_buf: [128]u8 = undefined;
+    const k1 = try std.fmt.bufPrint(&key_buf, "\"{s}\": \"", .{key});
+    const k1_len = k1.len;
+    const start = blk: {
+        if (std.mem.indexOf(u8, line, k1)) |p| break :blk p + k1_len;
+        const k2 = try std.fmt.bufPrint(&key_buf, "\"{s}\":\"", .{key});
+        if (std.mem.indexOf(u8, line, k2)) |p| break :blk p + k2.len;
+        return null;
+    };
+    // Find unescaped closing quote.
+    var i: usize = start;
+    while (i < line.len) : (i += 1) {
+        if (line[i] == '\\' and i + 1 < line.len) {
+            i += 1;
+            continue;
+        }
+        if (line[i] == '"') break;
+    }
+    if (i >= line.len) return null;
+    return try std.heap.page_allocator.dupe(u8, line[start..i]);
+}
+
 test "deterministic derivation + sign + verify round-trip" {
     const root: [32]u8 = .{0xab} ** 32;
     const kp1 = try deriveKeyPair(root, "deadbeef");
