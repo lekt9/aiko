@@ -56,29 +56,48 @@ pub fn loadOrInitRootKey(allocator: std.mem.Allocator, env: std.process.Environ)
     const mirror = try std.fs.path.join(allocator, &.{ home, ".aiko", "keys", "root.key" });
     defer allocator.free(mirror);
 
-    // Tier 1: canonical file
+    // Tier 1: canonical file (the happy path — no evidence emission needed).
     if (readHexFile(canonical)) |existing| {
-        backfillMirrors(allocator, &existing, canonical, mirror) catch {};
+        backfillMirrors(allocator, &existing, canonical, mirror) catch |e|
+            surface("backfill from canonical tier failed: {s}", .{@errorName(e)});
         return existing;
-    } else |err| if (err != error.FileNotFound) return err;
+    } else |err| if (err != error.FileNotFound) {
+        surface("canonical tier read errored (not just missing): {s}", .{@errorName(err)});
+        return err;
+    }
 
-    // Tier 2: ~/.aiko/keys/root.key mirror
+    // Tier 2: mirror file. If we reach here, canonical was missing — surface
+    // the fall-through so observers see the canonical tier is degraded.
     if (readHexFile(mirror)) |existing| {
-        backfillMirrors(allocator, &existing, canonical, mirror) catch {};
+        surface("canonical tier missing at {s}, served from mirror tier {s}", .{ canonical, mirror });
+        backfillMirrors(allocator, &existing, canonical, mirror) catch |e|
+            surface("backfill from mirror tier failed: {s}", .{@errorName(e)});
         return existing;
-    } else |err| if (err != error.FileNotFound) return err;
+    } else |err| if (err != error.FileNotFound) {
+        surface("mirror tier read errored (not just missing): {s}", .{@errorName(err)});
+        return err;
+    }
 
-    // Tier 3: macOS Keychain
+    // Tier 3: OS keystore. Both file tiers missed — degraded state, surface.
     if (readKeychainSeed(allocator)) |existing| {
-        backfillMirrors(allocator, &existing, canonical, mirror) catch {};
+        surface("both file tiers missing, served from OS keystore (svc=aiko.root.ed25519.seed)", .{});
+        backfillMirrors(allocator, &existing, canonical, mirror) catch |e|
+            surface("backfill from keystore tier failed: {s}", .{@errorName(e)});
         return existing;
-    } else |err| if (err != error.NotFound) return err;
+    } else |err| if (err != error.NotFound) {
+        surface("keystore tier read errored (not just missing): {s}", .{@errorName(err)});
+        return err;
+    }
 
-    // Tier 4: fresh generation, write to all three.
+    // Tier 4: fresh generation. ALL three tiers missed — true first-run on
+    // a clean machine. Surface this loudly: a wallet is being born.
+    surface("FIRST RUN — generating fresh ed25519 root seed (no existing material in canonical/mirror/keystore tiers)", .{});
     var fresh: [32]u8 = undefined;
     arc4random_buf(&fresh, fresh.len);
     try writeHexFile(allocator, canonical, &fresh);
-    backfillMirrors(allocator, &fresh, canonical, mirror) catch {};
+    backfillMirrors(allocator, &fresh, canonical, mirror) catch |e|
+        surface("backfill after fresh generation failed: {s}", .{@errorName(e)});
+    surface("fresh root persisted to {s} (chmod 600); mirror + keystore back-filled best-effort", .{canonical});
     return fresh;
 }
 
