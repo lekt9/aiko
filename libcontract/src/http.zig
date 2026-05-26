@@ -109,24 +109,6 @@ pub fn postJsonWithHeaders(
         cmd_buf.appendSlice(allocator, k) catch return HttpError.OutOfMemory;
         cmd_buf.appendSlice(allocator, "' ") catch return HttpError.OutOfMemory;
     }
-    // Admin bypass triple: pubkey, ts, signature. Server validates the
-    // sig against the pubkey (allowlisted) and skips 402 if all three
-    // match. The pubkey is the root-admin derived identity.
-    if (headers.admin_pubkey) |p| {
-        cmd_buf.appendSlice(allocator, "-H 'X-Aiko-Admin-Pubkey: ") catch return HttpError.OutOfMemory;
-        cmd_buf.appendSlice(allocator, p) catch return HttpError.OutOfMemory;
-        cmd_buf.appendSlice(allocator, "' ") catch return HttpError.OutOfMemory;
-    }
-    if (headers.admin_ts) |t| {
-        cmd_buf.appendSlice(allocator, "-H 'X-Aiko-Admin-Ts: ") catch return HttpError.OutOfMemory;
-        cmd_buf.appendSlice(allocator, t) catch return HttpError.OutOfMemory;
-        cmd_buf.appendSlice(allocator, "' ") catch return HttpError.OutOfMemory;
-    }
-    if (headers.admin_signature) |s| {
-        cmd_buf.appendSlice(allocator, "-H 'X-Aiko-Admin-Signature: ") catch return HttpError.OutOfMemory;
-        cmd_buf.appendSlice(allocator, s) catch return HttpError.OutOfMemory;
-        cmd_buf.appendSlice(allocator, "' ") catch return HttpError.OutOfMemory;
-    }
     cmd_buf.appendSlice(allocator, "-d @") catch return HttpError.OutOfMemory;
     cmd_buf.appendSlice(allocator, tmp_path) catch return HttpError.OutOfMemory;
     cmd_buf.appendSlice(allocator, " -w '\\n__STATUS__:%{http_code}\\n' ") catch return HttpError.OutOfMemory;
