@@ -1096,11 +1096,7 @@ const ShellOutput = struct { rc: i32, output: []u8 };
 /// is a manual step (chmod 600). Honored in strict mode by default, and
 /// always when CONTRACT_WALLET_STRICT=1.
 fn walletPermissionReject(allocator: std.mem.Allocator, env: std.process.Environ) ?[]const u8 {
-    const strict = blk: {
-        const f = env.getPosix("CONTRACT_WALLET_STRICT") orelse break :blk true;
-        break :blk std.mem.eql(u8, f, "1") or std.mem.eql(u8, f, "on");
-    };
-    if (!strict) return null;
+    // Strict mode always-on; the env override (CONTRACT_WALLET_STRICT) was removed.
     const home = env.getPosix("HOME") orelse return null;
     const path = std.fs.path.join(allocator, &.{ home, ".contracts", "root.key" }) catch return null;
     defer allocator.free(path);
