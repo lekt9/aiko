@@ -14,12 +14,12 @@
 const std = @import("std");
 const spirit = @import("spirit.zig");
 
-pub fn main() u8 {
+pub fn main(init: std.process.Init.Minimal) !u8 {
     var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const env: std.process.Environ = .{};
+    const env = init.environ;
 
     const result = spirit.verifyAllAttested(allocator, env) catch |e| {
         std.debug.print(
