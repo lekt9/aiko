@@ -2138,31 +2138,6 @@ fn actionFromPlan(plan: []const u8) []const u8 {
     return "neuron";
 }
 
-fn ambientAdapter(env: std.process.Environ) ?[]const u8 {
-    _ = env;
-    return null;
-}
-
-fn ambientAdapterKind(env: std.process.Environ) ?[]const u8 {
-    _ = env;
-    return null;
-}
-
-fn ambientEventBus(env: std.process.Environ) ?[]const u8 {
-    _ = env;
-    return null;
-}
-
-fn ambientPretoolEvent(env: std.process.Environ) ?[]const u8 {
-    _ = env;
-    return null;
-}
-
-fn ambientEventKind(env: std.process.Environ) ?[]const u8 {
-    _ = env;
-    return null;
-}
-
 fn enqueueOwned(allocator: std.mem.Allocator, queue: *std.ArrayList([]u8), id: []const u8) !void {
     for (queue.items) |existing| {
         if (std.mem.eql(u8, existing, id)) return;
