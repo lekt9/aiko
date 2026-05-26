@@ -70,8 +70,21 @@ const lineage_lib = @import("contract").Lineage;
 const HkdfSha256 = std.crypto.kdf.hkdf.HkdfSha256;
 const X25519 = std.crypto.dh.X25519;
 const ChaCha20Poly1305 = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
-const BINARY_NAME = build_options.binary_name;
-const AIKO_DECLARE_ONLY = std.mem.eql(u8, BINARY_NAME, "aiko");
+// Persona is selected at RUNTIME from argv[0]'s basename. One binary, two
+// faces: invoked as `aiko` → declare-only (no verbs, just the goal +
+// optional --private); invoked as anything else (canonical `contract`) →
+// full verb dispatcher. The previous compile-time discriminator
+// (`build_options.binary_name`) produced two byte-different binaries; the
+// runtime path lets one binary serve both via a symlink (`aiko -> contract`)
+// without behavior drift.
+//
+// Both globals are initialised exactly once at the top of `main` BEFORE any
+// dispatch reads them. They are `var` because Zig requires runtime-computed
+// values to live in mutable globals (or be threaded through every callsite);
+// init-once-then-read matches the substrate's existing style for ambient
+// process state. After `main` initialises them they are never written again.
+var BINARY_NAME: []const u8 = "contract";
+var AIKO_DECLARE_ONLY: bool = false;
 
 const Row = struct {
     id: []const u8 = "",
