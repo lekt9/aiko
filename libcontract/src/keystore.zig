@@ -126,7 +126,6 @@ fn validateSvc(svc: []const u8) !void {
 // ─────────────── darwin (security CLI) ───────────────
 
 fn darwinRead(allocator: std.mem.Allocator, svc: []const u8) !?[]u8 {
-    _ = allocator;
     var cmd_buf: [512]u8 = undefined;
     const cmd = try std.fmt.bufPrintZ(
         &cmd_buf,
@@ -141,9 +140,7 @@ fn darwinRead(allocator: std.mem.Allocator, svc: []const u8) !?[]u8 {
     var end: usize = n;
     while (end > 0 and (buf[end - 1] == '\n' or buf[end - 1] == '\r' or buf[end - 1] == ' ')) end -= 1;
     if (end == 0) return null;
-    // Per the keystore contract, callers hex-encode value before write.
-    // Return the trimmed bytes; we own them via dupe so the caller can free.
-    return try std.heap.page_allocator.dupe(u8, buf[0..end]);
+    return try allocator.dupe(u8, buf[0..end]);
 }
 
 fn darwinWrite(allocator: std.mem.Allocator, svc: []const u8, value: []const u8) !void {
