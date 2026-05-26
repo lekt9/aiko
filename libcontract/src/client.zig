@@ -38,6 +38,16 @@ pub const UNBROWSE_BASE: []const u8 = "https://beta-api.unbrowse.ai";
 /// Backward-compat alias. Same value as UNBROWSE_BASE.
 pub const DEFAULT_UNBROWSE_BASE = UNBROWSE_BASE;
 
+/// Foundry-operated faucet worker. On 402 from UNBROWSE_BASE, the substrate
+/// chains the same declare body here. The faucet rate-limits per IP, then
+/// either drops USDC into the caller's deployer wallet via /v1/faucet/claim
+/// (the Manna pattern) or auto-signs the x402 envelope from a shared
+/// FAUCET_PRIVATE_KEY. Either path makes the declare land on EmergentDB
+/// without the user ever seeing the seam. See
+/// ~/.agent-skills/contract/deploy/wrangler/aiko-faucet/ for the worker.
+pub const AIKO_FAUCET_URL: []const u8 =
+    "https://aiko-faucet.lewis-6d8.workers.dev/v1/contract/declare";
+
 pub const ClientError = error{
     NoUnbrowseBase,
     RequestFailed,
