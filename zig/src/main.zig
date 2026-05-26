@@ -1318,8 +1318,8 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
                 break :blk2 false;
             };
             if (use_count >= threshold and !already_primitive) {
-                contract.appendPrimitiveRow(allocator, env, target, use_count) catch |err| {
-                    evidencePrint("hebbian: primitive append failed for {s}: {s} — promotion not durable\n", .{ target, @errorName(err) });
+                contract.appendPrimitiveRow(allocator, env, target, use_count) catch |caught_err| {
+                    evidencePrint("hebbian: primitive append failed for {s}: {s} — promotion not durable\n", .{ target, @errorName(caught_err) });
                 };
                 evidencePrint("  hebbian-promotion: pattern:{s} use_count={d} >= threshold={d} -> baked as primitive\n", .{ target, use_count, threshold });
             }
@@ -1514,8 +1514,8 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
             defer allocator.free(bid);
             const target = try std.fmt.allocPrint(allocator, "contract:{s}", .{bid});
             defer allocator.free(target);
-            contract.appendCalledRow(allocator, env, r.id, target, "budget-estimate") catch |err| {
-                evidencePrint("flex:budget: appendCalledRow failed: {s} — no observable edge from {s}\n", .{ @errorName(err), r.id });
+            contract.appendCalledRow(allocator, env, r.id, target, "budget-estimate") catch |caught_err| {
+                evidencePrint("flex:budget: appendCalledRow failed: {s} — no observable edge from {s}\n", .{ @errorName(caught_err), r.id });
             };
         }
         const msg = try std.fmt.allocPrint(allocator, "budget: max={s} lamports of {s}", .{ budget_lamports, mint });
@@ -1655,8 +1655,8 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
             defer allocator.free(wid);
             const target = try std.fmt.allocPrint(allocator, "contract:{s}", .{wid});
             defer allocator.free(target);
-            contract.appendCalledRow(allocator, env, r.id, target, "wallet-setup") catch |err| {
-                evidencePrint("wallet-setup: appendCalledRow failed: {s} — no observable edge from {s}\n", .{ @errorName(err), r.id });
+            contract.appendCalledRow(allocator, env, r.id, target, "wallet-setup") catch |caught_err| {
+                evidencePrint("wallet-setup: appendCalledRow failed: {s} — no observable edge from {s}\n", .{ @errorName(caught_err), r.id });
             };
         }
         return .{ .rc = 0, .result = "wallet-setup-done-multichain" };
@@ -1684,8 +1684,8 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
             defer allocator.free(rid);
             const target = try std.fmt.allocPrint(allocator, "contract:{s}", .{rid});
             defer allocator.free(target);
-            contract.appendCalledRow(allocator, env, r.id, target, "route-request") catch |err| {
-                evidencePrint("route: appendCalledRow failed: {s} — no observable edge from {s}\n", .{ @errorName(err), r.id });
+            contract.appendCalledRow(allocator, env, r.id, target, "route-request") catch |caught_err| {
+                evidencePrint("route: appendCalledRow failed: {s} — no observable edge from {s}\n", .{ @errorName(caught_err), r.id });
             };
         }
         evidencePrint("  route: requested env_kind={s}\n", .{env_kind});
@@ -2002,8 +2002,8 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
         const cls = bioClassifyRoadblock(rr.result, r.action);
         if (!is_already_guard and !hasGuardRow(rows, id)) {
             const remed = remediationFor(cls.class);
-            contract.appendGuardRow(allocator, env, id, cls.class, cls.layer, remed) catch |err| {
-                evidencePrint("guard: append failed for {s} ({s}/{s}): {s} — scar tissue not persisted\n", .{ id, cls.class, cls.layer, @errorName(err) });
+            contract.appendGuardRow(allocator, env, id, cls.class, cls.layer, remed) catch |caught_err| {
+                evidencePrint("guard: append failed for {s} ({s}/{s}): {s} — scar tissue not persisted\n", .{ id, cls.class, cls.layer, @errorName(caught_err) });
             };
             evidencePrint("  guard: class={s} layer={s} -> {s}\n", .{ cls.class, cls.layer, remed });
             // Declare the follow-up resolver contract pointing at this id
