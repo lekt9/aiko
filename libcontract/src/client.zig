@@ -315,16 +315,12 @@ pub fn declareRemoteAiko(
             ikey_buf[i * 2 + 1] = hex_chars[b & 0x0F];
         }
     }
-    // Admin bypass triple removed — it was an env escape hatch (AIKO_ADMIN_*).
     const resp = http.postJsonWithHeaders(allocator, url_buf.items, body.items, .{
         .payment = paymentHeader(env),
         .client = "aiko",
         .payment_provider = "corbits",
         .payment_scheme = "@faremeter/flex",
         .idempotency_key = &ikey_buf,
-        .admin_pubkey = null,
-        .admin_ts = null,
-        .admin_signature = null,
     }) catch |e| {
         std.debug.print("aiko remote: transport error: {s}\n", .{@errorName(e)});
         return ClientError.RequestFailed;
