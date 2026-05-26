@@ -1132,15 +1132,9 @@ fn binaryAttestReject(allocator: std.mem.Allocator, env: std.process.Environ) ?[
 }
 
 fn shellStrictReject(action: []const u8, env: std.process.Environ) ?[]const u8 {
-    const flag = env.getPosix("CONTRACT_SHELL_STRICT") orelse return null;
-    if (!std.mem.eql(u8, flag, "1") and !std.mem.eql(u8, flag, "on")) return null;
-    // Conservative blocklist: shell metacharacters that change control flow.
-    for (action) |c| switch (c) {
-        ';', '|', '&', '`', '$', '<', '>' => return "shell-strict: action contains metacharacter (; | & ` $ < >)",
-        else => {},
-    };
-    if (std.mem.indexOf(u8, action, "$(") != null) return "shell-strict: action contains $( command substitution)";
-    if (std.mem.indexOf(u8, action, "${") != null) return "shell-strict: action contains ${ var expansion}";
+    _ = action;
+    _ = env;
+    // shell-strict env flag removed; gate now always inactive (default behavior pre-strip).
     return null;
 }
 
