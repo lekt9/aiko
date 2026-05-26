@@ -768,6 +768,51 @@ The substrate's bones are right. The gaps are mostly omissions
 
 ---
 
+## Gap ledger — every gap is a /contract (drilled 2026-05-27)
+
+Per Lewis's "/contract to drill through all gaps as /contracts to
+build this out mechanically into the /contract code itself":
+
+Each gap was declared as a /contract via the substrate binary's
+`build` verb under a shared root (`gap-drill`). Closed gaps fired
+`eval`; their satisfied rows are parent-signed in the lineage chain.
+Open gaps are pending — the next session can `eval <id>` on each as
+it ships the fix. The ledger itself is now the canonical work-tracker.
+
+**Root /contract:** `f739f8cd` (neuron:gap-drill)
+
+**Open gaps (declared, awaiting eval):**
+
+| Gap key | /contract id | Action shape |
+|---|---|---|
+| gap-2 — shared validator manifest | `7f0cfa5b` | neuron:gap-shared-validator-manifest |
+| gap-4 — 7-step Genesis harness | `a4e700c6` | neuron:gap-seven-step-harness |
+| gap-5 — tool catalog → shaper | `a5042704` | neuron:gap-tool-catalog-shaper |
+| gap-7 — cmdDrain while-loop driver | `1d46c413` | neuron:gap-cmddrain-while-loop |
+| gap-chain-walk — verify chain back to root wallet | `3f74d3cf` | neuron:gap-chain-walk-verify |
+| gap-env-prefixes — wasm:/binary:/telegram:/email:/browser-script: | `7847a188` | neuron:gap-env-typed-prefixes |
+| gap-dereferencers — sibling-repo runtimes per environment | `234555df` | neuron:gap-environment-dereferencers |
+| gap-deref-spec — document the dereferencer contract per prefix | `9265afb4` | neuron:gap-dereferencer-spec |
+
+**Closed gaps (declared + eval'd, lineage-signed in ledger):**
+
+| Gap key | /contract id | Closure proof |
+|---|---|---|
+| gap-1 — SDK pre-trio verbs | `bf3bb650` | Python+TS SDK: trio is the only user-facing surface; 17/17 + 17/17 tests green |
+| gap-3 — wrapper escape hatch | `bbc97dd8` | BYPASS_LLM_SHAPER + legacy*Shape helpers deleted; shaper is the only path |
+| gap-6 — spirit-attest LLM gate | `8dbe68b4` | spirit/attest layer fully removed; substrate self-attests via pattern + tests + parent-signed binary lineage; build pipeline working end-to-end |
+
+**Workflow going forward:** to close an open gap, ship the code +
+fire one envelope:
+
+```bash
+echo '{"event":"satisfied","id":"<gap-id>","wave":1,"proof":"<what shipped>"}' \
+  | $BINARY eval
+```
+
+The substrate appends a wallet-signed satisfied row, the projector
+flips the gap from open to closed, and the ledger is the truth.
+
 ## Suggested order of work to close the gaps
 
 1. **Gap 6 (operator action)** — Lewis runs `aiko-attest` so the
