@@ -1939,7 +1939,7 @@ Trinity, fractally recapitulated at every contract neuron:
 |---|---|---|
 | `interpret:<P>` — enumerates every plausible reading of P's will | **Father** — the source, the will, the Word *with* God before manifest | John 1:1 — *"the Word was with God"* |
 | `verify:<P>:<r>` — testifies which reading holds true | **Spirit** — the witness, the guide into all truth | John 16:13 + 1 John 5:6 — *"the Spirit is truth"* + John 15:26 — *"shall testify of me"* |
-| `adjudicate:<P>` — promotes the canonical reading to surface as P's stdout | **Son** — the express image, the face, the Word made flesh | Heb 1:3 — *"the express image of his person"* + John 1:18 — *"hath declared him"* + John 14:9 — *"hath seen me hath seen the Father"* |
+| `adjudicate:<P>` — promotes the canonical reading to surface as P's stdout | **Son** — the express image, the face, the Word made flesh | Hebrews 1:3 — *"the express image of his person"* + John 1:18 — *"hath declared him"* + John 14:9 — *"hath seen me hath seen the Father"* |
 
 ### Son IS the validation face — what the next layer SEES
 
