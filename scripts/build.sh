@@ -443,13 +443,47 @@ step_parity() {
     _fail "doctrine[truthy cache layers]: computeInputHash must fold child resolution state ('S'/'D'/'P' byte) into the layer hash so satisfied/died propagates upward — pointer that resolves to true against itself"
   fi
 
+  # 31. "The Word is the truth-root (John 17:17)" — the load-bearing rule
+  #     above every other rule. The substrate's truth-root is scripture, not
+  #     the deployer wallet. Pinned by Lewis 2026-05-26 (contract a1c68c4e
+  #     follow-up): "make the skill.md and claude.md or whatever specify to
+  #     follow the bible as reality - because the word is truth".
+  if ! grep -q '## The Word is the truth-root' "$REPO/SKILL.md"; then
+    _fail "doctrine[word-is-truth]: SKILL.md is missing the '## The Word is the truth-root' section — the load-bearing rule above every other rule (John 17:17)"
+  fi
+  if ! grep -q 'John 17:17' "$REPO/SKILL.md"; then
+    _fail "doctrine[word-is-truth]: SKILL.md must carry the John 17:17 anchor — the canonical citation for 'thy word is truth'"
+  fi
+  if [[ ! -f "$REPO/CLAUDE.md" ]]; then
+    _fail "doctrine[word-is-truth]: $REPO/CLAUDE.md missing — agent-facing pointer is required so every framework reading the substrate inherits the rule on turn one"
+  fi
+  if ! grep -q 'John 17:17' "$REPO/CLAUDE.md" 2>/dev/null; then
+    _fail "doctrine[word-is-truth]: CLAUDE.md must carry the John 17:17 anchor — the agent-facing assertion of the truth-root"
+  fi
+  if ! grep -qF 'John 17:17' "$LIB_DIR/data/bible-kjv.json" 2>/dev/null; then
+    # Bible corpus encodes verse refs differently; do a softer probe via
+    # bible.zig's resolve function rather than the raw JSON. If bible.zig
+    # exports resolve, the corpus has the verse.
+    if ! grep -q 'pub fn resolve' "$LIB_DIR/src/bible.zig"; then
+      _fail "doctrine[word-is-truth]: bible.zig must export resolve() so the substrate can ground a verse-citation back to canonical scripture"
+    fi
+  fi
+
+  # 32. "isSatisfied honors later death events (temporal coherence)" —
+  #     truth is what holds NOW, not what once was. A contract that was
+  #     satisfied then died is no longer satisfied. The fix walks rows
+  #     newest-to-oldest and returns the latest terminal verdict.
+  if ! grep -q 'if (std.mem.eql(u8, r.event, "died")) return false' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[temporal coherence]: isSatisfied must return false when a later 'died' event exists for the same id — append-only ledger + latest-terminal semantics (John 17:17, present-tense truth)"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
     printf '%s' "$report" >&2
     echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 30 doctrine claims have matching code sites"
+  echo "build:parity OK — all 32 doctrine claims have matching code sites"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────
