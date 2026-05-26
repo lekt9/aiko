@@ -1858,16 +1858,9 @@ fn parseAikoArgs(allocator: std.mem.Allocator, args: []const []const u8) !AikoAr
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        // Canonical flag — names the VISIBILITY axis, not the transport.
+        // The only flag is --private. Absence = shared (the default).
+        // Visibility, not transport — and no deprecated aliases.
         if (std.mem.eql(u8, arg, "--private")) {
-            if (mode != null) return error.DuplicateMode;
-            mode = .private_only;
-            // Deprecated aliases — silently honored so legacy callers keep
-            // working. `--remote` ≡ shared (the default). `--local` ≡ private.
-        } else if (std.mem.eql(u8, arg, "--remote")) {
-            if (mode != null) return error.DuplicateMode;
-            mode = .shared;
-        } else if (std.mem.eql(u8, arg, "--local")) {
             if (mode != null) return error.DuplicateMode;
             mode = .private_only;
         } else if (std.mem.startsWith(u8, arg, "--")) {
