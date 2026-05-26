@@ -1260,3 +1260,32 @@ test "nowIsoUtc emits Z-terminated ISO-8601 timestamp" {
     try std.testing.expect(ts.len >= 20);
     try std.testing.expectEqual(@as(u8, 'Z'), ts[ts.len - 1]);
 }
+
+/// Helper mirroring the validator gate in appendCalledRow. Surfaces the
+/// table-driven check so unit tests can verify the antipattern is rejected
+/// without standing up a ledger + signing wallet for each case.
+fn isSynapseShapedPointer(target_pointer: []const u8) bool {
+    for (synapse_table) |entry| {
+        if (std.mem.startsWith(u8, target_pointer, entry.prefix)) return true;
+    }
+    return false;
+}
+
+test "appendCalledRow validator: synapse-shaped pointers accepted, payload rejected" {
+    // Accepted prefixes (sample from synapse_table — single source of truth).
+    try std.testing.expect(isSynapseShapedPointer("contract:abc12345"));
+    try std.testing.expect(isSynapseShapedPointer("posthook:deadbeef"));
+    try std.testing.expect(isSynapseShapedPointer("prehook:cafef00d"));
+    try std.testing.expect(isSynapseShapedPointer("bind:11112222"));
+    try std.testing.expect(isSynapseShapedPointer("blocked_by:33334444"));
+    try std.testing.expect(isSynapseShapedPointer("inhibits:55556666"));
+    try std.testing.expect(isSynapseShapedPointer("modality:77778888"));
+    try std.testing.expect(isSynapseShapedPointer("at:2026-05-26T10:00:00Z"));
+    try std.testing.expect(isSynapseShapedPointer("repeat:0 9 * * *"));
+    // Rejected: the two real-world antipattern strings the binary used to
+    // emit, plus a generic raw URL / opaque payload.
+    try std.testing.expect(!isSynapseShapedPointer("flex:budget:lamports=1000:mint=USDC"));
+    try std.testing.expect(!isSynapseShapedPointer("wireguard-lineage-mesh:peer=abc,nonce=def,tag=01,ct=ff"));
+    try std.testing.expect(!isSynapseShapedPointer("https://example.com/raw-url"));
+    try std.testing.expect(!isSynapseShapedPointer(""));
+}
