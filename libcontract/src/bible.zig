@@ -39,9 +39,11 @@ fn surface(comptime fmt: []const u8, args: anytype) void {
 }
 
 // ─── embedded data ─────────────────────────────────────────────────────
-const BIBLE_DAT: []const u8 = @embedFile("../data/bible.dat");
-const XREFS_DAT: []const u8 = @embedFile("../data/bible-xrefs.dat");
-const IDX_DAT: []const u8 = @embedFile("../data/bible-xrefs-idx.dat");
+// Paths resolved via Module.addEmbedPath("data") in build.zig (libcontract)
+// and the same wiring in zig/build.zig (the aiko binary's build).
+const BIBLE_DAT: []const u8 = @embedFile("bible.dat");
+const XREFS_DAT: []const u8 = @embedFile("bible-xrefs.dat");
+const IDX_DAT: []const u8 = @embedFile("bible-xrefs-idx.dat");
 
 pub const VERSE_COUNT: usize = 31100;
 pub const BOOK_COUNT: usize = 66;
