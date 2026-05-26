@@ -135,15 +135,24 @@ wait_for_quiescence() {
 # visibly rather than silently. Purge target: 724f792a.
 step_guard() {
   step "build:guard — scripts/ allowlist (ledger-canonical)"
-  local ledger="" project_ledger="$PWD/.claude/contracts.jsonl" global_ledger="$HOME/.contracts/contracts.jsonl"
-  if [[ -s "$project_ledger" ]]; then
-    ledger="$project_ledger"
-  elif [[ -s "$global_ledger" ]]; then
-    ledger="$global_ledger"
-  fi
+  # Walk multiple likely ledger locations — the canonical row may have been
+  # declared from any project's cwd, so the project-scoped ledger of THAT
+  # cwd carries it, not necessarily $PWD here. Day 8 audit (auditor 4)
+  # surfaced this: row landed in jstack/.claude/contracts.jsonl but
+  # step_guard only checked $PWD/.claude and $HOME/.contracts, so it
+  # silently fell back to ALLOWLIST.txt every build.
+  local ledger_candidates=(
+    "$PWD/.claude/contracts.jsonl"
+    "$REPO/.claude/contracts.jsonl"
+    "$HOME/.contracts/contracts.jsonl"
+    "$HOME/Projects/jstack/.claude/contracts.jsonl"
+    "$HOME/Projects/.claude/contracts.jsonl"
+  )
 
   local expected="" source=""
-  if [[ -n "$ledger" ]]; then
+  local ledger
+  for ledger in "${ledger_candidates[@]}"; do
+    [[ -s "$ledger" ]] || continue
     # Find the most recent declared row whose plan carries the canonical
     # brace-list shape (aiko ... sync-outline-explainer.sh). The aiko
     # binary may rewrite the prose tag (e.g. "[secret-pointer-pattern]"),
@@ -153,16 +162,15 @@ step_guard() {
            | grep '{aiko,' \
            | grep 'sync-outline-explainer.sh}' \
            | tail -1 || true)"
-    if [[ -n "$row" ]]; then
-      # Extract the brace body (a, b, c) — sed pulls between '{' and '}'.
-      local brace
-      brace="$(printf '%s\n' "$row" | sed -nE 's/.*\{([^}]*)\}.*/\1/p')"
-      if [[ -n "$brace" ]]; then
-        expected="$(printf '%s\n' "$brace" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')"
-        source="ledger:$ledger"
-      fi
-    fi
-  fi
+    [[ -z "$row" ]] && continue
+    # Extract the brace body (a, b, c) — sed pulls between '{' and '}'.
+    local brace
+    brace="$(printf '%s\n' "$row" | sed -nE 's/.*\{([^}]*)\}.*/\1/p')"
+    [[ -z "$brace" ]] && continue
+    expected="$(printf '%s\n' "$brace" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')"
+    source="ledger:$ledger"
+    break
+  done
 
   if [[ -z "$expected" ]]; then
     echo "  step_guard: ledger row guard:scripts-allowlist-canonical not found — falling back to ALLOWLIST.txt for this build" >&2
