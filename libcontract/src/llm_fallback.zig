@@ -97,15 +97,16 @@ pub fn compileLocallyJson(
     // so a doctrine change here flows through without manual eviction).
     try writeFile(allocator, grammar_path, GRAMMAR_GBNF);
 
-    // Ensure llama-cli is fetched + extracted.
+    // Ensure llama-cli is fetched + extracted. Tarball extracts into
+    // `<models_dir>/llama-cli/llama-<TAG>/` with the binary + companion
+    // dylibs all in that one directory — leave them there.
     if (!pathExists(llama_cli)) {
         const tarball_url = platformLlamaCppUrl() orelse return Error.UnsupportedPlatform;
         const tarball_path = try std.fmt.allocPrint(allocator, "{s}/llama-cli/release.tar.gz", .{models_dir});
         defer allocator.free(tarball_path);
         try shell(allocator, "curl -fsSL '{s}' -o '{s}'", .{ tarball_url, tarball_path });
-        // Extract into llama-cli/ — release tarballs put binaries under build/bin/
-        try shell(allocator, "tar -xzf '{s}' -C '{s}/llama-cli' --strip-components=2 2>/dev/null || tar -xzf '{s}' -C '{s}/llama-cli'", .{ tarball_path, models_dir, tarball_path, models_dir });
-        try shell(allocator, "find '{s}/llama-cli' -name 'llama-cli' -type f -exec mv {{}} '{s}' \\; 2>/dev/null; chmod +x '{s}' 2>/dev/null || true", .{ models_dir, llama_cli, llama_cli });
+        try shell(allocator, "tar -xzf '{s}' -C '{s}/llama-cli'", .{ tarball_path, models_dir });
+        try shell(allocator, "chmod +x '{s}' 2>/dev/null || true", .{llama_cli});
         if (!pathExists(llama_cli)) return Error.ExtractFailed;
     }
 
