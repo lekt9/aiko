@@ -2476,7 +2476,7 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
             evidencePrint("pretool-event-ts: {s}\n", .{pts});
         }
     }
-    const action = ambientAction(env);
+    const action = actionFromPlan(d.plan);
     const parent = ambientParent(env);
     const adapter = ambientAdapter(env);
     const adapter_kind = ambientAdapterKind(env);
@@ -2960,7 +2960,7 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         }
     }
 
-    const action = ambientAction(env);
+    const action = actionFromPlan(d.plan);
     const parent = ambientParent(env);
     const adapter = ambientAdapter(env);
     const adapter_kind = ambientAdapterKind(env);
@@ -3128,7 +3128,7 @@ fn cmdOpenAi(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
     // 4. Route to remote declare. If UNBROWSE_BASE is missing the call
     //    fails — we don't fall back; per canon the public surface is
     //    always Unbrowse-backed.
-    const action = ambientAction(env);
+    const action = actionFromPlan(d.plan);
     const parent = ambientParent(env);
     var tool_calls_json: ?[]u8 = null;
     defer if (tool_calls_json) |t| allocator.free(t);
