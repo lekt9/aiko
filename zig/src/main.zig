@@ -1564,7 +1564,7 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
             evidence("  result: FAIL — no root key\n");
             return .{ .rc = 1, .result = "no-root-key" };
         };
-        const identity_id = env.getPosix("CONTRACT_INSTANCE_ID") orelse r.id;
+        const identity_id = r.id;
         // Solana (ed25519)
         const sol_kp = lineage_lib.deriveKeyPair(root, identity_id) catch return .{ .rc = 1, .result = "derive-failed" };
         var b58: [64]u8 = undefined;
@@ -1589,7 +1589,7 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
     // wallet:setup — chain-agnostic first-run guidance.
     if (std.mem.eql(u8, action, "wallet:setup")) {
         const root = lineage_lib.loadOrInitRootKey(allocator, env) catch return .{ .rc = 1, .result = "no-root-key" };
-        const identity_id = env.getPosix("CONTRACT_INSTANCE_ID") orelse r.id;
+        const identity_id = r.id;
         const sol_kp = lineage_lib.deriveKeyPair(root, identity_id) catch return .{ .rc = 1, .result = "derive-failed" };
         var b58: [64]u8 = undefined;
         const b58_n = b58encode(&sol_kp.public_key.bytes, &b58);
