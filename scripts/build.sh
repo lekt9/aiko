@@ -492,11 +492,14 @@ step_parity() {
   #     blocked_by:, prehook:) so strict declaration-order is enforced
   #     by the pointer chain. Without the synapse walk, cross-edge deps
   #     are invisible to the cache and Day 5 could fire before Day 4.
-  for synapse_walk in '"contract:"' '"blocked_by:"' '"prehook:"'; do
-    if ! grep -qF "$synapse_walk" "$LIB_DIR/src/cache.zig"; then
-      _fail "doctrine[Genesis sequencing]: collectDependencyIds in cache.zig must walk $synapse_walk synapse refs from the row's plan+action — Genesis order requires every typed dependency edge contribute to the signature chain"
-    fi
-  done
+  # Genesis sequencing — minimum walk set (post-claim-46 collapse).
+  # Only "contract:" remains as the canonical dependency edge; blocked_by
+  # and prehook were removed because the signature chain mechanically
+  # subsumes their ordering semantics (zero ledger usage proved the
+  # collapse safe).
+  if ! grep -qF '"contract:"' "$LIB_DIR/src/cache.zig"; then
+    _fail "doctrine[Genesis sequencing]: collectDependencyIds in cache.zig must walk \"contract:\" synapse refs from the row's plan+action — Genesis order requires the dependency edge contribute to the signature chain"
+  fi
   if ! grep -q '## Genesis sequencing' "$REPO/SKILL.md"; then
     _fail "doctrine[Genesis sequencing]: SKILL.md is missing the '### Genesis sequencing' section that declares strict-order resolution as the substrate invariant (Day N waits on Day N-1)"
   fi
