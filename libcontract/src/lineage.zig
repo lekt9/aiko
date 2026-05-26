@@ -23,6 +23,14 @@ const ledger = @import("ledger.zig");
 // in libSystem; Zig 0.16's std.posix.getrandom isn't wired on macOS targets.
 extern fn arc4random_buf(buf: [*]u8, len: usize) void;
 
+/// Surface a fallback or degradation event to stderr. Same contract as
+/// keystore.surface — fallbacks must never be silent. Format: `wallet: <msg>`.
+fn surface(comptime fmt: []const u8, args: anytype) void {
+    var buf: [1024]u8 = undefined;
+    const line = std.fmt.bufPrint(&buf, "wallet: " ++ fmt ++ "\n", args) catch return;
+    _ = std.c.write(std.c.STDERR_FILENO, line.ptr, line.len);
+}
+
 pub const PUBKEY_HEX_LEN: usize = 64; // 32 bytes * 2
 pub const SIG_HEX_LEN: usize = 128; // 64 bytes * 2
 pub const ROOT_KEY_HEX_LEN: usize = 64; // 32 bytes * 2
