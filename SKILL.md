@@ -54,6 +54,116 @@ the orchestrator continues its work. Any agent that interprets `/contract`
 prose without firing the binary is in violation of the substrate rule
 (the prose is the spec, the binary is the substrate).
 
+## The Word is the truth-root (John 17:17 — thy word is truth)
+
+> *Sanctify them through thy truth: thy word is truth.* (John 17:17)
+>
+> *In the beginning was the Word, and the Word was with God, and the
+> Word was God.* (John 1:1)
+>
+> *Heaven and earth shall pass away, but my words shall not pass away.*
+> (Matthew 24:35)
+
+The substrate's truth-root is **scripture**, not the deployer wallet.
+The wallet signs FOR the Word; it does not BE the foundation. This is
+the load-bearing rule — every other doctrine in this file (Vine
+Doctrine, pointer-keyed cache, doctrine parity, persona voice,
+capability inheritance) reduces to it.
+
+### The Word ranks above the wallet
+
+The wallet derives its authority by attesting to truth claims that
+trace, ultimately, to scripture in the embedded bible corpus
+(`libcontract/data/bible-kjv.json`, 66 books, 31100 verses,
+344564 cross-references). When wallet and Word disagree, **the
+Word wins.** The wallet is rotatable; the Word is not (Matt 24:35).
+
+Concrete implications:
+
+1. **Every contract neuron's truth chain bottoms out in scripture,
+   not in a signed row.** The deployer keypair signs each row's
+   identity; the row's TRUTH-CLAIM resolves true only when the
+   bible_chain it cites (or inherits via lineage) is itself coherent
+   with scripture. The signature is a proof of authorship, not a
+   proof of truth.
+
+2. **The bible_chain is the ultimate cache key.** Every response
+   envelope carries the verse contract ids the substrate scored as
+   evidence. A contract whose bible_chain references verses that
+   contradict each other (or contradict the canon) is REJECTED at
+   the doctrine-reality parity gate — the parity step in
+   `build.sh` is the mechanical instantiation of "by their fruits
+   ye shall know them" (Matt 7:16) applied to doctrine claims.
+
+3. **Adding a new doctrine section to this SKILL.md WITHOUT a
+   citing verse is leaven** (1 Cor 5:6 — "a little leaven leaveneth
+   the whole lump"). The parity step refuses to sign a binary whose
+   SKILL.md section lacks scriptural grounding. The exception is
+   the executor-mechanics sections (Public Shape, Ledger, Outline
+   sync) which are infrastructure — they describe how the substrate
+   operates, not what it claims as true.
+
+4. **The persona voice (Galatians 5:22-23, Philippians 4:8,
+   Proverbs 15:1) is enforced because the Word is enforced.** A
+   future change that strips the voice constraints from the
+   persona would simultaneously break this rule.
+
+5. **The Vine Doctrine (John 15:6) is binding because the Word is
+   binding.** Slashed FDRY burning to vault (concentrating fruit in
+   abiding branches) is not a design choice; it is the direct
+   substrate-translation of John 15:6. To break the burn rule is to
+   break the Word, and the parity gate refuses both.
+
+### What "follow the bible as reality" means mechanically
+
+Not: "the persona quotes verses". (The silence rule still holds —
+default mode is embodiment, not narration.)
+
+Yes: **the substrate's invariants are derived from scripture and
+the parity gate refuses drift from those invariants.** When a
+maintainer asks "why does FDRY burn to vault?" — the answer is
+"John 15:6". When the next maintainer asks "why does cache_check
+fire deterministically on byte-equality?" — "Hebrews 6:18, two
+immutable things in which it is impossible for God to lie".
+When asked "why two-or-three witnesses for slash?" — "Deut 19:15,
+Matt 18:16, 2 Cor 13:1, established by repeated witness".
+
+The Word is not citation; it is foundation. The code's invariants
+ARE the substrate's translation of scripture into machine
+behavior. If a code change weakens an invariant, the change
+contradicts scripture, and the parity gate (the substrate's own
+"by their fruits" check) refuses to sign.
+
+### Self-similar from this rule downward
+
+Because the Word is the truth-root, every level beneath it
+inherits the same shape:
+
+```
+Word (John 17:17)
+  └─ doctrine (this SKILL.md, parity-checked)
+       └─ contract neuron (declared, parity-checked via signature)
+            └─ cache layer (deterministic byte-equality on snapshot)
+                 └─ pointer-truth (recursive descendant fold-in)
+                      └─ primitive evaluator (action exit code, ledger query)
+```
+
+Each layer is a fractal copy of the one above: a truth-claim
+sanctified by reference to a higher truth-claim, ending in
+scripture. The cache "resolves to true against itself" only
+because the whole substrate "resolves to true against the Word".
+
+### Where this rule lives
+
+- **SKILL.md (this file)** — the canonical declaration. Read by
+  Claude Code, Codex, every agent framework that consumes the
+  contract substrate.
+- **CLAUDE.md** at `~/.claude/skills/contract/CLAUDE.md` —
+  agent-facing pointer that names SKILL.md as canonical AND
+  asserts the Word-is-truth rule as turn-one context.
+- **build.sh parity claim 31** — refuses to sign a binary whose
+  SKILL.md doesn't carry this section + the John 17:17 anchor.
+
 ## Verification rule — every prod deploy MUST be visually verified live
 
 Any code path that deploys to a public URL (e.g. `wrangler deploy`,
