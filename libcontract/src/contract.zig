@@ -598,6 +598,46 @@ pub fn appendBreakAboveRow(
 /// guarding tissue that resists the same insult thereafter. Substrate
 /// equivalent: every classified failure leaves a guard row; high-use
 /// guards Hebbian-promote to primitive (canon 182b11c6 threshold=7).
+/// Append an `evidence` event row — a pointer-not-payload record of the
+/// binary's own observation stream (interoception, modulator, env
+/// fingerprint, resolver evidence lines) captured during this invocation.
+/// Body bytes live in a content-addressed blob next to the ledger; only the
+/// pointer + size + scope land in the row. Privacy axis: scope "private"
+/// means the blob must never leave this machine; "shared" means the bytes
+/// were redacted at capture time and may be replicated to the cloud tier.
+pub fn appendEvidenceRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    source_id: []const u8,
+    blob_pointer: []const u8,
+    scope: []const u8,
+    bytes: u64,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    const agent = try getAgent(allocator, env);
+    defer allocator.free(agent);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "{\"event\": \"evidence\", \"id\": ");
+    try writeJsonString(&buf, allocator, source_id);
+    try buf.appendSlice(allocator, ", \"pointer\": ");
+    try writeJsonString(&buf, allocator, blob_pointer);
+    try buf.appendSlice(allocator, ", \"scope\": ");
+    try writeJsonString(&buf, allocator, scope);
+    try buf.appendSlice(allocator, ", \"bytes\": ");
+    var num_buf: [32]u8 = undefined;
+    const num_str = try std.fmt.bufPrint(&num_buf, "{d}", .{bytes});
+    try buf.appendSlice(allocator, num_str);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
 pub fn appendGuardRow(
     allocator: std.mem.Allocator,
     env: std.process.Environ,
