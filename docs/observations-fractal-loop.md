@@ -1025,6 +1025,9 @@ it ships the fix. The ledger itself is now the canonical work-tracker.
 | gap-env-prefixes — wasm:/binary:/telegram:/email:/browser-script: | `7847a188` | neuron:gap-env-typed-prefixes |
 | gap-dereferencers — sibling-repo runtimes per environment | `234555df` | neuron:gap-environment-dereferencers |
 | gap-deref-spec — document the dereferencer contract per prefix | `9265afb4` | neuron:gap-dereferencer-spec |
+| gap-edge-wire — signed cross-machine wire primitive (wireguard-style) | `f7f193b8` | neuron:gap-edge-wire |
+| gap-while-loop-runtime — binary as long-running while-loop with SIGINT trap | `3212a613` | neuron:gap-while-loop-runtime |
+| gap-translate-verb — `translate` verb walking verses.relevantVerses for cross-domain pattern bridges | `9ce105a1` | neuron:gap-translate-verb |
 
 **Closed gaps (declared + eval'd, lineage-signed in ledger):**
 
@@ -1032,7 +1035,8 @@ it ships the fix. The ledger itself is now the canonical work-tracker.
 |---|---|---|
 | gap-1 — SDK pre-trio verbs | `bf3bb650` | Python+TS SDK: trio is the only user-facing surface; 17/17 + 17/17 tests green |
 | gap-3 — wrapper escape hatch | `bbc97dd8` | BYPASS_LLM_SHAPER + legacy*Shape helpers deleted; shaper is the only path |
-| gap-6 — spirit-attest LLM gate | `8dbe68b4` | spirit/attest layer fully removed; substrate self-attests via pattern + tests + parent-signed binary lineage; build pipeline working end-to-end |
+| gap-6 — spirit-attest LLM gate | `8dbe68b4` | spirit/attest layer fully removed; substrate self-attests via pattern + tests + parent-signed binary lineage |
+| gap-prune-authority | `61c76aa9` | cmdPrune verifies by_id == target.parent_id or self-apoptosis; 4/4 falsifier tests pass (parent-kills-child OK; stranger REFUSED; self-apoptosis OK; sibling-kills-sibling REFUSED) |
 
 **Workflow going forward:** to close an open gap, ship the code +
 fire one envelope:
