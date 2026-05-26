@@ -38,18 +38,24 @@ extern fn pclose(stream: *anyopaque) c_int;
 extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: *anyopaque) usize;
 
 pub const Verdict = enum {
+    /// Signature chain present + matches the recorded snapshot.
+    /// Substrate short-circuits — contract already true, dependencies
+    /// unchanged.
     hit,
+    /// Signature chain present + differs from the recorded snapshot.
+    /// A dependency's terminal state changed; the parent re-evaluates.
     miss,
+    /// Signature chain present but no recorded snapshot for this id.
+    /// Treat as miss; the next satisfaction lands the first snapshot.
     stale,
+    /// No signature chain — either the contract predates output_signature
+    /// (pre-cache rows) OR a dependency is still pending its terminal
+    /// signature (Genesis-day ordering: Day N waits on Day N-1). In
+    /// the satisfied-and-no-chain case, the substrate honors the prior
+    /// satisfaction (return 0). In the pending-dependency case, the
+    /// caller already short-circuits via isSatisfied/runAction, so this
+    /// verdict only ever fires on legacy-satisfied rows.
     legacy,
-    /// Signature chain incomplete — at least one row in the contract's
-    /// pointer chain (declared parent_signature OR a child's
-    /// output_signature) is missing. Defensive: the cache layer refuses
-    /// to assert a verdict from raw bytes when the pointer-resolved
-    /// chain is broken. resolveOne falls through to re-evaluate; the
-    /// next satisfaction lands a signed terminal row and the chain
-    /// becomes complete on the following pass.
-    signature_incomplete,
 
     pub fn jsonName(self: Verdict) []const u8 {
         return switch (self) {
@@ -57,7 +63,6 @@ pub const Verdict = enum {
             .miss => "miss",
             .stale => "stale",
             .legacy => "legacy",
-            .signature_incomplete => "signature_incomplete",
         };
     }
 };
