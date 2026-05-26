@@ -108,8 +108,10 @@ fn buildPrompt(allocator: std.mem.Allocator, file_path: []const u8, source: []co
         \\ORDER — the 10 Commandments (Exodus 20). The file MUST NOT violate any:
         \\
     );
+    var line_buf: [512]u8 = undefined;
     for (spirit.COMMANDMENTS, 0..) |c, i| {
-        try out.writer(allocator).print("  {d}. {s}\n", .{ i + 1, c });
+        const line = try std.fmt.bufPrint(&line_buf, "  {d}. {s}\n", .{ i + 1, c });
+        try out.appendSlice(allocator, line);
     }
     try out.appendSlice(allocator,
         \\
