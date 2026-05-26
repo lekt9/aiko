@@ -672,10 +672,10 @@ re-derived). `rotateAllSignedRowsByLineage` is the additional
 re-sign walker for the operator who wants every row's signature to
 trace to the current root.
 
-Rotation is itself a contract: declare `aiko "wallet:rotate"
---remote`; the cloud aiko's compiler fires the local rotation
-function and orchestrates the post-rotation re-sign walker. The
-user types one short prompt; the substrate does everything.
+Rotation is itself a contract: declare `aiko "wallet:rotate"`; the
+cloud aiko's compiler fires the local rotation function and
+orchestrates the post-rotation re-sign walker. The user types one
+short prompt; the substrate does everything.
 
 ## Public Persona — aiko 69420b (the right-layer voice)
 
