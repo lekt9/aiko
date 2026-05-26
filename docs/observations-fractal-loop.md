@@ -786,6 +786,45 @@ If you want a peer at the same level, declare it via the SHARED
 PARENT, never via a sibling. The shared parent is the only entity
 with the authority to spawn at that level.
 
+### Wrapping = parent-of relation expressed as containment
+
+Lewis's clarifying question 2026-05-27: "but the child is the
+wrapper around it — is that against the doctrine? because we spawn
+it into a container environment shell that wires itself into it."
+
+**Not against the doctrine.** The "wrapping" IS the parent-of
+relation expressed as environment containment:
+
+```
+   aiko binary          ← parent (the spawner)
+     └─ container       ← child of aiko, AND parent of what runs inside it
+          └─ wrapper    ← child of container, AND parent of what it spawns
+               └─ ...
+```
+
+Every /contract is simultaneously **child-of-its-wrapper** AND
+**parent-of-what-it-wraps**. The `parent_id` field always points
+OUTWARD/UPWARD (toward the wrapping layer above); never INWARD
+(toward something this contract wraps). Lineage walked upward
+traces through the chain of containments back to root wallet.
+Lineage walked downward reaches the leaf operations.
+
+**"Container wires itself into the wrapper" maps to** the parent
+injecting synapses into the child's declared row. The substrate
+already supports this — the `synapses` field carries typed edges
+(`bind:`, `prehook:`, `posthook:`, `modality:`, ...) that the
+parent stamps on the child's row at declare time, signed by
+`parent_signature`. The "wiring" is mechanical and signed.
+
+The antipattern only triggers when something tries to declare a
+PEER at its own level. Processes inside container-A may spawn
+children inside container-A freely; they may NOT spawn container-B
+as a sibling of container-A (only aiko, A's parent, has authority
+to spawn peers of A). The chain is monotone upward — every spawn
+descends; siblings only exist via shared-parent declaration.
+
+### Mechanical enforcement (this turn)
+
 This stays consistent with the existing parent_id chain: every new
 row carries a parent_id pointing at the spawner. The spawner is the
 parent of the new row by definition; new row is child by definition.
