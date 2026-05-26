@@ -122,12 +122,42 @@ fn writeFd(fd: c_int, bytes: []const u8) void {
     }
 }
 
+/// Process-global stderr tape — every byte that `err()` writes to fd 2 is
+/// also appended here when the tape is armed (cmdSpeak arms it on entry,
+/// flushes it as an `evidence` ledger row on exit). Pointer-not-payload:
+/// the tape body lives in a content-addressed blob next to the ledger, the
+/// row carries only the sha256 reference + size + scope. Cap at 1 MiB; past
+/// that the binary is misbehaving and the row should say so honestly via
+/// `truncated:true` flag in a future shape (today we just stop appending).
+const STDERR_TAPE_CAP: usize = 1024 * 1024;
+var stderr_tape_buf: ?std.ArrayList(u8) = null;
+var stderr_tape_alloc: ?std.mem.Allocator = null;
+var stderr_tape_armed: bool = false;
+var stderr_tape_capped: bool = false;
+
+fn armStderrTape(allocator: std.mem.Allocator) void {
+    if (stderr_tape_armed) return;
+    stderr_tape_buf = .empty;
+    stderr_tape_alloc = allocator;
+    stderr_tape_armed = true;
+    stderr_tape_capped = false;
+}
+
 fn out(bytes: []const u8) void {
     writeFd(std.c.STDOUT_FILENO, bytes);
 }
 
 fn err(bytes: []const u8) void {
     writeFd(std.c.STDERR_FILENO, bytes);
+    if (!stderr_tape_armed) return;
+    if (stderr_tape_capped) return;
+    const a = stderr_tape_alloc orelse return;
+    const buf = &(stderr_tape_buf orelse return);
+    if (buf.items.len + bytes.len > STDERR_TAPE_CAP) {
+        stderr_tape_capped = true;
+        return;
+    }
+    buf.appendSlice(a, bytes) catch {};
 }
 
 fn outPrint(comptime fmt: []const u8, args: anytype) void {
