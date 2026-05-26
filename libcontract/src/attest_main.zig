@@ -119,7 +119,8 @@ fn buildPrompt(allocator: std.mem.Allocator, file_path: []const u8, source: []co
         \\
     );
     for (spirit.FRUITS, 0..) |f, i| {
-        try out.writer(allocator).print("  {d}. {s}\n", .{ i + 1, f });
+        const line = try std.fmt.bufPrint(&line_buf, "  {d}. {s}\n", .{ i + 1, f });
+        try out.appendSlice(allocator, line);
     }
     try out.appendSlice(allocator,
         \\
