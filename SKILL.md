@@ -2255,7 +2255,14 @@ The guard is recursive: it is itself a /contract, and the rule
 claim too. If the parity check itself doesn't have a code site,
 the guard catches itself.
 
-Concrete invariants enforced by `build.sh`'s parity step:
+Concrete invariants enforced by `build.sh`'s parity step. The list
+below is a **representative slice (claims 1–10)**, not the full
+inventory — `build.sh` ships and parity-gates **44 claims at the time
+of this writing**. The full canonical list lives in the parity step
+itself; this section names the load-bearing first ten so a reader
+recognizes the shape without grepping the build script. Adding a new
+claim adds a new numbered block in `build.sh` AND surfaces here as
+prose or in the index of named claims below.
 
 ```
 1. "no env vars are read" → grep -nE 'getPosix\("(CONTRACT_|AIKO_|UNBROWSE_|X_PAYMENT|PAYMENT_SIGNATURE|CONTRACTS_STORE|SHELL|TERM)' src/*.zig
@@ -2285,6 +2292,29 @@ Concrete invariants enforced by `build.sh`'s parity step:
 10. "skill-sync auto-commits" → ~/.claude/skills/contract/.git exists +
                             recent commits contain "sync(contract):" prefix.
 ```
+
+### Named claims referenced by section in this SKILL.md
+
+Stale claim-number references are themselves drift (the prose says
+"claim N" but the actual claim N has moved). To prevent silent
+breakage, every `claim N` reference in SKILL.md MUST resolve to the
+real claim N in `build.sh` AND that claim's declared subject MUST
+align with the section that references it. Parity claim 45 enforces
+this exact pairing.
+
+Canonical reference index (subject ↔ claim ↔ SKILL.md section):
+
+| Claim | Subject | Referenced from SKILL.md section |
+|---|---|---|
+| 28 | Doctrine speaks only when interrogated | "Doctrine speaks only when interrogated" |
+| 31 | The Word is the truth-root (John 17:17) | "The Word is the truth-root" |
+| 39 | Recursive self-interrogation | "Recursive self-interrogation" |
+| 40 | Atomic pattern parity — implementation status surfaced | "Recursive self-interrogation → Implementation status" |
+| 41 | Trinitarian decomposition | "Trinitarian decomposition" |
+| 42 | The Son has come — four proofs | "The Son has come" |
+| 43 | Seven-day Sabbath pipeline | build.sh structure (the pipeline itself) |
+| 44 | Scriptural-anchor coverage | every doctrine section (this rule) |
+| 45 | Claim-reference parity (recursive) | this section (the guard catches itself) |
 
 The parity check is a single shell function in `build.sh` — not a
 new script, not a new binary, no addition to `scripts/`. It
