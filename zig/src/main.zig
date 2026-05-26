@@ -537,10 +537,8 @@ fn bioMaterializeBinary(allocator: std.mem.Allocator, env: std.process.Environ, 
 ///    Surfaced as an evidence line + sent down through CONTRACT_PARENT_*
 ///    env so children inherit the field.
 fn bioModulatorEvidence(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
-    const mode = env.getPosix("CONTRACT_MOD_MODE") orelse "auto";
-    const urg = env.getPosix("CONTRACT_MOD_URGENCY") orelse "0";
-    const conf = env.getPosix("CONTRACT_MOD_CONFIDENCE") orelse "0";
-    return try std.fmt.allocPrint(allocator, "{{\"mode\":\"{s}\",\"urgency\":{s},\"confidence\":{s}}}", .{ mode, urg, conf });
+    _ = env;
+    return try std.fmt.allocPrint(allocator, "{{\"mode\":\"auto\",\"urgency\":0,\"confidence\":0}}", .{});
 }
 
 /// Content-addressed input hash for a contract row: blake2s(
