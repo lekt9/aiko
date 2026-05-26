@@ -512,6 +512,180 @@ shape as its row topology. Every /contract has a parent_id; every
 LLM endpoint has a parent endpoint; every wrapper has a parent
 wrapper. Walk the pointer chain to get the full provenance.
 
+## Edges at layers 6/7/8 = ANY layer-4 carrier (Lewis 2026-05-27)
+
+Lewis's question: "the edges that connect contracts on the step 6-7-8
+is anything — any network, any tunnel, any whatever, even a webhook
+api route that was built. The contract bridging it just builds the
+integration to remember it as an edge?"
+
+**Confirmed — and the substrate already supports this.** Layer 4
+(transport) is the carrier layer; ANY layer-4-typed prefix can serve
+as the signed edge between contracts at higher layers:
+
+| Layer-4 prefix | Carrier | What it bridges |
+|---|---|---|
+| `wrapper:<name>` | environment adapter | one execution context → another |
+| `webhook:<url>` | HTTP push | any URL the substrate can POST to |
+| `tunnel:<peer>` | wireguard-style network | cross-machine via signed peer pubkey |
+| `posthook:<id>` | downstream callback | "fire this contract when I resolve" |
+| `prehook:<id>` | upstream callback | "fire this contract before I construct" |
+| `modality:<id>` | typed channel | input/output adapter for a media kind |
+| `sha256-shared:<hex>` | content-addressed | shared blob storage reference |
+
+**The bridging IS the act of declaring a `wrapper:<name>` (or
+`webhook:<url>`, or `tunnel:<peer>`) contract.** Once that row lands
+on the ledger, the substrate "remembers it as an edge" — future
+contracts can declare it as `parent_id` (or reference it via the
+edge prefix) and the lineage walker treats it as a first-class
+carrier. There is no separate "register a new edge" verb; declaring
+the wrapper IS the registration.
+
+### The doctrinal anchor
+
+This composes cleanly with the existing rules:
+
+- **Edge IS the signed pathway** — the wrapper's row carries
+  `env_pubkey` + `parent_signature`, so the bridge itself is
+  cryptographically attested. Walking the lineage walks the wires.
+- **Pointers-over-anything (Clause B)** — the bridge is a pointer
+  to a runtime, not the runtime itself. Whichever host has the
+  dereferencer reads the bytes; the substrate just routes.
+- **Render-without-seeing** — a webhook bridge can carry sealed
+  payload bytes between hosts without the bridge ever decrypting
+  them. The orchestrator routes; the target env's dereferencer
+  holds the key.
+- **Environment-generative** — when a contract names a location
+  word in its plan, the substrate looks up the wrapper:<word>
+  contract in the ledger. If a fresh integration (e.g. a new
+  webhook) was just declared, the lookup finds it on the next
+  pass. The edge becomes available as soon as the declaring
+  contract is signed.
+
+### Mechanical gap (newly surfaced)
+
+There is no INVARIANT documented anywhere that pins "any layer-4
+prefix can serve as a higher-layer edge." Each prefix is declared
+individually in `pointer.zig:inferPointerType` + `inferLayer`, but
+the meta-rule that they're ALL valid carriers is implicit. A new
+maintainer adding a layer-4 prefix might not realize it
+automatically becomes available as a higher-layer edge.
+
+**Gap declared:** `gap-edge-meta-invariant` — pin the meta-rule
+("any layer-4 typed prefix is a valid edge carrier between contracts
+at any higher layer") in pointer.zig as a comment AND in
+build.sh's parity step as a claim. See the gap ledger below.
+
+## Value-change re-evaluation — cascade gap (Lewis 2026-05-27)
+
+Lewis's question: "scenario where a value changes — does the
+contract re-evaluate and re-call things properly, fractally
+recursively, in all dimensions?"
+
+### Doctrinal answer (what SKILL.md says)
+
+From the pointer-keyed cache section:
+
+> "When any pointer the contract depends on acquires a new terminal
+> event → the next computeInputHash walks the descendant DAG, the
+> snapshot drifts, the next resolveOne fires cache_check{verdict=miss}
+> and re-evaluates. The invalidation cascades up the DAG by recursion;
+> no explicit walker is required."
+
+In theory: cache_invalidated row appended → next resolveOne sees the
+miss → re-evaluates → produces new terminal signature → propagates
+up the parent_id chain by the same mechanism.
+
+### Mechanical reality (what the code actually does)
+
+**The cascade is partly wired and partly not.** Concretely:
+
+1. `cache.zig` correctly appends `cache_invalidated` when a
+   dependency's terminal event arrives AFTER `cache_resolved`. ✅
+2. `cache.findLatestResolvedSnapshot` correctly returns null for
+   invalidated rows. ✅
+3. `resolveOne` correctly fires `cache_check{verdict=miss}` when
+   the snapshot mismatches AND re-evaluates. ✅ — **but only if
+   resolveOne is called on the affected row.**
+4. The drill (`backfillUnresolvedWithBudget` in `zig/src/main.zig`
+   line 2705) **SKIPS `isSatisfied` rows**: `if (isSatisfied(rows,
+   r.id)) continue;`. ❌
+
+**This means**: a previously-satisfied row whose dependency value
+changes (and thus has a `cache_invalidated` row) is NEVER re-resolved
+by the drill. The cascade-up that the doctrine promises requires
+something to call `resolveOne` on the affected row; the drill
+doesn't because the row already has a `satisfied` event.
+
+### Concrete failure scenario
+
+```
+   t=0: contract X declared, depends on Y. Y satisfied with signature S_y_v1.
+   t=1: X satisfied with signature S_x_v1 (depends on S_y_v1).
+        cache_resolved{snapshot=H1} appended.
+   t=2: Y re-evaluates (some external change) → satisfied with
+        signature S_y_v2. cache_invalidated{id=X, source=Y} appended.
+   t=3: drill runs. Walks unresolved rows. X is satisfied →
+        SKIPPED. resolveOne(X) never called.
+   t=4: X's snapshot is stale; downstream consumers still see X's
+        old terminal signature; the value-change at Y does NOT
+        cascade up to X without external prompt.
+```
+
+### Where it WORKS today
+
+The cascade DOES fire correctly when:
+- A caller invokes `aiko` with a NEW goal that includes X — the
+  new declare triggers resolveOne on X's chain.
+- A NEW child of X is declared — the child's resolveOne walks up
+  through X.
+- A test or operator explicitly re-asks for X (`aiko status X`
+  with a force-re-resolve flag, which doesn't exist yet).
+
+The cascade does NOT fire when:
+- A descendant updates silently (e.g. a metric pointer ticks; an
+  external data source refreshes) without anyone declaring against
+  X's lineage.
+- Long-running drills miss already-satisfied rows even though
+  their cache_invalidated rows are visible on the ledger.
+
+### The fix shape (gap-cache-invalidated-cascade)
+
+Two complementary wires close the gap:
+
+1. **Drill widens its candidate set** — `backfillUnresolvedWithBudget`
+   should NOT skip satisfied rows whose latest `cache_invalidated`
+   timestamp is AFTER their latest `cache_resolved` timestamp.
+   Such rows are stale-satisfied; the drill walks them and calls
+   resolveOne which fires `cache_check{verdict=miss}` and re-resolves.
+
+2. **cache_invalidated rows append `parent_id`-chain marks** — when
+   a dependency's terminal sig changes, the cascade walker emits
+   `cache_invalidated` not just for the direct dependent but for
+   every ancestor up the parent_id chain. Each ancestor's next
+   resolveOne sees the invalidation, re-evaluates, propagates
+   further. Same primitive applied transitively.
+
+Together they make the cascade truly fractal: a value change at any
+leaf cascades up to every ancestor, and the drill picks every
+affected row up on the next pass.
+
+### Why this matters for the substrate's truth claims
+
+The pointer-keyed cache section claims:
+> "The substrate's whole 'context-efficient because it only needs
+> to resolve the ones that are not resolved yet' property depends
+> on this cache being correct, ledger-backed, and deterministic."
+
+That property fails closed if value changes don't cascade — stale
+truth claims sit in the ledger with valid signatures that point at
+outdated descendants. The substrate would say "yes, X is true"
+when actually X's dependency Y just changed and X should re-evaluate.
+
+This is the kind of silent drift the substrate refuses elsewhere
+(Decalogue commandment 9 — "thou shalt not bear false witness").
+The gap is doctrinally a commandment-9 violation in waiting.
+
 ## The substrate's grammar — pointer is form, value is substance (Lewis 2026-05-27)
 
 The substrate has a natural-language grammar that maps one-to-one
