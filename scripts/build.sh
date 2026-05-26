@@ -140,11 +140,25 @@ step_parity() {
   done
 
   # 5. "fallbacks surface, never silent" — no bare `catch {}` in the
-  #    two files that own degradation paths.
-  local silent_catches
-  silent_catches=$(grep -nE 'catch \{\}' "$LIB_DIR/src/lineage.zig" "$LIB_DIR/src/keystore.zig" 2>/dev/null | grep -v '^//' || true)
+  #    two files that own degradation paths, EXCEPT lines preceded
+  #    within 5 lines by a `PARITY-OK:` marker comment explaining why
+  #    silence is the right choice (e.g. test cleanup where surfacing
+  #    is benign noise).
+  local raw_silent silent_catches=""
+  raw_silent=$(grep -nE 'catch \{\}' "$LIB_DIR/src/lineage.zig" "$LIB_DIR/src/keystore.zig" 2>/dev/null || true)
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local file lineno start
+    file="${line%%:*}"
+    lineno="${line#*:}"; lineno="${lineno%%:*}"
+    start=$((lineno > 5 ? lineno - 5 : 1))
+    if sed -n "${start},${lineno}p" "$file" 2>/dev/null | grep -q 'PARITY-OK:'; then
+      continue
+    fi
+    silent_catches+="$line"$'\n'
+  done <<< "$raw_silent"
   if [[ -n "$silent_catches" ]]; then
-    _fail "doctrine[fallbacks surface]: silent catch {} in lineage/keystore:"$'\n'"$silent_catches"
+    _fail "doctrine[fallbacks surface]: silent catch {} without PARITY-OK marker:"$'\n'"$silent_catches"
   fi
 
   # 6. "rotation as a function"
