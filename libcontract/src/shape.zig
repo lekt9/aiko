@@ -188,6 +188,35 @@ pub fn validateShape(
         if (pf == .string) shape.proof = pf.string;
     }
 
+    // died-event extras: cause / by_id / reason. cause is required on
+    // died events; by_id is required when cause is superseded /
+    // contradicts (death must name its agent); reason is optional text.
+    if (event == .died) {
+        const cause_v = obj.get("cause") orelse return ShapeError.BadJson;
+        if (cause_v != .string) return ShapeError.BadJson;
+        const c = cause_v.string;
+        const cause_ok = std.mem.eql(u8, c, "superseded") or
+            std.mem.eql(u8, c, "contradicts") or
+            std.mem.eql(u8, c, "stale") or
+            std.mem.eql(u8, c, "apoptosed");
+        if (!cause_ok) return ShapeError.BadJson;
+        shape.cause = c;
+
+        if (std.mem.eql(u8, c, "superseded") or std.mem.eql(u8, c, "contradicts")) {
+            const by_v = obj.get("by_id") orelse return ShapeError.BadJson;
+            if (by_v != .string or !is8Hex(by_v.string)) return ShapeError.BadJson;
+            shape.by_id = by_v.string;
+        } else if (obj.get("by_id")) |bv| {
+            if (bv == .string) {
+                if (!is8Hex(bv.string)) return ShapeError.BadJson;
+                shape.by_id = bv.string;
+            }
+        }
+        if (obj.get("reason")) |rv| {
+            if (rv == .string) shape.reason = rv.string;
+        }
+    }
+
     return .{ .parsed = parsed, .shape = shape };
 }
 
