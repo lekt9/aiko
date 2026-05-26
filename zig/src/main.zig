@@ -525,7 +525,14 @@ fn bioPainSignaled(rows: []const Row, cid: []const u8) bool {
 ///   (future) docker://   — server-side adapter
 /// Env: CONTRACT_BINARY_TARGET=<target> triggers materialization on declare.
 fn bioMaterializeBinary(allocator: std.mem.Allocator, env: std.process.Environ, cid: []const u8) !void {
-    const target = env.getPosix("CONTRACT_BINARY_TARGET") orelse return;
+    _ = allocator;
+    _ = env;
+    _ = cid;
+    return;
+}
+
+fn bioMaterializeBinary_unused(allocator: std.mem.Allocator, env: std.process.Environ, cid: []const u8) !void {
+    const target: []const u8 = "";
     if (target.len == 0) return;
     if (!std.mem.startsWith(u8, target, "local:")) {
         evidencePrint("materialize: scheme not local — declaring server-side adapter contract for {s}\n", .{target});
