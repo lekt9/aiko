@@ -3385,9 +3385,15 @@ fn retryOneQueuedDeclare(
 /// Skips the `abandoned/` subdir. Never throws — a transport failure
 /// or a missing dir is silently survived.
 fn retryQueuedDeclares(allocator: std.mem.Allocator, env: std.process.Environ) void {
-    const dir_path = resolvePendingDir(allocator, env, null) catch return;
+    const dir_path = resolvePendingDir(allocator, env, null) catch |e| {
+        substrateEvidence("pending-queue: resolvePendingDir failed: {s} — sweep skipped\n", .{@errorName(e)});
+        return;
+    };
     defer allocator.free(dir_path);
-    const dir_path_z = allocator.dupeZ(u8, dir_path) catch return;
+    const dir_path_z = allocator.dupeZ(u8, dir_path) catch |e| {
+        substrateEvidence("pending-queue: dupeZ dir_path failed: {s} — sweep skipped\n", .{@errorName(e)});
+        return;
+    };
     defer allocator.free(dir_path_z);
 
     // opendir + readdir via std.c. Keeps the same C-stdlib shape as the
