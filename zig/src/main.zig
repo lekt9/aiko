@@ -159,9 +159,7 @@ fn usage() void {
             \\Use when the goal contains PII, secrets, or anything the
             \\operator does not want federated.
             \\
-            \\Deprecated aliases (still honored): --remote ≡ default
-            \\(shared), --local ≡ --private. The vocabulary is
-            \\visibility, not transport.
+            \\The vocabulary is visibility, not transport.
             \\
         , .{BINARY_NAME});
         return;
