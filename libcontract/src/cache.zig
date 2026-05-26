@@ -560,6 +560,17 @@ test "Verdict.jsonName covers every variant" {
     try std.testing.expectEqualStrings("miss", Verdict.miss.jsonName());
     try std.testing.expectEqualStrings("stale", Verdict.stale.jsonName());
     try std.testing.expectEqualStrings("legacy", Verdict.legacy.jsonName());
+    try std.testing.expectEqualStrings("signature_incomplete", Verdict.signature_incomplete.jsonName());
+}
+
+test "extractStringField parses both spaced and unspaced JSON" {
+    const a = "{\"event\": \"satisfied\", \"id\": \"abcd1234\"}";
+    const b = "{\"event\":\"satisfied\",\"id\":\"abcd1234\"}";
+    try std.testing.expectEqualStrings("satisfied", extractStringField(a, "event").?);
+    try std.testing.expectEqualStrings("abcd1234", extractStringField(a, "id").?);
+    try std.testing.expectEqualStrings("satisfied", extractStringField(b, "event").?);
+    try std.testing.expectEqualStrings("abcd1234", extractStringField(b, "id").?);
+    try std.testing.expect(extractStringField(a, "missing") == null);
 }
 
 test "writeJsonString escapes quotes and control characters" {
