@@ -192,12 +192,13 @@ test "validates a canonical declared row" {
     const json =
         \\{"event":"declared","plan":"answer the user","action":"neuron:user","layer":3,"parent_id":"deadbeef"}
     ;
-    const shape = try validateShape(allocator, json);
-    try std.testing.expect(shape.event == .declared);
-    try std.testing.expectEqualStrings("answer the user", shape.plan.?);
-    try std.testing.expectEqualStrings("neuron:user", shape.action.?);
-    try std.testing.expectEqual(@as(i32, 3), shape.layer.?);
-    try std.testing.expectEqualStrings("deadbeef", shape.parent_id.?);
+    var ps = try validateShape(allocator, json);
+    defer ps.deinit();
+    try std.testing.expect(ps.shape.event == .declared);
+    try std.testing.expectEqualStrings("answer the user", ps.shape.plan.?);
+    try std.testing.expectEqualStrings("neuron:user", ps.shape.action.?);
+    try std.testing.expectEqual(@as(i32, 3), ps.shape.layer.?);
+    try std.testing.expectEqualStrings("deadbeef", ps.shape.parent_id.?);
 }
 
 test "rejects unknown event" {
