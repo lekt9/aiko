@@ -3633,35 +3633,36 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             // GATE — only signed/attested binaries may invoke the LLM compiler.
             if (!assertBinaryIntegrityForLlm(allocator, env)) return 2;
             const body = client.declareRemoteAiko(allocator, env, safe_plan, action, parent, adapter, adapter_kind, event_bus, pretool_event, event_kind, null) catch |e| {
-                // Wallet-empty fallback: when the cloud 402s and the wallet
-                // can't pay, fall through to a locally-spawned llama.cpp +
-                // Qwen3.5-0.8B-Instruct compile. The substrate downloads
-                // the inference engine + model on first use to
-                // ~/.aiko/models/ and caches them. The user never sees this.
+                // Wallet-empty path (Wave-1 replacement): when the cloud
+                // 402s, the prior path compiled the goal locally with a
+                // weak Qwen 0.8B and wrote canonical rows to the on-disk
+                // ledger as if the cloud had answered — leaven, because
+                // the canonical graph and this host's view permanently
+                // disagreed. The replacement queues the payload at
+                // ~/.contracts/pending-declares/<sha>.json; the next
+                // funded aiko invocation sweeps the dir and retries.
+                //
+                // --private is unaffected: that branch (below) never
+                // touches the queue. Private declares stay fully local
+                // per the doctrine (Lewis 2026-05-26).
                 if (e == error.PaymentRequired) {
-                    const local_json = contract.LlmFallback.compileLocallyJson(allocator, env, safe_plan) catch |le| blk: {
-                        errPrint("local LLM fallback unavailable: {s}\n", .{@errorName(le)});
-                        break :blk null;
+                    // Derive the wallet pubkey hex purely for the
+                    // queue's sha-prefix idempotency key. Same wallet,
+                    // same plan, same instant → one queued envelope.
+                    var wallet_hex_buf: [64]u8 = undefined;
+                    const wallet_hex: []const u8 = wallet_hex_blk: {
+                        const root = lineage_lib.loadOrInitRootKey(allocator, env) catch {
+                            break :wallet_hex_blk "unknown";
+                        };
+                        const kp = lineage_lib.deriveKeyPair(root, "aiko-declare-identity") catch {
+                            break :wallet_hex_blk "unknown";
+                        };
+                        lineage_lib.bytesToHex(&kp.public_key.bytes, &wallet_hex_buf);
+                        break :wallet_hex_blk wallet_hex_buf[0..];
                     };
-                    if (local_json) |json| {
-                        defer allocator.free(json);
-                        // Walk the locally-compiled tree and declare each node
-                        // onto the local ledger. Root id becomes the substrate's
-                        // stdout — same shape as a successful --remote return.
-                        if (declareLocalTree(allocator, env, json)) |root_id| {
-                            defer allocator.free(root_id);
-                            outPrint("{s}\n", .{root_id});
-                            // 402-fallback compiled the tree locally — the
-                            // bytes never crossed the wire. Treat the
-                            // evidence row as private even though the
-                            // user asked for shared.
-                            const id_n = @min(root_id.len, root_id_buf.len);
-                            @memcpy(root_id_buf[0..id_n], root_id[0..id_n]);
-                            root_id_len = id_n;
-                            return 0;
-                        }
-                        errPrint("local-llm compiled tree but failed to declare onto local ledger\n", .{});
-                    }
+                    queuePendingDeclare(allocator, env, safe_plan, action, wallet_hex);
+                    errPrint("aiko: cloud declare returned 402 — payload queued; retry will fire on next funded invocation\n", .{});
+                    return 2;
                 }
                 errPrint("aiko remote failed against Unbrowse: {s}\n", .{@errorName(e)});
                 return 2;
