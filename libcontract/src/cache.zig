@@ -520,7 +520,10 @@ pub fn collectDependencyIds(
         try scan_buf.append(allocator, ' ');
         if (target_action) |a| try scan_buf.appendSlice(allocator, a);
 
-        // contract:<8hex>
+        // Typed synapse dependency edges walked here: "contract:",
+        // "blocked_by:", "prehook:". Other synapse kinds (inhibits,
+        // posthook, modality, at, repeat) do NOT gate Genesis order
+        // because they are not "Day N waits on Day N-1" relationships.
         const ptr_refs = try pointer.extractContractRefs(allocator, scan_buf.items);
         defer {
             for (ptr_refs) |r| allocator.free(r);
