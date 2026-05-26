@@ -1038,7 +1038,7 @@ fn writeCloudMirrorRow(
         break :blk .miss;
     };
     contract.cache.appendCacheCheckRow(allocator, env, id, verdict, current_hex, recorded_hex) catch |e| {
-        evidencePrint("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
+        substrateEvidence("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
     };
 }
 
@@ -2196,20 +2196,20 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
                 defer allocator.free(recorded);
                 if (std.mem.eql(u8, sig_chain, recorded)) {
                     contract.cache.appendCacheCheckRow(allocator, env, id, .hit, sig_chain, recorded) catch |e| {
-                        evidencePrint("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
+                        substrateEvidence("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
                     };
                     evidencePrint("{s} already resolved (pointer-chain {s})\n", .{ id, sig_chain[0..16] });
                     return 0;
                 }
                 contract.cache.appendCacheCheckRow(allocator, env, id, .miss, sig_chain, recorded) catch |e| {
-                    evidencePrint("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
+                    substrateEvidence("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
                 };
                 evidencePrint("{s} pointer chain drifted (was {s}, now {s})\n", .{ id, recorded[0..16], sig_chain[0..16] });
             } else {
                 // purge:verdict-stale (42bce795) — chain-present-without-recorded
                 // collapses into .miss; behavior identical (fall through, re-evaluate).
                 contract.cache.appendCacheCheckRow(allocator, env, id, .miss, sig_chain, "") catch |e| {
-                    evidencePrint("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
+                    substrateEvidence("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
                 };
                 evidencePrint("{s} satisfied without recorded pointer chain — recomputing\n", .{id});
             }
@@ -2220,7 +2220,7 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
             // dependency-pending case, the substrate's other gates
             // (isSatisfied, runAction) keep things consistent.
             contract.cache.appendCacheCheckRow(allocator, env, id, .legacy, "", "") catch |e| {
-                evidencePrint("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
+                substrateEvidence("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
             };
             evidencePrint("{s} already resolved (legacy, no pointer chain)\n", .{id});
             return 0;
