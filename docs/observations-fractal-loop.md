@@ -1988,7 +1988,7 @@ it ships the fix. The ledger itself is now the canonical work-tracker.
 | ~~gap-env-prefixes~~ (SUPERSEDED 2026-05-27, pruned by parent) | ~~`7847a188`~~ | premise wrong: hardcoded prefix table binds runtime to compile time |
 | gap-env-generative — location word in plan → wrapper:<word> lookup → fallback to parent env via lineage | `379afd78` | neuron:gap-env-generative |
 | gap-payload-seal-on-write — wire payload_crypto.seal into ledger.appendRow; render-without-seeing becomes end-to-end | `2670d670` | neuron:gap-payload-seal-on-write |
-| gap-edge-meta-invariant — pin "any layer-4 prefix is a valid edge carrier" in pointer.zig + build.sh parity | `7783ca73` | neuron:gap-edge-meta-invariant |
+| ~~gap-edge-meta-invariant~~ (CLOSED 2026-05-27) | ~~`7783ca73`~~ | META-INVARIANT comment landed in pointer.zig:inferLayer; build green |
 | ~~gap-cache-invalidated-cascade~~ (SUPERSEDED 2026-05-27 by gap-radix-prefix-cache) | ~~`abe3c445`~~ | radix-tree-keyed cache lookup IS the cascade; half-fixing the drill skip would be wrong shape; subsumed |
 | gap-radix-prefix-cache — sglang RadixAttention applied to parent_id chain; cache lookup walks UP finding deepest valid prefix; sibling prefix-sharing; cache_evicted tombstone | `1e52b77a` | neuron:gap-radix-prefix-cache |
 | gap-relay-sign-and-verify — SDK signEnvelope + relay verifier wiring; end-to-end signed cross-host webhook | `27f42009` | neuron:gap-relay-sign-and-verify |
