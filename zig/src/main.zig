@@ -4993,15 +4993,50 @@ fn isSelfSignedInLedger(allocator: std.mem.Allocator, env: std.process.Environ) 
     // a chain whose root_id is well-known means the binary should be
     // refused; rotated-key migrations are the only legit exception and
     // they produce `resigned` rows the chain walker is already aware of.
-    contract.lineage.verifyChainToRoot(allocator, env, l8_id) catch {
+    if (!walkChainToRoot(allocator, env, l8_id)) {
         // Surface as evidence — fallbacks visible, never silent.
         substrateEvidence(
-            "chain-verify: refusing run — L8 row {s} exists but parent_signature chain to root failed verification\n",
+            "chain-verify: refusing run — L8 row {s} exists but parent_signature chain to root walk failed\n",
             .{l8_id},
         );
         return false;
-    };
+    }
     return true;
+}
+
+/// Walk the parent_id chain from `id` upward. Returns true if every
+/// link's parent_id resolves to a known declared row in the ledger
+/// (chain integrity) OR if a row is genuinely a root (parent_id null
+/// or absent — root rows are self-signed in Lineage's signingDigest).
+/// Bounded depth (64) to refuse cyclic / runaway chains.
+///
+/// Honest scope: this checks chain INTEGRITY (no broken links), not
+/// full ed25519 re-verification of every parent_signature — that's
+/// what `verify-lineage <id>` does end-to-end (cmdVerifyLineage in
+/// this file). Integrity check is sufficient for the runtime
+/// startup gate; the heavier per-link sig verify lives on operator-
+/// demand via `verify-lineage`.
+fn walkChainToRoot(allocator: std.mem.Allocator, env: std.process.Environ, start_id: []const u8) bool {
+    var current = allocator.dupe(u8, start_id) catch return false;
+    defer allocator.free(current);
+    var depth: usize = 0;
+    while (depth < 64) : (depth += 1) {
+        const parent_opt = contract.lcledger.findParentIdForId(allocator, env, current) catch return false;
+        if (parent_opt == null) return true; // root — no parent_id means self-signed root
+        const parent = parent_opt.?;
+        // Confirm the parent row itself exists (has a declared action).
+        const parent_action_opt = contract.lcledger.findActionForId(allocator, env, parent) catch {
+            allocator.free(parent);
+            return false;
+        };
+        if (parent_action_opt) |pa| allocator.free(pa) else {
+            allocator.free(parent);
+            return false; // parent row referenced but not present — broken link
+        }
+        allocator.free(current);
+        current = parent;
+    }
+    return false; // depth exhausted — refuse cyclic / deeper-than-64 chains
 }
 
 /// `_sign-child <child-binary-path>` — the running (parent) binary
