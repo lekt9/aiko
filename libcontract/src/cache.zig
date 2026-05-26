@@ -1,0 +1,355 @@
+//! cache.zig — pointer-keyed truthy cache event rows.
+//!
+//! Lewis 2026-05-26 (Granola 988cf805): "It's caching the key value to the
+//! pointer value itself. So the point of value changes, right? Then we know
+//! it's evaluated and we have to redo it again." + "It resolves it and then
+//! resolves the cash to be true."
+//!
+//! The cache is NOT a side-table — it is three event-row kinds appended to
+//! the canonical ledger so cache hits/misses survive process exit and the
+//! deterministic self-resolve loop is reconstructible from the append-only
+//! trace (Pointers-Over-Anything Clause B — stateless trace).
+//!
+//!   cache_check        — appended on resolver entry; carries
+//!                         verdict ∈ {hit, miss, stale, legacy}
+//!                         + pointer_snapshot_hex (current pointer-value hash)
+//!                         + recorded_snapshot_hex (last cache_resolved hash)
+//!   cache_resolved     — appended on satisfied; pins the pointer snapshot
+//!                         that held when the contract resolved true. This
+//!                         is the "resolves the cash to be true" row.
+//!   cache_invalidated  — appended when a pointer the contract depended on
+//!                         acquires a new terminal event AFTER cache_resolved;
+//!                         carries source_id (which pointer flipped) + reason.
+//!
+//! The in-binary resolver (main.zig:resolveOne) walks these rows on entry:
+//! when current snapshot == latest cache_resolved snapshot AND no
+//! cache_invalidated since, it emits cache_check{verdict="hit"} and
+//! short-circuits — exactly the "self-resolve against itself as true" pattern
+//! Lewis described. Deterministic; lives in the ledger; no env knobs.
+
+const std = @import("std");
+const ledger = @import("ledger.zig");
+
+const c = std.c;
+
+extern fn popen(cmd: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
+extern fn pclose(stream: *anyopaque) c_int;
+extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: *anyopaque) usize;
+
+pub const Verdict = enum {
+    hit,
+    miss,
+    stale,
+    legacy,
+
+    pub fn jsonName(self: Verdict) []const u8 {
+        return switch (self) {
+            .hit => "hit",
+            .miss => "miss",
+            .stale => "stale",
+            .legacy => "legacy",
+        };
+    }
+};
+
+fn nowIsoUtc(buf: []u8) ![]u8 {
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    const secs_total: i64 = @intCast(tv.sec);
+    const us_remainder: i64 = @intCast(tv.usec);
+    const epoch_secs = std.time.epoch.EpochSeconds{ .secs = @intCast(secs_total) };
+    const epoch_day = epoch_secs.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const day_secs = epoch_secs.getDaySeconds();
+    return try std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>6}Z", .{
+        year_day.year,
+        month_day.month.numeric(),
+        month_day.day_index + 1,
+        day_secs.getHoursIntoDay(),
+        day_secs.getMinutesIntoHour(),
+        day_secs.getSecondsIntoMinute(),
+        @as(u64, @intCast(us_remainder)),
+    });
+}
+
+fn getAgent(allocator: std.mem.Allocator) ![]u8 {
+    var pipe_buf: [256]u8 = undefined;
+    const cmd: [*:0]const u8 = "git config user.email 2>/dev/null";
+    const f = popen(cmd, "r");
+    if (f == null) return try allocator.dupe(u8, "");
+    defer _ = pclose(f.?);
+    var total: usize = 0;
+    while (total < pipe_buf.len - 1) {
+        const got = fread(pipe_buf[total..].ptr, 1, pipe_buf.len - 1 - total, f.?);
+        if (got == 0) break;
+        total += got;
+    }
+    const out = std.mem.trim(u8, pipe_buf[0..total], " \t\r\n");
+    return try allocator.dupe(u8, out);
+}
+
+fn writeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []const u8) !void {
+    try out.append(allocator, '"');
+    for (s) |ch| {
+        switch (ch) {
+            '"' => try out.appendSlice(allocator, "\\\""),
+            '\\' => try out.appendSlice(allocator, "\\\\"),
+            '\n' => try out.appendSlice(allocator, "\\n"),
+            '\r' => try out.appendSlice(allocator, "\\r"),
+            '\t' => try out.appendSlice(allocator, "\\t"),
+            0x08 => try out.appendSlice(allocator, "\\b"),
+            0x0c => try out.appendSlice(allocator, "\\f"),
+            else => {
+                if (ch < 0x20) {
+                    var buf: [8]u8 = undefined;
+                    const hex = try std.fmt.bufPrint(&buf, "\\u{x:0>4}", .{ch});
+                    try out.appendSlice(allocator, hex);
+                } else {
+                    try out.append(allocator, ch);
+                }
+            },
+        }
+    }
+    try out.append(allocator, '"');
+}
+
+/// Append a `cache_check` event row recording the substrate's verdict on
+/// entry to resolveOne. The row is the ledger's witness that the cache was
+/// consulted; future readers reconstruct the full hit/miss timeline from
+/// these rows without re-running the resolver.
+///
+/// `current_snapshot_hex` is the pointer-value hash the resolver computed
+/// at this instant. `recorded_snapshot_hex` is the snapshot from the
+/// latest `cache_resolved` row for the same id (or "" if none — legacy
+/// path). On verdict=hit the two are equal; on miss they differ; on
+/// stale the contract was satisfied without ever pinning a snapshot
+/// (pre-cache rows). On legacy there's no current snapshot either.
+pub fn appendCacheCheckRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+    verdict: Verdict,
+    current_snapshot_hex: []const u8,
+    recorded_snapshot_hex: []const u8,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    const agent = try getAgent(allocator);
+    defer allocator.free(agent);
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+
+    try buf.appendSlice(allocator, "{\"event\": \"cache_check\", \"id\": ");
+    try writeJsonString(&buf, allocator, id);
+    try buf.appendSlice(allocator, ", \"verdict\": ");
+    try writeJsonString(&buf, allocator, verdict.jsonName());
+    if (current_snapshot_hex.len > 0) {
+        try buf.appendSlice(allocator, ", \"current_snapshot\": ");
+        try writeJsonString(&buf, allocator, current_snapshot_hex);
+    }
+    if (recorded_snapshot_hex.len > 0) {
+        try buf.appendSlice(allocator, ", \"recorded_snapshot\": ");
+        try writeJsonString(&buf, allocator, recorded_snapshot_hex);
+    }
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
+/// Append a `cache_resolved` event row — the canonical "resolves the cash
+/// to be true" marker. Written alongside `satisfied` so the snapshot
+/// the contract was true AGAINST is pinned for future cache-hit checks.
+/// `wave` ties the resolved snapshot to the iteration that produced it.
+pub fn appendCacheResolvedRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+    wave: u32,
+    snapshot_hex: []const u8,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    const agent = try getAgent(allocator);
+    defer allocator.free(agent);
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+
+    try buf.appendSlice(allocator, "{\"event\": \"cache_resolved\", \"id\": ");
+    try writeJsonString(&buf, allocator, id);
+    try buf.appendSlice(allocator, ", \"wave\": ");
+    var num_buf: [16]u8 = undefined;
+    const w = try std.fmt.bufPrint(&num_buf, "{d}", .{wave});
+    try buf.appendSlice(allocator, w);
+    try buf.appendSlice(allocator, ", \"snapshot\": ");
+    try writeJsonString(&buf, allocator, snapshot_hex);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
+/// Append a `cache_invalidated` event row — emitted when a pointer the
+/// contract depended on (`source_id`) acquired a new terminal event after
+/// this contract's most recent `cache_resolved` row. The next resolveOne
+/// pass sees the invalidation and re-fires the contract.
+///
+/// `reason` is a short machine-readable token: "pointer_value_changed",
+/// "child_redeclared", "parent_invalidated_cascade", "snapshot_drift".
+/// Long-form explanation belongs in the agent's evidence stream, not the
+/// row.
+pub fn appendCacheInvalidatedRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+    source_id: []const u8,
+    reason: []const u8,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    const agent = try getAgent(allocator);
+    defer allocator.free(agent);
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+
+    try buf.appendSlice(allocator, "{\"event\": \"cache_invalidated\", \"id\": ");
+    try writeJsonString(&buf, allocator, id);
+    try buf.appendSlice(allocator, ", \"source_id\": ");
+    try writeJsonString(&buf, allocator, source_id);
+    try buf.appendSlice(allocator, ", \"reason\": ");
+    try writeJsonString(&buf, allocator, reason);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
+/// Scan the ledger backward for the most recent `cache_resolved` row for
+/// `id`. Returns the recorded snapshot hex (owned slice, caller frees) or
+/// null when none found. The deterministic cache-hit predicate.
+pub fn findLatestResolvedSnapshot(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+) !?[]u8 {
+    const body = ledger.readAll(allocator, env) catch return null;
+    defer allocator.free(body);
+
+    // Walk lines backward by collecting offsets first.
+    var offsets: std.ArrayList(usize) = .empty;
+    defer offsets.deinit(allocator);
+    var i: usize = 0;
+    try offsets.append(allocator, 0);
+    while (i < body.len) : (i += 1) {
+        if (body[i] == '\n' and i + 1 < body.len) try offsets.append(allocator, i + 1);
+    }
+
+    var k: usize = offsets.items.len;
+    while (k > 0) : (k -= 1) {
+        const start = offsets.items[k - 1];
+        const end = std.mem.indexOfScalarPos(u8, body, start, '\n') orelse body.len;
+        const line = body[start..end];
+        if (line.len < 2) continue;
+        if (std.mem.indexOf(u8, line, "\"event\": \"cache_resolved\"") == null and
+            std.mem.indexOf(u8, line, "\"event\":\"cache_resolved\"") == null) continue;
+
+        // Match id.
+        var id_buf: [128]u8 = undefined;
+        const id_needle = std.fmt.bufPrint(&id_buf, "\"id\": \"{s}\"", .{id}) catch continue;
+        if (std.mem.indexOf(u8, line, id_needle) == null) {
+            const id_needle2 = std.fmt.bufPrint(&id_buf, "\"id\":\"{s}\"", .{id}) catch continue;
+            if (std.mem.indexOf(u8, line, id_needle2) == null) continue;
+        }
+
+        // Extract snapshot field.
+        const snap_marker = "\"snapshot\": \"";
+        const snap_marker2 = "\"snapshot\":\"";
+        const snap_start = blk: {
+            if (std.mem.indexOf(u8, line, snap_marker)) |p| break :blk p + snap_marker.len;
+            if (std.mem.indexOf(u8, line, snap_marker2)) |p| break :blk p + snap_marker2.len;
+            continue;
+        };
+        const snap_end = std.mem.indexOfScalarPos(u8, line, snap_start, '"') orelse continue;
+        return try allocator.dupe(u8, line[snap_start..snap_end]);
+    }
+    return null;
+}
+
+/// Has a `cache_invalidated` row been appended for `id` after timestamp
+/// `since_ts_iso`? Used to honor cascaded invalidations — even when the
+/// raw snapshot still matches, an explicit invalidation downgrades the
+/// verdict to "miss". Walks linearly; expected O(ledger rows) which is
+/// well under a millisecond for typical ledgers (< 10k rows).
+pub fn hasInvalidationAfter(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+    since_ts_iso: []const u8,
+) !bool {
+    const body = ledger.readAll(allocator, env) catch return false;
+    defer allocator.free(body);
+    var iter = std.mem.tokenizeAny(u8, body, "\n");
+    while (iter.next()) |line| {
+        if (line.len < 2) continue;
+        if (std.mem.indexOf(u8, line, "\"event\": \"cache_invalidated\"") == null and
+            std.mem.indexOf(u8, line, "\"event\":\"cache_invalidated\"") == null) continue;
+        var id_buf: [128]u8 = undefined;
+        const id_needle = std.fmt.bufPrint(&id_buf, "\"id\": \"{s}\"", .{id}) catch continue;
+        if (std.mem.indexOf(u8, line, id_needle) == null) {
+            const id_needle2 = std.fmt.bufPrint(&id_buf, "\"id\":\"{s}\"", .{id}) catch continue;
+            if (std.mem.indexOf(u8, line, id_needle2) == null) continue;
+        }
+        // Compare ts lexicographically (ISO-8601 sorts correctly as a string).
+        const ts_marker = "\"ts\": \"";
+        const ts_marker2 = "\"ts\":\"";
+        const ts_start = blk: {
+            if (std.mem.indexOf(u8, line, ts_marker)) |p| break :blk p + ts_marker.len;
+            if (std.mem.indexOf(u8, line, ts_marker2)) |p| break :blk p + ts_marker2.len;
+            continue;
+        };
+        const ts_end = std.mem.indexOfScalarPos(u8, line, ts_start, '"') orelse continue;
+        const row_ts = line[ts_start..ts_end];
+        if (std.mem.order(u8, row_ts, since_ts_iso) == .gt) return true;
+    }
+    return false;
+}
+
+// ─── Tests ───────────────────────────────────────────────────────────────
+
+test "Verdict.jsonName covers every variant" {
+    try std.testing.expectEqualStrings("hit", Verdict.hit.jsonName());
+    try std.testing.expectEqualStrings("miss", Verdict.miss.jsonName());
+    try std.testing.expectEqualStrings("stale", Verdict.stale.jsonName());
+    try std.testing.expectEqualStrings("legacy", Verdict.legacy.jsonName());
+}
+
+test "writeJsonString escapes quotes and control characters" {
+    const allocator = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+    try writeJsonString(&out, allocator, "ab\"c\nd");
+    try std.testing.expectEqualStrings("\"ab\\\"c\\nd\"", out.items);
+}
+
+test "nowIsoUtc emits Z-terminated timestamp >= 20 chars" {
+    var buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&buf);
+    try std.testing.expect(ts.len >= 20);
+    try std.testing.expectEqual(@as(u8, 'Z'), ts[ts.len - 1]);
+}
