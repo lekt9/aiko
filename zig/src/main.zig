@@ -132,6 +132,54 @@ fn writeFd(fd: c_int, bytes: []const u8) void {
     }
 }
 
+/// Mirror of build.sh's acquire_build_lock loop, read-only side. Block this
+/// binary while a build is in progress at /tmp/contract-build.lock; reclaim
+/// the lock if its owner pid is dead. Capped at 1800s — past that we let the
+/// invocation proceed against whatever binary is on disk and surface the
+/// timeout to stderr (visible-fallback rule). Best-effort: a syscall failure
+/// just lets the binary run.
+fn waitForBuildLock(env: std.process.Environ) void {
+    _ = env;
+    const lock_path: [*:0]const u8 = "/tmp/contract-build.lock";
+    const pid_path: [*:0]const u8 = "/tmp/contract-build.lock/pid";
+    var waited: u32 = 0;
+    const max_wait: u32 = 1800;
+    var announced = false;
+    while (waited < max_wait) {
+        var st: c_stat = .{};
+        if (stat(lock_path, &st) != 0) return; // no lock → free
+        // Read pid file (best-effort) and check liveness via kill(pid, 0).
+        const owner_pid: c_int = blk: {
+            var pid_st: c_stat = .{};
+            if (stat(pid_path, &pid_st) != 0) break :blk 0;
+            var flags: std.c.O = .{};
+            flags.ACCMODE = .RDONLY;
+            const fd = std.c.open(pid_path, flags, @as(c_uint, 0));
+            if (fd < 0) break :blk 0;
+            defer _ = std.c.close(fd);
+            var buf: [32]u8 = undefined;
+            const n = std.c.read(fd, &buf, buf.len);
+            if (n <= 0) break :blk 0;
+            const trimmed = std.mem.trim(u8, buf[0..@intCast(n)], &std.ascii.whitespace);
+            break :blk std.fmt.parseInt(c_int, trimmed, 10) catch 0;
+        };
+        if (owner_pid > 0 and kill(owner_pid, 0) != 0) {
+            // Owner is dead — reclaim like build.sh's loop does.
+            errPrint("aiko: build lock owner pid={d} is dead — reclaiming\n", .{owner_pid});
+            _ = std.c.unlink(pid_path);
+            _ = rmdir(lock_path);
+            return;
+        }
+        if (!announced) {
+            errPrint("aiko: build in progress (pid={d}) — queued, waiting...\n", .{owner_pid});
+            announced = true;
+        }
+        _ = sleep(1);
+        waited += 1;
+    }
+    errPrint("aiko: build lock wait exceeded {d}s — proceeding against on-disk binary\n", .{max_wait});
+}
+
 /// Mirror of fd-2 writes for the `evidence` row flush at end of cmdSpeak.
 const STDERR_TAPE_CAP: usize = 1024 * 1024;
 var stderr_tape_buf: ?std.ArrayList(u8) = null;
