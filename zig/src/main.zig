@@ -550,19 +550,6 @@ fn bioModulatorEvidence(allocator: std.mem.Allocator, env: std.process.Environ) 
 const Blake2s256 = std.crypto.hash.blake2.Blake2s256;
 const INPUT_HASH_HEX_LEN: usize = 64;
 
-/// ADMIN BYPASS PREFLIGHT — sign a fresh challenge with the root-admin
-/// identity's ed25519 key, setenv the triple (AIKO_ADMIN_PUBKEY,
-/// AIKO_ADMIN_TS, AIKO_ADMIN_SIGNATURE). The client picks these up and
-/// forwards as headers; the server checks pubkey against allowlist and
-/// skips 402 on match. Substrate-canonical: no user config; if you have
-/// the root.key (you = the operator) you're admin. Automatic.
-fn bioAdminBypassPreflight(allocator: std.mem.Allocator, env: std.process.Environ) void {
-    _ = allocator;
-    _ = env;
-    // Admin bypass deleted: was an env escape hatch (AIKO_ADMIN_PUBKEY/TS/SIGNATURE).
-    return;
-}
-
 /// FIRST-RUN WALLET SETUP — prints top-up guidance once, marks done.
 /// Idempotent via ~/.contracts/wallet_setup.done. Caller-invisible: runs
 /// in preflight, never gates work; first declare after install shows the
