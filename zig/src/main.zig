@@ -2719,7 +2719,11 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
         errPrint("declare refused: {s}\n", .{cause});
         return 2;
     }
-    // Biology kit — interoception + homeostasis + neuromodulation preflight.
+    // purge:bio-kit-ceremony (84baa523) — pre-flight ceremony emissions
+    // deleted. interoception / modulator / environment / bind-manifest /
+    // pretool-ts evidence rows were decoration, not truth. Truth is in
+    // the ledger's cache_check + signed rows. Keep only the actual gate
+    // (homeostat) and the one-time wallet-bootstrap guidance.
     {
         const rows_pre = try parseRows(allocator, env);
         defer allocator.free(rows_pre);
@@ -2727,43 +2731,7 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
             errPrint("declare refused: {s}\n", .{cause});
             return 2;
         }
-        if (bioInteroceptionJson(allocator, rows_pre)) |intero| {
-            defer allocator.free(intero);
-            evidencePrint("interoception: {s}\n", .{intero});
-        } else |e| {
-            evidencePrint("interoception: bioInteroceptionJson failed: {s} — preflight proceeds without interoception evidence\n", .{@errorName(e)});
-        }
-        if (bioModulatorEvidence(allocator, env)) |mod| {
-            defer allocator.free(mod);
-            evidencePrint("modulator: {s}\n", .{mod});
-        } else |e| {
-            evidencePrint("modulator: bioModulatorEvidence failed: {s} — preflight proceeds without neuromodulator evidence\n", .{@errorName(e)});
-        }
-        // First-run wallet guidance — shown once, then silent forever.
         bioFirstRunWalletGuidance(allocator, env);
-        // Environment fingerprint — listen to the host's tongue before
-        // declaring anything. Pentecost shape.
-        if (bioEnvironmentFingerprint(allocator, env)) |fp| {
-            defer allocator.free(fp);
-            evidencePrint("environment: {s}\n", .{fp});
-        } else |e| {
-            evidencePrint("environment: bioEnvironmentFingerprint failed: {s} — preflight proceeds without env-fingerprint binding\n", .{@errorName(e)});
-        }
-        if (bioBindManifest(allocator, env)) |bind| {
-            defer allocator.free(bind);
-            evidencePrint("bind-manifest: {s}\n", .{bind});
-        }
-        // PreTool context: timestamp + channel + (env already surfaced)
-        // Land as evidence so the cloud compiler binds the call to its
-        // origin in time, space, and host shape.
-        const now_ts: i64 = time(null);
-        evidencePrint("pretool-ts: {d}\n", .{now_ts});
-        if (ambientPretoolChannel(env)) |ch| {
-            evidencePrint("pretool-channel: {s}\n", .{ch});
-        }
-        if (ambientPretoolTs(env)) |pts| {
-            evidencePrint("pretool-event-ts: {s}\n", .{pts});
-        }
     }
     const action = actionFromPlan(d.plan);
     const parent = ambientParent(env);
