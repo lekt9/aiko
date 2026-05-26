@@ -12,6 +12,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
+    lib_mod.addEmbedPath(b.path("data"));
     const lib = b.addLibrary(.{
         .name = "contract",
         .linkage = .static,
