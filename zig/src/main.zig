@@ -1860,79 +1860,41 @@ fn ambientParent(env: std.process.Environ) ?[]const u8 {
 }
 
 fn ambientAction(env: std.process.Environ) []const u8 {
-    if (env.getPosix("CONTRACT_NEURON_ACTION")) |v| {
-        if (v.len > 0) return v;
-    }
-    if (env.getPosix("CONTRACT_INTERNAL_ACTION")) |v| {
-        if (v.len > 0) return v;
-    }
+    _ = env;
     return "neuron";
 }
 
 fn ambientAdapter(env: std.process.Environ) ?[]const u8 {
-    if (env.getPosix("CONTRACT_ADAPTER_ID")) |v| {
-        if (v.len > 0) return v;
-    }
-    if (env.getPosix("CONTRACT_ADAPTER")) |v| {
-        if (v.len > 0) return v;
-    }
+    _ = env;
     return null;
 }
 
 fn ambientAdapterKind(env: std.process.Environ) ?[]const u8 {
-    if (env.getPosix("CONTRACT_ADAPTER_KIND")) |v| {
-        if (v.len > 0) return v;
-    }
-    if (env.getPosix("CONTRACT_ENVIRONMENT_KIND")) |v| {
-        if (v.len > 0) return v;
-    }
+    _ = env;
     return null;
 }
 
 fn ambientEventBus(env: std.process.Environ) ?[]const u8 {
-    if (env.getPosix("CONTRACT_EVENT_BUS_ID")) |v| {
-        if (v.len > 0) return v;
-    }
-    if (env.getPosix("CONTRACT_EVENT_BUS")) |v| {
-        if (v.len > 0) return v;
-    }
+    _ = env;
     return null;
 }
 
-/// PreTool context dimensions per canon: every event lands with
-/// timestamp + channel + environment. These are read from env at declare
-/// time, surfaced as evidence, and forwarded to children via setenv so
-/// they propagate down the lineage like the existing PARENT_RESULT tree.
 fn ambientPretoolTs(env: std.process.Environ) ?[]const u8 {
-    if (env.getPosix("CONTRACT_PRETOOL_TS")) |v| {
-        if (v.len > 0) return v;
-    }
+    _ = env;
     return null;
 }
 fn ambientPretoolChannel(env: std.process.Environ) ?[]const u8 {
-    if (env.getPosix("CONTRACT_PRETOOL_CHANNEL")) |v| {
-        if (v.len > 0) return v;
-    }
+    _ = env;
     return null;
 }
 
 fn ambientPretoolEvent(env: std.process.Environ) ?[]const u8 {
-    if (env.getPosix("CONTRACT_PRETOOL_EVENT_ID")) |v| {
-        if (v.len > 0) return v;
-    }
-    if (env.getPosix("CONTRACT_PRETOOL_EVENT")) |v| {
-        if (v.len > 0) return v;
-    }
+    _ = env;
     return null;
 }
 
 fn ambientEventKind(env: std.process.Environ) ?[]const u8 {
-    if (env.getPosix("CONTRACT_EVENT_KIND")) |v| {
-        if (v.len > 0) return v;
-    }
-    if (env.getPosix("CONTRACT_PRETOOL_KIND")) |v| {
-        if (v.len > 0) return v;
-    }
+    _ = env;
     return null;
 }
 
