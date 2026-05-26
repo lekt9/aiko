@@ -72,7 +72,7 @@
 1242 178629978 1778037831962075227 c5e5cebc2cfc9353dc65aa5193442b60 1 std/zon.zig
 31720 178629958 1778037831951271871 ffd3a427c45dfa3cbc9761a1361d1d3c 1 std/start.zig
 1605 348460167 1779730373920945754 d604e937e9da77323b79de068e95ba7e 0 /Users/lekt9/.agent-skills/contract/libcontract/src/id.zig
-17324 353364603 1779809785854562154 fdc285405f7f4147a964b04951a8f5a6 0 /Users/lekt9/.agent-skills/contract/libcontract/src/pointer.zig
+17854 353396935 1779813868375423306 c7913570c85361bf9c6e38670b5ed75d 0 /Users/lekt9/.agent-skills/contract/libcontract/src/pointer.zig
 12852 353390781 1779813282037327111 d1e51f11fdb3af601ac72b2a6b6d44d7 0 /Users/lekt9/.agent-skills/contract/libcontract/src/ledger.zig
 38234 350837908 1779762921350277694 25fa72e88c1530fcf8537b25201e935f 0 /Users/lekt9/.agent-skills/contract/libcontract/src/lineage.zig
 9999 350837253 1779762882152829393 d668af83806636aee07c94562412dfa9 0 /Users/lekt9/.agent-skills/contract/libcontract/src/http.zig
