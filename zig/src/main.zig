@@ -1514,7 +1514,9 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
             defer allocator.free(bid);
             const target = try std.fmt.allocPrint(allocator, "contract:{s}", .{bid});
             defer allocator.free(target);
-            contract.appendCalledRow(allocator, env, r.id, target, "budget-estimate") catch {};
+            contract.appendCalledRow(allocator, env, r.id, target, "budget-estimate") catch |err| {
+                evidencePrint("flex:budget: appendCalledRow failed: {s} — no observable edge from {s}\n", .{ @errorName(err), r.id });
+            };
         }
         const msg = try std.fmt.allocPrint(allocator, "budget: max={s} lamports of {s}", .{ budget_lamports, mint });
         evidencePrint("  result: PASS — {s}\n", .{msg});
