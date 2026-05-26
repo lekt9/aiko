@@ -2125,11 +2125,6 @@ fn ambientParent(env: std.process.Environ) ?[]const u8 {
     return null;
 }
 
-fn ambientAction(env: std.process.Environ) []const u8 {
-    _ = env;
-    return "neuron";
-}
-
 /// Auto-derive the row's `action` from the plan when the plan starts with a
 /// known typed-action prefix (`drill:`, `channel:`, `sabbath:`, `resolver:`).
 /// Falls back to the ambient default ("neuron") otherwise. Substrate-faithful:
