@@ -1015,7 +1015,11 @@ PYAUDIT
   if [[ -f "$LIB_DIR/src/llm_fallback.zig" ]]; then
     _fail "doctrine[client/server split]: libcontract/src/llm_fallback.zig resurrected — the 319-LOC weak-Qwen fallback was deleted because it wrote canonical rows locally as fake-green children of cloud-402'd shared declares. Do not reintroduce."
   fi
-  if grep -q 'pub const LlmFallback' "$LIB_DIR/src/contract.zig"; then
+  # Anchor on `=` so the descriptive comment ("// The prior `pub const
+  # LlmFallback = @import(...)` re-export was deleted…") doesn't trip
+  # this guard. Only an actual `pub const LlmFallback = @import(...)`
+  # declaration counts as a resurrection.
+  if grep -qE '^pub const LlmFallback[[:space:]]*=' "$LIB_DIR/src/contract.zig"; then
     _fail "doctrine[client/server split]: contract.zig still exports LlmFallback — the re-export was deleted with llm_fallback.zig itself"
   fi
 
