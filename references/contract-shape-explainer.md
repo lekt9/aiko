@@ -204,6 +204,8 @@ After any successful read, missing tiers silently back-fill. Generation only hap
 
 **Fallbacks are visible, never silent.** Every degradation path emits one line to stderr in `<topic>: <what happened> — <consequence>` shape. The fallback STILL fires (the substrate doesn't break) but it ALWAYS surfaces, because a silent fallback hides degradation until something else breaks downstream and the cause is invisible. Examples that fire during normal operation: `wallet: canonical tier missing at <path>, served from mirror tier <path>`, `wallet: both file tiers missing, served from OS keystore`, `wallet: FIRST RUN — generating fresh ed25519 root seed`, `keystore: linux secret-tool unavailable — falling back to encrypted file`. The happy path stays silent. Silent `catch {}` is an anti-pattern; the evidence stream is the substrate's proprioception.
 
+**Doctrine-reality parity is itself a /contract.** Every claim in SKILL.md has a grep-able code site, enforced by `build.sh`'s `step_parity` step that runs BEFORE sign. Drift fails the build — unattested-by-reality binaries never ship. The guard is recursive: the parity rule applies to the parity step too (meta-parity check enforces that the parity section itself is documented in SKILL.md). When adding a new doctrine claim, add a new invariant in the same commit — "if you can claim it, you can grep it." Honored exceptions use a `PARITY-OK:` marker comment within 5 lines of the code site, with a one-line reason.
+
 ---
 
 ## 7. The one-line summary
