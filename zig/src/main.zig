@@ -4769,7 +4769,7 @@ fn cmdBuild(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     _ = args;
     const json = try readStdinJson(allocator);
     defer allocator.free(json);
-    const sh = contract.shape.validateShape(allocator, json) catch |e| {
+    var ps = contract.shape.validateShape(allocator, json) catch |e| {
         errPrint("build: shape validation failed: {s}\n", .{@errorName(e)});
         return 2;
     };
@@ -4801,7 +4801,7 @@ fn cmdRun(allocator: std.mem.Allocator, env: std.process.Environ, args: []const 
     _ = args;
     const json = try readStdinJson(allocator);
     defer allocator.free(json);
-    const sh = contract.shape.validateShape(allocator, json) catch |e| {
+    var ps = contract.shape.validateShape(allocator, json) catch |e| {
         errPrint("run: shape validation failed: {s}\n", .{@errorName(e)});
         return 2;
     };
@@ -4850,7 +4850,7 @@ fn cmdEval(allocator: std.mem.Allocator, env: std.process.Environ, args: []const
     _ = args;
     const json = try readStdinJson(allocator);
     defer allocator.free(json);
-    const sh = contract.shape.validateShape(allocator, json) catch |e| {
+    var ps = contract.shape.validateShape(allocator, json) catch |e| {
         errPrint("eval: shape validation failed: {s}\n", .{@errorName(e)});
         return 2;
     };
