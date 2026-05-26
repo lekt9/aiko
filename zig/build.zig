@@ -18,6 +18,13 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .imports = &.{
+            // client.zig depends on contract.zig (lineage/wallet/persona
+            // primitives). Declare the module dep explicitly so Zig 0.16
+            // doesn't see contract.zig reachable from two modules with no
+            // declared edge between them.
+            .{ .name = "contract", .module = libcontract },
+        },
     });
     const contract_options = b.addOptions();
     contract_options.addOption([]const u8, "binary_name", "contract");
