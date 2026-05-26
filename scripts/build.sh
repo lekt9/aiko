@@ -770,7 +770,7 @@ PYAUDIT
     echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 43 doctrine claims have matching code sites"
+  echo "build:parity OK — all 44 doctrine claims have matching code sites"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────
