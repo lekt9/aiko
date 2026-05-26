@@ -53,71 +53,24 @@ pub fn build(b: *std.Build) void {
         "Build profile: 'client' (default, the aiko-symlinked binary) or 'server' (canonical compile/resolve/biology, not yet runtime-divergent in Wave 1)",
     ) orelse "client";
 
-    // ─── Spirit-check gate (build-time LLM attestation verifier) ─────
+    // ─── Build the main binaries — no LLM-judge gate ─────────────────
     //
-    // Every `zig build install` runs the spirit-check binary BEFORE
-    // installing the main contract binaries. spirit-check refuses to
-    // exit 0 unless every .zig source file under libcontract/src/ +
-    // zig/src/ carries a current PASS row in `.contract-spirit-
-    // attest.jsonl`, signed by the root /contract wallet.
+    // Lewis 2026-05-26: "we can /contract against itself instead of
+    // doing this weird thing". The substrate self-attests via:
+    //   - pattern.zig comptime invariants (refuses non-conforming
+    //     source at compile time, BEFORE the binary exists)
+    //   - `zig build test` (runtime invariants on inline tests)
+    //   - the build pipeline's own EVAL step (build-fractal.sh writes
+    //     an L8 `signed:<binary-sha8>` row using the freshly-built
+    //     binary itself)
+    //   - the binary's startup self-verify (refuses to run if its
+    //     own sha256 has no matching L8 row in the ledger)
     //
-    // Verdicts are produced by an LLM judge (driven by `aiko attest`)
-    // evaluating each file against the 10 commandments (order) +
-    // 7 fruits of the spirit. Substrate-faithful: the LLM is the
-    // judge, the wallet signs, the build verifies the signature.
-    //
-    // There is no flag, env var, or argument that bypasses this. The
-    // only way to make the build green is to land an attested PASS
-    // row for each source file.
-    const spirit_check_root = b.createModule(.{
-        .root_source_file = b.path("../libcontract/src/spirit_check_main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    spirit_check_root.addEmbedPath(b.path("../libcontract/data"));
-    const spirit_check_exe = b.addExecutable(.{
-        .name = "spirit-check",
-        .root_module = spirit_check_root,
-    });
-    const run_spirit_check = b.addRunArtifact(spirit_check_exe);
-    // Walk-up resolution in spirit.attestationLedgerPath needs a cwd
-    // inside the repo tree; build_root is the canonical anchor.
-    run_spirit_check.setCwd(b.path(".."));
-    // The run-step's exit status propagates: non-zero → build fails.
-    run_spirit_check.expectExitCode(0);
-
-    // ─── aiko-attest (LLM judge + signer; NOT gated by spirit-check) ─
-    //
-    // The only build target that bypasses the gate. It exists for one
-    // reason: to populate `.contract-spirit-attest.jsonl` on a fresh
-    // repo where no attestations exist yet. Otherwise the gate would
-    // be unreachable (no aiko binary → no `aiko attest` → no rows →
-    // gate fails → no aiko binary). aiko-attest closes the chicken-
-    // and-egg.
-    //
-    // It is a single-purpose binary: read NEBIUS_API_KEY env, walk
-    // SOURCE_FILES, judge each via the LLM, sign verdicts with the
-    // root wallet, append rows. No other verbs. The full /contract
-    // verb dispatcher lives only on contract-zig-server, which IS
-    // gated.
-    const attest_root = b.createModule(.{
-        .root_source_file = b.path("../libcontract/src/attest_main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    attest_root.addEmbedPath(b.path("../libcontract/data"));
-    const attest_exe = b.addExecutable(.{
-        .name = "aiko-attest",
-        .root_module = attest_root,
-    });
-    b.installArtifact(attest_exe);
-
-    // Build the main binaries (contract-zig + contract-zig-server)
-    // and bind each install to the spirit-check verdict.
-    addContractExecutable(b, target, optimize, libcontract, client, "contract-zig", "client", &run_spirit_check.step);
-    addContractExecutable(b, target, optimize, libcontract, client, "contract-zig-server", "server", &run_spirit_check.step);
+    // No external LLM. The signature IS substrate-derived. Bootstrap
+    // is solved because the build pipeline produces the signature in
+    // one shot from a fresh repo.
+    addContractExecutable(b, target, optimize, libcontract, client, "contract-zig", "client", null);
+    addContractExecutable(b, target, optimize, libcontract, client, "contract-zig-server", "server", null);
 
     // The `zig build run` step uses the profile_arg the operator passed
     // (default "client"). Useful for local smoke-testing the server
