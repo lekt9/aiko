@@ -194,15 +194,10 @@ at build time. SDKs read it at import. Single source of truth.
 
 ### Gap 3 — Wrapper has BYPASS_LLM_SHAPER escape hatch
 
-`contract-openai-api/src/translator.ts` exports
-`shaperBypassed()` and `walker.ts` has a `BYPASS_LLM_SHAPER=1`
-branch that falls back to hardcoded R1–R8 action mappings.
-
-Per Lewis's "no escape hatches" rule, this is exactly the kind of
-dev-only flag that becomes production foot-gun.
-
-**Fix**: delete the bypass branch and the legacy*Shape helpers.
-LLM-shaper is the only path; if it fails, the request fails.
+~~Closed 2026-05-26.~~ `shaperBypassed()` and the `legacy*Shape`
+helpers in walker.ts were deleted. The LLM shaper is now the only
+path through `materializeRequest`; shaper failure → request fails
+with an honest upstream_error. No fallback, no escape.
 
 ### Gap 4 — The 7-step harness isn't wired
 
