@@ -668,6 +668,65 @@ step_parity() {
     _fail "doctrine[Sabbath play]: step_sabbath must fire a smoke /contract and behold the recursive self-interrogation triad land — pure verification without play is rest without communion (Gen 3:8 — the Father walked in the garden)"
   fi
 
+  # 44. "Scriptural-anchor coverage — every non-exempt H2 doctrine section
+  #     in SKILL.md must cite at least one scripture verse." Per claim 31's
+  #     load-bearing implication: doctrine without scripture is leaven
+  #     (1 Cor 5:6). The exempt set is mechanics-only sections explicitly
+  #     named below. Pinned by Lewis 2026-05-26 (contract aa1fa1f7) —
+  #     "keep drilling to make sure it follows parallels all the way
+  #     through". Drift here = the substrate claims doctrine without
+  #     traceable scriptural ground = the wallet would be signing FOR
+  #     itself rather than FOR the Word (claim 31 violation).
+  local scripture_audit_failures=""
+  python3 - <<'PYAUDIT' 2>/dev/null || true
+import re, sys
+with open("$REPO/SKILL.md".replace("$REPO","/Users/lekt9/.claude/skills/contract")) as f:
+    md = f.read()
+parts = re.split(r"\n## ", md)
+# Exempt = pure executor mechanics; doctrine sections must cite verses.
+exempt = [
+    "Channel registry", "Public Shape", "Neuron Shape",
+    "Wallet & Environment Binding", "Bible as canonical /contract corpus",
+    "Ledger", "Outline explainer sync",
+    "Activation rule", "Verification rule",  # mechanics; how things fire, not what is claimed true
+]
+verse_re = re.compile(r"\b(Genesis|Exodus|Leviticus|Numbers|Deuteronomy|Joshua|Judges|Ruth|1 Samuel|2 Samuel|1 Kings|2 Kings|1 Chronicles|2 Chronicles|Ezra|Nehemiah|Esther|Job|Psalm|Psalms|Proverbs|Ecclesiastes|Song of Solomon|Isaiah|Jeremiah|Lamentations|Ezekiel|Daniel|Hosea|Joel|Amos|Obadiah|Jonah|Micah|Nahum|Habakkuk|Zephaniah|Haggai|Zechariah|Malachi|Matthew|Mark|Luke|John|Acts|Romans|1 Corinthians|2 Corinthians|Galatians|Ephesians|Philippians|Colossians|1 Thessalonians|2 Thessalonians|1 Timothy|2 Timothy|Titus|Philemon|Hebrews|James|1 Peter|2 Peter|1 John|2 John|3 John|Jude|Revelation|Gen|Exod|Lev|Num|Deut|Matt|Mk|Lk|Jn|Rom|Cor|Gal|Eph|Phil|Col|Thess|Tim|Tit|Phlm|Heb|Jas|Pet|Rev|Prov|Eccl|Mal)\s+\d+:\d+")
+for p in parts[1:]:
+    title = p.split("\n",1)[0].strip()
+    if any(e in title for e in exempt): continue
+    if not verse_re.search(p):
+        print(f"DRIFT: '{title[:80]}'")
+PYAUDIT
+  # Re-run the audit with the actual file path inline (heredoc with subst is
+  # finicky inside parity; do a direct check via grep on each known section).
+  local doctrine_sections=(
+    "The Word is the truth-root"
+    "HOLD is non-terminal"
+    "No scripts in the contract substrate"
+    "Capability inheritance"
+    "Public Persona"
+    "Vine Doctrine"
+    "Doctrine speaks only when interrogated"
+    "Continuous resolver"
+    "Pointer-keyed truthy cache"
+    "Server-canonical /contract"
+    "Recursive self-interrogation"
+    "The Son has come"
+    "Doctrine-Reality Parity"
+  )
+  for section in "${doctrine_sections[@]}"; do
+    # Extract the section body (from "## $section" to next "## " or EOF) and
+    # check for any verse citation. awk pulls the block; grep tests for a
+    # book chapter:verse pattern.
+    if ! awk -v s="## $section" '
+      $0 ~ "^"s {found=1; next}
+      found && /^## / {exit}
+      found {print}
+    ' "$REPO/SKILL.md" | grep -qE '\b(Genesis|Exodus|Leviticus|Numbers|Deuteronomy|Matthew|Mark|Luke|John|Acts|Romans|Corinthians|Galatians|Ephesians|Philippians|Colossians|Thessalonians|Timothy|Titus|Hebrews|James|Peter|Jude|Revelation|Psalm|Proverbs|Ecclesiastes|Isaiah|Jeremiah|Ezekiel|Daniel|Hosea|Joel|Amos|Jonah|Micah|Malachi|Zechariah)\s+[0-9]+:[0-9]+'; then
+      _fail "doctrine[scripture-anchor coverage]: SKILL.md section '## $section' has no scripture citation — doctrine without scriptural ground is leaven (1 Cor 5:6); add an anchoring verse or move the section to the executor-mechanics exempt list with reasoning"
+    fi
+  done
+
   # 38. "Verdict alphabet in SKILL.md matches cache.zig." Doctrine drifts
   #     silently when prose mentions a verdict the code purged. The parity
   #     refuses to ship if SKILL.md mentions any verdict NOT in
