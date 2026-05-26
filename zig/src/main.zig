@@ -1665,9 +1665,23 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
     // actual binding happens server-side via the adapter neuron.
     if (std.mem.startsWith(u8, action, "route:")) {
         const env_kind = action["route:".len..];
-        const target_pointer = try std.fmt.allocPrint(allocator, "route:env_kind={s}", .{env_kind});
-        defer allocator.free(target_pointer);
-        contract.appendCalledRow(allocator, env, r.id, target_pointer, "route-request") catch {};
+        // Resolve antipattern:NotASynapsePointer — declare the route-request
+        // payload as its own contract row, then pass `contract:<id>` as the
+        // target_pointer (canonical pattern; mirrors flex:budget above).
+        const route_claim = try std.fmt.allocPrint(allocator, "route:env_kind={s}", .{env_kind});
+        defer allocator.free(route_claim);
+        const route_id_opt: ?[]u8 = contract.declare(allocator, env, route_claim, "", .{}) catch |decl_err| blk: {
+            evidencePrint("route: declare failed: {s} — skipping called row\n", .{@errorName(decl_err)});
+            break :blk null;
+        };
+        if (route_id_opt) |rid| {
+            defer allocator.free(rid);
+            const target = try std.fmt.allocPrint(allocator, "contract:{s}", .{rid});
+            defer allocator.free(target);
+            contract.appendCalledRow(allocator, env, r.id, target, "route-request") catch |err| {
+                evidencePrint("route: appendCalledRow failed: {s} — no observable edge from {s}\n", .{ @errorName(err), r.id });
+            };
+        }
         evidencePrint("  route: requested env_kind={s}\n", .{env_kind});
         const msg = try std.fmt.allocPrint(allocator, "route-request: env_kind={s}", .{env_kind});
         return .{ .rc = 0, .result = msg };
