@@ -34,13 +34,6 @@ pub const Headers = struct {
     payment_provider: ?[]const u8 = null,
     payment_scheme: ?[]const u8 = null,
     idempotency_key: ?[]const u8 = null,
-    /// Admin bypass: pubkey of the identity that wants 402 skipped.
-    /// Server checks against hardcoded allowlist before granting bypass.
-    admin_pubkey: ?[]const u8 = null,
-    /// Admin signature: ed25519 sig over `aiko-admin-bypass\0<ts>` where
-    /// ts is unix seconds in admin_ts. Validates the admin_pubkey claim.
-    admin_signature: ?[]const u8 = null,
-    admin_ts: ?[]const u8 = null,
 };
 
 /// POST JSON body to url. Returns owned Response.body (caller frees).
