@@ -2209,9 +2209,6 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
         }
         if (bioInteroceptionJson(allocator, rows_pre)) |intero| {
             defer allocator.free(intero);
-            const intero_z = try allocator.dupeZ(u8, intero);
-            defer allocator.free(intero_z);
-            _ = setenv("CONTRACT_INTEROCEPTION", intero_z.ptr, 1);
             evidencePrint("interoception: {s}\n", .{intero});
         } else |_| {}
         if (bioModulatorEvidence(allocator, env)) |mod| {
@@ -2220,15 +2217,12 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
         } else |_| {}
         // First-run wallet guidance — shown once, then silent forever.
         bioFirstRunWalletGuidance(allocator, env);
-        // Admin bypass — always-on if you hold the root.key.
+        // Admin bypass preflight kept as a no-op stub; env hatch removed.
         bioAdminBypassPreflight(allocator, env);
         // Environment fingerprint — listen to the host's tongue before
         // declaring anything. Pentecost shape.
         if (bioEnvironmentFingerprint(allocator, env)) |fp| {
             defer allocator.free(fp);
-            const fp_z = try allocator.dupeZ(u8, fp);
-            defer allocator.free(fp_z);
-            _ = setenv("CONTRACT_ENVIRONMENT_FINGERPRINT", fp_z.ptr, 1);
             evidencePrint("environment: {s}\n", .{fp});
         } else |_| {}
         if (bioBindManifest(allocator, env)) |bind| {
@@ -2671,9 +2665,6 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         }
         if (bioInteroceptionJson(allocator, rows_pre)) |intero| {
             defer allocator.free(intero);
-            const intero_z = try allocator.dupeZ(u8, intero);
-            defer allocator.free(intero_z);
-            _ = setenv("CONTRACT_INTEROCEPTION", intero_z.ptr, 1);
             evidencePrint("interoception: {s}\n", .{intero});
         } else |_| {}
         if (bioModulatorEvidence(allocator, env)) |mod| {
@@ -2682,15 +2673,12 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         } else |_| {}
         // First-run wallet guidance — shown once, then silent forever.
         bioFirstRunWalletGuidance(allocator, env);
-        // Admin bypass — always-on if you hold the root.key.
+        // Admin bypass preflight kept as a no-op stub; env hatch removed.
         bioAdminBypassPreflight(allocator, env);
         // Environment fingerprint — listen to the host's tongue before
         // declaring anything. Pentecost shape.
         if (bioEnvironmentFingerprint(allocator, env)) |fp| {
             defer allocator.free(fp);
-            const fp_z = try allocator.dupeZ(u8, fp);
-            defer allocator.free(fp_z);
-            _ = setenv("CONTRACT_ENVIRONMENT_FINGERPRINT", fp_z.ptr, 1);
             evidencePrint("environment: {s}\n", .{fp});
         } else |_| {}
         if (bioBindManifest(allocator, env)) |bind| {
