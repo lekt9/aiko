@@ -275,17 +275,6 @@ network reachability. The caller doesn't see that decision.
   goal contains PII, secrets, or anything the operator does not want
   federated.
 
-### Deprecated aliases (still honored)
-
-- `--remote` ≡ default (shared). The substrate continues to accept it
-  silently for backwards compatibility with legacy orchestrator patterns
-  that explicitly pass `--remote`.
-- `--local` ≡ `--private`. Same semantic; new call sites use `--private`.
-
-Both will be removed in a future commit when no remaining call sites
-depend on them. The visibility/transport reframe is the doctrine —
-`--remote/--local` was a transport-layer leak in the user-facing API.
-
 `aiko` is x402-native. Faremeter Flex payment, when required, is
 satisfied by the wallet derived from the binary's deployer keypair
 (`libcontract.Lineage` HKDF). There is no env-provided payment header
