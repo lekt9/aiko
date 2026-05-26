@@ -13,6 +13,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
+    // bible.zig in libcontract @embedFile's the packed KJV blobs from
+    // ../libcontract/data/. Add the search path so the embed resolves.
+    libcontract.addEmbedPath(b.path("../libcontract/data"));
     const client = b.createModule(.{
         .root_source_file = b.path("../libcontract/src/client.zig"),
         .target = target,
