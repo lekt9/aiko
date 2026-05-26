@@ -1147,6 +1147,18 @@ pub fn markDied(
     const agent = try getAgent(allocator, env);
     defer allocator.free(agent);
 
+    // Bind the signature to cause + reason so different death classes
+    // produce distinct output_signature values. Wave is 0 for died (no
+    // iteration wave applies); the contract id + event + payload are
+    // sufficient to identify the terminal state uniquely.
+    var payload_buf: std.ArrayList(u8) = .empty;
+    defer payload_buf.deinit(allocator);
+    try payload_buf.appendSlice(allocator, cause.jsonName());
+    try payload_buf.append(allocator, 0);
+    if (reason) |r| try payload_buf.appendSlice(allocator, r);
+    const sig_opt = try signOutput(allocator, env, id, "died", 0, payload_buf.items, ts);
+    defer if (sig_opt) |s| allocator.free(s);
+
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
 
@@ -1168,6 +1180,10 @@ pub fn markDied(
     }
     try buf.appendSlice(allocator, ", \"ts\": ");
     try writeJsonString(&buf, allocator, ts);
+    if (sig_opt) |s| {
+        try buf.appendSlice(allocator, ", \"output_signature\": ");
+        try writeJsonString(&buf, allocator, s);
+    }
     try buf.appendSlice(allocator, ", \"agent\": ");
     try writeJsonString(&buf, allocator, agent);
     try buf.append(allocator, '}');
