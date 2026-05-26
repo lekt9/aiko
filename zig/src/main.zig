@@ -317,13 +317,6 @@ fn dependentIds(allocator: std.mem.Allocator, rows: []const Row, target_id: []co
     return try ids.toOwnedSlice(allocator);
 }
 
-fn hookId(env: std.process.Environ, primary: []const u8, secondary: []const u8) ?[]const u8 {
-    _ = env;
-    _ = primary;
-    _ = secondary;
-    return null;
-}
-
 extern fn system(command: [*:0]const u8) c_int;
 extern fn popen(command: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
 extern fn pclose(stream: *anyopaque) c_int;
