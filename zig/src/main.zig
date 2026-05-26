@@ -3453,7 +3453,10 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     // into inputs_hash_v2 as the Docker-style "content layer". Paths
     // themselves never leave this function; only the 64-char hex digest
     // crosses into the row.
-    const file_refs_digest_opt: ?[]u8 = extractFileRefsAndHash(allocator, parsed.plan) catch null;
+    const file_refs_digest_opt: ?[]u8 = extractFileRefsAndHash(allocator, parsed.plan) catch |e| blk: {
+        evidencePrint("declare: extractFileRefsAndHash failed: {s} — omitting file_refs digest\n", .{@errorName(e)});
+        break :blk null;
+    };
     defer if (file_refs_digest_opt) |d| allocator.free(d);
     const safe_plan = redactAikoPlan(allocator, parsed.plan) catch |e| {
         errPrint("aiko privacy guard failed: {s}\n", .{@errorName(e)});
