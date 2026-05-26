@@ -4234,6 +4234,17 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     var arena: std.heap.ArenaAllocator = .init(allocator);
     defer arena.deinit();
     const argv_z = try init.args.toSlice(arena.allocator());
+    // Persona selection from argv[0] basename — must precede any read of
+    // BINARY_NAME / AIKO_DECLARE_ONLY (usage() reads both, so even the
+    // `argv_z.len < 2` short-circuit below depends on these being set).
+    // std.fs.path.basename handles `/abs/path/to/aiko`, `./aiko`, and bare
+    // `aiko` uniformly. argv_z is guaranteed at least one element by the
+    // process loader on every supported OS; defensively fall through to
+    // the default if it isn't.
+    if (argv_z.len >= 1) {
+        BINARY_NAME = std.fs.path.basename(argv_z[0]);
+        AIKO_DECLARE_ONLY = std.mem.eql(u8, BINARY_NAME, "aiko");
+    }
     if (argv_z.len < 2) {
         usage();
         return 2;
