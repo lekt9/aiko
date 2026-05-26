@@ -3249,20 +3249,20 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
                     errPrint("cloud-mirror: row build failed: {s}\n", .{@errorName(e)});
                     break :mirror;
                 };
-                appendJsonEscaped(&row, allocator, id) catch |e| {
+                appendJsonEscaped(allocator, &row, id) catch |e| {
                     errPrint("cloud-mirror: row build failed: {s}\n", .{@errorName(e)});
                     break :mirror;
                 };
                 row.appendSlice(allocator, ", \"plan\": ") catch break :mirror;
-                appendJsonEscaped(&row, allocator, safe_plan) catch break :mirror;
+                appendJsonEscaped(allocator, &row, safe_plan) catch break :mirror;
                 row.appendSlice(allocator, ", \"action\": ") catch break :mirror;
-                appendJsonEscaped(&row, allocator, action) catch break :mirror;
+                appendJsonEscaped(allocator, &row, action) catch break :mirror;
                 if (parent) |p| {
                     row.appendSlice(allocator, ", \"parent_id\": ") catch break :mirror;
-                    appendJsonEscaped(&row, allocator, p) catch break :mirror;
+                    appendJsonEscaped(allocator, &row, p) catch break :mirror;
                 }
                 row.appendSlice(allocator, ", \"ts\": ") catch break :mirror;
-                appendJsonEscaped(&row, allocator, ts) catch break :mirror;
+                appendJsonEscaped(allocator, &row, ts) catch break :mirror;
                 row.append(allocator, '}') catch break :mirror;
                 const path = ledger.appendRow(allocator, env, row.items) catch |e| {
                     errPrint("cloud-mirror: appendRow failed: {s} — local ledger may be read-only\n", .{@errorName(e)});
