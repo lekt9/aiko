@@ -1036,8 +1036,8 @@ fn meshEmitRemoteHook(allocator: std.mem.Allocator, env: std.process.Environ, ci
     const envelope_body = try hex_buf.toOwnedSlice(allocator);
     defer allocator.free(envelope_body);
 
-    const envelope_id_opt: ?[]u8 = contract.declare(allocator, env, envelope_body, "", .{}) catch |err| blk: {
-        evidencePrint("mesh envelope declare failed: {s} — skipping called row\n", .{@errorName(err)});
+    const envelope_id_opt: ?[]u8 = contract.declare(allocator, env, envelope_body, "", .{}) catch |decl_err| blk: {
+        evidencePrint("mesh envelope declare failed: {s} — skipping called row\n", .{@errorName(decl_err)});
         break :blk null;
     };
     if (envelope_id_opt) |eid| {
