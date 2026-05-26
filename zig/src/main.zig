@@ -1007,8 +1007,12 @@ fn meshEmitRemoteHook(allocator: std.mem.Allocator, env: std.process.Environ, ci
     const env_pkt = try meshEncryptHook(allocator, local_priv, peer_pub, tree_payload, info);
     defer allocator.free(env_pkt.ciphertext);
 
-    // Hex-encode peer pubkey + nonce + tag + ciphertext for the called row's
-    // target_pointer body. Bounded by 16KB so the ledger row stays sane.
+    // Resolve antipattern:posthook-pointer-as-raw-url — the wireguard envelope
+    // is payload, not a pointer. Declare it as its own contract row (the blob
+    // becomes the row's plan body) and point the called row at it via
+    // `contract:<envelope-id>`. The recipient resolves the pointer → reads the
+    // envelope row's plan → decrypts the ciphertext. Bounded by 16KB so the
+    // ledger row stays sane.
     const hex_max: usize = @min(env_pkt.ciphertext.len, 8 * 1024);
     var hex_buf: std.ArrayList(u8) = .empty;
     defer hex_buf.deinit(allocator);
@@ -1029,11 +1033,20 @@ fn meshEmitRemoteHook(allocator: std.mem.Allocator, env: std.process.Environ, ci
     defer allocator.free(ct_hex);
     lineage_lib.bytesToHex(env_pkt.ciphertext[0..hex_max], ct_hex);
     try hex_buf.appendSlice(allocator, ct_hex);
-    const target_pointer = try hex_buf.toOwnedSlice(allocator);
-    defer allocator.free(target_pointer);
+    const envelope_body = try hex_buf.toOwnedSlice(allocator);
+    defer allocator.free(envelope_body);
 
-    try contract.appendCalledRow(allocator, env, cid, target_pointer, "posthook-mesh");
-    evidencePrint("mesh hook encrypted: {s} -> {s} ct_bytes={d} nonce={s}\n", .{ cid, posthook, env_pkt.ciphertext.len, nonce_hex[0..16] });
+    const envelope_id_opt: ?[]u8 = contract.declare(allocator, env, envelope_body, "", .{}) catch |err| blk: {
+        evidencePrint("mesh envelope declare failed: {s} — skipping called row\n", .{@errorName(err)});
+        break :blk null;
+    };
+    if (envelope_id_opt) |eid| {
+        defer allocator.free(eid);
+        const target_pointer = try std.fmt.allocPrint(allocator, "contract:{s}", .{eid});
+        defer allocator.free(target_pointer);
+        try contract.appendCalledRow(allocator, env, cid, target_pointer, "posthook-mesh");
+        evidencePrint("mesh hook encrypted: {s} -> {s} ct_bytes={d} nonce={s} envelope={s}\n", .{ cid, posthook, env_pkt.ciphertext.len, nonce_hex[0..16], eid });
+    }
 }
 
 /// Walk the parent_id chain from `cid` up to root and emit a JSON array of
