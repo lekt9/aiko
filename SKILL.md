@@ -996,9 +996,11 @@ Concrete invariants enforced by `build.sh`'s parity step:
                             be `catch |e| surface(...)`).
 6. "rotation as a function" → libcontract/src/lineage.zig must export
                             `pub fn rotateRootKey` AND `pub fn rotateAllSignedRowsByLineage`.
-7. "aiko binary has no verbs other than the goal + --remote/--local" → 
+7. "aiko binary has no verbs other than the goal + --private (visibility flag)" →
                             zig/src/main.zig parseAikoArgs must accept ONLY
-                            --remote / --local (no --genesis, no --user).
+                            --private (canonical) plus --remote/--local
+                            (deprecated aliases honored for backwards-compat).
+                            No --genesis, no --user, no other knobs.
 8. "spawn = appendRow to a ledger" → every row-creating code path
                             flows through ledger.appendRow OR client.declareRemote*.
 9. "binary self-attests at startup" → main.zig must call verifyBinary
