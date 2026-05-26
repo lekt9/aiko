@@ -52,14 +52,12 @@ pub const KeystoreError = error{
 };
 
 /// Read the secret stored under `svc`. Returns `null` when not found.
-/// Caller frees the returned slice.
+/// Caller frees the returned slice using the same allocator passed in.
 pub fn read(allocator: std.mem.Allocator, svc: []const u8) !?[]u8 {
     try validateSvc(svc);
     switch (builtin.os.tag) {
         .macos => {
             if (try darwinRead(allocator, svc)) |v| return v;
-            // Fall through to fallback on miss (covers brand-new machines
-            // before the canonical seed has been mirrored to keychain).
             return try fallbackRead(allocator, svc);
         },
         .linux => {
