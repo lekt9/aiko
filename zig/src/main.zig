@@ -2013,12 +2013,30 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
             var followup_buf: std.ArrayList(u8) = .empty;
             defer followup_buf.deinit(allocator);
             const buf_ok = blk_buf: {
-                followup_buf.appendSlice(allocator, "guard:") catch |e| { evidencePrint("guard: followup_buf OOM (prefix): {s} — follow-up skipped\n", .{@errorName(e)}); break :blk_buf false; };
-                followup_buf.appendSlice(allocator, cls.class) catch |e| { evidencePrint("guard: followup_buf OOM (class): {s} — follow-up skipped\n", .{@errorName(e)}); break :blk_buf false; };
-                followup_buf.appendSlice(allocator, ":") catch |e| { evidencePrint("guard: followup_buf OOM (sep): {s} — follow-up skipped\n", .{@errorName(e)}); break :blk_buf false; };
-                followup_buf.appendSlice(allocator, cls.layer) catch |e| { evidencePrint("guard: followup_buf OOM (layer): {s} — follow-up skipped\n", .{@errorName(e)}); break :blk_buf false; };
-                followup_buf.appendSlice(allocator, " — ") catch |e| { evidencePrint("guard: followup_buf OOM (dash): {s} — follow-up skipped\n", .{@errorName(e)}); break :blk_buf false; };
-                followup_buf.appendSlice(allocator, remed) catch |e| { evidencePrint("guard: followup_buf OOM (remed): {s} — follow-up skipped\n", .{@errorName(e)}); break :blk_buf false; };
+                followup_buf.appendSlice(allocator, "guard:") catch |e| {
+                    evidencePrint("guard: followup_buf OOM (prefix): {s} — follow-up skipped\n", .{@errorName(e)});
+                    break :blk_buf false;
+                };
+                followup_buf.appendSlice(allocator, cls.class) catch |e| {
+                    evidencePrint("guard: followup_buf OOM (class): {s} — follow-up skipped\n", .{@errorName(e)});
+                    break :blk_buf false;
+                };
+                followup_buf.appendSlice(allocator, ":") catch |e| {
+                    evidencePrint("guard: followup_buf OOM (sep): {s} — follow-up skipped\n", .{@errorName(e)});
+                    break :blk_buf false;
+                };
+                followup_buf.appendSlice(allocator, cls.layer) catch |e| {
+                    evidencePrint("guard: followup_buf OOM (layer): {s} — follow-up skipped\n", .{@errorName(e)});
+                    break :blk_buf false;
+                };
+                followup_buf.appendSlice(allocator, " — ") catch |e| {
+                    evidencePrint("guard: followup_buf OOM (dash): {s} — follow-up skipped\n", .{@errorName(e)});
+                    break :blk_buf false;
+                };
+                followup_buf.appendSlice(allocator, remed) catch |e| {
+                    evidencePrint("guard: followup_buf OOM (remed): {s} — follow-up skipped\n", .{@errorName(e)});
+                    break :blk_buf false;
+                };
                 break :blk_buf true;
             };
             if (buf_ok) {
