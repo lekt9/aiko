@@ -4705,6 +4705,13 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         usage();
         return 2;
     }
+    // Runtime side of the build queue lock. `build.sh` holds an exclusive
+    // mkdir-atomic mutex at /tmp/contract-build.lock while it compiles +
+    // signs; if we run mid-build we'd execute a half-installed binary or
+    // race on the wallet signature. Wait for the build to release before
+    // doing anything else. Quick check + sleep loop with stale-pid reclaim
+    // matches build.sh's own loop so the two sides agree on ownership.
+    waitForBuildLock(init.environ);
     const verb = argv_z[1];
     // Wave-1 pending-declare sweep: re-POST any payloads that 402'd
     // on a previous invocation. Fired BEFORE any other dispatch so
