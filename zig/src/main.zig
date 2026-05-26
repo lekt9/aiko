@@ -3584,8 +3584,12 @@ fn flushStderrTapeAsEvidence(
         _ = std.c.close(fd);
     }
 
-    var ptr_buf: [80]u8 = undefined;
-    const pointer_str = std.fmt.bufPrint(&ptr_buf, "sha256:{s}", .{hex}) catch |e| {
+    // Privacy axis lives ON the pointer prefix, not just on a row field.
+    // `sha256-private:` blobs must never leave this host; `sha256-shared:`
+    // are caller-redacted and may be cloud-mirrored.
+    var ptr_buf: [96]u8 = undefined;
+    const prefix: []const u8 = if (std.mem.eql(u8, scope, "shared")) "sha256-shared" else "sha256-private";
+    const pointer_str = std.fmt.bufPrint(&ptr_buf, "{s}:{s}", .{ prefix, hex }) catch |e| {
         substrateEvidence("evidence: bufPrint sha256 pointer failed: {s} — row not appended\n", .{@errorName(e)});
         return;
     };
