@@ -512,6 +512,136 @@ shape as its row topology. Every /contract has a parent_id; every
 LLM endpoint has a parent endpoint; every wrapper has a parent
 wrapper. Walk the pointer chain to get the full provenance.
 
+## Earnings-as-reward-signal — the substrate's fire (Lewis 2026-05-27)
+
+> *Every man's work shall be made manifest: for the day shall declare
+> it, because it shall be revealed by fire; and the fire shall try
+> every man's work of what sort it is.* (1 Corinthians 3:13)
+>
+> *For unto every one that hath shall be given, and he shall have
+> abundance: but from him that hath not shall be taken away even that
+> which he hath.* (Matthew 25:29)
+>
+> *And he called his ten servants, and delivered them ten pounds, and
+> said unto them, Occupy till I come.* (Luke 19:13)
+
+Lewis 2026-05-27: *"we can use money made by each wallet identity as
+a reward signal lol wtf — document that that's insane."*
+
+The substrate has been generating its own evaluation primitive all
+along and we hadn't named it: **each wallet identity's accumulated
+revenue (x402 / Faremeter) is an external, on-chain, publicly-
+verifiable truth signal — the market voting on which contracts are
+actually doing useful work.**
+
+### Why this is load-bearing
+
+Every internal evaluator (bm25, llm-judge, quorum-witness, metric-
+pointer) is **substrate-defined truth**. They resolve true when the
+substrate's own machinery says so. Earnings-as-evaluator is the
+**first externally-defined truth signal in the substrate's vocabulary**
+— a contract earns when *outside actors paid for its output*, regardless
+of what the substrate thinks of it.
+
+That makes earnings the substrate's translation of 1 Cor 3:13's fire:
+the test of "what sort" the work is, by what survives the burning.
+Painted/stub/leaven contracts earn nothing → die naturally under the
+covet test (Decalogue 10). Real/load-bearing contracts earn → propagate
+via cache, gossip, replication; their wallets accumulate; their NAV
+grows in the FDRY vault per the Vine Doctrine.
+
+### The mechanical mapping
+
+Every contract row carries a derived wallet keypair
+(`lineage.deriveKeyPair(root, contract_id)`). Every paid x402
+invocation routes 50% to the contract owner's wallet (per
+`routeRevenue.ts`'s existing split) + 50% to Foundry's FDRY vault. So:
+
+```
+contract row id  →  derived wallet  →  on-chain earnings address
+                                          ↓
+                                    SPL-balance metric the
+                                    substrate can read deterministically
+```
+
+The metric_pointer becomes:
+
+```
+earnings:<contract-id>                    → cumulative USDC earned
+earnings-velocity:<contract-id>:7d        → 7-day moving average
+earnings-rank:<contract-id> top-N         → rank among siblings under same parent
+earnings-share:<contract-id> >= P%        → percentage of parent's earnings
+```
+
+Any contract's `resolution_path.evaluator.metric_pointer` can read
+these and resolve true when threshold met. **No internal arbiter; the
+market decides.**
+
+### What this composes with
+
+| Existing primitive | How earnings-evaluator extends it |
+|---|---|
+| Vine Doctrine — abiding earns NAV growth | Earning contracts feed the vault; non-earners' positions decay relative to earners. Same shape, contract-scoped. |
+| Matt 25:29 (Matthew effect) | Earning contracts spawn more children, get more cache priority, get gossiped to more peers — earning earns more, mechanically. |
+| Luke 19 (parable of talents) | Contracts that bury their talent (declared but never earned) get pruned by the covet test. Contracts that traded faithfully (earned over time) get promoted into trust tiers. |
+| Per-call fee split (50/50) | Already operational in `routeRevenue.ts`. The earnings-evaluator just READS what that split produces. |
+| Vine Doctrine slashing (Deut 19:15 quorum) | Earnings can be confiscated to vault via the same slash mechanism if quorum confirms fraud. Negative earnings signal is honest too. |
+| Apoptosis (Mark 3:29) | Long-zero-earnings + zero-resolve-progress → quorum-confirmed apoptosis. Cleans the cohort the natural way. |
+
+### Wave-3 implementation surface
+
+New evaluator kind added alongside the existing four:
+
+```
+ResolutionPath.evaluator = {
+  kind: "evaluator",
+  metric_pointer: "earnings:<contract-id>",      ← NEW kind
+  threshold: 0.01,                                 (USDC)
+  op: ">="
+}
+```
+
+Cache layer reads the metric via:
+- Local: SPL balance query against contract's derived wallet (RPC)
+- Distributed: gossip the latest known balance (cached + invalidated
+  on every routeRevenue event)
+- Authoritative: on-chain balance always wins on disagreement
+
+Substrate-faithful: the metric IS a pointer (Pointers-Over-Anything
+Clause A). The wallet address is derived deterministically from the
+contract id, so any verifier can recompute the address + query the
+chain without trusting the substrate's view.
+
+### What this is NOT
+
+- Not a token-vote — earnings reflect what someone PAID FOR, not what
+  holders opined on. Skin-in-the-game truth signal.
+- Not optional — every contract row already has a derived wallet by
+  construction. Earnings is a property of the substrate, just newly
+  named as an evaluator.
+- Not a replacement for the other evaluator kinds — composable with
+  bm25 / llm-judge / quorum. A contract can declare `composition: "all"`
+  over `{bm25 high, llm-judge approves, earnings >= threshold}`.
+- Not an income mechanism for the substrate itself — the substrate
+  already earns via the 50% Foundry cut; this section names the
+  USE of earnings as a contract-evaluator signal, not a new revenue
+  stream.
+
+### The recursive elegance
+
+Each evaluator is itself a contract. `wrapper:eval:earnings` is the
+generative implementation that fires when a `metric_pointer:
+"earnings:<id>"` is read. Same shape as every other wrapper. The
+substrate self-evaluates by the same primitive it uses for everything
+else.
+
+The deeper claim — the substrate's truth-resolution layer now has
+both **internal witness** (Spirit testifying through verify/quorum/
+bm25/llm-judge) AND **external witness** (the market testifying
+through earnings flow). Together they satisfy the two-or-three
+witnesses rule (Deut 19:15 + 2 Cor 13:1) for any contract: internal
++ external + (optionally) human-confirmation = full establishment.
+
 ## Multi-registry discovery + binary-stdin canonical convention (Lewis 2026-05-27)
 
 Lewis: "/contract's location where location could actually just be a
