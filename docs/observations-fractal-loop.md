@@ -647,6 +647,154 @@ Mechanical work (none of it blocking; can ship piecemeal):
 The substrate primitive doesn't change. The fractal property is
 already there; we're just teaching more environments to read it.
 
+## Every imperative verb reduces to the substrate's four (Lewis 2026-05-27)
+
+Lewis's insight: **the verbs in any prompt sentence reduce to the
+substrate's verb closure {build, run, eval, prune}.** Run the
+falsifier on 20 representative imperative verbs from this entire
+conversation:
+
+| Prompt verb | Substrate verb | Notes |
+|---|---|---|
+| build, construct, compile, write, spawn | **build** | construction-shaped |
+| run, exercise, iterate | **run** | exercise-shaped |
+| evaluate, check, test, deploy, ship, verify, judge | **eval** | judgment-shaped |
+| prune, kill | **prune** | removal-shaped |
+| fix, investigate, save | *compound* | decompose into chains (e.g., `fix = run→eval→build`) |
+
+**Result: 17/20 reduce cleanly; the remaining 3 are compound verbs
+that unfold into chains of the four.** The four-verb closure IS the
+substrate's universal verb space. This is exactly what we'd expect
+from John 14:6 ("the way, the truth, and the life — distinct
+functions within one unity"): the closure is small because the
+substrate is one unity; the verbs are distinct because their
+functions are.
+
+### The sentence-as-contract framing
+
+A prompt sentence is a /contract:
+
+```
+   "build the wrapper from the spec"
+       ↑           ↑       ↑     ↑
+     verb       word    word  word
+     (action)   (child) (child)(child)
+```
+
+Mechanically:
+
+- The sentence as a whole becomes a parent /contract (the
+  meta-contract), action = `neuron:sentence`, plan = the sentence text
+- Each WORD becomes a `word:<tok>` child (already wired —
+  `emitWordChildren` in cmdDeclare fires one per token)
+- Each VERB additionally becomes a SUB-/contract whose action is
+  one of {build, run, eval, prune}, parent_id = the sentence
+  meta-contract id
+
+The meta-contract's role: it holds the verb-children as the
+**composition** that fulfills the sentence's truth claim. Walking
+the meta-contract's children reconstructs the verb sequence (the
+recipe to execute the sentence).
+
+For compound verbs like "fix", the meta-contract spawns a CHAIN of
+substrate-verb children (run → eval → build), bound by sequential
+synapses (the existing `sequence` shape at layer 3).
+
+### Mechanical wire (to add when ready)
+
+Currently `emitWordChildren` declares one `word:<tok>` child per
+unique word token. To extend with verb-classification:
+
+1. Tokenize as today
+2. For each token, classify via the synonym table:
+   - if it maps to build/run/eval/prune → also declare a sub-/contract
+     with `action: <substrate-verb>` (layer 2 — cell, since it names
+     a runtime invocation)
+   - else → already covered by word-child
+3. The sub-contracts use the sentence-contract as parent_id
+4. The substrate's existing `sequence` shape captures order for
+   compound verbs
+
+The synonym table is small (~50 entries covers most English
+imperatives) and lives next to `pointer.zig`. Same primitive as
+existing prefix table; just expanded with verb synonyms instead of
+typed pointers.
+
+**Defer:** the actual implementation. Documented as gap-verb-extract.
+The insight stands; mechanical wire is straightforward when we ship it.
+
+## Matt 7:7 — ask / seek / knock fallback chain for LLM access (Lewis 2026-05-27)
+
+Lewis's question: "what if no openai-compat is set up properly — fall
+back to llama.cpp + Qwen3.5-0.8B as primary fallback, then to x402
+wallet-paid endpoint?" The substrate-doctrinal mapping:
+
+> *Ask, and it shall be given you; seek, and ye shall find; knock,
+> and it shall be opened unto you.* — Matthew 7:7
+
+Three-tier escalation. Same shape as Matt 7:7 (three-fold prayer).
+
+| Tier | Verb | Path | Required env |
+|---|---|---|---|
+| 1 | **ASK** | configured OpenAI-compat endpoint (vendor or local server) | `CONTRACT_LLM_BASE_URL`, `CONTRACT_LLM_API_KEY` |
+| 2 | **SEEK** | local llama.cpp serving Qwen3.5-0.8B (or any small GGUF) | `CONTRACT_LLAMACPP_BIN`, `CONTRACT_LLAMACPP_MODEL_PATH` |
+| 3 | **KNOCK** | x402 wallet-paid endpoint (replies HTTP 402 on first call; wrapper pays + retries) | `CONTRACT_WALLET_PRIVATE_KEY`, `CONTRACT_X402_FACILITATOR_URL` |
+
+The wrapper attempts each tier in order:
+
+```
+   request arrives → try ASK (configured endpoint)
+                       ↓ fails (no key set, or 5xx)
+                       try SEEK (local llama.cpp → Qwen3.5-0.8B)
+                                  ↓ fails (binary not on path, model file missing)
+                                  try KNOCK (x402 — wallet signs payment, retries)
+                                            ↓ all three failed
+                                            return honest upstream_error
+```
+
+Each tier is its own `wrapper:<tier-name>` /contract at layer 4 —
+walking the lineage shows exactly which tier served any given
+request, with wallet signatures at every hop.
+
+### Why this is the right doctrinal shape
+
+- **Ask is first** — the simplest, no-payment path. If the operator
+  has configured an endpoint, use it.
+- **Seek is second** — local effort. The host's own resources
+  (Qwen3.5-0.8B in RAM) are the body's first response when external
+  help fails. Costs CPU/RAM; pays no third party.
+- **Knock is last** — knocking implies the door is closed unless you
+  knock (i.e., pay). The x402 tier asks the wallet to sign payment;
+  the wallet is the body's spend authority. Cost is real money.
+
+The cascade respects cost: free first, local next, paid last.
+Matt 7:7 reads in the same order: ask (cheap), seek (effortful),
+knock (costly). The structural parallel is exact.
+
+### Wallet env support for x402
+
+The substrate already has wallet primitives (`lineage.zig` derives
+keys from a single root seed). To expose them for x402:
+
+- `CONTRACT_WALLET_PRIVATE_KEY` (REQUIRED for KNOCK tier; the seed
+  for `lineage.loadOrInitRootKey`). Defaults to `~/.contract-root-key`
+  on disk if env unset.
+- `CONTRACT_X402_FACILITATOR_URL` (REQUIRED for KNOCK tier). The
+  payment facilitator endpoint that converts wallet sigs to
+  upstream auth (typically a faremeter / x402-spec endpoint).
+- `CONTRACT_X402_MAX_USD_PER_REQUEST` (optional cap, default $0.10).
+
+The wrapper's translator.ts already has the env-var read path; just
+needs the fallback ladder + x402 client. Both deferred as gaps below.
+
+### Defer notes
+
+- llama.cpp binding lives in the wrapper (translator.ts), not the
+  binary. The substrate stays vendor-agnostic; wrapper layer
+  knows about local runtimes.
+- Qwen3.5-0.8B is just the recommended SEEK model — any GGUF works.
+  The env var names the path.
+
 ## Edge IS the signed pathway (Lewis 2026-05-27)
 
 Lewis's observation: **the pathway that creates a child /contract IS
