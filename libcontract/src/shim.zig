@@ -45,7 +45,7 @@ fn usage() void {
         \\  contract-lib-shim list
         \\  contract-lib-shim fractal <id>              Φ11 fractal context block
         \\  contract-lib-shim guard <plan> <action>     Σ23+Σ24 stack dry-run
-        \\Usage (thin-client mode, Σ28 — set UNBROWSE_BASE):
+        \\Usage (thin-client mode, Σ28 — routes to canonical Unbrowse base):
         \\  contract-lib-shim remote-declare <plan> <action> [parent_id]
         \\  contract-lib-shim remote-status <id>
         \\  contract-lib-shim mode                        show current client/server mode
