@@ -2866,9 +2866,15 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
                     };
                     if (local_json) |json| {
                         defer allocator.free(json);
-                        outPrint("local-llm fallback compiled tree (wallet 402'd cloud):\n{s}\n", .{json});
-                        // TODO: recursively declare the children locally — next commit.
-                        return 0;
+                        // Walk the locally-compiled tree and declare each node
+                        // onto the local ledger. Root id becomes the substrate's
+                        // stdout — same shape as a successful --remote return.
+                        if (declareLocalTree(allocator, env, json)) |root_id| {
+                            defer allocator.free(root_id);
+                            outPrint("{s}\n", .{root_id});
+                            return 0;
+                        }
+                        errPrint("local-llm compiled tree but failed to declare onto local ledger\n", .{});
                     }
                 }
                 errPrint("aiko remote failed against Unbrowse: {s}\n", .{@errorName(e)});
