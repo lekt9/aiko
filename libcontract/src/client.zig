@@ -360,6 +360,18 @@ pub fn declareRemoteAiko(
     } else |err| {
         std.debug.print("verses: relevantVerses failed: {s} — LLM call proceeds without verse RAG context\n", .{@errorName(err)});
     }
+
+    // Signed-declare wire fields. The server's gate at /v1/contract/declare
+    // (routes/contract.ts:509) verifies declare_signature against the
+    // canonical body reconstructed from these fields. Same bytes the binary
+    // just signed above.
+    body.appendSlice(allocator, ",\"wallet_identity\":") catch return ClientError.OutOfMemory;
+    writeJsonString(&body, allocator, &wid_hex) catch return ClientError.OutOfMemory;
+    body.appendSlice(allocator, ",\"declare_signature\":") catch return ClientError.OutOfMemory;
+    writeJsonString(&body, allocator, &sig_hex) catch return ClientError.OutOfMemory;
+    body.appendSlice(allocator, ",\"ts\":") catch return ClientError.OutOfMemory;
+    writeJsonString(&body, allocator, ts) catch return ClientError.OutOfMemory;
+
     body.append(allocator, '}') catch return ClientError.OutOfMemory;
 
     // Idempotency-Key over the canonical request body so retries dedupe.
