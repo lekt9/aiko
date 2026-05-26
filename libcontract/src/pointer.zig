@@ -42,6 +42,16 @@ pub fn inferPointerType(action: []const u8) []const u8 {
     // parent_id is the layer it wraps. Layer 4 (transport) — wrappers
     // carry calls between layers without changing the truth claim.
     if (std.mem.startsWith(u8, action, "wrapper:")) return "wrapper";
+    // Environment-typed runtime prefixes (Lewis 2026-05-27): every
+    // "tool" in any host environment is just a /contract whose action
+    // names the runtime that dereferences it. Same primitive, more
+    // dereferencers. See docs/observations-fractal-loop.md for the
+    // dereferencer contract per prefix.
+    if (std.mem.startsWith(u8, action, "wasm:")) return "wasm";
+    if (std.mem.startsWith(u8, action, "binary:")) return "binary";
+    if (std.mem.startsWith(u8, action, "telegram:")) return "telegram";
+    if (std.mem.startsWith(u8, action, "email:")) return "email";
+    if (std.mem.startsWith(u8, action, "browser-script:")) return "browser-script";
     // Recursive truth-substrate (this turn): every word in a plan is itself
     // a /contract pointer, and the layer-7 validator → layer-8 signed
     // pointer-memory cascade is mechanical. `word:<tok>` is a sub-cell
