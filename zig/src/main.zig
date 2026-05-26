@@ -2002,7 +2002,9 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
         const cls = bioClassifyRoadblock(rr.result, r.action);
         if (!is_already_guard and !hasGuardRow(rows, id)) {
             const remed = remediationFor(cls.class);
-            contract.appendGuardRow(allocator, env, id, cls.class, cls.layer, remed) catch {};
+            contract.appendGuardRow(allocator, env, id, cls.class, cls.layer, remed) catch |err| {
+                evidencePrint("guard: append failed for {s} ({s}/{s}): {s} — scar tissue not persisted\n", .{ id, cls.class, cls.layer, @errorName(err) });
+            };
             evidencePrint("  guard: class={s} layer={s} -> {s}\n", .{ cls.class, cls.layer, remed });
             // Declare the follow-up resolver contract pointing at this id
             // as parent. Its plan is the remediation hint; resolving it
