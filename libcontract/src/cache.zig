@@ -677,6 +677,86 @@ pub fn snapshotAt(
     return null;
 }
 
+/// Stigmergic timestamp index — when was contract `id` last touched (any
+/// event kind)? Walks the ledger newest-first, returns the ts of the most
+/// recent event row matching the id. No sidecar; no schema change; the
+/// ledger IS the index (cf. ant pheromone trail — the environment carries
+/// the state, no parallel registry needed).
+///
+/// Returns null when no row carries the id. Caller owns the returned ts
+/// slice (typically an ISO-8601 string).
+///
+/// Companion to `latestEventKind` below — together they answer "when did
+/// X last change, and what kind of change was it?" without a `state_changed`
+/// schema bolt-on. Process-local memoization is intentionally NOT done
+/// here: a memoized `id → (ts, kind)` map would be a second source of
+/// truth that can desync from the append-only ledger across processes.
+/// If a caller needs hot-path lookups, it can memoize at its own layer
+/// and invalidate on observed appendRow.
+pub fn latestEventTs(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+) !?[]u8 {
+    const body = ledger.readAll(allocator, env) catch return null;
+    defer allocator.free(body);
+
+    var offsets: std.ArrayList(usize) = .empty;
+    defer offsets.deinit(allocator);
+    try offsets.append(allocator, 0);
+    var i: usize = 0;
+    while (i < body.len) : (i += 1) {
+        if (body[i] == '\n' and i + 1 < body.len) try offsets.append(allocator, i + 1);
+    }
+
+    var k: usize = offsets.items.len;
+    while (k > 0) : (k -= 1) {
+        const start = offsets.items[k - 1];
+        const end = std.mem.indexOfScalarPos(u8, body, start, '\n') orelse body.len;
+        const line = body[start..end];
+        if (line.len < 2) continue;
+        const rid = extractStringField(line, "id") orelse continue;
+        if (!std.mem.eql(u8, rid, id)) continue;
+        const ts = extractStringField(line, "ts") orelse continue;
+        return try allocator.dupe(u8, ts);
+    }
+    return null;
+}
+
+/// Companion to `latestEventTs` — returns the event kind of the most
+/// recent row for `id` (e.g. "declared", "iterated", "satisfied",
+/// "died", "purged", "cache_resolved", "child_added"). Same walk shape,
+/// returns the `event` field instead of `ts`.
+pub fn latestEventKind(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+) !?[]u8 {
+    const body = ledger.readAll(allocator, env) catch return null;
+    defer allocator.free(body);
+
+    var offsets: std.ArrayList(usize) = .empty;
+    defer offsets.deinit(allocator);
+    try offsets.append(allocator, 0);
+    var i: usize = 0;
+    while (i < body.len) : (i += 1) {
+        if (body[i] == '\n' and i + 1 < body.len) try offsets.append(allocator, i + 1);
+    }
+
+    var k: usize = offsets.items.len;
+    while (k > 0) : (k -= 1) {
+        const start = offsets.items[k - 1];
+        const end = std.mem.indexOfScalarPos(u8, body, start, '\n') orelse body.len;
+        const line = body[start..end];
+        if (line.len < 2) continue;
+        const rid = extractStringField(line, "id") orelse continue;
+        if (!std.mem.eql(u8, rid, id)) continue;
+        const ev = extractStringField(line, "event") orelse continue;
+        return try allocator.dupe(u8, ev);
+    }
+    return null;
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────
 
 test "Verdict.jsonName covers every variant" {
