@@ -35,6 +35,11 @@ pub const pattern = @import("pattern.zig");
 comptime {
     pattern.assertInvariants();
 }
+// Spirit layer: per-file LLM attestation against the 10 commandments
+// (order) + 7 fruits of the spirit. Runtime verification (filesystem
+// + signed ledger), not comptime. Enforced via the spirit-check
+// binary that gates every `zig build install`.
+pub const spirit = @import("spirit.zig");
 
 /// Re-export so consumers of libcontract can verify chains without rewiring
 /// the build graph.
