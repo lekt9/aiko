@@ -477,13 +477,51 @@ step_parity() {
     _fail "doctrine[temporal coherence]: isSatisfied must return false when a later 'died' event exists for the same id — append-only ledger + latest-terminal semantics (John 17:17, present-tense truth)"
   fi
 
+  # 33. "Pointer chain is the primary cache key" — per Lewis 2026-05-26
+  #     follow-up: "the cache must rely only on pointers — everything is
+  #     a pointer to another pointer". cache.zig must export
+  #     computeSignatureChain + findLatestTerminalSignature +
+  #     findDeclaredParentSignature so the substrate roots cache
+  #     identity in ed25519 signatures (cryptographic pointers), not
+  #     raw value bytes. The signature_incomplete verdict must exist
+  #     so missing-pointer cases surface as ledger evidence rather
+  #     than silent value-hash fallback.
+  for chain_fn in 'pub fn computeSignatureChain' 'pub fn findLatestTerminalSignature' 'pub fn findDeclaredParentSignature'; do
+    if ! grep -q "$chain_fn" "$LIB_DIR/src/cache.zig"; then
+      _fail "doctrine[pointer-only cache]: '$chain_fn' missing in cache.zig — pointer-chain identity is incomplete"
+    fi
+  done
+  if ! grep -q 'signature_incomplete' "$LIB_DIR/src/cache.zig"; then
+    _fail "doctrine[pointer-only cache]: Verdict.signature_incomplete missing in cache.zig — defensive incomplete-chain verdict is required so missing pointers surface as ledger evidence"
+  fi
+  if ! grep -q 'contract.cache.computeSignatureChain' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[pointer-only cache]: main.zig:resolveOne must call computeSignatureChain as the PRIMARY cache key (byte-hash is legacy fallback only)"
+  fi
+
+  # 34. "Terminal events carry output_signature" — markSatisfied and
+  #     markDied must invoke signOutput so satisfied/died rows are
+  #     pointer-identifiable via ed25519 signatures. Without these
+  #     signatures, the pointer chain is permanently incomplete and
+  #     the cache stays on the legacy byte-hash fallback.
+  if ! grep -q 'fn signOutput' "$LIB_DIR/src/contract.zig"; then
+    _fail "doctrine[signed outputs]: contract.zig must define signOutput — the terminal-event signer that emits output_signature on satisfied/died rows"
+  fi
+  local sigout_callers
+  sigout_callers=$(grep -c 'signOutput(allocator, env, id,' "$LIB_DIR/src/contract.zig" 2>/dev/null || echo 0)
+  if [[ "$sigout_callers" -lt 2 ]]; then
+    _fail "doctrine[signed outputs]: signOutput must be called from BOTH markSatisfied AND markDied in contract.zig (found $sigout_callers callers; expected ≥2)"
+  fi
+  if ! grep -q 'output_signature' "$LIB_DIR/src/contract.zig"; then
+    _fail "doctrine[signed outputs]: contract.zig must emit the output_signature JSON field on terminal-event rows"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
     printf '%s' "$report" >&2
     echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 32 doctrine claims have matching code sites"
+  echo "build:parity OK — all 34 doctrine claims have matching code sites"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────
