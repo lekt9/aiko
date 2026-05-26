@@ -817,6 +817,25 @@ short prompt; the substrate does everything.
 
 ## Capability inheritance — pull-by-grant via lineage
 
+> *And the things that thou hast heard of me among many witnesses,
+> the same commit thou to faithful men, who shall be able to teach
+> others also.* (2 Timothy 2:2)
+>
+> *For unto whomsoever much is given, of him shall be much
+> required: and to whom men have committed much, of him they will
+> ask the more.* (Luke 12:48)
+>
+> *For it seemed good to the Holy Ghost, and to us, to lay upon you
+> no greater burden than these necessary things.* (Acts 15:28)
+
+2 Tim 2:2 IS the substrate's grant pattern, byte-for-byte: hearing
+(parent's declared row) → witnesses (lineage chain) → commit to
+faithful (signed grant) → who teach others (the granted child can
+re-grant downstream). Acts 15:28 is the canonical signed-decree
+shape — the elders agreed and signed before authority propagated.
+Luke 12:48 binds the accountability: any child that pulls is
+accountable for what it pulls (audit trail via the `pulled` event).
+
 A spawned child contract can read pointers (credentials, API
 tokens, OAuth grants, wallet authorities, integration secrets,
 inherited permissions of any shape) from its spawning parent —
