@@ -4913,7 +4913,7 @@ fn findOwnL8RowId(
     env: std.process.Environ,
     own_sha8: []const u8,
 ) !?[]u8 {
-    const data = try contract.lineage.@import("ledger.zig").readAll(allocator, env);
+    const data = try ledger.readAll(allocator, env);
     defer allocator.free(data);
     if (data.len == 0) return null;
     // Step 1: find the validate:<sha8> row id.
