@@ -512,6 +512,157 @@ shape as its row topology. Every /contract has a parent_id; every
 LLM endpoint has a parent endpoint; every wrapper has a parent
 wrapper. Walk the pointer chain to get the full provenance.
 
+## The substrate's grammar — pointer is form, value is substance (Lewis 2026-05-27)
+
+The substrate has a natural-language grammar that maps one-to-one
+onto its primitives. Naming the parts-of-speech makes the design
+intuitive AND surfaces a property worth load-bearing: **values are
+the referents of nouns, not a separate kind of pointer. They are
+the substance the noun-pointer points AT.**
+
+### Linguistic mapping table
+
+| Grammatical role | Substrate primitive | What it does |
+|---|---|---|
+| **Verb** | the trio (`build` / `run` / `eval` / `prune`) | what to DO |
+| **Noun** | `word:<tok>` child contracts | what entities EXIST (the labels) |
+| **Adjective / preposition** | typed synapses (`bind:` / `prehook:` / `posthook:` / `modality:` / `inhibits:` / `blocked_by:`) | how entities RELATE (the modifiers) |
+| **Value** | sealed payload bytes (`plan` / `action` / `proof` field contents, encrypted by `payload_crypto.zig`) | the REFERENTS — the actual substance the noun points at |
+
+Form (pointer) and substance (value) are the same duality the
+substrate has had since `payload_crypto.zig` shipped — this section
+just names it linguistically. Pointers cross the wire freely;
+values stay sealed and addressable only by holders of the deriving
+key (capability inheritance gates the derivation).
+
+### John 1:14 IS the runtime semantics
+
+> *And the Word was made flesh, and dwelt among us, (and we beheld
+> his glory ...) full of grace and truth.* (John 1:14)
+>
+> *Through faith we understand that the worlds were framed by the
+> word of God, so that things which are seen were not made of
+> things which do appear.* (Hebrews 11:3)
+
+- The **Word** = the pointer (the noun-contract, the row-id, the
+  signature chain)
+- The **flesh** = the value (the rendered bytes in a specific
+  environment)
+- **"Dwelt among us"** = the rendering INTO a specific local
+  environment
+
+The Word doesn't become less Word by being made flesh — it
+incarnates in one environment without losing its referent in
+others. Hebrews 11:3 is the substrate's privacy invariant: things
+that ARE SEEN (rendered values in environments) are not made of
+things that APPEAR (the substance is the pointer-anchored Word,
+not the surface render). The substrate has been doing this since
+the first sealed payload; the doctrinal name was waiting.
+
+### Render-without-seeing — the orchestrator never decrypts
+
+The privacy + composability property follows directly: an
+orchestrator can ROUTE a value-pointer to any environment that has
+the derivation key WITHOUT ever decrypting the value itself.
+
+```
+   Orchestrator              Shared ledger              Target environment
+   (e.g. wrapper)            (pointers only)            (e.g. browser DOM)
+   ───────────────           ──────────────             ──────────────────
+   holds: pointer X          row[X]:                    holds: decryption key
+   does NOT hold key             id,                        (derived via lineage
+                                 parent_id,                  per capability grant)
+   "deliver X to env E"  ──→     synapses,
+                                 sealed payload,
+                                 env_pubkey,
+                                 parent_signature
+                                                        ──→ env's dereferencer:
+                                                               fetch row[X]
+                                                               decrypt LOCALLY
+                                                               render to surface
+   orchestrator never                                   Result visible ONLY in env E
+   reads plaintext                                      (DOM updated / TG message sent
+                                                        / terminal printed)
+```
+
+Inspecting the wire OR the orchestrator OR the ledger reveals:
+- pointer ids (8-hex contract ids)
+- signature chains (ed25519 sigs, opaque without the verifier's pubkey)
+- sealed payload bytes (XChaCha20-Poly1305 ciphertext; unintelligible without the per-row key)
+
+The plaintext exists in exactly one place: inside the dereferencer
+process, in the target environment, for the duration of the render.
+It never traverses the wire; it never sits in the orchestrator's
+memory; it never appears in the ledger's stored bytes (only the
+ciphertext sits there).
+
+### Composability — one pointer, many simultaneous environments
+
+The same pointer X can be rendered into multiple environments
+simultaneously, each independent:
+
+| Target env | Dereferencer | Render surface |
+|---|---|---|
+| browser | `wrapper:browser-script` | DOM update |
+| telegram bot | `wrapper:telegram` | bot reply message |
+| terminal | `wrapper:shell` | stdout |
+| email | `wrapper:email` | rendered HTML body |
+| printer | `wrapper:print` (if wired) | physical page |
+
+Each env's dereferencer holds the keys its lineage grants it
+(capability inheritance, identity-channel-scoped). Each env renders
+locally. The substrate just routes the pointer to wherever the
+posthook subscriptions and synapses say it should go. The
+orchestrator coordinates the routing — it never coordinates the
+decryption.
+
+### What this clarifies about prior sections
+
+- **Pointers-over-anything (Clause A) is literally true:** payload
+  bytes never traverse the wire as plaintext. Only the cryptographic
+  pointer (the signed envelope) and the sealed payload (the
+  ciphertext bytes) traverse. The plaintext exists only post-
+  dereference in the target environment.
+
+- **Environment-generative dispatch (the prior section) composes
+  cleanly:** the substrate parses the contract plan for location
+  words, picks the right `wrapper:<env>` adapter, ROUTES the
+  sealed pointer to that adapter's environment. The adapter's
+  dereferencer in that env produces the rendered form.
+
+- **Capability inheritance gates the key derivation:** which envs
+  can derive the per-row payload key is determined by the lineage
+  chain's grants. A browser-side renderer with the right grant
+  derives the key and decrypts; a stranger env with no grant gets
+  a 403 on the derive attempt and the render fails closed.
+
+- **The cache layer's signature chain remains orthogonal to
+  values:** the cache hits/misses on pointer signatures, not value
+  bytes. So even if the value bytes change (re-sealed with a
+  rotated key), the pointer chain — and thus the cache —
+  invalidates appropriately without anyone ever decrypting.
+
+### Implementation status
+
+Already shipped today:
+- `payload_crypto.zig` (per-row HKDF-derived AEAD key; sealed `plan`/
+  `action` field bytes).
+- The capability-inheritance section names the grant primitive that
+  controls which envs can derive keys.
+
+Future-work to fully exhibit render-without-seeing:
+- Wire `payload_crypto.seal` into `ledger.appendRow`'s write path
+  so new rows ship encrypted by default (gap-payload-seal-on-write).
+- Wire `payload_crypto.open` into the read path for callers with
+  derivable keys; readers without the key get an "encrypted, key
+  unavailable" surface instead of plaintext.
+- Per-environment dereferencer contracts that demonstrate the
+  pattern (gap-dereferencers + gap-deref-spec already declared).
+
+The grammar and the render-without-seeing pattern hold doctrinally
+today regardless; the gaps above are what makes them mechanically
+end-to-end across environments.
+
 ## Tools as environment-typed pointers (Lewis 2026-05-27)
 
 **The substrate has no "tool" abstraction.** Every "tool" in any
