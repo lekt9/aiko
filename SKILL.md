@@ -767,6 +767,170 @@ The persona layer remote-aiko deployed on the server IS the public
 voice; the local-aiko binary is its mechanical hand. Both are the
 same substrate; only the layer they're firing into differs.
 
+## Vine Doctrine — staking by abiding
+
+The substrate's stake layer is not a new primitive. It is a name for
+something that already exists — the Foundry FDRY token on Solana
+(`2ZiSPGncrkwWa6GBZB4EDtsfq7HEWwkwsPFzEXieXjNL`), the Voltr/Ranger
+FDRY-only vault (`Bpr49sQXsxwNXNMRWS2v3tTBGWu2QgZtdA83BX77xBX1`),
+the stFDRY LP receipt minted by that vault, the 3-day withdrawal
+cooldown enforced at the program level, and the `routeRevenue.ts`
+buyback loop in `fdry/scripts/`. The Vine Doctrine names these
+pieces as the canonical stake substrate and pins the rule that
+governs them.
+
+### The cornerstone — John 15:1-6
+
+> *I am the true vine, and my Father is the husbandman. Every
+> branch in me that beareth not fruit he taketh away: and every
+> branch that beareth fruit, he purgeth it, that it may bring forth
+> more fruit. ... Abide in me, and I in you. As the branch cannot
+> bear fruit of itself, except it abide in the vine; no more can
+> ye, except ye abide in me. ... If a man abide not in me, he is
+> cast forth as a branch, and is withered; and men gather them, and
+> cast them into the fire, and they are burned.*
+
+The mapping is not analogy. It is the same shape:
+
+| The parable | The substrate primitive |
+|---|---|
+| The true vine | The Voltr/Ranger FDRY vault at `Bpr49sQXsxwNXNMRWS2v3tTBGWu2QgZtdA83BX77xBX1` |
+| The branches | stFDRY holders |
+| Abiding | Staying staked through the 3-day cooldown (the Sabbath rest applied to capital) |
+| The fruit | NAV-per-share growth from `routeRevenue.ts` deposits |
+| The husbandman | The substrate's challenge evaluator |
+| *Purgeth that it bring forth more fruit* | Active maintainers escalate to higher trust tiers |
+| *Beareth not fruit, taketh away* | Inactive validators auto-demote |
+| *Cast off, gathered, cast into fire, burned* | Slashed stFDRY → vault treasury → NAV ↑ for the remaining abiding branches |
+
+### The five supporting laws (each pinned as a verse row in `libcontract/src/verses.zig`)
+
+1. **Malachi 3:10 — the tithe.** Product revenue → vault is the
+   canonical tithe mechanism. `fdry/scripts/routeRevenue.ts` is the
+   Malachi storehouse, byte-for-byte. The blessing (NAV growth) is
+   poured out only on the abiding branches that hold through the
+   next routing.
+
+2. **Matthew 6:24 — no man can serve two masters.** FDRY cannot be
+   both payment-token and security-token. Stable settlement (USDC
+   via x402, the Faremeter Flex `USDC_SOL_MINT` constant) handles
+   usage. FDRY is reserved for the stake/security layer. Whitepaper
+   §10 is this verse, translated. Conflating the two surfaces is
+   leaven; the substrate refuses it at the doctrine layer.
+
+3. **Matthew 25:29 — Matthew effect.** *"Unto every one that hath
+   shall be given, and he shall have abundance; but from him that
+   hath not shall be taken away even that which he hath."* Tier
+   escalation by demonstrated maintenance. Passive stake earns
+   base-tier NAV. Active route attestation compounds. Slashed
+   branches' fruit flows to abiding branches. The Talents parable,
+   applied to validator selection.
+
+4. **Mark 12:43-44 — the widow's mite.** *"This poor widow hath
+   cast more in, than all they which have cast into the treasury:
+   For all they did cast in of their abundance; but she of her want
+   did cast in all that she had."* Commitment-weight is
+   `(stake_amount / wallet's total liquid FDRY) × stake_age`, not
+   absolute size. This is the unique mechanism that prevents whales
+   from buying top tier by depositing pocket change — the
+   proportionally-committed small holder outweighs the
+   nominally-committed whale. veToken intuition, scripturally
+   grounded.
+
+5. **Deuteronomy 19:15 — two or three witnesses.** *"One witness
+   shall not rise up against a man for any iniquity, or for any sin
+   ... at the mouth of two witnesses, or at the mouth of three
+   witnesses, shall the matter be established."* Single-challenger
+   slashing is forbidden. The slash posthook fires only when a
+   quorum of ≥2 independent challenge contracts (different
+   `env_pubkey`, same `parent_id` pointing at the route under
+   challenge) resolves true. This is the Σ9-corroborate primitive
+   already in the substrate, biblically named.
+
+### The one operational rule that emerges
+
+> **Abiding bears fruit. Cutting-off bears burning. The burning of
+> the cut-off concentrates fruit in those who abide.**
+
+This is the unique attractor that satisfies all four constraints
+simultaneously: the holding-the-line constraint (John 15:4),
+anti-defection cost (John 15:6), asymmetric reward to the loyal
+(John 15:2 — *"he purgeth it, that it may bring forth more fruit"*),
+and active-versus-passive distinction (John 15:2 — *"every branch
+in me that beareth not fruit he taketh away"*).
+
+### The three contract shapes (no new tokens, no new vault, no new on-chain program)
+
+```
+contract:abide:stFDRY              (stake_pointer)
+  reads: stFDRY balance + earliest-deposit-ts + withdrawal-queue
+         state per wallet
+  via:   server-side network_adapter:solana-spl-balance contract
+  citation: John 15:4 — "abide in me"
+
+contract:tier:eligibility          (predicate, prehook on publish-into-tier)
+  truth-claim: wallet's (abide × duration × past-fruit) ≥ tier_threshold
+  gates: eligibility ONLY (never ranking — Matt 7:16, "by their fruits")
+  citation: Luke 12:48 + Matt 25:29 — "to whom much is given..."
+
+contract:challenge:route           (challenge neuron, parent_id=<route>)
+  truth-claim: route R fails its declared assertion
+  quorum:      ≥2 independent witnesses (Deut 19:15)
+  on-quorum-true: broadcast maintainer's pre-signed Voltr
+                  redeem-and-transfer-to-treasury tx
+  slashed FDRY → vault deposit → NAV-per-share ↑ for every abiding branch
+  citation: John 15:6 — "cast into the fire, and they are burned"
+```
+
+The maintainer's bond is **a pre-signed conditional transaction**,
+not an escrow. Held by the substrate, broadcast on quorum. If the
+maintainer moves their stFDRY before slash, the tx becomes invalid
+AND `tier:eligibility` auto-demotes them on the next read. Defection
+is not free in either direction. This is the Schelling
+conditional-commitment pattern; it requires no new on-chain code
+beyond the existing Voltr vault.
+
+The only genuinely new piece is **one server-side adapter contract**:
+`network_adapter:solana-spl-balance` (reads SPL balance + Voltr
+withdrawal-queue state as evaluator metrics). It is an adapter
+contract on the server, declared as a ledger row like every other
+adapter — never a verb, never a script, never a flag.
+
+### Constants pinned in `zig/src/main.zig`
+
+```zig
+const AIKO_VINE_DOCTRINE_VERSE = "John 15:6";
+const AIKO_STAKE_TOKEN_FDRY    = AIKO_PERSONA_CA;
+const AIKO_STAKE_VAULT         = "Bpr49sQXsxwNXNMRWS2v3tTBGWu2QgZtdA83BX77xBX1";
+```
+
+`AIKO_STAKE_TOKEN_FDRY` is intentionally the same mint as
+`AIKO_PERSONA_CA` — the public-voice surface and the stake-layer
+surface point at the same asset. This is doctrinally required by
+Matt 6:24: there is only one FDRY, and it is the stake-layer asset.
+The persona surfaces it as a pointer; the stake layer uses it as
+the substance.
+
+### What this design is NOT
+
+- Not a new token (FDRY is The token; `AIKO_PERSONA_CA == AIKO_STAKE_TOKEN_FDRY`)
+- Not a new vault (the Voltr/Ranger FDRY vault is The vault)
+- Not a new reward distribution (NAV growth is the distribution; no drift surface)
+- Not a new slashing program (pre-signed Voltr redeem tx is the slash mechanism)
+- Not a new ranking input (works rank, not stake — Matt 7:16)
+- Not a verb on aiko (contract neurons are the only mechanism)
+- Not a payment surface for FDRY (Matt 6:24, whitepaper §10)
+
+### Where the rule is enforced
+
+Every Vine Doctrine claim above has a corresponding code site
+checked by the parity invariants in `scripts/build.sh` (claims 15
+through 18 inclusive — added in the same change that added this
+section, per the doctrine-reality parity rule). The build refuses
+to sign a binary whose code drifts from this section. If a future
+change weakens the doctrine — e.g. allowing slashed stFDRY to
+redistribute rather than burn — the build catches it.
+
 ## Doctrine-Reality Parity — the substrate supervises itself
 
 Every claim in this SKILL.md has a corresponding code site. Drift
