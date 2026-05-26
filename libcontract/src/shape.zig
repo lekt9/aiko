@@ -63,6 +63,13 @@ pub const Shape = struct {
     parent_id: ?[]const u8 = null,
     wave: ?u32 = null,
     proof: ?[]const u8 = null,
+    // died-event fields (the prune surface — John 15:2 "every branch
+    // that beareth not fruit he taketh away"). cause must be one of
+    // the four DeathCause variants from contract.zig; by_id is the
+    // contract that pruned this one; reason is human text.
+    cause: ?[]const u8 = null,
+    by_id: ?[]const u8 = null,
+    reason: ?[]const u8 = null,
 };
 
 /// Wraps the std.json parser's owned tree plus the projected Shape
