@@ -5175,34 +5175,12 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     waitForBuildLock(init.environ);
     const verb = argv_z[1];
 
-    // ─── Startup self-verify gate (Lewis 2026-05-27) ──────────────────
-    //
-    // The binary refuses to run unless its own sha256 has a matching
-    // signed:<sha8> row in the ledger (the L8 pointer-memory landed by
-    // the build pipeline's eval step). "Built = signed; running =
-    // signature checks out" — the substrate runs only signed binaries.
-    //
-    // Exception list: verbs that are themselves the bootstrap path or
-    // pure read-only metadata. _sign-self IS the bootstrap (it writes
-    // the L8 row on first build); self/verify-* are read-only.
-    if (!std.mem.eql(u8, verb, "_bootstrap-self-sign") and
-        !std.mem.eql(u8, verb, "_sign-child") and
-        !std.mem.eql(u8, verb, "self") and
-        !std.mem.eql(u8, verb, "verify-self") and
-        !std.mem.eql(u8, verb, "verify-binary"))
-    {
-        if (!isSelfSignedInLedger(allocator, init.environ)) {
-            errPrint(
-                "refuse-to-run: this binary has no L8 signed:<sha> row in the ledger.\n" ++
-                    "  Bootstrap by running `bash scripts/build-fractal.sh` which fires\n" ++
-                    "  the build → test → parent-sign pipeline. First build runs\n" ++
-                    "  _bootstrap-self-sign (root); subsequent builds run _sign-child\n" ++
-                    "  from the previous binary kept aside as .previous-binary.\n",
-                .{},
-            );
-            return 1;
-        }
-    }
+    // (Removed the unconditional startup self-verify gate per Lewis's
+    // 2026-05-27 correction: "self verify works only on the root
+    // contract". Child invocations inherit verification via lineage
+    // walk — they pass through freely. The gate is now lazily checked
+    // inside cmdBuild only when parent_id is absent, i.e. a brand-new
+    // root-level declaration. See cmdBuild for the moved check.)
     // Wave-1 pending-declare sweep: re-POST any payloads that 402'd
     // on a previous invocation. Fired BEFORE any other dispatch so
     // queued envelopes are honored on every aiko call. `self` and
