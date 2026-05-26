@@ -83,6 +83,14 @@ pub fn inferLayer(action: []const u8) i32 {
     if (std.mem.eql(u8, pt, "api")) return 2;
     if (std.mem.eql(u8, pt, "harness")) return 2;
     if (std.mem.eql(u8, pt, "loop")) return 2;
+    // word: is the sub-cell — every token in a plan is itself a /contract
+    // pointer, mechanically a child of the sentence-contract above it.
+    if (std.mem.eql(u8, pt, "word")) return 0;
+    // validate: is the L7 boundary; signed: is the L8 pointer-memory.
+    // markSatisfied on a L7 row auto-spawns the L8 signed:<sig> row, so
+    // the chain breaks at L7 and ratifies at L8.
+    if (std.mem.eql(u8, pt, "validate")) return 7;
+    if (std.mem.eql(u8, pt, "signed")) return 8;
     return 2;
 }
 
