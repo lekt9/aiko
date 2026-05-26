@@ -127,12 +127,13 @@ fn usage() void {
         errPrint(
             \\  {s} "<truth claim>" [--remote|--local]
             \\
-            \\Default routes to the Unbrowse substrate; --local runs the
-            \\one-shot lifecycle against the on-disk ledger.
+            \\No verbs, no env knobs, no escape hatches. The substrate
+            \\reads only the goal and the mode pointer; lineage,
+            \\hooks, adapters, and child neurons are server-determined.
+            \\Default routes to Unbrowse; --local runs the one-shot
+            \\lifecycle against the on-disk ledger.
             \\
-            \\  {s} declare "<truth>"      compat alias
-            \\
-        , .{ BINARY_NAME, BINARY_NAME });
+        , .{BINARY_NAME});
         return;
     }
     errPrint(
