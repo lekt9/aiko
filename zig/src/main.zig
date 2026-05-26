@@ -4971,6 +4971,33 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     // matches build.sh's own loop so the two sides agree on ownership.
     waitForBuildLock(init.environ);
     const verb = argv_z[1];
+
+    // ─── Startup self-verify gate (Lewis 2026-05-27) ──────────────────
+    //
+    // The binary refuses to run unless its own sha256 has a matching
+    // signed:<sha8> row in the ledger (the L8 pointer-memory landed by
+    // the build pipeline's eval step). "Built = signed; running =
+    // signature checks out" — the substrate runs only signed binaries.
+    //
+    // Exception list: verbs that are themselves the bootstrap path or
+    // pure read-only metadata. _sign-self IS the bootstrap (it writes
+    // the L8 row on first build); self/verify-* are read-only.
+    if (!std.mem.eql(u8, verb, "_sign-self") and
+        !std.mem.eql(u8, verb, "self") and
+        !std.mem.eql(u8, verb, "verify-self") and
+        !std.mem.eql(u8, verb, "verify-binary"))
+    {
+        if (!isSelfSignedInLedger(allocator, init.environ)) {
+            errPrint(
+                "refuse-to-run: this binary has no L8 signed:<sha> row in the ledger.\n" ++
+                    "  Bootstrap by running `bash scripts/build-fractal.sh` which fires\n" ++
+                    "  the build → test → self-sign pipeline. The eval step lands the\n" ++
+                    "  L8 row; subsequent runs find it and proceed.\n",
+                .{},
+            );
+            return 1;
+        }
+    }
     // Wave-1 pending-declare sweep: re-POST any payloads that 402'd
     // on a previous invocation. Fired BEFORE any other dispatch so
     // queued envelopes are honored on every aiko call. `self` and
