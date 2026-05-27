@@ -123,3 +123,4 @@
 {"event": "iterated", "id": "d3f54987", "wave": 8, "action_exit": 1, "action_result": "hold", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-27T09:17:12.370331Z", "agent": "lewistham9x@gmail.com"}
 {"event": "iterated", "id": "6be490de", "wave": 9, "action_exit": 1, "action_result": "hold", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-27T09:17:12.386527Z", "agent": "lewistham9x@gmail.com"}
 {"event": "evidence", "id": "a5a418bc", "pointer": "sha256-shared:e1bcd7dfdcab11f2341fa13c19d0e7c071cab8f49ef552e6e21f3f59c92752cb", "scope": "shared", "bytes": 1939, "ts": "2026-05-27T09:17:12.402520Z", "agent": "lewistham9x@gmail.com"}
+{"event": "evidence", "id": "", "pointer": "sha256-private:895a13ad158caf888e619db416a6ba9019c7a0b9ca70a27e9e7668b986075aa3", "scope": "private", "bytes": 467, "ts": "2026-05-27T09:28:19.473969Z", "agent": "lewistham9x@gmail.com"}
