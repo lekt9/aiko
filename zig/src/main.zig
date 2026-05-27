@@ -5209,12 +5209,11 @@ fn cmdSelf(args: []const []const u8) u8 {
         return 2;
     }
     // BINARY_NAME is a runtime var (set in main from argv[0] basename),
-    // so the JSON header is built at runtime. `profile` exposes the
-    // build-profile constant ("client" or "server"); the pending-declares
-    // retry queue is surfaced as `pending_declares_retry_queue`.
+    // so the JSON header is built at runtime. The pending-declares retry
+    // queue is surfaced as `pending_declares_retry_queue`.
     outPrint(
-        "{{ \"binary\": \"{s}\", \"profile\": \"{s}\", \"implementation\": \"zig\", \"version\": \"{s}\", \"public_shape\": \"<binary-name> \\\"<truth claim>\\\" [--private]\", \"visibility_axis\": {{\"default\": \"shared\", \"override\": \"--private\"}}, \"env_reads\": [\"HOME\"], \"unbrowse_base\": \"https://beta-api.unbrowse.ai\", \"llm_compiler_binding\": \"hardcoded\", \"binary_self_attestation\": true, \"shapes\": [\"neuron\"], \"internal_shapes\": [\"cell\",\"funnel\",\"funnel-first\",\"sequence\",\"quorum\",\"loop\",\"harness\",\"contract-ref\"], \"containment_edge\": \"parent_id\", \"cross_edges\": [\"contract-ref\"], \"lineage_assignment\": \"server-side (wallet identity + declare timestamp)\", \"prompt_compiler\": \"unbrowse-llm\", \"prompt_to_contract_graph\": true, \"prompt_text_is_root_declaration\": true, \"server_integrator\": \"unbrowse-llm\", \"pending_declares_retry_queue\": {{\"path\": \"~/.contracts/pending-declares/\", \"trigger\": \"PaymentRequired\", \"max_attempts\": 10, \"abandoned_subdir\": \"abandoned\"}}, \"adapters_are_server_contracts\": true, \"recursive_firing\": true, \"recursive_children\": true, \"breakpoints\": true, \"fractal_environment_layers\": true, \"multidimensional_dag\": true }}\n",
-        .{ BINARY_NAME, PROFILE_STR, VERSION },
+        "{{ \"binary\": \"{s}\", \"implementation\": \"zig\", \"version\": \"{s}\", \"public_shape\": \"<binary-name> \\\"<truth claim>\\\" [--private]\", \"visibility_axis\": {{\"default\": \"shared\", \"override\": \"--private\"}}, \"env_reads\": [\"HOME\"], \"unbrowse_base\": \"https://beta-api.unbrowse.ai\", \"llm_compiler_binding\": \"hardcoded\", \"binary_self_attestation\": true, \"shapes\": [\"neuron\"], \"internal_shapes\": [\"cell\",\"funnel\",\"funnel-first\",\"sequence\",\"quorum\",\"loop\",\"harness\",\"contract-ref\"], \"containment_edge\": \"parent_id\", \"cross_edges\": [\"contract-ref\"], \"lineage_assignment\": \"server-side (wallet identity + declare timestamp)\", \"prompt_compiler\": \"unbrowse-llm\", \"prompt_to_contract_graph\": true, \"prompt_text_is_root_declaration\": true, \"server_integrator\": \"unbrowse-llm\", \"pending_declares_retry_queue\": {{\"path\": \"~/.contracts/pending-declares/\", \"trigger\": \"PaymentRequired\", \"max_attempts\": 10, \"abandoned_subdir\": \"abandoned\"}}, \"adapters_are_server_contracts\": true, \"recursive_firing\": true, \"recursive_children\": true, \"breakpoints\": true, \"fractal_environment_layers\": true, \"multidimensional_dag\": true }}\n",
+        .{ BINARY_NAME, VERSION },
     );
     return 0;
 }
