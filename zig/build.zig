@@ -30,30 +30,7 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    // ─── Wave-1 client/server split: build profile selector ──────────
-    //
-    // The `-Dcontract_binary_profile=<client|server>` flag selects which
-    // build_options.contract_binary_profile constant gets compiled into
-    // the binary. Currently the two binaries are byte-different but
-    // functionally identical — only `cmdSelf --json` reads the constant
-    // (it surfaces `"profile": "client"` vs `"profile": "server"`). The
-    // heavy code-path gating (cmdSearch/cmdDiscover/bio*/runAction graph
-    // branches → RPC wrappers in client profile) sequences after the
-    // Worker side ships the matching /v1/contract endpoints.
-    //
-    // Default is "client" so a bare `zig build` (and `zig build run`)
-    // still produce the canonical aiko client binary.
-    //
-    // build.sh invokes this twice: once with =client (installed as
-    // `scripts/contract`, what `aiko -> contract` symlinks to) and once
-    // with =server (installed as `scripts/contract-server`).
-    const profile_arg = b.option(
-        []const u8,
-        "contract_binary_profile",
-        "Build profile: 'client' (default, the aiko-symlinked binary) or 'server' (canonical compile/resolve/biology, not yet runtime-divergent in Wave 1)",
-    ) orelse "client";
-
-    // ─── Build the main binaries — no LLM-judge gate ─────────────────
+    // ─── Build the main binary — no LLM-judge gate ──────────────────
     //
     // Lewis 2026-05-26: "we can /contract against itself instead of
     // doing this weird thing". The substrate self-attests via:
@@ -69,12 +46,9 @@ pub fn build(b: *std.Build) void {
     // No external LLM. The signature IS substrate-derived. Bootstrap
     // is solved because the build pipeline produces the signature in
     // one shot from a fresh repo.
-    addContractExecutable(b, target, optimize, libcontract, client, "contract-zig", "client", null);
-    addContractExecutable(b, target, optimize, libcontract, client, "contract-zig-server", "server", null);
+    addContractExecutable(b, target, optimize, libcontract, client, "contract-zig", null);
 
-    // The `zig build run` step uses the profile_arg the operator passed
-    // (default "client"). Useful for local smoke-testing the server
-    // profile without leaving the build tree.
+    // `zig build run` — local smoke-test entry point.
     const run_root = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -85,9 +59,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "contract_client", .module = client },
         },
     });
-    const run_opts = b.addOptions();
-    run_opts.addOption([]const u8, "contract_binary_profile", profile_arg);
-    run_root.addImport("build_options", run_opts.createModule());
 
     const run_exe = b.addExecutable(.{
         .name = "contract-zig-run",
@@ -97,13 +68,11 @@ pub fn build(b: *std.Build) void {
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| run_cmd.addArgs(args);
 
-    const run_step = b.step("run", "Run contract-zig (profile selected by -Dcontract_binary_profile)");
+    const run_step = b.step("run", "Run contract-zig");
     run_step.dependOn(&run_cmd.step);
 }
 
-/// Create one contract-zig executable with the given profile constant
-/// baked in via build_options. Shared between the client and server
-/// install targets — only the executable name + profile string differ.
+/// Create the contract-zig executable.
 ///
 /// `gate_step` is an optional dependency edge: the install step for
 /// the produced executable depends on `gate_step` succeeding. Used to
@@ -115,7 +84,6 @@ fn addContractExecutable(
     libcontract: *std.Build.Module,
     client: *std.Build.Module,
     exe_name: []const u8,
-    profile: []const u8,
     gate_step: ?*std.Build.Step,
 ) void {
     const root = b.createModule(.{
@@ -128,9 +96,6 @@ fn addContractExecutable(
             .{ .name = "contract_client", .module = client },
         },
     });
-    const opts = b.addOptions();
-    opts.addOption([]const u8, "contract_binary_profile", profile);
-    root.addImport("build_options", opts.createModule());
 
     const exe = b.addExecutable(.{
         .name = exe_name,
