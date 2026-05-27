@@ -2,3 +2,4 @@
 {"event": "cache_check", "id": "6be490de", "verdict": "miss", "current_snapshot": "a7c717f9f74a46daae144bf0c7ea67bf8ca2b539c251debdd16d31b070cf9231", "ts": "2026-05-27T01:59:32.616494Z", "agent": "lewistham9x@gmail.com"}
 {"event": "cache_resolved", "id": "6be490de", "wave": 0, "snapshot": "a7c717f9f74a46daae144bf0c7ea67bf8ca2b539c251debdd16d31b070cf9231", "ts": "2026-05-27T01:59:32.627027Z", "agent": "lewistham9x@gmail.com"}
 {"event": "evidence", "id": "6be490de", "pointer": "sha256-shared:dc948ed32eb3bc450664d9c7e2e6c42245aac8a54efc244b6181c21821441913", "scope": "shared", "bytes": 1325, "ts": "2026-05-27T01:59:32.637342Z", "agent": "lewistham9x@gmail.com"}
+{"event": "evidence", "id": "", "pointer": "sha256-private:df9a87b4dc1401a4ba3e944ef18a5d541b787ce8cad387bccac7b04b82c86893", "scope": "private", "bytes": 758, "ts": "2026-05-27T05:00:21.505987Z", "agent": "lewistham9x@gmail.com"}
