@@ -44,3 +44,4 @@
 {"event": "iterated", "id": "d3f54987", "wave": 3, "action_exit": 1, "action_result": "hold", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-27T08:19:46.642158Z", "agent": "lewistham9x@gmail.com"}
 {"event": "iterated", "id": "a282d265", "wave": 2, "action_exit": 1, "action_result": "hold", "agent_verdict": null, "children_spawned": [], "log_path": "", "ts": "2026-05-27T08:19:46.653951Z", "agent": "lewistham9x@gmail.com"}
 {"event": "evidence", "id": "151355df", "pointer": "sha256-shared:8f30dd420191e0f0b737460f98580ef7ce4e0805824d293780c7b9010cad685a", "scope": "shared", "bytes": 580, "ts": "2026-05-27T08:19:46.666732Z", "agent": "lewistham9x@gmail.com"}
+{"event": "evidence", "id": "", "pointer": "sha256-private:895a13ad158caf888e619db416a6ba9019c7a0b9ca70a27e9e7668b986075aa3", "scope": "private", "bytes": 467, "ts": "2026-05-27T08:20:24.398015Z", "agent": "lewistham9x@gmail.com"}
