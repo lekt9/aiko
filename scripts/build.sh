@@ -218,26 +218,20 @@ step_compile() {
   ( cd "$ZIG_DIR" && zig build --cache-dir "$CACHE" --global-cache-dir "$GCACHE" )
 }
 
-# ─── build:install — installed binaries land in scripts/ ─────────────
-# TWO binaries are installed after the Wave-1 client/server split
-# (2026-05-26): `contract` (the client profile, what `aiko -> contract`
-# symlinks to) and `contract-server` (the server profile). Currently
-# byte-different but functionally identical — only `cmdSelf --json`
-# reads the profile constant. Heavy code-path divergence (cmdSearch/
-# cmdDiscover/bio*/runAction graph branches → RPC wrappers in client
-# profile) sequences after the Worker side adds the matching
-# /v1/contract endpoints. See references/client-server-split.md.
+# ─── build:install — installed binary lands in scripts/ ─────────────
+# One binary ships: `contract` (with `aiko -> contract` symlink for the
+# user-facing surface). The Wave-1 client/server split was retired —
+# SKILL.md doctrine is the truth-root and never named a second binary.
 step_install() {
   step "build:install — install -m 755 + symlink"
-  install -m 755 "$ZIG_DIR/zig-out/bin/contract-zig"        "$SCRIPTS_DIR/contract"
-  install -m 755 "$ZIG_DIR/zig-out/bin/contract-zig-server" "$SCRIPTS_DIR/contract-server"
+  install -m 755 "$ZIG_DIR/zig-out/bin/contract-zig" "$SCRIPTS_DIR/contract"
   # `ln -sf` replaces any prior independent binary at scripts/aiko with the
   # canonical symlink. The relative target keeps the link valid no matter
   # where the scripts/ folder lives.
   ln -sf contract "$SCRIPTS_DIR/aiko"
 }
 
-# ─── build:sign — wallet signs each binary's SHA-256 ─────────────────
+# ─── build:sign — wallet signs the binary's SHA-256 ──────────────────
 # The actual ed25519 signing is the wallet operation: deployer.key (root
 # seed → HKDF-derived binary-signing key via libcontract.Lineage) signs
 # the binary's SHA-256 and writes <binary>.sig. The `contract` binary is
@@ -245,17 +239,13 @@ step_install() {
 # `contract sign-binary <path>` ≡ "wallet, sign this binary".
 step_sign() {
   step "build:sign — wallet signs"
-  # Sign the canonical client binary; the aiko.sig file is a symlink to
+  # Sign the canonical binary; the aiko.sig file is a symlink to
   # contract.sig (same bytes, same digest, same signature). We pre-create
   # the symlink BEFORE signing so signBinary's `open(O_CREAT|O_TRUNC)` on
   # `aiko.sig` follows the symlink and writes to `contract.sig`. If the
   # symlink doesn't exist yet (first build), create it first.
   "$SCRIPTS_DIR/contract" sign-binary "$SCRIPTS_DIR/contract"
   ln -sf contract.sig "$SCRIPTS_DIR/aiko.sig"
-  # Sign the server profile binary too. Both are released artifacts and
-  # both must self-attest — the released server binary's startup check
-  # refuses to run an unsigned binary.
-  "$SCRIPTS_DIR/contract" sign-binary "$SCRIPTS_DIR/contract-server"
 }
 
 # ─── build:parity — doctrine-reality parity (recursive guard) ────────
