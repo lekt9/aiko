@@ -761,10 +761,10 @@ in the append-only ledger, not in a CLI surface).
 every aiko build:
 
 > "scripts/ folder of ~/.claude/skills/contract/ contains exactly
-> {aiko, aiko.sig, contract, contract.sig, build.sh, dist.sh,
-> sync-outline-explainer.sh}. Any additional file = HOLD; the build
-> refuses to sign; the offending file is rejected before it can be
-> invoked."
+> {aiko, aiko.sig, contract, contract.sig, build.sh, build-fractal.sh,
+> dist.sh, sync-outline-explainer.sh}. Any additional file = HOLD;
+> the build refuses to sign; the offending file is rejected before it
+> can be invoked."
 
 Pinned as `contract guard:scripts-allowlist`. The build.sh checks
 this contract before signing the binary; on drift, sign fails. The
