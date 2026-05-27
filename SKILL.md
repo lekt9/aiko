@@ -3639,7 +3639,8 @@ prose or in the index of named claims below.
 1. "no env vars are read" → grep -nE 'getPosix\("(CONTRACT_|AIKO_|UNBROWSE_|X_PAYMENT|PAYMENT_SIGNATURE|CONTRACTS_STORE|SHELL|TERM)' src/*.zig
                             must return ONLY the HOME read in ledger.zig/lineage.zig.
 2. "scripts/ allowlist"   → ls scripts/ must equal {aiko, aiko.sig, contract,
-                            contract.sig, build.sh, dist.sh, sync-outline-explainer.sh}.
+                            contract.sig, build.sh, build-fractal.sh, dist.sh,
+                            sync-outline-explainer.sh}.
 3. "three-tier wallet bootstrap" → libcontract/src/lineage.zig must
                             contain `pub fn loadOrInitRootKey` AND reference
                             ~/.contracts/root.key AND ~/.aiko/keys/root.key AND keystore.
