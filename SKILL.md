@@ -330,7 +330,7 @@ author of confusion"*).
 | Trinitarian three-shape (claim 41) | `interpret:<P>` enumeration | `adjudicate:<P>` promotion |
 | Pointer-keyed cache | `cache_resolved` snapshot | re-resolution avoidance |
 | Synapse-kind minimum (claim 46) | existing primitive (`contract:<X>`) | new mechanism (refused if foundation suffices) |
-| No-scripts allowlist (claim 2) | 7-item binary set | new functionality must compose, not add files |
+| No-scripts allowlist (claim 2) | 8-item binary set | new functionality must compose, not add files |
 | HOLD-non-terminal | all-dependencies signed | parent satisfaction |
 
 Each row is read as: *the creativity column may exist ONLY because the
