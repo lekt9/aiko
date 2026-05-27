@@ -719,21 +719,25 @@ via aiko; the substrate fires the chain.
 Matt 5:37 names the substrate's minimum-surface rule directly: yea
 or nay, nothing more. Every shell wrapper beyond the canonical
 binary set IS the "whatsoever is more" that "cometh of evil" — it
-is leaven (1 Cor 5:6) that decays the whole lump. The seven-item
+is leaven (1 Cor 5:6) that decays the whole lump. The eight-item
 allowlist is the "decently and in order" form (1 Cor 14:40).
 
 The `scripts/` folder of this skill contains ONLY the canonical
 signed-binary set:
 
 ```
-aiko            ← user-facing substrate (goal-only, no verbs)
-aiko.sig        ← ed25519(SHA-256(aiko)) by deployer wallet
+aiko            ← user-facing substrate (goal-only, no verbs) — symlink to contract
+aiko.sig        ← ed25519(SHA-256(aiko)) by deployer wallet — symlink to contract.sig
 contract        ← wallet-side build/attestation tool (same source as aiko,
-                  different BINARY_NAME; exposes sign-binary / verify-self /
-                  verify-binary verbs ONLY to build.sh — never to end users)
+                  argv[0] basename selects persona; exposes sign-binary /
+                  verify-self / verify-binary verbs ONLY to build.sh —
+                  never to end users)
 contract.sig    ← ed25519(SHA-256(contract)) by deployer wallet
 build.sh        ← canonical end-of-change pipeline: fmt → tests → build →
                   install → sign (via wallet through contract) → verify
+build-fractal.sh ← fractal-recursive build pipeline (build → test → eval),
+                   the substrate's self-attesting variant referenced by
+                   the four-verb loop section above
 dist.sh         ← distribution packaging
 sync-outline-explainer.sh ← Outline doc mirror for the explainer
 ```
