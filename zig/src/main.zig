@@ -3785,6 +3785,10 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     // The closure narrative still declares below — the declared row is the
     // witness, the satisfied event is the settlement. Failures surface as
     // evidence lines and never block the declaration (visible, not fatal).
+    // When the event lands, the closure-narrative row self-settles after
+    // declare (its claim became true the moment the event landed), so
+    // closures stop accumulating as frontier debt.
+    var eval_settled_target: ?[]const u8 = null;
     if (parseSatisfiedGoal(parsed.plan)) |sg| {
         const rows = parseRows(allocator, env) catch &[_]Row{};
         defer if (rows.len > 0) allocator.free(rows);
@@ -3799,6 +3803,7 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             const proof_opt: ?[]const u8 = if (sg.proof.len > 0) sg.proof else null;
             if (contract.markSatisfied(allocator, env, sg.id, sg.wave, proof_opt)) {
                 evidencePrint("eval: satisfied event landed on {s} (wave {d})\n", .{ sg.id, sg.wave });
+                eval_settled_target = sg.id;
             } else |e| {
                 evidencePrint("eval: markSatisfied({s}) failed: {s} — closure declared as narrative only\n", .{ sg.id, @errorName(e) });
             }
@@ -3888,6 +3893,16 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             writeCloudMirrorRow(allocator, env, id, safe_plan, action, null) catch |e| {
                 errPrint("cloud-mirror: append failed: {s} — local ledger view will lag the cloud canonical row\n", .{@errorName(e)});
             };
+            // Eval closures self-settle (local mirror view only; the cloud
+            // judges its canonical row independently): the closure's claim
+            // became true when the satisfied event landed on its target.
+            if (eval_settled_target) |tid| {
+                var proof_buf: [24]u8 = undefined;
+                const proof = std.fmt.bufPrint(&proof_buf, "contract:{s}", .{tid}) catch "contract:settled";
+                contract.markSatisfied(allocator, env, id, 1, proof) catch |e| {
+                    evidencePrint("eval: closure self-settle failed for {s}: {s}\n", .{ id, @errorName(e) });
+                };
+            }
             backfillUnresolved(allocator, env, id) catch |e| {
                 errPrint("backfill skipped: {s}\n", .{@errorName(e)});
             };
@@ -3913,6 +3928,15 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             const id_n = @min(cid.len, root_id_buf.len);
             @memcpy(root_id_buf[0..id_n], cid[0..id_n]);
             root_id_len = id_n;
+            // Eval closures self-settle: claim became true when the
+            // satisfied event landed on the target.
+            if (eval_settled_target) |tid| {
+                var proof_buf: [24]u8 = undefined;
+                const proof = std.fmt.bufPrint(&proof_buf, "contract:{s}", .{tid}) catch "contract:settled";
+                contract.markSatisfied(allocator, env, cid, 1, proof) catch |e| {
+                    evidencePrint("eval: closure self-settle failed for {s}: {s}\n", .{ cid, @errorName(e) });
+                };
+            }
             // Materialize binary if CONTRACT_BINARY_TARGET is declared.
             bioMaterializeBinary(allocator, env, cid) catch |e| {
                 evidencePrint("materialize skipped: {s}\n", .{@errorName(e)});
