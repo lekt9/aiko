@@ -63,12 +63,19 @@ hook-based break-neuron structure.
 
 ### The four verbs (closure proven; nothing else is needed)
 
-| Verb | Role | Stdin JSON envelope |
+| Verb | Role | Goal grammar (the one write API) |
 |---|---|---|
-| **build** | construct a /contract — declare a truth claim | `{event:"declared", plan, action, layer, parent_id?}` |
-| **run** | exercise the runtime — record an iteration (itself a /contract child) | `{event:"declared", plan, action:"iterate:<parent>", layer:3, parent_id}` |
-| **eval** | walk to verdict — markSatisfied; L7 `validate:` auto-cascades to L8 `signed:` | `{event:"satisfied", id, wave:1, proof?}` |
-| **prune** | doctrine-fired removal (John 15:2 — "every branch that beareth not fruit he taketh away") | `{event:"died", id, cause, by_id, reason?}` |
+| **build** | construct a /contract — declare a truth claim | `aiko "<truth claim>"` |
+| **run** | exercise the runtime — record an iteration (itself a /contract child) | `aiko "iterate:<parent-id> — <what this wave exercises>"` |
+| **eval** | walk to verdict — markSatisfied; L7 `validate:` auto-cascades to L8 `signed:` | `aiko "satisfied:<id> wave=<n> — <proof>"` |
+| **prune** | doctrine-fired removal (John 15:2 — "every branch that beareth not fruit he taketh away") | `aiko "died:<id> cause=<superseded\|contradicts\|stale\|apoptosed> by=<id> — <reason>"` |
+
+The binary is goal-only (Public Shape: no verbs, no stdin envelopes — a
+piped `{event:"satisfied"}` is refused with usage, witnessed 2026-06-10).
+Verb semantics ride in the goal's leading token; the cloud compiler
+translates the goal into the typed JSON envelope (`{event, plan, action,
+layer, parent_id, …}`), which is the SERVER-side row schema `shape.zig`
+validates — an internal representation, never a caller transport.
 
 **Authority rule for prune**: only the legitimate parent can prune
 its child (`by_id == target.parent_id`), or self-apoptosis
@@ -92,9 +99,9 @@ re-verifying the binary's own signature. Otherwise the gate would
 re-fire on every child invocation, breaking the cheap inheritance
 the lineage chain is built for.
 
-Concretely: a `build` invocation reading an envelope with
-`parent_id: null` AND a binary whose sha has no `signed:<sha>`
-row in the ledger → refused. Any other shape → passes through.
+Concretely: a root-level declaration (no parent in the reconstructed
+lineage) from a binary whose sha has no `signed:<sha>` row in the
+ledger → refused. Any other shape → passes through.
 
 This matches the substrate's lineage-walk philosophy already
 elsewhere — the binary trusts the lineage rather than re-verifying
@@ -107,14 +114,15 @@ When working on the substrate, the canonical pattern is:
 1. **Identify a gap** — something doctrinally true that isn't yet
    wired mechanically (a documented invariant without code, an
    unimplemented verb, a missing parity claim).
-2. **Declare it as a /contract** — `aiko "gap-<name> — <description>"`
-   OR pipe a JSON envelope to `build`. Parent is the gap-drill root
-   (or your project's truth-root contract).
+2. **Declare it as a /contract** — `aiko "gap-<name> — <description>"`.
+   The goal IS the declaration; the cloud compiler emits the typed
+   envelope. Parent is the gap-drill root (or your project's
+   truth-root contract).
 3. **Ship the closure** — write the code, run the tests, get the
    build pipeline green.
-4. **Eval the gap** — pipe `{event:"satisfied", id:<gap-id>, wave:1,
-   proof:"<what shipped + evidence>"}` to `eval`. The L7→L8 cascade
-   signs the closure into the ledger.
+4. **Eval the gap** — declare `aiko "satisfied:<gap-id> wave=1 —
+   <what shipped + evidence>"`. The L7→L8 cascade signs the closure
+   into the ledger.
 5. **Repeat** — until the substrate's truth claims and the
    substrate's code agree, all the way down.
 
