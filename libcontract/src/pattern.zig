@@ -62,15 +62,15 @@ pub const PATTERN_VERSION: []const u8 = "1.0.0";
 /// Human-readable names per layer, indexed 0..8. Exposed for tooling
 /// (status/list renderers, fractal-context block).
 pub const LAYER_NAMES = [9][]const u8{
-    "word",      // 0 — sub-cell
-    "system",    // 1
-    "cell",      // 2
-    "graph",     // 3
+    "word", // 0 — sub-cell
+    "system", // 1
+    "cell", // 2
+    "graph", // 3
     "transport", // 4
-    "value",     // 5
-    "operator",  // 6
-    "break",     // 7
-    "emerge",    // 8
+    "value", // 5
+    "operator", // 6
+    "break", // 7
+    "emerge", // 8
 };
 
 /// Representative shape set used by the comptime verifier. One probe per

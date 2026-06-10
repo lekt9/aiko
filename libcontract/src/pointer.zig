@@ -90,19 +90,17 @@ pub fn isKnownAction(action: []const u8) bool {
     if (std.mem.eql(u8, action, "loop")) return true;
     // Typed prefixes — each must end with ':' or be a network shape.
     const prefixes = [_][]const u8{
-        "word:",       "machine:",    "neuron:",
-        "funnel:",     "sequence:",   "quorum:",
-        "contract:",   "loop-until:", "harness:",
-        "embedding:",  "sabbath-eval:", "inhibits:",
-        "bind:",       "blocked_by:",
-        "webhook:",    "tunnel:",     "posthook:",
-        "prehook:",    "modality:",   "wrapper:",
-        "sha256-private:", "sha256-shared:", "sha256:",
-        "wallet:",     "x402:",
-        "agent:",
-        "validate:",   "signed:",
-        "iterate:",
-        "curl ",       "http://",     "https://", "wget ",
+        "word:",          "machine:",      "neuron:",
+        "funnel:",        "sequence:",     "quorum:",
+        "contract:",      "loop-until:",   "harness:",
+        "embedding:",     "sabbath-eval:", "inhibits:",
+        "bind:",          "blocked_by:",   "webhook:",
+        "tunnel:",        "posthook:",     "prehook:",
+        "modality:",      "wrapper:",      "sha256-private:",
+        "sha256-shared:", "sha256:",       "wallet:",
+        "x402:",          "agent:",        "validate:",
+        "signed:",        "iterate:",      "curl ",
+        "http://",        "https://",      "wget ",
     };
     for (prefixes) |p| {
         if (std.mem.startsWith(u8, action, p)) return true;

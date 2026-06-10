@@ -50,6 +50,11 @@ comptime {
 // non-conforming input before any signing / ledger write.
 pub const shape = @import("shape.zig");
 
+// Hard-typed six-interrogative projection (gap 55006079). A declared row
+// IS who/what/when/where/why/how; the declare chokepoint refuses a row
+// that cannot project, naming the unanswered interrogative.
+pub const w6h = @import("w6h.zig");
+
 /// Re-export so consumers of libcontract can verify chains without rewiring
 /// the build graph.
 pub const Lineage = lineage;
@@ -513,6 +518,15 @@ pub fn declare(
     try buf.appendSlice(allocator, ", \"agent\": ");
     try writeJsonString(&buf, allocator, agent);
     try buf.append(allocator, '}');
+
+    // W6H hard-type gate (gap 55006079): the finished row must answer all
+    // six interrogatives before it lands. Tautological for this writer
+    // today; load-bearing against writer drift — a dropped field fails the
+    // WRITE with the interrogative named, not a downstream reader.
+    {
+        var pw = try w6h.fromDeclaredRow(allocator, buf.items);
+        pw.deinit();
+    }
 
     const path = try ledger.appendRow(allocator, env, buf.items);
     allocator.free(path);
