@@ -3734,6 +3734,90 @@ fn parseSatisfiedGoal(plan: []const u8) ?SatisfiedGoal {
     return .{ .id = id, .wave = wave, .proof = proof };
 }
 
+/// Parsed run-verb goal (four-verb table: `iterate:<id> — <what this wave exercises>`).
+const IterateGoal = struct {
+    id: []const u8,
+    wave: u32,
+    result: []const u8,
+};
+
+fn parseIterateGoal(plan: []const u8) ?IterateGoal {
+    const prefix = "iterate:";
+    if (!std.mem.startsWith(u8, plan, prefix)) return null;
+    if (plan.len < prefix.len + 8) return null;
+    const id = plan[prefix.len .. prefix.len + 8];
+    for (id) |c| {
+        const ok = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+        if (!ok) return null;
+    }
+    var wave: u32 = 1;
+    if (std.mem.indexOf(u8, plan, "wave=")) |wi| {
+        const rest = plan[wi + 5 ..];
+        var end: usize = 0;
+        while (end < rest.len and rest[end] >= '0' and rest[end] <= '9') end += 1;
+        if (end > 0) wave = std.fmt.parseInt(u32, rest[0..end], 10) catch 1;
+    }
+    var result: []const u8 = plan;
+    if (std.mem.indexOf(u8, plan, "\u{2014} ")) |pi| {
+        result = plan[pi + "\u{2014} ".len ..];
+    } else if (std.mem.indexOf(u8, plan, " - ")) |pi| {
+        result = plan[pi + 3 ..];
+    }
+    return .{ .id = id, .wave = wave, .result = result };
+}
+
+/// Parsed prune-verb goal (four-verb table:
+/// `died:<id> cause=<superseded|contradicts|stale|apoptosed> by=<id> — <reason>`).
+/// cause is null when the token is missing or not one of the four — the
+/// wiring surfaces that instead of guessing a death class.
+const DiedGoal = struct {
+    id: []const u8,
+    cause: ?contract.DeathCause,
+    by: ?[]const u8,
+    reason: []const u8,
+};
+
+fn parseDiedGoal(plan: []const u8) ?DiedGoal {
+    const prefix = "died:";
+    if (!std.mem.startsWith(u8, plan, prefix)) return null;
+    if (plan.len < prefix.len + 8) return null;
+    const id = plan[prefix.len .. prefix.len + 8];
+    for (id) |c| {
+        const ok = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+        if (!ok) return null;
+    }
+    var cause: ?contract.DeathCause = null;
+    if (std.mem.indexOf(u8, plan, "cause=")) |ci| {
+        const rest = plan[ci + 6 ..];
+        var end: usize = 0;
+        while (end < rest.len and rest[end] != ' ') end += 1;
+        const word = rest[0..end];
+        if (std.mem.eql(u8, word, "superseded")) cause = .superseded;
+        if (std.mem.eql(u8, word, "contradicts")) cause = .contradicts;
+        if (std.mem.eql(u8, word, "stale")) cause = .stale;
+        if (std.mem.eql(u8, word, "apoptosed")) cause = .apoptosed;
+    }
+    var by: ?[]const u8 = null;
+    if (std.mem.indexOf(u8, plan, "by=")) |bi| {
+        const rest = plan[bi + 3 ..];
+        if (rest.len >= 8) {
+            var hex_ok = true;
+            for (rest[0..8]) |c| {
+                const ok = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+                if (!ok) hex_ok = false;
+            }
+            if (hex_ok) by = rest[0..8];
+        }
+    }
+    var reason: []const u8 = "";
+    if (std.mem.indexOf(u8, plan, "\u{2014} ")) |pi| {
+        reason = plan[pi + "\u{2014} ".len ..];
+    } else if (std.mem.indexOf(u8, plan, " - ")) |pi| {
+        reason = plan[pi + 3 ..];
+    }
+    return .{ .id = id, .cause = cause, .by = by, .reason = reason };
+}
+
 fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
     armStderrTape(allocator);
     // Stack buffers because the deferred flush reads at unwind time, after
@@ -3778,37 +3862,78 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         return 2;
     }
 
-    // Four-verb eval grammar (gap b68d805b closure mechanics): a goal of
-    // the shape `satisfied:<id> wave=<n> — <proof>` ALSO lands the
-    // mechanical `satisfied` event on the target via the same honest path
-    // as _mark (target's declared row must exist in the reachable ledger).
-    // The closure narrative still declares below — the declared row is the
-    // witness, the satisfied event is the settlement. Failures surface as
-    // evidence lines and never block the declaration (visible, not fatal).
-    // When the event lands, the closure-narrative row self-settles after
-    // declare (its claim became true the moment the event landed), so
-    // closures stop accumulating as frontier debt.
+    // Four-verb goal grammar (gaps b68d805b + e6ae4fc2): eval / run / prune
+    // semantics ride the goal's leading token and ALSO land their mechanical
+    // event on the target — same honest guard as _mark (target's declared
+    // row must exist in the reachable ledger). The narrative still declares
+    // below (the witness); the event is the settlement; when the event
+    // lands, the narrative self-settles after declare so verb goals never
+    // accumulate as frontier debt. Failures surface as evidence lines and
+    // never block the declaration (visible, not fatal).
     var eval_settled_target: ?[]const u8 = null;
-    if (parseSatisfiedGoal(parsed.plan)) |sg| {
+    verb_block: {
+        const sat = parseSatisfiedGoal(parsed.plan);
+        const itg: ?IterateGoal = if (sat == null) parseIterateGoal(parsed.plan) else null;
+        const dg: ?DiedGoal = if (sat == null and itg == null) parseDiedGoal(parsed.plan) else null;
+        if (sat == null and itg == null and dg == null) break :verb_block;
+
+        const tid = if (sat) |s| s.id else if (itg) |g| g.id else dg.?.id;
         const rows = parseRows(allocator, env) catch &[_]Row{};
         defer if (rows.len > 0) allocator.free(rows);
-        var target_declared = false;
+        var target_row: ?Row = null;
         for (rows) |r| {
-            if (std.mem.eql(u8, r.event, "declared") and std.mem.eql(u8, r.id, sg.id)) {
-                target_declared = true;
+            if (std.mem.eql(u8, r.event, "declared") and std.mem.eql(u8, r.id, tid)) {
+                target_row = r;
                 break;
             }
         }
-        if (target_declared) {
+        if (target_row == null) {
+            evidencePrint("verb: no declared row for {s} in the reachable ledger — narrative only\n", .{tid});
+            break :verb_block;
+        }
+
+        if (sat) |sg| {
             const proof_opt: ?[]const u8 = if (sg.proof.len > 0) sg.proof else null;
             if (contract.markSatisfied(allocator, env, sg.id, sg.wave, proof_opt)) {
                 evidencePrint("eval: satisfied event landed on {s} (wave {d})\n", .{ sg.id, sg.wave });
                 eval_settled_target = sg.id;
             } else |e| {
-                evidencePrint("eval: markSatisfied({s}) failed: {s} — closure declared as narrative only\n", .{ sg.id, @errorName(e) });
+                evidencePrint("eval: markSatisfied({s}) failed: {s} — narrative only\n", .{ sg.id, @errorName(e) });
             }
-        } else {
-            evidencePrint("eval: no declared row for {s} in the reachable ledger — closure declared as narrative only\n", .{sg.id});
+        } else if (itg) |ig| {
+            if (contract.recordIteration(allocator, env, ig.id, ig.wave, 0, ig.result)) {
+                evidencePrint("run: iterated event landed on {s} (wave {d})\n", .{ ig.id, ig.wave });
+                eval_settled_target = ig.id;
+            } else |e| {
+                evidencePrint("run: recordIteration({s}) failed: {s} — narrative only\n", .{ ig.id, @errorName(e) });
+            }
+        } else if (dg) |g| {
+            const cause = g.cause orelse {
+                evidencePrint("prune: cause missing or not one of superseded|contradicts|stale|apoptosed — narrative only\n", .{});
+                break :verb_block;
+            };
+            // Authority rule (SKILL.md): only the legitimate parent may
+            // prune (by == target.parent_id), or self-apoptosis
+            // (cause=apoptosed AND by == target.id). by defaults to the
+            // target itself for apoptosis; siblings cannot kill each other.
+            const by: []const u8 = g.by orelse (if (cause == .apoptosed) g.id else {
+                evidencePrint("prune refused: by=<id> required (only the parent may prune; self-apoptosis names the target) — narrative only\n", .{});
+                break :verb_block;
+            });
+            const parent = target_row.?.parent_id orelse "";
+            const authorized = std.mem.eql(u8, by, parent) or
+                (cause == .apoptosed and std.mem.eql(u8, by, g.id));
+            if (!authorized) {
+                evidencePrint("prune refused: by={s} is neither the target's parent ({s}) nor self-apoptosis — siblings cannot kill each other\n", .{ by, if (parent.len > 0) parent else "root" });
+                break :verb_block;
+            }
+            const reason_opt: ?[]const u8 = if (g.reason.len > 0) g.reason else null;
+            if (contract.markDied(allocator, env, g.id, cause, by, reason_opt)) {
+                evidencePrint("prune: died event landed on {s} (cause={s} by={s})\n", .{ g.id, cause.jsonName(), by });
+                eval_settled_target = g.id;
+            } else |e| {
+                evidencePrint("prune: markDied({s}) failed: {s} — narrative only\n", .{ g.id, @errorName(e) });
+            }
         }
     }
 
