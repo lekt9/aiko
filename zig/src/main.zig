@@ -3818,6 +3818,91 @@ fn parseDiedGoal(plan: []const u8) ?DiedGoal {
     return .{ .id = id, .cause = cause, .by = by, .reason = reason };
 }
 
+/// Parsed judge-verb goal (two-key system, second key:
+/// `judged:<id> verdict=PROMOTE|REJECT|HOLD [judge=<id>] — <reasoning>`).
+/// verdict is null when missing or not one of the three — surfaced, never guessed.
+const JudgedGoal = struct {
+    id: []const u8,
+    verdict: ?[]const u8,
+    judge: []const u8,
+    reasoning: []const u8,
+};
+
+fn parseJudgedGoal(plan: []const u8) ?JudgedGoal {
+    const prefix = "judged:";
+    if (!std.mem.startsWith(u8, plan, prefix)) return null;
+    if (plan.len < prefix.len + 8) return null;
+    const id = plan[prefix.len .. prefix.len + 8];
+    for (id) |c| {
+        const ok = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+        if (!ok) return null;
+    }
+    var verdict: ?[]const u8 = null;
+    if (std.mem.indexOf(u8, plan, "verdict=")) |vi| {
+        const rest = plan[vi + 8 ..];
+        var end: usize = 0;
+        while (end < rest.len and rest[end] != ' ') end += 1;
+        const word = rest[0..end];
+        if (std.mem.eql(u8, word, "PROMOTE") or
+            std.mem.eql(u8, word, "REJECT") or
+            std.mem.eql(u8, word, "HOLD")) verdict = word;
+    }
+    // judge=<8hex> optional; default names the in-thread agent honestly.
+    var judge: []const u8 = "agent-in-thread";
+    if (std.mem.indexOf(u8, plan, "judge=")) |ji| {
+        const rest = plan[ji + 6 ..];
+        if (rest.len >= 8) {
+            var hex_ok = true;
+            for (rest[0..8]) |c| {
+                const ok = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+                if (!ok) hex_ok = false;
+            }
+            if (hex_ok) judge = rest[0..8];
+        }
+    }
+    var reasoning: []const u8 = "";
+    if (std.mem.indexOf(u8, plan, "\u{2014} ")) |pi| {
+        reasoning = plan[pi + "\u{2014} ".len ..];
+    } else if (std.mem.indexOf(u8, plan, " - ")) |pi| {
+        reasoning = plan[pi + 3 ..];
+    }
+    return .{ .id = id, .verdict = verdict, .judge = judge, .reasoning = reasoning };
+}
+
+/// Parsed purge-verb goal (Decalogue gate:
+/// `purged:<id> commandment=<1..10> — <violation evidence>`).
+/// commandment is 0 when missing/unparseable — surfaced, never guessed.
+const PurgedGoal = struct {
+    id: []const u8,
+    commandment: u8,
+    evidence: []const u8,
+};
+
+fn parsePurgedGoal(plan: []const u8) ?PurgedGoal {
+    const prefix = "purged:";
+    if (!std.mem.startsWith(u8, plan, prefix)) return null;
+    if (plan.len < prefix.len + 8) return null;
+    const id = plan[prefix.len .. prefix.len + 8];
+    for (id) |c| {
+        const ok = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+        if (!ok) return null;
+    }
+    var commandment: u8 = 0;
+    if (std.mem.indexOf(u8, plan, "commandment=")) |ci| {
+        const rest = plan[ci + 12 ..];
+        var end: usize = 0;
+        while (end < rest.len and rest[end] >= '0' and rest[end] <= '9') end += 1;
+        if (end > 0) commandment = std.fmt.parseInt(u8, rest[0..end], 10) catch 0;
+    }
+    var evid: []const u8 = "";
+    if (std.mem.indexOf(u8, plan, "\u{2014} ")) |pi| {
+        evid = plan[pi + "\u{2014} ".len ..];
+    } else if (std.mem.indexOf(u8, plan, " - ")) |pi| {
+        evid = plan[pi + 3 ..];
+    }
+    return .{ .id = id, .commandment = commandment, .evidence = evid };
+}
+
 fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
     armStderrTape(allocator);
     // Stack buffers because the deferred flush reads at unwind time, after
@@ -3875,9 +3960,11 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         const sat = parseSatisfiedGoal(parsed.plan);
         const itg: ?IterateGoal = if (sat == null) parseIterateGoal(parsed.plan) else null;
         const dg: ?DiedGoal = if (sat == null and itg == null) parseDiedGoal(parsed.plan) else null;
-        if (sat == null and itg == null and dg == null) break :verb_block;
+        const jg: ?JudgedGoal = if (sat == null and itg == null and dg == null) parseJudgedGoal(parsed.plan) else null;
+        const pg: ?PurgedGoal = if (sat == null and itg == null and dg == null and jg == null) parsePurgedGoal(parsed.plan) else null;
+        if (sat == null and itg == null and dg == null and jg == null and pg == null) break :verb_block;
 
-        const tid = if (sat) |s| s.id else if (itg) |g| g.id else dg.?.id;
+        const tid = if (sat) |s| s.id else if (itg) |g| g.id else if (dg) |g| g.id else if (jg) |g| g.id else pg.?.id;
         const rows = parseRows(allocator, env) catch &[_]Row{};
         defer if (rows.len > 0) allocator.free(rows);
         var target_row: ?Row = null;
@@ -3933,6 +4020,32 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
                 eval_settled_target = g.id;
             } else |e| {
                 evidencePrint("prune: markDied({s}) failed: {s} — narrative only\n", .{ g.id, @errorName(e) });
+            }
+        } else if (jg) |g| {
+            // Two-key system, second key: the agent-judged verdict row.
+            const verdict = g.verdict orelse {
+                evidencePrint("judge: verdict missing or not one of PROMOTE|REJECT|HOLD — narrative only\n", .{});
+                break :verb_block;
+            };
+            if (contract.appendJudgedRow(allocator, env, g.id, g.judge, verdict, g.reasoning)) {
+                evidencePrint("judge: judged event landed on {s} (verdict={s} judge={s})\n", .{ g.id, verdict, g.judge });
+                eval_settled_target = g.id;
+            } else |e| {
+                evidencePrint("judge: appendJudgedRow({s}) failed: {s} — narrative only\n", .{ g.id, @errorName(e) });
+            }
+        } else if (pg) |g| {
+            // Decalogue purge: external law-violation judgment. The cache
+            // treats the purged row as null-terminal (never resolved).
+            if (g.commandment < 1 or g.commandment > 10) {
+                evidencePrint("purge: commandment=<1..10> required — narrative only\n", .{});
+                break :verb_block;
+            }
+            const evidence_opt: ?[]const u8 = if (g.evidence.len > 0) g.evidence else null;
+            if (contract.markPurged(allocator, env, g.id, g.commandment, evidence_opt)) {
+                evidencePrint("purge: purged event landed on {s} (commandment={d}) — null-terminal in cache\n", .{ g.id, g.commandment });
+                eval_settled_target = g.id;
+            } else |e| {
+                evidencePrint("purge: markPurged({s}) failed: {s} — narrative only\n", .{ g.id, @errorName(e) });
             }
         }
     }

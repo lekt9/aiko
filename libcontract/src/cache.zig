@@ -365,15 +365,30 @@ fn extractStringField(line: []const u8, key: []const u8) ?[]const u8 {
     return line[start..end];
 }
 
+/// Terminal-class decision for a ledger event name — the ONE named place
+/// this heuristic lives. `signature` = terminal, use output_signature;
+/// `null_terminal` = terminal but the chain treats the row as never
+/// resolved (Decalogue purge, SKILL.md `purged` spec); `not_terminal` =
+/// keep walking.
+pub const TerminalClass = enum { not_terminal, signature, null_terminal };
+
+pub fn terminalClass(ev: []const u8) TerminalClass {
+    if (std.mem.eql(u8, ev, "satisfied") or std.mem.eql(u8, ev, "died")) return .signature;
+    if (std.mem.eql(u8, ev, "purged")) return .null_terminal;
+    return .not_terminal;
+}
+
 /// Walk the ledger backward for `id`. Returns the latest row's
 /// `output_signature` (newest terminal event wins — satisfied or died,
-/// whichever came last). Returns null if no terminal row has a
-/// signature. Caller-owned slice.
+/// whichever came last; a purged row NULLIFIES the terminal). Returns
+/// null if no terminal row has a signature. Caller-owned slice.
 ///
 /// "Latest terminal" semantics matches the temporal-coherence fix on
 /// isSatisfied (claim 32): truth is what holds NOW. A satisfied-then-
 /// died row chain returns the DIED signature; the cache rightly sees
-/// a different snapshot and re-evaluates.
+/// a different snapshot and re-evaluates. A satisfied-then-PURGED chain
+/// returns null — the purge erases the row's contribution to downstream
+/// truth while history stays visible (append-only).
 pub fn findLatestTerminalSignature(
     allocator: std.mem.Allocator,
     env: std.process.Environ,
@@ -400,12 +415,17 @@ pub fn findLatestTerminalSignature(
         // Match id first.
         const row_id = extractStringField(line, "id") orelse continue;
         if (!std.mem.eql(u8, row_id, id)) continue;
-        // Accept satisfied OR died (terminal events).
         const ev = extractStringField(line, "event") orelse continue;
-        const is_terminal = std.mem.eql(u8, ev, "satisfied") or std.mem.eql(u8, ev, "died");
-        if (!is_terminal) continue;
-        const sig = extractStringField(line, "output_signature") orelse return null;
-        return try allocator.dupe(u8, sig);
+        switch (terminalClass(ev)) {
+            .not_terminal => continue,
+            // Decalogue purge: null-terminal — as if the row never resolved;
+            // downstream truth-claims cascade to HOLD on the next pass.
+            .null_terminal => return null,
+            .signature => {
+                const sig = extractStringField(line, "output_signature") orelse return null;
+                return try allocator.dupe(u8, sig);
+            },
+        }
     }
     return null;
 }
@@ -787,4 +807,20 @@ test "nowIsoUtc emits Z-terminated timestamp >= 20 chars" {
     const ts = try nowIsoUtc(&buf);
     try std.testing.expect(ts.len >= 20);
     try std.testing.expectEqual(@as(u8, 'Z'), ts[ts.len - 1]);
+}
+
+test "terminalClass: satisfied and died carry signatures" {
+    try std.testing.expect(terminalClass("satisfied") == .signature);
+    try std.testing.expect(terminalClass("died") == .signature);
+}
+
+test "terminalClass: purged is null-terminal (Decalogue purge)" {
+    try std.testing.expect(terminalClass("purged") == .null_terminal);
+}
+
+test "terminalClass: non-terminal events keep walking" {
+    try std.testing.expect(terminalClass("declared") == .not_terminal);
+    try std.testing.expect(terminalClass("iterated") == .not_terminal);
+    try std.testing.expect(terminalClass("judged") == .not_terminal);
+    try std.testing.expect(terminalClass("cache_check") == .not_terminal);
 }

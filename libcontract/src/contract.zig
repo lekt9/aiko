@@ -1311,6 +1311,71 @@ pub fn markDied(
     allocator.free(path);
 }
 
+/// Append a `purged` event row — the Decalogue gate's external
+/// law-violation judgment (SKILL.md `purged` spec). Append-only: the row
+/// stays visible in history (audit preserved), but the cache layer's
+/// terminal walk (cache.terminalClass) treats purged as NULL-terminal —
+/// the signature chain behaves as if the row never resolved, so
+/// downstream truth-claims cascade to HOLD. Differs from `died`: died
+/// records the row's own evaluator returning false; purged records that
+/// the row should not have been declared at all. commandment_n ∈ 1..10.
+pub const PurgeError = error{CommandmentOutOfRange};
+
+pub fn markPurged(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+    commandment_n: u8,
+    violation_evidence: ?[]const u8,
+) !void {
+    if (commandment_n < 1 or commandment_n > 10) return PurgeError.CommandmentOutOfRange;
+
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+
+    const agent = try getAgent(allocator, env);
+    defer allocator.free(agent);
+
+    // Bind the signature to commandment + evidence so different purge
+    // judgments produce distinct output_signature values (same discipline
+    // as markDied). Wave 0 — no iteration wave applies to a purge.
+    var payload_buf: std.ArrayList(u8) = .empty;
+    defer payload_buf.deinit(allocator);
+    var n_buf: [4]u8 = undefined;
+    const n_str = try std.fmt.bufPrint(&n_buf, "{d}", .{commandment_n});
+    try payload_buf.appendSlice(allocator, n_str);
+    try payload_buf.append(allocator, 0);
+    if (violation_evidence) |e| try payload_buf.appendSlice(allocator, e);
+    const sig_opt = try signOutput(allocator, env, id, "purged", 0, payload_buf.items, ts);
+    defer if (sig_opt) |s| allocator.free(s);
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+
+    try buf.appendSlice(allocator, "{\"event\": \"purged\", \"id\": ");
+    try writeJsonString(&buf, allocator, id);
+    try buf.appendSlice(allocator, ", \"commandment_n\": ");
+    try buf.appendSlice(allocator, n_str);
+    if (violation_evidence) |e| {
+        if (e.len > 0) {
+            try buf.appendSlice(allocator, ", \"violation_evidence\": ");
+            try writeJsonString(&buf, allocator, e);
+        }
+    }
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    if (sig_opt) |s| {
+        try buf.appendSlice(allocator, ", \"output_signature\": ");
+        try writeJsonString(&buf, allocator, s);
+    }
+    try buf.appendSlice(allocator, ", \"agent\": ");
+    try writeJsonString(&buf, allocator, agent);
+    try buf.append(allocator, '}');
+
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
 /// Append a `called` event row recording that the dispatcher fired a hook
 /// from `source_id` toward `target_pointer` (typically `contract:<id>`). The
 /// `call_kind` discriminates posthook vs prehook vs posttool vs pretool.

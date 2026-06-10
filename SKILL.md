@@ -557,11 +557,17 @@ prevents weeds from being planted.
 🟡 Agent-side layer      — agents reading this section MUST run the
                            10 purges in-thread before any creative
                            doctrine work or any code-write turn.
-🟡 Runtime layer (TODO)  — `purged` event kind needs the cache layer
-                           updated to treat it as null-terminal.
-                           Cloud LLM compiler needs to recognize
-                           `decalogue:purge:<N>` declarations and
-                           emit per-violation `purged` events.
+✅ Runtime layer (local) — `purged` event kind is native: markPurged
+                           appends the row (commandment_n 1..10,
+                           signed), cache.terminalClass treats purged
+                           as NULL-terminal (chain = never resolved),
+                           and the goal grammar reaches it:
+                           `aiko "purged:<id> commandment=<n> — <evidence>"`.
+                           The `judged` second key is goal-native too:
+                           `aiko "judged:<id> verdict=PROMOTE|REJECT|HOLD — <reasoning>"`.
+🟡 Cloud compiler (TODO) — recognize `decalogue:purge:<N>` scope walks
+                           and emit per-violation `purged` events
+                           server-side.
 ```
 
 Same pattern as the Trinitarian decomposition's status block — the
