@@ -495,9 +495,16 @@ No script. No verb. The purge is a declaration:
 aiko "decalogue:purge:<N> <scope>"
   # N    = 1..10 (which commandment to enforce)
   # scope = lineage-id | code-path | "all"
-  # The cloud LLM compiler walks the scope, identifies violations
-  # against commandment N, appends `purged` events per violation,
-  # surfaces evidence lines for each.
+  # LOCAL (native, report-mode): for the mechanically-checkable
+  # commandments — 3 (declared rows with no children and no terminal
+  # progress), 5 (orphans: parent_id with no declared row), 9
+  # (satisfied events without output_signature) — the binary walks
+  # the LOCAL ledger and surfaces one evidence line per violation.
+  # The purge stays explicit: the agent judges the report and fires
+  # `purged:<id> commandment=<N> — <evidence>` per row (commandment 6
+  # forbids mechanical kills without judgment).
+  # CLOUD (TODO): the cloud LLM compiler walks non-mechanical scopes
+  # (code paths, doctrine) and emits per-violation `purged` events.
 ```
 
 Standing meta-purge (declared once, fires every build):

@@ -99,6 +99,7 @@ const Row = struct {
     wave: u32 = 0,
     satisfied: bool = false,
     env_pubkey: []const u8 = "",
+    output_signature: []const u8 = "",
     parent_signature: []const u8 = "",
     input_hash: []const u8 = "",
     source_id: []const u8 = "",
@@ -410,6 +411,7 @@ fn parseRows(allocator: std.mem.Allocator, env: std.process.Environ) ![]Row {
         r.wave = @intCast(jsonInt(line, "wave") orelse 0);
         r.satisfied = std.mem.eql(u8, r.event, "satisfied");
         r.env_pubkey = jsonString(line, "env_pubkey") orelse "";
+        r.output_signature = jsonString(line, "output_signature") orelse "";
         r.input_hash = jsonString(line, "input_hash") orelse "";
         r.source_id = jsonString(line, "source_id") orelse "";
         r.ts = jsonString(line, "ts") orelse "";
@@ -3903,6 +3905,102 @@ fn parsePurgedGoal(plan: []const u8) ?PurgedGoal {
     return .{ .id = id, .commandment = commandment, .evidence = evid };
 }
 
+/// `decalogue:purge:<N>` — the standing-purge scan grammar (Gal 3:24).
+fn parseDecaloguePurgeGoal(plan: []const u8) ?u8 {
+    const prefix = "decalogue:purge:";
+    if (!std.mem.startsWith(u8, plan, prefix)) return null;
+    const rest = plan[prefix.len..];
+    var end: usize = 0;
+    while (end < rest.len and rest[end] >= '0' and rest[end] <= '9') end += 1;
+    if (end == 0) return null;
+    return std.fmt.parseInt(u8, rest[0..end], 10) catch null;
+}
+
+/// Walk the local ledger for violations of commandment `n`. REPORT-MODE
+/// ONLY: each violation is one evidence line carrying the offending id;
+/// the purge itself remains an explicit `purged:<id>` declaration
+/// (substrate emits, agent judges — commandment 6 forbids mechanical
+/// kills without judgment). Locally mechanical: 3 (empty invocations),
+/// 5 (orphans), 9 (unsigned satisfactions). The rest are cloud-compiler
+/// scope and say so honestly.
+fn runDecalogueScan(allocator: std.mem.Allocator, env: std.process.Environ, n: u8) void {
+    const rows = parseRows(allocator, env) catch {
+        evidencePrint("decalogue: ledger unreadable — commandment {d} scan skipped\n", .{n});
+        return;
+    };
+    defer allocator.free(rows);
+    var violations: u32 = 0;
+    switch (n) {
+        3 => {
+            // Taking the name in vain: declared rows with no WORK — no
+            // children, no terminal progress (satisfied/died/judged/purged).
+            // The resolver's automatic `iterated` poke is the substrate
+            // touching the row, not the declarer doing the work, so it
+            // does not count.
+            for (rows) |r| {
+                if (!std.mem.eql(u8, r.event, "declared") or r.id.len == 0) continue;
+                var worked = false;
+                for (rows) |o| {
+                    const is_work = std.mem.eql(u8, o.event, "satisfied") or
+                        std.mem.eql(u8, o.event, "died") or
+                        std.mem.eql(u8, o.event, "judged") or
+                        std.mem.eql(u8, o.event, "purged") or
+                        std.mem.eql(u8, o.event, "child_added");
+                    if (!is_work) continue;
+                    if (std.mem.eql(u8, o.id, r.id)) {
+                        worked = true;
+                        break;
+                    }
+                }
+                if (!worked) {
+                    violations += 1;
+                    evidencePrint("decalogue: commandment 3 violation — {s} (declared, no children, no terminal progress: empty invocation)\n", .{r.id});
+                }
+            }
+        },
+        5 => {
+            // Honor father and mother: declared rows whose parent_id names
+            // an id with no declared row in this ledger (broken lineage).
+            for (rows) |r| {
+                if (!std.mem.eql(u8, r.event, "declared") or r.id.len == 0) continue;
+                const pid = r.parent_id orelse continue;
+                if (pid.len == 0) continue;
+                var found = false;
+                for (rows) |o| {
+                    if (std.mem.eql(u8, o.event, "declared") and std.mem.eql(u8, o.id, pid)) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    violations += 1;
+                    evidencePrint("decalogue: commandment 5 violation — {s} (orphan: parent {s} has no declared row here)\n", .{ r.id, pid });
+                }
+            }
+        },
+        9 => {
+            // False witness: satisfied events that carry no output
+            // signature — the evaluator's mark without the evaluator's hand.
+            for (rows) |r| {
+                if (!std.mem.eql(u8, r.event, "satisfied") or r.id.len == 0) continue;
+                if (r.output_signature.len == 0) {
+                    violations += 1;
+                    evidencePrint("decalogue: commandment 9 violation — {s} (satisfied without output_signature)\n", .{r.id});
+                }
+            }
+        },
+        1, 2, 4, 6, 7, 8, 10 => {
+            evidencePrint("decalogue: commandment {d} is not locally mechanical — cloud-compiler scope (HOLD)\n", .{n});
+            return;
+        },
+        else => {
+            evidencePrint("decalogue: commandment must be 1..10 (got {d})\n", .{n});
+            return;
+        },
+    }
+    evidencePrint("decalogue: commandment {d} scan complete — {d} violation(s); purge stays explicit: aiko \"purged:<id> commandment={d} — <evidence>\"\n", .{ n, violations, n });
+}
+
 fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
     armStderrTape(allocator);
     // Stack buffers because the deferred flush reads at unwind time, after
@@ -3955,6 +4053,15 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     // lands, the narrative self-settles after declare so verb goals never
     // accumulate as frontier debt. Failures surface as evidence lines and
     // never block the declaration (visible, not fatal).
+    // Decalogue standing-purge scan (Gal 3:24 — the law as schoolmaster):
+    // `decalogue:purge:<N>` walks the LOCAL ledger and surfaces one evidence
+    // line per violation for the mechanically-checkable commandments.
+    // Report-mode only; the scan claim itself still declares below as the
+    // standing witness, and the purge remains an explicit purged:<id> act.
+    if (parseDecaloguePurgeGoal(parsed.plan)) |n| {
+        runDecalogueScan(allocator, env, n);
+    }
+
     var eval_settled_target: ?[]const u8 = null;
     verb_block: {
         const sat = parseSatisfiedGoal(parsed.plan);
