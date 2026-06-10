@@ -572,16 +572,19 @@ prevents weeds from being planted.
                            `aiko "purged:<id> commandment=<n> — <evidence>"`.
                            The `judged` second key is goal-native too:
                            `aiko "judged:<id> verdict=PROMOTE|REJECT|HOLD — <reasoning>"`.
-🟡 Cloud compiler (TODO) — recognize `decalogue:purge:<N>` scope walks
-                           and emit per-violation `purged` events
-                           server-side.
+✅ Cloud (report-mode)   — the declare endpoint recognizes
+                           `decalogue:purge:<N>` plans and walks the
+                           canonical ledger for commandments 3/5/9,
+                           surfacing per-violation `purge_evidence`
+                           lines. Per-violation `purged` events stay an
+                           explicit judged act (commandment 6 — no
+                           mechanical kills), which supersedes the
+                           original auto-emit framing.
 ```
 
-Same pattern as the Trinitarian decomposition's status block — the
-gap is named, not hidden. The next wave wires parity claim 47, the
-wave after wires the cache layer's `purged`-aware traversal, and
-the standing-purge contract gets declared once the runtime layer
-ships. Until then: agents enforce in-thread; doctrine prevails.
+Same pattern as the Trinitarian decomposition's status block — every
+layer is now wired; what remains judged (the purge act itself, the
+non-mechanical commandments) is judged by design, not by gap.
 
 ### What this section refuses
 
