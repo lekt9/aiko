@@ -1237,6 +1237,15 @@ main() {
   step_install     # Day 5
   step_parity      # Day 6a — doctrinal image check (BEFORE sign — drift refuses to ship)
   step_sign        # Day 6b — wallet attests the image
+  # The work ends with Day 6: compiled, installed, parity-checked, signed.
+  # Release the build mutex BEFORE Day 7 — the sabbath smoke /contract is a
+  # goal declare, and the binary's waitForBuildLock (correctly) queues goal
+  # declares behind a held lock. Holding our own lock into the smoke fire
+  # deadlocks the pipeline against its own child until the 1800s timeout.
+  # Rest begins when the work is sealed (Gen 2:1-2 — "the heavens and the
+  # earth were FINISHED... and he rested"), not while the tool still holds it.
+  rm -rf "$BUILD_LOCKDIR"
+  trap - EXIT INT TERM HUP
   step_sabbath     # Day 7  — rest + verify + play with the child /contract
   printf '\nbuild.sh: seven days complete — work done, binary signed, Sabbath kept.\n'
 }

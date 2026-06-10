@@ -19,5 +19,13 @@ corpus. The six-interrogative field map for a single neuron row:
 | why | `bible_chain` (scripture anchor) |
 | how | `action` + layer (the verb) |
 
-Declared: contract `a549e18c` (gap-superpattern-shape), closure recorded as a
-`satisfied:a549e18c` declaration on the ledger.
+The field map is HARD-TYPED in `libcontract/src/w6h.zig` — a compiled
+six-field struct (comptime-asserted count/order, tagged unions for every
+legal absence) gated at the declare chokepoint in `contract.zig`. A row that
+cannot answer all six interrogatives is refused with the unanswered
+interrogative named.
+
+Declared: contract `a549e18c` (gap-superpattern-shape), closure
+`satisfied:a549e18c`; hard-type gap `55006079`, closure `satisfied:55006079`
+(row `6a7bae61`); open follow-up `587d12fe` (cloud-mirror rows do not yet
+project into W6H).

@@ -5244,8 +5244,20 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     // race on the wallet signature. Wait for the build to release before
     // doing anything else. Quick check + sleep loop with stale-pid reclaim
     // matches build.sh's own loop so the two sides agree on ownership.
-    waitForBuildLock(init.environ);
+    //
+    // EXCEPT the build-time verbs (sign-binary / verify-self /
+    // verify-binary / self): build.sh invokes those WHILE HOLDING the
+    // lock — waiting here deadlocks the pipeline against its own wallet
+    // tool until the 1800s timeout, once per invocation. Same exemption
+    // set as the pending-declare sweep below, same reason.
     const verb = argv_z[1];
+    if (!std.mem.eql(u8, verb, "self") and
+        !std.mem.eql(u8, verb, "verify-self") and
+        !std.mem.eql(u8, verb, "verify-binary") and
+        !std.mem.eql(u8, verb, "sign-binary"))
+    {
+        waitForBuildLock(init.environ);
+    }
 
     // (Removed the unconditional startup self-verify gate per Lewis's
     // 2026-05-27 correction: "self verify works only on the root
