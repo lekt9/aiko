@@ -3905,6 +3905,46 @@ fn parsePurgedGoal(plan: []const u8) ?PurgedGoal {
     return .{ .id = id, .commandment = commandment, .evidence = evid };
 }
 
+/// Parsed reward-verb goal: `reward:<target> from=<source> signal=<word> — <note>`.
+/// Routes a reward signal between contracts (appendRewardRow); the existing
+/// KV-cache invalidation fires the target's reward neuron when rows land.
+const RewardGoal = struct {
+    target: []const u8,
+    source: ?[]const u8,
+    signal: []const u8,
+};
+
+fn parseRewardGoal(plan: []const u8) ?RewardGoal {
+    const prefix = "reward:";
+    if (!std.mem.startsWith(u8, plan, prefix)) return null;
+    if (plan.len < prefix.len + 8) return null;
+    const target = plan[prefix.len .. prefix.len + 8];
+    for (target) |c| {
+        const ok = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+        if (!ok) return null;
+    }
+    var source: ?[]const u8 = null;
+    if (std.mem.indexOf(u8, plan, "from=")) |fi| {
+        const rest = plan[fi + 5 ..];
+        if (rest.len >= 8) {
+            var hex_ok = true;
+            for (rest[0..8]) |c| {
+                const ok = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+                if (!ok) hex_ok = false;
+            }
+            if (hex_ok) source = rest[0..8];
+        }
+    }
+    var signal: []const u8 = "";
+    if (std.mem.indexOf(u8, plan, "signal=")) |si| {
+        const rest = plan[si + 7 ..];
+        var end: usize = 0;
+        while (end < rest.len and rest[end] != ' ') end += 1;
+        signal = rest[0..end];
+    }
+    return .{ .target = target, .source = source, .signal = signal };
+}
+
 /// `decalogue:purge:<N>` — the standing-purge scan grammar (Gal 3:24).
 fn parseDecaloguePurgeGoal(plan: []const u8) ?u8 {
     const prefix = "decalogue:purge:";
@@ -4069,9 +4109,10 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         const dg: ?DiedGoal = if (sat == null and itg == null) parseDiedGoal(parsed.plan) else null;
         const jg: ?JudgedGoal = if (sat == null and itg == null and dg == null) parseJudgedGoal(parsed.plan) else null;
         const pg: ?PurgedGoal = if (sat == null and itg == null and dg == null and jg == null) parsePurgedGoal(parsed.plan) else null;
-        if (sat == null and itg == null and dg == null and jg == null and pg == null) break :verb_block;
+        const rg: ?RewardGoal = if (sat == null and itg == null and dg == null and jg == null and pg == null) parseRewardGoal(parsed.plan) else null;
+        if (sat == null and itg == null and dg == null and jg == null and pg == null and rg == null) break :verb_block;
 
-        const tid = if (sat) |s| s.id else if (itg) |g| g.id else if (dg) |g| g.id else if (jg) |g| g.id else pg.?.id;
+        const tid = if (sat) |s| s.id else if (itg) |g| g.id else if (dg) |g| g.id else if (jg) |g| g.id else if (pg) |g| g.id else rg.?.target;
         const rows = parseRows(allocator, env) catch &[_]Row{};
         defer if (rows.len > 0) allocator.free(rows);
         var target_row: ?Row = null;
@@ -4091,6 +4132,9 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             if (contract.markSatisfied(allocator, env, sg.id, sg.wave, proof_opt)) {
                 evidencePrint("eval: satisfied event landed on {s} (wave {d})\n", .{ sg.id, sg.wave });
                 eval_settled_target = sg.id;
+                // Chains fire on satisfaction whichever surface satisfied
+                // the row (parity with _mark — gap 2e7315f8).
+                dispatchPosthooks(allocator, env, sg.id);
             } else |e| {
                 evidencePrint("eval: markSatisfied({s}) failed: {s} — narrative only\n", .{ sg.id, @errorName(e) });
             }
@@ -4153,6 +4197,23 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
                 eval_settled_target = g.id;
             } else |e| {
                 evidencePrint("purge: markPurged({s}) failed: {s} — narrative only\n", .{ g.id, @errorName(e) });
+            }
+        } else if (rg) |g| {
+            // Reward routing: signal from source to target; the pointer-keyed
+            // cache fires the target's reward neuron when the row lands.
+            const source = g.source orelse {
+                evidencePrint("reward: from=<id> required (a signal must name its source) — narrative only\n", .{});
+                break :verb_block;
+            };
+            if (g.signal.len == 0) {
+                evidencePrint("reward: signal=<word> required — narrative only\n", .{});
+                break :verb_block;
+            }
+            if (contract.appendRewardRow(allocator, env, source, g.target, g.signal, "")) {
+                evidencePrint("reward: signal '{s}' routed {s} -> {s}\n", .{ g.signal, source, g.target });
+                eval_settled_target = g.target;
+            } else |e| {
+                evidencePrint("reward: appendRewardRow({s}) failed: {s} — narrative only\n", .{ g.target, @errorName(e) });
             }
         }
     }
@@ -5049,29 +5110,45 @@ fn cmdMark(allocator: std.mem.Allocator, env: std.process.Environ, args: []const
     try contract.markSatisfied(allocator, env, id, 1, proof);
     outPrint("satisfied: {s}\n", .{id});
 
-    // Posthook dispatch: scan the declared row's plan for posthook:<id> refs
-    // and append a `called` row per target. This is the second half of the
-    // dispatcher contract d8a30a14 — the graph itself records that the
-    // upstream contract fired its successors. Target action execution
-    // (cli shell-out / webhook POST / etc.) is deferred to the resolveLineage
-    // loop; cmdMark only emits the called edge so the chain is observable.
+    // Posthook dispatch — shared one-place helper; chains must fire
+    // identically whichever surface satisfied the row.
+    dispatchPosthooks(allocator, env, id);
+    return 0;
+}
+
+/// Posthook dispatch (dispatcher contract d8a30a14, second half): scan the
+/// satisfied row's declared plan for posthook:<id> refs and append one
+/// `called` edge per target. The graph itself records that the upstream
+/// contract fired its successors; target action execution is deferred to
+/// the resolveLineage loop. ONE named site — shared by cmdMark and the
+/// eval goal grammar (gap 2e7315f8: closures through the goal surface
+/// previously skipped dispatch, silently breaking chains). Failures
+/// surface as evidence lines; dispatch never blocks the satisfaction.
+fn dispatchPosthooks(allocator: std.mem.Allocator, env: std.process.Environ, id: []const u8) void {
+    const rows = parseRows(allocator, env) catch {
+        evidencePrint("posthook: ledger unreadable — dispatch skipped for {s}\n", .{id});
+        return;
+    };
+    defer allocator.free(rows);
     for (rows) |r| {
         if (!std.mem.eql(u8, r.event, "declared")) continue;
         if (!std.mem.eql(u8, r.id, id)) continue;
-        const targets = try pointer.extractTypedRefs(allocator, r.plan, "posthook:");
+        const targets = pointer.extractTypedRefs(allocator, r.plan, "posthook:") catch return;
         defer {
             for (targets) |t| allocator.free(t);
             allocator.free(targets);
         }
         for (targets) |target| {
             var ptr_buf: [32]u8 = undefined;
-            const target_pointer = try std.fmt.bufPrint(&ptr_buf, "contract:{s}", .{target});
-            try contract.appendCalledRow(allocator, env, id, target_pointer, "posthook");
+            const target_pointer = std.fmt.bufPrint(&ptr_buf, "contract:{s}", .{target}) catch continue;
+            contract.appendCalledRow(allocator, env, id, target_pointer, "posthook") catch |e| {
+                evidencePrint("posthook: called-edge append failed for {s}: {s}\n", .{ target, @errorName(e) });
+                continue;
+            };
             outPrint("called: posthook -> {s}\n", .{target});
         }
-        break;
+        return;
     }
-    return 0;
 }
 
 fn cmdStatus(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
