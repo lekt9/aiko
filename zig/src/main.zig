@@ -3698,6 +3698,42 @@ fn flushStderrTapeAsEvidence(
     stderr_tape_armed = false;
 }
 
+/// Parsed eval-verb goal (four-verb table: `satisfied:<id> wave=<n> — <proof>`).
+const SatisfiedGoal = struct {
+    id: []const u8,
+    wave: u32,
+    proof: []const u8,
+};
+
+/// Recognize the eval grammar in a goal: leading token `satisfied:<8hex>`,
+/// optional `wave=<n>`, proof = text after the first "— " (or " - ").
+/// Returns null when the goal is not eval-shaped — it then declares as a
+/// plain neuron like any other truth claim.
+fn parseSatisfiedGoal(plan: []const u8) ?SatisfiedGoal {
+    const prefix = "satisfied:";
+    if (!std.mem.startsWith(u8, plan, prefix)) return null;
+    if (plan.len < prefix.len + 8) return null;
+    const id = plan[prefix.len .. prefix.len + 8];
+    for (id) |c| {
+        const ok = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+        if (!ok) return null;
+    }
+    var wave: u32 = 1;
+    if (std.mem.indexOf(u8, plan, "wave=")) |wi| {
+        const rest = plan[wi + 5 ..];
+        var end: usize = 0;
+        while (end < rest.len and rest[end] >= '0' and rest[end] <= '9') end += 1;
+        if (end > 0) wave = std.fmt.parseInt(u32, rest[0..end], 10) catch 1;
+    }
+    var proof: []const u8 = "";
+    if (std.mem.indexOf(u8, plan, "\u{2014} ")) |pi| {
+        proof = plan[pi + "\u{2014} ".len ..];
+    } else if (std.mem.indexOf(u8, plan, " - ")) |pi| {
+        proof = plan[pi + 3 ..];
+    }
+    return .{ .id = id, .wave = wave, .proof = proof };
+}
+
 fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
     armStderrTape(allocator);
     // Stack buffers because the deferred flush reads at unwind time, after
@@ -3741,6 +3777,36 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
         errPrint("aiko refused: {s}\n", .{cause});
         return 2;
     }
+
+    // Four-verb eval grammar (gap b68d805b closure mechanics): a goal of
+    // the shape `satisfied:<id> wave=<n> — <proof>` ALSO lands the
+    // mechanical `satisfied` event on the target via the same honest path
+    // as _mark (target's declared row must exist in the reachable ledger).
+    // The closure narrative still declares below — the declared row is the
+    // witness, the satisfied event is the settlement. Failures surface as
+    // evidence lines and never block the declaration (visible, not fatal).
+    if (parseSatisfiedGoal(parsed.plan)) |sg| {
+        const rows = parseRows(allocator, env) catch &[_]Row{};
+        defer if (rows.len > 0) allocator.free(rows);
+        var target_declared = false;
+        for (rows) |r| {
+            if (std.mem.eql(u8, r.event, "declared") and std.mem.eql(u8, r.id, sg.id)) {
+                target_declared = true;
+                break;
+            }
+        }
+        if (target_declared) {
+            const proof_opt: ?[]const u8 = if (sg.proof.len > 0) sg.proof else null;
+            if (contract.markSatisfied(allocator, env, sg.id, sg.wave, proof_opt)) {
+                evidencePrint("eval: satisfied event landed on {s} (wave {d})\n", .{ sg.id, sg.wave });
+            } else |e| {
+                evidencePrint("eval: markSatisfied({s}) failed: {s} — closure declared as narrative only\n", .{ sg.id, @errorName(e) });
+            }
+        } else {
+            evidencePrint("eval: no declared row for {s} in the reachable ledger — closure declared as narrative only\n", .{sg.id});
+        }
+    }
+
     // purge:bio-kit-ceremony (84baa523) — pre-flight ceremony emissions
     // deleted. Keep only the actual gate (homeostat) and the one-time
     // wallet-bootstrap guidance.
