@@ -1058,6 +1058,27 @@ fn writeCloudMirrorRow(
     try appendJsonEscaped(allocator, &row, plan);
     try row.appendSlice(allocator, ", \"action\": ");
     try appendJsonEscaped(allocator, &row, action);
+
+    // W6H parity with libcontract declare (gap 587d12fe): the mirror row is
+    // written by the LOCAL declaring process, which knows cwd and can derive
+    // layer/pointer_type from the action exactly as declare() does. A mirror
+    // that answers fewer interrogatives than a local row is a thinner truth,
+    // not a different kind of truth — derive locally known answers at write
+    // time. Agent narrative is "" (legal: the signer below is the identity).
+    try row.appendSlice(allocator, ", \"pointer_type\": ");
+    try appendJsonEscaped(allocator, &row, pointer.inferPointerType(action));
+    try row.appendSlice(allocator, ", \"layer\": ");
+    var layer_buf: [16]u8 = undefined;
+    const layer_str = std.fmt.bufPrint(&layer_buf, "{d}", .{pointer.inferLayer(action)}) catch "3";
+    try row.appendSlice(allocator, layer_str);
+    var cwd_buf: [4096]u8 = undefined;
+    const cwd_ptr = std.c.getcwd(&cwd_buf, cwd_buf.len);
+    const cwd: []const u8 = if (cwd_ptr) |p| std.mem.span(@as([*:0]const u8, @ptrCast(p))) else "/";
+    try row.appendSlice(allocator, ", \"cwd\": ");
+    try appendJsonEscaped(allocator, &row, cwd);
+    try row.appendSlice(allocator, ", \"agent\": ");
+    try appendJsonEscaped(allocator, &row, "");
+
     if (parent_id) |p| {
         try row.appendSlice(allocator, ", \"parent_id\": ");
         try appendJsonEscaped(allocator, &row, p);
@@ -1116,6 +1137,15 @@ fn writeCloudMirrorRow(
     }
 
     try row.append(allocator, '}');
+
+    // W6H hard-type gate — same chokepoint discipline as libcontract
+    // declare(): the mirror row must answer all six interrogatives before
+    // it lands; drift in this writer fails the WRITE with the unanswered
+    // interrogative named.
+    {
+        var pw = try contract.w6h.fromDeclaredRow(allocator, row.items);
+        pw.deinit();
+    }
 
     const path = try ledger.appendRow(allocator, env, row.items);
     allocator.free(path);

@@ -294,6 +294,21 @@ test "missing pointer_type: MissingHow" {
     try std.testing.expectError(W6HError.MissingHow, fromDeclaredRow(allocator, row));
 }
 
+test "cloud-mirror row shape projects (gap 587d12fe parity)" {
+    const allocator = std.testing.allocator;
+    // Mirrors writeCloudMirrorRow's emission order exactly: source tag,
+    // derived pointer_type/layer, real cwd, empty agent narrative,
+    // lineage pair, ts.
+    const row =
+        \\{"event": "declared", "source": "cloud-mirror", "id": "deadbeef", "plan": "mirrored claim", "action": "neuron", "pointer_type": "cell", "layer": 3, "cwd": "/tmp", "agent": "", "parent_id": "cafebabe", "ts": "t", "env_pubkey": "aa", "parent_signature": "bb"}
+    ;
+    var pw = try fromDeclaredRow(allocator, row);
+    defer pw.deinit();
+    try std.testing.expectEqualStrings("aa", pw.w6h.who.signer.pubkey);
+    try std.testing.expectEqualStrings("/tmp", pw.w6h.where.cwd);
+    try std.testing.expectEqualStrings("bb", pw.w6h.why.parent_signed);
+}
+
 test "non-declared event refused: NotDeclared" {
     const allocator = std.testing.allocator;
     const row =

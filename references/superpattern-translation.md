@@ -25,7 +25,11 @@ legal absence) gated at the declare chokepoint in `contract.zig`. A row that
 cannot answer all six interrogatives is refused with the unanswered
 interrogative named.
 
+Both row writers are gated: the local declare path (`contract.zig`) and the
+cloud-mirror path (`zig/src/main.zig` `writeCloudMirrorRow`, which derives
+pointer_type/layer from the action and writes real cwd at write time).
+
 Declared: contract `a549e18c` (gap-superpattern-shape), closure
-`satisfied:a549e18c`; hard-type gap `55006079`, closure `satisfied:55006079`
-(row `6a7bae61`); open follow-up `587d12fe` (cloud-mirror rows do not yet
-project into W6H).
+`satisfied:a549e18c`; hard-type gap `55006079`, closure `satisfied:55006079`;
+mirror-parity gap `587d12fe`, closure `satisfied:587d12fe` (witness: mirror
+row `2441c353` answers all six).
