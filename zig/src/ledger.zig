@@ -88,6 +88,50 @@ pub fn appendRow(allocator: std.mem.Allocator, env: std.process.Environ, row_jso
     return path;
 }
 
+/// Byte size of the resolved ledger file (0 when absent/unreadable).
+/// The ledger is APPEND-ONLY, so file size is a sound within-process
+/// cache-invalidation key: any append grows the file. open+lseek because
+/// std.c.stat isn't wired on macOS in Zig 0.16 (see opendir note above).
+pub fn currentSize(allocator: std.mem.Allocator, env: std.process.Environ) u64 {
+    const path = resolvePath(allocator, env) catch return 0;
+    defer allocator.free(path);
+    const path_z = allocator.dupeZ(u8, path) catch return 0;
+    defer allocator.free(path_z);
+    var flags: c.O = .{};
+    flags.ACCMODE = .RDONLY;
+    const fd: c_int = c.open(path_z.ptr, flags, @as(c_uint, 0));
+    if (fd < 0) return 0;
+    defer _ = c.close(fd);
+    const off = c.lseek(fd, 0, c.SEEK.END);
+    return if (off < 0) 0 else @intCast(off);
+}
+
+/// Read the ledger from byte `offset` to EOF. The file is append-only and
+/// every append is one writev of `row + "\n"`, so any previously observed
+/// size is a line boundary — tail reads always start at a whole line.
+pub fn readFrom(allocator: std.mem.Allocator, env: std.process.Environ, offset: u64) ![]u8 {
+    const path = try resolvePath(allocator, env);
+    defer allocator.free(path);
+    const path_z = try allocator.dupeZ(u8, path);
+    defer allocator.free(path_z);
+    var flags: c.O = .{};
+    flags.ACCMODE = .RDONLY;
+    const fd: c_int = c.open(path_z.ptr, flags, @as(c_uint, 0));
+    if (fd < 0) return try allocator.alloc(u8, 0);
+    defer _ = c.close(fd);
+    if (c.lseek(fd, @intCast(offset), c.SEEK.SET) < 0) return try allocator.alloc(u8, 0);
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    var chunk: [8192]u8 = undefined;
+    while (true) {
+        const n = c.read(fd, &chunk, chunk.len);
+        if (n <= 0) break;
+        try out.appendSlice(allocator, chunk[0..@intCast(n)]);
+        if (out.items.len > 64 * 1024 * 1024) return error.LedgerTooLarge;
+    }
+    return try out.toOwnedSlice(allocator);
+}
+
 /// Slurp the entire resolved ledger file. Returns an owned []u8; missing
 /// ledger is an empty bootstrap state.
 pub fn readAll(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {

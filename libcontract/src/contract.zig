@@ -242,21 +242,36 @@ pub fn nowIsoUtc(buf: []u8) ![]u8 {
     });
 }
 
+// Per-process agent-identity memo (bench finding, docs/journal.md
+// 2026-06-11): getAgent forked `git config` via popen on EVERY event
+// append — at resolver scale that is hundreds of subprocess spawns per
+// invocation and was the dominant cost in the profile (≈⅓ of all
+// samples). One identity per process is also the correct attribution
+// semantics: the author cannot change mid-invocation. Cache-owned;
+// callers still receive a dupe they free, so the API is unchanged.
+var agent_cache: ?[]const u8 = null;
+var agent_cache_buf: [256]u8 = undefined;
+
 fn getAgent(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
     _ = env;
+    if (agent_cache) |a| return try allocator.dupe(u8, a);
     var pipe_buf: [256]u8 = undefined;
     const cmd: [*:0]const u8 = "git config user.email 2>/dev/null";
-    const f = popen(cmd, "r");
-    if (f == null) return try allocator.dupe(u8, "");
-    defer _ = pclose(f.?);
-    var total: usize = 0;
-    while (total < pipe_buf.len - 1) {
-        const got = fread(pipe_buf[total..].ptr, 1, pipe_buf.len - 1 - total, f.?);
-        if (got == 0) break;
-        total += got;
+    var out: []const u8 = "";
+    if (popen(cmd, "r")) |f| {
+        defer _ = pclose(f);
+        var total: usize = 0;
+        while (total < pipe_buf.len - 1) {
+            const got = fread(pipe_buf[total..].ptr, 1, pipe_buf.len - 1 - total, f);
+            if (got == 0) break;
+            total += got;
+        }
+        out = std.mem.trim(u8, pipe_buf[0..total], " \t\r\n");
     }
-    const out = std.mem.trim(u8, pipe_buf[0..total], " \t\r\n");
-    return try allocator.dupe(u8, out);
+    const n = @min(out.len, agent_cache_buf.len);
+    @memcpy(agent_cache_buf[0..n], out[0..n]);
+    agent_cache = agent_cache_buf[0..n];
+    return try allocator.dupe(u8, agent_cache.?);
 }
 
 fn writeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []const u8) !void {

@@ -87,20 +87,31 @@ fn nowIsoUtc(buf: []u8) ![]u8 {
     });
 }
 
+// Per-process agent memo — same reasoning and shape as contract.zig's
+// getAgent memo (bench finding, docs/journal.md 2026-06-11): no popen
+// per appended cache row.
+var agent_cache: ?[]const u8 = null;
+var agent_cache_buf: [256]u8 = undefined;
+
 fn getAgent(allocator: std.mem.Allocator) ![]u8 {
+    if (agent_cache) |a| return try allocator.dupe(u8, a);
     var pipe_buf: [256]u8 = undefined;
     const cmd: [*:0]const u8 = "git config user.email 2>/dev/null";
-    const f = popen(cmd, "r");
-    if (f == null) return try allocator.dupe(u8, "");
-    defer _ = pclose(f.?);
-    var total: usize = 0;
-    while (total < pipe_buf.len - 1) {
-        const got = fread(pipe_buf[total..].ptr, 1, pipe_buf.len - 1 - total, f.?);
-        if (got == 0) break;
-        total += got;
+    var out: []const u8 = "";
+    if (popen(cmd, "r")) |f| {
+        defer _ = pclose(f);
+        var total: usize = 0;
+        while (total < pipe_buf.len - 1) {
+            const got = fread(pipe_buf[total..].ptr, 1, pipe_buf.len - 1 - total, f);
+            if (got == 0) break;
+            total += got;
+        }
+        out = std.mem.trim(u8, pipe_buf[0..total], " \t\r\n");
     }
-    const out = std.mem.trim(u8, pipe_buf[0..total], " \t\r\n");
-    return try allocator.dupe(u8, out);
+    const n = @min(out.len, agent_cache_buf.len);
+    @memcpy(agent_cache_buf[0..n], out[0..n]);
+    agent_cache = agent_cache_buf[0..n];
+    return try allocator.dupe(u8, agent_cache.?);
 }
 
 fn writeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []const u8) !void {
@@ -262,8 +273,8 @@ pub fn findLatestResolvedSnapshot(
     env: std.process.Environ,
     id: []const u8,
 ) !?[]u8 {
-    const body = ledger.readAll(allocator, env) catch return null;
-    defer allocator.free(body);
+    // Shared cache-owned read (size-keyed memo) — do not free.
+    const body = ledger.readAllShared(allocator, env) catch return null;
 
     // Walk lines backward by collecting offsets first.
     var offsets: std.ArrayList(usize) = .empty;
@@ -316,8 +327,8 @@ pub fn hasInvalidationAfter(
     id: []const u8,
     since_ts_iso: []const u8,
 ) !bool {
-    const body = ledger.readAll(allocator, env) catch return false;
-    defer allocator.free(body);
+    // Shared cache-owned read (size-keyed memo) — do not free.
+    const body = ledger.readAllShared(allocator, env) catch return false;
     var iter = std.mem.tokenizeAny(u8, body, "\n");
     while (iter.next()) |line| {
         if (line.len < 2) continue;
@@ -394,8 +405,8 @@ pub fn findLatestTerminalSignature(
     env: std.process.Environ,
     id: []const u8,
 ) !?[]u8 {
-    const body = ledger.readAll(allocator, env) catch return null;
-    defer allocator.free(body);
+    // Shared cache-owned read (size-keyed memo) — do not free.
+    const body = ledger.readAllShared(allocator, env) catch return null;
 
     // Collect line offsets (cheap) so we can walk newest-first.
     var offsets: std.ArrayList(usize) = .empty;
@@ -438,8 +449,8 @@ pub fn findDeclaredParentSignature(
     env: std.process.Environ,
     id: []const u8,
 ) !?[]u8 {
-    const body = ledger.readAll(allocator, env) catch return null;
-    defer allocator.free(body);
+    // Shared cache-owned read (size-keyed memo) — do not free.
+    const body = ledger.readAllShared(allocator, env) catch return null;
 
     var offsets: std.ArrayList(usize) = .empty;
     defer offsets.deinit(allocator);
@@ -494,8 +505,8 @@ pub fn collectDependencyIds(
     env: std.process.Environ,
     target: []const u8,
 ) ![][]u8 {
-    const body = ledger.readAll(allocator, env) catch return try allocator.alloc([]u8, 0);
-    defer allocator.free(body);
+    // Shared cache-owned read (size-keyed memo) — do not free.
+    const body = ledger.readAllShared(allocator, env) catch return try allocator.alloc([]u8, 0);
 
     var deps: std.ArrayList([]u8) = .empty;
     errdefer {
@@ -662,8 +673,8 @@ pub fn snapshotAt(
     id: []const u8,
     as_of_ts_iso: []const u8,
 ) !?[]u8 {
-    const body = ledger.readAll(allocator, env) catch return null;
-    defer allocator.free(body);
+    // Shared cache-owned read (size-keyed memo) — do not free.
+    const body = ledger.readAllShared(allocator, env) catch return null;
 
     var offsets: std.ArrayList(usize) = .empty;
     defer offsets.deinit(allocator);
@@ -717,8 +728,8 @@ pub fn latestEventTs(
     env: std.process.Environ,
     id: []const u8,
 ) !?[]u8 {
-    const body = ledger.readAll(allocator, env) catch return null;
-    defer allocator.free(body);
+    // Shared cache-owned read (size-keyed memo) — do not free.
+    const body = ledger.readAllShared(allocator, env) catch return null;
 
     var offsets: std.ArrayList(usize) = .empty;
     defer offsets.deinit(allocator);
@@ -751,8 +762,8 @@ pub fn latestEventKind(
     env: std.process.Environ,
     id: []const u8,
 ) !?[]u8 {
-    const body = ledger.readAll(allocator, env) catch return null;
-    defer allocator.free(body);
+    // Shared cache-owned read (size-keyed memo) — do not free.
+    const body = ledger.readAllShared(allocator, env) catch return null;
 
     var offsets: std.ArrayList(usize) = .empty;
     defer offsets.deinit(allocator);

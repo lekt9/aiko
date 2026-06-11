@@ -275,6 +275,43 @@ pub fn findParentIdForId(
     return null;
 }
 
+/// Byte size of the resolved ledger (0 when absent). Append-only file ⇒
+/// size is a sound within-process cache-invalidation key.
+pub fn currentSize(allocator: std.mem.Allocator, env: std.process.Environ) u64 {
+    const path = resolvePath(allocator, env) catch return 0;
+    defer allocator.free(path);
+    const path_z = allocator.dupeZ(u8, path) catch return 0;
+    defer allocator.free(path_z);
+    var flags: c.O = .{};
+    flags.ACCMODE = .RDONLY;
+    const fd: c_int = c.open(path_z.ptr, flags, @as(c_uint, 0));
+    if (fd < 0) return 0;
+    defer _ = c.close(fd);
+    const off = c.lseek(fd, 0, c.SEEK.END);
+    return if (off < 0) 0 else @intCast(off);
+}
+
+// Within-process whole-ledger read cache (bench finding, docs/journal.md
+// 2026-06-11): the cache layer's per-id walks re-slurped the full ledger
+// once per call — at resolver scale that is hundreds of reads per
+// invocation, each leaked. Size-keyed memo; old buffers leak bounded by
+// APPENDS, not reads. Single-threaded CLI — plain globals are safe.
+var read_cache_size: u64 = 0;
+var read_cache_buf: ?[]u8 = null;
+
+/// Memoized whole-ledger read. The returned slice is CACHE-OWNED — the
+/// caller must NOT free it. Re-reads only when the file size changed.
+pub fn readAllShared(allocator: std.mem.Allocator, env: std.process.Environ) ![]const u8 {
+    const size = currentSize(allocator, env);
+    if (read_cache_buf) |b| {
+        if (size != 0 and size == read_cache_size) return b;
+    }
+    const buf = try readAll(allocator, env);
+    read_cache_buf = buf;
+    read_cache_size = size;
+    return buf;
+}
+
 /// Slurp the entire resolved ledger file. Returns an owned []u8 (empty when
 /// the file doesn't exist). 16 MiB cap is way above the largest ledger ever
 /// observed (the global ledger is ~3 MB after months of use).

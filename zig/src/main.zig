@@ -384,7 +384,83 @@ fn countTerminalEvents(rows: []const Row) usize {
     return n;
 }
 
+// Within-process ledger parse cache (bench finding, docs/journal.md
+// 2026-06-11): resolver passes re-parsed the FULL ledger per pass and per
+// candidate row — O(reads × rows) CPU and one leaked ledger buffer per
+// read (~3.2 GB RSS observed at 2k rows). The ledger is append-only, so
+// file size is a sound invalidation key. The cache owns the template
+// slice and the backing strings; callers receive a fresh struct-slice
+// copy and free the SLICE only — string ownership never transfers, which
+// preserves the existing borrow contract. Old generations leak bounded
+// by APPENDS per process, not by reads.
+var parse_cache_size: u64 = 0;
+var parse_cache_rows: ?[]Row = null;
+
+/// Parse one ledger line into a Row. Cheap fields borrow from `line`
+/// (which borrows from a process-lifetime buffer); decoded fields
+/// allocate. ONE named place for the row schema read.
+fn parseRowLine(allocator: std.mem.Allocator, line: []const u8) Row {
+    var r = Row{};
+    r.id = jsonString(line, "id") orelse "";
+    r.event = jsonString(line, "event") orelse "";
+    // User-shaped fields are decoded here so shell/python/argv consumers
+    // never see literal escapes. Owned slices leak with the backing buffer
+    // for the process lifetime (see parseRows header comment).
+    r.plan = (jsonStringDecoded(allocator, line, "plan") catch null) orelse "";
+    r.action = (jsonStringDecoded(allocator, line, "action") catch null) orelse "";
+    r.cwd = (jsonStringDecoded(allocator, line, "cwd") catch null) orelse "";
+    r.parent_id = jsonNullableString(line, "parent_id");
+    r.child_id = jsonString(line, "child_id") orelse "";
+    r.action_result = (jsonStringDecoded(allocator, line, "action_result") catch null) orelse "";
+    r.action_exit = jsonInt(line, "action_exit") orelse 0;
+    r.wave = @intCast(jsonInt(line, "wave") orelse 0);
+    r.satisfied = std.mem.eql(u8, r.event, "satisfied");
+    r.env_pubkey = jsonString(line, "env_pubkey") orelse "";
+    r.output_signature = jsonString(line, "output_signature") orelse "";
+    r.input_hash = jsonString(line, "input_hash") orelse "";
+    r.source_id = jsonString(line, "source_id") orelse "";
+    r.ts = jsonString(line, "ts") orelse "";
+    r.actor_pubkey = jsonString(line, "actor_pubkey") orelse "";
+    r.role = jsonString(line, "role") orelse "";
+    r.scope = jsonString(line, "scope") orelse "";
+    r.parent_signature = jsonString(line, "parent_signature") orelse "";
+    r.layer = @intCast(jsonInt(line, "layer") orelse 0);
+    return r;
+}
+
 fn parseRows(allocator: std.mem.Allocator, env: std.process.Environ) ![]Row {
+    const cur_size = ledger.currentSize(allocator, env);
+    if (parse_cache_rows) |tmpl| {
+        // Same size → serve the template untouched.
+        if (cur_size != 0 and cur_size == parse_cache_size) {
+            const copy = try allocator.alloc(Row, tmpl.len);
+            @memcpy(copy, tmpl);
+            return copy;
+        }
+        // Grew (the common resolver case: our own appends between calls)
+        // → parse ONLY the appended tail and extend the template. Sound
+        // because the file is append-only and every append is one whole
+        // `row + "\n"` writev — any previously observed size is a line
+        // boundary. O(new bytes) per resolver step instead of O(file).
+        if (cur_size > parse_cache_size and parse_cache_size != 0) {
+            const tail = try ledger.readFrom(allocator, env, parse_cache_size);
+            var rows: std.ArrayList(Row) = .empty;
+            errdefer rows.deinit(allocator);
+            try rows.appendSlice(allocator, tmpl);
+            var it = std.mem.splitScalar(u8, tail, '\n');
+            while (it.next()) |line| {
+                if (line.len == 0) continue;
+                try rows.append(allocator, parseRowLine(allocator, line));
+            }
+            const owned = try rows.toOwnedSlice(allocator);
+            const new_tmpl = try allocator.alloc(Row, owned.len);
+            @memcpy(new_tmpl, owned);
+            allocator.free(tmpl);
+            parse_cache_rows = new_tmpl;
+            parse_cache_size = cur_size;
+            return owned;
+        }
+    }
     const data = try ledger.readAll(allocator, env);
     // Rows intentionally borrow slices from `data`. The native CLI is a
     // short-lived process, so keeping the ledger buffer alive until process
@@ -395,34 +471,17 @@ fn parseRows(allocator: std.mem.Allocator, env: std.process.Environ) ![]Row {
     var it = std.mem.splitScalar(u8, data, '\n');
     while (it.next()) |line| {
         if (line.len == 0) continue;
-        var r = Row{};
-        r.id = jsonString(line, "id") orelse "";
-        r.event = jsonString(line, "event") orelse "";
-        // User-shaped fields are decoded here so shell/python/argv consumers
-        // never see literal escapes. Owned slices leak with `data` for the
-        // process lifetime (see header comment).
-        r.plan = (jsonStringDecoded(allocator, line, "plan") catch null) orelse "";
-        r.action = (jsonStringDecoded(allocator, line, "action") catch null) orelse "";
-        r.cwd = (jsonStringDecoded(allocator, line, "cwd") catch null) orelse "";
-        r.parent_id = jsonNullableString(line, "parent_id");
-        r.child_id = jsonString(line, "child_id") orelse "";
-        r.action_result = (jsonStringDecoded(allocator, line, "action_result") catch null) orelse "";
-        r.action_exit = jsonInt(line, "action_exit") orelse 0;
-        r.wave = @intCast(jsonInt(line, "wave") orelse 0);
-        r.satisfied = std.mem.eql(u8, r.event, "satisfied");
-        r.env_pubkey = jsonString(line, "env_pubkey") orelse "";
-        r.output_signature = jsonString(line, "output_signature") orelse "";
-        r.input_hash = jsonString(line, "input_hash") orelse "";
-        r.source_id = jsonString(line, "source_id") orelse "";
-        r.ts = jsonString(line, "ts") orelse "";
-        r.actor_pubkey = jsonString(line, "actor_pubkey") orelse "";
-        r.role = jsonString(line, "role") orelse "";
-        r.scope = jsonString(line, "scope") orelse "";
-        r.parent_signature = jsonString(line, "parent_signature") orelse "";
-        r.layer = @intCast(jsonInt(line, "layer") orelse 0);
-        try rows.append(allocator, r);
+        try rows.append(allocator, parseRowLine(allocator, line));
     }
-    return try rows.toOwnedSlice(allocator);
+    const owned = try rows.toOwnedSlice(allocator);
+    // Stash the template. The previous template's slice memory is freed;
+    // backing strings leak bounded by appends, not reads (see header).
+    if (parse_cache_rows) |old| allocator.free(old);
+    const tmpl = try allocator.alloc(Row, owned.len);
+    @memcpy(tmpl, owned);
+    parse_cache_rows = tmpl;
+    parse_cache_size = cur_size;
+    return owned;
 }
 
 fn latestDeclared(rows: []const Row, id: []const u8) ?Row {
