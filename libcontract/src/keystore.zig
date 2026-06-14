@@ -180,32 +180,30 @@ fn validateSvc(svc: []const u8) !void {
 
 // ─────────────── pay.sh (Secure Enclave + biometric) backend ───────────────
 //
-// Opt-in macOS backend. When CONTRACT_KEY_VAULT=pay and ~/.cache/pay/pay.sh
-// exists, the secret is stored/read through pay.sh — a Secure-Enclave +
-// Touch-ID-backed vault — binding the wallet to this user on this machine
-// (stronger than the plain `/usr/bin/security` Keychain item the security CLI
-// writes). Preferred-but-fallthrough: any miss/error falls back to the security
+// Auto-detected macOS backend. When ~/.cache/pay/pay.sh exists, the secret is
+// stored/read through pay.sh — a Secure-Enclave + Touch-ID-backed vault —
+// binding the wallet to this user on this machine (stronger than the plain
+// `/usr/bin/security` Keychain item the security CLI writes). Installing pay.sh
+// IS the opt-in; the substrate reads no new env var (doctrine: only HOME is
+// read). Preferred-but-fallthrough: any miss/error falls back to the security
 // CLI and then the encrypted file, so the wallet is never lost and ~/.contracts/
 // root.key stays canonical. Non-biometric `read` is used for the substrate's
 // frequent reads (no Touch ID per declare); `store` writes the Enclave item.
 
-fn cEnv(key: [*:0]const u8) ?[]const u8 {
-    const z = std.c.getenv(key) orelse return null;
+fn cHome() ?[]const u8 {
+    const z = std.c.getenv("HOME") orelse return null;
     return std.mem.span(@as([*:0]const u8, @ptrCast(z)));
 }
 
 fn payShEnabled() bool {
-    const v = cEnv("CONTRACT_KEY_VAULT") orelse return false;
-    if (!std.mem.eql(u8, v, "pay")) return false;
-    const home = cEnv("HOME") orelse return false;
+    const home = cHome() orelse return false;
     var pbuf: [512]u8 = undefined;
     const p = std.fmt.bufPrintZ(&pbuf, "{s}/.cache/pay/pay.sh", .{home}) catch return false;
-    if (access(p.ptr, 0) != 0) return false; // F_OK — pay.sh not installed
-    return true;
+    return access(p.ptr, 0) == 0; // F_OK — pay.sh installed = opt-in
 }
 
 fn payShRead(allocator: std.mem.Allocator, svc: []const u8) !?[]u8 {
-    const home = cEnv("HOME") orelse return null;
+    const home = cHome() orelse return null;
     var cmd_buf: [768]u8 = undefined;
     // svc is validateSvc-sanitized ([a-zA-Z0-9._-]) so interpolation is safe.
     const cmd = try std.fmt.bufPrintZ(
@@ -230,7 +228,7 @@ fn payShWrite(allocator: std.mem.Allocator, svc: []const u8, value: []const u8) 
     for (value) |c| {
         if (c == '\'' or c == '\n' or c == '\r' or c == 0) return KeystoreError.InvalidServiceName;
     }
-    const home = cEnv("HOME") orelse return KeystoreError.NoHome;
+    const home = cHome() orelse return KeystoreError.NoHome;
     var cmd_buf: [4608]u8 = undefined;
     const cmd = try std.fmt.bufPrintZ(
         &cmd_buf,
