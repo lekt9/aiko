@@ -37,6 +37,7 @@ extern fn popen(command: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
 extern fn pclose(stream: *anyopaque) c_int;
 extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: *anyopaque) usize;
 extern fn system(command: [*:0]const u8) c_int;
+extern fn access(path: [*:0]const u8, mode: c_int) c_int;
 
 const FALLBACK_HKDF_SALT: []const u8 = "aiko-keystore-v1";
 const FALLBACK_DIR_REL: []const u8 = ".aiko/keys";
@@ -74,6 +75,14 @@ pub fn read(allocator: std.mem.Allocator, svc: []const u8) !?[]u8 {
     try validateSvc(svc);
     switch (builtin.os.tag) {
         .macos => {
+            // Preferred: pay.sh Secure-Enclave vault (opt-in). Miss/err falls
+            // through to the security CLI then the fallback file — never lost.
+            if (payShEnabled()) {
+                if (payShRead(allocator, svc) catch |e| blk: {
+                    surface("pay.sh read failed svc={s}: {s} — falling through to security keychain", .{ svc, @errorName(e) });
+                    break :blk null;
+                }) |v| return v;
+            }
             if (try darwinRead(allocator, svc)) |v| return v;
             // Darwin keychain returned no entry — try the fallback file before
             // declaring not-found. If the fallback hits, surface it.
@@ -115,6 +124,12 @@ pub fn write(allocator: std.mem.Allocator, svc: []const u8, value: []const u8) !
     try validateSvc(svc);
     switch (builtin.os.tag) {
         .macos => {
+            // Bind into the pay.sh Secure-Enclave vault (opt-in), best-effort,
+            // then also write the security keychain so both backends hold it.
+            if (payShEnabled()) {
+                payShWrite(allocator, svc, value) catch |e|
+                    surface("pay.sh store failed svc={s}: {s} — continuing with security keychain", .{ svc, @errorName(e) });
+            }
             darwinWrite(allocator, svc, value) catch |e| {
                 surface("darwin write failed for svc={s}: {s} — falling back to encrypted file", .{ svc, @errorName(e) });
                 return try fallbackWrite(allocator, svc, value);
@@ -161,6 +176,69 @@ fn validateSvc(svc: []const u8) !void {
             (c >= '0' and c <= '9') or c == '.' or c == '_' or c == '-';
         if (!ok) return KeystoreError.InvalidServiceName;
     }
+}
+
+// ─────────────── pay.sh (Secure Enclave + biometric) backend ───────────────
+//
+// Opt-in macOS backend. When CONTRACT_KEY_VAULT=pay and ~/.cache/pay/pay.sh
+// exists, the secret is stored/read through pay.sh — a Secure-Enclave +
+// Touch-ID-backed vault — binding the wallet to this user on this machine
+// (stronger than the plain `/usr/bin/security` Keychain item the security CLI
+// writes). Preferred-but-fallthrough: any miss/error falls back to the security
+// CLI and then the encrypted file, so the wallet is never lost and ~/.contracts/
+// root.key stays canonical. Non-biometric `read` is used for the substrate's
+// frequent reads (no Touch ID per declare); `store` writes the Enclave item.
+
+fn cEnv(key: [*:0]const u8) ?[]const u8 {
+    const z = std.c.getenv(key) orelse return null;
+    return std.mem.span(@as([*:0]const u8, @ptrCast(z)));
+}
+
+fn payShEnabled() bool {
+    const v = cEnv("CONTRACT_KEY_VAULT") orelse return false;
+    if (!std.mem.eql(u8, v, "pay")) return false;
+    const home = cEnv("HOME") orelse return false;
+    var pbuf: [512]u8 = undefined;
+    const p = std.fmt.bufPrintZ(&pbuf, "{s}/.cache/pay/pay.sh", .{home}) catch return false;
+    if (access(p.ptr, 0) != 0) return false; // F_OK — pay.sh not installed
+    return true;
+}
+
+fn payShRead(allocator: std.mem.Allocator, svc: []const u8) !?[]u8 {
+    const home = cEnv("HOME") orelse return null;
+    var cmd_buf: [768]u8 = undefined;
+    // svc is validateSvc-sanitized ([a-zA-Z0-9._-]) so interpolation is safe.
+    const cmd = try std.fmt.bufPrintZ(
+        &cmd_buf,
+        "\"{s}/.cache/pay/pay.sh\" read {s} 2>/dev/null",
+        .{ home, svc },
+    );
+    const fp = popen(cmd.ptr, "r") orelse return null;
+    var buf: [4096]u8 = undefined;
+    const n = fread(&buf, 1, buf.len, fp);
+    const rc = pclose(fp);
+    if (rc != 0 or n == 0) return null;
+    var end: usize = n;
+    while (end > 0 and (buf[end - 1] == '\n' or buf[end - 1] == '\r' or buf[end - 1] == ' ')) end -= 1;
+    if (end == 0) return null;
+    return try allocator.dupe(u8, buf[0..end]);
+}
+
+fn payShWrite(allocator: std.mem.Allocator, svc: []const u8, value: []const u8) !void {
+    _ = allocator;
+    // value must be shell-safe (callers hex-encode); reject quote/newline/NUL.
+    for (value) |c| {
+        if (c == '\'' or c == '\n' or c == '\r' or c == 0) return KeystoreError.InvalidServiceName;
+    }
+    const home = cEnv("HOME") orelse return KeystoreError.NoHome;
+    var cmd_buf: [4608]u8 = undefined;
+    const cmd = try std.fmt.bufPrintZ(
+        &cmd_buf,
+        "printf '%s' '{s}' | \"{s}/.cache/pay/pay.sh\" store {s} 2>/dev/null",
+        .{ value, home, svc },
+    );
+    const rc = system(cmd.ptr);
+    if (rc != 0) return KeystoreError.WriteFailed;
 }
 
 // ─────────────── darwin (security CLI) ───────────────
