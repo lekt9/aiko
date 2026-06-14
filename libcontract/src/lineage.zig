@@ -56,7 +56,11 @@ pub fn loadOrInitRootKey(allocator: std.mem.Allocator, env: std.process.Environ)
     const mirror = try std.fs.path.join(allocator, &.{ home, ".aiko", "keys", "root.key" });
     defer allocator.free(mirror);
 
-    // Tier 1: canonical file (the happy path — no evidence emission needed).
+    // Tier 1: canonical file (the happy path — no evidence emission needed, and
+    // crucially NO keychain/pay.sh touch, so a contract call in a session without
+    // a keychain never reaches the OS-keystore backend). The Secure-Enclave copy
+    // is the bound recovery tier below — it survives file loss, but the file is
+    // canonical so the hot path is fast and never prompts.
     if (readHexFile(canonical)) |existing| {
         backfillMirrors(allocator, &existing, canonical, mirror) catch |e|
             surface("backfill from canonical tier failed: {s}", .{@errorName(e)});
@@ -66,8 +70,7 @@ pub fn loadOrInitRootKey(allocator: std.mem.Allocator, env: std.process.Environ)
         return err;
     }
 
-    // Tier 2: mirror file. If we reach here, canonical was missing — surface
-    // the fall-through so observers see the canonical tier is degraded.
+    // Tier 2: mirror file. canonical was missing — surface the degradation.
     if (readHexFile(mirror)) |existing| {
         surface("canonical tier missing at {s}, served from mirror tier {s}", .{ canonical, mirror });
         backfillMirrors(allocator, &existing, canonical, mirror) catch |e|
@@ -78,7 +81,10 @@ pub fn loadOrInitRootKey(allocator: std.mem.Allocator, env: std.process.Environ)
         return err;
     }
 
-    // Tier 3: OS keystore. Both file tiers missed — degraded state, surface.
+    // Tier 3: OS keystore (Secure-Enclave via pay.sh, or security CLI). Both
+    // file tiers missed — the bound vault is the recovery source. Only reached
+    // when files are gone, so the keychain/pay.sh interaction is rare, not
+    // per-load.
     if (readKeychainSeed(allocator)) |existing| {
         surface("both file tiers missing, served from OS keystore (svc=aiko.root.ed25519.seed)", .{});
         backfillMirrors(allocator, &existing, canonical, mirror) catch |e|
@@ -89,8 +95,8 @@ pub fn loadOrInitRootKey(allocator: std.mem.Allocator, env: std.process.Environ)
         return err;
     }
 
-    // Tier 4: fresh generation. ALL three tiers missed — true first-run on
-    // a clean machine. Surface this loudly: a wallet is being born.
+    // Tier 4: fresh generation. ALL tiers missed — true first-run on a clean
+    // machine. Surface this loudly: a wallet is being born.
     surface("FIRST RUN — generating fresh ed25519 root seed (no existing material in canonical/mirror/keystore tiers)", .{});
     var fresh: [32]u8 = undefined;
     arc4random_buf(&fresh, fresh.len);

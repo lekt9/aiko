@@ -241,7 +241,33 @@ fn payShWrite(allocator: std.mem.Allocator, svc: []const u8, value: []const u8) 
 
 // ─────────────── darwin (security CLI) ───────────────
 
+/// Non-prompting probe: is a keychain available in THIS session's search list?
+/// `security add/find-generic-password` pops a blocking SecurityAgent dialog
+/// ("a keychain cannot be found to store …") when the search list is empty —
+/// and `2>/dev/null` cannot suppress it (the dialog is a separate UI process,
+/// not stderr). The ONLY way to avoid the dialog is to not invoke `security`
+/// when no keychain is present. `list-keychains` is a pure query (never
+/// prompts); empty output / failure ⇒ skip the security backend, fall to the
+/// encrypted-file fallback. This keeps the keystore non-blocking by
+/// construction in headless / no-session contexts (the bug that popped a dialog
+/// in a sibling agent session).
+fn darwinKeychainUsable() bool {
+    const fp = popen("/usr/bin/security list-keychains -d user 2>/dev/null", "r") orelse return false;
+    var buf: [512]u8 = undefined;
+    const n = fread(&buf, 1, buf.len, fp);
+    const rc = pclose(fp);
+    if (rc != 0) return false;
+    // Any non-whitespace, non-quote byte ⇒ at least one keychain in the list.
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const c = buf[i];
+        if (c != ' ' and c != '\n' and c != '\r' and c != '\t' and c != '"') return true;
+    }
+    return false;
+}
+
 fn darwinRead(allocator: std.mem.Allocator, svc: []const u8) !?[]u8 {
+    if (!darwinKeychainUsable()) return null; // no keychain → never invoke `security`
     var cmd_buf: [512]u8 = undefined;
     const cmd = try std.fmt.bufPrintZ(
         &cmd_buf,
@@ -261,6 +287,10 @@ fn darwinRead(allocator: std.mem.Allocator, svc: []const u8) !?[]u8 {
 
 fn darwinWrite(allocator: std.mem.Allocator, svc: []const u8, value: []const u8) !void {
     _ = allocator;
+    // No keychain in this session → never invoke `security add-generic-password`
+    // (it would pop a blocking dialog). Caller falls through to the encrypted
+    // file, which always works and never prompts.
+    if (!darwinKeychainUsable()) return KeystoreError.WriteFailed;
     // value must be shell-safe; callers hex-encode before passing in. Reject
     // anything containing a single-quote to keep the single-quoted shell arg
     // unambiguous.
@@ -281,6 +311,7 @@ fn darwinWrite(allocator: std.mem.Allocator, svc: []const u8, value: []const u8)
 
 fn darwinDelete(allocator: std.mem.Allocator, svc: []const u8) !void {
     _ = allocator;
+    if (!darwinKeychainUsable()) return; // no keychain → nothing to delete, no prompt
     var cmd_buf: [512]u8 = undefined;
     const cmd = try std.fmt.bufPrintZ(
         &cmd_buf,
