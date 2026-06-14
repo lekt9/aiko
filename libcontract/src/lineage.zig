@@ -56,12 +56,44 @@ pub fn loadOrInitRootKey(allocator: std.mem.Allocator, env: std.process.Environ)
     const mirror = try std.fs.path.join(allocator, &.{ home, ".aiko", "keys", "root.key" });
     defer allocator.free(mirror);
 
-    // Tier 1: canonical file (the happy path — no evidence emission needed, and
-    // crucially NO keychain/pay.sh touch, so a contract call in a session without
-    // a keychain never reaches the OS-keystore backend). The Secure-Enclave copy
-    // is the bound recovery tier below — it survives file loss, but the file is
-    // canonical so the hot path is fast and never prompts.
+    // Tier 1 (Enclave-canonical): OS keystore — the Secure-Enclave vault is the
+    // canonical source; the wallet is bound to the user. Safe now that the
+    // keystore is non-prompting by construction (pay.sh + security are both
+    // gated by a live-keychain-session probe and use only non-biometric verbs).
+    // CORRUPTION GUARD: if the canonical file ALSO exists and DIFFERS from the
+    // vault seed, the file is authoritative (recovery wins over a drifted vault)
+    // and the vault is re-bound — a valid-but-wrong vault seed can never silently
+    // change the wallet.
+    if (readKeychainSeed(allocator)) |ks_seed| {
+        if (readHexFile(canonical)) |file_seed| {
+            if (std.mem.eql(u8, &ks_seed, &file_seed)) {
+                return ks_seed; // match — Enclave canonical, happy path
+            }
+            surface("CORRUPTION GUARD: keystore seed != canonical file {s} — file is authoritative; re-binding keystore", .{canonical});
+            writeKeychainSeed(allocator, &file_seed) catch |e|
+                surface("keystore re-bind from canonical failed: {s}", .{@errorName(e)});
+            return file_seed;
+        } else |err| {
+            if (err != error.FileNotFound) {
+                surface("canonical read errored during keystore cross-check: {s}", .{@errorName(err)});
+                return err;
+            }
+            // No canonical file — the Enclave is the sole source (fully bound to
+            // the user). Back-fill the file tiers so recovery exists again.
+            backfillMirrors(allocator, &ks_seed, canonical, mirror) catch |e|
+                surface("backfill from keystore tier failed: {s}", .{@errorName(e)});
+            return ks_seed;
+        }
+    } else |err| if (err != error.NotFound) {
+        surface("keystore tier read errored (not just missing): {s}", .{@errorName(err)});
+        return err;
+    }
+
+    // Tier 2: canonical file (keystore empty — pre-bind, or a non-Enclave host /
+    // dead keychain session where the gate skipped the vault). Back-fill
+    // populates the keystore so the next load in a live session hits tier 1.
     if (readHexFile(canonical)) |existing| {
+        surface("keystore tier empty/unavailable, served from canonical file {s}", .{canonical});
         backfillMirrors(allocator, &existing, canonical, mirror) catch |e|
             surface("backfill from canonical tier failed: {s}", .{@errorName(e)});
         return existing;
@@ -70,9 +102,9 @@ pub fn loadOrInitRootKey(allocator: std.mem.Allocator, env: std.process.Environ)
         return err;
     }
 
-    // Tier 2: mirror file. canonical was missing — surface the degradation.
+    // Tier 3: mirror file. keystore + canonical both missed — degraded, surface.
     if (readHexFile(mirror)) |existing| {
-        surface("canonical tier missing at {s}, served from mirror tier {s}", .{ canonical, mirror });
+        surface("keystore + canonical missing, served from mirror tier {s}", .{mirror});
         backfillMirrors(allocator, &existing, canonical, mirror) catch |e|
             surface("backfill from mirror tier failed: {s}", .{@errorName(e)});
         return existing;
@@ -81,23 +113,9 @@ pub fn loadOrInitRootKey(allocator: std.mem.Allocator, env: std.process.Environ)
         return err;
     }
 
-    // Tier 3: OS keystore (Secure-Enclave via pay.sh, or security CLI). Both
-    // file tiers missed — the bound vault is the recovery source. Only reached
-    // when files are gone, so the keychain/pay.sh interaction is rare, not
-    // per-load.
-    if (readKeychainSeed(allocator)) |existing| {
-        surface("both file tiers missing, served from OS keystore (svc=aiko.root.ed25519.seed)", .{});
-        backfillMirrors(allocator, &existing, canonical, mirror) catch |e|
-            surface("backfill from keystore tier failed: {s}", .{@errorName(e)});
-        return existing;
-    } else |err| if (err != error.NotFound) {
-        surface("keystore tier read errored (not just missing): {s}", .{@errorName(err)});
-        return err;
-    }
-
     // Tier 4: fresh generation. ALL tiers missed — true first-run on a clean
     // machine. Surface this loudly: a wallet is being born.
-    surface("FIRST RUN — generating fresh ed25519 root seed (no existing material in canonical/mirror/keystore tiers)", .{});
+    surface("FIRST RUN — generating fresh ed25519 root seed (no existing material in keystore/canonical/mirror tiers)", .{});
     var fresh: [32]u8 = undefined;
     arc4random_buf(&fresh, fresh.len);
     try writeHexFile(allocator, canonical, &fresh);

@@ -196,10 +196,26 @@ fn cHome() ?[]const u8 {
 }
 
 fn payShEnabled() bool {
+    // Provably non-prompting gate: pay.sh needs a live keychain session; in a
+    // dead session (no keychain in the search list) keychain/Enclave ops can
+    // prompt or hang. The same non-prompting probe that guards the security CLI
+    // guards pay.sh — no session ⇒ pay.sh is never invoked ⇒ file fallback.
+    if (!darwinKeychainUsable()) return false;
     const home = cHome() orelse return false;
     var pbuf: [512]u8 = undefined;
     const p = std.fmt.bufPrintZ(&pbuf, "{s}/.cache/pay/pay.sh", .{home}) catch return false;
     return access(p.ptr, 0) == 0; // F_OK — pay.sh installed = opt-in
+}
+
+/// Best-effort timeout prefix for a pay.sh shellout, so a wedged call is killed
+/// (its death dismisses any dialog it owns) instead of hanging the substrate.
+/// Empty when no timeout binary is present — the keychain-session gate is the
+/// primary, always-present protection.
+fn payTimeoutPrefix() []const u8 {
+    if (access("/opt/homebrew/bin/gtimeout", 0) == 0) return "/opt/homebrew/bin/gtimeout 6 ";
+    if (access("/usr/local/bin/gtimeout", 0) == 0) return "/usr/local/bin/gtimeout 6 ";
+    if (access("/usr/bin/timeout", 0) == 0) return "/usr/bin/timeout 6 ";
+    return "";
 }
 
 fn payShRead(allocator: std.mem.Allocator, svc: []const u8) !?[]u8 {
@@ -208,8 +224,8 @@ fn payShRead(allocator: std.mem.Allocator, svc: []const u8) !?[]u8 {
     // svc is validateSvc-sanitized ([a-zA-Z0-9._-]) so interpolation is safe.
     const cmd = try std.fmt.bufPrintZ(
         &cmd_buf,
-        "\"{s}/.cache/pay/pay.sh\" read {s} 2>/dev/null",
-        .{ home, svc },
+        "{s}\"{s}/.cache/pay/pay.sh\" read {s} 2>/dev/null",
+        .{ payTimeoutPrefix(), home, svc },
     );
     const fp = popen(cmd.ptr, "r") orelse return null;
     var buf: [4096]u8 = undefined;
@@ -232,8 +248,8 @@ fn payShWrite(allocator: std.mem.Allocator, svc: []const u8, value: []const u8) 
     var cmd_buf: [4608]u8 = undefined;
     const cmd = try std.fmt.bufPrintZ(
         &cmd_buf,
-        "printf '%s' '{s}' | \"{s}/.cache/pay/pay.sh\" store {s} 2>/dev/null",
-        .{ value, home, svc },
+        "printf '%s' '{s}' | {s}\"{s}/.cache/pay/pay.sh\" store {s} 2>/dev/null",
+        .{ value, payTimeoutPrefix(), home, svc },
     );
     const rc = system(cmd.ptr);
     if (rc != 0) return KeystoreError.WriteFailed;
