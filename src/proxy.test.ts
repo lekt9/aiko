@@ -84,6 +84,24 @@ describe("handleRequest", () => {
     expect(seenBody).toBe(original); // byte-for-byte passthrough — "default" NOT expanded
   });
 
+  // Security invariant (verified live in step 5): a client-supplied Authorization must be
+  // REPLACED with the upstream key, never forwarded — otherwise a client could reach the
+  // upstream with its own/forged credentials instead of the proxy's.
+  it("REPLACES a client-supplied Authorization header with the upstream key", async () => {
+    let seenAuth: string | null = null;
+    globalThis.fetch = mock(async (_url: string, init: RequestInit) => {
+      seenAuth = new Headers(init.headers).get("authorization");
+      return new Response(JSON.stringify({ ok: 1 }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const req = new Request("http://x/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer cg_sk_STOLEN_BOGUS" },
+      body: JSON.stringify({ model: "default", messages: [] }),
+    });
+    await handleRequest(req, ENV);
+    expect(seenAuth).toBe("Bearer cg_sk_test"); // upstream key, NOT the client's bogus one
+  });
+
   it("answers an OPTIONS preflight with CORS headers and no upstream call", async () => {
     let called = false;
     globalThis.fetch = mock(async () => {
