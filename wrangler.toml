@@ -12,7 +12,7 @@ account_id = "6d81c1b653effb2e0eac5ee071107122"
 UPSTREAM_BASE = "https://gateway.codegraff.com"
 DEFAULT_MODEL = "deepseek-v4-pro"
 
-# Point unbrowse.ai/v1/* at this Worker (adjust zone/route to taste):
-# [[routes]]
-# pattern = "unbrowse.ai/v1/*"
-# zone_name = "unbrowse.ai"
+# Serve the proxy at unbrowse.ai/v1/* (in addition to the workers.dev URL).
+[[routes]]
+pattern = "unbrowse.ai/v1/*"
+zone_name = "unbrowse.ai"
