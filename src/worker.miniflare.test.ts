@@ -62,4 +62,32 @@ describe("Worker artifact under workerd (Miniflare)", () => {
     expect(lastOutbound?.auth).toBe("Bearer cg_sk_miniflare");
     expect(JSON.parse(lastOutbound?.body ?? "{}").model).toBe("deepseek-v4-pro");
   });
+
+  // The #1 deploy mistake is forgetting `wrangler secret put CODEGRAFF_API_KEY`.
+  // The Worker must fail LOUD (500), never silently pass a keyless request upstream.
+  it("fails loud with 500 when the CODEGRAFF_API_KEY secret is missing (forgotten `wrangler secret put`)", async () => {
+    const built = await Bun.build({ entrypoints: ["./src/worker.ts"], target: "browser", format: "esm" });
+    const script = await built.outputs[0].text();
+    let outboundCalled = false;
+    const bare = new Miniflare({
+      modules: true,
+      script,
+      bindings: { DEFAULT_MODEL: "deepseek-v4-pro" }, // NOTE: no CODEGRAFF_API_KEY
+      async outboundService() {
+        outboundCalled = true;
+        return Response.json({});
+      },
+    });
+    try {
+      const res = await bare.dispatchFetch("http://proxy.local/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "default", messages: [] }),
+      });
+      expect(res.status).toBe(500);
+      expect(outboundCalled).toBe(false); // never reached upstream — no keyless leak
+    } finally {
+      await bare.dispose();
+    }
+  });
 });
