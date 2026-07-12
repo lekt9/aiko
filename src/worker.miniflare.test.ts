@@ -91,3 +91,65 @@ describe("Worker artifact under workerd (Miniflare)", () => {
     }
   });
 });
+
+// Real-runtime behavior: the deployed Worker must stream, route, and defend auth the
+// same way the pure handler does — proven INSIDE workerd, where a ReadableStream
+// passthrough can behave differently than in a mock.
+describe("Worker runtime behavior (workerd edges + adversarial)", () => {
+  it("GOLDEN edge — streams an SSE response body through unbuffered", async () => {
+    const built = await Bun.build({ entrypoints: ["./src/worker.ts"], target: "browser", format: "esm" });
+    const script = await built.outputs[0].text();
+    const stream = new Miniflare({
+      modules: true,
+      script,
+      bindings: { CODEGRAFF_API_KEY: "cg_sk_x", DEFAULT_MODEL: "deepseek-v4-pro" },
+      async outboundService() {
+        // Emit three SSE frames as a stream, exactly like a streamed completion.
+        const body = new ReadableStream({
+          start(controller) {
+            const enc = new TextEncoder();
+            controller.enqueue(enc.encode("data: a\n\n"));
+            controller.enqueue(enc.encode("data: b\n\n"));
+            controller.enqueue(enc.encode("data: [DONE]\n\n"));
+            controller.close();
+          },
+        });
+        return new Response(body, { headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    try {
+      const res = await stream.dispatchFetch("http://proxy.local/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "default", stream: true, messages: [] }),
+      });
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+      const text = await res.text();
+      expect(text).toContain("data: a");
+      expect(text).toContain("data: b");
+      expect(text).toContain("[DONE]");
+    } finally {
+      await stream.dispose();
+    }
+  });
+
+  it("EDGE — an unknown (non-/v1) path returns 404 without an upstream call", async () => {
+    const res = await mf.dispatchFetch("http://proxy.local/nope");
+    expect(res.status).toBe(404);
+  });
+
+  it("EDGE — an OPTIONS preflight returns 204 with CORS headers", async () => {
+    const res = await mf.dispatchFetch("http://proxy.local/v1/chat/completions", { method: "OPTIONS" });
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+  });
+
+  it("ADVERSARIAL — replaces a client-supplied Authorization with the upstream key", async () => {
+    await mf.dispatchFetch("http://proxy.local/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer cg_sk_CLIENT_FORGED" },
+      body: JSON.stringify({ model: "default", messages: [] }),
+    });
+    expect(lastOutbound?.auth).toBe("Bearer cg_sk_miniflare"); // upstream key, not the client's
+  });
+});
