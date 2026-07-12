@@ -47,6 +47,33 @@ export function resolveModel(requested: unknown, def: string): string {
   return PLACEHOLDER_MODELS.has(id.toLowerCase()) ? def : id;
 }
 
+const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * Fetch the upstream, retrying transient failures. The gateway (DeepSeek behind
+ * codegraff) returns intermittent 5xx / 429 ("internal error, please try again")
+ * that are safe to retry — the status arrives before any body is streamed, so a
+ * retry never re-sends a half-consumed stream. `body` is a string, reusable across
+ * attempts. Non-retryable statuses (and success) return on the first response.
+ */
+async function fetchWithRetry(
+  target: string,
+  init: { method: string; headers: Headers; body?: BodyInit },
+  retries = 2,
+): Promise<Response> {
+  let last: Response | undefined;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    last = await fetch(target, init);
+    if (!RETRYABLE.has(last.status)) return last;
+    if (attempt < retries) {
+      await last.body?.cancel().catch(() => {}); // free the failed body before retrying
+      await sleep(250 * (attempt + 1)); // 250ms, 500ms
+    }
+  }
+  return last as Response;
+}
+
 export async function handleRequest(request: Request, env: ProxyEnv): Promise<Response> {
   const url = new URL(request.url);
 
@@ -96,7 +123,7 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
 
   let upstream: Response;
   try {
-    upstream = await fetch(target, { method: request.method, headers, body });
+    upstream = await fetchWithRetry(target, { method: request.method, headers, body });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return json({ error: { message: `upstream fetch failed: ${msg}` } }, 502);

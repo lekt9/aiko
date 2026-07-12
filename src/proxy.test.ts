@@ -102,6 +102,35 @@ describe("handleRequest", () => {
     expect(seenAuth).toBe("Bearer cg_sk_test"); // upstream key, NOT the client's bogus one
   });
 
+  it("retries a transient upstream 500 and succeeds on a later attempt", async () => {
+    let n = 0;
+    globalThis.fetch = mock(async () => {
+      n++;
+      if (n < 3) return new Response('{"error":{"message":"internal error"}}', { status: 500 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const res = await handleRequest(
+      new Request("http://x/v1/chat/completions", { method: "POST", body: JSON.stringify({ model: "default" }) }),
+      ENV,
+    );
+    expect(res.status).toBe(200); // recovered after two 500s
+    expect(n).toBe(3);
+  });
+
+  it("gives up after exhausting retries on persistent 5xx (returns the last status)", async () => {
+    let n = 0;
+    globalThis.fetch = mock(async () => {
+      n++;
+      return new Response("{}", { status: 503 });
+    }) as unknown as typeof fetch;
+    const res = await handleRequest(
+      new Request("http://x/v1/chat/completions", { method: "POST", body: JSON.stringify({ model: "default" }) }),
+      ENV,
+    );
+    expect(res.status).toBe(503);
+    expect(n).toBe(3); // initial + 2 retries
+  });
+
   it("answers an OPTIONS preflight with CORS headers and no upstream call", async () => {
     let called = false;
     globalThis.fetch = mock(async () => {
