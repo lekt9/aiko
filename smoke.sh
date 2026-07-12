@@ -16,10 +16,13 @@ fail() { echo "✗ $1"; exit 1; }
 
 echo "→ smoke-testing $BASE (no client auth)"
 
-# 1. Liveness
-health=$(curl -fsS --max-time 10 "$BASE/health" 2>/dev/null) || fail "/health unreachable"
-echo "$health" | grep -q '"ok":true' || fail "/health did not report ok:true — got: $health"
-echo "✓ /health ok"
+# 1. Liveness (soft). On a custom domain only /v1/* is routed to the Worker, so /health
+#    legitimately falls through to the main site. Liveness is really proven by /v1/models.
+if health=$(curl -fsS --max-time 10 "$BASE/health" 2>/dev/null) && echo "$health" | grep -q '"ok":true'; then
+  echo "✓ /health ok"
+else
+  echo "• /health not routed here (expected when only /v1/* maps to the Worker) — skipping"
+fi
 
 # 2. Model list collapses to the single unbrowse-default
 models=$(curl -fsS --max-time 15 "$BASE/v1/models" 2>/dev/null) || fail "/v1/models unreachable"
