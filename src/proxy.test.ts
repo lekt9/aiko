@@ -70,4 +70,29 @@ describe("handleRequest", () => {
     await handleRequest(new Request("http://x/v1/search", { method: "POST", body: '{"query":"hi"}' }), ENV);
     expect(seenUrl).toBe("https://gateway.codegraff.com/v1/search");
   });
+
+  // Load-bearing invariant: model rewriting must touch ONLY chat/completions/responses.
+  // If it rewrote a search or sandbox body, the key-free tools would silently corrupt.
+  it("does NOT rewrite the body of a non-chat path even when it carries a 'model' field", async () => {
+    let seenBody = "";
+    globalThis.fetch = mock(async (_url: string, init: RequestInit) => {
+      seenBody = init.body as string;
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const original = '{"query":"hi","model":"default"}';
+    await handleRequest(new Request("http://x/v1/search", { method: "POST", body: original }), ENV);
+    expect(seenBody).toBe(original); // byte-for-byte passthrough — "default" NOT expanded
+  });
+
+  it("answers an OPTIONS preflight with CORS headers and no upstream call", async () => {
+    let called = false;
+    globalThis.fetch = mock(async () => {
+      called = true;
+      return new Response("");
+    }) as unknown as typeof fetch;
+    const res = await handleRequest(new Request("http://x/v1/chat/completions", { method: "OPTIONS" }), ENV);
+    expect(res.status).toBe(204);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(called).toBe(false);
+  });
 });
