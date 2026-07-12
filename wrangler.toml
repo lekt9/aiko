@@ -1,0 +1,14 @@
+name = "unbrowse-proxy"
+main = "src/worker.ts"
+compatibility_date = "2026-07-01"
+
+# Optional overrides (upstream base + default model). The CODEGRAFF_API_KEY is a
+# SECRET — set it with `wrangler secret put CODEGRAFF_API_KEY`, do NOT put it here.
+[vars]
+UPSTREAM_BASE = "https://gateway.codegraff.com"
+DEFAULT_MODEL = "deepseek-v4-pro"
+
+# Point unbrowse.ai/v1/* at this Worker (adjust zone/route to taste):
+# [[routes]]
+# pattern = "unbrowse.ai/v1/*"
+# zone_name = "unbrowse.ai"

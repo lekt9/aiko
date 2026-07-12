@@ -1,0 +1,17 @@
+{
+  "name": "unbrowse-dev",
+  "version": "0.1.0",
+  "private": true,
+  "description": "unbrowse proxy — a credential-injecting, OpenAI-compatible front for the codegraff gateway",
+  "type": "module",
+  "scripts": {
+    "dev": "bun server.ts",
+    "start": "bun server.ts",
+    "test": "bun test",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240909.0",
+    "wrangler": "^3.78.0"
+  }
+}

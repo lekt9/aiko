@@ -1,0 +1,73 @@
+import { afterEach, describe, expect, it, mock } from "bun:test";
+import { handleRequest, type ProxyEnv, resolveModel } from "./proxy";
+
+const ENV: ProxyEnv = { CODEGRAFF_API_KEY: "cg_sk_test", DEFAULT_MODEL: "deepseek-v4-pro" };
+
+afterEach(() => {
+  mock.restore();
+});
+
+describe("resolveModel", () => {
+  it("maps placeholder ids to the default", () => {
+    for (const p of ["", "default", "auto", "unbrowse", "UNBROWSE-DEFAULT"]) {
+      expect(resolveModel(p, "deepseek-v4-pro")).toBe("deepseek-v4-pro");
+    }
+  });
+  it("passes an explicit model through untouched", () => {
+    expect(resolveModel("claude-opus-4.8", "deepseek-v4-pro")).toBe("claude-opus-4.8");
+  });
+});
+
+describe("handleRequest", () => {
+  it("answers /health without an upstream call", async () => {
+    const res = await handleRequest(new Request("http://x/health"), ENV);
+    expect(res.status).toBe(200);
+    expect((await res.json()).ok).toBe(true);
+  });
+
+  it("500s when the upstream key is missing", async () => {
+    const res = await handleRequest(new Request("http://x/v1/chat/completions", { method: "POST", body: "{}" }), {});
+    expect(res.status).toBe(500);
+  });
+
+  it("injects the upstream key and rewrites a placeholder model", async () => {
+    let seenAuth: string | null = null;
+    let seenBody: unknown = null;
+    globalThis.fetch = mock(async (_url: string, init: RequestInit) => {
+      seenAuth = new Headers(init.headers).get("authorization");
+      seenBody = JSON.parse(init.body as string);
+      return new Response(JSON.stringify({ ok: 1 }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as unknown as typeof fetch;
+
+    const req = new Request("http://x/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "default", messages: [] }),
+    });
+    const res = await handleRequest(req, ENV);
+    expect(res.status).toBe(200);
+    expect(seenAuth).toBe("Bearer cg_sk_test"); // client sent none; proxy injected it
+    expect((seenBody as { model: string }).model).toBe("deepseek-v4-pro"); // placeholder rewritten
+  });
+
+  it("collapses /v1/models to a single unbrowse-default entry", async () => {
+    globalThis.fetch = mock(
+      async () => new Response(JSON.stringify({ data: [{ id: "a" }, { id: "b" }] }), { status: 200 }),
+    ) as unknown as typeof fetch;
+    const res = await handleRequest(new Request("http://x/v1/models"), ENV);
+    const body = (await res.json()) as { data: Array<{ id: string }> };
+    expect(body.data).toHaveLength(1);
+    expect(body.data[0].id).toBe("unbrowse-default");
+  });
+
+  it("forwards a non-model path (search) verbatim with the key", async () => {
+    let seenUrl = "";
+    globalThis.fetch = mock(async (url: string, init: RequestInit) => {
+      seenUrl = url;
+      expect(new Headers(init.headers).get("authorization")).toBe("Bearer cg_sk_test");
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await handleRequest(new Request("http://x/v1/search", { method: "POST", body: '{"query":"hi"}' }), ENV);
+    expect(seenUrl).toBe("https://gateway.codegraff.com/v1/search");
+  });
+});
