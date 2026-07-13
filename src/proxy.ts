@@ -14,17 +14,50 @@
 export interface ProxyEnv {
   /** The upstream codegraff key (cg_sk_...). Held here, never sent to clients. */
   CODEGRAFF_API_KEY?: string;
-  /** Upstream base, default https://gateway.codegraff.com. */
+  /** Upstream base for codegraff (search + sandboxes), default https://gateway.codegraff.com. */
   UPSTREAM_BASE?: string;
   /** The real model every placeholder id resolves to. */
   DEFAULT_MODEL?: string;
+  /**
+   * Optional xAI key. When set, MODEL calls (chat/completions, completions, responses,
+   * models) route to xAI instead of codegraff and the default model becomes
+   * XAI_DEFAULT_MODEL. Search + sandboxes always stay on codegraff (xAI has no such
+   * endpoints). Unset => everything goes to codegraff (original behavior).
+   */
+  XAI_API_KEY?: string;
+  /** xAI base, default https://api.x.ai. */
+  XAI_UPSTREAM?: string;
+  /** The xAI model that placeholder ids resolve to for model calls. */
+  XAI_DEFAULT_MODEL?: string;
 }
 
 const DEFAULT_UPSTREAM = "https://gateway.codegraff.com";
 const DEFAULT_MODEL = "deepseek-v4-pro";
+const DEFAULT_XAI_UPSTREAM = "https://api.x.ai";
+const DEFAULT_XAI_MODEL = "grok-4.5";
+
+// Paths that carry a model and can be served by an OpenAI-compatible model provider (xAI).
+// Everything else on /v1 (search, sandboxes) is codegraff-only.
+const MODEL_PATHS = new Set(["/v1/chat/completions", "/v1/completions", "/v1/responses", "/v1/models"]);
 
 // Incoming model ids that mean "just use the default" — the client no longer picks.
 const PLACEHOLDER_MODELS = new Set(["", "default", "auto", "unbrowse", "unbrowse-default"]);
+
+/** Pick the upstream host, key, and default model for a request path. */
+function pickUpstream(pathname: string, env: ProxyEnv): { base: string; key?: string; def: string } {
+  if (env.XAI_API_KEY && MODEL_PATHS.has(pathname)) {
+    return {
+      base: (env.XAI_UPSTREAM ?? DEFAULT_XAI_UPSTREAM).replace(/\/$/, ""),
+      key: env.XAI_API_KEY,
+      def: env.XAI_DEFAULT_MODEL ?? DEFAULT_XAI_MODEL,
+    };
+  }
+  return {
+    base: (env.UPSTREAM_BASE ?? DEFAULT_UPSTREAM).replace(/\/$/, ""),
+    key: env.CODEGRAFF_API_KEY,
+    def: env.DEFAULT_MODEL ?? DEFAULT_MODEL,
+  };
+}
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -90,14 +123,12 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     return json({ error: { message: `unknown path ${url.pathname}` } }, 404);
   }
 
-  const upstreamKey = env.CODEGRAFF_API_KEY;
+  const { base, key: upstreamKey, def } = pickUpstream(url.pathname, env);
   if (!upstreamKey) {
-    return json({ error: { message: "proxy misconfigured: CODEGRAFF_API_KEY is not set" } }, 500);
+    return json({ error: { message: "proxy misconfigured: no upstream key for this route" } }, 500);
   }
 
-  const base = (env.UPSTREAM_BASE ?? DEFAULT_UPSTREAM).replace(/\/$/, "");
   const target = base + url.pathname + url.search;
-  const def = env.DEFAULT_MODEL ?? DEFAULT_MODEL;
 
   // Forward headers, but REPLACE auth with our upstream key and drop hop-by-hop noise.
   const headers = new Headers();

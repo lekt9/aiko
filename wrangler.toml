@@ -11,6 +11,8 @@ account_id = "6d81c1b653effb2e0eac5ee071107122"
 [vars]
 UPSTREAM_BASE = "https://gateway.codegraff.com"
 DEFAULT_MODEL = "deepseek-v4-pro"
+# When XAI_API_KEY (a secret) is set, model calls route to xAI with this default model.
+XAI_DEFAULT_MODEL = "grok-4.5"
 
 # Serve the proxy at unbrowse.ai/v1/* (in addition to the workers.dev URL).
 [[routes]]

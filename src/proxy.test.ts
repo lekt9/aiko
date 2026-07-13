@@ -131,6 +131,46 @@ describe("handleRequest", () => {
     expect(n).toBe(3); // initial + 2 retries
   });
 
+  // Dual upstream: model calls -> xAI, search/sandbox -> codegraff.
+  const XENV: ProxyEnv = {
+    CODEGRAFF_API_KEY: "cg_sk_test",
+    DEFAULT_MODEL: "deepseek-v4-pro",
+    XAI_API_KEY: "xai-test",
+    XAI_DEFAULT_MODEL: "grok-4.5",
+  };
+
+  it("routes chat/completions to xAI with the xAI key and grok-4.5 default", async () => {
+    let seenUrl = "";
+    let seenAuth: string | null = null;
+    let seenModel = "";
+    globalThis.fetch = mock(async (url: string, init: RequestInit) => {
+      seenUrl = url;
+      seenAuth = new Headers(init.headers).get("authorization");
+      seenModel = JSON.parse(init.body as string).model;
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await handleRequest(
+      new Request("http://x/v1/chat/completions", { method: "POST", body: JSON.stringify({ model: "default" }) }),
+      XENV,
+    );
+    expect(seenUrl).toBe("https://api.x.ai/v1/chat/completions");
+    expect(seenAuth).toBe("Bearer xai-test");
+    expect(seenModel).toBe("grok-4.5"); // placeholder -> xAI default
+  });
+
+  it("still routes /v1/search to codegraff with the codegraff key (xAI has no such endpoint)", async () => {
+    let seenUrl = "";
+    let seenAuth: string | null = null;
+    globalThis.fetch = mock(async (url: string, init: RequestInit) => {
+      seenUrl = url;
+      seenAuth = new Headers(init.headers).get("authorization");
+      return new Response(JSON.stringify({ results: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await handleRequest(new Request("http://x/v1/search", { method: "POST", body: '{"query":"hi"}' }), XENV);
+    expect(seenUrl).toBe("https://gateway.codegraff.com/v1/search");
+    expect(seenAuth).toBe("Bearer cg_sk_test");
+  });
+
   it("answers an OPTIONS preflight with CORS headers and no upstream call", async () => {
     let called = false;
     globalThis.fetch = mock(async () => {
