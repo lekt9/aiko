@@ -23,6 +23,7 @@ pub const env_fingerprint = @import("env_fingerprint.zig");
 pub const verses = @import("verses.zig");
 pub const bible = @import("bible.zig");
 pub const cache = @import("cache.zig");
+pub const terminal = @import("terminal.zig");
 pub const payload_crypto = @import("payload_crypto.zig");
 // Words-as-contracts: every token in a plan is a child /contract pointer
 // (action `word:<tok>`, layer 0). Wired from cmdDeclare so each declare

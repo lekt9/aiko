@@ -53,6 +53,7 @@ pub fn build(b: *std.Build) void {
         "src/client.zig",
         "src/bible.zig",
         "src/cache.zig",
+        "src/terminal.zig",
         "src/payload_crypto.zig",
         "src/words.zig",
         "src/pattern.zig",

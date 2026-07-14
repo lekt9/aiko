@@ -30,6 +30,7 @@
 const std = @import("std");
 const ledger = @import("ledger.zig");
 const pointer = @import("pointer.zig");
+const terminal = @import("terminal.zig");
 
 const c = std.c;
 
@@ -384,9 +385,16 @@ fn extractStringField(line: []const u8, key: []const u8) ?[]const u8 {
 pub const TerminalClass = enum { not_terminal, signature, null_terminal };
 
 pub fn terminalClass(ev: []const u8) TerminalClass {
-    if (std.mem.eql(u8, ev, "satisfied") or std.mem.eql(u8, ev, "died")) return .signature;
-    if (std.mem.eql(u8, ev, "purged")) return .null_terminal;
-    return .not_terminal;
+    // Delegates to the ONE terminal authority (terminal.zig). The cache only
+    // needs signature-vs-null; the authority is 4-way (pending/satisfied/dead/
+    // purged). satisfied+dead carry a signature; purged nullifies; pending is
+    // not terminal. This is the single place the event→class heuristic lives —
+    // the plan's fork F3, collapsed to one classifier.
+    return switch (terminal.classify(ev)) {
+        .satisfied, .dead => .signature,
+        .purged => .null_terminal,
+        .pending => .not_terminal,
+    };
 }
 
 /// Walk the ledger backward for `id`. Returns the latest row's
