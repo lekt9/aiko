@@ -806,23 +806,12 @@ fn bioHomeostatReject(allocator: std.mem.Allocator, env: std.process.Environ, ro
     return null;
 }
 
-/// 3. REFLEX-FIRST — when an action body is a pure deterministic verifier
-///    (neuron|funnel|sequence|funnel-first|quorum:|contract:), it is its own
-///    reflex; we already short-circuit in runAction without LLM round-trip.
-///    The marker exposes the routing: a declared contract whose action
-///    starts with these keywords resolves locally even in remote mode.
-fn bioIsReflex(action: []const u8) bool {
-    if (std.mem.eql(u8, action, "neuron")) return true;
-    if (std.mem.eql(u8, action, "funnel")) return true;
-    if (std.mem.eql(u8, action, "sequence")) return true;
-    if (std.mem.eql(u8, action, "funnel-first")) return true;
-    if (std.mem.startsWith(u8, action, "quorum:")) return true;
-    if (std.mem.startsWith(u8, action, "contract:")) return true;
-    if (std.mem.startsWith(u8, action, "fulfil:")) return true;
-    if (std.mem.startsWith(u8, action, "value-of:")) return true;
-    return false;
-}
-
+/// 3. REFLEX-FIRST — a pure deterministic verifier action (neuron|funnel|
+///    sequence|funnel-first|quorum:|contract:|fulfil:|value-of:) is its own
+///    reflex: runAction short-circuits it locally without an LLM round-trip.
+///    The former `bioIsReflex` marker fn was dead (0 callers) and is removed
+///    (fork F10); the routing already lives in runAction's ptype dispatch —
+///    the one classifier authority, not a duplicated hand-rolled list.
 /// 5. APOPTOSIS BY DISUSE — return ids whose latest activity is older than
 ///    CONTRACT_APOPTOSIS_AGE_HOURS (default 0=off). Caller writes the
 ///    apoptosed rows; this just identifies the cohort. ts parsing is best-

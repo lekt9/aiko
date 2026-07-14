@@ -97,6 +97,16 @@ pub fn inferLayer(action: []const u8) i32 {
     if (std.mem.eql(u8, pt, "api")) return 2;
     if (std.mem.eql(u8, pt, "harness")) return 2;
     if (std.mem.eql(u8, pt, "loop")) return 2;
+    // F9: sync with libcontract/src/pointer.zig::inferLayer so the two copies
+    // agree on every class. These prefixes now classify to their real ptypes
+    // (F8), and their layers must match the canonical (comptime-pinned) copy.
+    if (std.mem.eql(u8, pt, "fulfil")) return 3;
+    if (std.mem.eql(u8, pt, "value-of")) return 3;
+    if (std.mem.eql(u8, pt, "modality")) return 4;
+    if (std.mem.eql(u8, pt, "wrapper")) return 4;
+    if (std.mem.eql(u8, pt, "word")) return 0;
+    if (std.mem.eql(u8, pt, "validate")) return 7;
+    if (std.mem.eql(u8, pt, "signed")) return 8;
     return 2;
 }
 
