@@ -1150,13 +1150,39 @@ PYAUDIT
     fi
   done
 
+  # 51. "Single terminal-recognition authority (fork F3 collapsed)" — biology
+  #     axis 1: a cell has ONE apoptosis machinery, not one per organ. Terminality
+  #     was decided in ~7 disagreeing hand-rolled sites (isDead was blind to
+  #     `purged` while cache.terminalClass was not). Step 3 lifted it onto
+  #     libcontract/src/terminal.zig — the ONE classifier: TerminalClass +
+  #     classify(event) + nullifies(c)=dead||purged. cache.zig:terminalClass now
+  #     DELEGATES to it. Refuse to ship a binary where the authority is missing,
+  #     unreachable, or where the cache has silently re-forked its own event->class
+  #     heuristic. (Routing main.zig:isDead through the authority is the Day-5
+  #     follow-up; this claim locks the authority's shape so it cannot re-fork.)
+  if [[ ! -f "$LIB_DIR/src/terminal.zig" ]]; then
+    _fail "doctrine[terminal authority]: libcontract/src/terminal.zig missing — the ONE terminal-event classifier (fork F3); every reader must route through it"
+  else
+    for term_fn in 'pub fn classify' 'pub fn nullifies'; do
+      if ! grep -q "$term_fn" "$LIB_DIR/src/terminal.zig"; then
+        _fail "doctrine[terminal authority]: '$term_fn' missing in terminal.zig — the single terminal-recognition surface is incomplete (classify=event->class, nullifies=dead||purged)"
+      fi
+    done
+  fi
+  if ! grep -q 'pub const terminal = @import("terminal.zig")' "$LIB_DIR/src/contract.zig"; then
+    _fail "doctrine[terminal authority]: contract.zig must re-export pub const terminal = @import(\"terminal.zig\") so every consumer reaches the single classifier instead of re-forking it"
+  fi
+  if ! grep -q 'terminal.classify(' "$LIB_DIR/src/cache.zig"; then
+    _fail "doctrine[terminal authority]: cache.zig:terminalClass must delegate to terminal.classify( — the cache must not re-inline its own satisfied/died/purged string-matching (fork F3 must stay collapsed)"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
     printf '%s' "$report" >&2
     echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 50 doctrine claims have matching code sites"
+  echo "build:parity OK — all 51 doctrine claims have matching code sites"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────
