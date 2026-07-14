@@ -696,6 +696,46 @@ fires the child; the substrate routes the payload to the right
 channel; the user's reply is the next resolver-wave child of the
 same parent.
 
+## One terminal-recognition authority — a cell has one apoptosis machinery
+
+> *Neither do men put new wine into old bottles: else the bottles break*
+> *... but they put new wine into new bottles, and both are preserved.*
+> (Matthew 9:17)
+
+A cell recognizes death one way — not one machinery in the liver and a
+different one in the brain. The substrate's terminal alphabet is exactly
+three events: **`satisfied`, `died`, `purged`** (`apoptosed`/`superseded`/
+`stale` are `DeathCause` fields written ON a `died` row, never events).
+Terminality is decided in a single place — `libcontract/src/terminal.zig`:
+
+- `classify(event) -> {pending | satisfied | dead | purged}` — the one
+  event→class heuristic.
+- `nullifies(c) = dead || purged` — BOTH natural death and Decalogue purge
+  stop downstream truth. This is the load-bearing predicate.
+- `isSatisfiedClass`, `carriesSignature`, `isTerminal` — the rest of the read
+  surface.
+
+Every reader routes through it: `isSatisfied`, `isDead`, `countTerminalEvents`
+(main.zig) and `cache.terminalClass` (cache.zig). Before this authority these
+disagreed — `isDead` recognized only `died` and was blind to `purged`, so a
+satisfied-then-purged producer was read two contradictory ways, and a
+neuron/funnel/quorum parent of it held forever instead of inheriting death.
+The one classifier makes such drift impossible; parity claim 51 locks it.
+
+Death propagates consistently (biology: trophic withdrawal / anoikis):
+
+- A `fulfil:`/`contract:`/`value-of:` consumer adopts a producer's value ONLY
+  from a LIVE (satisfied) producer — a dead/purged producer's nullified value
+  is never surfaced. Adopt a value only from a signal that holds NOW.
+- A `quorum:k` inherits death when its threshold becomes UNREACHABLE (too few
+  live children to ever reach `k`), preserving k-of-n fault tolerance while
+  ending the infinite HOLD.
+
+Lineage (`parent_id`, HKDF `parent_signature`) stays separate from signaling
+(`contract:`/`fulfil:`): a neuron signals neurons it is not descended from
+(synapse ≠ mitosis). Value adoption is therefore reference-based and
+cross-lineage — the substrate does NOT gate signaling on descent.
+
 ## Channel registry — every contact channel is a contract
 
 Every channel through which the substrate can reach the user is its
