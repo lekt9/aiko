@@ -508,6 +508,15 @@ fn isSatisfied(rows: []const Row, id: []const u8) bool {
         if (!std.mem.eql(u8, r.id, id)) continue;
         if (std.mem.eql(u8, r.event, "satisfied")) return true;
         if (std.mem.eql(u8, r.event, "died")) return false;
+        // `purged` is a nulling terminal too (Decalogue gate). cache.zig's
+        // terminalClass already treats it as .null_terminal and contract.zig's
+        // markPurged docstring says the terminal walk must; isSatisfied was the
+        // one read surface still blind to it, so a satisfied-then-purged
+        // producer surfaced stale bytes to any fulfil:/contract:/value-of:
+        // consumer. Same temporal-incoherence class as a1c68c4e (the `died`
+        // fix), extended to the stronger terminal. Verified: examples/arc-agi3/
+        // arc-validate-purge.sh fails without this line.
+        if (std.mem.eql(u8, r.event, "purged")) return false;
     }
     return false;
 }
@@ -555,10 +564,19 @@ fn dependentIds(allocator: std.mem.Allocator, rows: []const Row, target_id: []co
     var ids: std.ArrayList([]const u8) = .empty;
     errdefer ids.deinit(allocator);
     var needle_buf: [32]u8 = undefined;
-    const needle = std.fmt.bufPrint(&needle_buf, "contract:{s}", .{target_id}) catch return try ids.toOwnedSlice(allocator);
+    const needle_c = std.fmt.bufPrint(&needle_buf, "contract:{s}", .{target_id}) catch return try ids.toOwnedSlice(allocator);
+    var needle_f: [32]u8 = undefined;
+    const needle_fulfil = std.fmt.bufPrint(&needle_f, "fulfil:{s}", .{target_id}) catch return try ids.toOwnedSlice(allocator);
+    var needle_v: [32]u8 = undefined;
+    const needle_value = std.fmt.bufPrint(&needle_v, "value-of:{s}", .{target_id}) catch return try ids.toOwnedSlice(allocator);
     for (rows) |r| {
         if (!std.mem.eql(u8, r.event, "declared")) continue;
-        if (std.mem.indexOf(u8, r.action, needle) != null) try appendUnique(&ids, allocator, r.id);
+        if (std.mem.indexOf(u8, r.action, needle_c) != null or
+            std.mem.indexOf(u8, r.action, needle_fulfil) != null or
+            std.mem.indexOf(u8, r.action, needle_value) != null)
+        {
+            try appendUnique(&ids, allocator, r.id);
+        }
     }
     return try ids.toOwnedSlice(allocator);
 }
@@ -764,6 +782,8 @@ fn bioIsReflex(action: []const u8) bool {
     if (std.mem.eql(u8, action, "funnel-first")) return true;
     if (std.mem.startsWith(u8, action, "quorum:")) return true;
     if (std.mem.startsWith(u8, action, "contract:")) return true;
+    if (std.mem.startsWith(u8, action, "fulfil:")) return true;
+    if (std.mem.startsWith(u8, action, "value-of:")) return true;
     return false;
 }
 
@@ -1497,6 +1517,176 @@ fn runShell(allocator: std.mem.Allocator, action: []const u8, cwd: []const u8) !
 /// the recursive context-aggregation channel.
 const ShellOutput = struct { rc: i32, output: []u8 };
 
+// === MCP helpers (ported) ===
+fn mcpShellQuote(allocator: std.mem.Allocator, arg: []const u8) ![]u8 {
+    var quoted: std.ArrayList(u8) = .empty;
+    errdefer quoted.deinit(allocator);
+    try quoted.append(allocator, '\'');
+    for (arg) |c| {
+        if (c == '\'') try quoted.appendSlice(allocator, "'\\''") else try quoted.append(allocator, c);
+    }
+    try quoted.append(allocator, '\'');
+    return try quoted.toOwnedSlice(allocator);
+}
+
+fn mcpCaptureSelfArgv(allocator: std.mem.Allocator, argv: []const []const u8) !ShellOutput {
+    var exe_buf: [4096]u8 = undefined;
+    const exe = try selfExePathPortable(&exe_buf);
+    var cmd: std.ArrayList(u8) = .empty;
+    errdefer cmd.deinit(allocator);
+    try cmd.appendSlice(allocator, exe);
+    for (argv) |a| {
+        try cmd.append(allocator, ' ');
+        const q = try mcpShellQuote(allocator, a);
+        defer allocator.free(q);
+        try cmd.appendSlice(allocator, q);
+    }
+    return runShellCapture(allocator, cmd.items, ".");
+}
+
+fn mcpStrField(args: std.json.Value, key: []const u8) ?[]const u8 {
+    if (args != .object) return null;
+    const v = args.object.get(key) orelse return null;
+    if (v != .string) return null;
+    return v.string;
+}
+
+fn mcpBoolField(args: std.json.Value, key: []const u8) bool {
+    if (args != .object) return false;
+    const v = args.object.get(key) orelse return false;
+    return v == .bool and v.bool;
+}
+
+fn dispatchMcpTool(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    tool_name: []const u8,
+    args: std.json.Value,
+) !contract.mcp_server.ToolResult {
+    if (std.mem.eql(u8, tool_name, "declare")) {
+        const plan = mcpStrField(args, "plan") orelse return .{ .text = try allocator.dupe(u8, "missing plan"), .is_error = true };
+        const action = mcpStrField(args, "action") orelse return .{ .text = try allocator.dupe(u8, "missing action"), .is_error = true };
+        var cli = std.ArrayList([]const u8).empty;
+        defer cli.deinit(allocator);
+        try cli.append(allocator, "declare");
+        try cli.append(allocator, plan);
+        try cli.append(allocator, "--action");
+        try cli.append(allocator, action);
+        if (mcpStrField(args, "parent")) |p| {
+            try cli.append(allocator, "--parent");
+            try cli.append(allocator, p);
+        }
+        if (mcpStrField(args, "scope")) |s| {
+            if (std.mem.eql(u8, s, "global")) {
+                try cli.append(allocator, "--scope");
+                try cli.append(allocator, "global");
+            }
+        }
+        if (mcpBoolField(args, "fast")) {
+            try cli.append(allocator, "--fast");
+        }
+        const cap = try mcpCaptureSelfArgv(allocator, cli.items);
+        defer allocator.free(cap.output);
+        const text = try allocator.dupe(u8, cap.output);
+        return .{ .text = text, .is_error = cap.rc != 0 };
+    }
+    if (std.mem.eql(u8, tool_name, "iterate")) {
+        const id = mcpStrField(args, "id") orelse return .{ .text = try allocator.dupe(u8, "missing id"), .is_error = true };
+        const goal = try std.fmt.allocPrint(allocator, "iterate:{s} — mcp wave", .{id});
+        defer allocator.free(goal);
+        const cap = try mcpCaptureSelfArgv(allocator, &.{ goal, "--private" });
+        defer allocator.free(cap.output);
+        const text = try allocator.dupe(u8, cap.output);
+        return .{ .text = text, .is_error = cap.rc != 0 };
+    }
+    if (std.mem.eql(u8, tool_name, "status")) {
+        var cli = std.ArrayList([]const u8).empty;
+        defer cli.deinit(allocator);
+        try cli.append(allocator, "status");
+        if (mcpStrField(args, "id")) |id| try cli.append(allocator, id);
+        const cap = try mcpCaptureSelfArgv(allocator, cli.items);
+        defer allocator.free(cap.output);
+        const text = try allocator.dupe(u8, cap.output);
+        return .{ .text = text, .is_error = cap.rc != 0 };
+    }
+    if (std.mem.eql(u8, tool_name, "list")) {
+        if (mcpStrField(args, "scope")) |scope| {
+            var cli = [_][]const u8{ "discover", "--scope", scope };
+            const cap = try mcpCaptureSelfArgv(allocator, &cli);
+            defer allocator.free(cap.output);
+            const text = try allocator.dupe(u8, cap.output);
+            return .{ .text = text, .is_error = cap.rc != 0 };
+        }
+        const cap = if (mcpBoolField(args, "show_merged"))
+            try mcpCaptureSelfArgv(allocator, &[_][]const u8{ "list", "--show-merged" })
+        else
+            try mcpCaptureSelfArgv(allocator, &[_][]const u8{"list"});
+        defer allocator.free(cap.output);
+        const text = try allocator.dupe(u8, cap.output);
+        return .{ .text = text, .is_error = cap.rc != 0 };
+    }
+    if (std.mem.eql(u8, tool_name, "search")) {
+        const ctx = mcpStrField(args, "context") orelse return .{ .text = try allocator.dupe(u8, "missing context"), .is_error = true };
+        var cli = std.ArrayList([]const u8).empty;
+        defer cli.deinit(allocator);
+        try cli.append(allocator, "search");
+        try cli.append(allocator, "--context");
+        try cli.append(allocator, ctx);
+        if (mcpStrField(args, "scope")) |s| {
+            try cli.append(allocator, "--scope");
+            try cli.append(allocator, s);
+        }
+        const cap = try mcpCaptureSelfArgv(allocator, cli.items);
+        defer allocator.free(cap.output);
+        const text = try allocator.dupe(u8, cap.output);
+        return .{ .text = text, .is_error = cap.rc != 0 };
+    }
+    if (std.mem.eql(u8, tool_name, "find_skills")) {
+        const gap = mcpStrField(args, "gap") orelse return .{ .text = try allocator.dupe(u8, "missing gap"), .is_error = true };
+        const home = env.getPosix("HOME") orelse return .{ .text = try allocator.dupe(u8, "HOME not set"), .is_error = true };
+        const script = try std.fmt.allocPrint(allocator, "{s}/.agents/skills/contract-and-find-skills/scripts/find-skills", .{home});
+        defer allocator.free(script);
+        var cmd: std.ArrayList(u8) = .empty;
+        defer cmd.deinit(allocator);
+        try cmd.appendSlice(allocator, "bash ");
+        const q_script = try mcpShellQuote(allocator, script);
+        defer allocator.free(q_script);
+        try cmd.appendSlice(allocator, q_script);
+        try cmd.append(allocator, ' ');
+        const q_gap = try mcpShellQuote(allocator, gap);
+        defer allocator.free(q_gap);
+        try cmd.appendSlice(allocator, q_gap);
+        const cap = try runShellCapture(allocator, cmd.items, ".");
+        defer allocator.free(cap.output);
+        const text = try allocator.dupe(u8, cap.output);
+        return .{ .text = text, .is_error = cap.rc != 0 };
+    }
+    if (std.mem.eql(u8, tool_name, "symlink_list")) {
+        if (!contract.symlink.isLewisWallet(allocator, env)) {
+            return .{ .text = try allocator.dupe(u8, "symlink: REFUSED — lewis-only wallet"), .is_error = true };
+        }
+        const json = contract.symlink.listJson(allocator) catch return .{ .text = try allocator.dupe(u8, "symlink list failed"), .is_error = true };
+        defer allocator.free(json);
+        return .{ .text = try allocator.dupe(u8, json), .is_error = false };
+    }
+    if (std.mem.eql(u8, tool_name, "symlink_resolve")) {
+        if (!contract.symlink.isLewisWallet(allocator, env)) {
+            return .{ .text = try allocator.dupe(u8, "symlink: REFUSED — lewis-only wallet"), .is_error = true };
+        }
+        const surface = mcpStrField(args, "surface") orelse return .{ .text = try allocator.dupe(u8, "missing surface"), .is_error = true };
+        const json = contract.symlink.resolveJson(allocator, surface) catch return .{ .text = try allocator.dupe(u8, "symlink resolve failed"), .is_error = true };
+        defer allocator.free(json);
+        return .{ .text = try allocator.dupe(u8, json), .is_error = false };
+    }
+    return .{ .text = try allocator.dupe(u8, "unknown tool"), .is_error = true };
+}
+
+/// MCP stdio server — JSON-RPC 2.0 tools surface for agents (local transport).
+fn cmdMcp(allocator: std.mem.Allocator, env: std.process.Environ) !u8 {
+    try contract.mcp_server.runStdio(allocator, env, dispatchMcpTool);
+    return 0;
+}
+
 /// In strict mode (CONTRACT_SHELL_STRICT=1) reject actions containing the
 /// metacharacters that enable command chaining, substitution, or piping out
 /// of the declared body. The default is OFF for back-compat — existing
@@ -1826,27 +2016,66 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
                 evidencePrint("  hebbian-promotion: pattern:{s} use_count={d} >= threshold={d} -> baked as primitive\n", .{ target, use_count, threshold });
             }
         }
-        // BAKED-PRIMITIVE FAST PATH — if target was promoted to primitive
-        // (Hebbian threshold crossed), return its cached action_result
-        // directly without re-walking the subgraph. The reused pathway is
-        // now a reflex arc; same shape as biology's LTP-strengthened synapse.
-        const is_primitive_target = blk3: {
-            for (rows) |row| {
-                if (std.mem.eql(u8, row.event, "primitive") and std.mem.eql(u8, row.id, target)) break :blk3 true;
-            }
-            break :blk3 false;
-        };
-        if (is_primitive_target) {
-            if (latestActionResult(rows, target)) |cached| {
-                evidencePrint("  result: PASS — contract:{s} primitive cache hit\n", .{target});
+        // Phase 1: approved pointers surface values.
+        // Any terminal target with a recorded action_result returns the
+        // concrete bytes (unified path for primitives + future fulfilled
+        // neurons). Signature chain already decided we are allowed to trust it.
+        if (latestActionResult(rows, target)) |cached| {
+            if (cached.len > 0) {
+                evidencePrint("  result: PASS — contract:{s} value surfaced ({d} bytes)\n", .{ target, cached.len });
                 return .{ .rc = 0, .result = try allocator.dupe(u8, cached) };
             }
         }
         if (isSatisfied(rows, target)) {
-            evidencePrint("  result: PASS — contract:{s} satisfied\n", .{target});
+            evidencePrint("  result: PASS — contract:{s} satisfied (no value bytes)\n", .{target});
             return .{ .rc = 0, .result = "pass" };
         }
         evidencePrint("  result: FAIL — contract:{s} not satisfied\n", .{target});
+        return .{ .rc = 1, .result = "fail" };
+    }
+
+    // Phase 2: fulfil:<id> — self-fulfilling return. The contract stays HOLD
+    // until the target is terminal (satisfied) and then surfaces the target's
+    // concrete result bytes as its own result. This is the "return a contract
+    // and wait until equal" carrier. The caller (neuron/funnel) sees the value
+    // in aggregation; equality checks live in the plan or a verify child.
+    if (std.mem.eql(u8, ptype, "fulfil")) {
+        const ref = action["fulfil:".len..];
+        const target = if (ref.len >= 8) ref[0..8] else ref;
+        if (!isSatisfied(rows, target)) {
+            evidencePrint("  result: HOLD — fulfil waiting on contract:{s}\n", .{target});
+            return .{ .rc = 1, .result = "hold:fulfil" };
+        }
+        if (latestActionResult(rows, target)) |val| {
+            if (val.len > 0) {
+                evidencePrint("  result: PASS — fulfil:{s} value surfaced ({d} bytes)\n", .{ target, val.len });
+                return .{ .rc = 0, .result = try allocator.dupe(u8, val) };
+            }
+        }
+        if (isSatisfied(rows, target)) {
+            evidencePrint("  result: PASS — fulfil:{s} satisfied (no bytes)\n", .{target});
+            return .{ .rc = 0, .result = "pass" };
+        }
+        evidencePrint("  result: FAIL — fulfil:{s} not satisfied\n", .{target});
+        return .{ .rc = 1, .result = "fail" };
+    }
+
+    // value-of:<id> — explicit value carrier alias for contract:<id>.
+    // Semantically identical to contract-ref for surfacing.
+    if (std.mem.eql(u8, ptype, "value-of")) {
+        const ref = action["value-of:".len..];
+        const target = if (ref.len >= 8) ref[0..8] else ref;
+        if (latestActionResult(rows, target)) |cached| {
+            if (cached.len > 0) {
+                evidencePrint("  result: PASS — value-of:{s} surfaced ({d} bytes)\n", .{ target, cached.len });
+                return .{ .rc = 0, .result = try allocator.dupe(u8, cached) };
+            }
+        }
+        if (isSatisfied(rows, target)) {
+            evidencePrint("  result: PASS — value-of:{s} satisfied (no value bytes)\n", .{target});
+            return .{ .rc = 0, .result = "pass" };
+        }
+        evidencePrint("  result: FAIL — value-of:{s} not satisfied\n", .{target});
         return .{ .rc = 1, .result = "fail" };
     }
 
@@ -2257,12 +2486,40 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
     return .{ .rc = out_capture.rc, .result = "fail" };
 }
 
-const DeclareArgs = struct { plan: []const u8 };
+const DeclareArgs = struct { plan: []const u8, action: ?[]const u8 = null, parent: ?[]const u8 = null, fast: bool = false };
 
 fn parseDeclare(args: []const []const u8) !DeclareArgs {
     if (args.len == 0) return error.MissingPlan;
-    if (args.len != 1) return error.UnknownFlag;
-    return .{ .plan = args[0] };
+    // Simple positional: plan only (legacy) or plan + --action X [--parent Y] [--fast]
+    if (args.len == 1) return .{ .plan = args[0] };
+    var plan: ?[]const u8 = null;
+    var action: ?[]const u8 = null;
+    var parent: ?[]const u8 = null;
+    var fast: bool = false;
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const a = args[i];
+        if (std.mem.eql(u8, a, "--action") and i + 1 < args.len) {
+            action = args[i + 1];
+            i += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, a, "--parent") and i + 1 < args.len) {
+            parent = args[i + 1];
+            i += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, a, "--fast")) {
+            fast = true;
+            continue;
+        }
+        if (plan == null) {
+            plan = a;
+            continue;
+        }
+    }
+    if (plan == null) return error.MissingPlan;
+    return .{ .plan = plan.?, .action = action, .parent = parent, .fast = fast };
 }
 
 /// Visibility axis (not transport).
@@ -2380,7 +2637,7 @@ fn redactAikoPlan(allocator: std.mem.Allocator, plan: []const u8) ![]u8 {
 /// heartbeat backfill. Returns a slice borrowed from `plan` — caller must not
 /// free; lifetime is the plan's lifetime.
 fn actionFromPlan(plan: []const u8) []const u8 {
-    const known_prefixes = [_][]const u8{ "drill:", "channel:", "sabbath:", "resolver:" };
+    const known_prefixes = [_][]const u8{ "drill:", "channel:", "sabbath:", "resolver:", "contract:", "fulfil:", "value-of:" };
     for (known_prefixes) |pfx| {
         if (std.mem.startsWith(u8, plan, pfx)) {
             const end = std.mem.indexOfScalar(u8, plan, ' ') orelse plan.len;
@@ -3032,6 +3289,15 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
     const cid = try contract.declare(allocator, env, d.plan, action, .{ .parent_id = null });
     defer allocator.free(cid);
     outPrint("{s}\n", .{cid});
+    // Fast path for per-frame ARC gameplay: skip word fanout + backfill
+    // (trinity fanout is not present on this lean base; when cherry-picked
+    // later it must also be gated by !d.fast).
+    if (d.fast) {
+        // Still run resolve so the caller sees a settled id if possible,
+        // but do NOT sweep the unresolved tail.
+        _ = resolveLineage(allocator, env, cid) catch {};
+        return 0;
+    }
     // Every word in the plan is itself a /contract — fan out one
     // `word:<tok>` child per unique token, lineage-signed under cid.
     // The substrate is recursive: a sentence-contract is a /contract of
@@ -3054,160 +3320,12 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
     const rc = try resolveLineage(allocator, env, cid);
     if (rc == 0) {}
     // Backfill: every declare sweeps the un-resolved tail of the ledger.
+    // This is the 5-10s cost for "real ARC gameplay" per declare.
+    // Use --fast (or MCP fast path) to skip for per-frame use.
     backfillUnresolved(allocator, env, cid) catch |e| {
         errPrint("backfill skipped: {s}\n", .{@errorName(e)});
     };
     return if (rc == 0) 0 else 1;
-}
-
-/// The nine days of creation, Fibonacci-scaled. Hardcoded so the substrate has
-/// no JSON dependency at runtime and the rubric is part of the binary. Fib
-/// pattern 1·1·2·3·5·8 across the six creation days, single-thread sabbath
-/// verdict, 13 cold auditors for the books, single emergence — Genesis 1–2 +
-/// Revelation 20:12 + 21:1.
-const GenesisDay = struct {
-    n: u8,
-    fib: u8,
-    name: []const u8,
-    ref: []const u8,
-    label: []const u8,
-};
-
-const days_table = [_]GenesisDay{
-    .{ .n = 1, .fib = 1, .name = "light", .ref = "Gen 1:3", .label = "inventory — what exists" },
-    .{ .n = 2, .fib = 1, .name = "firmament", .ref = "Gen 1:6", .label = "separate — what divides" },
-    .{ .n = 3, .fib = 2, .name = "land", .ref = "Gen 1:11", .label = "seed — what produces" },
-    .{ .n = 4, .fib = 3, .name = "luminaries", .ref = "Gen 1:14", .label = "test — what signals" },
-    .{ .n = 5, .fib = 5, .name = "creatures", .ref = "Gen 1:20", .label = "run — what moves" },
-    .{ .n = 6, .fib = 8, .name = "dominion", .ref = "Gen 1:26", .label = "integrate — what rules" },
-    .{ .n = 7, .fib = 1, .name = "sabbath", .ref = "Gen 2:2", .label = "verdict — PROMOTE/HOLD/REJECT" },
-    .{ .n = 8, .fib = 13, .name = "books", .ref = "Rev 20:12", .label = "audit — cold re-read of artifact" },
-    .{ .n = 9, .fib = 1, .name = "emergence", .ref = "Rev 21:1", .label = "publish — make all things new" },
-};
-
-/// Find the latest unsatisfied root contract whose plan exactly matches `plan`.
-/// Last-writer wins by ledger order (chronological).
-fn findSessionByPlan(rows: []const Row, plan: []const u8) ?[]const u8 {
-    var latest: ?[]const u8 = null;
-    for (rows) |r| {
-        if (!std.mem.eql(u8, r.event, "declared")) continue;
-        if (r.parent_id) |p| {
-            if (p.len > 0) continue; // skip non-roots
-        }
-        if (!std.mem.eql(u8, r.plan, plan)) continue;
-        if (isSatisfied(rows, r.id)) continue;
-        latest = r.id;
-    }
-    return latest;
-}
-
-/// Project current day from the ledger: max N across child plans that start
-/// with `jl-day N`. 0 = pre-Day-1 (session created, no day spawned yet).
-fn currentDay(rows: []const Row, session_id: []const u8) u8 {
-    var max: u8 = 0;
-    for (rows) |r| {
-        if (!std.mem.eql(u8, r.event, "declared")) continue;
-        const p = r.parent_id orelse continue;
-        if (!std.mem.eql(u8, p, session_id)) continue;
-        if (!std.mem.startsWith(u8, r.plan, "jl-day ")) continue;
-        const after = r.plan[7..];
-        var i: usize = 0;
-        while (i < after.len and std.ascii.isDigit(after[i])) : (i += 1) {}
-        if (i == 0) continue;
-        const n = std.fmt.parseInt(u8, after[0..i], 10) catch continue;
-        if (n > max) max = n;
-    }
-    return max;
-}
-
-/// Count {spawned, satisfied} children of `session_id` whose plan starts with
-/// `jl-day <day> `. Used to gate day advancement: a day completes only when
-/// every Fib worker is satisfied.
-const DayCount = struct { spawned: u8, satisfied: u8 };
-fn countDayChildren(rows: []const Row, session_id: []const u8, day: u8) DayCount {
-    var prefix_buf: [32]u8 = undefined;
-    const prefix = std.fmt.bufPrint(&prefix_buf, "jl-day {d} ", .{day}) catch return .{ .spawned = 0, .satisfied = 0 };
-    var dc = DayCount{ .spawned = 0, .satisfied = 0 };
-    for (rows) |r| {
-        if (!std.mem.eql(u8, r.event, "declared")) continue;
-        const p = r.parent_id orelse continue;
-        if (!std.mem.eql(u8, p, session_id)) continue;
-        if (!std.mem.startsWith(u8, r.plan, prefix)) continue;
-        dc.spawned += 1;
-        if (isSatisfied(rows, r.id)) dc.satisfied += 1;
-    }
-    return dc;
-}
-
-/// cmdGenesis — stateless 9-day projection walker.
-///
-/// Each invocation reads the ledger, computes the session's current day, and
-/// either (a) spawns the next day's Fib(N) workers and exits, or (b) reports
-/// HOLD with the count of unsatisfied workers from the prior day.
-///
-/// State is the ledger; no local file is created. Re-running `aiko "<truth>"
-/// --genesis` with the same plan resumes the same session.
-fn cmdGenesis(allocator: std.mem.Allocator, env: std.process.Environ, plan: []const u8) !u8 {
-    const rows = try parseRows(allocator, env);
-    defer allocator.free(rows);
-
-    // Project session id (find latest unsatisfied root with matching plan, else create).
-    var owned_sid: ?[]u8 = null;
-    defer if (owned_sid) |s| allocator.free(s);
-    const session_id: []const u8 = blk: {
-        if (findSessionByPlan(rows, plan)) |existing| break :blk existing;
-        const new_id = try contract.declare(allocator, env, plan, "neuron", .{ .parent_id = null });
-        owned_sid = new_id;
-        outPrint("session opened: {s}\n", .{new_id});
-        break :blk new_id;
-    };
-
-    // Re-read rows if we just declared (so currentDay sees the new root).
-    // Cheap: parseRows is a single file slurp.
-    const rows2 = if (owned_sid == null) rows else try parseRows(allocator, env);
-    defer if (owned_sid != null) allocator.free(rows2);
-
-    const cur = currentDay(rows2, session_id);
-
-    if (cur >= 9) {
-        outPrint("session {s}: day 9 emerged — all things made new\n", .{session_id});
-        return 0;
-    }
-
-    // Gate: previous day's Fib workers must all be satisfied before advancing.
-    if (cur > 0) {
-        const day_prev = days_table[cur - 1];
-        const dc = countDayChildren(rows2, session_id, cur);
-        if (dc.satisfied < day_prev.fib) {
-            outPrint(
-                "session {s}: day {d} ({s}) HOLD — {d}/{d} workers satisfied\n" ++
-                    "  satisfy the remaining workers (`contract _mark <id> satisfied`) then re-fire\n",
-                .{ session_id, cur, day_prev.name, dc.satisfied, day_prev.fib },
-            );
-            return 1;
-        }
-    }
-
-    // Advance: spawn next day's Fib workers.
-    const day = days_table[cur];
-    outPrint(
-        "session {s}: day {d} ({s}) — {s}\n  {s}\n  spawning {d} worker{s}:\n",
-        .{ session_id, day.n, day.name, day.ref, day.label, day.fib, if (day.fib == 1) "" else "s" },
-    );
-
-    var i: u8 = 0;
-    while (i < day.fib) : (i += 1) {
-        const child_plan = try std.fmt.allocPrint(
-            allocator,
-            "jl-day {d} ({s}) worker {d}/{d}: {s} — bind:{s}",
-            .{ day.n, day.name, i + 1, day.fib, day.label, session_id },
-        );
-        defer allocator.free(child_plan);
-        const child_id = try contract.declare(allocator, env, child_plan, "neuron", .{ .parent_id = session_id });
-        defer allocator.free(child_id);
-        outPrint("    {s}\n", .{child_id});
-    }
-    return 0;
 }
 
 /// cmdSpeak — the single Word.
@@ -5921,6 +6039,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     if (std.mem.eql(u8, verb, "verify-binary")) return try cmdVerifyBinary(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "layer")) return try cmdLayer(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "kill")) return try cmdKill(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "mcp")) return try cmdMcp(allocator, init.environ);
 
     errPrint("unknown native verb: {s}\n", .{verb});
     usage();

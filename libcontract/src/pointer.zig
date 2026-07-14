@@ -11,6 +11,8 @@ pub fn inferPointerType(action: []const u8) []const u8 {
     if (std.mem.eql(u8, action, "sequence")) return "sequence";
     if (std.mem.startsWith(u8, action, "quorum:")) return "quorum";
     if (std.mem.startsWith(u8, action, "contract:")) return "contract-ref";
+    if (std.mem.startsWith(u8, action, "fulfil:")) return "fulfil";
+    if (std.mem.startsWith(u8, action, "value-of:")) return "value-of";
     if (std.mem.startsWith(u8, action, "loop-until:")) return "loop";
     if (std.mem.startsWith(u8, action, "harness:")) return "harness";
     if (std.mem.startsWith(u8, action, "webhook:")) return "webhook";
@@ -88,19 +90,21 @@ pub fn isKnownAction(action: []const u8) bool {
     if (std.mem.eql(u8, action, "api")) return true;
     if (std.mem.eql(u8, action, "harness")) return true;
     if (std.mem.eql(u8, action, "loop")) return true;
+    if (std.mem.eql(u8, action, "fulfil")) return true;
     // Typed prefixes — each must end with ':' or be a network shape.
     const prefixes = [_][]const u8{
-        "word:",          "machine:",      "neuron:",
-        "funnel:",        "sequence:",     "quorum:",
-        "contract:",      "loop-until:",   "harness:",
-        "embedding:",     "sabbath-eval:", "inhibits:",
-        "bind:",          "blocked_by:",   "webhook:",
-        "tunnel:",        "posthook:",     "prehook:",
-        "modality:",      "wrapper:",      "sha256-private:",
-        "sha256-shared:", "sha256:",       "wallet:",
-        "x402:",          "agent:",        "validate:",
-        "signed:",        "iterate:",      "curl ",
-        "http://",        "https://",      "wget ",
+        "word:",         "machine:",        "neuron:",
+        "funnel:",       "sequence:",       "quorum:",
+        "contract:",     "fulfil:",         "value-of:",
+        "loop-until:",   "harness:",        "embedding:",
+        "sabbath-eval:", "inhibits:",       "bind:",
+        "blocked_by:",   "webhook:",        "tunnel:",
+        "posthook:",     "prehook:",        "modality:",
+        "wrapper:",      "sha256-private:", "sha256-shared:",
+        "sha256:",       "wallet:",         "x402:",
+        "agent:",        "validate:",       "signed:",
+        "iterate:",      "curl ",           "http://",
+        "https://",      "wget ",
     };
     for (prefixes) |p| {
         if (std.mem.startsWith(u8, action, p)) return true;
@@ -132,6 +136,8 @@ pub fn inferLayer(action: []const u8) i32 {
     if (std.mem.eql(u8, pt, "sequence")) return 3;
     if (std.mem.eql(u8, pt, "quorum")) return 3;
     if (std.mem.eql(u8, pt, "contract-ref")) return 3;
+    if (std.mem.eql(u8, pt, "fulfil")) return 3;
+    if (std.mem.eql(u8, pt, "value-of")) return 3;
     if (std.mem.eql(u8, pt, "inhibits")) return 3;
     if (std.mem.eql(u8, pt, "bind")) return 3;
     if (std.mem.eql(u8, pt, "blocked_by")) return 3;

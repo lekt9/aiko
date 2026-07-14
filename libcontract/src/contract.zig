@@ -28,6 +28,9 @@ pub const payload_crypto = @import("payload_crypto.zig");
 // (action `word:<tok>`, layer 0). Wired from cmdDeclare so each declare
 // fans out automatically.
 pub const words = @import("words.zig");
+// MCP stdio server (warm process for agents). Re-export so main can do
+// `contract.mcp_server.runStdio(allocator, env, dispatch)`.
+pub const mcp_server = @import("mcp_server.zig");
 // Comptime pattern enforcement. The assertInvariants() call below is
 // evaluated at compile time inside contract.zig's own container, which
 // forces eager analysis of pattern.zig and its @compileError checks.
@@ -38,6 +41,26 @@ pub const words = @import("words.zig");
 // COMPILE. Only the root /contract wallet (via repo write access +
 // signed source) can evolve the shape.
 pub const pattern = @import("pattern.zig");
+
+// Temporary shim so main.zig's MCP symlink tools compile while the real
+// implementation lives elsewhere. The Phase-1 work (value surfacing) is
+// orthogonal to symlink management.
+pub const symlink = struct {
+    pub fn isLewisWallet(allocator: std.mem.Allocator, env: std.process.Environ) bool {
+        _ = allocator;
+        _ = env;
+        // Conservative default: refuse in non-lewis contexts. Real check
+        // can be restored later; this just lets the binary link.
+        return false;
+    }
+    pub fn listJson(allocator: std.mem.Allocator) ![]u8 {
+        return try allocator.dupe(u8, "[]");
+    }
+    pub fn resolveJson(allocator: std.mem.Allocator, surface: []const u8) ![]u8 {
+        _ = surface;
+        return try allocator.dupe(u8, "{\"error\":\"shim\"}");
+    }
+};
 comptime {
     pattern.assertInvariants();
 }

@@ -1,0 +1,16 @@
+{
+  "name": "arc-task-1-copy-color",
+  "description": "Copy the color of the single non-zero object to every cell of that object shape in the output grid. 3x3 grid. Input has one colored object (color 2); background 0. Expected output has the object filled with color 2.",
+  "grid_size": 3,
+  "input": [
+    [0, 0, 0],
+    [0, 2, 0],
+    [0, 0, 0]
+  ],
+  "expected": [
+    [0, 0, 0],
+    [0, 2, 0],
+    [0, 0, 0]
+  ],
+  "notes": "Trivial case for value surfacing + fulfilment. The rule neuron must output a grid equal to expected."
+}

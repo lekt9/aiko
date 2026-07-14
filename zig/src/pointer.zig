@@ -19,6 +19,8 @@ pub fn inferPointerType(action: []const u8) []const u8 {
     if (std.mem.eql(u8, action, "sequence")) return "sequence";
     if (std.mem.startsWith(u8, action, "quorum:")) return "quorum";
     if (std.mem.startsWith(u8, action, "contract:")) return "contract-ref";
+    if (std.mem.startsWith(u8, action, "fulfil:")) return "fulfil";
+    if (std.mem.startsWith(u8, action, "value-of:")) return "value-of";
     if (std.mem.startsWith(u8, action, "loop-until:")) return "loop";
     if (std.mem.startsWith(u8, action, "harness:")) return "harness";
     if (std.mem.startsWith(u8, action, "webhook:")) return "webhook";
@@ -153,6 +155,50 @@ pub fn extractTypedRefs(allocator: std.mem.Allocator, text: []const u8, prefix: 
         i += 1;
     }
     return try refs.toOwnedSlice(allocator);
+}
+
+// REGRESSION LOCK — do not delete these branches as "unused".
+//
+// A pointer kind with zero rows in the `action` field is not thereby dead.
+// [CORRECTED after a red-team pass: the earlier note here claimed these
+// branches "prevent shell-exec". They do NOT. runAction has no inert branch for
+// sha256-*, so a sha256-private: *action* shell-executes like a cli action, and
+// deleting the classification branch would not change that. The classification
+// matters for LAYER, CACHE, and the isKnownAction/shape-validation coupling —
+// not for execution.] Why each branch must still stay:
+//
+//   sha256-private / sha256-shared — main.zig:3858 GENERATES these prefixes for
+//     stderr-tape blob evidence (384 + 23 rows carry them in the `pointer`
+//     field, never `action`). Removing them reclassifies those generated
+//     pointers as cli/layer-2 and, via isKnownAction in libcontract/pointer.zig,
+//     makes shape.zig:validateShape REJECT the evidence envelopes the substrate
+//     writes about itself.
+//
+//   agent-judges — the doctrine sentinel (c64bf5e2 / C-G01 5b9574ee). THIS one
+//     is a real execution guard: runAction:1850 returns HOLD for it. Its comment
+//     at main.zig:1847 records the last fall-through: `sh: agent-judges: command
+//     not found` rows on every backfill pass.
+//
+//   agent: / machine: — sole inhabitants of layers 6 and 1; pattern.zig's
+//     comptime assertInvariants @compileErrors if either layer empties.
+//
+// A scan of the `action` field alone reports all of these as "unused" and is
+// wrong. Multiple independent audits made exactly that error before this lock
+// was written. If you are here to shrink the dispatch table, measure every
+// field a pointer can live in, and check whether the substrate emits the prefix.
+test "classification lock: generated + sentinel kinds keep their ptype (not cli)" {
+    try std.testing.expectEqualStrings("sha256-private", inferPointerType("sha256-private:c0ffee"));
+    try std.testing.expectEqualStrings("sha256-shared", inferPointerType("sha256-shared:c0ffee"));
+    try std.testing.expectEqualStrings("sha256-private", inferPointerType("sha256:c0ffee"));
+    try std.testing.expectEqualStrings("agent-judges", inferPointerType("agent-judges"));
+
+    // Each must keep its own ptype — never silently become the executable cli.
+    const guarded = [_][]const u8{
+        "sha256-private:c0ffee", "sha256-shared:c0ffee", "sha256:c0ffee", "agent-judges",
+    };
+    for (guarded) |action| {
+        try std.testing.expect(!std.mem.eql(u8, "cli", inferPointerType(action)));
+    }
 }
 
 test "inferPointerType exposes only native shapes plus cell/api" {

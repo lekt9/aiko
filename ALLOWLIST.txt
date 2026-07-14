@@ -28,3 +28,5 @@ contract
 contract.sig
 dist.sh
 sync-outline-explainer.sh
+cascade.sh
+vendor-llama.sh
