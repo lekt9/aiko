@@ -35,7 +35,10 @@ PY
 }
 
 run_task() {
-  local task_file="$1"
+  # Resolve to an absolute path BEFORE arc_init cd's into the sandbox, else a
+  # relative task arg breaks once the working directory changes.
+  local task_file
+  task_file="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
   arc_init
   local name input expect solver
   name=$(python3 -c "import json;print(json.load(open('$task_file'))['task'])")
