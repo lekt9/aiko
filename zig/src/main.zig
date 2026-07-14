@@ -38,6 +38,9 @@ const terminal = contract.terminal;
 // default, but a producer may declare a signed adoption grant to restrict who
 // may adopt its value. The gate decision is the one authority in capability.zig.
 const capability = contract.capability;
+// Energy-ranking atom (Phase 1): ebm = per-key centroid + energy; embed = the
+// native stateless vector. Used to order the drill frontier best-first.
+const ebm = contract.ebm;
 
 const VERSION = "0.4.0-guarded-native-shape";
 
@@ -3159,6 +3162,49 @@ fn resolveLineage(allocator: std.mem.Allocator, env: std.process.Environ, id: []
 ///
 /// Returns `anyerror!void` (explicit, not inferred) to break the inferred
 /// error-set cycle: runAction → backfillUnresolvedDeep → resolveOne → runAction.
+/// Phase 1 energy router — reorder the drill frontier best-first by energy.
+///
+/// Reconstructs a "resolved-like" centroid from the ledger on the fly (fold each
+/// satisfied contract's action with reward +1, each died with −1 — the
+/// train-on-fire signal, the ledger IS the weights), then sorts the candidate
+/// ids ascending by energy = −cosine(embed(action), centroid) so the most
+/// resolved-like fire first (enabling contracts resolve earlier → shorter
+/// cascade). SAFETY: reorder-ONLY — every collected candidate still fires this
+/// pass, so nothing is starved (the fairness floor holds by construction).
+/// Gated on AIKO_ENERGY_RANK; unset = untouched scan order (non-breaking).
+fn energyRankCandidates(allocator: std.mem.Allocator, env: std.process.Environ, rows: []const Row, items: [][]const u8) void {
+    if (env.getPosix("AIKO_ENERGY_RANK") == null) return;
+    if (items.len < 2) return;
+    var ok: ebm.Prototype = .{};
+    var seen = std.StringHashMap(void).init(allocator);
+    defer seen.deinit();
+    for (rows) |r| {
+        const reward: f64 = switch (terminal.classify(r.event)) {
+            .satisfied => 1.0,
+            .dead => -1.0,
+            else => continue,
+        };
+        if (seen.contains(r.id)) continue;
+        seen.put(r.id, {}) catch return;
+        const decl = latestDeclared(rows, r.id) orelse continue;
+        ok.foldText(decl.action, reward);
+    }
+    if (ok.w <= 0) return; // no training signal yet → keep scan order
+    const Scored = struct { id: []const u8, e: f64 };
+    const scored = allocator.alloc(Scored, items.len) catch return;
+    defer allocator.free(scored);
+    for (items, 0..) |cid, i| {
+        const act = if (latestDeclared(rows, cid)) |d| d.action else "";
+        scored[i] = .{ .id = cid, .e = ebm.energyText(ok, act) };
+    }
+    std.sort.pdq(Scored, scored, {}, struct {
+        fn lt(_: void, a: Scored, b: Scored) bool {
+            return a.e < b.e;
+        }
+    }.lt);
+    for (scored, 0..) |s, i| items[i] = s.id;
+}
+
 fn backfillUnresolvedDeep(allocator: std.mem.Allocator, env: std.process.Environ, skip_id: []const u8) anyerror!void {
     return backfillUnresolvedWithBudget(allocator, env, skip_id, 1024, 32);
 }
@@ -3235,6 +3281,9 @@ fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.E
             return;
         }
         evidencePrint("drill pass {d}: {d} unresolved row(s) within deep budget {d}\n", .{ pass + 1, candidates.items.len, budget });
+        // Phase 1 energy router: order the frontier best-first (reorder-only,
+        // non-breaking, gated on AIKO_ENERGY_RANK). No-op in scan-order mode.
+        energyRankCandidates(allocator, env, rows, candidates.items);
         var progressed: u32 = 0;
         for (candidates.items) |cid| {
             const rc = resolveOne(allocator, env, cid) catch continue;
@@ -3354,6 +3403,8 @@ fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, sk
             return;
         }
         evidencePrint("backfill pass {d}: {d} unresolved row(s) within budget {d}\n", .{ pass + 1, candidates.items.len, budget });
+        // Phase 1 energy router (reorder-only, gated on AIKO_ENERGY_RANK).
+        energyRankCandidates(allocator, env, rows, candidates.items);
         const terminals_before = countTerminalEvents(rows);
         var satisfied_any = false;
         for (candidates.items) |cid| {

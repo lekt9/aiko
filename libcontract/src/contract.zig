@@ -25,6 +25,11 @@ pub const bible = @import("bible.zig");
 pub const cache = @import("cache.zig");
 pub const terminal = @import("terminal.zig");
 pub const capability = @import("capability.zig");
+// Energy-ranking atom (ported from main, verified on arc-lean): embed = native
+// stateless embedding; ebm = per-key centroid + train-on-fire fold + energy.
+// The foundation for energy-ranked resolution (prove-the-atom before on-chain).
+pub const embed = @import("embed.zig");
+pub const ebm = @import("ebm.zig");
 pub const payload_crypto = @import("payload_crypto.zig");
 // Words-as-contracts: every token in a plan is a child /contract pointer
 // (action `word:<tok>`, layer 0). Wired from cmdDeclare so each declare
