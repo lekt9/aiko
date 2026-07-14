@@ -1991,12 +1991,30 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
             return .{ .rc = 1, .result = "fail" };
         }
         var got: usize = 0;
+        var dead: usize = 0;
         for (ids) |cid| {
-            if (isSatisfied(rows, cid)) got += 1;
+            if (isDead(rows, cid)) {
+                dead += 1;
+            } else if (isSatisfied(rows, cid)) {
+                got += 1;
+            }
         }
         if (got >= need) {
             evidencePrint("  result: PASS — quorum {d}/{d}\n", .{ got, need });
             return .{ .rc = 0, .result = "pass" };
+        }
+        // Trophic withdrawal / anoikis: a quorum inherits death only when the
+        // threshold becomes UNREACHABLE — k-of-n fault tolerance means a single
+        // dead child must not kill the whole (that is the point of a quorum),
+        // but once too few children remain alive to ever reach `need`, the
+        // quorum can never satisfy and must apoptose instead of HOLDING forever.
+        // Before this, quorum never consulted isDead at all (fork F4/F5): a
+        // dead/purged child was merely "not satisfied", so the quorum re-fired
+        // every sweep forever. Emitting a `child_dead` result reuses the
+        // existing apoptosis plumbing (bioClassifyRoadblock + resolveOne markDied).
+        if (ids.len - dead < need) {
+            evidencePrint("  result: FAIL — child_dead: quorum {d}/{d} unreachable ({d} dead)\n", .{ got, need, dead });
+            return .{ .rc = 1, .result = "child_dead — quorum inherits death: too few live children to reach threshold" };
         }
         evidencePrint("  result: FAIL — quorum {d}/{d}\n", .{ got, need });
         return .{ .rc = 1, .result = "fail" };
@@ -2036,17 +2054,20 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
                 evidencePrint("  hebbian-promotion: pattern:{s} use_count={d} >= threshold={d} -> baked as primitive\n", .{ target, use_count, threshold });
             }
         }
-        // Phase 1: approved pointers surface values.
-        // Any terminal target with a recorded action_result returns the
-        // concrete bytes (unified path for primitives + future fulfilled
-        // neurons). Signature chain already decided we are allowed to trust it.
-        if (latestActionResult(rows, target)) |cached| {
-            if (cached.len > 0) {
-                evidencePrint("  result: PASS — contract:{s} value surfaced ({d} bytes)\n", .{ target, cached.len });
-                return .{ .rc = 0, .result = try allocator.dupe(u8, cached) };
-            }
-        }
+        // Phase 1: approved pointers surface values — but ONLY from a LIVE
+        // (satisfied) producer. A dead or purged target has a nulling latest
+        // terminal, so isSatisfied is false and its stale action_result must NOT
+        // be adopted. Before the gate, contract:/value-of: surfaced bytes before
+        // any terminal check (fork F5, value-surface death-blindness) — a dead
+        // producer's value leaked out as PASS. Biology: adopt a value only from
+        // a signal that holds NOW (matches fulfil:, which already gates first).
         if (isSatisfied(rows, target)) {
+            if (latestActionResult(rows, target)) |cached| {
+                if (cached.len > 0) {
+                    evidencePrint("  result: PASS — contract:{s} value surfaced ({d} bytes)\n", .{ target, cached.len });
+                    return .{ .rc = 0, .result = try allocator.dupe(u8, cached) };
+                }
+            }
             evidencePrint("  result: PASS — contract:{s} satisfied (no value bytes)\n", .{target});
             return .{ .rc = 0, .result = "pass" };
         }
@@ -2085,13 +2106,15 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
     if (std.mem.eql(u8, ptype, "value-of")) {
         const ref = action["value-of:".len..];
         const target = if (ref.len >= 8) ref[0..8] else ref;
-        if (latestActionResult(rows, target)) |cached| {
-            if (cached.len > 0) {
-                evidencePrint("  result: PASS — value-of:{s} surfaced ({d} bytes)\n", .{ target, cached.len });
-                return .{ .rc = 0, .result = try allocator.dupe(u8, cached) };
-            }
-        }
+        // Same F5 death-gate as contract-ref: only surface a LIVE producer's
+        // bytes; a dead/purged target must not leak its stale value.
         if (isSatisfied(rows, target)) {
+            if (latestActionResult(rows, target)) |cached| {
+                if (cached.len > 0) {
+                    evidencePrint("  result: PASS — value-of:{s} surfaced ({d} bytes)\n", .{ target, cached.len });
+                    return .{ .rc = 0, .result = try allocator.dupe(u8, cached) };
+                }
+            }
             evidencePrint("  result: PASS — value-of:{s} satisfied (no value bytes)\n", .{target});
             return .{ .rc = 0, .result = "pass" };
         }
