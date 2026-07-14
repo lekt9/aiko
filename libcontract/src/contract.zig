@@ -30,6 +30,7 @@ pub const capability = @import("capability.zig");
 // The foundation for energy-ranked resolution (prove-the-atom before on-chain).
 pub const embed = @import("embed.zig");
 pub const ebm = @import("ebm.zig");
+pub const cas = @import("cas.zig");
 pub const payload_crypto = @import("payload_crypto.zig");
 // Words-as-contracts: every token in a plan is a child /contract pointer
 // (action `word:<tok>`, layer 0). Wired from cmdDeclare so each declare
