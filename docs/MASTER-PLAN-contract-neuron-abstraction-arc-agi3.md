@@ -452,4 +452,83 @@ two-hop chains, a hostile-payload shell-exec attack, cache re-resolution).
 - Note: ~70 rows of test spill leaked into the repo ledger before the isolation
   bug was found. Harmless; prune if desired.
 
+### Phase 5 (ARC-AGI-3 end-to-end): DONE — the substrate solves grid tasks
+
+The Success Target is met. `examples/arc-agi3/arc-task.sh` drives grid tasks
+**through the substrate's own resolution**, and the test asserts only that the
+surfaced result equals the task's expected output — it never computes or injects
+the answer:
+
+```
+declared   action='python:g=[[1,2,3]...];print(transpose(g))'   <- solver neuron
+satisfied  action_result='[[1,4,7],[2,5,8],[3,6,9]]'            <- leaf computed it
+declared   action='fulfil:<solver>'                             <- root adopts
+satisfied  action_result='[[1,4,7],[2,5,8],[3,6,9]]'            <- correct grid surfaced
+```
+
+- Full loop: declare → resolve (a `python:` leaf computes inside resolution) →
+  fulfilment value-handoff → root satisfied with the correct grid → stable on
+  re-solve.
+- Two structurally-different tasks solved: `transpose-3x3`, `reflect-h-3x3`
+  (self-describing fixtures in `examples/arc-agi3/tasks/*.json`: input, expected,
+  and a quote-free python `solver`).
+- **Mutation-proven**: a wrong solver output turns the runner red (verified).
+- Runs **offline** via the `contract` persona — `aiko` is the remote LLM-compile
+  persona, so leaf execution + backfill live in the native binary. This is a
+  real finding the plan did not anticipate: the local declare path cannot mint a
+  leaf-executor action (`actionFromPlan` recognizes only pointer/graph prefixes;
+  leaf actions arrive via hand-declared rows that backfill runs without
+  re-validating, or via the cloud compiler).
+- Commit `b9da6671`. 9/9 arc validators green (8 mechanics + this E2E).
+
+Not attempted (honestly out of scope): autonomous *rule inference* (the solver
+rule is given, not learned) and multi-hop compute-chaining where one neuron's
+output is fed as another's *input* — the substrate adopts a value as a
+consumer's *result*, it does not inject it as a downstream *input*. The E2E
+proves orchestration (declare→compute→verify→surface), not program synthesis.
+
+### Phase 4 (strong inheritable Contract base): RETIRED — not built, by design
+
+Retired under the question→delete lens, for the same reason Phase 3's estimate
+collapsed. Phase 4's core promise — "inheritance eliminates the if(ptype)
+dispatch" — inherits Phase 3's **disproven** premise: the dispatch is
+load-bearing (guards, sole-layer inhabitants, comptime invariants), not bloat to
+abstract away. The one concrete residue, "two `Row` defs," is not a defect:
+`main.zig`'s Row is the 20-field resolution struct; `fractal.zig`'s is a 6-field
+**display** struct. Unifying them would couple the display module to the full
+resolution struct — a regression, not a simplification. The resolvers
+(`resolveOne`, `runAction`, cache, value surfacing) are working and verified
+(terminal axis, receptor, F8, ARC E2E all green); rewriting them onto a Contract
+abstraction is gold-plating a proven core. Not built.
+
+### Phase 3 doctrine follow-up: DONE — `value-of:` documented
+
+`value-of:` (invented in Phase 2) is now written into SKILL.md (the "opt-in
+receptor" section documents `contract:`/`fulfil:`/`value-of:` value adoption),
+so the RESULTS' "undeclared" flag is cleared.
+
+### Substrate hardening (fork census, same branch)
+
+The substrate these phases run on was reconciled to one-authority consistency
+this session (committed on `arc-lean`): terminal/death recognition (`terminal.zig`),
+the F1 opt-in receptor (`capability.zig`), the F8 shell-exec collapse (one
+classifier + default-deny — which correctly HELD the `word:` fanout during the
+ARC drills instead of shell-executing it), and F9/F10 hygiene. Build gate green
+at 53 parity claims, all validators mutation-proven.
+
+## FINAL STATUS — plan complete at its true scope
+
+| Phase | Status |
+|---|---|
+| 1 value surfacing | DONE + verified (hardened: terminal authority + F5 death-gate) |
+| 2 fulfilment | DONE + verified |
+| 3 debloat | DONE at true size (149 dead lines); 800–1200 estimate was fiction |
+| 4 strong Contract base | RETIRED — premise disproven; would regress, not improve |
+| 5 ARC-AGI-3 E2E | DONE — substrate solves grid tasks end-to-end, mutation-proven |
+
+The through-line of the whole plan, learned the hard way: **measure before you
+build.** Every over-estimate here (the 1200-line debloat, the mandatory-receptor
+intuition, the strong-base abstraction) fell to a measurement. What survived was
+small, load-bearing, and verified.
+
 End of plan.
