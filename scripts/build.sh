@@ -1229,13 +1229,37 @@ PYAUDIT
     _fail "doctrine[receptor gate]: SKILL.md is missing the '## The opt-in receptor' section — the F1 doctrine that value adoption is open by default and gated only by a producer's signed grant"
   fi
 
+  # 53. "One classifier + default-deny execution (fork F8 collapsed)" — biology:
+  #     one genome, and an immune system refuses an unrecognized protein. The
+  #     VALIDATOR (libcontract isKnownAction) blessed 9 typed doctrine pointers
+  #     (word:/validate:/signed:/modality:/wrapper:/iterate: + neuron:/funnel:/
+  #     sequence: subtypes) that the EXECUTOR's separate classifier mapped to
+  #     "cli", so they fell through to runAction's `sh -c "<action>"` — a
+  #     shell-injection surface. Fix: (1) zig/src/pointer.zig recognizes the same
+  #     typed prefixes so they classify as inert kinds, and (2) runAction
+  #     default-denies at the exec fall-through — only cli/api/loop/harness may
+  #     shell-execute; every other ptype HOLDs (hold:inert-pointer). Refuse to
+  #     ship a binary missing either half.
+  if ! grep -q 'if (std.mem.startsWith(u8, action, "word:")) return "word";' "$ZIG_DIR/src/pointer.zig"; then
+    _fail "doctrine[F8 one-classifier]: zig/src/pointer.zig must recognize the typed doctrine prefixes (word:/validate:/... ) so they no longer misclassify as executable cli (fork F8)"
+  fi
+  if ! grep -q 'hold:inert-pointer' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[F8 default-deny]: main.zig runAction must default-deny at the shell-exec fall-through (HOLD hold:inert-pointer for any non-cli/api/loop/harness ptype) — else a validator-blessed typed pointer shell-executes (fork F8)"
+  fi
+  if ! grep -qE '!std\.mem\.eql\(u8, ptype, "loop"\) and !std\.mem\.eql\(u8, ptype, "harness"\)' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[F8 default-deny]: main.zig's exec allow-list must be exactly cli/api/loop/harness — a broader allow-list re-opens the shell-exec fork"
+  fi
+  if ! grep -q '^## One classifier, default-deny execution' "$REPO/SKILL.md"; then
+    _fail "doctrine[F8]: SKILL.md is missing the '## One classifier, default-deny execution' section — the F8 doctrine (one genome + refuse the unrecognized action)"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
     printf '%s' "$report" >&2
     echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 52 doctrine claims have matching code sites"
+  echo "build:parity OK — all 53 doctrine claims have matching code sites"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────

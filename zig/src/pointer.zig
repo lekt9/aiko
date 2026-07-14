@@ -43,6 +43,21 @@ pub fn inferPointerType(action: []const u8) []const u8 {
     if (std.mem.startsWith(u8, action, "posthook:")) return "posthook";
     if (std.mem.startsWith(u8, action, "prehook:")) return "prehook";
     if (std.mem.startsWith(u8, action, "blocked_by:")) return "blocked_by";
+    // Fork F8: these typed doctrine pointers are blessed by the validator
+    // (libcontract isKnownAction) but had NO branch here, so they fell through
+    // to "cli" and were shell-executed (`sh -c "word:..."`) — a shell-injection
+    // surface. Classify them as their real (inert) kinds so runAction's F8
+    // default-deny HOLDs them instead of executing. neuron:/funnel:/sequence:
+    // subtypes route to their existing base handlers.
+    if (std.mem.startsWith(u8, action, "word:")) return "word";
+    if (std.mem.startsWith(u8, action, "validate:")) return "validate";
+    if (std.mem.startsWith(u8, action, "signed:")) return "signed";
+    if (std.mem.startsWith(u8, action, "modality:")) return "modality";
+    if (std.mem.startsWith(u8, action, "wrapper:")) return "wrapper";
+    if (std.mem.startsWith(u8, action, "iterate:")) return "iterate";
+    if (std.mem.startsWith(u8, action, "neuron:")) return "neuron";
+    if (std.mem.startsWith(u8, action, "funnel:")) return "funnel";
+    if (std.mem.startsWith(u8, action, "sequence:")) return "sequence";
     if (std.mem.startsWith(u8, action, "curl ") or
         std.mem.startsWith(u8, action, "http://") or
         std.mem.startsWith(u8, action, "https://") or
