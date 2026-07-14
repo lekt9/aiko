@@ -1,0 +1,7 @@
+{
+  "task": "transpose-3x3",
+  "rule": "output[i][j] = input[j][i] (matrix transpose)",
+  "input":    [[1,2,3],[4,5,6],[7,8,9]],
+  "expected": [[1,4,7],[2,5,8],[3,6,9]],
+  "solver": "print(str([list(r) for r in zip(*g)]).replace(' ',''),end='')"
+}
