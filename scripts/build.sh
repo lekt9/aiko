@@ -657,10 +657,15 @@ step_parity() {
 
   # 32. "isSatisfied honors later death events (temporal coherence)" —
   #     truth is what holds NOW, not what once was. A contract that was
-  #     satisfied then died is no longer satisfied. The fix walks rows
-  #     newest-to-oldest and returns the latest terminal verdict.
-  if ! grep -q 'if (std.mem.eql(u8, r.event, "died")) return false' "$ZIG_DIR/src/main.zig"; then
-    _fail "doctrine[temporal coherence]: isSatisfied must return false when a later 'died' event exists for the same id — append-only ledger + latest-terminal semantics (John 17:17, present-tense truth)"
+  #     satisfied then died is no longer satisfied. isSatisfied walks rows
+  #     newest-to-oldest and returns the latest terminal verdict, classifying
+  #     each event through the ONE terminal authority (terminal.classify) rather
+  #     than re-inlining a died/purged string-match — so a nulling terminal
+  #     (.dead or .purged) that appears after a `satisfied` returns false. The
+  #     Day-5 reconcile routed this through terminal.zig (claim 51 sub-check C),
+  #     so the load-bearing site is now the switch arm, not the old inlined eql.
+  if ! grep -q '\.dead, \.purged => return false' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[temporal coherence]: isSatisfied must return false when a later 'died' event exists for the same id — append-only ledger + latest-terminal semantics via terminal.classify (John 17:17, present-tense truth)"
   fi
 
   # 33. "Pointer chain is the only cache key" — cache.zig exports the
@@ -1174,6 +1179,15 @@ PYAUDIT
   fi
   if ! grep -q 'terminal.classify(' "$LIB_DIR/src/cache.zig"; then
     _fail "doctrine[terminal authority]: cache.zig:terminalClass must delegate to terminal.classify( — the cache must not re-inline its own satisfied/died/purged string-matching (fork F3 must stay collapsed)"
+  fi
+  # Sub-check C (Day 5): the binary's terminal readers route through the authority.
+  # isDead/isSatisfied/countTerminalEvents must use terminal.classify/nullifies
+  # instead of inlining their own event string set (the fork F3 divergence).
+  if ! grep -q 'terminal.nullifies(' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[terminal authority]: main.zig:isDead must route through terminal.nullifies( — died-OR-purged is the one nulling-terminal predicate; isDead was blind to purged (fork F3)"
+  fi
+  if grep -qE 'std\.mem\.eql\(u8, r\.event, "(died|purged)"\)' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[terminal authority]: main.zig still inlines a died/purged event string-match — route it through terminal.classify (the single authority) so terminal recognition cannot re-fork"
   fi
 
   if [[ $drift -gt 0 ]]; then

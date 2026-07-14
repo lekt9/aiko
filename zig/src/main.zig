@@ -29,6 +29,11 @@ const contract = @import("contract");
 const client = @import("contract_client");
 const pointer = @import("pointer.zig");
 const ledger = @import("ledger.zig");
+// The ONE terminal-event classifier (biology axis 1). Every event->terminal
+// decision in this file routes through it, so isSatisfied/isDead/
+// countTerminalEvents cannot drift apart the way they did before (fork F3 —
+// isDead was blind to `purged` while isSatisfied and cache.terminalClass were not).
+const terminal = contract.terminal;
 
 const VERSION = "0.4.0-guarded-native-shape";
 
@@ -378,8 +383,10 @@ fn jsonStringDecoded(allocator: std.mem.Allocator, line: []const u8, key: []cons
 fn countTerminalEvents(rows: []const Row) usize {
     var n: usize = 0;
     for (rows) |r| {
-        if (std.mem.eql(u8, r.event, "satisfied")) n += 1;
-        if (std.mem.eql(u8, r.event, "died")) n += 1;
+        // Routes through the ONE authority: any terminal (satisfied, died, OR
+        // purged) is progress. Previously counted only satisfied+died, missing
+        // `purged` — a Decalogue purge IS a terminal verdict and must count.
+        if (terminal.isTerminal(terminal.classify(r.event))) n += 1;
     }
     return n;
 }
@@ -502,30 +509,43 @@ fn isSatisfied(rows: []const Row, id: []const u8) bool {
     // is the correct read; the prior implementation (return on first
     // satisfied match, regardless of later death) was the load-bearing
     // temporal-incoherence contradiction surfaced by contract a1c68c4e.
+    // Latest terminal wins (temporal coherence, a1c68c4e). Routes the event
+    // classification through the ONE authority (terminal.zig) instead of
+    // re-inlining the {satisfied,died,purged} string set — so this and every
+    // other reader agree by construction. satisfied → true; any nulling terminal
+    // (dead or purged) → false; keep walking on non-terminal rows.
     var i: usize = rows.len;
     while (i > 0) : (i -= 1) {
         const r = rows[i - 1];
         if (!std.mem.eql(u8, r.id, id)) continue;
-        if (std.mem.eql(u8, r.event, "satisfied")) return true;
-        if (std.mem.eql(u8, r.event, "died")) return false;
-        // `purged` is a nulling terminal too (Decalogue gate). cache.zig's
-        // terminalClass already treats it as .null_terminal and contract.zig's
-        // markPurged docstring says the terminal walk must; isSatisfied was the
-        // one read surface still blind to it, so a satisfied-then-purged
-        // producer surfaced stale bytes to any fulfil:/contract:/value-of:
-        // consumer. Same temporal-incoherence class as a1c68c4e (the `died`
-        // fix), extended to the stronger terminal. Verified: examples/arc-agi3/
-        // arc-validate-purge.sh fails without this line.
-        if (std.mem.eql(u8, r.event, "purged")) return false;
+        switch (terminal.classify(r.event)) {
+            .satisfied => return true,
+            .dead, .purged => return false,
+            .pending => {},
+        }
     }
     return false;
 }
 
-/// Natural-selection projection: has a `died` event been appended for this id?
-/// Append-only — once dead, stays dead (Hebrews 9:27, appointed once to die).
+/// Natural-selection projection: has a NULLING terminal (died OR purged) been
+/// appended for this id? Append-only — once nullified, stays nullified (Hebrews
+/// 9:27, appointed once to die). Routes through the ONE terminal authority
+/// (terminal.nullifies = dead||purged), which is the fix for fork F3: isDead was
+/// blind to `purged`, so a satisfied-then-purged child was neither dead (this)
+/// nor satisfied (isSatisfied), and its neuron/funnel parent HELD FOREVER
+/// instead of inheriting death. Verified: examples/arc-agi3/arc-validate-inherit-death.sh
+/// fails without the `purged` recognition this delegation now provides.
+///
+/// Note: this keeps the "once nullified stays nullified" scan (any nulling
+/// terminal anywhere → dead), matching the existing Hebrews stance rather than
+/// switching to isSatisfied's latest-terminal-wins. A died-then-satisfied
+/// revival would make both isDead and isSatisfied true — a theoretical case
+/// (zero such rows in the real ledger); resolving it means a latest-wins isDead,
+/// which is a doctrine decision left for Lewis.
 fn isDead(rows: []const Row, id: []const u8) bool {
     for (rows) |r| {
-        if (std.mem.eql(u8, r.event, "died") and std.mem.eql(u8, r.id, id)) return true;
+        if (!std.mem.eql(u8, r.id, id)) continue;
+        if (terminal.nullifies(terminal.classify(r.event))) return true;
     }
     return false;
 }
