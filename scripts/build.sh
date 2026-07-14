@@ -1190,13 +1190,52 @@ PYAUDIT
     _fail "doctrine[terminal authority]: main.zig still inlines a died/purged event string-match — route it through terminal.classify (the single authority) so terminal recognition cannot re-fork"
   fi
 
+  # 52. "Opt-in receptor gate for value adoption (fork F1)" — biology: a cell
+  #     responds to a ligand only through a receptor it expresses. Measurement
+  #     showed 100% of real adoption is cross-lineage peer reference, so a
+  #     MANDATORY gate would break everything; the data-honest shape is OPT-IN —
+  #     adoption is OPEN by default, but a producer may declare a signed adoption
+  #     grant to restrict who may adopt its value. libcontract/src/capability.zig
+  #     is the ONE receptor authority (scopeMatch + granteeMatches + grantSelfValid
+  #     + authorizes + adoptionAllowed). main.zig routes contract:/fulfil:/value-of:
+  #     through adoptionAllowed, and BINDS the grant's authority to the producer's
+  #     own env_pubkey (else a forged grant would self-authorize). Refuse to ship a
+  #     binary where the authority is missing, unreachable, ungated, or unbound.
+  if [[ ! -f "$LIB_DIR/src/capability.zig" ]]; then
+    _fail "doctrine[receptor gate]: libcontract/src/capability.zig missing — the ONE opt-in adoption-receptor authority (fork F1)"
+  else
+    for cap_fn in 'pub fn adoptionAllowed' 'pub fn authorizes' 'pub fn scopeMatch' 'pub fn grantSelfValid'; do
+      if ! grep -q "$cap_fn" "$LIB_DIR/src/capability.zig"; then
+        _fail "doctrine[receptor gate]: '$cap_fn' missing in capability.zig — the receptor decision surface is incomplete"
+      fi
+    done
+  fi
+  if ! grep -q 'pub const capability = @import("capability.zig")' "$LIB_DIR/src/contract.zig"; then
+    _fail "doctrine[receptor gate]: contract.zig must re-export pub const capability = @import(\"capability.zig\") so the binary reaches the one receptor authority"
+  fi
+  if ! grep -q 'fn adoptionAllowed(' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[receptor gate]: main.zig:adoptionAllowed missing — value adoption must route through the receptor gate (fork F1)"
+  fi
+  # The three adoption predicates must each consult the gate before surfacing.
+  if [[ "$(grep -c 'if (!adoptionAllowed(allocator, rows, r.id, target))' "$ZIG_DIR/src/main.zig")" -lt 3 ]]; then
+    _fail "doctrine[receptor gate]: contract:/fulfil:/value-of: must EACH gate on adoptionAllowed before surfacing a producer's value (found <3 gates — a path bypasses the receptor)"
+  fi
+  # Authority binding: a grant is only trusted if its authority_pubkey equals the
+  # producer's own env_pubkey — without this a forged grant self-authorizes.
+  if ! grep -q 'g.authority_pubkey, producer_pubkey' "$ZIG_DIR/src/main.zig"; then
+    _fail "doctrine[receptor gate]: main.zig must bind an adoption grant's authority_pubkey to the producer's env_pubkey (forged-grant defense) — the binding is missing"
+  fi
+  if ! grep -q '^## The opt-in receptor' "$REPO/SKILL.md"; then
+    _fail "doctrine[receptor gate]: SKILL.md is missing the '## The opt-in receptor' section — the F1 doctrine that value adoption is open by default and gated only by a producer's signed grant"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
     printf '%s' "$report" >&2
     echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 51 doctrine claims have matching code sites"
+  echo "build:parity OK — all 52 doctrine claims have matching code sites"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────

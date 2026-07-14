@@ -736,6 +736,48 @@ Lineage (`parent_id`, HKDF `parent_signature`) stays separate from signaling
 (synapse ≠ mitosis). Value adoption is therefore reference-based and
 cross-lineage — the substrate does NOT gate signaling on descent.
 
+## The opt-in receptor — a producer may restrict who adopts its value (fork F1)
+
+> *If the whole body were an eye, where were the hearing? If the whole were
+> hearing, where were the smelling?* (1 Corinthians 12:17)
+>
+> *To him the porter openeth; and the sheep hear his voice: and he calleth
+> his own sheep by name.* (John 10:3)
+
+Biology: a cell responds to a ligand only through a **receptor** it expresses —
+not by descent (a paracrine signal reaches an unrelated cell if the receptor
+fits) and not by anyone-grabs (a receptor-blind cell simply does not respond).
+Specificity is the receptor's shape, not lineage.
+
+The substrate's adoption path (`contract:`/`fulfil:`/`value-of:` surfacing a
+producer's value) was open by pure id-reference: any consumer that named a
+producer's 8-hex id adopted its value. Measurement of the real ledger settled
+the design: **100% of existing adoption is cross-lineage root-to-root peer
+reference** — that openness IS the substrate's working model, not an edge case.
+So the receptor is **opt-in**, never mandatory:
+
+1. **Default OPEN.** A producer that has declared no restriction is adoptable by
+   anyone — the cross-lineage peer-reference model above is preserved untouched.
+2. **Opt-in restriction.** A producer runs `grant-adopt <producer> <grantee>
+   [scope]`, which derives the producer's lineage keypair and appends a
+   **signed adoption grant** (`event:"grant"` with `grantee` + `scope` +
+   `authority_pubkey` + `authority_signature`). Once ≥1 such grant scoped to the
+   producer exists, only a consumer a valid grant authorizes may adopt; all
+   others HOLD (`hold:receptor`).
+
+One authority: `libcontract/src/capability.zig` decides every adoption —
+`scopeMatch` (exact / `*`-glob), `granteeMatches` (exact id / glob / lineage
+descent, so a grant to an ancestor authorizes its line), `grantSelfValid`
+(ed25519 over `grantDigest = sha256(granter\0grantee\0scope)`), `authorizes`,
+and `adoptionAllowed` (empty grant set ⇒ open). `main.zig` routes the three
+adoption predicates through `adoptionAllowed` and **binds authority**: a grant
+is trusted only if its `authority_pubkey` equals the producer's own declared
+`env_pubkey` — otherwise anyone could mint a grant naming their own key and
+self-authorize. The grantee may be a non-descendant, so cross-lineage reuse
+survives when the producer explicitly grants it; but a stranger who merely knows
+the id can no longer adopt a restricted producer's value. The receptor is an
+optional specificity layer over reference-based signaling, never a descent gate.
+
 ## Channel registry — every contact channel is a contract
 
 Every channel through which the substrate can reach the user is its

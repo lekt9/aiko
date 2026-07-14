@@ -34,6 +34,10 @@ const ledger = @import("ledger.zig");
 // countTerminalEvents cannot drift apart the way they did before (fork F3 —
 // isDead was blind to `purged` while isSatisfied and cache.terminalClass were not).
 const terminal = contract.terminal;
+// F1 opt-in receptor: value adoption (contract:/fulfil:/value-of:) is OPEN by
+// default, but a producer may declare a signed adoption grant to restrict who
+// may adopt its value. The gate decision is the one authority in capability.zig.
+const capability = contract.capability;
 
 const VERSION = "0.4.0-guarded-native-shape";
 
@@ -113,6 +117,15 @@ const Row = struct {
     actor_pubkey: []const u8 = "",
     role: []const u8 = "",
     scope: []const u8 = "",
+    // F1 adoption-grant tuple (only populated for event=="grant" adoption
+    // rows): grantee = who may adopt (contract id / glob / ancestor),
+    // authority_pubkey = the granter's env_pubkey, authority_signature = the
+    // granter's ed25519 sig over capability.grantDigest. A grant row is an
+    // adoption restriction (not an RBAC grant) iff grantee+authority_signature
+    // are both present.
+    grantee: []const u8 = "",
+    authority_pubkey: []const u8 = "",
+    authority_signature: []const u8 = "",
     /// Layer per contract:d10b3dbb convention (1=system, 2=cell, 3=graph,
     /// 4=transport, 5=value, 6=operator). Inferred at declare from
     /// pointer.zig's inferLayer; persisted on the row.
@@ -430,6 +443,9 @@ fn parseRowLine(allocator: std.mem.Allocator, line: []const u8) Row {
     r.actor_pubkey = jsonString(line, "actor_pubkey") orelse "";
     r.role = jsonString(line, "role") orelse "";
     r.scope = jsonString(line, "scope") orelse "";
+    r.grantee = jsonString(line, "grantee") orelse "";
+    r.authority_pubkey = jsonString(line, "authority_pubkey") orelse "";
+    r.authority_signature = jsonString(line, "authority_signature") orelse "";
     r.parent_signature = jsonString(line, "parent_signature") orelse "";
     r.layer = @intCast(jsonInt(line, "layer") orelse 0);
     return r;
@@ -1844,6 +1860,90 @@ fn aggregateChildOutputs(allocator: std.mem.Allocator, rows: []const Row, parent
     return try buf.toOwnedSlice(allocator);
 }
 
+/// F1 opt-in receptor gate. Collects the producer's declared adoption
+/// restrictions (signed grant rows scoped to it) and asks the one authority
+/// (capability.adoptionAllowed) whether `consumer_id` may adopt. Default OPEN:
+/// a producer with no adoption grants is adoptable by anyone (unchanged
+/// cross-lineage peer-reference behaviour). Fails OPEN on allocation error —
+/// the receptor never wrongly blocks because of an OOM.
+fn adoptionAllowed(allocator: std.mem.Allocator, rows: []const Row, consumer_id: []const u8, producer_id: []const u8) bool {
+    // Authority binding: an adoption grant is only trusted if its
+    // authority_pubkey equals the producer's OWN declared env_pubkey — i.e.
+    // the grant was signed by the producer's lineage key, not an attacker's.
+    // Without this, anyone could forge a grant naming their own key and adopt.
+    // If the producer has no declared env_pubkey on record we cannot bind, so
+    // every grant is ignored and the producer stays OPEN (fail-open is safe:
+    // it never wrongly blocks, and an unbindable grant confers nothing).
+    var producer_pubkey: []const u8 = "";
+    for (rows) |d| {
+        if (!std.mem.eql(u8, d.id, producer_id)) continue;
+        if (!std.mem.eql(u8, d.event, "declared")) continue;
+        if (d.env_pubkey.len > 0) {
+            producer_pubkey = d.env_pubkey;
+            break;
+        }
+    }
+
+    var grants: std.ArrayList(capability.Grant) = .empty;
+    defer grants.deinit(allocator);
+    for (rows) |g| {
+        if (!std.mem.eql(u8, g.event, "grant")) continue;
+        if (g.grantee.len == 0 or g.authority_signature.len == 0) continue; // RBAC grant, not adoption
+        if (!capability.scopeMatch(g.scope, producer_id)) continue;
+        if (producer_pubkey.len == 0) continue; // unbindable → grant confers nothing
+        if (!std.mem.eql(u8, g.authority_pubkey, producer_pubkey)) continue; // forged authority → drop
+        grants.append(allocator, .{
+            .granter_id = g.id,
+            .grantee = g.grantee,
+            .scope = g.scope,
+            .authority_pubkey = g.authority_pubkey,
+            .authority_signature = g.authority_signature,
+        }) catch return true;
+    }
+    if (grants.items.len == 0) return true; // no receptor declared → open
+    var pairs: std.ArrayList([2][]const u8) = .empty;
+    defer pairs.deinit(allocator);
+    for (rows) |row| {
+        pairs.append(allocator, .{ row.id, row.parent_id orelse "" }) catch return true;
+    }
+    return capability.adoptionAllowed(grants.items, consumer_id, producer_id, .{ .pairs = pairs.items });
+}
+
+/// F1 issuance: a producer opts into receptor restriction by declaring who may
+/// adopt its value. `grant-adopt <producer_id> <grantee> [scope]` derives the
+/// producer's lineage keypair, signs the canonical grant digest, and appends a
+/// signed adoption-grant row. Until a producer runs this, its value is OPEN.
+/// grantee may be an exact id, a glob ("team:*"), or an ancestor id.
+fn cmdGrantAdopt(allocator: std.mem.Allocator, env: std.process.Environ, rest: []const []const u8) !u8 {
+    if (rest.len < 2) {
+        errPrint("usage: grant-adopt <producer_id> <grantee> [scope]\n", .{});
+        return 2;
+    }
+    const producer_id = rest[0];
+    const grantee = rest[1];
+    const scope = if (rest.len >= 3) rest[2] else producer_id;
+
+    const root = lineage_lib.loadOrInitRootKey(allocator, env) catch {
+        errPrint("grant-adopt: no root key — cannot sign grant\n", .{});
+        return 1;
+    };
+    const kp = try lineage_lib.deriveKeyPair(root, producer_id);
+    var pk_hex: [lineage_lib.PUBKEY_HEX_LEN]u8 = undefined;
+    lineage_lib.bytesToHex(&kp.public_key.bytes, &pk_hex);
+    var sig_hex: [lineage_lib.SIG_HEX_LEN]u8 = undefined;
+    try capability.signGrant(kp, producer_id, grantee, scope, &sig_hex);
+
+    var ts_buf: [64]u8 = undefined;
+    const ts = try contract.nowIsoUtc(&ts_buf);
+    const row = try std.fmt.allocPrint(allocator, "{{\"event\": \"grant\", \"id\": \"{s}\", \"grantee\": \"{s}\", \"scope\": \"{s}\", \"authority_pubkey\": \"{s}\", \"authority_signature\": \"{s}\", \"ts\": \"{s}\"}}", .{ producer_id, grantee, scope, pk_hex, sig_hex, ts });
+    defer allocator.free(row);
+    const path = try ledger.appendRow(allocator, env, row);
+    allocator.free(path);
+    evidencePrint("grant-adopt: {s} now receptor-restricted — only grantee {s} (scope {s}) may adopt\n", .{ producer_id, grantee, scope });
+    outPrint("{s}\n", .{producer_id});
+    return 0;
+}
+
 fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []const Row, r: Row) !struct { rc: i32, result: []const u8 } {
     const action = r.action;
     const ptype = pointer.inferPointerType(action);
@@ -2062,6 +2162,10 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         // producer's value leaked out as PASS. Biology: adopt a value only from
         // a signal that holds NOW (matches fulfil:, which already gates first).
         if (isSatisfied(rows, target)) {
+            if (!adoptionAllowed(allocator, rows, r.id, target)) {
+                evidencePrint("  result: HOLD — contract:{s} receptor-restricted (no grant for {s})\n", .{ target, r.id });
+                return .{ .rc = 1, .result = "hold:receptor" };
+            }
             if (latestActionResult(rows, target)) |cached| {
                 if (cached.len > 0) {
                     evidencePrint("  result: PASS — contract:{s} value surfaced ({d} bytes)\n", .{ target, cached.len });
@@ -2087,6 +2191,10 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
             evidencePrint("  result: HOLD — fulfil waiting on contract:{s}\n", .{target});
             return .{ .rc = 1, .result = "hold:fulfil" };
         }
+        if (!adoptionAllowed(allocator, rows, r.id, target)) {
+            evidencePrint("  result: HOLD — fulfil:{s} receptor-restricted (no grant for {s})\n", .{ target, r.id });
+            return .{ .rc = 1, .result = "hold:receptor" };
+        }
         if (latestActionResult(rows, target)) |val| {
             if (val.len > 0) {
                 evidencePrint("  result: PASS — fulfil:{s} value surfaced ({d} bytes)\n", .{ target, val.len });
@@ -2109,6 +2217,10 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
         // Same F5 death-gate as contract-ref: only surface a LIVE producer's
         // bytes; a dead/purged target must not leak its stale value.
         if (isSatisfied(rows, target)) {
+            if (!adoptionAllowed(allocator, rows, r.id, target)) {
+                evidencePrint("  result: HOLD — value-of:{s} receptor-restricted (no grant for {s})\n", .{ target, r.id });
+                return .{ .rc = 1, .result = "hold:receptor" };
+            }
             if (latestActionResult(rows, target)) |cached| {
                 if (cached.len > 0) {
                     evidencePrint("  result: PASS — value-of:{s} surfaced ({d} bytes)\n", .{ target, cached.len });
@@ -6082,6 +6194,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     if (std.mem.eql(u8, verb, "verify-binary")) return try cmdVerifyBinary(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "layer")) return try cmdLayer(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "kill")) return try cmdKill(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "grant-adopt")) return try cmdGrantAdopt(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "mcp")) return try cmdMcp(allocator, init.environ);
 
     errPrint("unknown native verb: {s}\n", .{verb});
