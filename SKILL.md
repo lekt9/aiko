@@ -2740,6 +2740,57 @@ to sign a binary whose code drifts from this section. If a future
 change weakens the doctrine — e.g. allowing slashed stFDRY to
 redistribute rather than burn — the build catches it.
 
+## The Cooperative Commons (arc-lean) — an alternative value layer
+
+*This section CROSS-REFERENCES a parallel economics explored on the
+`arc-lean` branch. It does NOT supersede the Vine Doctrine above: the
+canonical staking economics of this substrate remains slash-to-burn
+(John 15:6 — the branch cast into the fire; slashed FDRY burns to the
+vault, NAV-per-share rises for the abiding, and it never redistributes).
+The Vine Doctrine parity invariants in `scripts/build.sh` still enforce
+exactly that, and this section touches none of them — new wine, new
+skin (Matthew 9:17 — "neither do men put new wine into old bottles").*
+
+Alongside the Vine Doctrine, `arc-lean` builds a **reward-not-slash**
+commons. Usage fees — paid in the asset they arrive in (USDC), no
+conversion — are distributed to the maintainers whose routes were
+**used** and still **verify**; a route that fails re-verification simply
+forfeits its accrued fees to the honest, nothing seized and nothing
+burned. Its scriptural root differs from the vine's pruning-fire: *the
+labourer is worthy of his hire* (Luke 10:7) and *they had all things
+common ... neither was there any among them that lacked* (Acts 2:44-45),
+rather than John 15:6. The full economics is canonical in
+`docs/ECONOMICS-cooperative-commons.md`; this is only the doctrine's
+honest acknowledgement that it exists.
+
+The commons is built as ~18 zero-dependency modules in
+`libcontract/src/`, each bound by its own `zig test` witnesses (Σ27,
+the-binary-IS-the-interface) — so it mints **no new parity invariant**
+and moves no money by itself:
+
+- `reward` — usage→USDC distribution (conservation; forfeit→honest).
+- `usage` + `usage_ledger` — Sybil-dampened accounting (self-exclusion +
+  per-payer cap; wash-trading becomes a donation, not a theft).
+- `reverify` — re-verification on structural **shape, not data** (data
+  churn stays verified; a dropped field or type change drifts → forfeits).
+- `link_ledger` — a mutually-signed `env_pubkey ↔ Solana wallet` binding
+  (stake-borrow and reward-hijack both blocked).
+- `stake` — live stFDRY balance read; `voltr` — native Voltr deposit,
+  canonical vault `8ojsTvrFLGFHnbhE56DaTTJ1g9WBSjtqrqBxKqjLo8aJ` (the
+  post-2026-06-23 successor to the retired, compromised `Bpr49sQ…`).
+- `epoch` + `epoch_driver` — ledger → payout cards, end to end.
+- `payout` + `broadcast` + `broadcast_card` — operator-gated USDC
+  transfer cards; the operator's `broadcast-tool` submits, so the
+  human's hand stays on the money path (Prov 16:9), never the agent's.
+
+**The honest tension, named not hidden:** the vine *burns*; the commons
+*redistributes*. Which becomes canonical is a deployer decision, not a
+doctrine edit — promoting the commons would require rewriting §Vine
+Doctrine, the pinned `AIKO_STAKE_VAULT`, the John 15:6 burn invariant in
+`verses.zig`, and the Vine Doctrine parity invariants. Until a deployer
+makes that call, both stand: the canon is the vine; the commons is a lit
+path beside it.
+
 ## Doctrine speaks only when interrogated
 
 The substrate's machinery — contracts, lineage, evaluators, hooks,

@@ -74,6 +74,10 @@ The pointer index:
   → SKILL.md sections of the same name
 - **Vine Doctrine / Doctrine speaks only when interrogated**
   → SKILL.md sections of the same name
+- **The Cooperative Commons (arc-lean, reward-not-slash — an
+  alternative value layer that COEXISTS with, does not supersede,
+  the Vine Doctrine)** → SKILL.md section of the same name; full
+  economics canonical in `docs/ECONOMICS-cooperative-commons.md`
 - **Continuous resolver / Pointer-keyed truthy cache**
   → SKILL.md sections of the same name
 - **Doctrine-Reality Parity / Ledger / Outline explainer sync**
