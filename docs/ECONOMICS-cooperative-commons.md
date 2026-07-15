@@ -202,6 +202,7 @@ utopian socialism; it is a **governed commons**, the thing that actually works.
 | **On-chain payout** | `payout.zig` — SPL `TransferChecked` USDC card per maintainer (no swap), operator-gated | **built + proven (arc-lean); batch card from an epoch's payouts; canonical USDC mint, emits — never sends** |
 | **Operator submit path** | `broadcast.zig` — sign (`solana_tx`) + send (`solana_rpc`); the only module that moves value | **built + proven (arc-lean); wire is cluster-valid (devnet: dummy blockhash → BlockhashNotFound, i.e. deserialized + simulated); gated on an operator keypair, never called implicitly** |
 | **Card → instruction bridge** | `broadcast_card.zig` — parse an emitted card + apply ix flag template (deposit_vault / transfer_checked) | **built + proven (arc-lean); parses the REAL payout + deposit cards; refuses an unknown ix (no guessed flags)** |
+| **Operator broadcast tool** | `broadcast-tool` — standalone binary: `<keypair.json> <card.json> <network>` → signature | **built + proven (arc-lean); end-to-end (load key → parse → sign → submit) reaches the chain. OUTSIDE the substrate's declare/redaction flow — a money-move can't be a redacted, no-verb public action; it is the operator's deliberate run** |
 
 ## 8. The falsifiable first step (discipline)
 

@@ -37,6 +37,24 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(shim);
 
+    // ── broadcast-tool ───────────────────────────────────────────────────
+    // The operator's standalone submit utility. Uses the proven broadcast +
+    // broadcast_card + solana_rpc library directly — outside the substrate's
+    // declare/redaction flow (a money-move cannot live there). Built via its
+    // own `broadcast-tool` step so it never blocks the default build.
+    const bt_mod = b.createModule(.{
+        .root_source_file = b.path("src/broadcast_main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const broadcast_tool = b.addExecutable(.{
+        .name = "broadcast-tool",
+        .root_module = bt_mod,
+    });
+    const bt_step = b.step("broadcast-tool", "Build the operator broadcast utility");
+    bt_step.dependOn(&b.addInstallArtifact(broadcast_tool, .{}).step);
+
     // ── tests ────────────────────────────────────────────────────────────
     // Σ27 (a4e162c8) — the-binary-IS-the-interface: every doctrine has its
     // tests INSIDE the source file, exercised by `zig build test`. No
