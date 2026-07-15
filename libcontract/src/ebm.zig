@@ -168,6 +168,25 @@ test "train-on-fire generalizes to held-out contexts (not memorization)" {
     try std.testing.expect(neg_after > neg_before); // inhibition raised the wrong context's energy
 }
 
+test "per-binary routing: trains from (goal→binary) fires and routes HELD-OUT goals" {
+    // This is the `contract route` loop at the unit level: one prototype per binary,
+    // trained on the GOALS where that binary succeeded (reward +1). Then goals never
+    // trained on must still route to the right binary by argmin energy (generalize).
+    var git: Prototype = .{};
+    var grep: Prototype = .{};
+    for ([_][]const u8{ "commit my changes", "stage files for a commit", "push the branch to the remote" }) |g|
+        git.foldText(g, 1.0);
+    for ([_][]const u8{ "search for a string in files", "find a pattern recursively", "look for text in the source" }) |g|
+        grep.foldText(g, 1.0);
+    const protos = [_]Prototype{ git, grep }; // index 0 = git, 1 = grep
+
+    // held-out goals — NEVER folded; a hash cache would miss them. The router must land.
+    try std.testing.expectEqual(@as(?usize, 0), routeText(protos[0..], "save my work to version control")); // git
+    try std.testing.expectEqual(@as(?usize, 0), routeText(protos[0..], "roll back to a previous commit")); // git
+    try std.testing.expectEqual(@as(?usize, 1), routeText(protos[0..], "hunt for a phrase in the files")); // grep
+    try std.testing.expectEqual(@as(?usize, 1), routeText(protos[0..], "look for a word across the tree")); // grep
+}
+
 test "rewardFromTip: bounded, self-refused, sign-correct (the tip->reward bridge)" {
     // self-tip folds NOTHING (Deut 19:15 — no self-witness; the from!=self gate).
     try std.testing.expect(rewardFromTip(1000, true) == 0);

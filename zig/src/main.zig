@@ -3467,7 +3467,9 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
         }
         bioFirstRunWalletGuidance(allocator, env);
     }
-    const action = actionFromPlan(d.plan);
+    // Honor an explicit --action (e.g. "git commit" — names the binary for the EBM
+    // router); fall back to inferring the action type from the plan when omitted.
+    const action = d.action orelse actionFromPlan(d.plan);
     if (AIKO_DECLARE_ONLY) {
         const safe_plan = redactAikoPlan(allocator, d.plan) catch |e| {
             errPrint("aiko privacy guard failed: {s}\n", .{@errorName(e)});
@@ -5552,6 +5554,70 @@ fn dispatchPosthooks(allocator: std.mem.Allocator, env: std.process.Environ, id:
     }
 }
 
+/// route "<context>" — the LEARNED energy router (NO LLM). Trains a per-binary
+/// Prototype straight from the ledger (the ledger IS the weights, exactly like
+/// energyRankCandidates): every SATISFIED contract folds its goal-text into the
+/// prototype of the binary its action used (+1, Hebbian); every DIED one inhibits
+/// it (−1). Then it returns the argmin-energy binary for <context> — the binary
+/// whose past successes sit closest to this goal, GENERALIZING to goals never seen
+/// (ebm.zig prototype scores by cosine distance, not exact match). Cold (no
+/// training yet) → honest refusal, never a fabricated route. Pure-local: reads the
+/// ledger, no LLM-compile, so it runs without the signed-binary gate.
+fn cmdRoute(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    if (args.len < 1) {
+        err("route requires: <context>  (a goal to route to a binary)\n");
+        return 2;
+    }
+    const context = try std.mem.join(allocator, " ", args);
+    defer allocator.free(context);
+
+    const rows = try parseRows(allocator, env);
+
+    // Per-binary prototypes, trained from the ledger. Key = the action's first token
+    // (the binary): "git commit" → "git", "grep -r foo" → "grep".
+    var protos = std.StringHashMap(ebm.Prototype).init(allocator);
+    defer protos.deinit();
+    var seen = std.StringHashMap(void).init(allocator);
+    defer seen.deinit();
+
+    for (rows) |r| {
+        const reward: f64 = switch (terminal.classify(r.event)) {
+            .satisfied => 1.0,
+            .dead => -1.0,
+            else => continue,
+        };
+        if (seen.contains(r.id)) continue;
+        seen.put(r.id, {}) catch continue;
+        const decl = latestDeclared(rows, r.id) orelse continue;
+        const act = decl.action;
+        const end = std.mem.indexOfScalar(u8, act, ' ') orelse act.len;
+        const bin = act[0..end];
+        if (bin.len == 0 or std.mem.eql(u8, bin, "claim")) continue; // skip untyped claims
+        const gop = try protos.getOrPut(bin);
+        if (!gop.found_existing) gop.value_ptr.* = .{};
+        gop.value_ptr.foldText(decl.plan, reward); // fold the GOAL, weighted by outcome
+    }
+
+    // Settle: argmin energy over the learned binary prototypes (ebm.route semantics).
+    var best_bin: ?[]const u8 = null;
+    var best_e: f64 = std.math.inf(f64);
+    var it = protos.iterator();
+    while (it.next()) |entry| {
+        const e = ebm.energyText(entry.value_ptr.*, context);
+        if (e < best_e) {
+            best_e = e;
+            best_bin = entry.key_ptr.*;
+        }
+    }
+
+    if (best_bin) |b| {
+        outPrint("{s}\t{d:.4}\n", .{ b, best_e }); // <binary>\t<energy> (lower = better fit)
+        return 0;
+    }
+    err("route: cold — no learned routes yet. Satisfy some typed actions first: declare --action \"<binary> ...\".\n");
+    return 1;
+}
+
 fn cmdStatus(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
     if (args.len > 1) {
         err("status accepts zero args or exactly <id>\n");
@@ -6250,6 +6316,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     if (std.mem.eql(u8, verb, "run")) return try cmdRun(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "eval")) return try cmdEval(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "prune")) return try cmdPrune(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "route")) return try cmdRoute(allocator, init.environ, rest);
     // Substrate-internal bootstrap + parent-sign verbs. Underscore
     // prefix marks them as machinery the substrate uses to attest
     // itself; they bypass the startup self-verify gate (one writes
