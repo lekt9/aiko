@@ -51,7 +51,10 @@ fn extract(obj: std.json.ObjectMap) ?Fields {
     if (std.mem.eql(u8, ev, SETTLE_EVENT)) {
         return .{
             .route = strField(obj, "id") orelse return null,
-            .payer = strField(obj, "agent") orelse return null,
+            // Prefer the cryptographic identity (env_pubkey) so self-exclusion
+            // shares a namespace with the route owner (declared.env_pubkey). Fall
+            // back to `agent` for rows that predate the emit carrying env_pubkey.
+            .payer = strField(obj, "env_pubkey") orelse strField(obj, "agent") orelse return null,
             .fee = intField(obj, "settle_amount") orelse return null,
         };
     }
@@ -144,6 +147,46 @@ pub fn parse(
     return out.toOwnedSlice(allocator);
 }
 
+/// The event every contract's birth row carries.
+pub const DECLARED_EVENT = "declared";
+
+/// Resolve each route's OWNER identity from the ledger's `declared` rows: a
+/// contract's birth row records `id` (the route) and `env_pubkey` (the declarer
+/// — its owner). Fills `out_owner_ids[i]` with identityHash(env_pubkey) for the
+/// route `route_ids[i]`, or 0 if no `declared` row is found (unknown owner →
+/// never self-excludes — honest: we don't guess ownership). The u64 it writes is
+/// the SAME hash a usage event's payer gets, so self-exclusion fires exactly when
+/// the payer's env_pubkey equals the route owner's. `out_owner_ids.len` must ==
+/// `route_ids.len`.
+pub fn resolveOwners(
+    allocator: std.mem.Allocator,
+    jsonl: []const u8,
+    route_ids: []const []const u8,
+    out_owner_ids: []u64,
+) !void {
+    std.debug.assert(out_owner_ids.len == route_ids.len);
+    @memset(out_owner_ids, 0);
+
+    var it = std.mem.splitScalar(u8, jsonl, '\n');
+    while (it.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0) continue;
+        const parsed = std.json.parseFromSlice(std.json.Value, allocator, line, .{}) catch continue;
+        defer parsed.deinit();
+        const obj = switch (parsed.value) {
+            .object => |o| o,
+            else => continue,
+        };
+        const ev = strField(obj, "event") orelse continue;
+        if (!std.mem.eql(u8, ev, DECLARED_EVENT)) continue;
+        const id = strField(obj, "id") orelse continue;
+        const owner = strField(obj, "env_pubkey") orelse continue;
+        if (owner.len == 0) continue; // no cryptographic owner recorded
+        const idx = routeIndex(route_ids, id) orelse continue;
+        out_owner_ids[idx] = identityHash(owner);
+    }
+}
+
 // ── witnesses (zig test) — no fabricated green ───────────────────────────────
 
 test "emit → parse round-trips route index, payer identity, and fee" {
@@ -167,6 +210,65 @@ test "emit → parse round-trips route index, payer identity, and fee" {
     try std.testing.expectEqual(@as(u64, 500), events[0].fee);
     try std.testing.expectEqual(@as(usize, 1), events[1].route);
     try std.testing.expectEqual(@as(u64, 700), events[1].fee);
+}
+
+test "resolveOwners maps route → declared owner; unknown route → 0" {
+    const a = std.testing.allocator;
+    const route_ids = [_][]const u8{ "ed9421cb", "route:orphan" };
+    const jsonl =
+        \\{"event":"declared","id":"ed9421cb","env_pubkey":"6ce0f8a054611d64"}
+        \\{"event":"declared","id":"other","env_pubkey":"deadbeef"}
+        \\{"event":"evidence","id":"ed9421cb","env_pubkey":"IGNORED"}
+    ;
+    var owners: [2]u64 = undefined;
+    try resolveOwners(a, jsonl, &route_ids, &owners);
+    try std.testing.expectEqual(identityHash("6ce0f8a054611d64"), owners[0]);
+    try std.testing.expectEqual(@as(u64, 0), owners[1]); // no declared row → unknown
+}
+
+test "OWNER SELF-PAY EXCLUDED end-to-end: owner ← ledger changes the distribution" {
+    const a = std.testing.allocator;
+    const cas = @import("cas.zig");
+    const reward = @import("reward.zig");
+    const epoch = @import("epoch.zig");
+
+    // ONE owner ("OWNERKEY") declares TWO routes. It self-pays route:wash (1000)
+    // and an OUTSIDER genuinely pays route:honest (1000). Owner identity is taken
+    // from the ledger's declared rows — not stubbed. Because self-pay is excluded,
+    // route:wash earns 0 and route:honest takes the whole pool. If owner
+    // resolution had failed, wash would have split the pool 50/50 — so the
+    // payout split is a live assertion that the ledger-sourced owner took effect.
+    const route_ids = [_][]const u8{ "route:honest", "route:wash" };
+    const jsonl =
+        \\{"event":"declared","id":"route:honest","env_pubkey":"OWNERKEY"}
+        \\{"event":"declared","id":"route:wash","env_pubkey":"OWNERKEY"}
+        \\{"event":"usage","source_id":"route:honest","env_pubkey":"OUTSIDER","amount":1000}
+        \\{"event":"usage","source_id":"route:wash","env_pubkey":"OWNERKEY","amount":1000}
+    ;
+
+    var owners: [2]u64 = undefined;
+    try resolveOwners(a, jsonl, &route_ids, &owners);
+    try std.testing.expectEqual(identityHash("OWNERKEY"), owners[0]);
+    try std.testing.expectEqual(identityHash("OWNERKEY"), owners[1]);
+
+    const events = try parse(a, jsonl, &route_ids);
+    defer a.free(events);
+
+    var kh: [cas.HEX_LEN]u8 = undefined;
+    cas.hexKey(cas.contentHash("honest shape"), &kh);
+    var kw: [cas.HEX_LEN]u8 = undefined;
+    cas.hexKey(cas.contentHash("wash shape"), &kw);
+    const specs = [_]epoch.RouteSpec{
+        .{ .maintainer = 0, .owner_identity = owners[0], .committed_attestation = &kh, .fresh_observation = "honest shape" },
+        .{ .maintainer = 1, .owner_identity = owners[1], .committed_attestation = &kw, .fresh_observation = "wash shape" },
+    };
+    const maintainers = [_]reward.Maintainer{ .{ .stake = 1 }, .{ .stake = 1 } };
+    const res = try epoch.runEpoch(a, &maintainers, &specs, events, 0);
+    defer res.deinit(a);
+
+    try std.testing.expectEqual(@as(u64, 2000), res.pool);
+    try std.testing.expectEqual(@as(u64, 2000), res.payouts[0]); // honest takes all
+    try std.testing.expectEqual(@as(u64, 0), res.payouts[1]); // wash self-pay excluded
 }
 
 test "reads the REAL flex_settle settlement row (the live emit site)" {
