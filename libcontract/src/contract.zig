@@ -40,6 +40,8 @@ pub const solana_rpc = @import("solana_rpc.zig");
 pub const voltr = @import("voltr.zig");
 pub const stake = @import("stake.zig");
 pub const payout = @import("payout.zig");
+pub const solana_tx = @import("solana_tx.zig");
+pub const broadcast = @import("broadcast.zig");
 pub const payload_crypto = @import("payload_crypto.zig");
 // Words-as-contracts: every token in a plan is a child /contract pointer
 // (action `word:<tok>`, layer 0). Wired from cmdDeclare so each declare
