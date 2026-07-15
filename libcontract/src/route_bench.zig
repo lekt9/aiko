@@ -180,16 +180,16 @@ test "BENCHMARK — learned energy router accuracy vs baselines" {
     P("\n═══════════════════════════════════════\n", .{});
 
     // HONEST witness — only what the data supports, no fabricated green:
-    //   • The router is a REAL signal: > 2× random, and it beats both the keyword
-    //     baseline and cold-start by a wide margin.
-    //   • It is a WEAK classifier (~45%): reliable where a binary's goals cluster
-    //     (npm 100%, docker 78%), poor where they're diverse (git 11%, grep 0%).
-    //   • 1-NN ≈ centroid ⇒ the aggregation is not the bottleneck; the shallow
-    //     feature-hash EMBEDDING is (the documented "generation wall"). A better
-    //     embedding is the real lever — recorded, not hidden.
-    try std.testing.expect(loo_seed.overall > 100.0 / @as(f64, BINS.len) * 2.0); // > 2× random
-    try std.testing.expect(loo_seed.overall > 27.8 + 10.0); // clears cold-start by >10 pts
-    try std.testing.expect(knn.overall >= loo_seed.overall - 5.0); // neither method is a silver bullet
+    //   • The embed WAS the bottleneck: dropping function words (IDF-approx) lifted
+    //     the router 44% → 57% and the centroid now BEATS 1-NN (was ≈), because a
+    //     cleaner space rewards the averaged prototype.
+    //   • Now a MODERATE classifier (~57%, >3× random): strong where goals cluster
+    //     (docker/npm ~89%, tar 67%, git 44%), still weak on pure synonymy (grep
+    //     11% — search/find/hunt/locate share no letters). That last gap needs a
+    //     SEMANTIC embedding, not more wiring — recorded, not hidden.
+    try std.testing.expect(loo_seed.overall > 100.0 / @as(f64, BINS.len) * 3.0); // > 3× random
+    try std.testing.expect(loo_seed.overall > 31.5 + 15.0); // clears cold-start by >15 pts
+    try std.testing.expect(loo_seed.overall >= knn.overall); // the centroid (production) is now the best method
 }
 
 fn knnLoo(allocator: std.mem.Allocator) !LooResult {

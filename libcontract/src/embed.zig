@@ -49,7 +49,13 @@ pub fn embedDim(text: []const u8, out: []f32) void {
         const n = @min(tok.len, lbuf.len);
         const low = std.ascii.lowerString(lbuf[0..n], tok[0..n]);
 
-        // whole-token feature
+        // IDF-approx: drop function words. They carry no routing signal and their
+        // shared buckets (+ trigrams like "the"/"ing"/"for") make unrelated texts
+        // look similar — the noise that capped routing accuracy. No corpus needed:
+        // a fixed stop list is the dependency-free stand-in for a low IDF weight.
+        if (isStopword(low)) continue;
+
+        // whole-token feature (content words carry the signal → full weight)
         addFeature(out, low, 1.0);
         // char-trigram features (sub-word: morphology + typo tolerance)
         if (low.len >= 3) {
@@ -92,6 +98,23 @@ fn addFeature(out: []f32, feature: []const u8, weight: f32) void {
 
 fn isWord(c: u8) bool {
     return std.ascii.isAlphanumeric(c);
+}
+
+/// English function words that carry no routing signal (the IDF-approx stop list).
+/// Tokens < 2 chars are already dropped, so single letters need not appear here.
+fn isStopword(w: []const u8) bool {
+    const stops = [_][]const u8{
+        "of",   "to",   "in",    "on",   "at",    "by",   "is",    "it",   "as",
+        "or",   "my",   "me",    "be",   "do",    "so",   "up",    "we",   "he",
+        "if",   "an",   "the",   "and",  "for",   "are",  "was",   "its",  "you",
+        "all",  "any",  "can",   "get",  "got",   "out",  "not",   "but",  "use",
+        "via",  "per",  "new",   "see",  "let",   "this", "that",  "with", "from",
+        "into", "over", "your",  "them", "then",  "than", "some",  "each", "have",
+        "has",  "had",  "will",  "been", "here",  "does", "onto",  "off",  "our",
+        "one",  "two",  "a",     "i",
+    };
+    for (stops) |s| if (std.mem.eql(u8, w, s)) return true;
+    return false;
 }
 
 // ── runnable witnesses (the gate: `zig test src/embed.zig`) ─────────────────
