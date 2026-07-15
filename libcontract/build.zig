@@ -78,6 +78,7 @@ pub fn build(b: *std.Build) void {
         "src/payout.zig",
         "src/solana_tx.zig",
         "src/broadcast.zig",
+        "src/broadcast_card.zig",
         "src/payload_crypto.zig",
         "src/words.zig",
         "src/pattern.zig",

@@ -201,6 +201,7 @@ utopian socialism; it is a **governed commons**, the thing that actually works.
 | **Fully-live assembler** | `usage_ledger.runEpochFromLedger` — owner + attestation + usage FROM THE LEDGER, stakes injected live | **built + proven (arc-lean); whole epoch from ledger text + live stakes, every gate ledger-sourced** |
 | **On-chain payout** | `payout.zig` — SPL `TransferChecked` USDC card per maintainer (no swap), operator-gated | **built + proven (arc-lean); batch card from an epoch's payouts; canonical USDC mint, emits — never sends** |
 | **Operator submit path** | `broadcast.zig` — sign (`solana_tx`) + send (`solana_rpc`); the only module that moves value | **built + proven (arc-lean); wire is cluster-valid (devnet: dummy blockhash → BlockhashNotFound, i.e. deserialized + simulated); gated on an operator keypair, never called implicitly** |
+| **Card → instruction bridge** | `broadcast_card.zig` — parse an emitted card + apply ix flag template (deposit_vault / transfer_checked) | **built + proven (arc-lean); parses the REAL payout + deposit cards; refuses an unknown ix (no guessed flags)** |
 
 ## 8. The falsifiable first step (discipline)
 
