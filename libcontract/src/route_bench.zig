@@ -24,9 +24,12 @@ const binary_ast = @import("binary_ast.zig");
 
 const Example = struct { goal: []const u8, bin: []const u8 };
 
-// The candidate binaries. git + docker are in the cold-start lexicon; grep, curl,
-// npm, tar are NOT — so accuracy on those isolates LEARNING from cold-start priors.
-const BINS = [_][]const u8{ "git", "docker", "grep", "curl", "npm", "tar" };
+// The candidate binaries. The first 6 have labeled goals; git-lfs + gh have NONE —
+// they are the extra lexicon binaries that exist in PRODUCTION as cold-start
+// DISTRACTORS (their broad seeded prototypes can steal unrelated goals). Including
+// them makes the benchmark faithful to what aiko-cli actually routes against.
+// git, docker, git-lfs, gh are in the lexicon; grep, curl, npm, tar are learned-only.
+const BINS = [_][]const u8{ "git", "docker", "grep", "curl", "npm", "tar", "git-lfs", "gh" };
 
 // A labeled dataset of natural-language goals. Deliberately phrased as a user would
 // (rarely naming the binary), so keyword-matching mostly fails and the model must
@@ -118,8 +121,24 @@ fn seedLexicon(allocator: std.mem.Allocator, protos: *[BINS.len]ebm.Prototype) !
     }
 }
 
-fn route(protos: *const [BINS.len]ebm.Prototype, goal: []const u8) ?usize {
-    return ebm.routeText(protos[0..], goal);
+// Mirror route.zig: a seed-only (untrained) binary's energy is penalized so a broad
+// lexicon prior never steals a goal from a trained binary.
+const SEED_PENALTY: f64 = 0.30;
+
+fn route(protos: *const [BINS.len]ebm.Prototype, trained: *const [BINS.len]bool, goal: []const u8) ?usize {
+    var v: [embed.DIM]f32 = undefined;
+    embed.embed(goal, &v);
+    var best: ?usize = null;
+    var best_e: f64 = std.math.inf(f64);
+    for (protos, 0..) |p, i| {
+        var e = ebm.energy(p, &v);
+        if (!trained[i]) e += SEED_PENALTY;
+        if (e < best_e) {
+            best_e = e;
+            best = i;
+        }
+    }
+    return best;
 }
 
 test "BENCHMARK — learned energy router accuracy vs baselines" {
@@ -140,9 +159,10 @@ test "BENCHMARK — learned energy router accuracy vs baselines" {
     {
         var protos = [_]ebm.Prototype{.{}} ** BINS.len;
         try seedLexicon(A, &protos);
+        const none_trained = [_]bool{false} ** BINS.len; // pure cold-start
         var ok: usize = 0;
         for (DATA) |ex| {
-            if (route(&protos, ex.goal)) |r| if (r == binIndex(ex.bin)) {
+            if (route(&protos, &none_trained, ex.goal)) |r| if (r == binIndex(ex.bin)) {
                 ok += 1;
             };
         }
@@ -230,14 +250,17 @@ fn looAccuracy(allocator: std.mem.Allocator, seed: bool) !LooResult {
     var bin_tot = [_]usize{0} ** BINS.len;
     for (DATA, 0..) |test_ex, ti| {
         var protos = [_]ebm.Prototype{.{}} ** BINS.len;
+        var trained = [_]bool{false} ** BINS.len;
         if (seed) try seedLexicon(allocator, &protos);
         for (DATA, 0..) |tr, tri| {
             if (tri == ti) continue;
-            protos[binIndex(tr.bin)].foldText(tr.goal, 1.0);
+            const bi = binIndex(tr.bin);
+            protos[bi].foldText(tr.goal, 1.0);
+            trained[bi] = true;
         }
         const want = binIndex(test_ex.bin);
         bin_tot[want] += 1;
-        if (route(&protos, test_ex.goal)) |r| if (r == want) {
+        if (route(&protos, &trained, test_ex.goal)) |r| if (r == want) {
             ok += 1;
             bin_ok[want] += 1;
         };
@@ -250,6 +273,7 @@ fn looAccuracy(allocator: std.mem.Allocator, seed: bool) !LooResult {
 /// Train the FIRST k goals of each binary; test on that binary's remaining goals.
 fn curveAccuracy(allocator: std.mem.Allocator, k: usize) !f64 {
     var protos = [_]ebm.Prototype{.{}} ** BINS.len;
+    var trained = [_]bool{false} ** BINS.len;
     try seedLexicon(allocator, &protos);
     // per-binary running count of how many train goals we've folded
     var count = [_]usize{0} ** BINS.len;
@@ -257,6 +281,7 @@ fn curveAccuracy(allocator: std.mem.Allocator, k: usize) !f64 {
         const bi = binIndex(ex.bin);
         if (count[bi] < k) {
             protos[bi].foldText(ex.goal, 1.0);
+            trained[bi] = true;
             count[bi] += 1;
         }
     }
@@ -269,7 +294,7 @@ fn curveAccuracy(allocator: std.mem.Allocator, k: usize) !f64 {
         defer seen[bi] += 1;
         if (seen[bi] < k) continue; // was a training goal
         tot += 1;
-        if (route(&protos, ex.goal)) |r| if (r == bi) {
+        if (route(&protos, &trained, ex.goal)) |r| if (r == bi) {
             ok += 1;
         };
     }

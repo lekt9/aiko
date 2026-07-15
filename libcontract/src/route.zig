@@ -16,14 +16,24 @@ const terminal = @import("terminal.zig");
 const ebm = @import("ebm.zig");
 const binary_ast = @import("binary_ast.zig");
 
-/// Cold-start weight: seed every known binary's prototype from its command-surface
-/// description so a novel goal routes to a sensible binary BEFORE any training. Kept
-/// small (≪ a real fire's ±1) so learned successes always dominate the seed.
+/// Cold-start weight for the lexicon seed (≪ a real fire's ±1).
 const SEED_REWARD: f64 = 0.35;
 
-/// Fold each lexicon binary's full command surface (name + root desc + every verb
-/// name/desc) into its prototype as ONE weak fire — cold-start priors.
-fn seedFromLexicon(allocator: std.mem.Allocator, protos: *std.StringHashMap(ebm.Prototype)) !void {
+/// Last-resort penalty on a SEED-ONLY binary (lexicon prior, no real training). Its
+/// broad command-surface prototype otherwise steals goals from trained binaries
+/// (measured: the raw seed HURT production — 40% vs 55% without it). Penalizing its
+/// energy means it only wins when clearly best AND nothing trained is close; and
+/// when NOTHING is trained (fresh ledger) the constant cancels across all, so
+/// cold-start still works. This turns the seed net-positive.
+const SEED_PENALTY: f64 = 0.30;
+
+/// A routing candidate: its prototype + whether a REAL fire (not just the lexicon
+/// seed) has trained it.
+const Cand = struct { p: ebm.Prototype = .{}, trained: bool = false };
+
+/// Fold each lexicon binary's full command surface into its prototype as ONE weak
+/// (seed-only) fire — cold-start priors, left marked untrained.
+fn seedFromLexicon(allocator: std.mem.Allocator, protos: *std.StringHashMap(Cand)) !void {
     for (&binary_ast.registries) |reg| {
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(allocator);
@@ -38,7 +48,7 @@ fn seedFromLexicon(allocator: std.mem.Allocator, protos: *std.StringHashMap(ebm.
         }
         const gop = try protos.getOrPut(reg.name);
         if (!gop.found_existing) gop.value_ptr.* = .{};
-        gop.value_ptr.foldText(buf.items, SEED_REWARD);
+        gop.value_ptr.p.foldText(buf.items, SEED_REWARD);
     }
 }
 
@@ -81,7 +91,7 @@ pub fn route(allocator: std.mem.Allocator, env: std.process.Environ, context: []
 
     // Cold-start: seed every known binary from its command surface (weak prior), so a
     // novel goal still routes sensibly before any training.
-    var protos = std.StringHashMap(ebm.Prototype).init(allocator);
+    var protos = std.StringHashMap(Cand).init(allocator);
     defer protos.deinit();
     try seedFromLexicon(allocator, &protos);
 
@@ -107,15 +117,18 @@ pub fn route(allocator: std.mem.Allocator, env: std.process.Environ, context: []
         if (bin.len == 0 or std.mem.eql(u8, bin, "claim") or std.mem.eql(u8, bin, "neuron")) continue;
         const gop = try protos.getOrPut(bin);
         if (!gop.found_existing) gop.value_ptr.* = .{};
-        gop.value_ptr.foldText(d.plan, reward);
+        gop.value_ptr.p.foldText(d.plan, reward);
+        gop.value_ptr.trained = true; // a REAL fire — no longer seed-only
     }
 
-    // Settle: argmin energy over the learned binary prototypes.
+    // Settle: argmin energy, with a last-resort penalty on seed-only (untrained)
+    // binaries so a broad lexicon prior never steals a goal from a trained binary.
     var best_bin: ?[]const u8 = null;
     var best_e: f64 = std.math.inf(f64);
     var pit = protos.iterator();
     while (pit.next()) |e| {
-        const en = ebm.energyText(e.value_ptr.*, context);
+        var en = ebm.energyText(e.value_ptr.p, context);
+        if (!e.value_ptr.trained) en += SEED_PENALTY;
         if (en < best_e) {
             best_e = en;
             best_bin = e.key_ptr.*;
