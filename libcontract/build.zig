@@ -20,6 +20,25 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(lib);
 
+    // ── libcontract.dylib (shared) ───────────────────────────────────────
+    // The SAME c_abi.zig, linked dynamic so bun:ffi (aiko-cli) can dlopen it
+    // in-process. This is the native seam: aiko calls the signed declare/get/
+    // mark_satisfied directly (µs, no subprocess), landing rows in the one
+    // signed ledger. Its own module because linkage is a module-artifact pair.
+    const dylib_mod = b.createModule(.{
+        .root_source_file = b.path("src/c_abi.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    dylib_mod.addEmbedPath(b.path("data"));
+    const dylib = b.addLibrary(.{
+        .name = "contract",
+        .linkage = .dynamic,
+        .root_module = dylib_mod,
+    });
+    b.installArtifact(dylib);
+
     // ── contract-lib-shim ────────────────────────────────────────────────
     // Tiny CLI for the bash parity tests. Calls contract.zig directly (no
     // FFI roundtrip) but pulls c_abi.zig into the same module so static
