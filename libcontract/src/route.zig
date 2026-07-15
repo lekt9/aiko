@@ -13,8 +13,41 @@
 const std = @import("std");
 const ledger = @import("ledger.zig");
 const terminal = @import("terminal.zig");
-const ebm = @import("ebm.zig");
+const embed = @import("embed.zig");
 const binary_ast = @import("binary_ast.zig");
+
+// The router embeds with the SEMANTIC embedding (baked GloVe) — it knows
+// search≈find≈hunt, the synonymy the feature-hash embed can't. A per-binary
+// reward-weighted centroid over goal vectors (West 1979, like ebm.Prototype but at
+// the semantic dim); energy = −cosine; routing = argmin energy.
+const SEM = embed.SEM_DIM;
+
+const SemProto = struct {
+    mean: [SEM]f32 = [_]f32{0} ** SEM,
+    w: f64 = 0, // reward-weight folded in
+    trained: bool = false, // a REAL fire (not just the lexicon seed) touched it
+
+    fn fold(self: *SemProto, text: []const u8, reward: f64) void {
+        var v: [SEM]f32 = undefined;
+        embed.embedSemantic(text, &v);
+        const w_new = self.w + reward;
+        if (@abs(w_new) < 1e-9) {
+            self.mean = [_]f32{0} ** SEM;
+            self.w = 0;
+            return;
+        }
+        const a: f32 = @floatCast(reward / w_new);
+        for (&self.mean, 0..) |*m, i| m.* += a * (v[i] - m.*);
+        self.w = w_new;
+    }
+
+    fn energy(self: SemProto, text: []const u8) f64 {
+        if (self.w <= 0) return std.math.inf(f64);
+        var v: [SEM]f32 = undefined;
+        embed.embedSemantic(text, &v);
+        return -@as(f64, embed.cosine(&v, &self.mean));
+    }
+};
 
 /// Cold-start weight for the lexicon seed (≪ a real fire's ±1).
 const SEED_REWARD: f64 = 0.35;
@@ -27,13 +60,9 @@ const SEED_REWARD: f64 = 0.35;
 /// cold-start still works. This turns the seed net-positive.
 const SEED_PENALTY: f64 = 0.30;
 
-/// A routing candidate: its prototype + whether a REAL fire (not just the lexicon
-/// seed) has trained it.
-const Cand = struct { p: ebm.Prototype = .{}, trained: bool = false };
-
 /// Fold each lexicon binary's full command surface into its prototype as ONE weak
 /// (seed-only) fire — cold-start priors, left marked untrained.
-fn seedFromLexicon(allocator: std.mem.Allocator, protos: *std.StringHashMap(Cand)) !void {
+fn seedFromLexicon(allocator: std.mem.Allocator, protos: *std.StringHashMap(SemProto)) !void {
     for (&binary_ast.registries) |reg| {
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(allocator);
@@ -48,7 +77,7 @@ fn seedFromLexicon(allocator: std.mem.Allocator, protos: *std.StringHashMap(Cand
         }
         const gop = try protos.getOrPut(reg.name);
         if (!gop.found_existing) gop.value_ptr.* = .{};
-        gop.value_ptr.p.foldText(buf.items, SEED_REWARD);
+        gop.value_ptr.fold(buf.items, SEED_REWARD);
     }
 }
 
@@ -91,7 +120,7 @@ pub fn route(allocator: std.mem.Allocator, env: std.process.Environ, context: []
 
     // Cold-start: seed every known binary from its command surface (weak prior), so a
     // novel goal still routes sensibly before any training.
-    var protos = std.StringHashMap(Cand).init(allocator);
+    var protos = std.StringHashMap(SemProto).init(allocator);
     defer protos.deinit();
     try seedFromLexicon(allocator, &protos);
 
@@ -117,7 +146,7 @@ pub fn route(allocator: std.mem.Allocator, env: std.process.Environ, context: []
         if (bin.len == 0 or std.mem.eql(u8, bin, "claim") or std.mem.eql(u8, bin, "neuron")) continue;
         const gop = try protos.getOrPut(bin);
         if (!gop.found_existing) gop.value_ptr.* = .{};
-        gop.value_ptr.p.foldText(d.plan, reward);
+        gop.value_ptr.fold(d.plan, reward);
         gop.value_ptr.trained = true; // a REAL fire — no longer seed-only
     }
 
@@ -127,7 +156,7 @@ pub fn route(allocator: std.mem.Allocator, env: std.process.Environ, context: []
     var best_e: f64 = std.math.inf(f64);
     var pit = protos.iterator();
     while (pit.next()) |e| {
-        var en = ebm.energyText(e.value_ptr.p, context);
+        var en = e.value_ptr.energy(context);
         if (!e.value_ptr.trained) en += SEED_PENALTY;
         if (en < best_e) {
             best_e = en;

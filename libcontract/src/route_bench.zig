@@ -5,7 +5,7 @@
 //!
 //! It measures routing accuracy on a labeled (goal → binary) dataset with proper
 //! held-out evaluation, against real baselines. It uses the SAME embedding + energy
-//! model the production router uses (embed.zig + ebm.zig), and seeds from the SAME
+//! model the production router uses (embed.zig (semantic) + the same seed), and seeds from the SAME
 //! lexicon (binary_ast.zig), so the numbers reflect the shipped code — not a toy.
 //!
 //! Metrics:
@@ -19,7 +19,6 @@
 
 const std = @import("std");
 const embed = @import("embed.zig");
-const ebm = @import("ebm.zig");
 const binary_ast = @import("binary_ast.zig");
 
 const Example = struct { goal: []const u8, bin: []const u8 };
@@ -102,8 +101,35 @@ fn binIndex(bin: []const u8) usize {
     unreachable;
 }
 
+// The router's semantic centroid (mirror route.zig's SemProto) — embeds with the
+// baked GloVe so search≈find. Trained-tracking lives in a parallel bool array here.
+const SEM = embed.SEM_DIM;
+const Proto = struct {
+    mean: [SEM]f32 = [_]f32{0} ** SEM,
+    w: f64 = 0,
+    fn fold(self: *Proto, text: []const u8, reward: f64) void {
+        var v: [SEM]f32 = undefined;
+        embed.embedSemantic(text, &v);
+        const w_new = self.w + reward;
+        if (@abs(w_new) < 1e-9) {
+            self.mean = [_]f32{0} ** SEM;
+            self.w = 0;
+            return;
+        }
+        const a: f32 = @floatCast(reward / w_new);
+        for (&self.mean, 0..) |*m, i| m.* += a * (v[i] - m.*);
+        self.w = w_new;
+    }
+    fn energy(self: Proto, text: []const u8) f64 {
+        if (self.w <= 0) return std.math.inf(f64);
+        var v: [SEM]f32 = undefined;
+        embed.embedSemantic(text, &v);
+        return -@as(f64, embed.cosine(&v, &self.mean));
+    }
+};
+
 /// Seed a binary's prototype from the lexicon surface (one weak fold, like route.zig).
-fn seedLexicon(allocator: std.mem.Allocator, protos: *[BINS.len]ebm.Prototype) !void {
+fn seedLexicon(allocator: std.mem.Allocator, protos: *[BINS.len]Proto) !void {
     for (&binary_ast.registries) |reg| {
         var idx: ?usize = null;
         for (BINS, 0..) |b, i| if (std.mem.eql(u8, b, reg.name)) {
@@ -117,7 +143,7 @@ fn seedLexicon(allocator: std.mem.Allocator, protos: *[BINS.len]ebm.Prototype) !
             try buf.append(allocator, ' ');
             try buf.appendSlice(allocator, sub.desc);
         }
-        protos[idx.?].foldText(buf.items, 0.35);
+        protos[idx.?].fold(buf.items, 0.35);
     }
 }
 
@@ -125,13 +151,11 @@ fn seedLexicon(allocator: std.mem.Allocator, protos: *[BINS.len]ebm.Prototype) !
 // lexicon prior never steals a goal from a trained binary.
 const SEED_PENALTY: f64 = 0.30;
 
-fn route(protos: *const [BINS.len]ebm.Prototype, trained: *const [BINS.len]bool, goal: []const u8) ?usize {
-    var v: [embed.DIM]f32 = undefined;
-    embed.embed(goal, &v);
+fn route(protos: *const [BINS.len]Proto, trained: *const [BINS.len]bool, goal: []const u8) ?usize {
     var best: ?usize = null;
     var best_e: f64 = std.math.inf(f64);
     for (protos, 0..) |p, i| {
-        var e = ebm.energy(p, &v);
+        var e = p.energy(goal);
         if (!trained[i]) e += SEED_PENALTY;
         if (e < best_e) {
             best_e = e;
@@ -157,7 +181,7 @@ test "BENCHMARK — learned energy router accuracy vs baselines" {
 
     // ── Cold-start only (lexicon seed, ZERO training) ──
     {
-        var protos = [_]ebm.Prototype{.{}} ** BINS.len;
+        var protos = [_]Proto{.{}} ** BINS.len;
         try seedLexicon(A, &protos);
         const none_trained = [_]bool{false} ** BINS.len; // pure cold-start
         var ok: usize = 0;
@@ -214,8 +238,8 @@ test "BENCHMARK — learned energy router accuracy vs baselines" {
 
 fn knnLoo(allocator: std.mem.Allocator) !LooResult {
     _ = allocator;
-    var vecs: [DATA.len][embed.DIM]f32 = undefined;
-    for (DATA, 0..) |ex, i| embed.embed(ex.goal, &vecs[i]);
+    var vecs: [DATA.len][SEM]f32 = undefined;
+    for (DATA, 0..) |ex, i| embed.embedSemantic(ex.goal, &vecs[i]);
     var ok: usize = 0;
     var bin_ok = [_]usize{0} ** BINS.len;
     var bin_tot = [_]usize{0} ** BINS.len;
@@ -249,13 +273,13 @@ fn looAccuracy(allocator: std.mem.Allocator, seed: bool) !LooResult {
     var bin_ok = [_]usize{0} ** BINS.len;
     var bin_tot = [_]usize{0} ** BINS.len;
     for (DATA, 0..) |test_ex, ti| {
-        var protos = [_]ebm.Prototype{.{}} ** BINS.len;
+        var protos = [_]Proto{.{}} ** BINS.len;
         var trained = [_]bool{false} ** BINS.len;
         if (seed) try seedLexicon(allocator, &protos);
         for (DATA, 0..) |tr, tri| {
             if (tri == ti) continue;
             const bi = binIndex(tr.bin);
-            protos[bi].foldText(tr.goal, 1.0);
+            protos[bi].fold(tr.goal, 1.0);
             trained[bi] = true;
         }
         const want = binIndex(test_ex.bin);
@@ -272,7 +296,7 @@ fn looAccuracy(allocator: std.mem.Allocator, seed: bool) !LooResult {
 
 /// Train the FIRST k goals of each binary; test on that binary's remaining goals.
 fn curveAccuracy(allocator: std.mem.Allocator, k: usize) !f64 {
-    var protos = [_]ebm.Prototype{.{}} ** BINS.len;
+    var protos = [_]Proto{.{}} ** BINS.len;
     var trained = [_]bool{false} ** BINS.len;
     try seedLexicon(allocator, &protos);
     // per-binary running count of how many train goals we've folded
@@ -280,7 +304,7 @@ fn curveAccuracy(allocator: std.mem.Allocator, k: usize) !f64 {
     for (DATA) |ex| {
         const bi = binIndex(ex.bin);
         if (count[bi] < k) {
-            protos[bi].foldText(ex.goal, 1.0);
+            protos[bi].fold(ex.goal, 1.0);
             trained[bi] = true;
             count[bi] += 1;
         }
