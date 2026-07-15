@@ -5,6 +5,13 @@ weights*; share data in the ledger to be space/cost efficient; store **primarily
 on-chain**, local machine as a **frecency cache**. Plus: make the EBM actually
 **rank which contract fires next** (energy-ranked resolution).
 
+> **Status (this arc): the value/economics half of this plan SHIPPED.** The energy
+> router, CAS dedup, and the **reward-not-slash cooperative commons** (usage → USDC
+> to used + verified maintainers; forfeit→honest; nothing burned) are built + proven
+> on `arc-lean` as ~18 zero-dependency modules. Canonical spec:
+> `ECONOMICS-cooperative-commons.md`. It coexists with (does not supersede) the
+> canonical Vine Doctrine; see SKILL.md → `## The Cooperative Commons (arc-lean)`.
+
 **Corrected premise (verified this session — the earlier draft was wrong).**
 The substrate already trains a real fractal EBM *on-fire* — but on `main`, not
 arc-lean, and via `ebm.zig`/`ebm_store.zig`/`jepa.zig` (NOT `energy_route.zig`,

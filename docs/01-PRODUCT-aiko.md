@@ -2,6 +2,11 @@
 
 > Confidential DD dossier. Status tags: **BUILT+PROVEN / DESIGNED / RESEARCH-DIRECTION**
 > (see `00-README-DUE-DILIGENCE.md`).
+>
+> **Value/economics layer:** how the network funds and rewards itself is the
+> **reward-not-slash cooperative commons** — usage fees → USDC to used + verified
+> maintainers, nothing seized — **BUILT+PROVEN** on `arc-lean`. Full model:
+> `ECONOMICS-cooperative-commons.md` (and `03-ONCHAIN-*`, `04-PROOF-*`).
 
 ## The product in one line
 
