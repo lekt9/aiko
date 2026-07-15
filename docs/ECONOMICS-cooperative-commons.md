@@ -155,7 +155,8 @@ utopian socialism; it is a **governed commons**, the thing that actually works.
 | Solana read / RPC (blockhash, balance, airdrop) | `solana_rpc` + `base58` | **devnet-proven (arc-lean); zero-dependency (std-only, native TLS — no curl/shell), env-free** |
 | Trustless settlement + anchoring (write) | `iq_ledger` / `solana_tx` / `agency` | exists (main); deferred until on-chain purpose built + env-config refactored to param/ledger |
 | Corroboration / quorum for slashing | "two/three witnesses" doctrine | exists (doctrine) |
-| **FDRY bond / stake / slash** | new security-asset contract (+ optional Voltr vault) | **to build** |
+| **FDRY bond / stake (the bonding rail)** | `voltr.zig` — native Voltr deposit → stFDRY receipt | **built + proven (arc-lean); real mainnet vault, PDA derivation matches on-chain authority; operator-gated card, zero-dependency** |
+| **FDRY slash (forfeit)** | separate program / local-first mechanism | **to build** — NOT a Voltr instruction; the vault yields + custodies, it does not slash a third party |
 | **Proof-of-re-verification proof + dispute** | re-run + attest (`cas`) + quorum challenge | **to build** |
 
 ## 8. The falsifiable first step (discipline)

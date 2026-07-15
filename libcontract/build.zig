@@ -66,6 +66,10 @@ pub fn build(b: *std.Build) void {
         "src/base58.zig",
         "src/solana_rpc.zig",
         "src/devnet_probe.zig",
+        // FDRY bonding rail — native Voltr staking, std-only (base58 + std.crypto
+        // PDA derivation). Operator-gated: builds the deposit card, never sends.
+        // The PDA-matches-mainnet-constant test proves byte-correctness offline.
+        "src/voltr.zig",
         "src/payload_crypto.zig",
         "src/words.zig",
         "src/pattern.zig",
