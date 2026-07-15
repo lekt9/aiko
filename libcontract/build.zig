@@ -58,6 +58,14 @@ pub fn build(b: *std.Build) void {
         "src/embed.zig",
         "src/ebm.zig",
         "src/cas.zig",
+        // Solana read/airdrop capability — env-clean closure only (claim 1).
+        // rpc→std; link→cfile,keystore. The write/anchor engine (solana_tx,
+        // agency, chain, iq_ledger, voltr, solana_vault) is deferred until its
+        // on-chain purpose is built + its env-config refactored to param/ledger.
+        "src/cfile.zig",
+        "src/link.zig",
+        "src/solana_rpc.zig",
+        "src/devnet_probe.zig",
         "src/payload_crypto.zig",
         "src/words.zig",
         "src/pattern.zig",

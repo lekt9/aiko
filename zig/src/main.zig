@@ -3171,9 +3171,9 @@ fn resolveLineage(allocator: std.mem.Allocator, env: std.process.Environ, id: []
 /// resolved-like fire first (enabling contracts resolve earlier → shorter
 /// cascade). SAFETY: reorder-ONLY — every collected candidate still fires this
 /// pass, so nothing is starved (the fairness floor holds by construction).
-/// Gated on AIKO_ENERGY_RANK; unset = untouched scan order (non-breaking).
-fn energyRankCandidates(allocator: std.mem.Allocator, env: std.process.Environ, rows: []const Row, items: [][]const u8) void {
-    if (env.getPosix("AIKO_ENERGY_RANK") == null) return;
+/// Always on: proven reorder-only + non-breaking (bench: 2 vs 3 passes), so it
+/// IS the Way — no env-var toggle (claim 1: no env vars are read).
+fn energyRankCandidates(allocator: std.mem.Allocator, rows: []const Row, items: [][]const u8) void {
     if (items.len < 2) return;
     var ok: ebm.Prototype = .{};
     var seen = std.StringHashMap(void).init(allocator);
@@ -3282,8 +3282,8 @@ fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.E
         }
         evidencePrint("drill pass {d}: {d} unresolved row(s) within deep budget {d}\n", .{ pass + 1, candidates.items.len, budget });
         // Phase 1 energy router: order the frontier best-first (reorder-only,
-        // non-breaking, gated on AIKO_ENERGY_RANK). No-op in scan-order mode.
-        energyRankCandidates(allocator, env, rows, candidates.items);
+        // non-breaking — always on, it IS the Way; no env toggle).
+        energyRankCandidates(allocator, rows, candidates.items);
         var progressed: u32 = 0;
         for (candidates.items) |cid| {
             const rc = resolveOne(allocator, env, cid) catch continue;
@@ -3403,8 +3403,8 @@ fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, sk
             return;
         }
         evidencePrint("backfill pass {d}: {d} unresolved row(s) within budget {d}\n", .{ pass + 1, candidates.items.len, budget });
-        // Phase 1 energy router (reorder-only, gated on AIKO_ENERGY_RANK).
-        energyRankCandidates(allocator, env, rows, candidates.items);
+        // Phase 1 energy router (reorder-only, always on — no env toggle).
+        energyRankCandidates(allocator, rows, candidates.items);
         const terminals_before = countTerminalEvents(rows);
         var satisfied_any = false;
         for (candidates.items) |cid| {
