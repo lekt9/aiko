@@ -36,6 +36,7 @@ pub const usage = @import("usage.zig");
 pub const usage_ledger = @import("usage_ledger.zig");
 pub const link_ledger = @import("link_ledger.zig");
 pub const epoch = @import("epoch.zig");
+pub const reverify = @import("reverify.zig");
 pub const base58 = @import("base58.zig");
 pub const solana_rpc = @import("solana_rpc.zig");
 pub const voltr = @import("voltr.zig");

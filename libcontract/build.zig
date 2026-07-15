@@ -81,6 +81,7 @@ pub fn build(b: *std.Build) void {
         "src/usage_ledger.zig",
         "src/link_ledger.zig",
         "src/epoch.zig",
+        "src/reverify.zig",
         // Solana devnet capability — a ZERO-DEPENDENCY closure: every file here
         // imports only `std` (base58 pure; solana_rpc uses std.http native TLS,
         // no curl/shell). No env reads (claim 1). The write/anchor engine
