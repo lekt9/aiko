@@ -75,6 +75,7 @@ pub fn build(b: *std.Build) void {
         // The PDA-matches-mainnet-constant test proves byte-correctness offline.
         "src/voltr.zig",
         "src/stake.zig",
+        "src/payout.zig",
         "src/payload_crypto.zig",
         "src/words.zig",
         "src/pattern.zig",

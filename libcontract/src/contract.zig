@@ -39,6 +39,7 @@ pub const base58 = @import("base58.zig");
 pub const solana_rpc = @import("solana_rpc.zig");
 pub const voltr = @import("voltr.zig");
 pub const stake = @import("stake.zig");
+pub const payout = @import("payout.zig");
 pub const payload_crypto = @import("payload_crypto.zig");
 // Words-as-contracts: every token in a plan is a child /contract pointer
 // (action `word:<tok>`, layer 0). Wired from cmdDeclare so each declare
@@ -834,6 +835,18 @@ pub fn appendFlexSettleRow(
     var num_buf: [32]u8 = undefined;
     const sa = try std.fmt.bufPrint(&num_buf, "{d}", .{settle_amount});
     try buf.appendSlice(allocator, sa);
+    // env_pubkey: the settling contract's derived identity, in the SAME namespace
+    // as declared rows — so usage_ledger self-exclusion is cryptographic (matches
+    // the route owner's env_pubkey), not the display `agent`. Best-effort: if the
+    // root key can't load, the row still settles (parser falls back to agent).
+    if (lineage.loadOrInitRootKey(allocator, env)) |root_key| {
+        if (lineage.deriveKeyPair(root_key, source_id)) |kp| {
+            var pubkey_hex: [lineage.PUBKEY_HEX_LEN]u8 = undefined;
+            lineage.bytesToHex(&kp.public_key.bytes, &pubkey_hex);
+            try buf.appendSlice(allocator, ", \"env_pubkey\": ");
+            try writeJsonString(&buf, allocator, &pubkey_hex);
+        } else |_| {}
+    } else |_| {}
     try buf.appendSlice(allocator, ", \"ts\": ");
     try writeJsonString(&buf, allocator, ts);
     try buf.appendSlice(allocator, ", \"agent\": ");

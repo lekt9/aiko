@@ -199,7 +199,7 @@ utopian socialism; it is a **governed commons**, the thing that actually works.
 | **Route → owner identity** | `usage_ledger.resolveOwners` — a route's `declared` row → `env_pubkey` (its owner), hashed to the same id space as payers | **built + proven (arc-lean); owner sourced from the ledger drives self-exclusion end-to-end** |
 | **Route → committed attestation** | `usage_ledger.resolveAttestations` + `emitAttestRow` — the `attest` row convention; latest wins | **built + proven (arc-lean); drift detected from the attest row + fresh re-run** |
 | **Fully-live assembler** | `usage_ledger.runEpochFromLedger` — owner + attestation + usage FROM THE LEDGER, stakes injected live | **built + proven (arc-lean); whole epoch from ledger text + live stakes, every gate ledger-sourced** |
-| **On-chain payout** | USDC (SPL) transfers to stakers — no swap | to wire (operator-gated card, like the deposit card) |
+| **On-chain payout** | `payout.zig` — SPL `TransferChecked` USDC card per maintainer (no swap), operator-gated | **built + proven (arc-lean); batch card from an epoch's payouts; canonical USDC mint, emits — never sends** |
 
 ## 8. The falsifiable first step (discipline)
 
