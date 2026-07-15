@@ -33,6 +33,7 @@ pub const ebm = @import("ebm.zig");
 pub const cas = @import("cas.zig");
 pub const reward = @import("reward.zig");
 pub const usage = @import("usage.zig");
+pub const epoch = @import("epoch.zig");
 pub const base58 = @import("base58.zig");
 pub const solana_rpc = @import("solana_rpc.zig");
 pub const voltr = @import("voltr.zig");

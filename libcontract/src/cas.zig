@@ -33,6 +33,20 @@ pub fn hexKey(h: [HASH_LEN]u8, out: *[HEX_LEN]u8) void {
     }
 }
 
+/// Re-verification verdict, content-addressed. Does `bytes` reproduce the
+/// attestation `key`? Re-run a route, hash the observation, compare to the
+/// committed key — TRUE iff they match. This is the whole payoff of
+/// content-addressing: "is it still fresh/valid" is a HASH EQUALITY anyone can
+/// recompute, not a trust assertion. A drifted route hashes to a different key
+/// and fails. `key` must be HEX_LEN hex chars (a non-matching length is false,
+/// never an error — an unattested route is simply unverified).
+pub fn reproduces(key: []const u8, bytes: []const u8) bool {
+    if (key.len != HEX_LEN) return false;
+    var got: [HEX_LEN]u8 = undefined;
+    hexKey(contentHash(bytes), &got);
+    return std.mem.eql(u8, &got, key);
+}
+
 pub const PutResult = struct {
     key: [HEX_LEN]u8,
     /// false when the content was already present — DEDUP: no new bytes stored.
@@ -129,4 +143,15 @@ test "content key is deterministic and matches a fresh hash" {
     var k2: [HEX_LEN]u8 = undefined;
     hexKey(contentHash("route:verb:python"), &k2);
     try std.testing.expectEqualSlices(u8, &k1, &k2);
+}
+
+test "reproduces: a matching re-run verifies; a drifted one does not" {
+    var key: [HEX_LEN]u8 = undefined;
+    hexKey(contentHash("route shape v1"), &key);
+    // same observation reproduces the committed attestation → verified
+    try std.testing.expect(reproduces(&key, "route shape v1"));
+    // drifted observation → different hash → NOT verified
+    try std.testing.expect(!reproduces(&key, "route shape v2 (drifted)"));
+    // a malformed/absent key length → unverified, not an error
+    try std.testing.expect(!reproduces("deadbeef", "route shape v1"));
 }
