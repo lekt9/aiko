@@ -117,6 +117,17 @@ export fn contract_gate(
     return out.ptr;
 }
 
+/// The LEARNED energy router: given a goal, return the best-fit binary name by
+/// argmin energy over per-binary prototypes trained from the ledger (no LLM).
+/// NULL when nothing has been learned yet. Caller frees with contract_free.
+export fn contract_route(context: [*:0]const u8) ?[*:0]u8 {
+    const best = (contract.route(gpa, extEnv(), cstr(context)) catch return null) orelse return null;
+    defer gpa.free(best);
+    const out = gpa.allocSentinel(u8, best.len, 0) catch return null;
+    @memcpy(out, best);
+    return out.ptr;
+}
+
 /// Release a buffer previously returned by one of the C ABI getters.
 export fn contract_free(p: ?[*:0]u8) void {
     if (p) |ptr| {

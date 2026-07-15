@@ -93,6 +93,7 @@ pub fn build(b: *std.Build) void {
         "src/terminal.zig",
         "src/capability.zig",
         "src/gate.zig",
+        "src/route.zig",
         "src/embed.zig",
         "src/ebm.zig",
         "src/cas.zig",

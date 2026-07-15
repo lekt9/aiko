@@ -1021,6 +1021,13 @@ fn bioClassifyRoadblock(result: []const u8, action: []const u8) RoadblockClass {
     if (std.mem.indexOf(u8, result, "HTTP 5") != null) return .{ .class = "upstream_5xx", .layer = "transport" };
     if (std.mem.indexOf(u8, result, "schema") != null) return .{ .class = "schema_mismatch", .layer = "compiler" };
     if (std.mem.indexOf(u8, result, "PAIN interrupt") != null) return .{ .class = "pain", .layer = "resolver" };
+    // Permanently-unresolvable classes (checked before the broad "sabbath"
+    // substring below, which would otherwise swallow the sabbath-eval hold):
+    // an inert typed pointer (fork F8) has no executor and never will; a
+    // sabbath-eval child whose parent has no signed declared row can never
+    // self-attest (the signature is written at declare time or never).
+    if (std.mem.indexOf(u8, result, "hold:inert-pointer") != null) return .{ .class = "inert_pointer", .layer = "executor" };
+    if (std.mem.indexOf(u8, result, "hold:sabbath-eval — parent declared unsigned") != null) return .{ .class = "unsigned_parent", .layer = "wallet" };
     if (std.mem.indexOf(u8, result, "sabbath") != null) return .{ .class = "sabbath", .layer = "scheduler" };
     if (std.mem.indexOf(u8, result, "child neuron pending") != null) return .{ .class = "pending_children", .layer = "neuron" };
     if (std.mem.indexOf(u8, result, "shell-strict") != null) return .{ .class = "shell_injection", .layer = "executor" };
@@ -1047,6 +1054,8 @@ fn remediationFor(class: []const u8) []const u8 {
     if (std.mem.eql(u8, class, "shell_injection")) return "shell-strict gate rejected ; | & ` $ < > — use code:/python:/bun: typed prefixes instead";
     if (std.mem.eql(u8, class, "wallet_mode")) return "chmod 600 ~/.contracts/root.key — wallet must not be group/world-readable";
     if (std.mem.eql(u8, class, "command_not_found")) return "missing binary on PATH; declare depends_on:<runtime>:<pkg> sidecar contract first";
+    if (std.mem.eql(u8, class, "inert_pointer")) return "typed doctrine pointer with no executor (fork F8); the resolver can never fire it — apoptosed on sight";
+    if (std.mem.eql(u8, class, "unsigned_parent")) return "parent declared while root key unavailable; a signed row can never attest it — apoptosed; re-declare the goal if still wanted";
     if (std.mem.eql(u8, class, "stage_dead")) return "sequence's current stage was apoptosed; the sequence cannot satisfy and inherits the death (Genesis Day N inherits Day N-1)";
     if (std.mem.eql(u8, class, "child_dead")) return "neuron's declared child was apoptosed; the neuron cannot integrate that branch's evidence and inherits the death";
     if (std.mem.eql(u8, class, "bun_failure")) return "bun runtime returned non-zero; verify bun on PATH and code body has no shell-escape issues";
@@ -2649,7 +2658,7 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
     return .{ .rc = out_capture.rc, .result = "fail" };
 }
 
-const DeclareArgs = struct { plan: []const u8, action: ?[]const u8 = null, parent: ?[]const u8 = null, fast: bool = false, register: bool = false };
+const DeclareArgs = struct { plan: []const u8, action: ?[]const u8 = null, parent: ?[]const u8 = null, fast: bool = false, register: bool = false, resolve: bool = false };
 
 fn parseDeclare(args: []const []const u8) !DeclareArgs {
     if (args.len == 0) return error.MissingPlan;
@@ -2660,6 +2669,7 @@ fn parseDeclare(args: []const []const u8) !DeclareArgs {
     var parent: ?[]const u8 = null;
     var fast: bool = false;
     var register: bool = false;
+    var resolve: bool = false;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const a = args[i];
@@ -2678,10 +2688,18 @@ fn parseDeclare(args: []const []const u8) !DeclareArgs {
             continue;
         }
         // --register: pure register — append the declared row, print the id, and
-        // return. No word fanout, no resolveLineage. Sub-second; for callers (e.g.
-        // aiko-cli's anchor) that only need the id + the row, not resolution.
+        // return. This is now the DEFAULT (SKILL.md: bookkeeping must never block
+        // or slow the real work); the flag is kept as an accepted no-op for
+        // existing callers (e.g. aiko-cli's anchor).
         if (std.mem.eql(u8, a, "--register")) {
             register = true;
+            continue;
+        }
+        // --resolve: opt into the full lifecycle — word fanout + resolveLineage.
+        // Resolution is a deliberate act, not a side effect of speaking; the
+        // ledger-wide sweep lives solely in the drill: action.
+        if (std.mem.eql(u8, a, "--resolve")) {
+            resolve = true;
             continue;
         }
         if (plan == null) {
@@ -2690,7 +2708,7 @@ fn parseDeclare(args: []const []const u8) !DeclareArgs {
         }
     }
     if (plan == null) return error.MissingPlan;
-    return .{ .plan = plan.?, .action = action, .parent = parent, .fast = fast, .register = register };
+    return .{ .plan = plan.?, .action = action, .parent = parent, .fast = fast, .register = register, .resolve = resolve };
 }
 
 /// Visibility axis (not transport).
@@ -2941,6 +2959,12 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
         // guard failure spawns another guard, recursively.
         const is_already_guard = std.mem.startsWith(u8, r.plan, "guard:");
         const cls = bioClassifyRoadblock(rr.result, r.action);
+        // Classes that apoptose below get scar tissue (the guard row) but NO
+        // follow-up contract: there is nothing to remediate on a permanently
+        // dead row, and the follow-up neuron would itself sit unresolved
+        // forever — re-growing the exact frontier the apoptosis just buried.
+        const apoptoses_below = std.mem.eql(u8, cls.class, "inert_pointer") or
+            std.mem.eql(u8, cls.class, "unsigned_parent");
         if (!is_already_guard and !hasGuardRow(rows, id)) {
             const remed = remediationFor(cls.class);
             contract.appendGuardRow(allocator, env, id, cls.class, cls.layer, remed) catch |caught_err| {
@@ -2980,7 +3004,7 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
                 };
                 break :blk_buf true;
             };
-            if (buf_ok) {
+            if (buf_ok and !apoptoses_below) {
                 if (contract.declare(allocator, env, followup_buf.items, "neuron", .{ .parent_id = id })) |fid| {
                     evidencePrint("  follow-up declared: {s}\n", .{fid});
                     allocator.free(fid);
@@ -3010,6 +3034,16 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
                 evidencePrint("apoptosis: markDied failed for {s}: {s} — neuron will continue to cycle\n", .{ id, @errorName(e) });
             };
             evidencePrint("  -> apoptosed (neuron inherits child death)\n", .{});
+        } else if (std.mem.eql(u8, cls.class, "inert_pointer")) {
+            contract.markDied(allocator, env, id, .apoptosed, null, "inert_pointer — typed doctrine pointer with no executor (fork F8); the resolver can never fire it") catch |e| {
+                evidencePrint("apoptosis: markDied failed for {s}: {s} — row will continue to cycle\n", .{ id, @errorName(e) });
+            };
+            evidencePrint("  -> apoptosed (inert pointer has no executor; permanently unresolvable)\n", .{});
+        } else if (std.mem.eql(u8, cls.class, "unsigned_parent")) {
+            contract.markDied(allocator, env, id, .apoptosed, null, "unsigned_parent — parent declared while root key unavailable; no signed row can ever attest (sabbath-eval)") catch |e| {
+                evidencePrint("apoptosis: markDied failed for {s}: {s} — row will continue to cycle\n", .{ id, @errorName(e) });
+            };
+            evidencePrint("  -> apoptosed (unsigned parent can never self-attest)\n", .{});
         }
         // PURGED (contract af7429cd — purge:apoptosed-by-cap): three wave-cap
         // apoptosis branches (guard@>=2, cli@>=3, neuron@>=3) deleted per the
@@ -3155,18 +3189,13 @@ fn resolveLineage(allocator: std.mem.Allocator, env: std.process.Environ, id: []
 
 /// Walk the entire ledger and attempt to resolve every contract that is
 /// neither satisfied nor dead. Mechanical, deterministic, idempotent: a row
-/// that resolves stays resolved; a row that fails stays pending. Budget is
-/// controlled by CONTRACT_BACKFILL_BUDGET (default 64, max 1024). Skip the
-/// id passed in `skip_id` (the one we just declared, already resolved).
+/// that resolves stays resolved; a row that fails stays pending.
 ///
-/// This is the in-binary realisation of contract:3600ca96 + contract:410bceea:
-/// every declaration sweeps the un-backfilled tail so accumulated learnings
-/// catch up to the live frontier without a separate script.
-/// Deep variant of backfillUnresolved — wider budget + more passes for the
-/// standing `drill:all-unresolved` contract. Same fixed-point semantics: halts
-/// on no-progress or budget exhaustion, surfaces evidence on every pass.
-/// Used by the `drill:` action handler so the substrate's continuous resolver
-/// reaches further per fire than the heartbeat backfill does.
+/// This sweep is reachable ONLY through the standing `drill:` contract —
+/// declaring is register-only bookkeeping (SKILL.md: it must never block or
+/// slow the real work); resolution is a deliberate act, never a side effect
+/// of speaking. Fixed-point semantics: halts on no-progress or budget
+/// exhaustion, surfaces evidence on every pass.
 ///
 /// Returns `anyerror!void` (explicit, not inferred) to break the inferred
 /// error-set cycle: runAction → backfillUnresolvedDeep → resolveOne → runAction.
@@ -3223,7 +3252,7 @@ fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.E
         evidencePrint("sabbath: drill paused at unix {d}\n", .{ts_now});
         return;
     }
-    // Apoptosis sweep before resolver passes (same shape as backfillUnresolved).
+    // Apoptosis sweep before resolver passes — stale rows exit the pool first.
     {
         const rows_for_apop = try parseRows(allocator, env);
         defer allocator.free(rows_for_apop);
@@ -3267,7 +3296,7 @@ fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.E
             // STRUCTURAL slot is here so the helper drops in without
             // re-finding the call site.
             if (isSatisfied(rows, r.id)) continue;
-            // Orphan filter (mirrors backfillUnresolved) — Decalogue cmd 5.
+            // Orphan filter — Decalogue cmd 5 (no declared row → nothing to fire).
             const decl_opt = latestDeclared(rows, r.id);
             if (decl_opt == null) continue;
             // `agent-judges` sentinel (c64bf5e2 / C-G01 5b9574ee): substrate
@@ -3292,149 +3321,28 @@ fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.E
         // Phase 1 energy router: order the frontier best-first (reorder-only,
         // non-breaking — always on, it IS the Way; no env toggle).
         energyRankCandidates(allocator, rows, candidates.items);
+        const terminals_before = countTerminalEvents(rows);
         var progressed: u32 = 0;
         for (candidates.items) |cid| {
             const rc = resolveOne(allocator, env, cid) catch continue;
             if (rc == 0) progressed += 1;
         }
         total_resolved += progressed;
-        if (progressed == 0) {
+        // Progress includes a terminal verdict landing on ANY row — a death by
+        // inherent-impossibility (command_not_found / inert_pointer /
+        // unsigned_parent / stage_dead / child_dead) counts even when nothing
+        // satisfied, because the next pass sees those rows filtered out of the
+        // candidates and any parents can now apoptose via child_dead
+        // inheritance. HOLDs alone do not count (the frontier must converge).
+        const rows_after = try parseRows(allocator, env);
+        defer allocator.free(rows_after);
+        const terminals_landed = countTerminalEvents(rows_after) > terminals_before;
+        if (progressed == 0 and !terminals_landed) {
             evidencePrint("drill: no progress on pass {d} — frontier stuck (resolved {d} total before stall)\n", .{ pass + 1, total_resolved });
             return;
         }
     }
     evidencePrint("drill: deep passes exhausted at {d} (resolved {d} total)\n", .{ max_passes, total_resolved });
-}
-
-fn backfillUnresolved(allocator: std.mem.Allocator, env: std.process.Environ, skip_id: []const u8) !void {
-    const budget: u32 = 64;
-    if (bioSabbathHolds(env)) {
-        // Sabbath is an EVALUATION tier, not a full stop. Per Gen 2:2-3
-        // the seventh day is when work is judged 'very good'. The
-        // pacemaker pauses to evaluate prior work + emit a verdict hook
-        // that downstream cycles can read. In-flight resolveLineage
-        // (active work) continues; only the heartbeat backfill rests.
-        const ts_now: i64 = time(null);
-        evidencePrint("sabbath: evaluation tier — pacemaker paused at unix {d}, in-flight work continues\n", .{ts_now});
-        // Emit a sabbath_evaluation called row so downstream tooling can
-        // see exactly when the rest began and resume at the next day.
-        // Resolve antipattern:NotASynapsePointer — declare the evaluation
-        // payload as its own contract row first, then pass `contract:<id>`.
-        const sabbath_claim = std.fmt.allocPrint(allocator, "sabbath:evaluation ts={d}", .{ts_now}) catch return;
-        defer allocator.free(sabbath_claim);
-        const sabbath_id_opt: ?[]u8 = contract.declare(allocator, env, sabbath_claim, "", .{}) catch |decl_err| blk: {
-            evidencePrint("sabbath: declare-evaluation failed: {s} — skipping called row\n", .{@errorName(decl_err)});
-            break :blk null;
-        };
-        if (sabbath_id_opt) |sid| {
-            defer allocator.free(sid);
-            const target = std.fmt.allocPrint(allocator, "contract:{s}", .{sid}) catch return;
-            defer allocator.free(target);
-            contract.appendCalledRow(allocator, env, skip_id, target, "sabbath-evaluation") catch |called_err| {
-                evidencePrint("sabbath: appendCalledRow failed: {s} — no observable evaluation edge\n", .{@errorName(called_err)});
-            };
-        }
-        return;
-    }
-    const max_passes: u32 = 8;
-    // Fixed-point loop: keep sweeping until a full pass yields zero new
-    // satisfies (whole ledger settled) or budget exhausts. Each pass takes
-    // the newest-first slice of still-unresolved rows.
-    // Apoptosis sweep — runs once per backfill cycle, BEFORE the resolver
-    // passes, so stale rows don't get spuriously re-attempted. Disabled
-    // when CONTRACT_APOPTOSIS_AGE_HOURS is unset or 0.
-    {
-        const rows_for_apop = try parseRows(allocator, env);
-        defer allocator.free(rows_for_apop);
-        const stale = try bioStaleIds(allocator, env, rows_for_apop);
-        defer allocator.free(stale);
-        if (stale.len > 0) {
-            evidencePrint("apoptosis: {d} stale row(s) older than CONTRACT_APOPTOSIS_AGE_HOURS\n", .{stale.len});
-            for (stale) |id| {
-                contract.markDied(allocator, env, id, .apoptosed, null, "stale beyond age window") catch |e| {
-                    evidencePrint("apoptosis skip {s}: {s}\n", .{ id, @errorName(e) });
-                };
-            }
-        }
-    }
-
-    var pass: u32 = 0;
-    while (pass < max_passes) : (pass += 1) {
-        const rows = try parseRows(allocator, env);
-        defer allocator.free(rows);
-        var seen: std.StringHashMap(void) = .init(allocator);
-        defer seen.deinit();
-        var candidates: std.ArrayList([]const u8) = .empty;
-        defer candidates.deinit(allocator);
-        var i: usize = rows.len;
-        while (i > 0) : (i -= 1) {
-            const r = rows[i - 1];
-            if (std.mem.eql(u8, r.id, skip_id)) continue;
-            if (seen.contains(r.id)) continue;
-            try seen.put(r.id, {});
-            if (isDead(rows, r.id)) continue;
-            // Orphan filter — an id that appears in some event row but has
-            // no `declared` row has no action to fire. Decalogue commandment
-            // 5 (honor lineage): the substrate refuses to invoke a neuron
-            // whose parent declaration never landed. Skip silently — the
-            // row that referenced this orphan still resolves via its own
-            // evaluator (not via the orphan's resolution).
-            const decl_opt = latestDeclared(rows, r.id);
-            if (decl_opt == null) continue;
-            // `agent-judges` sentinel (c64bf5e2 / C-G01 5b9574ee): substrate
-            // cannot resolve these; only an in-thread agent verdict can.
-            // Adding them to the candidate set burns a budget slot and (pre-
-            // sentinel-branch) emitted `command not found` pollution into the
-            // ledger every pass. Skip silently — they remain pending until a
-            // `_mark satisfied` / `corroborate` lands from an agent in-thread.
-            if (std.mem.eql(u8, pointer.inferPointerType(decl_opt.?.action), "agent-judges")) continue;
-            if (isSatisfied(rows, r.id)) {
-                // Chain-stale satisfied rows re-enter — that's the
-                // cache-invalidation propagation channel. Same pointer
-                // primitive as resolveOne: a satisfied row whose current
-                // signature chain still matches the recorded snapshot
-                // skips backfill; chain drift OR missing chain (legacy)
-                // honors the prior satisfaction and skips too.
-                const chain_opt = contract.cache.computeSignatureChain(allocator, env, r.id) catch null;
-                if (chain_opt == null) continue;
-                defer if (chain_opt) |c| allocator.free(c);
-                const rec_opt = contract.cache.findLatestResolvedSnapshot(allocator, env, r.id) catch null;
-                if (rec_opt == null) continue;
-                defer if (rec_opt) |c| allocator.free(c);
-                if (std.mem.eql(u8, chain_opt.?, rec_opt.?)) continue;
-            }
-            try candidates.append(allocator, r.id);
-            if (candidates.items.len >= budget) break;
-        }
-        if (candidates.items.len == 0) {
-            if (pass > 0) evidencePrint("backfill: ledger settled after {d} pass(es)\n", .{pass});
-            return;
-        }
-        evidencePrint("backfill pass {d}: {d} unresolved row(s) within budget {d}\n", .{ pass + 1, candidates.items.len, budget });
-        // Phase 1 energy router (reorder-only, always on — no env toggle).
-        energyRankCandidates(allocator, rows, candidates.items);
-        const terminals_before = countTerminalEvents(rows);
-        var satisfied_any = false;
-        for (candidates.items) |cid| {
-            const rc = resolveOne(allocator, env, cid) catch continue;
-            if (rc == 0) satisfied_any = true;
-        }
-        // Progress includes a terminal verdict landing on ANY row — death by
-        // inherent-impossibility (command_not_found / stage_dead / child_dead)
-        // counts even when no satisfaction happened, because the next pass
-        // sees those rows filtered out of candidates and any parent rows now
-        // able to apoptose via child_dead inheritance. HOLDs alone do not
-        // count (otherwise the frontier could spin without convergence).
-        const rows_after = try parseRows(allocator, env);
-        defer allocator.free(rows_after);
-        const terminals_after = countTerminalEvents(rows_after);
-        const terminals_landed = terminals_after > terminals_before;
-        if (!satisfied_any and !terminals_landed) {
-            evidencePrint("backfill: no progress on pass {d} — frontier stuck\n", .{pass + 1});
-            return;
-        }
-    }
-    evidencePrint("backfill: passes exhausted at {d}\n", .{max_passes});
 }
 
 fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
@@ -3486,9 +3394,6 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
             return 2;
         };
         outPrint("{s}\n", .{id});
-        backfillUnresolved(allocator, env, id) catch |e| {
-            errPrint("backfill skipped: {s}\n", .{@errorName(e)});
-        };
         return 0;
     }
     if (client.isRemoteMode(env)) {
@@ -3502,55 +3407,43 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
             return 2;
         };
         outPrint("{s}\n", .{id});
-        backfillUnresolved(allocator, env, id) catch |e| {
-            errPrint("backfill skipped: {s}\n", .{@errorName(e)});
-        };
         return 0;
     }
     const cid = try contract.declare(allocator, env, d.plan, action, .{ .parent_id = null });
     defer allocator.free(cid);
     outPrint("{s}\n", .{cid});
-    // Register-only: the declared row is written and the id is printed; skip BOTH
-    // word fanout and resolveLineage. Sub-second — this is the anchor path (a
-    // caller that only needs a signed row + its id, not resolution). Distinct from
-    // --fast, which still runs resolveLineage to settle the id if it can.
-    if (d.register) return 0;
-    // Fast path for per-frame ARC gameplay: skip word fanout + backfill
-    // (trinity fanout is not present on this lean base; when cherry-picked
-    // later it must also be gated by !d.fast).
-    if (d.fast) {
-        // Still run resolve so the caller sees a settled id if possible,
-        // but do NOT sweep the unresolved tail.
+    // Register-only is the DEFAULT (SKILL.md: recording is quiet bookkeeping
+    // that "must never block or slow the real work"): the declared row is
+    // written, the id is printed, done — sub-second. Resolution is a
+    // deliberate act, opted into per call:
+    //   --fast     resolve this lineage only (per-frame ARC gameplay)
+    //   --resolve  full lifecycle: word fanout + materialize + resolveLineage
+    //   drill:*    always resolves — the standing drill contract IS the
+    //              ledger-wide resolver (the only backfill entry point).
+    const is_drill = std.mem.startsWith(u8, action, "drill:");
+    if (!d.resolve and !d.fast and !is_drill) return 0;
+    if (d.fast and !d.resolve) {
         _ = resolveLineage(allocator, env, cid) catch {};
         return 0;
     }
-    // Every word in the plan is itself a /contract — fan out one
-    // `word:<tok>` child per unique token, lineage-signed under cid.
-    // The substrate is recursive: a sentence-contract is a /contract of
-    // /contracts that are words. Cache hits via inputs_hash_v2 make
-    // repeat emissions idempotent. Failures here must not invalidate
-    // the parent declared row, so we swallow the error.
-    if (contract.words.emitWordChildren(allocator, env, cid, d.plan)) |stats| {
-        evidencePrint(
-            "words: emitted={d} skipped={d} failed={d}\n",
-            .{ stats.emitted, stats.skipped, stats.failed },
-        );
-    } else |e| {
-        evidencePrint("words skipped: {s}\n", .{@errorName(e)});
+    if (d.resolve) {
+        // Every word in the plan is itself a /contract — fan out one
+        // `word:<tok>` child per unique token, lineage-signed under cid.
+        // Failures here must not invalidate the parent declared row.
+        if (contract.words.emitWordChildren(allocator, env, cid, d.plan)) |stats| {
+            evidencePrint(
+                "words: emitted={d} skipped={d} failed={d}\n",
+                .{ stats.emitted, stats.skipped, stats.failed },
+            );
+        } else |e| {
+            evidencePrint("words skipped: {s}\n", .{@errorName(e)});
+        }
+        // Materialize binary if CONTRACT_BINARY_TARGET is declared.
+        bioMaterializeBinary(allocator, env, cid) catch |e| {
+            evidencePrint("materialize skipped: {s}\n", .{@errorName(e)});
+        };
     }
-    // Materialize binary if CONTRACT_BINARY_TARGET is declared. Every new
-    // contract can spawn its own signed thin-client at the declared target.
-    bioMaterializeBinary(allocator, env, cid) catch |e| {
-        evidencePrint("materialize skipped: {s}\n", .{@errorName(e)});
-    };
     const rc = try resolveLineage(allocator, env, cid);
-    if (rc == 0) {}
-    // Backfill: every declare sweeps the un-resolved tail of the ledger.
-    // This is the 5-10s cost for "real ARC gameplay" per declare.
-    // Use --fast (or MCP fast path) to skip for per-frame use.
-    backfillUnresolved(allocator, env, cid) catch |e| {
-        errPrint("backfill skipped: {s}\n", .{@errorName(e)});
-    };
     return if (rc == 0) 0 else 1;
 }
 
@@ -4696,7 +4589,7 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
             // root-fix:substrate-singularity f5ff4f42). The cloud is canonical;
             // the local ledger is a derived view. Append a `declared` mirror
             // row carrying source="cloud-mirror" so future resolveOne /
-            // backfillUnresolved / cache walks can see the row on this host
+            // drill sweeps / cache walks can see the row on this host
             // and so the substrate's interoception counter reflects reality.
             // Failure is non-fatal but ALWAYS surfaced (fallbacks-visible).
             writeCloudMirrorRow(allocator, env, id, safe_plan, action, null) catch |e| {
@@ -4712,9 +4605,6 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
                     evidencePrint("eval: closure self-settle failed for {s}: {s}\n", .{ id, @errorName(e) });
                 };
             }
-            backfillUnresolved(allocator, env, id) catch |e| {
-                errPrint("backfill skipped: {s}\n", .{@errorName(e)});
-            };
             return 0;
         },
         .private_only => {
@@ -4785,10 +4675,6 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
                 // form (posthook synapses in the row's plan) above is the
                 // only posthook channel.
             }
-            // Backfill: sweep un-resolved tail every time the Word is spoken locally.
-            backfillUnresolved(allocator, env, cid) catch |e| {
-                errPrint("backfill skipped: {s}\n", .{@errorName(e)});
-            };
             return if (rc == 0) 0 else 1;
         },
     }
@@ -5570,48 +5456,10 @@ fn cmdRoute(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     }
     const context = try std.mem.join(allocator, " ", args);
     defer allocator.free(context);
-
-    const rows = try parseRows(allocator, env);
-
-    // Per-binary prototypes, trained from the ledger. Key = the action's first token
-    // (the binary): "git commit" → "git", "grep -r foo" → "grep".
-    var protos = std.StringHashMap(ebm.Prototype).init(allocator);
-    defer protos.deinit();
-    var seen = std.StringHashMap(void).init(allocator);
-    defer seen.deinit();
-
-    for (rows) |r| {
-        const reward: f64 = switch (terminal.classify(r.event)) {
-            .satisfied => 1.0,
-            .dead => -1.0,
-            else => continue,
-        };
-        if (seen.contains(r.id)) continue;
-        seen.put(r.id, {}) catch continue;
-        const decl = latestDeclared(rows, r.id) orelse continue;
-        const act = decl.action;
-        const end = std.mem.indexOfScalar(u8, act, ' ') orelse act.len;
-        const bin = act[0..end];
-        if (bin.len == 0 or std.mem.eql(u8, bin, "claim")) continue; // skip untyped claims
-        const gop = try protos.getOrPut(bin);
-        if (!gop.found_existing) gop.value_ptr.* = .{};
-        gop.value_ptr.foldText(decl.plan, reward); // fold the GOAL, weighted by outcome
-    }
-
-    // Settle: argmin energy over the learned binary prototypes (ebm.route semantics).
-    var best_bin: ?[]const u8 = null;
-    var best_e: f64 = std.math.inf(f64);
-    var it = protos.iterator();
-    while (it.next()) |entry| {
-        const e = ebm.energyText(entry.value_ptr.*, context);
-        if (e < best_e) {
-            best_e = e;
-            best_bin = entry.key_ptr.*;
-        }
-    }
-
-    if (best_bin) |b| {
-        outPrint("{s}\t{d:.4}\n", .{ b, best_e }); // <binary>\t<energy> (lower = better fit)
+    // ONE implementation — the shared libcontract router (also the C ABI's).
+    if (try contract.route(allocator, env, context)) |bin| {
+        defer allocator.free(bin);
+        outPrint("{s}\n", .{bin});
         return 0;
     }
     err("route: cold — no learned routes yet. Satisfy some typed actions first: declare --action \"<binary> ...\".\n");
