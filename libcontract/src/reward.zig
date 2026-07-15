@@ -1,9 +1,13 @@
 //! reward.zig — the commons pays out, it does not punish (Luke 10:7 — "the
 //! labourer is worthy of his hire"). The positive-sum replacement for slashing.
 //!
-//! All usage fees (converted to SOL lamports) form a pool. The pool is paid to
-//! the maintainers whose routes were actually USED and still VERIFY — weighted
-//! by the usage they generated, gated by stake (Sybil cost) + verification.
+//! All usage fees form a pool, paid out in the SAME asset they arrive in — USDC
+//! over x402 (no conversion: a swap is pure slippage + a Jupiter dependency +
+//! FX risk foisted on maintainers who'd rather hold a stablecoin). The pool is
+//! paid to the maintainers whose routes were actually USED and still VERIFY —
+//! weighted by the usage they generated, gated by stake (Sybil cost) +
+//! verification. The math is unit-agnostic; "atoms" below = USDC's 6-decimal
+//! base units (equally valid as any SPL token's atoms).
 //!
 //! The transmutation of the slash: a route that fails re-verification does NOT
 //! get its maintainer's principal seized. It simply earns nothing, and the fees
@@ -12,7 +16,7 @@
 //! actually correct. Forfeiture becomes provision.
 //!
 //! Design invariants, all mechanically tested below:
-//!   1. CONSERVATION — every lamport in the pool is either paid out or lands in
+//!   1. CONSERVATION — every atom in the pool is either paid out or lands in
 //!      the treasury remainder. Nothing is burned (contrast slashing, which
 //!      destroys value). sum(payouts) + treasury == pool.
 //!   2. USAGE-WEIGHTED — more verified usage → strictly more payout.
@@ -21,10 +25,10 @@
 //!      its own fees — the "forfeit → value to the honest" property).
 //!   4. STAKE-GATED — an unstaked maintainer earns 0 (the Sybil cost of entry).
 //!
-//! ZERO-DEPENDENCY: imports only `std`. Lamports are u64 (SOL's atom); the
-//! pool*weight product uses u128 to never overflow. This proves the economics
-//! OFF-CHAIN first — the on-chain payout (SOL transfers to stFDRY holders, an
-//! operator-gated card like voltr.zig) is wired only after the math is proven.
+//! ZERO-DEPENDENCY: imports only `std`. Amounts are u64 atoms; the pool*weight
+//! product uses u128 to never overflow. This proves the economics OFF-CHAIN
+//! first — the on-chain payout (USDC SPL transfers to stakers, an operator-gated
+//! card like voltr.zig) is wired only after the math is proven.
 
 const std = @import("std");
 
@@ -34,20 +38,20 @@ pub const Maintainer = struct {
     stake: u64,
 };
 
-/// A route's usage this epoch. `usage_fee` is the SOL (lamports) users paid to
+/// A route's usage this epoch. `usage_fee` is the USDC (atoms) users paid to
 /// call it. `verified` is the current re-verification verdict (cas.zig). A route
 /// whose maintainer is unstaked OR whose `verified` is false is INELIGIBLE — it
 /// earns nothing and its fee redistributes to the eligible.
 pub const Route = struct {
     maintainer: usize, // index into the maintainers slice
-    usage_fee: u64, // lamports of SOL paid for this route's usage this epoch
+    usage_fee: u64, // USDC atoms paid for this route's usage this epoch
     verified: bool,
 };
 
 pub const Distribution = struct {
     /// pool == sum of ALL usage fees (every payment enters, verified or not).
     pool: u64,
-    /// lamports that could not be attributed to an eligible maintainer:
+    /// atoms that could not be attributed to an eligible maintainer:
     /// integer-division dust, plus the WHOLE pool when no route is eligible.
     treasury: u64,
 };

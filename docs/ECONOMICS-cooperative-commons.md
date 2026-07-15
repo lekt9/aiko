@@ -42,8 +42,9 @@ participate**. There is a positive-sum instrument that internalises the SAME
 externality by pricing the *good* instead of the harm:
 
 > **Redirect the usage fees to the people who keep the used routes fresh.**
-> All fees are converted to **SOL** and paid out to the stakers whose routes were
-> actually **used** and still **verify** — weighted by the usage they generated.
+> Fees are paid out **in the same asset they arrive in — USDC** (no conversion) —
+> to the stakers whose routes were actually **used** and still **verify**,
+> weighted by the usage they generated.
 
 Now freshness is *funded by the very demand it serves*: a route people use earns
 its maintainer real yield, and a route that rots simply stops earning. The "slash"
@@ -58,16 +59,18 @@ burned; the users' payments still create value by rewarding whoever is correct.
 
 | Rail | Asset | Job | State |
 |---|---|---|---|
-| **Usage → reward** | USDC over `x402`, **converted to SOL** | meter calls *and* pay the SOL out to used+verified maintainers (`reward.zig`) | usage rail exists; distribution built (local), on-chain payout to wire |
+| **Usage → reward** | USDC over `x402` (paid out **as USDC — no swap**) | meter calls *and* pay the USDC out to used+verified maintainers (`reward.zig`) | usage rail exists; distribution built (local), on-chain payout to wire |
 | **Stake** | **FDRY** (base token) | **entry to the earning tier + Sybil cost**; bonded in the Voltr vault (`voltr.zig`); **never seized** | staking built (arc-lean) |
 
-They stay separate on purpose: **reward in SOL (real external revenue), stake in
-FDRY (skin-in-game).** Paying rewards in FDRY would be circular/inflationary;
-paying in SOL means staking FDRY earns *real* yield, so **FDRY's value grows with
-real usage of a trustworthy graph — without inflating FDRY**. FDRY is the
-security/eligibility asset, not the reward. Its **fair distribution is a security
-parameter, not marketing**: a coordination asset launched for money cannot become
-trustworthy.
+They stay separate on purpose: **reward in USDC (real external revenue, already
+the inbound asset), stake in FDRY (skin-in-game).** Paying rewards in FDRY would
+be circular/inflationary; paying in USDC means staking FDRY earns *real* yield, so
+**FDRY's value grows with real usage of a trustworthy graph — without inflating
+FDRY**. The reward asset need only be *real and non-minted*; USDC beats SOL for it
+(stable, already flowing in, zero conversion, no FX risk on the maintainer). FDRY
+is the security/eligibility asset, not the reward. Its **fair distribution is a
+security parameter, not marketing**: a coordination asset launched for money
+cannot become trustworthy.
 
 ## 3. Proof of re-verification — freshness as a checkable artifact
 
@@ -138,11 +141,12 @@ utopian socialism; it is a **governed commons**, the thing that actually works.
    formally solve Sybil. A conscious trade: more open and non-punitive, less
    costly to attack, than a slash.
 2. **Usage must be un-gameable — the new crux.** Because payout ∝ usage, a
-   maintainer wash-calling their own routes to farm SOL is the attack that
-   replaces "confidently-wrong data." The natural deterrent is that a self-call
-   pays the fee to earn it back *minus* the USDC→SOL conversion spread + gas
-   (negative-EV), but distinct-paying-caller accounting is load-bearing and not
-   yet hardened.
+   maintainer wash-calling their own routes to farm the payout is the attack that
+   replaces "confidently-wrong data." Since we pay out USDC with **no conversion**,
+   the self-call is deterred only by gas + x402 overhead (we deliberately did NOT
+   keep a swap spread just to tax wash-trading — that would tax every honest
+   payout too). So **distinct-paying-caller accounting is fully load-bearing** and
+   not yet hardened — it is the crux this model rests on.
 2. **The token's fair distribution is load-bearing.** FDRY exists strictly for the
    security function. If its distribution is a money-grab, the whole trust model
    collapses — "a coordination asset launched for money cannot become trustworthy."
@@ -179,9 +183,8 @@ utopian socialism; it is a **governed commons**, the thing that actually works.
 | Trustless settlement + anchoring (write) | `iq_ledger` / `solana_tx` / `agency` | exists (main); deferred until on-chain purpose built + env-config refactored to param/ledger |
 | Corroboration / quorum for slashing | "two/three witnesses" doctrine | exists (doctrine) |
 | **FDRY stake (entry + Sybil cost)** | `voltr.zig` — native Voltr deposit → stFDRY receipt | **built + proven (arc-lean); real mainnet vault, PDA derivation matches on-chain authority; operator-gated card, zero-dependency** |
-| **Usage → SOL reward distribution** (replaces slash) | `reward.zig` — usage-weighted, verification-gated, stake-gated payout | **built + proven (arc-lean, local); conservation + forfeit→honest properties tested** |
-| **USDC → SOL conversion** | Jupiter adaptor (a supported Voltr adaptor) | to wire (operator-gated card, like the deposit card) |
-| **On-chain payout** | SOL transfers to stFDRY holders | to wire (operator-gated) |
+| **Usage → USDC reward distribution** (replaces slash) | `reward.zig` — usage-weighted, verification-gated, stake-gated payout | **built + proven (arc-lean, local); conservation + forfeit→honest properties tested** |
+| **On-chain payout** | USDC (SPL) transfers to stakers — no swap | to wire (operator-gated card, like the deposit card) |
 | **Proof-of-re-verification proof + dispute** | re-run + attest (`cas`) + quorum verdict | re-verify substrate built; verdict feed to wire |
 
 ## 8. The falsifiable first step (discipline)
