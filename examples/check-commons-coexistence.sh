@@ -35,6 +35,21 @@ claims="$(grep -c 'all 53 doctrine claims' "$REPO/scripts/build.sh" 2>/dev/null 
 _check "parity claim count unchanged at 53 (no claim minted by the commons)" \
   "[ \"$claims\" -ge 1 ]"
 
+# 4. adversarial (the Step-3 failure class): the coexistence section must carry NO
+#    'claim N' token — the recursive claim-reference guard fails the whole build if
+#    it references a claim number with no matching parity block. Catch it here first.
+_check "coexistence section introduces no 'claim N' token (would trip build.sh)" \
+  "! sed -n '/## The Cooperative Commons (arc-lean)/,/## Doctrine speaks only when interrogated/p' '$REPO/SKILL.md' | grep -qE 'claim [0-9]'"
+
+# 5. copy-parity: the installed skill dirs must resolve to the SAME SKILL.md as the
+#    repo, so /aiko never loads stale doctrine (symlinks make this structural, but
+#    assert it — a swapped-in stale copy is the drift this catches).
+for inst in "$HOME/.agent-skills/contract/SKILL.md" "$HOME/.claude/skills/contract/SKILL.md"; do
+  if [ -e "$inst" ]; then
+    _check "installed doctrine matches the repo ($inst)" "diff -q '$REPO/SKILL.md' '$inst'"
+  fi
+done
+
 if [ "$fail" -eq 0 ]; then
   echo "coexistence OK — commons named beside the Vine, canon intact, no claim minted"
   exit 0
