@@ -194,7 +194,7 @@ utopian socialism; it is a **governed commons**, the thing that actually works.
 | **Usage → USDC reward distribution** (replaces slash) | `reward.zig` — weight-driven, verification-gated, stake-gated payout | **built + proven (arc-lean, local); conservation + forfeit→honest properties tested** |
 | **Re-verification verdict** | `cas.reproduces` — fresh re-run reproduces the committed attestation (a hash equality, not a trust assertion) | **built + proven (arc-lean)** |
 | **Epoch harness** (the whole loop) | `epoch.runEpoch` — re-verify → usage → reward, in one pass | **built + proven (arc-lean); capstone test drives every gate in one epoch** |
-| **Ledger ⇄ usage events** | `usage_ledger` — `"usage"` row builder + JSONL→`usage.Event` parser | **built + proven (arc-lean); full ledger-line→payout round trip tested** |
+| **Ledger ⇄ usage events** | `usage_ledger` — reads the REAL `flex_settle` settlement rows (already emitted live by `appendFlexSettleRow` on `flex:settle`) + a clean `usage` shape; JSONL→`usage.Event` | **built + proven (arc-lean); live emit already exists — parser wired to it; full ledger-line→payout round trip tested** |
 | **On-chain payout** | USDC (SPL) transfers to stakers — no swap | to wire (operator-gated card, like the deposit card) |
 
 ## 8. The falsifiable first step (discipline)

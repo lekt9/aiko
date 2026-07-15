@@ -26,7 +26,37 @@
 const std = @import("std");
 const usage = @import("usage.zig");
 
+/// The canonical usage event (clean shape: source_id / env_pubkey / amount).
 pub const USAGE_EVENT = "usage";
+/// The REAL settlement event already emitted live by contract.appendFlexSettleRow
+/// on `flex:settle:<auth_id>:<amount>` — an x402 hold converted to on-chain
+/// settlement at actual consumption. It carries the same three facts under
+/// different field names (id / agent / settle_amount), so it IS a usage record
+/// and the parser reads it directly — no redundant second emit (algorithm:
+/// don't duplicate an event that already lands in the ledger).
+pub const SETTLE_EVENT = "flex_settle";
+
+const Fields = struct { route: []const u8, payer: []const u8, fee: i64 };
+
+/// Map a recognized ledger row to (route, payer, fee), else null.
+fn extract(obj: std.json.ObjectMap) ?Fields {
+    const ev = strField(obj, "event") orelse return null;
+    if (std.mem.eql(u8, ev, USAGE_EVENT)) {
+        return .{
+            .route = strField(obj, "source_id") orelse return null,
+            .payer = strField(obj, "env_pubkey") orelse return null,
+            .fee = intField(obj, "amount") orelse return null,
+        };
+    }
+    if (std.mem.eql(u8, ev, SETTLE_EVENT)) {
+        return .{
+            .route = strField(obj, "id") orelse return null,
+            .payer = strField(obj, "agent") orelse return null,
+            .fee = intField(obj, "settle_amount") orelse return null,
+        };
+    }
+    return null;
+}
 
 /// Stable 64-bit identity from a wallet/agent string (sha256 first 8 bytes, LE).
 /// The one canonical hash for BOTH payers and route owners — self-exclusion in
@@ -101,19 +131,14 @@ pub fn parse(
             else => continue,
         };
 
-        const ev = strField(obj, "event") orelse continue;
-        if (!std.mem.eql(u8, ev, USAGE_EVENT)) continue;
-
-        const route_s = strField(obj, "source_id") orelse continue;
-        const payer_s = strField(obj, "env_pubkey") orelse continue;
-        const fee_i = intField(obj, "amount") orelse continue;
-        if (fee_i < 0) continue; // a negative fee is malformed, not a refund
-        const idx = routeIndex(route_ids, route_s) orelse continue;
+        const f = extract(obj) orelse continue; // usage OR flex_settle row
+        if (f.fee < 0) continue; // a negative fee is malformed, not a refund
+        const idx = routeIndex(route_ids, f.route) orelse continue;
 
         try out.append(allocator, .{
             .route = idx,
-            .payer = identityHash(payer_s),
-            .fee = @intCast(fee_i),
+            .payer = identityHash(f.payer),
+            .fee = @intCast(f.fee),
         });
     }
     return out.toOwnedSlice(allocator);
@@ -142,6 +167,23 @@ test "emit → parse round-trips route index, payer identity, and fee" {
     try std.testing.expectEqual(@as(u64, 500), events[0].fee);
     try std.testing.expectEqual(@as(usize, 1), events[1].route);
     try std.testing.expectEqual(@as(u64, 700), events[1].fee);
+}
+
+test "reads the REAL flex_settle settlement row (the live emit site)" {
+    const a = std.testing.allocator;
+    const route_ids = [_][]const u8{"contract:abcd1234"};
+    // Byte-for-byte the shape contract.appendFlexSettleRow emits:
+    // {"event": "flex_settle", "id": "...", "authorization_id": "...",
+    //  "settle_amount": N, "ts": "...", "agent": "..."}
+    const jsonl =
+        \\{"event": "flex_settle", "id": "contract:abcd1234", "authorization_id": "auth:9", "settle_amount": 1250, "ts": "2026-07-15T02:04:49Z", "agent": "payer@example.com"}
+    ;
+    const events = try parse(a, jsonl, &route_ids);
+    defer a.free(events);
+    try std.testing.expectEqual(@as(usize, 1), events.len);
+    try std.testing.expectEqual(@as(usize, 0), events[0].route);
+    try std.testing.expectEqual(identityHash("payer@example.com"), events[0].payer);
+    try std.testing.expectEqual(@as(u64, 1250), events[0].fee);
 }
 
 test "non-usage rows ignored; unknown routes skipped; junk skipped" {
