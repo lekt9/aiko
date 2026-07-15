@@ -7,6 +7,7 @@
 //! allocator (no caller-owned arena required).
 const std = @import("std");
 const contract = @import("contract.zig");
+const gate = @import("gate.zig");
 
 const gpa = std.heap.c_allocator;
 
@@ -91,6 +92,28 @@ export fn contract_list() ?[*:0]u8 {
     defer gpa.free(blob);
     const out = gpa.allocSentinel(u8, blob.len, 0) catch return null;
     @memcpy(out, blob);
+    return out.ptr;
+}
+
+/// Authorize a tool call: the SIGNED tool-authority policy (gate.zig). Returns a
+/// malloc'd JSON string {"decision","risk","reason"} where decision is
+/// allow|confirm|deny. scope="" ⇒ deny (fail-closed). Caller frees with
+/// contract_free. This is what makes aiko-cli's tool gate signed code — its
+/// gate.ts TS mirror is used only when this isn't loaded.
+export fn contract_gate(
+    scope: [*:0]const u8,
+    tool: [*:0]const u8,
+    args_json: [*:0]const u8,
+) ?[*:0]u8 {
+    const r = gate.decide(cstr(scope), cstr(tool), cstr(args_json));
+    var buf: [512]u8 = undefined;
+    const json = std.fmt.bufPrint(
+        &buf,
+        "{{\"decision\":\"{s}\",\"risk\":\"{s}\",\"reason\":\"{s}\"}}",
+        .{ gate.decisionStr(r.decision), r.risk, r.reason },
+    ) catch return null;
+    const out = gpa.allocSentinel(u8, json.len, 0) catch return null;
+    @memcpy(out, json);
     return out.ptr;
 }
 
