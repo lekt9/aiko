@@ -24,8 +24,8 @@ it is linear and shallow. **The reasoning layer is the hard, unsolved core.**
 **R3 — Verification is the crux and the single biggest risk.** A system that
 learns on-fire from verdicts is only as good as its verdicts. Bad or *gamed*
 verdicts don't just add noise — they train the shared prior toward delusion. The
-guard (a scripture-grounded truth-root + "two or three witnesses" corroboration +
-the reward economics' verification gate) is **load-bearing**: if it fails, the
+guard (a canonical, fixed reference anchor + independent multi-party
+corroboration + the reward economics' verification gate) is **load-bearing**: if it fails, the
 collective becomes confidently, collectively wrong. This is the line between
 wisdom-of-crowds and madness-of-crowds, and it is **not automatic.**
 
