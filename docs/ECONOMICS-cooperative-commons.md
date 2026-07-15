@@ -140,13 +140,20 @@ utopian socialism; it is a **governed commons**, the thing that actually works.
    cost that remains (required, never seized); it raises the bar but does not
    formally solve Sybil. A conscious trade: more open and non-punitive, less
    costly to attack, than a slash.
-2. **Usage must be un-gameable — the new crux.** Because payout ∝ usage, a
-   maintainer wash-calling their own routes to farm the payout is the attack that
-   replaces "confidently-wrong data." Since we pay out USDC with **no conversion**,
-   the self-call is deterred only by gas + x402 overhead (we deliberately did NOT
-   keep a swap spread just to tax wash-trading — that would tax every honest
-   payout too). So **distinct-paying-caller accounting is fully load-bearing** and
-   not yet hardened — it is the crux this model rests on.
+2. **Usage-gaming: addressed structurally, not formally closed.** Because payout
+   ∝ usage, a maintainer wash-calling their own routes to farm the payout is the
+   attack that replaces "confidently-wrong data." `usage.zig` (built + proven)
+   removes the *profit motive* with two rules: **self-exclusion** (a payment from
+   the route's own maintainer adds zero weight but still enters the pool — a
+   self-dealer just donates to the honest) and a **per-payer cap** (weight tracks
+   breadth of distinct demand, so faking weight W needs ≈ W/cap distinct funded
+   wallets, each paying real fees). End-to-end test: a wash-trader who pays 1000
+   to its own route earns **0** and the honest maintainer takes the whole pool.
+   **What remains open**: this bounds but does not *formally solve* Sybil — an
+   attacker with many cheap distinct wallets can still buy breadth; the per-payer
+   cap + the real x402 fee per wallet are the cost floor, not a proof. Identity
+   cost (stake-weighted payer reputation, proof-of-personhood) is the next lever
+   if the cost floor proves too low in practice.
 2. **The token's fair distribution is load-bearing.** FDRY exists strictly for the
    security function. If its distribution is a money-grab, the whole trust model
    collapses — "a coordination asset launched for money cannot become trustworthy."
@@ -183,7 +190,8 @@ utopian socialism; it is a **governed commons**, the thing that actually works.
 | Trustless settlement + anchoring (write) | `iq_ledger` / `solana_tx` / `agency` | exists (main); deferred until on-chain purpose built + env-config refactored to param/ledger |
 | Corroboration / quorum for slashing | "two/three witnesses" doctrine | exists (doctrine) |
 | **FDRY stake (entry + Sybil cost)** | `voltr.zig` — native Voltr deposit → stFDRY receipt | **built + proven (arc-lean); real mainnet vault, PDA derivation matches on-chain authority; operator-gated card, zero-dependency** |
-| **Usage → USDC reward distribution** (replaces slash) | `reward.zig` — usage-weighted, verification-gated, stake-gated payout | **built + proven (arc-lean, local); conservation + forfeit→honest properties tested** |
+| **Sybil-dampened usage accounting** | `usage.zig` — self-exclusion + per-payer cap → dampened weight | **built + proven (arc-lean); wash-trade-is-a-donation tested end-to-end** |
+| **Usage → USDC reward distribution** (replaces slash) | `reward.zig` — weight-driven, verification-gated, stake-gated payout | **built + proven (arc-lean, local); conservation + forfeit→honest properties tested** |
 | **On-chain payout** | USDC (SPL) transfers to stakers — no swap | to wire (operator-gated card, like the deposit card) |
 | **Proof-of-re-verification proof + dispute** | re-run + attest (`cas`) + quorum verdict | re-verify substrate built; verdict feed to wire |
 

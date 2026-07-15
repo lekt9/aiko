@@ -38,21 +38,30 @@ pub const Maintainer = struct {
     stake: u64,
 };
 
-/// A route's usage this epoch. `usage_fee` is the USDC (atoms) users paid to
-/// call it. `verified` is the current re-verification verdict (cas.zig). A route
-/// whose maintainer is unstaked OR whose `verified` is false is INELIGIBLE — it
-/// earns nothing and its fee redistributes to the eligible.
+/// A route's usage this epoch. Two numbers, deliberately separate (see usage.zig):
+///   - `gross_fee`: the REAL USDC (atoms) users paid to call it — every atom of
+///     it enters the pool, self-payments included (so a self-dealer just donates).
+///   - `weight`: the Sybil-DAMPENED usage this route earns FROM (self-excluded +
+///     per-payer-capped by usage.zig). In the trivial single-honest-payer case
+///     weight == gross_fee. Decoupling them is what makes wash-trading a donation
+///     instead of a theft: you can inflate gross_fee only by paying real fees,
+///     but you cannot inflate your own `weight` by paying yourself.
+/// `verified` is the current re-verification verdict (cas.zig). A route whose
+/// maintainer is unstaked OR whose `verified` is false is INELIGIBLE — it earns
+/// nothing and its gross_fee redistributes (by weight) to the eligible.
 pub const Route = struct {
     maintainer: usize, // index into the maintainers slice
-    usage_fee: u64, // USDC atoms paid for this route's usage this epoch
+    gross_fee: u64, // real USDC atoms paid for this route (enters the pool)
+    weight: u64, // Sybil-dampened usage this route earns from (usage.zig)
     verified: bool,
 };
 
 pub const Distribution = struct {
-    /// pool == sum of ALL usage fees (every payment enters, verified or not).
+    /// pool == sum of ALL gross fees (every real payment enters, verified or not).
     pool: u64,
     /// atoms that could not be attributed to an eligible maintainer:
-    /// integer-division dust, plus the WHOLE pool when no route is eligible.
+    /// integer-division dust, capped/self-excluded fees with no eligible weight,
+    /// plus the WHOLE pool when no route is eligible.
     treasury: u64,
 };
 
@@ -60,9 +69,9 @@ fn eligible(m: []const Maintainer, r: Route) bool {
     return r.verified and m[r.maintainer].stake > 0;
 }
 
-/// Distribute the usage-fee pool to eligible maintainers, usage-weighted.
-/// `out_payouts` must have length == maintainers.len; it is zeroed then filled.
-/// Returns the pool total and the treasury remainder. Pure + deterministic.
+/// Distribute the real-fee pool to eligible maintainers, weighted by dampened
+/// usage. `out_payouts` must have length == maintainers.len; it is zeroed then
+/// filled. Returns the pool total and the treasury remainder. Pure + deterministic.
 pub fn distribute(
     maintainers: []const Maintainer,
     routes: []const Route,
@@ -71,11 +80,11 @@ pub fn distribute(
     std.debug.assert(out_payouts.len == maintainers.len);
     @memset(out_payouts, 0);
 
-    var pool: u64 = 0;
-    var weight: u64 = 0; // sum of ELIGIBLE usage fees
+    var pool: u64 = 0; // real money in (all gross fees)
+    var weight: u64 = 0; // sum of ELIGIBLE dampened weight
     for (routes) |r| {
-        pool += r.usage_fee;
-        if (eligible(maintainers, r)) weight += r.usage_fee;
+        pool += r.gross_fee;
+        if (eligible(maintainers, r)) weight += r.weight;
     }
 
     if (weight == 0) {
@@ -89,7 +98,7 @@ pub fn distribute(
     var paid: u64 = 0;
     for (routes) |r| {
         if (!eligible(maintainers, r)) continue;
-        const share: u64 = @intCast(@as(u128, pool) * @as(u128, r.usage_fee) / @as(u128, weight));
+        const share: u64 = @intCast(@as(u128, pool) * @as(u128, r.weight) / @as(u128, weight));
         out_payouts[r.maintainer] += share;
         paid += share;
     }
@@ -108,9 +117,9 @@ fn sum(xs: []const u64) u64 {
 test "CONSERVATION: payouts + treasury == pool, always (nothing burned)" {
     const m = [_]Maintainer{ .{ .stake = 100 }, .{ .stake = 100 }, .{ .stake = 100 } };
     const routes = [_]Route{
-        .{ .maintainer = 0, .usage_fee = 700, .verified = true },
-        .{ .maintainer = 1, .usage_fee = 300, .verified = true },
-        .{ .maintainer = 2, .usage_fee = 137, .verified = false }, // forfeits
+        .{ .maintainer = 0, .gross_fee = 700, .weight = 700, .verified = true },
+        .{ .maintainer = 1, .gross_fee = 300, .weight = 300, .verified = true },
+        .{ .maintainer = 2, .gross_fee = 137, .weight = 137, .verified = false }, // forfeits
     };
     var payouts: [3]u64 = undefined;
     const d = distribute(&m, &routes, &payouts);
@@ -121,8 +130,8 @@ test "CONSERVATION: payouts + treasury == pool, always (nothing burned)" {
 test "USAGE-WEIGHTED: 70/30 usage split pays ~70/30 of the whole pool" {
     const m = [_]Maintainer{ .{ .stake = 1 }, .{ .stake = 1 } };
     const routes = [_]Route{
-        .{ .maintainer = 0, .usage_fee = 7000, .verified = true },
-        .{ .maintainer = 1, .usage_fee = 3000, .verified = true },
+        .{ .maintainer = 0, .gross_fee = 7000, .weight = 7000, .verified = true },
+        .{ .maintainer = 1, .gross_fee = 3000, .weight = 3000, .verified = true },
     };
     var payouts: [2]u64 = undefined;
     const d = distribute(&m, &routes, &payouts);
@@ -138,9 +147,9 @@ test "FORFEIT -> VALUE: an unverified route's fee redistributes to the honest" {
     // earns MORE than its own 500. Punishment became provision.
     const m = [_]Maintainer{ .{ .stake = 10 }, .{ .stake = 10 }, .{ .stake = 10 } };
     const routes = [_]Route{
-        .{ .maintainer = 0, .usage_fee = 500, .verified = true },
-        .{ .maintainer = 1, .usage_fee = 500, .verified = true },
-        .{ .maintainer = 2, .usage_fee = 1000, .verified = false },
+        .{ .maintainer = 0, .gross_fee = 500, .weight = 500, .verified = true },
+        .{ .maintainer = 1, .gross_fee = 500, .weight = 500, .verified = true },
+        .{ .maintainer = 2, .gross_fee = 1000, .weight = 1000, .verified = false },
     };
     var payouts: [3]u64 = undefined;
     const d = distribute(&m, &routes, &payouts);
@@ -156,8 +165,8 @@ test "FORFEIT -> VALUE: an unverified route's fee redistributes to the honest" {
 test "STAKE-GATED: an unstaked maintainer earns 0 (Sybil cost of entry)" {
     const m = [_]Maintainer{ .{ .stake = 0 }, .{ .stake = 5 } }; // m0 unstaked
     const routes = [_]Route{
-        .{ .maintainer = 0, .usage_fee = 900, .verified = true }, // ineligible: unstaked
-        .{ .maintainer = 1, .usage_fee = 100, .verified = true },
+        .{ .maintainer = 0, .gross_fee = 900, .weight = 900, .verified = true }, // ineligible: unstaked
+        .{ .maintainer = 1, .gross_fee = 100, .weight = 100, .verified = true },
     };
     var payouts: [2]u64 = undefined;
     const d = distribute(&m, &routes, &payouts);
@@ -169,7 +178,7 @@ test "STAKE-GATED: an unstaked maintainer earns 0 (Sybil cost of entry)" {
 
 test "NO ELIGIBLE: the whole pool waits in the treasury, unburned" {
     const m = [_]Maintainer{.{ .stake = 0 }};
-    const routes = [_]Route{.{ .maintainer = 0, .usage_fee = 4242, .verified = true }};
+    const routes = [_]Route{.{ .maintainer = 0, .gross_fee = 4242, .weight = 4242, .verified = true }};
     var payouts: [1]u64 = undefined;
     const d = distribute(&m, &routes, &payouts);
     try std.testing.expectEqual(@as(u64, 0), payouts[0]);
