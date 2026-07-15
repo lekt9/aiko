@@ -2649,7 +2649,7 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
     return .{ .rc = out_capture.rc, .result = "fail" };
 }
 
-const DeclareArgs = struct { plan: []const u8, action: ?[]const u8 = null, parent: ?[]const u8 = null, fast: bool = false };
+const DeclareArgs = struct { plan: []const u8, action: ?[]const u8 = null, parent: ?[]const u8 = null, fast: bool = false, register: bool = false };
 
 fn parseDeclare(args: []const []const u8) !DeclareArgs {
     if (args.len == 0) return error.MissingPlan;
@@ -2659,6 +2659,7 @@ fn parseDeclare(args: []const []const u8) !DeclareArgs {
     var action: ?[]const u8 = null;
     var parent: ?[]const u8 = null;
     var fast: bool = false;
+    var register: bool = false;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const a = args[i];
@@ -2676,13 +2677,20 @@ fn parseDeclare(args: []const []const u8) !DeclareArgs {
             fast = true;
             continue;
         }
+        // --register: pure register — append the declared row, print the id, and
+        // return. No word fanout, no resolveLineage. Sub-second; for callers (e.g.
+        // aiko-cli's anchor) that only need the id + the row, not resolution.
+        if (std.mem.eql(u8, a, "--register")) {
+            register = true;
+            continue;
+        }
         if (plan == null) {
             plan = a;
             continue;
         }
     }
     if (plan == null) return error.MissingPlan;
-    return .{ .plan = plan.?, .action = action, .parent = parent, .fast = fast };
+    return .{ .plan = plan.?, .action = action, .parent = parent, .fast = fast, .register = register };
 }
 
 /// Visibility axis (not transport).
@@ -3500,6 +3508,11 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
     const cid = try contract.declare(allocator, env, d.plan, action, .{ .parent_id = null });
     defer allocator.free(cid);
     outPrint("{s}\n", .{cid});
+    // Register-only: the declared row is written and the id is printed; skip BOTH
+    // word fanout and resolveLineage. Sub-second — this is the anchor path (a
+    // caller that only needs a signed row + its id, not resolution). Distinct from
+    // --fast, which still runs resolveLineage to settle the id if it can.
+    if (d.register) return 0;
     // Fast path for per-frame ARC gameplay: skip word fanout + backfill
     // (trinity fanout is not present on this lean base; when cherry-picked
     // later it must also be gated by !d.fast).
