@@ -93,13 +93,26 @@ pub fn shapeObservation(allocator: std.mem.Allocator, raw_json: []const u8) ![]u
     return allocator.dupe(u8, shape);
 }
 
+/// The re-verification observation for ANY route output: the structural shape
+/// when the output is JSON (value-invariant), else the raw trimmed bytes
+/// (exact-match — the honest fallback for unstructured text, where no shape can
+/// be inferred). This is what the epoch driver feeds as fresh_observation, so a
+/// route's kind (JSON API vs plain text) never has to be known up front. Frees.
+pub fn observation(allocator: std.mem.Allocator, raw: []const u8) ![]u8 {
+    if (shapeObservation(allocator, raw)) |shape| {
+        return shape;
+    } else |_| {
+        return allocator.dupe(u8, std.mem.trim(u8, raw, " \t\r\n"));
+    }
+}
+
 /// The committed attestation key for a route output = hexKey(contentHash(shape)).
 /// Emit this in an `attest` row when a route is verified; the epoch checks a
 /// fresh re-run reproduces it.
-pub fn attestationKey(allocator: std.mem.Allocator, raw_json: []const u8, out: *[cas.HEX_LEN]u8) !void {
-    const shape = try shapeObservation(allocator, raw_json);
-    defer allocator.free(shape);
-    cas.hexKey(cas.contentHash(shape), out);
+pub fn attestationKey(allocator: std.mem.Allocator, raw: []const u8, out: *[cas.HEX_LEN]u8) !void {
+    const obs = try observation(allocator, raw);
+    defer allocator.free(obs);
+    cas.hexKey(cas.contentHash(obs), out);
 }
 
 // ── witnesses (zig test) — no fabricated green ───────────────────────────────
