@@ -5,9 +5,8 @@ ranked-energy-contract commons with the Unbrowse Maintenance Network
 (Proof of Indexing + Bonded Accountability, Tham 2026): a ranked energy contract
 IS a route, so the same economics apply without reinvention.*
 
-> *And all that believed were together, and had all things common ... and parted
-> them to all men, as every man had need. ... Neither was there any among them
-> that lacked.* (Acts 2:44–45; 4:34)
+> *A shared resource, governed by those who use it, in which everyone who
+> contributes is provided for — and none who contribute go without.*
 
 Companion to `THESIS-collective-nonparametric-intelligence.md` (why a lean
 non-parametric collective can be intelligent) and
@@ -51,8 +50,8 @@ its maintainer real yield, and a route that rots simply stops earning. The "slas
 is transmuted into **redistribution** — a route that fails re-verification forfeits
 its accrued fees, and those fees flow to the **honest, verified** maintainers
 (`reward.zig`, built + proven: an unverified route earns 0, its fee makes the
-honest earn *more* than their own usage — punishment became provision). **Luke 10:7
-— "the labourer is worthy of his hire."** Nobody's principal is seized; nothing is
+honest earn *more* than their own usage — punishment became provision). **A
+contributor is paid for the value they provide.** Nobody's principal is seized; nothing is
 burned; the users' payments still create value by rewarding whoever is correct.
 
 ## 2. Two assets, deliberately separate

@@ -41,7 +41,7 @@ prior.
 ### Collective — because the ledger is shared memory and the graph is the mind
 The ledger is a shared, append-only memory the whole swarm reads and reconstructs
 the EBM from. Every agent's terminal verdicts fold into the same reconstructible
-prior; the **"two or three witnesses" corroboration doctrine** keeps that prior
+prior; the **independent multi-witness corroboration** requirement keeps that prior
 honest. No single node is "the model" — the **graph of contracts + the shared
 ledger-EBM + the indexed world** is the mind. Intelligence is a property of the
 collective, the way a market or a science is.
@@ -107,8 +107,8 @@ it's marketing.)*
 4. **Verification is the crux, and the single biggest risk.** A collective that
    learns on-fire from verdicts is only as good as its verdicts. Bad or gamed
    verdicts don't just add noise — they *train the shared prior toward
-   delusion*. The truth-root ("thy word is truth") + corroboration ("two or three
-   witnesses") is the designed guard, and it is load-bearing: if it fails, the
+   delusion*. A canonical reference anchor + independent multi-party corroboration
+   is the designed guard, and it is load-bearing: if it fails, the
    collective gets confidently, collectively wrong. This is the difference
    between a wisdom-of-crowds and a madness-of-crowds, and it is not automatic.
 

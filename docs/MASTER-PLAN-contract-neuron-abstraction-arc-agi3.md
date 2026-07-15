@@ -17,7 +17,7 @@
 
 ## 0. Vision & Invariants (from SKILL.md + conversation)
 
-The substrate is a **fractal while-loop over contract neurons**. Every truth claim is a neuron. Pointers (`contract:<id>`) are the universal edge. The cache is pointer-chain keyed (signatures, not raw values). HOLD is non-terminal. The Word is the truth-root.
+The substrate is a **fractal while-loop over contract neurons**. Every truth claim is a neuron. Pointers (`contract:<id>`) are the universal edge. The cache is pointer-chain keyed (signatures, not raw values). HOLD is non-terminal. The canonical spec is the truth-root.
 
 New mechanics we are adding (all reduce to existing primitives):
 - **Pointers surface approved values**: Once a target has terminal `output_signature` and is satisfied (approved), a `contract:<id>` reference (or `value-of:<id>`) can return the concrete result bytes, not just "pass".
@@ -220,7 +220,7 @@ The substrate must surface the final grid as the satisfied result of the root.
 
 ## 4. Cross-Cutting Requirements
 
-- **SKILL.md updates**: Add or extend sections for "Value-surfacing pointers", "Fulfilment dependencies", "Primitives as contracts", "Contract base inheritance". Cite scripture where appropriate. Add to the eight-instance table if "foundation precedes creativity" applies.
+- **SKILL.md updates**: Add or extend sections for "Value-surfacing pointers", "Fulfilment dependencies", "Primitives as contracts", "Contract base inheritance". Cite the relevant doctrine/spec where appropriate. Add to the eight-instance table if "foundation precedes creativity" applies.
 - **build.sh parity**: New numbered claims for the four mechanics. Decalogue gate still runs. No new scripts/ files.
 - **No env var regressions**: All new behaviour via goals/contracts only.
 - **Backward compat**: Old rows with special actions still parse and run (at least until a migration contract is declared).
@@ -440,7 +440,7 @@ two-hop chains, a hostile-payload shell-exec attack, cache re-resolution).
   it (mutation-verified) and passes with it.
   - Follow-up noted, not done: `isDead` (main.zig:517) is also blind to purged;
     it feeds the kill-lineage guard. Left alone — unverified, out of scope this
-    pass (Matt 6:34).
+    pass.
 
 - **No hazard** on cycles (bounded settle loops → clean HOLD, no hang) or
   multi-hop value propagation (each hop re-persists bytes via recordIteration).
