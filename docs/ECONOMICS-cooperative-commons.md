@@ -1,151 +1,178 @@
 # ECONOMICS — The Cooperative Commons of Ranked Energy Contracts
 
-*Why the on-chain layer earns its cost, and how the value flows to the collective
-that produced it rather than a host or a whale.*
+*A governed common-pool resource secured by bonded accountability. Unifies the
+ranked-energy-contract commons with the Unbrowse Maintenance Network
+(Proof of Indexing + Bonded Accountability, Tham 2026): a ranked energy contract
+IS a route, so the same economics apply without reinvention.*
 
-> *And all that believed were together, and had all things common; and sold
-> their possessions and goods, and parted them to all men, as every man had
-> need. ... Neither was there any among them that lacked.* (Acts 2:44–45; 4:34)
+> *And all that believed were together, and had all things common ... and parted
+> them to all men, as every man had need. ... Neither was there any among them
+> that lacked.* (Acts 2:44–45; 4:34)
 
-This is the companion to `THESIS-collective-nonparametric-intelligence.md`. The
-thesis argues intelligence is retrieval + routing + verification over a live
-index. This document answers: **if the ranked energy contracts are the collective's
-learned priors, what is the honest economic model — and how do we keep it a
-commons instead of a monopoly?**
+Companion to `THESIS-collective-nonparametric-intelligence.md` (why a lean
+non-parametric collective can be intelligent) and
+`PLAN-contracts-as-onchain-ebm-weights.md` (how it's built, prove-the-atom-first).
 
 ---
 
-## 1. What is tradeable, and why it makes sense
+## 0. The unifying insight
 
-A **ranked energy contract** is *proven experience*: "for context X, this action
-resolves," carrying a ledger track record no one can fake (N satisfied, M died →
-an energy/reputation the ledger reconstructs). Reusing it saves the buyer the
-cost of *rediscovering* it — failed fires, compute, time. So a market for priors
-is **Pareto-improving**: the whole collective wastes less rediscovery.
+A **ranked energy contract** — a reusable, ledger-reconstructible prior that
+resolves some context — is the same *kind* of object as a **route** in the
+maintenance-network paper: a shared, reusable asset that **decays** (the world
+drifts; the prior goes stale) and whose **freshness/quality is a non-rival public
+good**. So the paper's economics transfer 1:1. This document adopts them.
 
-It needs the chain for exactly three things, and only these:
-- **Verifiable reputation** — the ledger of verdicts can't be forged.
-- **Verifiable attribution** — who actually trained this prior (every fold is recorded).
-- **Settlement with no host** — payment clears trustlessly, no platform in the
-  middle extracting rent.
+Naming it correctly (per Ostrom): the graph of ranked contracts is a
+**common-pool resource** — hard to exclude, but *depletable through
+uncoordinated use*. The depletion is **epistemic**: every agent that leans on a
+stale prior and propagates it as correct lowers the trustworthiness of the graph
+for everyone. A prior that is *wrong with confidence* is worse than none.
 
-That is the *only* case where Solana earns its price (per the cost analysis:
-on-chain is worthless as bulk storage; it is worth it as tiny, tamper-proof,
-host-less verification). For a single user's private model, skip the chain.
+## 1. Why pure usage fees are the wrong instrument
 
-## 2. The failure mode — why "socialism" is the corrective, not a slogan
+A usage fee (pay-per-call) is the right tool to *ration* a contract — heavy users
+pay more — and the **wrong** tool to *fund the freshness of the graph*:
+- Freshness is **non-rival** (my using a fresh prior doesn't consume it) and near
+  **non-excludable** → a public good → usage fees **structurally under-provide**
+  it (everyone free-rides on someone else's fee).
+- Letting a prior rot is a **negative externality**: the neglecter's cost lands on
+  every downstream agent whose call now fails or returns wrong data.
 
-A naive market has a brutal **Matthew effect**: the best contracts get used →
-paid → trained more → get better → capture *all* usage. Winner-take-all,
-enclosure, the long tail starves and stops contributing, the commons ossifies
-around a few owners — and then dies, because it depends on the many contributing.
-Pure market kills the commons it feeds on. The design goal is a commons that
-structurally resists enclosure while still rewarding contribution.
+Pigou's corrective for an uninternalised externality is not a tax but **a price on
+the harmful act** — rendered here as **a slashable bond**. Staleness stops being a
+free option and becomes a liability the claimant carries. *This is the staking.*
 
-## 3. The cooperative-commons design (mechanisms → substrate primitives)
+## 2. Two assets, deliberately separate
 
-### 3.1 Socialize the base prior — un-encloseable by construction
-Because the EBM is **ledger-reconstructible** (`replayFromLedger`), anyone can
-rebuild the shared centroids from the public ledger for free. The accumulated
-collective knowledge is a **public good** — you literally cannot make the commons
-prior private. *From each according to ability* (everyone's verdicts train it) →
-*to each according to need* (free access to the commons prior). Only the
-**surplus** — premium *private* priors, priority compute — is ever paid.
-*Primitive:* the ledger + `ebm_store.replayFromLedger`.
+| Rail | Asset | Job | State |
+|---|---|---|---|
+| **Usage** | USDC over `x402` | meter/ration *calls that happen* — narrow | exists |
+| **Security** | **FDRY** (base token) | **bond/stake against the integrity of the graph**; funds maintenance; slashed on a false freshness claim | to build |
 
-### 3.2 Contribution-weighted reward — not owner-take-all
-When B pays to use a prior, the payment does not go to one "owner." It **splits
-across everyone whose verdicts trained that centroid**, weighted by recorded
-folds/corroborations. The ledger already attributes every fire; an on-chain split
-distributes the payment to the collective that produced the value. This is the
-single strongest anti-enclosure lever — it turns "owning a model" into "having
-contributed to a commons."
-*Primitive:* ledger attribution (who fired what) + an on-chain split contract.
+They stay separate for the same reason you don't pay a deductible out of the till:
+the thing that *funds maintenance and prices its failure* must be the asset whose
+worth rises and falls with **the network being worth trusting at all**. **FDRY's
+value grows with real usage of a trustworthy graph** — tied to integrity, not to a
+speculative launch. Its **fair distribution is a security parameter, not marketing**:
+a coordination asset launched for money cannot become trustworthy.
 
-### 3.3 Demurrage / decay — anti-hoarding is already in the code
-`ebm.zig`'s 30-day freshness half-life means a prior **decays unless used and
-refreshed**. You cannot sit on a valuable prior and extract rent forever; value
-must circulate or it fades. That is demurrage — it structurally punishes
-accumulation and rewards flow.
-*Primitive:* `ebm.freshness(age)` (exists today).
+## 3. Proof of re-verification — freshness as a checkable artifact
 
-### 3.4 Progressive commons fee — a redistributive floor
-A protocol fee on payments (progressive: the more a contract earns, the higher
-the cut) funds a **commons pool**, redistributed to low-usage contributors — a
-UBI-like floor that keeps the long tail participating instead of starving. The
-collective's health is a funded priority, not an afterthought.
-*Primitive:* `x402` payment fee split → a commons-pool contract.
+A bond only punishes a false claim *after* it's found false — it presupposes a way
+to find it false. So freshness is made a **verifiable artifact**, the ranked-contract
+analog of the paper's **Proof of Indexing**:
 
-### 3.5 Corroboration — distribute the power to mint value
-The **"two or three witnesses"** rule (Deut 19:15, the Σ-corroborate primitive)
-means no single actor can unilaterally mint reputation for its own contract —
-value requires independent attestation. A whale cannot self-certify its way to
-dominance.
-*Primitive:* the corroboration doctrine (exists in SKILL.md + the witness path).
+- A maintainer **re-verifies** a contract — re-runs it against fresh evidence and
+  attests that it still resolves and its observed shape matches — and commits a
+  **content-addressed, hash-chained attestation** to the ledger. **`cas.zig`
+  (built) is exactly this substrate**: content-addressed, integrity-checked,
+  independently reproducible. Anyone can re-verify and check they reconstruct the
+  same attestation. Freshness stops being say-so and becomes a checkable object.
+- One proof certifies a *moment*; **repeated proofs on a cadence** (set by the
+  trust tier) are what show a prior is *kept* fresh — the Proof-of-Spacetime
+  property, not the point one. `ebm.zig`'s 30-day freshness decay is the clock
+  that says when re-verification is due.
+- We attest *what* is observable (it resolves, the shape matches) and never
+  publish *how* the capture/re-verification is produced — the private surface
+  stays private; the proof is public.
 
-### 3.6 Only the surplus is traded
-The base commons prior is free (§3.1). Payment is only for premium/private priors,
-priority compute, or attestation. The commons is the floor; the market is the
-ceiling.
+## 4. Trust tiers (Ostrom's nested enterprises) — and why it's "optional"
 
-## 4. THE HONEST WALL — tensions, and where this breaks
+Not all traffic needs the same assurance; pretending it does taxes a harmless
+price-check at the same rate as a funds-moving call.
 
-*(Stated as loudly as the vision, per the substrate's own tradition.)*
+- **Open tier — the socialized commons.** Low-risk, idempotent priors. **No bond,
+  best-effort, free**, and honest about being best-effort. This is the
+  **ledger-reconstructible public good**: anyone rebuilds the shared centroids
+  from the public ledger for free — **un-encloseable by construction**. The free,
+  fast majority.
+- **Bonded / high-trust tier — the optional premium.** Authenticated, high-value,
+  or must-not-be-wrong priors. **FDRY-bonded, proof-of-re-verification-backed,
+  slashable** by a threshold quorum. A maintainer stakes FDRY behind "this prior
+  is fresh/good"; if independent re-verification refutes it, the bond is slashed.
 
-1. **Pure socialism starves quality.** If everything is free, no one is paid to
-   produce *good* priors → tragedy of the commons, free-riding, decay. This is
-   why the model is **not** pure socialism — it is a socialized base + a thin
-   surplus market. The realistic target is a **cooperative commons /
-   market-socialism**, not utopia.
-2. **Attribution gaming is the sybil risk.** If contribution → reward, an attacker
-   spams verdicts to claim credit. Corroboration (§3.5) + a real *cost to fire*
-   (compute / a small stake) are the guards; without them the reward split is
-   farmed. This is load-bearing and must be designed, not assumed.
-3. **The redistribution parameters are policy, not physics.** The progressive-fee
-   curve, the commons-pool payout rule, the split weighting — these are *choices*
-   with real tradeoffs (too redistributive → no incentive; too little → enclosure).
-   They should be tunable, transparent, and ideally governed by the commons, not
-   hard-coded by one author.
-4. **Reputation ≠ correctness.** A high-energy contract is one that *resembled past
-   successes*, not one that is *right*. Paying for reputation can amplify a
-   confident-but-wrong prior (the madness-of-crowds risk from the thesis). The
-   truth-root + corroboration is the guard, and it is the same guard the whole
-   collective-intelligence bet rests on.
-5. **On-chain only for the commons.** All of this is worth its cost ONLY when the
-   trustless, host-less, shared case is real. If it is a single user or a trusted
-   group, skip the chain — an encrypted local/Arweave store + the energy router
-   already deliver lean/private/realtime at zero SOL.
+**"Own it via Voltr, but optional" fits exactly:** you run a **maintainer/bonding
+vault** serving the high-trust tier; the open tier stays free and un-encloseable.
+You are a *maintainer*, not an encloser. Staking is opt-in — it buys you *into*
+the verified tier; it never gates the commons.
 
-## 5. Mapping — what exists vs. what must be built
+## 5. "Simulate socialism" = Ostrom CPR governance, done the empirical way
 
-| Mechanism | Substrate primitive | State |
+Durable commons are **neither privatised nor centrally administered — governed by
+the appropriators** (Ostrom's Nobel finding). Three principles map directly:
+- **Clearly-defined boundaries** — who may claim a prior is fresh, and who may draw
+  on it (the receptor grant + the trust tiers).
+- **Graduated sanctions** — slashing *tiers*: a first low-confidence miss ≠ a
+  repeated or high-value false claim.
+- **Nested enterprises** — the trust tiers themselves: lightly-governed open routes
+  inside tightly-governed high-trust ones.
+
+*From each according to ability* (everyone's verdicts train the base prior) → *to
+each according to need* (free access to the commons prior). Only the **surplus** —
+bonded verification, priority compute, private priors — is ever paid. That is not
+utopian socialism; it is a **governed commons**, the thing that actually works.
+
+## 6. THE HONEST WALL — what's live, what's reference, what breaks
+
+*(As loud as the design, per the substrate's own tradition — and the paper's.)*
+
+1. **Formal Sybil resistance is NOT closed.** The bond raises the cost of a false
+   identity but does not formally solve Sybil. Stated openly in the paper; it
+   stands here.
+2. **The token's fair distribution is load-bearing.** FDRY exists strictly for the
+   security function. If its distribution is a money-grab, the whole trust model
+   collapses — "a coordination asset launched for money cannot become trustworthy."
+3. **Yield on the bond couples the security asset to market risk.** Holding the
+   FDRY bond in a Voltr yield vault is attractive (idle collateral works), but the
+   asset that *secures* the graph should track *network integrity*; a strategy
+   loss that impairs the bond weakens the security it's supposed to provide. A
+   conscious tradeoff, not a free lunch.
+4. **Reputation is now a checkable artifact — but re-verification quality is the
+   new crux.** Proof-of-re-verification dissolves "reputation ≠ correctness" only
+   as far as the re-verification is honest and independently reproducible. Garbage
+   re-verification → confidently-wrong "fresh" priors. The quorum + graduated
+   slashing is the guard, and it is the same guard the whole collective bet rests on.
+5. **On-chain only for the genuine commons.** All of this is worth its cost ONLY
+   when the trustless, host-less, shared case is real. Single user or trusted group
+   → skip the chain; the energy router + encrypted local/Arweave store already
+   deliver lean/private/realtime at zero SOL.
+6. **Live vs reference vs design.** Be explicit (as the paper is): the route/contract
+   resolution + the `x402` usage rail are live; the energy router, `cas.zig`
+   attestation substrate, and receptor are built+proven here; the bond/challenge/
+   slash economics are *design + reference*, not a deployed production mechanism.
+
+## 7. Mapping to substrate primitives
+
+| Mechanism | Primitive | State |
 |---|---|---|
 | Socialized base prior | ledger + `ebm_store.replayFromLedger` | exists (main) |
-| Energy ranking (quality signal) | `ebm.zig` + the Phase-1 router | **built + proven (arc-lean)** |
-| Dedup / shared blobs paid once | `cas.zig` content-addressing | **built (arc-lean)** |
-| Demurrage / decay | `ebm.freshness` (30-day half-life) | exists (main) |
-| Access control | receptor grants (`capability.zig` F1) | **built (arc-lean)** |
-| Payment pointers | `x402:` | exists (main) |
+| Energy ranking (the quality signal) | `ebm.zig` + Phase-1 router | **built + proven (arc-lean)** |
+| Proof-of-re-verification substrate | `cas.zig` content-addressed attestation | **built (arc-lean)** |
+| Freshness cadence / demurrage | `ebm.freshness` (30-day half-life) | exists (main) |
+| Access boundary | receptor grants (`capability.zig` F1) | **built (arc-lean)** |
+| Usage rail | `x402:` (USDC) | exists (main) |
 | Trustless settlement + commitments | `iq_ledger` / Solana | exists (main), needs yoink |
-| Corroboration | "two/three witnesses" doctrine | exists (doctrine) |
-| **Contribution-weighted split** | ledger attribution + on-chain split | **to build** |
-| **Progressive fee + commons pool** | `x402` fee + pool contract | **to build** |
+| Corroboration / quorum for slashing | "two/three witnesses" doctrine | exists (doctrine) |
+| **FDRY bond / stake / slash** | new security-asset contract (+ optional Voltr vault) | **to build** |
+| **Proof-of-re-verification proof + dispute** | re-run + attest (`cas`) + quorum challenge | **to build** |
 
-## 6. The falsifiable first step (discipline)
+## 8. The falsifiable first step (discipline)
 
-Before any on-chain economics, the smallest testable claim: **a two-party
-"pay-to-use a ranked contract, split the payment to its contributors" flow,
-proven locally** — B references A's proven contract, a receptor grant + a
-(mock) payment gates access, and the payment splits across the ledger-attributed
-contributors of that prior. If the *local* split is correct and un-gameable under
-corroboration, then — and only then — settle it on-chain. Prove the economics off
-the chain before paying the chain to enforce them, exactly as we proved the router
-and the dedup before proposing to store anything.
+Before any FDRY or on-chain settlement, the smallest testable claim, **all local**:
+a **re-verify → attest → bond → slash-on-refutation** flow — re-run a ranked
+contract, commit a content-addressed attestation via `cas.zig`, post a (mock) bond
+behind the freshness claim, and have an independent re-verification under a
+quorum **slash** the bond when the attestation fails to reproduce. If the *local*
+bond-and-slash is correct and un-gameable under corroboration, then — and only
+then — settle FDRY on-chain. Prove the economics off the chain before paying the
+chain to enforce them, exactly as we proved the router and the dedup first.
 
 ---
 
-**Bottom line:** the chain is not a database; it is the *trust layer of a
-commons*. Its one job is to make "whose track record is real, who contributed,
-who gets paid" un-fakeable and host-less — so a collective of agents can share and
-reward learned priors without a platform enclosing the value. That is the reason
-the on-chain layer exists, and the only reason it is worth its cost.
+**Bottom line:** the chain is not a database; it is the **trust layer of a governed
+commons**. FDRY's one job is to make "whose freshness claim is real, who
+maintained it, who gets slashed" un-fakeable and host-less — so a collective can
+share and *keep fresh* a graph of ranked priors without a platform enclosing the
+value or letting it rot. That is the reason the on-chain layer exists, and the only
+reason it is worth its cost.
