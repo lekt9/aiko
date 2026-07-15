@@ -38,6 +38,7 @@ pub const epoch = @import("epoch.zig");
 pub const base58 = @import("base58.zig");
 pub const solana_rpc = @import("solana_rpc.zig");
 pub const voltr = @import("voltr.zig");
+pub const stake = @import("stake.zig");
 pub const payload_crypto = @import("payload_crypto.zig");
 // Words-as-contracts: every token in a plan is a child /contract pointer
 // (action `word:<tok>`, layer 0). Wired from cmdDeclare so each declare

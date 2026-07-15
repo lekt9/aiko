@@ -74,6 +74,7 @@ pub fn build(b: *std.Build) void {
         // PDA derivation). Operator-gated: builds the deposit card, never sends.
         // The PDA-matches-mainnet-constant test proves byte-correctness offline.
         "src/voltr.zig",
+        "src/stake.zig",
         "src/payload_crypto.zig",
         "src/words.zig",
         "src/pattern.zig",

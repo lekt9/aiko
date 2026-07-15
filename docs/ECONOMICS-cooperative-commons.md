@@ -190,6 +190,7 @@ utopian socialism; it is a **governed commons**, the thing that actually works.
 | Trustless settlement + anchoring (write) | `iq_ledger` / `solana_tx` / `agency` | exists (main); deferred until on-chain purpose built + env-config refactored to param/ledger |
 | Corroboration / quorum for slashing | "two/three witnesses" doctrine | exists (doctrine) |
 | **FDRY stake (entry + Sybil cost)** | `voltr.zig` — native Voltr deposit → stFDRY receipt | **built + proven (arc-lean); real mainnet vault, PDA derivation matches on-chain authority; operator-gated card, zero-dependency** |
+| **Live stake read** (stake field ← chain) | `stake.zig` — a wallet's stFDRY balance = its bond, read via `solana_rpc` | **built + proven (arc-lean); live mainnet read verified (derive ATA → getAccountInfo → parse amount); a read, no operator gate** |
 | **Sybil-dampened usage accounting** | `usage.zig` — self-exclusion + per-payer cap → dampened weight | **built + proven (arc-lean); wash-trade-is-a-donation tested end-to-end** |
 | **Usage → USDC reward distribution** (replaces slash) | `reward.zig` — weight-driven, verification-gated, stake-gated payout | **built + proven (arc-lean, local); conservation + forfeit→honest properties tested** |
 | **Re-verification verdict** | `cas.reproduces` — fresh re-run reproduces the committed attestation (a hash equality, not a trust assertion) | **built + proven (arc-lean)** |
