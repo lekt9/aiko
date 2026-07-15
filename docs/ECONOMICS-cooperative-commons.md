@@ -152,7 +152,7 @@ utopian socialism; it is a **governed commons**, the thing that actually works.
 | Freshness cadence / demurrage | `ebm.freshness` (30-day half-life) | exists (main) |
 | Access boundary | receptor grants (`capability.zig` F1) | **built (arc-lean)** |
 | Usage rail | `x402:` (USDC) | exists (main) |
-| Solana read / RPC (blockhash, balance, airdrop) | `solana_rpc` + `link` | **yoinked + devnet-proven (arc-lean), env-free** |
+| Solana read / RPC (blockhash, balance, airdrop) | `solana_rpc` + `base58` | **devnet-proven (arc-lean); zero-dependency (std-only, native TLS — no curl/shell), env-free** |
 | Trustless settlement + anchoring (write) | `iq_ledger` / `solana_tx` / `agency` | exists (main); deferred until on-chain purpose built + env-config refactored to param/ledger |
 | Corroboration / quorum for slashing | "two/three witnesses" doctrine | exists (doctrine) |
 | **FDRY bond / stake / slash** | new security-asset contract (+ optional Voltr vault) | **to build** |

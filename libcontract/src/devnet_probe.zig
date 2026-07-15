@@ -1,10 +1,10 @@
 //! devnet_probe.zig — REAL Solana devnet connectivity via the ported engine.
 //! No mocks: a live JSON-RPC round-trip to api.devnet.solana.com. Gated on
 //! RUN_DEVNET so the offline test suite stays offline. Run:
-//!   RUN_DEVNET=1 zig test libcontract/src/devnet_probe.zig
+//!   RUN_DEVNET=1 zig test -lc libcontract/src/devnet_probe.zig
 const std = @import("std");
 const rpc = @import("solana_rpc.zig");
-const link = @import("link.zig");
+const base58 = @import("base58.zig");
 const Ed25519 = std.crypto.sign.Ed25519;
 extern "c" fn sleep(seconds: c_uint) c_uint;
 
@@ -26,7 +26,7 @@ test "REAL devnet: live blockhash (hard) + airdrop/balance (best-effort)" {
     var seed: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(bh, &seed, .{});
     const kp = try Ed25519.KeyPair.generateDeterministic(seed);
-    const pk = try link.b58Encode(a, &kp.public_key.bytes);
+    const pk = try base58.encode(a, &kp.public_key.bytes);
     defer a.free(pk);
     std.debug.print("[devnet] fresh account = {s}\n", .{pk});
 

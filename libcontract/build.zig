@@ -58,12 +58,12 @@ pub fn build(b: *std.Build) void {
         "src/embed.zig",
         "src/ebm.zig",
         "src/cas.zig",
-        // Solana read/airdrop capability — env-clean closure only (claim 1).
-        // rpc→std; link→cfile,keystore. The write/anchor engine (solana_tx,
-        // agency, chain, iq_ledger, voltr, solana_vault) is deferred until its
-        // on-chain purpose is built + its env-config refactored to param/ledger.
-        "src/cfile.zig",
-        "src/link.zig",
+        // Solana devnet capability — a ZERO-DEPENDENCY closure: every file here
+        // imports only `std` (base58 pure; solana_rpc uses std.http native TLS,
+        // no curl/shell). No env reads (claim 1). The write/anchor engine
+        // (solana_tx, agency, chain, iq_ledger, voltr, solana_vault) is deferred
+        // until its on-chain purpose is built + its env-config refactored.
+        "src/base58.zig",
         "src/solana_rpc.zig",
         "src/devnet_probe.zig",
         "src/payload_crypto.zig",
