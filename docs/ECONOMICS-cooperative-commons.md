@@ -197,6 +197,8 @@ utopian socialism; it is a **governed commons**, the thing that actually works.
 | **Epoch harness** (the whole loop) | `epoch.runEpoch` — re-verify → usage → reward, in one pass | **built + proven (arc-lean); capstone test drives every gate in one epoch** |
 | **Ledger ⇄ usage events** | `usage_ledger` — reads the REAL `flex_settle` settlement rows (already emitted live by `appendFlexSettleRow` on `flex:settle`) + a clean `usage` shape; JSONL→`usage.Event` | **built + proven (arc-lean); live emit already exists — parser wired to it; full ledger-line→payout round trip tested** |
 | **Route → owner identity** | `usage_ledger.resolveOwners` — a route's `declared` row → `env_pubkey` (its owner), hashed to the same id space as payers | **built + proven (arc-lean); owner sourced from the ledger drives self-exclusion end-to-end** |
+| **Route → committed attestation** | `usage_ledger.resolveAttestations` + `emitAttestRow` — the `attest` row convention; latest wins | **built + proven (arc-lean); drift detected from the attest row + fresh re-run** |
+| **Fully-live assembler** | `usage_ledger.runEpochFromLedger` — owner + attestation + usage FROM THE LEDGER, stakes injected live | **built + proven (arc-lean); whole epoch from ledger text + live stakes, every gate ledger-sourced** |
 | **On-chain payout** | USDC (SPL) transfers to stakers — no swap | to wire (operator-gated card, like the deposit card) |
 
 ## 8. The falsifiable first step (discipline)

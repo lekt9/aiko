@@ -25,6 +25,11 @@
 
 const std = @import("std");
 const usage = @import("usage.zig");
+const cas = @import("cas.zig");
+const reward = @import("reward.zig");
+const epoch = @import("epoch.zig");
+
+const KEY_HEX_LEN = cas.HEX_LEN; // 64 hex chars — a content-addressed attestation
 
 /// The canonical usage event (clean shape: source_id / env_pubkey / amount).
 pub const USAGE_EVENT = "usage";
@@ -187,7 +192,193 @@ pub fn resolveOwners(
     }
 }
 
+/// The re-verification attestation event: written when a route is verified, it
+/// commits the route's shape to a content-addressed key (cas.hexKey). The epoch
+/// re-runs the route and checks the fresh observation still reproduces this key.
+pub const ATTEST_EVENT = "attest";
+
+/// Build ONE attest ledger line (JSONL). Pure string builder — does not touch
+/// the ledger file (parity claim 8). `attestation` is a cas hex key. Caller frees.
+pub fn emitAttestRow(
+    allocator: std.mem.Allocator,
+    route_id: []const u8,
+    attestation: []const u8,
+    ts: []const u8,
+) ![]u8 {
+    return std.fmt.allocPrint(
+        allocator,
+        "{{\"event\":\"{s}\",\"id\":\"{s}\",\"attestation\":\"{s}\",\"ts\":\"{s}\"}}",
+        .{ ATTEST_EVENT, route_id, attestation, ts },
+    );
+}
+
+/// Resolve each route's committed attestation from the ledger's `attest` rows.
+/// Fills `out_keys[i]` (a KEY_HEX_LEN hex key) and `out_present[i]` for route
+/// `route_ids[i]`. The ledger is append-only, so the LAST `attest` row for a
+/// route wins (newest verification). A route with no valid attest row →
+/// present=false (it will not verify — an unattested route earns nothing).
+pub fn resolveAttestations(
+    allocator: std.mem.Allocator,
+    jsonl: []const u8,
+    route_ids: []const []const u8,
+    out_keys: [][KEY_HEX_LEN]u8,
+    out_present: []bool,
+) !void {
+    std.debug.assert(out_keys.len == route_ids.len and out_present.len == route_ids.len);
+    @memset(out_present, false);
+
+    var it = std.mem.splitScalar(u8, jsonl, '\n');
+    while (it.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0) continue;
+        const parsed = std.json.parseFromSlice(std.json.Value, allocator, line, .{}) catch continue;
+        defer parsed.deinit();
+        const obj = switch (parsed.value) {
+            .object => |o| o,
+            else => continue,
+        };
+        const ev = strField(obj, "event") orelse continue;
+        if (!std.mem.eql(u8, ev, ATTEST_EVENT)) continue;
+        const id = strField(obj, "id") orelse continue;
+        const att = strField(obj, "attestation") orelse continue;
+        if (att.len != KEY_HEX_LEN) continue; // not a content-addressed key
+        const idx = routeIndex(route_ids, id) orelse continue;
+        @memcpy(&out_keys[idx], att[0..KEY_HEX_LEN]); // last wins (append-only → newest)
+        out_present[idx] = true;
+    }
+}
+
+/// A route to score this epoch: its ledger id, which maintainer index it belongs
+/// to, and the bytes observed by re-running it now (for re-verification).
+pub const LedgerRoute = struct {
+    route_id: []const u8,
+    maintainer: usize,
+    fresh_observation: []const u8,
+};
+
+/// THE FULLY-LIVE ASSEMBLER. Given the ledger text + the routes to score + the
+/// per-maintainer stakes (obtained live via stake.zig — passed in so this stays
+/// pure and offline-testable), assemble all three epoch inputs FROM THE LEDGER —
+/// owner identity (declared rows), committed attestation (attest rows), usage
+/// events (usage/flex_settle rows) — and run the epoch. Caller owns the result's
+/// payouts (EpochResult.deinit).
+pub fn runEpochFromLedger(
+    allocator: std.mem.Allocator,
+    jsonl: []const u8,
+    routes: []const LedgerRoute,
+    stakes: []const u64,
+    cap: u64,
+) !epoch.EpochResult {
+    const n = routes.len;
+
+    const route_ids = try allocator.alloc([]const u8, n);
+    defer allocator.free(route_ids);
+    for (routes, route_ids) |r, *rid| rid.* = r.route_id;
+
+    const owner_ids = try allocator.alloc(u64, n);
+    defer allocator.free(owner_ids);
+    try resolveOwners(allocator, jsonl, route_ids, owner_ids);
+
+    const keys = try allocator.alloc([KEY_HEX_LEN]u8, n);
+    defer allocator.free(keys);
+    const present = try allocator.alloc(bool, n);
+    defer allocator.free(present);
+    try resolveAttestations(allocator, jsonl, route_ids, keys, present);
+
+    const events = try parse(allocator, jsonl, route_ids);
+    defer allocator.free(events);
+
+    const specs = try allocator.alloc(epoch.RouteSpec, n);
+    defer allocator.free(specs);
+    for (specs, routes, 0..) |*s, r, i| {
+        s.* = .{
+            .maintainer = r.maintainer,
+            .owner_identity = owner_ids[i],
+            .committed_attestation = if (present[i]) keys[i][0..] else "",
+            .fresh_observation = r.fresh_observation,
+        };
+    }
+
+    const maintainers = try allocator.alloc(reward.Maintainer, stakes.len);
+    defer allocator.free(maintainers);
+    for (maintainers, stakes) |*m, st| m.* = .{ .stake = st };
+
+    return epoch.runEpoch(allocator, maintainers, specs, events, cap);
+}
+
 // ── witnesses (zig test) — no fabricated green ───────────────────────────────
+
+test "resolveAttestations: last attest row wins; unattested route → not present" {
+    const a = std.testing.allocator;
+    const route_ids = [_][]const u8{ "route:a", "route:b" };
+    var key_v1: [KEY_HEX_LEN]u8 = undefined;
+    cas.hexKey(cas.contentHash("a v1"), &key_v1);
+    var key_v2: [KEY_HEX_LEN]u8 = undefined;
+    cas.hexKey(cas.contentHash("a v2"), &key_v2);
+    const l1 = try emitAttestRow(a, "route:a", &key_v1, "t1");
+    defer a.free(l1);
+    const l2 = try emitAttestRow(a, "route:a", &key_v2, "t2"); // newer
+    defer a.free(l2);
+    const jsonl = try std.mem.join(a, "\n", &.{ l1, l2 });
+    defer a.free(jsonl);
+
+    var keys: [2][KEY_HEX_LEN]u8 = undefined;
+    var present: [2]bool = undefined;
+    try resolveAttestations(a, jsonl, &route_ids, &keys, &present);
+    try std.testing.expect(present[0]);
+    try std.testing.expectEqualSlices(u8, &key_v2, &keys[0]); // newest won
+    try std.testing.expect(!present[1]); // route:b never attested
+}
+
+test "FULLY LIVE ASSEMBLY: whole epoch from ledger text + injected stakes" {
+    const a = std.testing.allocator;
+
+    // Three routes / three maintainers, all facts sourced from the ledger:
+    //   route:A (m0, owner KEYA) attested to "A", re-run observes "A"        → verified, used
+    //   route:B (m1, owner KEYB) attested to "B-old", re-run observes "B-new"→ DRIFTED
+    //   route:C (m2, owner KEYC) attested to "C", re-run observes "C"        → verified, used
+    // stakes (live, injected): m0,m1 staked; m2 UNSTAKED.
+    var kA: [KEY_HEX_LEN]u8 = undefined;
+    cas.hexKey(cas.contentHash("A"), &kA);
+    var kBold: [KEY_HEX_LEN]u8 = undefined;
+    cas.hexKey(cas.contentHash("B-old"), &kBold);
+    var kC: [KEY_HEX_LEN]u8 = undefined;
+    cas.hexKey(cas.contentHash("C"), &kC);
+
+    const lines = [_][]const u8{
+        try std.fmt.allocPrint(a, "{{\"event\":\"declared\",\"id\":\"route:A\",\"env_pubkey\":\"KEYA\"}}", .{}),
+        try std.fmt.allocPrint(a, "{{\"event\":\"declared\",\"id\":\"route:B\",\"env_pubkey\":\"KEYB\"}}", .{}),
+        try std.fmt.allocPrint(a, "{{\"event\":\"declared\",\"id\":\"route:C\",\"env_pubkey\":\"KEYC\"}}", .{}),
+        try emitAttestRow(a, "route:A", &kA, "t"),
+        try emitAttestRow(a, "route:B", &kBold, "t"),
+        try emitAttestRow(a, "route:C", &kC, "t"),
+        try emitRow(a, "route:A", "OUT1", 500, "t"),
+        try emitRow(a, "route:A", "OUT2", 500, "t"),
+        try emitRow(a, "route:B", "OUT3", 400, "t"),
+        try emitRow(a, "route:C", "OUT4", 300, "t"),
+    };
+    defer for (lines) |l| a.free(l);
+    const jsonl = try std.mem.join(a, "\n", &lines);
+    defer a.free(jsonl);
+
+    const routes = [_]LedgerRoute{
+        .{ .route_id = "route:A", .maintainer = 0, .fresh_observation = "A" },
+        .{ .route_id = "route:B", .maintainer = 1, .fresh_observation = "B-new" }, // ≠ B-old → drift
+        .{ .route_id = "route:C", .maintainer = 2, .fresh_observation = "C" },
+    };
+    const stakes = [_]u64{ 10, 10, 0 }; // m2 unstaked
+
+    const res = try runEpochFromLedger(a, jsonl, &routes, &stakes, 0);
+    defer res.deinit(a);
+
+    // Pool = 1700 (every fee). Only route:A is verified + used + staked, so it
+    // takes the whole pool. B forfeits (drift, from the attest row + fresh obs).
+    // C forfeits (unstaked). Every gate was driven by ledger-sourced facts.
+    try std.testing.expectEqual(@as(u64, 1700), res.pool);
+    try std.testing.expectEqual(@as(u64, 1700), res.payouts[0]);
+    try std.testing.expectEqual(@as(u64, 0), res.payouts[1]); // drifted
+    try std.testing.expectEqual(@as(u64, 0), res.payouts[2]); // unstaked
+}
 
 test "emit → parse round-trips route index, payer identity, and fee" {
     const a = std.testing.allocator;
@@ -228,9 +419,6 @@ test "resolveOwners maps route → declared owner; unknown route → 0" {
 
 test "OWNER SELF-PAY EXCLUDED end-to-end: owner ← ledger changes the distribution" {
     const a = std.testing.allocator;
-    const cas = @import("cas.zig");
-    const reward = @import("reward.zig");
-    const epoch = @import("epoch.zig");
 
     // ONE owner ("OWNERKEY") declares TWO routes. It self-pays route:wash (1000)
     // and an OUTSIDER genuinely pays route:honest (1000). Owner identity is taken
@@ -308,9 +496,6 @@ test "non-usage rows ignored; unknown routes skipped; junk skipped" {
 
 test "FULL LOOP: ledger lines → parse → epoch payouts (incl. wash donation)" {
     const a = std.testing.allocator;
-    const cas = @import("cas.zig");
-    const reward = @import("reward.zig");
-    const epoch = @import("epoch.zig");
 
     // Two routes. route 0 (owner "wallet:owner0") is honestly used by two
     // distinct outside payers. route 1 (owner "wallet:owner1") is WASH-traded:
