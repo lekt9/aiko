@@ -79,6 +79,7 @@ pub fn build(b: *std.Build) void {
         "src/reward.zig",
         "src/usage.zig",
         "src/usage_ledger.zig",
+        "src/link_ledger.zig",
         "src/epoch.zig",
         // Solana devnet capability — a ZERO-DEPENDENCY closure: every file here
         // imports only `std` (base58 pure; solana_rpc uses std.http native TLS,

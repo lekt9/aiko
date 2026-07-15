@@ -34,6 +34,7 @@ pub const cas = @import("cas.zig");
 pub const reward = @import("reward.zig");
 pub const usage = @import("usage.zig");
 pub const usage_ledger = @import("usage_ledger.zig");
+pub const link_ledger = @import("link_ledger.zig");
 pub const epoch = @import("epoch.zig");
 pub const base58 = @import("base58.zig");
 pub const solana_rpc = @import("solana_rpc.zig");
