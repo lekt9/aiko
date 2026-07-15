@@ -29,33 +29,45 @@ uncoordinated use*. The depletion is **epistemic**: every agent that leans on a
 stale prior and propagates it as correct lowers the trustworthiness of the graph
 for everyone. A prior that is *wrong with confidence* is worse than none.
 
-## 1. Why pure usage fees are the wrong instrument
+## 1. Fund freshness by paying for it — reward, don't punish
 
-A usage fee (pay-per-call) is the right tool to *ration* a contract — heavy users
-pay more — and the **wrong** tool to *fund the freshness of the graph*:
-- Freshness is **non-rival** (my using a fresh prior doesn't consume it) and near
-  **non-excludable** → a public good → usage fees **structurally under-provide**
-  it (everyone free-rides on someone else's fee).
-- Letting a prior rot is a **negative externality**: the neglecter's cost lands on
-  every downstream agent whose call now fails or returns wrong data.
+Freshness of the graph is a **non-rival, near-non-excludable public good** → a bare
+usage fee (pay-per-call, revenue to nobody) **structurally under-provides** it:
+everyone free-rides, nobody is paid to keep a prior fresh, priors rot.
 
-Pigou's corrective for an uninternalised externality is not a tax but **a price on
-the harmful act** — rendered here as **a slashable bond**. Staleness stops being a
-free option and becomes a liability the claimant carries. *This is the staking.*
+The textbook Pigovian fix prices the *harmful act* — a **slashable bond** that
+seizes stake on a false freshness claim. It works, but it is **punitive, requires
+valuing the harm, invites adversarial slashing disputes, and raises the bar to
+participate**. There is a positive-sum instrument that internalises the SAME
+externality by pricing the *good* instead of the harm:
+
+> **Redirect the usage fees to the people who keep the used routes fresh.**
+> All fees are converted to **SOL** and paid out to the stakers whose routes were
+> actually **used** and still **verify** — weighted by the usage they generated.
+
+Now freshness is *funded by the very demand it serves*: a route people use earns
+its maintainer real yield, and a route that rots simply stops earning. The "slash"
+is transmuted into **redistribution** — a route that fails re-verification forfeits
+its accrued fees, and those fees flow to the **honest, verified** maintainers
+(`reward.zig`, built + proven: an unverified route earns 0, its fee makes the
+honest earn *more* than their own usage — punishment became provision). **Luke 10:7
+— "the labourer is worthy of his hire."** Nobody's principal is seized; nothing is
+burned; the users' payments still create value by rewarding whoever is correct.
 
 ## 2. Two assets, deliberately separate
 
 | Rail | Asset | Job | State |
 |---|---|---|---|
-| **Usage** | USDC over `x402` | meter/ration *calls that happen* — narrow | exists |
-| **Security** | **FDRY** (base token) | **bond/stake against the integrity of the graph**; funds maintenance; slashed on a false freshness claim | to build |
+| **Usage → reward** | USDC over `x402`, **converted to SOL** | meter calls *and* pay the SOL out to used+verified maintainers (`reward.zig`) | usage rail exists; distribution built (local), on-chain payout to wire |
+| **Stake** | **FDRY** (base token) | **entry to the earning tier + Sybil cost**; bonded in the Voltr vault (`voltr.zig`); **never seized** | staking built (arc-lean) |
 
-They stay separate for the same reason you don't pay a deductible out of the till:
-the thing that *funds maintenance and prices its failure* must be the asset whose
-worth rises and falls with **the network being worth trusting at all**. **FDRY's
-value grows with real usage of a trustworthy graph** — tied to integrity, not to a
-speculative launch. Its **fair distribution is a security parameter, not marketing**:
-a coordination asset launched for money cannot become trustworthy.
+They stay separate on purpose: **reward in SOL (real external revenue), stake in
+FDRY (skin-in-game).** Paying rewards in FDRY would be circular/inflationary;
+paying in SOL means staking FDRY earns *real* yield, so **FDRY's value grows with
+real usage of a trustworthy graph — without inflating FDRY**. FDRY is the
+security/eligibility asset, not the reward. Its **fair distribution is a security
+parameter, not marketing**: a coordination asset launched for money cannot become
+trustworthy.
 
 ## 3. Proof of re-verification — freshness as a checkable artifact
 
@@ -103,8 +115,10 @@ Durable commons are **neither privatised nor centrally administered — governed
 the appropriators** (Ostrom's Nobel finding). Three principles map directly:
 - **Clearly-defined boundaries** — who may claim a prior is fresh, and who may draw
   on it (the receptor grant + the trust tiers).
-- **Graduated sanctions** — slashing *tiers*: a first low-confidence miss ≠ a
-  repeated or high-value false claim.
+- **Graduated response** — *reward-withholding* tiers: a first low-confidence miss
+  dampens a route's earnings; a repeated or high-value false claim cuts them to
+  zero and redistributes them. No principal is ever seized — the sanction is
+  denied reward, not destroyed capital.
 - **Nested enterprises** — the trust tiers themselves: lightly-governed open routes
   inside tightly-governed high-trust ones.
 
@@ -117,9 +131,18 @@ utopian socialism; it is a **governed commons**, the thing that actually works.
 
 *(As loud as the design, per the substrate's own tradition — and the paper's.)*
 
-1. **Formal Sybil resistance is NOT closed.** The bond raises the cost of a false
-   identity but does not formally solve Sybil. Stated openly in the paper; it
-   stands here.
+1. **Formal Sybil resistance is NOT closed, and reward-withholding is softer than
+   slashing.** Denying future reward is a weaker deterrent than seizing stake — a
+   spammer loses nothing they held. The stake-to-enter requirement is the Sybil
+   cost that remains (required, never seized); it raises the bar but does not
+   formally solve Sybil. A conscious trade: more open and non-punitive, less
+   costly to attack, than a slash.
+2. **Usage must be un-gameable — the new crux.** Because payout ∝ usage, a
+   maintainer wash-calling their own routes to farm SOL is the attack that
+   replaces "confidently-wrong data." The natural deterrent is that a self-call
+   pays the fee to earn it back *minus* the USDC→SOL conversion spread + gas
+   (negative-EV), but distinct-paying-caller accounting is load-bearing and not
+   yet hardened.
 2. **The token's fair distribution is load-bearing.** FDRY exists strictly for the
    security function. If its distribution is a money-grab, the whole trust model
    collapses — "a coordination asset launched for money cannot become trustworthy."
@@ -155,9 +178,11 @@ utopian socialism; it is a **governed commons**, the thing that actually works.
 | Solana read / RPC (blockhash, balance, airdrop) | `solana_rpc` + `base58` | **devnet-proven (arc-lean); zero-dependency (std-only, native TLS — no curl/shell), env-free** |
 | Trustless settlement + anchoring (write) | `iq_ledger` / `solana_tx` / `agency` | exists (main); deferred until on-chain purpose built + env-config refactored to param/ledger |
 | Corroboration / quorum for slashing | "two/three witnesses" doctrine | exists (doctrine) |
-| **FDRY bond / stake (the bonding rail)** | `voltr.zig` — native Voltr deposit → stFDRY receipt | **built + proven (arc-lean); real mainnet vault, PDA derivation matches on-chain authority; operator-gated card, zero-dependency** |
-| **FDRY slash (forfeit)** | separate program / local-first mechanism | **to build** — NOT a Voltr instruction; the vault yields + custodies, it does not slash a third party |
-| **Proof-of-re-verification proof + dispute** | re-run + attest (`cas`) + quorum challenge | **to build** |
+| **FDRY stake (entry + Sybil cost)** | `voltr.zig` — native Voltr deposit → stFDRY receipt | **built + proven (arc-lean); real mainnet vault, PDA derivation matches on-chain authority; operator-gated card, zero-dependency** |
+| **Usage → SOL reward distribution** (replaces slash) | `reward.zig` — usage-weighted, verification-gated, stake-gated payout | **built + proven (arc-lean, local); conservation + forfeit→honest properties tested** |
+| **USDC → SOL conversion** | Jupiter adaptor (a supported Voltr adaptor) | to wire (operator-gated card, like the deposit card) |
+| **On-chain payout** | SOL transfers to stFDRY holders | to wire (operator-gated) |
+| **Proof-of-re-verification proof + dispute** | re-run + attest (`cas`) + quorum verdict | re-verify substrate built; verdict feed to wire |
 
 ## 8. The falsifiable first step (discipline)
 

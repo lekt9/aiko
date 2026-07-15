@@ -31,6 +31,7 @@ pub const capability = @import("capability.zig");
 pub const embed = @import("embed.zig");
 pub const ebm = @import("ebm.zig");
 pub const cas = @import("cas.zig");
+pub const reward = @import("reward.zig");
 pub const base58 = @import("base58.zig");
 pub const solana_rpc = @import("solana_rpc.zig");
 pub const voltr = @import("voltr.zig");
