@@ -94,6 +94,7 @@ pub fn build(b: *std.Build) void {
         "src/capability.zig",
         "src/gate.zig",
         "src/route.zig",
+        "src/binary_ast.zig",
         "src/embed.zig",
         "src/ebm.zig",
         "src/cas.zig",

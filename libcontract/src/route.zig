@@ -14,6 +14,33 @@ const std = @import("std");
 const ledger = @import("ledger.zig");
 const terminal = @import("terminal.zig");
 const ebm = @import("ebm.zig");
+const binary_ast = @import("binary_ast.zig");
+
+/// Cold-start weight: seed every known binary's prototype from its command-surface
+/// description so a novel goal routes to a sensible binary BEFORE any training. Kept
+/// small (≪ a real fire's ±1) so learned successes always dominate the seed.
+const SEED_REWARD: f64 = 0.35;
+
+/// Fold each lexicon binary's full command surface (name + root desc + every verb
+/// name/desc) into its prototype as ONE weak fire — cold-start priors.
+fn seedFromLexicon(allocator: std.mem.Allocator, protos: *std.StringHashMap(ebm.Prototype)) !void {
+    for (&binary_ast.registries) |reg| {
+        var buf: std.ArrayList(u8) = .empty;
+        defer buf.deinit(allocator);
+        try buf.appendSlice(allocator, reg.name);
+        try buf.append(allocator, ' ');
+        try buf.appendSlice(allocator, reg.root.desc);
+        for (reg.root.subs) |sub| {
+            try buf.append(allocator, ' ');
+            try buf.appendSlice(allocator, sub.name);
+            try buf.append(allocator, ' ');
+            try buf.appendSlice(allocator, sub.desc);
+        }
+        const gop = try protos.getOrPut(reg.name);
+        if (!gop.found_existing) gop.value_ptr.* = .{};
+        gop.value_ptr.foldText(buf.items, SEED_REWARD);
+    }
+}
 
 /// Extract a JSON string field's value (a slice INTO `line`), or null. Handles both
 /// `"key": "v"` and `"key":"v"`; skips backslash-escapes crudely (enough for plans).
@@ -52,9 +79,14 @@ pub fn route(allocator: std.mem.Allocator, env: std.process.Environ, context: []
         try declared.put(id, .{ .plan = plan, .action = field(line, "action") orelse "" });
     }
 
-    // Pass 2: fold each terminal event's declared goal into its binary's prototype.
+    // Cold-start: seed every known binary from its command surface (weak prior), so a
+    // novel goal still routes sensibly before any training.
     var protos = std.StringHashMap(ebm.Prototype).init(allocator);
     defer protos.deinit();
+    try seedFromLexicon(allocator, &protos);
+
+    // Pass 2: fold each terminal event's declared goal into its binary's prototype
+    // (a real ±1 fire, on TOP of the cold-start seed — learning dominates).
     var seen = std.StringHashMap(void).init(allocator);
     defer seen.deinit();
     it = std.mem.splitScalar(u8, data, '\n');
