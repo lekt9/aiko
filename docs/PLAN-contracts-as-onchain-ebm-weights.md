@@ -192,3 +192,21 @@ has). Port the `agency.zig` spend-gate FIRST.
 `0 measure/define` → `1 energy router (prove value)` → *fork: worth it?* →
 `2 CAS+dedup` → `3 base+delta` → `4 frecency cache` → `5 compress/quant` →
 `6 confidentiality`. Phase 1 is the load-bearing proof; 2–6 only follow if it pays.
+
+## Status — Phase 1 (energy router): BUILT + benchmarked (2026-07)
+
+The energy router is live: `contract route "<goal>"` (also `contract_route` C-ABI,
+and aiko-cli via FFI). It trains a per-binary prototype from the ledger (satisfied
+goal → +1 toward that binary, died → −1), seeds cold-start from the binary lexicon,
+and argmin-energy picks the binary — no LLM. aiko-cli consults it as a soft prior
+each turn and feeds it every successful `bash` run, so it learns from real work.
+
+Honest benchmark (`zig test libcontract/src/route_bench.zig`, 54 goals × 6 binaries,
+leave-one-out): **57.4%** — 3.4× random (16.7%), keyword 1.9%, cold-start 31.5%.
+Strong where a binary's goals cluster (docker/npm ~89%, tar 67%, git 44%); weak on
+pure synonymy (grep 11% — search/find/hunt share no letters). Dropping function
+words from `embed.zig` (IDF-approx) lifted it 44%→57% and made the centroid beat
+1-NN — proving the shallow feature-hash embedding, not the routing, was the cap.
+The remaining gap needs a semantic embedding; the `embed`/`cosine` seam is ready
+for one. Phase-1 fork verdict: a real, useful soft prior — not yet a reliable
+standalone classifier.
