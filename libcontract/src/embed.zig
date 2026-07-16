@@ -88,69 +88,11 @@ pub fn denseNorm(a: []const f32, b: []const f32) f64 {
     return (@as(f64, cosine(a, b)) + 1.0) / 2.0;
 }
 
-// ── semantic embedding (baked GloVe-100) ──────────────────────────────────────
-//
-// A REAL learned embedding for the ROUTER: pretrained GloVe-wiki-100 word vectors
-// baked into the binary (dependency-free at runtime; generated once at build time,
-// libcontract/data/embed_glove.*). Unlike the feature-hash above, this knows
-// "search" ≈ "find" ≈ "hunt" — the synonymy the router needs. Zero network, zero
-// files at runtime: the weights are in the executable. OOV words simply don't
-// contribute (the vector stays the mean of the in-vocabulary content words).
-
-pub const SEM_DIM: usize = 100;
-const GLOVE_W: usize = 20; // fixed vocab entry width (null-padded), sorted for bsearch
-const glove_vocab = @embedFile("embed_glove.vocab");
-const glove_vec = @embedFile("embed_glove.vec"); // GLOVE_N × SEM_DIM int8 (unit-vec × 127)
-const GLOVE_N: usize = glove_vocab.len / GLOVE_W;
-
-fn gloveLookup(word: []const u8) ?usize {
-    if (word.len >= GLOVE_W) return null;
-    var lo: usize = 0;
-    var hi: usize = GLOVE_N;
-    while (lo < hi) {
-        const mid = lo + (hi - lo) / 2;
-        const entry = glove_vocab[mid * GLOVE_W .. mid * GLOVE_W + GLOVE_W];
-        const elen = std.mem.indexOfScalar(u8, entry, 0) orelse GLOVE_W;
-        switch (std.mem.order(u8, entry[0..elen], word)) {
-            .eq => return mid,
-            .lt => lo = mid + 1,
-            .gt => hi = mid,
-        }
-    }
-    return null;
-}
-
-/// Semantic embedding of `text` into `out` (len == SEM_DIM), L2-normalized. Pools
-/// the baked GloVe vector of each in-vocabulary content word (stopwords skipped).
-pub fn embedSemantic(text: []const u8, out: []f32) void {
-    std.debug.assert(out.len == SEM_DIM);
-    @memset(out, 0);
-    var i: usize = 0;
-    while (i < text.len) {
-        if (!isWord(text[i])) {
-            i += 1;
-            continue;
-        }
-        var j = i;
-        while (j < text.len and isWord(text[j])) j += 1;
-        const tok = text[i..j];
-        i = j;
-        if (tok.len < 2) continue;
-        var lbuf: [64]u8 = undefined;
-        const n = @min(tok.len, lbuf.len);
-        const low = std.ascii.lowerString(lbuf[0..n], tok[0..n]);
-        if (isStopword(low)) continue;
-        const idx = gloveLookup(low) orelse continue; // OOV → no contribution
-        const row = glove_vec[idx * SEM_DIM .. idx * SEM_DIM + SEM_DIM];
-        for (out, 0..) |*o, d| o.* += @as(f32, @floatFromInt(@as(i8, @bitCast(row[d])))) / 127.0;
-    }
-    var norm: f32 = 0;
-    for (out) |v| norm += v * v;
-    norm = @sqrt(norm);
-    if (norm > 0) for (out) |*v| {
-        v.* /= norm;
-    };
-}
+// NOTE: the ROUTER's semantic embedding now lives in bge.zig (a baked BERT — real
+// phrase-level meaning). This file keeps the dependency-free FEATURE-HASH embedding,
+// which ebm.zig / contract.zig still use for the 1536-d RAG dense term. An earlier
+// baked-GloVe `embedSemantic` lived here; it was deleted when bge.zig superseded it
+// (the algorithm: delete what the better path made dead — with its 2.4 MB blobs).
 
 fn addFeature(out: []f32, feature: []const u8, weight: f32) void {
     const h = std.hash.Wyhash.hash(0x9e3779b97f4a7c15, feature);
@@ -230,22 +172,6 @@ test "empty text embeds to the zero vector (no NaN)" {
     var v: [DIM]f32 = undefined;
     embed("", &v);
     for (v) |x| try std.testing.expectEqual(@as(f32, 0.0), x);
-}
-
-test "embedSemantic: baked GloVe knows synonymy (search≈find, not≈commit)" {
-    var s: [SEM_DIM]f32 = undefined;
-    var f: [SEM_DIM]f32 = undefined;
-    var c: [SEM_DIM]f32 = undefined;
-    embedSemantic("search", &s);
-    embedSemantic("find", &f);
-    embedSemantic("commit", &c);
-    // the whole point: a LEARNED embedding relates synonyms the feature-hash can't.
-    try std.testing.expect(cosine(&s, &f) > cosine(&s, &c));
-    try std.testing.expect(cosine(&s, &f) > 0.5); // search/find are genuinely close
-    // L2-unit for in-vocab text; empty/OOV-only text → zero vector (no NaN).
-    var e: [SEM_DIM]f32 = undefined;
-    embedSemantic("", &e);
-    for (e) |x| try std.testing.expectEqual(@as(f32, 0), x);
 }
 
 test "embedDim: native stateless 1536-d embedding is L2-unit and deterministic (no server)" {

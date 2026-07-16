@@ -14,13 +14,14 @@ const std = @import("std");
 const ledger = @import("ledger.zig");
 const terminal = @import("terminal.zig");
 const embed = @import("embed.zig");
+const bge = @import("bge.zig");
 const binary_ast = @import("binary_ast.zig");
 
-// The router embeds with the SEMANTIC embedding (baked GloVe) — it knows
-// search≈find≈hunt, the synonymy the feature-hash embed can't. A per-binary
-// reward-weighted centroid over goal vectors (West 1979, like ebm.Prototype but at
-// the semantic dim); energy = −cosine; routing = argmin energy.
-const SEM = embed.SEM_DIM;
+// The router embeds with the baked BERT (bge-small, bge.zig) — a real learned
+// sentence embedder that knows phrase-level meaning ("roll back a version"≈git,
+// search≈hunt), well past GloVe averaging. A per-binary reward-weighted centroid over
+// goal vectors (West 1979, like ebm.Prototype); energy = −cosine; routing = argmin.
+const SEM = bge.DIM;
 
 const SemProto = struct {
     mean: [SEM]f32 = [_]f32{0} ** SEM,
@@ -29,7 +30,7 @@ const SemProto = struct {
 
     fn fold(self: *SemProto, text: []const u8, reward: f64) void {
         var v: [SEM]f32 = undefined;
-        embed.embedSemantic(text, &v);
+        bge.embed(text, &v);
         const w_new = self.w + reward;
         if (@abs(w_new) < 1e-9) {
             self.mean = [_]f32{0} ** SEM;
@@ -44,7 +45,7 @@ const SemProto = struct {
     fn energy(self: SemProto, text: []const u8) f64 {
         if (self.w <= 0) return std.math.inf(f64);
         var v: [SEM]f32 = undefined;
-        embed.embedSemantic(text, &v);
+        bge.embed(text, &v);
         return -@as(f64, embed.cosine(&v, &self.mean));
     }
 };
