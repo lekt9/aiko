@@ -1,0 +1,11 @@
+*.so filter=lfs diff=lfs merge=lfs -text
+*.dylib filter=lfs diff=lfs merge=lfs -text
+*.dll filter=lfs diff=lfs merge=lfs -text
+codedb.snapshot filter=lfs diff=lfs merge=lfs -text
+**/codedb.snapshot filter=lfs diff=lfs merge=lfs -text
+aiko/apps/desktop/src-tauri/resources/contract/* filter=lfs diff=lfs merge=lfs -text
+*.a filter=lfs diff=lfs merge=lfs -text
+*.snapshot filter=lfs diff=lfs merge=lfs -text
+**/workerd filter=lfs diff=lfs merge=lfs -text
+deploy/wrangler/**/workerd filter=lfs diff=lfs merge=lfs -text
+aiko/apps/desktop/src-tauri/resources/** filter=lfs diff=lfs merge=lfs -text
