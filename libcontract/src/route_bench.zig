@@ -6,35 +6,29 @@
 //!
 //! It measures routing accuracy on a labeled (goal → binary) dataset with proper
 //! held-out evaluation, against real baselines. It uses the SAME embedding + energy
-//! model the production router uses (bge.zig — the baked BERT) and seeds from the SAME
-//! lexicon (binary_ast.zig), so the numbers reflect the shipped code — not a toy.
-//! Each distinct goal is embedded ONCE up front (bge is ~ms/embed); LOO then reuses
-//! the cached vectors, so the whole benchmark is thousands of centroid ops, not embeds.
+//! model the production router uses (bge.zig — the baked BERT), PURE LEDGER: there is
+//! no lexicon seed, so a binary is a candidate only via its trained goals — exactly
+//! what route.zig does now. Each distinct goal is embedded ONCE up front (bge is
+//! ~ms/embed); LOO then reuses the cached vectors.
 //!
-//! Metrics:
-//!   • Leave-one-out accuracy (every goal tested, trained on all others) — the core
-//!     generalization number: a held-out goal must route by DISTANCE, not memory.
-//!   • Baselines: random (1/N), keyword (does the goal contain the binary name),
-//!     cold-start (lexicon only, no training).
-//!   • Ablation: learned with vs without the lexicon seed.
-//!   • Learning curve: accuracy at k = 1,2,3,5 training goals per binary.
-//!   • Per-binary accuracy + a 1-NN comparison (different aggregation, same embedding).
+//! NOTE on candidates: with the hardcoded lexicon removed, the git-lfs/gh distractors
+//! (which had zero goals and only existed as cold-start seeds) are gone — this is a
+//! 6-way problem now, not 8-way. So the headline % is NOT directly comparable to the
+//! old 8-way seeded number; random is 1/6 (16.7%), not 1/8.
+//!
+//! Metrics: leave-one-out accuracy, baselines (random, keyword), per-binary, learning
+//! curve at k = 1,2,3,5, and a 1-NN comparison (same embedding, different aggregation).
 
 const std = @import("std");
 const bge = @import("bge.zig");
-const binary_ast = @import("binary_ast.zig");
 
 const Example = struct { goal: []const u8, bin: []const u8 };
 
-// The candidate binaries. The first 6 have labeled goals; git-lfs + gh have NONE —
-// they are the extra lexicon binaries that exist in PRODUCTION as cold-start
-// DISTRACTORS (their broad seeded prototypes can steal unrelated goals). Including
-// them makes the benchmark faithful to what aiko-cli actually routes against.
-const BINS = [_][]const u8{ "git", "docker", "grep", "curl", "npm", "tar", "git-lfs", "gh" };
+// Only binaries that have labeled goals — PURE LEDGER has no seeded distractors.
+const BINS = [_][]const u8{ "git", "docker", "grep", "curl", "npm", "tar" };
 
-// A labeled dataset of natural-language goals. Deliberately phrased as a user would
-// (rarely naming the binary), so keyword-matching mostly fails and the model must
-// route by meaning. 9 goals × 6 binaries = 54.
+// A labeled dataset of natural-language goals, phrased as a user would (rarely naming
+// the binary), so keyword-matching mostly fails and the model must route by meaning.
 const DATA = [_]Example{
     // git
     .{ .goal = "commit my changes to the repository", .bin = "git" },
@@ -105,32 +99,13 @@ fn binIndex(bin: []const u8) usize {
     unreachable;
 }
 
-// ── embedding cache: embed each goal + each lexicon seed surface exactly once ──
+// ── embedding cache: embed each goal exactly once ──
 var goal_vecs: [DATA.len][SEM]f32 = undefined;
-var seed_vecs: [BINS.len][SEM]f32 = undefined;
-var seed_has: [BINS.len]bool = [_]bool{false} ** BINS.len;
-
-fn precompute(allocator: std.mem.Allocator) !void {
+fn precompute() void {
     for (DATA, 0..) |ex, i| bge.embed(ex.goal, &goal_vecs[i]);
-    for (&binary_ast.registries) |reg| {
-        var idx: ?usize = null;
-        for (BINS, 0..) |b, i| if (std.mem.eql(u8, b, reg.name)) {
-            idx = i;
-        };
-        if (idx == null) continue;
-        var buf: std.ArrayList(u8) = .empty;
-        defer buf.deinit(allocator);
-        try buf.appendSlice(allocator, reg.root.desc);
-        for (reg.root.subs) |sub| {
-            try buf.append(allocator, ' ');
-            try buf.appendSlice(allocator, sub.desc);
-        }
-        bge.embed(buf.items, &seed_vecs[idx.?]);
-        seed_has[idx.?] = true;
-    }
 }
 
-// The router's semantic centroid (mirror route.zig's SemProto) — but folds PRE-EMBEDDED
+// The router's semantic centroid (mirror route.zig's SemProto), folding PRE-EMBEDDED
 // vectors so the benchmark doesn't re-run the BERT thousands of times.
 const Proto = struct {
     mean: [SEM]f32 = [_]f32{0} ** SEM,
@@ -152,20 +127,11 @@ const Proto = struct {
     }
 };
 
-fn seedLexicon(protos: *[BINS.len]Proto) void {
-    for (0..BINS.len) |i| if (seed_has[i]) protos[i].foldVec(&seed_vecs[i], 0.35);
-}
-
-// Mirror route.zig: a seed-only (untrained) binary's energy is penalized so a broad
-// lexicon prior never steals a goal from a trained binary.
-const SEED_PENALTY: f64 = 0.30;
-
-fn route(protos: *const [BINS.len]Proto, trained: *const [BINS.len]bool, v: []const f32) ?usize {
+fn route(protos: *const [BINS.len]Proto, v: []const f32) ?usize {
     var best: ?usize = null;
     var best_e: f64 = std.math.inf(f64);
     for (protos, 0..) |p, i| {
-        var e = p.energyVec(v);
-        if (!trained[i]) e += SEED_PENALTY;
+        const e = p.energyVec(v);
         if (e < best_e) {
             best_e = e;
             best = i;
@@ -176,23 +142,19 @@ fn route(protos: *const [BINS.len]Proto, trained: *const [BINS.len]bool, v: []co
 
 const LooResult = struct { overall: f64, per_bin: [BINS.len]f64 };
 
-fn looAccuracy(seed: bool) LooResult {
+fn looAccuracy() LooResult {
     var ok: usize = 0;
     var bin_ok = [_]usize{0} ** BINS.len;
     var bin_tot = [_]usize{0} ** BINS.len;
     for (DATA, 0..) |test_ex, ti| {
         var protos = [_]Proto{.{}} ** BINS.len;
-        var trained = [_]bool{false} ** BINS.len;
-        if (seed) seedLexicon(&protos);
         for (DATA, 0..) |tr, tri| {
             if (tri == ti) continue;
-            const bi = binIndex(tr.bin);
-            protos[bi].foldVec(&goal_vecs[tri], 1.0);
-            trained[bi] = true;
+            protos[binIndex(tr.bin)].foldVec(&goal_vecs[tri], 1.0);
         }
         const want = binIndex(test_ex.bin);
         bin_tot[want] += 1;
-        if (route(&protos, &trained, &goal_vecs[ti])) |r| if (r == want) {
+        if (route(&protos, &goal_vecs[ti])) |r| if (r == want) {
             ok += 1;
             bin_ok[want] += 1;
         };
@@ -205,14 +167,11 @@ fn looAccuracy(seed: bool) LooResult {
 /// Train the FIRST k goals of each binary; test on that binary's remaining goals.
 fn curveAccuracy(k: usize) f64 {
     var protos = [_]Proto{.{}} ** BINS.len;
-    var trained = [_]bool{false} ** BINS.len;
-    seedLexicon(&protos);
     var count = [_]usize{0} ** BINS.len;
     for (DATA, 0..) |ex, i| {
         const bi = binIndex(ex.bin);
         if (count[bi] < k) {
             protos[bi].foldVec(&goal_vecs[i], 1.0);
-            trained[bi] = true;
             count[bi] += 1;
         }
     }
@@ -222,22 +181,19 @@ fn curveAccuracy(k: usize) f64 {
     for (DATA, 0..) |ex, i| {
         const bi = binIndex(ex.bin);
         defer seen[bi] += 1;
-        if (seen[bi] < k) continue; // was a training goal
+        if (seen[bi] < k) continue;
         tot += 1;
-        if (route(&protos, &trained, &goal_vecs[i])) |r| if (r == bi) {
+        if (route(&protos, &goal_vecs[i])) |r| if (r == bi) {
             ok += 1;
         };
     }
     return if (tot == 0) 0 else 100.0 * @as(f64, @floatFromInt(ok)) / @as(f64, @floatFromInt(tot));
 }
 
-fn knnLoo() LooResult {
+fn knnLoo() f64 {
     var ok: usize = 0;
-    var bin_ok = [_]usize{0} ** BINS.len;
-    var bin_tot = [_]usize{0} ** BINS.len;
     for (DATA, 0..) |test_ex, ti| {
         const want = binIndex(test_ex.bin);
-        bin_tot[want] += 1;
         var best_c: f32 = -2;
         var best_bin: usize = 0;
         for (DATA, 0..) |tr, tri| {
@@ -248,23 +204,17 @@ fn knnLoo() LooResult {
                 best_bin = binIndex(tr.bin);
             }
         }
-        if (best_bin == want) {
-            ok += 1;
-            bin_ok[want] += 1;
-        }
+        if (best_bin == want) ok += 1;
     }
-    var per: [BINS.len]f64 = undefined;
-    for (0..BINS.len) |i| per[i] = if (bin_tot[i] == 0) 0 else 100.0 * @as(f64, @floatFromInt(bin_ok[i])) / @as(f64, @floatFromInt(bin_tot[i]));
-    return .{ .overall = 100.0 * @as(f64, @floatFromInt(ok)) / DATA.len, .per_bin = per };
+    return 100.0 * @as(f64, @floatFromInt(ok)) / DATA.len;
 }
 
-test "BENCHMARK — learned energy router accuracy vs baselines" {
-    const A = std.testing.allocator;
+test "BENCHMARK — learned energy router accuracy vs baselines (pure ledger)" {
     const P = std.debug.print;
-    try precompute(A);
+    precompute();
 
-    P("\n══════════ ROUTER BENCHMARK (bge-small baked BERT) ══════════\n", .{});
-    P("  dataset: {d} goals across {d} binaries (git,docker,git-lfs,gh in lexicon; grep,curl,npm,tar learned-only)\n\n", .{ DATA.len, BINS.len });
+    P("\n══════════ ROUTER BENCHMARK (bge-small baked BERT · PURE LEDGER) ══════════\n", .{});
+    P("  dataset: {d} goals across {d} candidate binaries (all learned from the ledger, no lexicon seed)\n\n", .{ DATA.len, BINS.len });
 
     var kw_hit: usize = 0;
     for (DATA) |ex| {
@@ -273,40 +223,21 @@ test "BENCHMARK — learned energy router accuracy vs baselines" {
     P("  baseline · random            : {d:.1}%\n", .{100.0 / @as(f64, BINS.len)});
     P("  baseline · keyword-in-goal   : {d:.1}%  (goals rarely name the binary)\n", .{100.0 * @as(f64, @floatFromInt(kw_hit)) / DATA.len});
 
-    {
-        var protos = [_]Proto{.{}} ** BINS.len;
-        seedLexicon(&protos);
-        const none_trained = [_]bool{false} ** BINS.len;
-        var ok: usize = 0;
-        for (DATA, 0..) |ex, i| {
-            if (route(&protos, &none_trained, &goal_vecs[i])) |r| if (r == binIndex(ex.bin)) {
-                ok += 1;
-            };
-        }
-        P("  cold-start (lexicon only)    : {d:.1}%  (only git/docker/git-lfs/gh are in the lexicon)\n", .{100.0 * @as(f64, @floatFromInt(ok)) / DATA.len});
-    }
-
-    const loo_no_seed = looAccuracy(false);
-    const loo_seed = looAccuracy(true);
+    const loo = looAccuracy();
     P("\n  LEAVE-ONE-OUT (every goal held out, trained on the other {d}):\n", .{DATA.len - 1});
-    P("    learned, no seed           : {d:.1}%\n", .{loo_no_seed.overall});
-    P("    learned + lexicon seed     : {d:.1}%   ← production config\n", .{loo_seed.overall});
+    P("    learned centroid (pure ledger) : {d:.1}%   ← production config\n", .{loo.overall});
 
-    P("\n  per-binary (LOO, production):\n", .{});
-    for (BINS, 0..) |b, i| P("    {s: <8}: {d:.0}%\n", .{ b, loo_seed.per_bin[i] });
+    P("\n  per-binary (LOO):\n", .{});
+    for (BINS, 0..) |b, i| P("    {s: <8}: {d:.0}%\n", .{ b, loo.per_bin[i] });
 
     P("\n  LEARNING CURVE (train k goals/binary, test on the rest):\n", .{});
     for ([_]usize{ 1, 2, 3, 5 }) |k| P("    k={d}: {d:.1}%\n", .{ k, curveAccuracy(k) });
 
-    const knn = knnLoo();
-    P("\n  1-NN (nearest training goal), LOO:\n", .{});
-    P("    overall                    : {d:.1}%   ← vs {d:.1}% centroid\n", .{ knn.overall, loo_seed.overall });
+    P("\n  1-NN (nearest training goal), LOO : {d:.1}%   ← vs {d:.1}% centroid\n", .{ knnLoo(), loo.overall });
     P("\n═══════════════════════════════════════════════════════════\n", .{});
 
-    // HONEST witness — the baked BERT is a real semantic embedder: the router now
-    // clears every baseline by a wide margin (grep/curl, pure synonymy, no longer
-    // collapse). Numbers the data supports, no fabricated green:
-    try std.testing.expect(loo_seed.overall > 100.0 / @as(f64, BINS.len) * 3.0); // > 3× random
-    try std.testing.expect(loo_seed.overall > 31.5 + 15.0); // clears cold-start by >15 pts
-    try std.testing.expect(loo_seed.overall >= 80.0); // a real learned embedder: ≥80% (measured ~89%)
+    // HONEST witness — pure-ledger, 6-way (random 16.7%). The baked BERT clears every
+    // baseline by a wide margin; numbers the data supports, no fabricated green.
+    try std.testing.expect(loo.overall > 100.0 / @as(f64, BINS.len) * 3.0); // > 3× random
+    try std.testing.expect(loo.overall >= 85.0); // a real learned embedder on 6-way
 }

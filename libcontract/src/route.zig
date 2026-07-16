@@ -15,18 +15,22 @@ const ledger = @import("ledger.zig");
 const terminal = @import("terminal.zig");
 const embed = @import("embed.zig");
 const bge = @import("bge.zig");
-const binary_ast = @import("binary_ast.zig");
 
 // The router embeds with the baked BERT (bge-small, bge.zig) — a real learned
 // sentence embedder that knows phrase-level meaning ("roll back a version"≈git,
 // search≈hunt), well past GloVe averaging. A per-binary reward-weighted centroid over
 // goal vectors (West 1979, like ebm.Prototype); energy = −cosine; routing = argmin.
+//
+// PURE LEDGER — no hardcoded lexicon, no cold-start seed. A binary becomes a routable
+// candidate ONLY once a real fire (a satisfied contract naming it) folds a goal into
+// its prototype; the ledger is the sole source of meaning, so the router flexes to
+// whatever tools are actually used. A goal for a never-used binary gets no hint
+// (honest refusal, null), not a fabricated route from a typed description.
 const SEM = bge.DIM;
 
 const SemProto = struct {
     mean: [SEM]f32 = [_]f32{0} ** SEM,
     w: f64 = 0, // reward-weight folded in
-    trained: bool = false, // a REAL fire (not just the lexicon seed) touched it
 
     fn fold(self: *SemProto, text: []const u8, reward: f64) void {
         var v: [SEM]f32 = undefined;
@@ -49,38 +53,6 @@ const SemProto = struct {
         return -@as(f64, embed.cosine(&v, &self.mean));
     }
 };
-
-/// Cold-start weight for the lexicon seed (≪ a real fire's ±1).
-const SEED_REWARD: f64 = 0.35;
-
-/// Last-resort penalty on a SEED-ONLY binary (lexicon prior, no real training). Its
-/// broad command-surface prototype otherwise steals goals from trained binaries
-/// (measured: the raw seed HURT production — 40% vs 55% without it). Penalizing its
-/// energy means it only wins when clearly best AND nothing trained is close; and
-/// when NOTHING is trained (fresh ledger) the constant cancels across all, so
-/// cold-start still works. This turns the seed net-positive.
-const SEED_PENALTY: f64 = 0.30;
-
-/// Fold each lexicon binary's full command surface into its prototype as ONE weak
-/// (seed-only) fire — cold-start priors, left marked untrained.
-fn seedFromLexicon(allocator: std.mem.Allocator, protos: *std.StringHashMap(SemProto)) !void {
-    for (&binary_ast.registries) |reg| {
-        var buf: std.ArrayList(u8) = .empty;
-        defer buf.deinit(allocator);
-        try buf.appendSlice(allocator, reg.name);
-        try buf.append(allocator, ' ');
-        try buf.appendSlice(allocator, reg.root.desc);
-        for (reg.root.subs) |sub| {
-            try buf.append(allocator, ' ');
-            try buf.appendSlice(allocator, sub.name);
-            try buf.append(allocator, ' ');
-            try buf.appendSlice(allocator, sub.desc);
-        }
-        const gop = try protos.getOrPut(reg.name);
-        if (!gop.found_existing) gop.value_ptr.* = .{};
-        gop.value_ptr.fold(buf.items, SEED_REWARD);
-    }
-}
 
 /// Extract a JSON string field's value (a slice INTO `line`), or null. Handles both
 /// `"key": "v"` and `"key":"v"`; skips backslash-escapes crudely (enough for plans).
@@ -119,14 +91,13 @@ pub fn route(allocator: std.mem.Allocator, env: std.process.Environ, context: []
         try declared.put(id, .{ .plan = plan, .action = field(line, "action") orelse "" });
     }
 
-    // Cold-start: seed every known binary from its command surface (weak prior), so a
-    // novel goal still routes sensibly before any training.
+    // Prototypes are built PURELY from the ledger — no seed. A binary appears here only
+    // after a real fire named it.
     var protos = std.StringHashMap(SemProto).init(allocator);
     defer protos.deinit();
-    try seedFromLexicon(allocator, &protos);
 
     // Pass 2: fold each terminal event's declared goal into its binary's prototype
-    // (a real ±1 fire, on TOP of the cold-start seed — learning dominates).
+    // (a real ±1 fire: satisfied pulls the goal in, died pushes it away).
     var seen = std.StringHashMap(void).init(allocator);
     defer seen.deinit();
     it = std.mem.splitScalar(u8, data, '\n');
@@ -148,17 +119,15 @@ pub fn route(allocator: std.mem.Allocator, env: std.process.Environ, context: []
         const gop = try protos.getOrPut(bin);
         if (!gop.found_existing) gop.value_ptr.* = .{};
         gop.value_ptr.fold(d.plan, reward);
-        gop.value_ptr.trained = true; // a REAL fire — no longer seed-only
     }
 
-    // Settle: argmin energy, with a last-resort penalty on seed-only (untrained)
-    // binaries so a broad lexicon prior never steals a goal from a trained binary.
+    // Settle: argmin energy over the ledger-built prototypes (a net-negative binary
+    // has w<=0 → energy inf → never chosen).
     var best_bin: ?[]const u8 = null;
     var best_e: f64 = std.math.inf(f64);
     var pit = protos.iterator();
     while (pit.next()) |e| {
-        var en = e.value_ptr.energy(context);
-        if (!e.value_ptr.trained) en += SEED_PENALTY;
+        const en = e.value_ptr.energy(context);
         if (en < best_e) {
             best_e = en;
             best_bin = e.key_ptr.*;
