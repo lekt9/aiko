@@ -35,6 +35,12 @@ const SemProto = struct {
     fn fold(self: *SemProto, text: []const u8, reward: f64) void {
         var v: [SEM]f32 = undefined;
         bge.embed(text, &v);
+        self.foldVec(&v, reward);
+    }
+
+    /// Fold a PRE-EMBEDDED goal vector (West 1979 reward-weighted mean) — lets a caller
+    /// embed the goal once and reuse it (both for the centroid and for exemplar lookup).
+    fn foldVec(self: *SemProto, v: []const f32, reward: f64) void {
         const w_new = self.w + reward;
         if (@abs(w_new) < 1e-9) {
             self.mean = [_]f32{0} ** SEM;
@@ -47,10 +53,14 @@ const SemProto = struct {
     }
 
     fn energy(self: SemProto, text: []const u8) f64 {
-        if (self.w <= 0) return std.math.inf(f64);
         var v: [SEM]f32 = undefined;
         bge.embed(text, &v);
-        return -@as(f64, embed.cosine(&v, &self.mean));
+        return self.energyVec(&v);
+    }
+
+    fn energyVec(self: SemProto, v: []const f32) f64 {
+        if (self.w <= 0) return std.math.inf(f64);
+        return -@as(f64, embed.cosine(v, &self.mean));
     }
 };
 
@@ -137,6 +147,110 @@ pub fn route(allocator: std.mem.Allocator, env: std.process.Environ, context: []
     return null;
 }
 
+/// A satisfied row's proven usage: which binary, the exact action that satisfied, and
+/// the goal embedding (so the nearest proven command to a new goal can be retrieved).
+const Usage = struct { bin: []const u8, action: []const u8, vec: [SEM]f32 };
+
+/// Append `s` as a JSON string body (escaping " and \) to `buf`.
+fn appendJsonStr(buf: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []const u8) !void {
+    for (s) |c| switch (c) {
+        '"' => try buf.appendSlice(allocator, "\\\""),
+        '\\' => try buf.appendSlice(allocator, "\\\\"),
+        '\n' => try buf.appendSlice(allocator, "\\n"),
+        else => try buf.append(allocator, c),
+    };
+}
+
+/// Recommend a tool for `context` AND the nearest PROVEN command for it — the router
+/// self-documents usage: selection is the centroid argmin (as `route`), then the
+/// exemplar is the single satisfied row of that binary whose goal sits closest to the
+/// new one. Returns JSON {"binary":..,"example":..,"score":..} or null (nothing learned).
+/// Caller owns the slice.
+pub fn recommend(allocator: std.mem.Allocator, env: std.process.Environ, context: []const u8) !?[]u8 {
+    const data = try ledger.readAll(allocator, env);
+    defer allocator.free(data);
+
+    var declared = std.StringHashMap(Decl).init(allocator);
+    defer declared.deinit();
+    var it = std.mem.splitScalar(u8, data, '\n');
+    while (it.next()) |line| {
+        if (line.len == 0 or std.mem.indexOf(u8, line, "\"declared\"") == null) continue;
+        const id = field(line, "id") orelse continue;
+        const plan = field(line, "plan") orelse continue;
+        try declared.put(id, .{ .plan = plan, .action = field(line, "action") orelse "" });
+    }
+
+    var protos = std.StringHashMap(SemProto).init(allocator);
+    defer protos.deinit();
+    var usages: std.ArrayList(Usage) = .empty;
+    defer usages.deinit(allocator);
+
+    var seen = std.StringHashMap(void).init(allocator);
+    defer seen.deinit();
+    it = std.mem.splitScalar(u8, data, '\n');
+    while (it.next()) |line| {
+        if (line.len == 0) continue;
+        const ev = field(line, "event") orelse continue;
+        const reward: f64 = switch (terminal.classify(ev)) {
+            .satisfied => 1.0,
+            .dead => -1.0,
+            else => continue,
+        };
+        const id = field(line, "id") orelse continue;
+        if (seen.contains(id)) continue;
+        try seen.put(id, {});
+        const d = declared.get(id) orelse continue;
+        const end = std.mem.indexOfScalar(u8, d.action, ' ') orelse d.action.len;
+        const bin = d.action[0..end];
+        if (bin.len == 0 or std.mem.eql(u8, bin, "claim") or std.mem.eql(u8, bin, "neuron")) continue;
+        var v: [SEM]f32 = undefined;
+        bge.embed(d.plan, &v);
+        const gop = try protos.getOrPut(bin);
+        if (!gop.found_existing) gop.value_ptr.* = .{};
+        gop.value_ptr.foldVec(&v, reward);
+        if (reward > 0) try usages.append(allocator, .{ .bin = bin, .action = d.action, .vec = v });
+    }
+
+    // Selection: argmin energy over centroids (same as route). Embed the query once.
+    var qv: [SEM]f32 = undefined;
+    bge.embed(context, &qv);
+    var best_bin: ?[]const u8 = null;
+    var best_e: f64 = std.math.inf(f64);
+    var pit = protos.iterator();
+    while (pit.next()) |e| {
+        const en = e.value_ptr.energyVec(&qv);
+        if (en < best_e) {
+            best_e = en;
+            best_bin = e.key_ptr.*;
+        }
+    }
+    const b = best_bin orelse return null;
+
+    // Exemplar: the satisfied row of `b` whose goal is nearest the new goal.
+    var ex_action: ?[]const u8 = null;
+    var ex_c: f32 = -2;
+    for (usages.items) |u| {
+        if (!std.mem.eql(u8, u.bin, b)) continue;
+        const c = embed.cosine(&qv, &u.vec);
+        if (c > ex_c) {
+            ex_c = c;
+            ex_action = u.action;
+        }
+    }
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    try out.appendSlice(allocator, "{\"binary\":\"");
+    try appendJsonStr(&out, allocator, b);
+    try out.appendSlice(allocator, "\",\"example\":\"");
+    if (ex_action) |a| try appendJsonStr(&out, allocator, a);
+    try out.appendSlice(allocator, "\",\"score\":");
+    var scorebuf: [16]u8 = undefined;
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&scorebuf, "{d:.3}", .{ex_c}));
+    try out.append(allocator, '}');
+    return try out.toOwnedSlice(allocator);
+}
+
 test "route: learns per-binary from a synthetic ledger, routes a held-out goal" {
     // A tiny in-memory ledger emulation is overkill; the pure per-binary routing is
     // proven in ebm.zig. Here we only assert the field parser (the route-specific glue).
@@ -145,4 +259,12 @@ test "route: learns per-binary from a synthetic ledger, routes a held-out goal" 
     try std.testing.expectEqualStrings("commit my changes", field(line, "plan").?);
     try std.testing.expectEqualStrings("git commit", field(line, "action").?);
     try std.testing.expect(field(line, "missing") == null);
+}
+
+test "recommend: JSON string escaping keeps the example well-formed" {
+    const A = std.testing.allocator;
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(A);
+    try appendJsonStr(&buf, A, "grep -rn \"foo\\bar\" src/");
+    try std.testing.expectEqualStrings("grep -rn \\\"foo\\\\bar\\\" src/", buf.items);
 }

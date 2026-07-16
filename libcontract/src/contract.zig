@@ -31,6 +31,7 @@ pub const capability = @import("capability.zig");
 pub const embed = @import("embed.zig");
 pub const ebm = @import("ebm.zig");
 pub const route = @import("route.zig").route;
+pub const recommend = @import("route.zig").recommend;
 pub const cas = @import("cas.zig");
 pub const reward = @import("reward.zig");
 pub const usage = @import("usage.zig");

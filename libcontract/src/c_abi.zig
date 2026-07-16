@@ -128,6 +128,18 @@ export fn contract_route(context: [*:0]const u8) ?[*:0]u8 {
     return out.ptr;
 }
 
+/// The LEARNED router + self-documented usage: given a goal, return JSON
+/// {"binary":..,"example":<the nearest proven command>,"score":..} — the tool to try
+/// plus the exact past command that satisfied a similar goal. NULL when nothing learned.
+/// Caller frees with contract_free.
+export fn contract_recommend(context: [*:0]const u8) ?[*:0]u8 {
+    const j = (contract.recommend(gpa, extEnv(), cstr(context)) catch return null) orelse return null;
+    defer gpa.free(j);
+    const out = gpa.allocSentinel(u8, j.len, 0) catch return null;
+    @memcpy(out, j);
+    return out.ptr;
+}
+
 /// Release a buffer previously returned by one of the C ABI getters.
 export fn contract_free(p: ?[*:0]u8) void {
     if (p) |ptr| {

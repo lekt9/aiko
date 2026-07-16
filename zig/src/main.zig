@@ -5466,6 +5466,23 @@ fn cmdRoute(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     return 1;
 }
 
+fn cmdRecommend(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    if (args.len < 1) {
+        err("recommend requires: <context>  (a goal to route + retrieve a proven command)\n");
+        return 2;
+    }
+    const context = try std.mem.join(allocator, " ", args);
+    defer allocator.free(context);
+    // Selection + self-documented usage: the tool AND the nearest proven command.
+    if (try contract.recommend(allocator, env, context)) |json| {
+        defer allocator.free(json);
+        outPrint("{s}\n", .{json});
+        return 0;
+    }
+    err("recommend: cold — no learned routes yet.\n");
+    return 1;
+}
+
 fn cmdStatus(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
     if (args.len > 1) {
         err("status accepts zero args or exactly <id>\n");
@@ -6165,6 +6182,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     if (std.mem.eql(u8, verb, "eval")) return try cmdEval(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "prune")) return try cmdPrune(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "route")) return try cmdRoute(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "recommend")) return try cmdRecommend(allocator, init.environ, rest);
     // Substrate-internal bootstrap + parent-sign verbs. Underscore
     // prefix marks them as machinery the substrate uses to attest
     // itself; they bypass the startup self-verify gate (one writes
