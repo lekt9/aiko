@@ -5449,23 +5449,6 @@ fn dispatchPosthooks(allocator: std.mem.Allocator, env: std.process.Environ, id:
 /// (ebm.zig prototype scores by cosine distance, not exact match). Cold (no
 /// training yet) → honest refusal, never a fabricated route. Pure-local: reads the
 /// ledger, no LLM-compile, so it runs without the signed-binary gate.
-fn cmdRoute(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
-    if (args.len < 1) {
-        err("route requires: <context>  (a goal to route to a binary)\n");
-        return 2;
-    }
-    const context = try std.mem.join(allocator, " ", args);
-    defer allocator.free(context);
-    // ONE implementation — the shared libcontract router (also the C ABI's).
-    if (try contract.route(allocator, env, context)) |bin| {
-        defer allocator.free(bin);
-        outPrint("{s}\n", .{bin});
-        return 0;
-    }
-    err("route: cold — no learned routes yet. Satisfy some typed actions first: declare --action \"<binary> ...\".\n");
-    return 1;
-}
-
 fn cmdRecommend(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
     if (args.len < 1) {
         err("recommend requires: <context>  (a goal to route + retrieve a proven command)\n");
@@ -5481,84 +5464,6 @@ fn cmdRecommend(allocator: std.mem.Allocator, env: std.process.Environ, args: []
     }
     err("recommend: cold — no learned routes yet.\n");
     return 1;
-}
-
-/// A codegraff trajectory turn (harness.trajectory.jsonl) — only the fields we map.
-const GraffTurn = struct {
-    kind: []const u8 = "",
-    task: []const u8 = "",
-    label: []const u8 = "",
-    ok: ?bool = null,
-    prompt_sha: []const u8 = "",
-};
-
-fn readWholeFile(allocator: std.mem.Allocator, path: []const u8) ?[]u8 {
-    const path_z = allocator.dupeZ(u8, path) catch return null;
-    defer allocator.free(path_z);
-    const fd = std.c.open(path_z.ptr, .{ .ACCMODE = .RDONLY }, @as(c_uint, 0));
-    if (fd < 0) return null;
-    defer _ = std.c.close(fd);
-    var raw: std.ArrayList(u8) = .empty;
-    defer raw.deinit(allocator);
-    var chunk: [8192]u8 = undefined;
-    while (true) {
-        const n = std.c.read(fd, &chunk, chunk.len);
-        if (n <= 0) break;
-        raw.appendSlice(allocator, chunk[0..@intCast(n)]) catch return null;
-        if (raw.items.len > 16 * 1024 * 1024) break; // sanity cap
-    }
-    return raw.toOwnedSlice(allocator) catch null;
-}
-
-/// graff-import [trajectory-path] — UNIFY codegraff's evolutionary archive into the
-/// contract substrate. Each `turn` node becomes a signed contract neuron: plan = the
-/// task, action = `agent:<variant>` (so the SAME router selects agent variants like it
-/// selects tools), terminal = satisfied/died from `ok`. Marked provenance=graff-attested
-/// (the substrate attests it IMPORTED this from codegraff — it did not natively witness
-/// the run). Idempotent-ish: declare is content-addressed; route dedups terminals by id.
-fn cmdGraffImport(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
-    const path = if (args.len >= 1) args[0] else "harness.trajectory.jsonl";
-    const data = readWholeFile(allocator, path) orelse {
-        err("graff-import: cannot read trajectory file\n");
-        return 1;
-    };
-    defer allocator.free(data);
-
-    var imported: usize = 0;
-    var it = std.mem.splitScalar(u8, data, '\n');
-    while (it.next()) |line| {
-        if (line.len == 0) continue;
-        const parsed = std.json.parseFromSlice(GraffTurn, allocator, line, .{ .ignore_unknown_fields = true }) catch continue;
-        defer parsed.deinit();
-        const t = parsed.value;
-        if (!std.mem.eql(u8, t.kind, "turn") or t.label.len == 0) continue;
-        if (t.task.len < 12 or std.mem.startsWith(u8, t.task, "Claude Code")) continue; // skip banners/empties
-
-        // Sanitize the task to printable ASCII (trajectory tasks carry ANSI/box-drawing
-        // bytes) so the declared row stays well-formed.
-        var pbuf: [200]u8 = undefined;
-        var pn: usize = 0;
-        for (t.task) |c| {
-            if (pn >= pbuf.len) break;
-            pbuf[pn] = if (c >= 0x20 and c <= 0x7e) c else ' ';
-            pn += 1;
-        }
-        const plan = std.mem.trim(u8, pbuf[0..pn], " ");
-        if (plan.len < 12) continue;
-
-        const action = std.fmt.allocPrint(allocator, "agent:{s}", .{t.label}) catch continue;
-        defer allocator.free(action);
-        const id = contract.declare(allocator, env, plan, action, .{ .agent = "graff-attested" }) catch continue;
-        defer allocator.free(id);
-        if (t.ok orelse false) {
-            contract.markSatisfied(allocator, env, id, 0, "graff turn ok") catch {};
-        } else {
-            contract.markDied(allocator, env, id, .apoptosed, null, "graff turn failed") catch {};
-        }
-        imported += 1;
-    }
-    outPrint("graff-import: {d} turns → signed contract neurons (action=agent:<variant>, provenance=graff-attested)\n", .{imported});
-    return 0;
 }
 
 fn cmdStatus(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
@@ -6259,9 +6164,7 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     if (std.mem.eql(u8, verb, "run")) return try cmdRun(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "eval")) return try cmdEval(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "prune")) return try cmdPrune(allocator, init.environ, rest);
-    if (std.mem.eql(u8, verb, "route")) return try cmdRoute(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "recommend")) return try cmdRecommend(allocator, init.environ, rest);
-    if (std.mem.eql(u8, verb, "graff-import")) return try cmdGraffImport(allocator, init.environ, rest);
     // Substrate-internal bootstrap + parent-sign verbs. Underscore
     // prefix marks them as machinery the substrate uses to attest
     // itself; they bypass the startup self-verify gate (one writes

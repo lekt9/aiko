@@ -30,7 +30,6 @@ pub const capability = @import("capability.zig");
 // The foundation for energy-ranked resolution (prove-the-atom before on-chain).
 pub const embed = @import("embed.zig");
 pub const ebm = @import("ebm.zig");
-pub const route = @import("route.zig").route;
 pub const recommend = @import("route.zig").recommend;
 pub const cas = @import("cas.zig");
 pub const reward = @import("reward.zig");
