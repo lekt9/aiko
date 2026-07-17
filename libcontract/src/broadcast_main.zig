@@ -5,7 +5,7 @@
 //! money-moving action cannot live there. This is a separate operator tool that
 //! uses the proven library directly — no declare, no redaction, no ambient key.
 //!
-//!   broadcast-tool <keypair.json> <card.json> <network>
+//!   broadcast-tool --onchain <keypair.json> <card.json> <network>
 //!
 //! Loads the operator's funded Solana keypair (id.json), parses an emitted card
 //! (voltr deposit / payout), signs, and SUBMITS. THIS MOVES REAL VALUE. Running
@@ -68,12 +68,13 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     const allocator = std.heap.page_allocator;
     const args = try init.args.toSlice(allocator);
 
-    if (args.len < 4) {
+    if (args.len < 5 or !std.mem.eql(u8, args[1], "--onchain")) {
         std.debug.print(
-            \\broadcast-tool — submit an emitted card as a signed Solana tx.
+            \\broadcast-tool — on-chain submission is disabled by default.
             \\
-            \\  broadcast-tool <keypair.json> <card.json> <network>
+            \\  broadcast-tool --onchain <keypair.json> <card.json> <network>
             \\
+            \\  --onchain is REQUIRED for every invocation.
             \\  network is REQUIRED (no default) so mainnet is never accidental:
             \\    mainnet | devnet | localhost
             \\
@@ -83,9 +84,9 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         , .{});
         return 2;
     }
-    const kp_path = args[1];
-    const card_path = args[2];
-    const network = args[3];
+    const kp_path = args[2];
+    const card_path = args[3];
+    const network = args[4];
 
     const url = solana_rpc.rpcUrl(network) catch {
         std.debug.print("broadcast-tool: unknown network '{s}' (mainnet|devnet|localhost)\n", .{network});

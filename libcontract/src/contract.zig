@@ -128,17 +128,11 @@ pub const SynapseKind = enum {
     /// screen-output, etc.). Lets the Word's compiler bind a presence
     /// surface to the right adapter family for the spawn environment.
     modality,
-    /// `at:<RFC3339-timestamp>` — wall-clock threshold. Recorded on the
-    /// declared row; the pod provisioned for this contract reads the
-    /// synapse and sleeps until the timestamp before firing its action.
-    /// The substrate itself does NOT poll for due timestamps — that would
-    /// be a meta-service above the DAG (an antipattern). Time is the
-    /// pod's own metabolism; the substrate just records when. See
-    /// docs/design/runpod-bound-contract-vm.md.
+    /// `at:<unix-seconds>` — one-shot wall-clock threshold materialized by
+    /// the canonical resolver tick.
     at,
-    /// `repeat:<cron-expr>` — recurring fire pattern. The pod scheduled
-    /// for the contract reads this synapse and loops: sleep until next
-    /// cron tick, fire, repeat. Idempotent per (contract_id, tick-instant).
+    /// `repeat:<N>s|m|h` — recurring occurrence materialized by the same
+    /// resolver. Idempotent per (contract_id, interval bucket).
     repeat,
 
     pub fn jsonName(self: SynapseKind) []const u8 {
@@ -251,7 +245,7 @@ const synapse_table = [_]struct {
     freeform: bool,
 }{
     // freeform=true means the suffix is consumed verbatim until the next
-    // whitespace/quote — used for at:<RFC3339> + repeat:<cron-expr> where
+    // whitespace/quote — used for at:<unix-seconds> + repeat:<N>s|m|h where
     // the payload isn't an 8-hex id.
     .{ .prefix = "contract:", .kind = .pointer, .freeform = false },
     .{ .prefix = "inhibits:", .kind = .inhibits, .freeform = false },

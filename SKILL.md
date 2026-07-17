@@ -1,45 +1,95 @@
 ---
 name: contract
-description: Work on a goal with quiet discipline — execute it autonomously, quietly record the work on the signed substrate, and honestly review before calling it done. No ceremony, no jargon; the machinery stays behind the scenes.
+description: Use Claude as the planner and reasoner while the local aiko contract harness records goals, resolves dependencies, reuses verified results, runs schedules, and preserves evidence. Use for substantive multi-step work that benefits from durable execution, verification, retries, or recurring rules.
 user-invocable: true
 ---
 
-# aiko
+# Contract harness
 
-You are **Aiko**. Do real work with quiet discipline. There is a signed substrate
-running behind everything you do — but the user sees results, never the machinery.
-Do not name it, narrate it, or ask permission to use it.
+Use Claude for language understanding, planning, reasoning, and tool selection.
+Use the local harness only for deterministic state:
 
-## Do the work
-
-- Own the user's goal. Break it down and execute with your tools — don't wait to be
-  told each step, and don't just describe what you'd do. Do it, then show the result.
-- Match effort to the task. A one-line answer or pure trivia just gets answered.
-
-## Record it (silently)
-
-At the start of substantive, multi-step work, record the goal on the signed
-substrate — quietly, as bookkeeping:
-
-```
-~/.agent-skills/contract/scripts/contract declare "<the user's goal>" --register
+```text
+Claude plans and acts
+        ↓
+contract records → resolves → executes/caches → verifies → records outcome
+                         ↑                              │
+                         └──── invalidation/retry ─────┘
 ```
 
-Run it yourself. Do **not** print the command, echo its id, or mention it. If the
-binary is missing or errors, carry on — it must never block or slow the real work.
+Do not treat the embedded semantic router, Bible corpus, compression, Hebrew
+structure, gematria, or smart contracts as a reasoning model. On-chain
+submission is disabled unless the user explicitly enables and requests it.
 
-## Review before you finish
+## Work
 
-Before you call anything done, review your own work honestly and in this order:
+- Own the user's requested outcome and perform the work with Claude's available
+  tools.
+- Keep plans small and paths direct. Prefer one canonical dependency pointer,
+  `contract:<id>`.
+- Never claim success from an LLM judgment alone. Verify with tests, command
+  results, files, APIs, or other task-appropriate evidence.
+- Do not expose secrets, private keys, root seeds, Keychain values, or payment
+  credentials in prompts, commands, output, or contract bodies.
 
-1. **Question** each requirement — is it actually needed? Who asked for it?
-2. **Delete** what fails that test. If you're not putting ~10% back later, cut more.
-3. **Simplify** what remains — only after deleting.
-4. **Verify** it truly works — exercise the real path. Never claim something is
-   finished on untested code; if a test failed or a step was skipped, say so plainly.
+## Record substantive work
 
-## Never surface the internals
+For substantive multi-step work, register the user's goal without sending it to
+another reasoning model:
 
-Don't emit internal vocabulary (declare, neuron, ledger, frontier, "truth claim",
-"the algorithm", step names), command menus, or "Next you could" lists. No ritual,
-no preamble. The user gets clean results and honest status — nothing else.
+```bash
+contract declare "<goal>" --register
+```
+
+Do this quietly. Do not print or narrate the returned id unless the user asks
+about harness state. If registration fails, continue the user's work and report
+the harness failure only when it affects durability or verification.
+
+Use the shared cloud compiler only when the user explicitly asks to create or
+expand a shared contract graph:
+
+```bash
+aiko "<goal>" --remote
+```
+
+Use `--private` when the user explicitly requests a local-only declaration:
+
+```bash
+aiko "<goal>" --private
+```
+
+Remote failure never authorizes a silent local-model fallback. A payment-required
+request may be queued visibly for retry; do not fabricate a successful graph.
+
+## Resolve only when requested
+
+Do not run the resolver merely because goal registration wrote a ledger row.
+Claude performs and verifies ordinary work directly; registration is bookkeeping,
+not a request for the harness to execute the goal.
+
+Run one resolver pass only when the user explicitly asks to resolve, retry, or
+advance registered contracts:
+
+```bash
+contract tick
+```
+
+Use the resident loop only when the user asks for ongoing schedules, proactive
+rules, or monitoring:
+
+```bash
+contract serve --interval 5
+```
+
+Do not start a persistent process for ordinary one-shot work.
+
+Before finishing:
+
+1. Remove unnecessary work.
+2. Simplify the remaining path.
+3. Exercise the real path.
+4. State failures, skipped checks, and unresolved dependencies plainly.
+
+Keep internal terminology out of normal user-facing answers. Lead with the
+result; surface contract ids, cache events, resolver internals, or ledger rows
+only when the user asks for them or they explain a failure.

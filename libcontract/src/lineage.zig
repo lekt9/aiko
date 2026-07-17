@@ -78,10 +78,8 @@ pub fn loadOrInitRootKey(allocator: std.mem.Allocator, env: std.process.Environ)
                 surface("canonical read errored during keystore cross-check: {s}", .{@errorName(err)});
                 return err;
             }
-            // No canonical file — the Enclave is the sole source (fully bound to
-            // the user). Back-fill the file tiers so recovery exists again.
-            backfillMirrors(allocator, &ks_seed, canonical, mirror) catch |e|
-                surface("backfill from keystore tier failed: {s}", .{@errorName(e)});
+            // No canonical file means keychain-only mode. Do not recreate a
+            // plaintext recovery file behind the operator's back.
             return ks_seed;
         }
     } else |err| if (err != error.NotFound) {
@@ -181,8 +179,93 @@ fn readKeychainSeed(allocator: std.mem.Allocator) ![32]u8 {
 
 fn writeKeychainSeed(allocator: std.mem.Allocator, seed: *const [32]u8) !void {
     var hex: [ROOT_KEY_HEX_LEN]u8 = undefined;
+    defer @memset(&hex, 0);
     bytesToHex(seed, &hex);
     try keystore.write(allocator, KEYCHAIN_SVC, &hex);
+}
+
+/// Import a 32-byte seed from a 64-hex-character file into the native OS
+/// keychain. The secret is never printed or placed in process argv. On a
+/// verified native-store write, legacy plaintext canonical/mirror files are
+/// removed and future loads remain keychain-only. The source file is not
+/// modified; the caller decides when and how to dispose of it.
+pub fn importRootKeyFileKeychainOnly(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    source_path: []const u8,
+) ![PUBKEY_HEX_LEN]u8 {
+    const home = env.getPosix("HOME") orelse return error.NoHome;
+    const canonical = try std.fs.path.join(allocator, &.{ home, ".contracts", "root.key" });
+    defer allocator.free(canonical);
+    const mirror = try std.fs.path.join(allocator, &.{ home, ".aiko", "keys", "root.key" });
+    defer allocator.free(mirror);
+    if (std.mem.eql(u8, source_path, canonical) or std.mem.eql(u8, source_path, mirror))
+        return error.SourceIsManagedRootFile;
+
+    var seed = try readImportSeed(source_path);
+    defer @memset(&seed, 0);
+    var hex: [ROOT_KEY_HEX_LEN]u8 = undefined;
+    defer @memset(&hex, 0);
+    bytesToHex(&seed, &hex);
+
+    // Preserve the prior identity inside the native keychain before replacing
+    // it. Historical ledger signatures remain recoverable without retaining a
+    // plaintext root.key archive.
+    var old_seed_opt: ?[32]u8 = null;
+    if (try keystore.readNative(allocator, KEYCHAIN_SVC)) |old_native| {
+        defer {
+            @memset(old_native, 0);
+            allocator.free(old_native);
+        }
+        if (old_native.len >= ROOT_KEY_HEX_LEN) {
+            var old_seed: [32]u8 = undefined;
+            if (parseHex(old_native[0..ROOT_KEY_HEX_LEN], &old_seed)) |_| {
+                old_seed_opt = old_seed;
+            } else |_| {}
+        }
+    } else if (readHexFile(canonical)) |old_file_seed| {
+        old_seed_opt = old_file_seed;
+    } else |_| {}
+    if (old_seed_opt) |*old_seed| {
+        defer @memset(old_seed, 0);
+        if (!std.mem.eql(u8, old_seed, &seed)) {
+            const old_kp = try deriveIdentityKeyPair(old_seed.*);
+            var old_pub_hex: [PUBKEY_HEX_LEN]u8 = undefined;
+            bytesToHex(&old_kp.public_key.bytes, &old_pub_hex);
+            var archive_svc_buf: [128]u8 = undefined;
+            const archive_svc = try std.fmt.bufPrint(
+                &archive_svc_buf,
+                "aiko.root.ed25519.seed.archive.{s}",
+                .{old_pub_hex[0..16]},
+            );
+            var old_hex: [ROOT_KEY_HEX_LEN]u8 = undefined;
+            defer @memset(&old_hex, 0);
+            bytesToHex(old_seed, &old_hex);
+            try keystore.writeNative(allocator, archive_svc, &old_hex);
+        }
+    }
+
+    try keystore.writeNative(allocator, KEYCHAIN_SVC, &hex);
+
+    const stored_opt = try keystore.readNative(allocator, KEYCHAIN_SVC);
+    const stored = stored_opt orelse return error.KeychainVerificationFailed;
+    defer {
+        @memset(stored, 0);
+        allocator.free(stored);
+    }
+    if (stored.len < ROOT_KEY_HEX_LEN or !std.mem.eql(u8, stored[0..ROOT_KEY_HEX_LEN], &hex))
+        return error.KeychainVerificationFailed;
+
+    for ([_][]const u8{ canonical, mirror }) |path| {
+        const path_z = try allocator.dupeZ(u8, path);
+        defer allocator.free(path_z);
+        _ = std.c.unlink(path_z.ptr);
+    }
+
+    const kp = try deriveIdentityKeyPair(seed);
+    var pubkey_hex: [PUBKEY_HEX_LEN]u8 = undefined;
+    bytesToHex(&kp.public_key.bytes, &pubkey_hex);
+    return pubkey_hex;
 }
 
 /// HKDF-derive a 32-byte private seed, then build the ed25519 keypair.
@@ -390,6 +473,54 @@ fn readHexFile(path: []const u8) ![32]u8 {
     var out: [32]u8 = undefined;
     try parseHex(buf[0..ROOT_KEY_HEX_LEN], &out);
     return out;
+}
+
+/// Read an import file without rendering its contents. Accepted forms:
+///  - 64 hex characters: raw 32-byte seed
+///  - Base64 decoding to 64 bytes: Ed25519 seed || public key
+/// The 64-byte form is self-checked before its first 32 bytes are accepted.
+fn readImportSeed(path: []const u8) ![32]u8 {
+    const path_z = try std.heap.page_allocator.dupeZ(u8, path);
+    defer std.heap.page_allocator.free(path_z);
+    var flags: std.c.O = .{};
+    flags.ACCMODE = .RDONLY;
+    const fd: c_int = std.c.open(path_z.ptr, flags, @as(c_uint, 0));
+    if (fd < 0) return error.FileNotFound;
+    defer _ = std.c.close(fd);
+
+    var raw: [256]u8 = undefined;
+    defer @memset(&raw, 0);
+    const n_read = std.c.read(fd, &raw, raw.len);
+    if (n_read <= 0) return error.RootKeyTooShort;
+
+    var compact: [256]u8 = undefined;
+    defer @memset(&compact, 0);
+    var n: usize = 0;
+    for (raw[0..@intCast(n_read)]) |ch| {
+        if (std.ascii.isWhitespace(ch)) continue;
+        compact[n] = ch;
+        n += 1;
+    }
+
+    if (n == ROOT_KEY_HEX_LEN) {
+        var seed: [32]u8 = undefined;
+        try parseHex(compact[0..n], &seed);
+        return seed;
+    }
+
+    const dec = std.base64.standard.Decoder;
+    const decoded_len = dec.calcSizeForSlice(compact[0..n]) catch return error.UnsupportedRootKeyFormat;
+    if (decoded_len != 64) return error.UnsupportedRootKeyFormat;
+    var decoded: [64]u8 = undefined;
+    defer @memset(&decoded, 0);
+    dec.decode(&decoded, compact[0..n]) catch return error.UnsupportedRootKeyFormat;
+
+    var seed: [32]u8 = decoded[0..32].*;
+    errdefer @memset(&seed, 0);
+    const kp = try ed.KeyPair.generateDeterministic(seed);
+    if (!std.mem.eql(u8, &kp.public_key.bytes, decoded[32..64]))
+        return error.Ed25519PublicKeyMismatch;
+    return seed;
 }
 
 fn writeHexFile(allocator: std.mem.Allocator, path: []const u8, bytes: *const [32]u8) !void {

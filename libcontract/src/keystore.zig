@@ -38,6 +38,9 @@ extern fn pclose(stream: *anyopaque) c_int;
 extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: *anyopaque) usize;
 extern fn system(command: [*:0]const u8) c_int;
 extern fn access(path: [*:0]const u8, mode: c_int) c_int;
+extern fn dlopen(path: [*:0]const u8, mode: c_int) ?*anyopaque;
+extern fn dlsym(handle: *anyopaque, symbol: [*:0]const u8) ?*anyopaque;
+extern fn dlclose(handle: *anyopaque) c_int;
 
 const FALLBACK_HKDF_SALT: []const u8 = "aiko-keystore-v1";
 const FALLBACK_DIR_REL: []const u8 = ".aiko/keys";
@@ -151,6 +154,28 @@ pub fn write(allocator: std.mem.Allocator, svc: []const u8, value: []const u8) !
             return try fallbackWrite(allocator, svc, value);
         },
     }
+}
+
+/// Write to the OS-native secret store only. Unlike `write`, this never falls
+/// back to a file. Used for keychain-only imports where a silent file fallback
+/// would violate the caller's storage policy.
+pub fn writeNative(allocator: std.mem.Allocator, svc: []const u8, value: []const u8) !void {
+    try validateSvc(svc);
+    switch (builtin.os.tag) {
+        .macos => try darwinWrite(allocator, svc, value),
+        .linux => try linuxWrite(allocator, svc, value),
+        else => return KeystoreError.Unsupported,
+    }
+}
+
+/// Read from the OS-native secret store only; never consult encrypted files.
+pub fn readNative(allocator: std.mem.Allocator, svc: []const u8) !?[]u8 {
+    try validateSvc(svc);
+    return switch (builtin.os.tag) {
+        .macos => try darwinRead(allocator, svc),
+        .linux => try linuxRead(allocator, svc),
+        else => KeystoreError.Unsupported,
+    };
 }
 
 /// Best-effort delete. Never errors on a missing entry. Per-tier failures
@@ -307,22 +332,47 @@ fn darwinWrite(allocator: std.mem.Allocator, svc: []const u8, value: []const u8)
     // (it would pop a blocking dialog). Caller falls through to the encrypted
     // file, which always works and never prompts.
     if (!darwinKeychainUsable()) return KeystoreError.WriteFailed;
-    // value must be shell-safe; callers hex-encode before passing in. Reject
-    // anything containing a single-quote to keep the single-quoted shell arg
-    // unambiguous.
-    for (value) |c| {
-        if (c == '\'' or c == '\n' or c == '\r' or c == 0) return KeystoreError.InvalidServiceName;
+    // Native Security.framework call: the secret is passed as an in-process
+    // byte pointer, never through argv, environment, shell expansion or logs.
+    const handle = dlopen("/System/Library/Frameworks/Security.framework/Security", 0x2) orelse
+        return KeystoreError.WriteFailed; // RTLD_NOW
+    defer _ = dlclose(handle);
+    const FindFn = *const fn (
+        ?*anyopaque,
+        u32,
+        [*]const u8,
+        u32,
+        [*]const u8,
+        ?*u32,
+        ?*?*anyopaque,
+        *?*anyopaque,
+    ) callconv(.c) i32;
+    const ModifyFn = *const fn (*anyopaque, ?*const anyopaque, u32, [*]const u8) callconv(.c) i32;
+    const AddFn = *const fn (
+        ?*anyopaque,
+        u32,
+        [*]const u8,
+        u32,
+        [*]const u8,
+        u32,
+        [*]const u8,
+        ?*?*anyopaque,
+    ) callconv(.c) i32;
+    const find: FindFn = @ptrCast(@alignCast(dlsym(handle, "SecKeychainFindGenericPassword") orelse return KeystoreError.WriteFailed));
+    const modify: ModifyFn = @ptrCast(@alignCast(dlsym(handle, "SecKeychainItemModifyAttributesAndData") orelse return KeystoreError.WriteFailed));
+    const add: AddFn = @ptrCast(@alignCast(dlsym(handle, "SecKeychainAddGenericPassword") orelse return KeystoreError.WriteFailed));
+    const account = "root";
+    var item: ?*anyopaque = null;
+    const found = find(null, @intCast(svc.len), svc.ptr, account.len, account.ptr, null, null, &item);
+    if (found == 0 and item != null) {
+        if (modify(item.?, null, @intCast(value.len), value.ptr) != 0) return KeystoreError.WriteFailed;
+        return;
     }
-    var cmd_buf: [4096]u8 = undefined;
-    const cmd = try std.fmt.bufPrintZ(
-        &cmd_buf,
-        "/usr/bin/security add-generic-password -a root -s {s} " ++
-            "-D 'aiko keystore entry' " ++
-            "-w '{s}' -U 2>/dev/null",
-        .{ svc, value },
-    );
-    const rc = system(cmd.ptr);
-    if (rc != 0) return KeystoreError.WriteFailed;
+    // errSecItemNotFound. Refuse other lookup errors rather than replacing an
+    // item whose access control we could not inspect.
+    if (found != -25300) return KeystoreError.WriteFailed;
+    if (add(null, @intCast(svc.len), svc.ptr, account.len, account.ptr, @intCast(value.len), value.ptr, null) != 0)
+        return KeystoreError.WriteFailed;
 }
 
 fn darwinDelete(allocator: std.mem.Allocator, svc: []const u8) !void {

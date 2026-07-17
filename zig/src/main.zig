@@ -268,9 +268,9 @@ fn usage() void {
             \\server-determined.
             \\
             \\Default (no flag) → shared visibility. The row joins the
-            \\substrate's shared graph: cloud declare via Unbrowse,
-            \\transparent fallback to local LLM + local declare on
-            \\wallet-402 so the substrate keeps thinking offline.
+            \\substrate's shared graph: cloud declare via Unbrowse;
+            \\failed or unpaid requests remain visible and retryable;
+            \\there is no local inference fallback.
             \\
             \\--private → never leaves this machine. Runs the one-shot
             \\Genesis-days lifecycle against the on-disk ledger only.
@@ -291,9 +291,12 @@ fn usage() void {
             \\  {s} status [<id>]
             \\  {s} discover [--scope all|project|global]
             \\  {s} search --context <text>
+            \\  {s} tick
+            \\  {s} serve [--interval <seconds>]
+            \\  {s} import-root <seed-file>
             \\  {s} self [--json]
             \\
-        , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
+        , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
     }
 }
 
@@ -2874,7 +2877,13 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
             const recorded_opt = contract.cache.findLatestResolvedSnapshot(allocator, env, id) catch null;
             if (recorded_opt) |recorded| {
                 defer allocator.free(recorded);
-                if (std.mem.eql(u8, sig_chain, recorded)) {
+                const resolved_ts_opt = contract.cache.findLatestResolvedTs(allocator, env, id) catch null;
+                defer if (resolved_ts_opt) |resolved_ts| allocator.free(resolved_ts);
+                const explicitly_invalidated = if (resolved_ts_opt) |resolved_ts|
+                    contract.cache.hasInvalidationAfter(allocator, env, id, resolved_ts) catch false
+                else
+                    false;
+                if (std.mem.eql(u8, sig_chain, recorded) and !explicitly_invalidated) {
                     contract.cache.appendCacheCheckRow(allocator, env, id, .hit, sig_chain, recorded) catch |e| {
                         substrateEvidence("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
                     };
@@ -2884,7 +2893,11 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
                 contract.cache.appendCacheCheckRow(allocator, env, id, .miss, sig_chain, recorded) catch |e| {
                     substrateEvidence("cache_check: append failed for {s}: {s} — verdict only on stderr\n", .{ id, @errorName(e) });
                 };
-                evidencePrint("{s} pointer chain drifted (was {s}, now {s})\n", .{ id, recorded[0..16], sig_chain[0..16] });
+                if (explicitly_invalidated) {
+                    evidencePrint("{s} occurrence/dependency invalidated cached truth\n", .{id});
+                } else {
+                    evidencePrint("{s} pointer chain drifted (was {s}, now {s})\n", .{ id, recorded[0..16], sig_chain[0..16] });
+                }
             } else {
                 // purge:verdict-stale (42bce795) — chain-present-without-recorded
                 // collapses into .miss; behavior identical (fall through, re-evaluate).
@@ -3246,6 +3259,151 @@ fn backfillUnresolvedDeep(allocator: std.mem.Allocator, env: std.process.Environ
     return backfillUnresolvedWithBudget(allocator, env, skip_id, 1024, 32);
 }
 
+/// A satisfied row remains ready only when its dependency/occurrence snapshot
+/// changed. This is the single cache predicate shared by heartbeat, drill and
+/// the resident serve loop.
+fn isStaleSatisfied(allocator: std.mem.Allocator, env: std.process.Environ, id: []const u8) bool {
+    const recorded_opt = contract.cache.findLatestResolvedSnapshot(allocator, env, id) catch return false;
+    const recorded = recorded_opt orelse return true;
+    defer allocator.free(recorded);
+    const current_opt = contract.cache.computeSignatureChain(allocator, env, id) catch return false;
+    const current = current_opt orelse return false;
+    defer allocator.free(current);
+    if (!std.mem.eql(u8, recorded, current)) return true;
+    const ts_opt = contract.cache.findLatestResolvedTs(allocator, env, id) catch return false;
+    const ts = ts_opt orelse return true;
+    defer allocator.free(ts);
+    return contract.cache.hasInvalidationAfter(allocator, env, id, ts) catch false;
+}
+
+const TriggerSpec = union(enum) {
+    none,
+    at_unix: i64,
+    repeat_seconds: u64,
+};
+
+fn triggerToken(text: []const u8, prefix: []const u8) ?[]const u8 {
+    const at = std.mem.indexOf(u8, text, prefix) orelse return null;
+    const start = at + prefix.len;
+    var end = start;
+    while (end < text.len and !std.ascii.isWhitespace(text[end]) and text[end] != ',' and text[end] != ']') : (end += 1) {}
+    return if (end > start) text[start..end] else null;
+}
+
+/// Canonical scheduler syntax is deliberately small:
+///   at:<unix-seconds>
+///   repeat:<N>s | repeat:<N>m | repeat:<N>h
+/// Legacy cron strings remain parseable ledger data but are not a second
+/// scheduler path; callers translate them to an interval at declaration.
+fn triggerFor(r: Row) TriggerSpec {
+    if (triggerToken(r.action, "at:") orelse triggerToken(r.plan, "at:")) |tok| {
+        if (std.fmt.parseInt(i64, tok, 10)) |unix| return .{ .at_unix = unix } else |_| {}
+    }
+    if (triggerToken(r.action, "repeat:") orelse triggerToken(r.plan, "repeat:")) |tok| {
+        if (std.mem.eql(u8, tok, "always")) return .{ .repeat_seconds = 1 };
+        if (tok.len < 2) return .none;
+        const multiplier: u64 = switch (tok[tok.len - 1]) {
+            's' => 1,
+            'm' => 60,
+            'h' => 3600,
+            else => return .none,
+        };
+        const n = std.fmt.parseInt(u64, tok[0 .. tok.len - 1], 10) catch return .none;
+        if (n == 0 or n > std.math.maxInt(u64) / multiplier) return .none;
+        return .{ .repeat_seconds = n * multiplier };
+    }
+    return .none;
+}
+
+fn materializeDueTriggers(allocator: std.mem.Allocator, env: std.process.Environ) !usize {
+    const rows = try parseRows(allocator, env);
+    defer allocator.free(rows);
+    const now: i64 = time(null);
+    var seen: std.StringHashMap(void) = .init(allocator);
+    defer seen.deinit();
+    var fired: usize = 0;
+    var i = rows.len;
+    while (i > 0) : (i -= 1) {
+        const r = rows[i - 1];
+        if (!std.mem.eql(u8, r.event, "declared") or seen.contains(r.id) or isDead(rows, r.id)) continue;
+        try seen.put(r.id, {});
+        const occurrence = switch (triggerFor(r)) {
+            .none => continue,
+            .at_unix => |due| blk: {
+                if (now < due) continue;
+                break :blk try std.fmt.allocPrint(allocator, "at:{d}", .{due});
+            },
+            .repeat_seconds => |period| blk: {
+                const bucket: u64 = @intCast(@divFloor(now, @as(i64, @intCast(period))));
+                break :blk try std.fmt.allocPrint(allocator, "repeat:{d}:{d}", .{ period, bucket });
+            },
+        };
+        defer allocator.free(occurrence);
+        const prior_opt = contract.cache.findLatestOccurrence(allocator, env, r.id) catch null;
+        defer if (prior_opt) |prior| allocator.free(prior);
+        if (prior_opt != null and std.mem.eql(u8, prior_opt.?, occurrence)) continue;
+        try contract.cache.appendTriggeredRow(allocator, env, r.id, occurrence);
+        if (isSatisfied(rows, r.id)) {
+            try contract.cache.appendCacheInvalidatedRow(allocator, env, r.id, r.id, "trigger_occurrence_changed");
+        }
+        fired += 1;
+    }
+    return fired;
+}
+
+/// The one closed-loop step used by explicit tick, the resident server and
+/// future API/MCP adapters.
+fn resolverTick(allocator: std.mem.Allocator, env: std.process.Environ) !void {
+    const triggered = try materializeDueTriggers(allocator, env);
+    if (triggered > 0) evidencePrint("tick: materialized {d} due occurrence(s)\n", .{triggered});
+    try backfillUnresolvedWithBudget(allocator, env, "", 1024, 32);
+}
+
+fn cmdTick(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    if (args.len != 0) {
+        err("tick takes no arguments\n");
+        return 2;
+    }
+    try resolverTick(allocator, env);
+    return 0;
+}
+
+fn cmdServe(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    var interval: u32 = 5;
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--interval") and i + 1 < args.len) {
+            interval = std.fmt.parseInt(u32, args[i + 1], 10) catch return 2;
+            i += 1;
+        } else {
+            errPrint("serve unknown argument: {s}\n", .{args[i]});
+            return 2;
+        }
+    }
+    if (interval == 0) interval = 1;
+    evidencePrint("serve: closed loop active (interval={d}s)\n", .{interval});
+    while (true) {
+        resolverTick(allocator, env) catch |e| {
+            evidencePrint("serve: tick failed: {s}; retrying\n", .{@errorName(e)});
+        };
+        _ = sleep(interval);
+    }
+}
+
+fn cmdImportRoot(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    if (args.len != 1) {
+        err("import-root requires one 64-hex seed or Base64 Ed25519 keypair file\n");
+        return 2;
+    }
+    const pubkey = lineage_lib.importRootKeyFileKeychainOnly(allocator, env, args[0]) catch |e| {
+        errPrint("import-root failed: {s}\n", .{@errorName(e)});
+        return 1;
+    };
+    outPrint("root imported to native keychain; identity={s}\n", .{pubkey});
+    out("source file was not modified; remove it yourself after verifying the build\n");
+    return 0;
+}
+
 fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.Environ, skip_id: []const u8, budget: u32, max_passes: u32) anyerror!void {
     if (bioSabbathHolds(env)) {
         const ts_now: i64 = time(null);
@@ -3283,19 +3441,10 @@ fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.E
             if (seen.contains(r.id)) continue;
             try seen.put(r.id, {});
             if (isDead(rows, r.id)) continue;
-            // Stale-satisfied check (Lewis 2026-05-27 gap `abe3c445`):
-            // a satisfied row whose latest cache_invalidated timestamp
-            // is AFTER its latest cache_resolved timestamp is stale —
-            // a descendant value changed and the row needs to
-            // re-resolve. Without this check, descendant value-changes
-            // never cascade up to satisfied ancestors (commandment-9
-            // silent-drift in waiting).
-            // STUB pending full impl — for now preserves prior skip; the
-            // proper isStaleSatisfied (gap `abe3c445`) needs cache.zig's
-            // hasInvalidationAfter + cache_resolved-ts lookup. The
-            // STRUCTURAL slot is here so the helper drops in without
-            // re-finding the call site.
-            if (isSatisfied(rows, r.id)) continue;
+            // Resolved work is a cache hit unless its dependency snapshot or
+            // trigger occurrence changed. This closes the old gap where the
+            // sweep skipped satisfied ancestors before consulting the cache.
+            if (isSatisfied(rows, r.id) and !isStaleSatisfied(allocator, env, r.id)) continue;
             // Orphan filter — Decalogue cmd 5 (no declared row → nothing to fire).
             const decl_opt = latestDeclared(rows, r.id);
             if (decl_opt == null) continue;
@@ -3412,20 +3561,13 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
     const cid = try contract.declare(allocator, env, d.plan, action, .{ .parent_id = null });
     defer allocator.free(cid);
     outPrint("{s}\n", .{cid});
-    // Register-only is the DEFAULT (SKILL.md: recording is quiet bookkeeping
-    // that "must never block or slow the real work"): the declared row is
-    // written, the id is printed, done — sub-second. Resolution is a
-    // deliberate act, opted into per call:
-    //   --fast     resolve this lineage only (per-frame ARC gameplay)
-    //   --resolve  full lifecycle: word fanout + materialize + resolveLineage
-    //   drill:*    always resolves — the standing drill contract IS the
-    //              ledger-wide resolver (the only backfill entry point).
-    const is_drill = std.mem.startsWith(u8, action, "drill:");
-    if (!d.resolve and !d.fast and !is_drill) return 0;
-    if (d.fast and !d.resolve) {
-        _ = resolveLineage(allocator, env, cid) catch {};
-        return 0;
-    }
+    // Bookkeeping-only registration must never enter the resolver. Skills use
+    // this path to durably record a goal while the calling LLM performs the
+    // work and verification itself.
+    if (d.register) return 0;
+    // One mutation path: declaration always enters the same resolver tick.
+    // --fast/--resolve remain accepted for compatibility; --resolve still
+    // materializes its historical word children.
     if (d.resolve) {
         // Every word in the plan is itself a /contract — fan out one
         // `word:<tok>` child per unique token, lineage-signed under cid.
@@ -3443,8 +3585,8 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
             evidencePrint("materialize skipped: {s}\n", .{@errorName(e)});
         };
     }
-    const rc = try resolveLineage(allocator, env, cid);
-    return if (rc == 0) 0 else 1;
+    try resolverTick(allocator, env);
+    return 0;
 }
 
 /// cmdSpeak — the single Word.
@@ -4534,9 +4676,9 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     switch (effective_mode) {
         .shared => {
             // Shared visibility: row joins the substrate's shared graph via
-            // Unbrowse's cloud compiler. On 402 (wallet empty), transparently
-            // falls back to local LLM + local declare so the substrate keeps
-            // thinking offline — the user never sees the transport seam.
+            // Unbrowse's cloud LLM compiler. There is deliberately no local
+            // reasoning-model fallback: failed requests stay visible, and a
+            // 402 is queued for a later funded retry.
             // GATE — only signed/attested binaries may invoke the LLM compiler.
             if (!assertBinaryIntegrityForLlm(allocator, env)) return 2;
             const body = client.declareRemoteAiko(allocator, env, safe_plan, action, null, null, null, null, null, null, null) catch |e| {
@@ -5671,6 +5813,7 @@ fn cmdBuild(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     const cid = try contract.declare(allocator, env, plan, action, opts);
     defer allocator.free(cid);
     outPrint("{s}\n", .{cid});
+    try resolverTick(allocator, env);
     return 0;
 }
 
@@ -5704,6 +5847,7 @@ fn cmdRun(allocator: std.mem.Allocator, env: std.process.Environ, args: []const 
             const cid = try contract.declare(allocator, env, plan, action, opts);
             defer allocator.free(cid);
             outPrint("{s}\n", .{cid});
+            try resolverTick(allocator, env);
             return 0;
         },
         .iterated => {
@@ -5715,6 +5859,7 @@ fn cmdRun(allocator: std.mem.Allocator, env: std.process.Environ, args: []const 
             const proof = sh.proof orelse "";
             try contract.recordIteration(allocator, env, id, wave, 0, proof);
             outPrint("{s}\n", .{id});
+            try resolverTick(allocator, env);
             return 0;
         },
         else => {
@@ -5750,6 +5895,7 @@ fn cmdEval(allocator: std.mem.Allocator, env: std.process.Environ, args: []const
     const wave: u32 = sh.wave orelse 1;
     try contract.markSatisfied(allocator, env, id, wave, sh.proof);
     outPrint("{s}\n", .{id});
+    try resolverTick(allocator, env);
     return 0;
 }
 
@@ -5908,6 +6054,17 @@ fn cmdSignChild(allocator: std.mem.Allocator, env: std.process.Environ, args: []
         return 2;
     }
     const child_path = args[0];
+
+    // A root import intentionally changes the signing identity. Refuse to
+    // extend an old binary lineage when this parent binary's sidecar no longer
+    // verifies under the active root; build-fractal then takes its existing
+    // bootstrap-fallback path and roots the new identity cleanly.
+    const own_path = try ownBinaryPath(allocator);
+    defer allocator.free(own_path);
+    contract.Lineage.verifyBinary(allocator, env, own_path) catch {
+        err("_sign-child: parent binary is not signed by the active root; bootstrap the new root lineage\n");
+        return 2;
+    };
 
     // Resolve OUR own L8 row id — this becomes the new row's parent_id.
     var own_sha_buf: [64]u8 = undefined;
@@ -6154,6 +6311,9 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     if (std.mem.eql(u8, verb, "status")) return try cmdStatus(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "discover")) return try cmdDiscover(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "search")) return try cmdSearch(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "tick")) return try cmdTick(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "serve")) return try cmdServe(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "import-root")) return try cmdImportRoot(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "self")) return cmdSelf(rest);
     if (std.mem.eql(u8, verb, "_mark")) return try cmdMark(allocator, init.environ, rest);
     // Canonical trio (Lewis 2026-05-26): read /contract JSON from stdin,

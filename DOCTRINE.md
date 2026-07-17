@@ -3726,11 +3726,13 @@ contract:<X>     — generic dependency / ordering / waiting edge
 inhibits:<X>     — negative-polarity edge (this fires only if X is NOT terminal)
 posthook:<X>     — delivery target — what to PUSH when I resolve
                    (semantically different — leaving the substrate)
-at:<RFC3339>     — wall-clock time gate (genuinely different — time, not dep)
-repeat:<cron>    — recurrence pattern (genuinely different — fire schedule)
+at:<unix-seconds> — one-shot wall-clock gate materialized by resolver tick
+repeat:<N>s|m|h  — interval occurrence materialized by resolver tick
 ```
 
-Five canonical kinds; one absorbs four redundant ones. The cache's
+Five canonical kinds; one absorbs four redundant ones. Scheduled kinds do not
+create a second executor: `tick` materializes a unique occurrence and the same
+cache/resolver path executes it. The cache's
 `collectDependencyIds` walks exactly one synapse kind (`contract:`)
 plus `parent_id`-children. The other kinds remain parseable by
 `pointer.zig` for historical-row backward compat AND for future

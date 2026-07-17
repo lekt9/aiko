@@ -11,6 +11,85 @@ aiko "<goal>" --local
 
 The binary is the public verb. It accepts one goal and one execution mode.
 
+## The reduced closed loop
+
+There is one execution path:
+
+```text
+declare → trigger → resolve dependencies → cache hit or execute → verdict
+        ↑                                                   │
+        └──────────────── invalidate dependants ────────────┘
+```
+
+Every mutation-facing CLI command enters the same resolver tick. Run it once
+with:
+
+```bash
+contract tick
+```
+
+or keep it resident:
+
+```bash
+contract serve --interval 5
+```
+
+Import an existing root without placing it in argv or logs:
+
+```bash
+chmod 600 /path/to/root-seed.hex
+contract import-root /path/to/root-seed.hex
+```
+
+The file may contain either a 64-character hexadecimal seed or a Base64-encoded
+64-byte Ed25519 `seed || public-key` pair. The latter is checked for internal
+seed/public-key consistency. The importer writes through Security.framework,
+reads the key back for verification, removes managed plaintext root mirrors,
+and prints only the derived public identity. It never deletes the source file;
+remove that file yourself after the signed build verifies. A Keychain-only root
+will not be silently copied back to `~/.contracts/root.key`.
+
+## On-chain execution
+
+On-chain/Solana submission is disabled by default. The local ledger, signing,
+cache, scheduler, and resolver do not require it.
+
+The only value-moving executable is built separately:
+
+```bash
+cd libcontract
+zig build broadcast-tool
+```
+
+Even when built, every submission requires an explicit runtime flag:
+
+```bash
+broadcast-tool --onchain <keypair.json> <card.json> <mainnet|devnet|localhost>
+```
+
+Without `--onchain` it refuses before loading a keypair or contacting an RPC
+endpoint. Transaction construction and card generation remain available as
+offline, non-broadcast operations.
+
+The canonical dependency is `contract:<id>`. Existing `blocked_by`, `bind`,
+`prehook`, and composition action names remain readable for ledger
+compatibility, but new contracts should express ordering with `contract:<id>`.
+Truth aggregation defaults to all dependencies; use `quorum:<n>` only when
+independent corroboration is actually required.
+
+Schedules are occurrence-keyed:
+
+```text
+at:<unix-seconds>
+repeat:<N>s
+repeat:<N>m
+repeat:<N>h
+```
+
+An occurrence is materialized once. A new occurrence invalidates cached truth
+and sends the contract back through the same resolver. There is no separate
+cron/pod execution path.
+
 The older `contract` binary remains for compatibility/context activation flows.
 It must behave as an alias over the same aiko shape, not as a second interface.
 

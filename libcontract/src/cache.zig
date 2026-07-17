@@ -317,6 +317,88 @@ pub fn findLatestResolvedSnapshot(
     return null;
 }
 
+/// Timestamp of the latest cache_resolved row for `id`. Kept beside
+/// findLatestResolvedSnapshot so stale detection has one canonical history
+/// reader instead of reimplementing JSONL scans in the resolver.
+pub fn findLatestResolvedTs(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+) !?[]u8 {
+    const body = ledger.readAllShared(allocator, env) catch return null;
+    var offsets: std.ArrayList(usize) = .empty;
+    defer offsets.deinit(allocator);
+    try offsets.append(allocator, 0);
+    for (body, 0..) |ch, i| {
+        if (ch == '\n' and i + 1 < body.len) try offsets.append(allocator, i + 1);
+    }
+    var k = offsets.items.len;
+    while (k > 0) : (k -= 1) {
+        const start = offsets.items[k - 1];
+        const end = std.mem.indexOfScalarPos(u8, body, start, '\n') orelse body.len;
+        const line = body[start..end];
+        const ev = extractStringField(line, "event") orelse continue;
+        if (!std.mem.eql(u8, ev, "cache_resolved")) continue;
+        const rid = extractStringField(line, "id") orelse continue;
+        if (!std.mem.eql(u8, rid, id)) continue;
+        const ts = extractStringField(line, "ts") orelse continue;
+        return try allocator.dupe(u8, ts);
+    }
+    return null;
+}
+
+/// Append the canonical trigger occurrence. `occurrence` is part of the
+/// effective resolution key: the same occurrence is idempotent, while a new
+/// occurrence invalidates a previously resolved contract.
+pub fn appendTriggeredRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+    occurrence: []const u8,
+) !void {
+    var ts_buf: [64]u8 = undefined;
+    const ts = try nowIsoUtc(&ts_buf);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "{\"event\": \"triggered\", \"id\": ");
+    try writeJsonString(&buf, allocator, id);
+    try buf.appendSlice(allocator, ", \"occurrence\": ");
+    try writeJsonString(&buf, allocator, occurrence);
+    try buf.appendSlice(allocator, ", \"ts\": ");
+    try writeJsonString(&buf, allocator, ts);
+    try buf.append(allocator, '}');
+    const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
+/// Latest materialized occurrence for a contract.
+pub fn findLatestOccurrence(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+) !?[]u8 {
+    const body = ledger.readAllShared(allocator, env) catch return null;
+    var offsets: std.ArrayList(usize) = .empty;
+    defer offsets.deinit(allocator);
+    try offsets.append(allocator, 0);
+    for (body, 0..) |ch, i| {
+        if (ch == '\n' and i + 1 < body.len) try offsets.append(allocator, i + 1);
+    }
+    var k = offsets.items.len;
+    while (k > 0) : (k -= 1) {
+        const start = offsets.items[k - 1];
+        const end = std.mem.indexOfScalarPos(u8, body, start, '\n') orelse body.len;
+        const line = body[start..end];
+        const ev = extractStringField(line, "event") orelse continue;
+        if (!std.mem.eql(u8, ev, "triggered")) continue;
+        const rid = extractStringField(line, "id") orelse continue;
+        if (!std.mem.eql(u8, rid, id)) continue;
+        const occurrence = extractStringField(line, "occurrence") orelse continue;
+        return try allocator.dupe(u8, occurrence);
+    }
+    return null;
+}
+
 /// Has a `cache_invalidated` row been appended for `id` after timestamp
 /// `since_ts_iso`? Used to honor cascaded invalidations — even when the
 /// raw snapshot still matches, an explicit invalidation downgrades the
