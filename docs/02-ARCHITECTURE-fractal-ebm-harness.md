@@ -106,7 +106,7 @@ stated plainly in the THESIS and `05-RISK-honest-wall.md`.
 
 | Concern | Modules (`libcontract/src/`) | Status |
 |---|---|---|
-| Energy harness | `embed`, `ebm`, `energy_route`, `pattern`, `fractal` + the `main.zig` router | **BUILT+PROVEN** (router measured) |
+| Energy harness | `embed`, `bge` (baked BERT), `ebm`, `route` (`recommend`), `pattern`, `fractal` | **BUILT+PROVEN** (router measured — 88.9% LOO, `route_bench.zig`) |
 | Contract substrate | `contract`, `ledger`, `pointer`, `terminal`, `cache`, `guards`, `capability` | **BUILT+PROVEN** |
 | Identity / truth-root | `lineage`, `keystore`, `bible`, `verses` | **BUILT+PROVEN** |
 | Commons economics | `cas`, `reward`, `usage`, `usage_ledger`, `epoch` | **BUILT+PROVEN** (local) |

@@ -11,7 +11,7 @@
 > maintainers, forfeit→honest, nothing burned — built + proven on `arc-lean` as ~18
 > zero-dependency modules. Canonical spec: `ECONOMICS-cooperative-commons.md`. It
 > **coexists with (does not supersede)** the canonical Vine Doctrine (slash-to-burn);
-> see SKILL.md → `## The Cooperative Commons (arc-lean)`.
+> see DOCTRINE.md → `## The Cooperative Commons (arc-lean)`.
 
 ---
 

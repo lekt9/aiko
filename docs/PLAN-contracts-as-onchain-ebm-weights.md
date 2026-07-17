@@ -10,12 +10,13 @@ on-chain**, local machine as a **frecency cache**. Plus: make the EBM actually
 > to used + verified maintainers; forfeit→honest; nothing burned) are built + proven
 > on `arc-lean` as ~18 zero-dependency modules. Canonical spec:
 > `ECONOMICS-cooperative-commons.md`. It coexists with (does not supersede) the
-> canonical Vine Doctrine; see SKILL.md → `## The Cooperative Commons (arc-lean)`.
+> canonical Vine Doctrine; see DOCTRINE.md → `## The Cooperative Commons (arc-lean)`.
 
 **Corrected premise (verified this session — the earlier draft was wrong).**
 The substrate already trains a real fractal EBM *on-fire* — but on `main`, not
-arc-lean, and via `ebm.zig`/`ebm_store.zig`/`jepa.zig` (NOT `energy_route.zig`,
-which is mislabeled dead code = `binary_skill`). What's actually there:
+arc-lean, and via `ebm.zig`/`ebm_store.zig`/`jepa.zig` (the mislabeled dead
+`energy_route.zig`/`binary_skill.zig` have since been deleted from arc-lean).
+What's actually there:
 - **`ebm.zig`**: `E(x) = −cosine(x, centroid)`; the "weight" is a 256-d centroid
   `mean` + reward-mass `w`. Trained by a reward-weighted Hebbian fold on every
   declare/satisfy/die, with a 30-day freshness decay. Honest and shallow.
