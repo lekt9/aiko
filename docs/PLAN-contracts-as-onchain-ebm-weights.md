@@ -195,18 +195,26 @@ has). Port the `agency.zig` spend-gate FIRST.
 
 ## Status — Phase 1 (energy router): BUILT + benchmarked (2026-07)
 
-The energy router is live: `contract route "<goal>"` (also `contract_route` C-ABI,
-and aiko-cli via FFI). It trains a per-binary prototype from the ledger (satisfied
-goal → +1 toward that binary, died → −1), seeds cold-start from the binary lexicon,
-and argmin-energy picks the binary — no LLM. aiko-cli consults it as a soft prior
-each turn and feeds it every successful `bash` run, so it learns from real work.
+The energy router is live: `contract recommend "<goal>"` (also `contract_recommend`
+C-ABI, and aiko-cli via FFI) — ONE verb that returns both the argmin-energy binary
+and the nearest PROVEN command for it (the self-documented usage exemplar). It
+trains a per-binary prototype PURELY from the ledger (satisfied goal → +1 toward
+the binary its action named, died → −1) — no hardcoded lexicon, no cold-start
+seed: a binary becomes routable only after real use. aiko-cli consults it as a
+soft prior each turn and feeds it every successful command (full argv, not just
+the binary), so selection AND usage both learn from real work. No LLM.
 
-Honest benchmark (`zig test libcontract/src/route_bench.zig`, 54 goals × 6 binaries,
-leave-one-out): **57.4%** — 3.4× random (16.7%), keyword 1.9%, cold-start 31.5%.
-Strong where a binary's goals cluster (docker/npm ~89%, tar 67%, git 44%); weak on
-pure synonymy (grep 11% — search/find/hunt share no letters). Dropping function
-words from `embed.zig` (IDF-approx) lifted it 44%→57% and made the centroid beat
-1-NN — proving the shallow feature-hash embedding, not the routing, was the cap.
-The remaining gap needs a semantic embedding; the `embed`/`cosine` seam is ready
-for one. Phase-1 fork verdict: a real, useful soft prior — not yet a reliable
-standalone classifier.
+Embedding: the shallow feature-hash capped accuracy (44% → 57% after IDF-approx
+stopwords; grep 11% — pure synonymy was unreachable). Fixed by baking a REAL
+learned sentence embedder: bge-small-en-v1.5 as a pure-Zig 12-layer BERT over
+per-row int8 weights (`bge.zig`, @embedFile'd, zero runtime deps — matches its
+numpy golden reference at cosine > 0.999).
+
+Honest benchmark (`zig test libcontract/src/route_bench.zig -OReleaseFast`,
+54 goals × 6 binaries, leave-one-out, pure ledger): **88.9%** — 5.3× random
+(16.7%), keyword 1.9%; grep 89%, curl 100%; ~85% from a single training example
+per binary (k=1). Measured against real alternatives on the identical harness:
+GloVe-100 66.7%, nomic-embed 87.0%, bge-small 88.9%, Qwen3-0.6B 96.3% (the
+ceiling; 20× the size for +7pts — not worth the bundle). Phase-1 fork verdict:
+a genuinely trustworthy soft prior (~9/10) that generalizes by meaning and
+self-documents how each tool was successfully used.

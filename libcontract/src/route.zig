@@ -1,14 +1,15 @@
 //! route.zig — the LEARNED energy router, ONE implementation shared by the CLI
-//! (`contract route`), the C ABI (`contract_route`, so aiko-cli can call it via
-//! FFI), and any future caller.
+//! (`contract recommend`), the C ABI (`contract_recommend`, so aiko-cli can call
+//! it via FFI), and any future caller. One verb: recommend().
 //!
 //! It trains a per-binary energy prototype straight from the ledger — the ledger
 //! IS the weights (like energyRankCandidates): every SATISFIED contract folds its
 //! GOAL into the prototype of the binary its action named (+1, Hebbian); every
-//! DIED one inhibits it (−1). Then it returns the argmin-energy binary for a new
-//! goal — the binary whose past successes sit closest to it, generalizing to goals
-//! never seen (ebm.zig scores by cosine distance, not exact match). No LLM. Cold
-//! (nothing learned) → null (honest refusal, never a fabricated route).
+//! DIED one inhibits it (−1). recommend() then returns the argmin-energy binary
+//! for a new goal — the binary whose past successes sit closest to it,
+//! generalizing to goals never seen — PLUS the nearest proven command for it (the
+//! self-documented usage exemplar). No LLM. Cold (nothing learned) → null
+//! (honest refusal, never a fabricated route).
 
 const std = @import("std");
 const ledger = @import("ledger.zig");

@@ -169,7 +169,7 @@ test "train-on-fire generalizes to held-out contexts (not memorization)" {
 }
 
 test "per-binary routing: trains from (goal→binary) fires and routes HELD-OUT goals" {
-    // This is the `contract route` loop at the unit level: one prototype per binary,
+    // This is the `contract recommend` loop at the unit level: one prototype per binary,
     // trained on the GOALS where that binary succeeded (reward +1). Then goals never
     // trained on must still route to the right binary by argmin energy (generalize).
     var git: Prototype = .{};

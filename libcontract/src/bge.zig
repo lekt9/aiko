@@ -233,8 +233,9 @@ fn linear(x: []const f32, T: usize, in: usize, out: usize, y: []f32, wbase: []co
     }
 }
 
-/// Embed `text` into `out` (len == DIM), CLS-pooled + L2-normalized. Never fails
-/// (empty/whitespace text → zero vector, no NaN), matching embedSemantic's contract.
+/// Embed `text` into `out` (len == DIM), CLS-pooled + L2-normalized. Never fails:
+/// empty/whitespace/unembeddable text → the zero vector (no NaN), so callers can
+/// treat the output as always-valid.
 pub fn embed(text: []const u8, out: []f32) void {
     std.debug.assert(out.len == DIM);
     ensureReady();

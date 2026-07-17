@@ -6,3 +6,12 @@ __pycache__/
 zig-out/
 contracts/
 
+
+# machine-local state — never committed
+.claude/
+.contract-package
+.graff/
+.harness/
+harness.trace.jsonl
+harness.trajectory.jsonl
+deploy/
