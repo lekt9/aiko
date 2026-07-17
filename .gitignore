@@ -15,3 +15,4 @@ contracts/
 harness.trace.jsonl
 harness.trajectory.jsonl
 deploy/
+contract-docs-pdf.zip
