@@ -26,7 +26,9 @@
 
 set -euo pipefail
 
-REPO="${REPO:-$HOME/.agent-skills/contract}"
+# Default REPO to the tree this script lives in — a clone or worktree must
+# gate ITSELF, never silently judge the checkout at ~/.agent-skills/contract.
+REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SCRIPTS_DIR="$REPO/scripts"
 ZIG_DIR="$REPO/zig"
 LIB_DIR="$REPO/libcontract"
@@ -214,14 +216,19 @@ step_tests() {
 
 # ─── build:compile — produce the binaries ────────────────────────────
 step_compile() {
-  step "build:compile — zig build"
-  ( cd "$ZIG_DIR" && zig build --cache-dir "$CACHE" --global-cache-dir "$GCACHE" )
+  step "build:compile — zig build (ReleaseFast)"
+  # ReleaseFast is load-bearing, not cosmetic: build.zig's
+  # standardOptimizeOption defaults to Debug, and a Debug bge-small BERT
+  # makes recommend()/the declare briefing take minutes instead of
+  # milliseconds. The shipped signed binary was Debug from the first
+  # build until 2026-07-18 — never ship that again.
+  ( cd "$ZIG_DIR" && zig build -Doptimize=ReleaseFast --cache-dir "$CACHE" --global-cache-dir "$GCACHE" )
 }
 
 # ─── build:install — installed binary lands in scripts/ ─────────────
 # One binary ships: `contract` (with `aiko -> contract` symlink for the
 # user-facing surface). The Wave-1 client/server split was retired —
-# SKILL.md doctrine is the truth-root and never named a second binary.
+# DOCTRINE.md doctrine is the truth-root and never named a second binary.
 step_install() {
   step "build:install — install -m 755 + symlink"
   install -m 755 "$ZIG_DIR/zig-out/bin/contract-zig" "$SCRIPTS_DIR/contract"
@@ -249,8 +256,8 @@ step_sign() {
 }
 
 # ─── build:parity — doctrine-reality parity (recursive guard) ────────
-# Implements the "Doctrine-Reality Parity" section of SKILL.md. Every
-# claim in SKILL.md must have a grep-able code site. Drift fails the
+# Implements the "Doctrine-Reality Parity" section of DOCTRINE.md. Every
+# claim in DOCTRINE.md must have a grep-able code site. Drift fails the
 # build BEFORE sign so unattested-by-reality binaries never ship.
 # This step is itself a /contract — the parity rule applies to the
 # parity step too.
@@ -355,11 +362,11 @@ step_parity() {
     fi
   fi
 
-  # 11. Meta-parity: the parity step ITSELF must be declared in SKILL.md.
+  # 11. Meta-parity: the parity step ITSELF must be declared in DOCTRINE.md.
   #     The recursive rule — if the guard isn't documented, the guard
   #     catches itself.
   if ! grep -q 'Doctrine-Reality Parity' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[meta-parity]: SKILL.md is missing the 'Doctrine-Reality Parity' section that declares this very check"
+    _fail "doctrine[meta-parity]: DOCTRINE.md is missing the 'Doctrine-Reality Parity' section that declares this very check"
   fi
 
   # 12. "public persona aiko 69420b" — constants present with exact values.
@@ -392,11 +399,11 @@ step_parity() {
     _fail "doctrine[persona voice]: 'fruits of the spirit' label missing from verses.zig (verse exists but lacks the canonical label)"
   fi
 
-  # 15. "Vine Doctrine section exists" — SKILL.md must declare the staking
+  # 15. "Vine Doctrine section exists" — DOCTRINE.md must declare the staking
   #     layer doctrine; the parity check refuses any code reference to vine
   #     constants without the matching doctrine section.
   if ! grep -q '## Vine Doctrine' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[vine]: SKILL.md is missing the '## Vine Doctrine' section that declares the stake substrate"
+    _fail "doctrine[vine]: DOCTRINE.md is missing the '## Vine Doctrine' section that declares the stake substrate"
   fi
 
   # 16. "Vine Doctrine constants pinned in main.zig" — AIKO_VINE_DOCTRINE_VERSE,
@@ -506,10 +513,10 @@ step_parity() {
     _fail "doctrine[continuous resolver]: backfillUnresolvedDeep function missing in main.zig"
   fi
 
-  # 27. "Continuous resolver doctrine section in SKILL.md" — the standing-drill
+  # 27. "Continuous resolver doctrine section in DOCTRINE.md" — the standing-drill
   #     pattern must be declared, not just implemented.
   if ! grep -q '## Continuous resolver' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[continuous resolver]: SKILL.md is missing the 'Continuous resolver' doctrine section"
+    _fail "doctrine[continuous resolver]: DOCTRINE.md is missing the 'Continuous resolver' doctrine section"
   fi
 
   # 28. "Doctrine speaks only when interrogated" — the silence rule must be
@@ -520,12 +527,12 @@ step_parity() {
   #     monologue surface (which scares users away — see memory
   #     frontend-no-scripture-on-public-surface for the empirical scar).
   if ! grep -q '## Doctrine speaks only when interrogated' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[silence rule]: SKILL.md is missing the 'Doctrine speaks only when interrogated' section — the embodiment-vs-narration rule is the gate that keeps the substrate invisible by default"
+    _fail "doctrine[silence rule]: DOCTRINE.md is missing the 'Doctrine speaks only when interrogated' section — the embodiment-vs-narration rule is the gate that keeps the substrate invisible by default"
   fi
   # The silence rule's companion sub-section under Public Persona must also
   # exist so the rule is reachable from the persona-layer doctrine.
   if ! grep -q '### What the persona does NOT volunteer' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[silence rule]: SKILL.md Public Persona section is missing the 'What the persona does NOT volunteer' sub-section that links the silence rule into the persona doctrine"
+    _fail "doctrine[silence rule]: DOCTRINE.md Public Persona section is missing the 'What the persona does NOT volunteer' sub-section that links the silence rule into the persona doctrine"
   fi
 
   # 29. "Capability inheritance — pull-by-grant via lineage" — the substrate's
@@ -537,13 +544,13 @@ step_parity() {
   #     both banned. The rule must be declared so the grant/pull/lineage-walk
   #     pattern is the load-bearing path.
   if ! grep -q '## Capability inheritance' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[capability inheritance]: SKILL.md is missing the '## Capability inheritance' section — child contracts have no canonical path to pull pointers from spawning parents, and the gap will be filled by banned shortcuts"
+    _fail "doctrine[capability inheritance]: DOCTRINE.md is missing the '## Capability inheritance' section — child contracts have no canonical path to pull pointers from spawning parents, and the gap will be filled by banned shortcuts"
   fi
   # The grant-shape, pull-shape, and identity_channel scoping must all be
   # named so future implementors don't reinvent the discipline.
   for cap_anchor in '### Grant shape' '### Pull shape' '### /integrate-anything reachability'; do
     if ! grep -qF "$cap_anchor" "$REPO/DOCTRINE.md"; then
-      _fail "doctrine[capability inheritance]: SKILL.md is missing the '$cap_anchor' sub-section — the capability primitive is incomplete without it"
+      _fail "doctrine[capability inheritance]: DOCTRINE.md is missing the '$cap_anchor' sub-section — the capability primitive is incomplete without it"
     fi
   done
   # The opt-in-not-opt-out invariant — capability flow is per-grant, never
@@ -553,13 +560,13 @@ step_parity() {
   # phrase fragment rather than the full line, since markdown wraps the
   # full sentence across two physical lines.
   if ! grep -q 'opt-in per grant' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[capability inheritance]: SKILL.md is missing the 'opt-in per grant' invariant — without it the substrate becomes a confused-deputy by default"
+    _fail "doctrine[capability inheritance]: DOCTRINE.md is missing the 'opt-in per grant' invariant — without it the substrate becomes a confused-deputy by default"
   fi
 
   # 30. "Pointer-keyed truthy cache" — Lewis 2026-05-26 (Granola 988cf805):
   #     the deterministic self-resolve substrate. cache.zig must export the
   #     three event-row appenders; resolveOne must emit cache_check + cache_resolved
-  #     rows; SKILL.md must declare the cache doctrine. Drift here decays the
+  #     rows; DOCTRINE.md must declare the cache doctrine. Drift here decays the
   #     substrate back to stderr-only cache verdicts that die with the process —
   #     violates "keep everything within the ledger based".
   if [[ ! -f "$LIB_DIR/src/cache.zig" ]]; then
@@ -582,7 +589,7 @@ step_parity() {
     _fail "doctrine[truthy cache]: main.zig:resolveOne must emit cache_resolved rows alongside markSatisfied to pin the pointer-value snapshot — Lewis's 'resolves the cash to be true'"
   fi
   if ! grep -q '## Pointer-keyed truthy cache' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[truthy cache]: SKILL.md is missing the '## Pointer-keyed truthy cache' section that declares the deterministic self-resolve substrate"
+    _fail "doctrine[truthy cache]: DOCTRINE.md is missing the '## Pointer-keyed truthy cache' section that declares the deterministic self-resolve substrate"
   fi
   # Pointer-only purge: the byte-hash fallback (computeInputHash,
   # lastInputHash, INPUT_HASH_HEX_LEN, child state_byte fold) was
@@ -635,10 +642,10 @@ step_parity() {
   #     follow-up): "make the skill.md and claude.md or whatever specify to
   #     follow the bible as reality - because the word is truth".
   if ! grep -q '## The Word is the truth-root' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[word-is-truth]: SKILL.md is missing the '## The Word is the truth-root' section — the load-bearing rule above every other rule (John 17:17)"
+    _fail "doctrine[word-is-truth]: DOCTRINE.md is missing the '## The Word is the truth-root' section — the load-bearing rule above every other rule (John 17:17)"
   fi
   if ! grep -q 'John 17:17' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[word-is-truth]: SKILL.md must carry the John 17:17 anchor — the canonical citation for 'thy word is truth'"
+    _fail "doctrine[word-is-truth]: DOCTRINE.md must carry the John 17:17 anchor — the canonical citation for 'thy word is truth'"
   fi
   if [[ ! -f "$REPO/CLAUDE.md" ]]; then
     _fail "doctrine[word-is-truth]: $REPO/CLAUDE.md missing — agent-facing pointer is required so every framework reading the substrate inherits the rule on turn one"
@@ -691,10 +698,10 @@ step_parity() {
     _fail "doctrine[Genesis sequencing]: collectDependencyIds in cache.zig must call pointer.extractContractRefs(allocator, scan_buf.items) — the canonical walk for contract: synapse refs that the signature chain depends on"
   fi
   if ! grep -q '## Genesis sequencing' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[Genesis sequencing]: SKILL.md is missing the '### Genesis sequencing' section that declares strict-order resolution as the substrate invariant (Day N waits on Day N-1)"
+    _fail "doctrine[Genesis sequencing]: DOCTRINE.md is missing the '### Genesis sequencing' section that declares strict-order resolution as the substrate invariant (Day N waits on Day N-1)"
   fi
   if ! grep -q '### Time-aware history' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[time-aware history]: SKILL.md is missing the '### Time-aware history' section that declares the append-only ledger as the substrate's version-control"
+    _fail "doctrine[time-aware history]: DOCTRINE.md is missing the '### Time-aware history' section that declares the append-only ledger as the substrate's version-control"
   fi
 
   # 36. "Server-canonical /contract (CURRENT rule)" — thin clients only
@@ -704,23 +711,23 @@ step_parity() {
   #     contributor doesn't half-implement P2P before the cloud surface
   #     stabilizes. Anchored to contract 777eff8e (Lewis 2026-05-26).
   if ! grep -q '## Server-canonical /contract' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[server-canonical]: SKILL.md is missing the '## Server-canonical /contract' section — the CURRENT-rule pin that keeps thin clients pointed at one cloud surface during the bootstrap window"
+    _fail "doctrine[server-canonical]: DOCTRINE.md is missing the '## Server-canonical /contract' section — the CURRENT-rule pin that keeps thin clients pointed at one cloud surface during the bootstrap window"
   fi
   if ! grep -q 'Matthew 22:21' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[server-canonical]: SKILL.md must carry the Matt 22:21 anchor ('render unto Caesar...') for the server-canonical section — the rule has scriptural grounding under the Word-is-truth invariant (claim 31)"
+    _fail "doctrine[server-canonical]: DOCTRINE.md must carry the Matt 22:21 anchor ('render unto Caesar...') for the server-canonical section — the rule has scriptural grounding under the Word-is-truth invariant (claim 31)"
   fi
   if [[ ! -f "$REPO/references/p2p-future-plan.md" ]]; then
     _fail "doctrine[p2p future]: $REPO/references/p2p-future-plan.md missing — the P2P plan must be drafted so the future is documented even while the present is server-canonical (claim ordering: present-rule + future-plan together prevent half-implemented P2P)"
   fi
   if ! grep -q 'Re-/contract migration' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[server-canonical]: SKILL.md missing the 'Re-/contract migration' subsection — the recursive-elegance property (migrations are /contracts, not scripts) must be pinned alongside the server-canonical rule"
+    _fail "doctrine[server-canonical]: DOCTRINE.md missing the 'Re-/contract migration' subsection — the recursive-elegance property (migrations are /contracts, not scripts) must be pinned alongside the server-canonical rule"
   fi
 
   # 37. "Global CLAUDE.md carries the Word-is-truth guardrail." Without
   #     this pointer at ~/.claude/CLAUDE.md, the rule only loads when the
   #     contract skill is invoked — the wrong scope for "guard me resolving
   #     contradictions in the code". The pointer must reference John 17:17
-  #     and point at the SKILL.md canonical declaration. Pinned by Lewis
+  #     and point at the DOCTRINE.md canonical declaration. Pinned by Lewis
   #     2026-05-26 self-check (contract 909c0dbf).
   if [[ ! -f "$HOME/.claude/CLAUDE.md" ]]; then
     _fail "doctrine[global word-is-truth guard]: $HOME/.claude/CLAUDE.md missing — the global guardrail file is required for Word-is-truth to load on every session"
@@ -751,21 +758,21 @@ step_parity() {
   #     contract spawns interpret:/verify:/adjudicate: children; if the
   #     parent doesn't resolve, the substrate spawns MORE children
   #     (interpret-first discipline, 2 Tim 2:15 + Prov 18:13). The rule
-  #     refuses to decay: SKILL.md must carry the section + the three
+  #     refuses to decay: DOCTRINE.md must carry the section + the three
   #     child shapes + the "if not, /contract more /contract" clause.
   if ! grep -q '## Recursive self-interrogation' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[recursive self-interrogation]: SKILL.md is missing the '## Recursive self-interrogation' section — every /contract must decompose itself into interpret/verify/adjudicate children, and the rule cannot decay silently"
+    _fail "doctrine[recursive self-interrogation]: DOCTRINE.md is missing the '## Recursive self-interrogation' section — every /contract must decompose itself into interpret/verify/adjudicate children, and the rule cannot decay silently"
   fi
   for shape in 'interpret:<P>' 'verify:<P>' 'adjudicate:<P>'; do
     if ! grep -qF "$shape" "$REPO/DOCTRINE.md"; then
-      _fail "doctrine[recursive self-interrogation]: SKILL.md missing the canonical child shape '$shape' — the three-shape decomposition is the load-bearing pattern"
+      _fail "doctrine[recursive self-interrogation]: DOCTRINE.md missing the canonical child shape '$shape' — the three-shape decomposition is the load-bearing pattern"
     fi
   done
   if ! grep -q '2 Timothy 2:15' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[recursive self-interrogation]: SKILL.md must cite 2 Tim 2:15 ('rightly dividing the word of truth') as the scriptural anchor for interpret-first discipline"
+    _fail "doctrine[recursive self-interrogation]: DOCTRINE.md must cite 2 Tim 2:15 ('rightly dividing the word of truth') as the scriptural anchor for interpret-first discipline"
   fi
   if ! grep -q 'If not, /contract more /contract' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[recursive self-interrogation]: SKILL.md must carry the 'If not, /contract more /contract' clause — the non-surrender rule (HOLD spawns more interpretation waves, no arbitrary cap)"
+    _fail "doctrine[recursive self-interrogation]: DOCTRINE.md must carry the 'If not, /contract more /contract' clause — the non-surrender rule (HOLD spawns more interpretation waves, no arbitrary cap)"
   fi
 
   # 40. "Atomic pattern parity — implementation status surfaced, not silent."
@@ -777,13 +784,13 @@ step_parity() {
   #     substrate would pretend the runtime layer is wired (silent
   #     fallback = leaven).
   if ! grep -q '### Implementation status' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[atomic pattern parity]: SKILL.md is missing the '### Implementation status' subsection — the runtime-layer gap must be surfaced honestly so the agent-side layer remains the load-bearing bridge"
+    _fail "doctrine[atomic pattern parity]: DOCTRINE.md is missing the '### Implementation status' subsection — the runtime-layer gap must be surfaced honestly so the agent-side layer remains the load-bearing bridge"
   fi
   if ! grep -q 'Runtime layer (TODO)' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[atomic pattern parity]: SKILL.md must carry the 'Runtime layer (TODO)' marker — the cloud LLM compiler's pending three-shape emission is the named gap; silent omission is leaven"
+    _fail "doctrine[atomic pattern parity]: DOCTRINE.md must carry the 'Runtime layer (TODO)' marker — the cloud LLM compiler's pending three-shape emission is the named gap; silent omission is leaven"
   fi
   if ! grep -q 'every /contract turn the' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[atomic pattern parity]: SKILL.md must carry the 'every /contract turn the agent... MUST emit the three children in-thread' clause — the agent-side bridge rule cannot decay silently while the runtime is pending"
+    _fail "doctrine[atomic pattern parity]: DOCTRINE.md must carry the 'every /contract turn the agent... MUST emit the three children in-thread' clause — the agent-side bridge rule cannot decay silently while the runtime is pending"
   fi
 
   # 41. "Trinitarian decomposition — interpret/verify/adjudicate IS
@@ -792,18 +799,18 @@ step_parity() {
   #     Drop the three shapes and you drop the Trinity; drop the Trinity
   #     and you drop the Word-is-truth-root invariant. Refuse both.
   if ! grep -q '### Trinitarian decomposition' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[Trinitarian decomposition]: SKILL.md is missing the '### Trinitarian decomposition' subsection — the substrate's epistemic structure IS scripture's epistemic structure (Father/Spirit/Son); silent omission breaks the Word-is-truth-root invariant"
+    _fail "doctrine[Trinitarian decomposition]: DOCTRINE.md is missing the '### Trinitarian decomposition' subsection — the substrate's epistemic structure IS scripture's epistemic structure (Father/Spirit/Son); silent omission breaks the Word-is-truth-root invariant"
   fi
   for verse in '1 John 5:7' 'Matthew 28:19' 'Hebrews 1:3' 'John 1:18' 'John 16:13' 'John 15:26'; do
     if ! grep -qF "$verse" "$REPO/DOCTRINE.md"; then
-      _fail "doctrine[Trinitarian decomposition]: SKILL.md must cite '$verse' — the Trinitarian shape requires its scriptural locks; missing locks = unanchored doctrine = leaven"
+      _fail "doctrine[Trinitarian decomposition]: DOCTRINE.md must cite '$verse' — the Trinitarian shape requires its scriptural locks; missing locks = unanchored doctrine = leaven"
     fi
   done
   if ! grep -q 'Son IS the validation face' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[Trinitarian decomposition]: SKILL.md must carry the 'Son IS the validation face' clause — adjudicate's output_signature is what the next layer sees; Father and Spirit are known through the Son (John 14:9)"
+    _fail "doctrine[Trinitarian decomposition]: DOCTRINE.md must carry the 'Son IS the validation face' clause — adjudicate's output_signature is what the next layer sees; Father and Spirit are known through the Son (John 14:9)"
   fi
   if ! grep -q 'three witnesses, one verdict' "$REPO/DOCTRINE.md" && ! grep -q 'Three witnesses, one verdict' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[Trinitarian decomposition]: SKILL.md must carry the 'three witnesses, one verdict' rule (1 John 5:7-8) — the triad must agree for the parent to resolve true; one-of-three is insufficient"
+    _fail "doctrine[Trinitarian decomposition]: DOCTRINE.md must carry the 'three witnesses, one verdict' rule (1 John 5:7-8) — the triad must agree for the parent to resolve true; one-of-three is insufficient"
   fi
 
   # 42. "The Son has come — adjudicate is the proof (forgiveness + universal
@@ -815,16 +822,16 @@ step_parity() {
   #     (apoptosis = Mark 3:29). Drop any of the four → Trinity drops
   #     with it. Refuse.
   if ! grep -q '## The Son has come' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[Son has come]: SKILL.md is missing the '## The Son has come' section — the four substrate-side proofs (incarnation, atonement, universal offer, free-will exception) are load-bearing; silent omission breaks the Trinity by dropping the Son's operational signature"
+    _fail "doctrine[Son has come]: DOCTRINE.md is missing the '## The Son has come' section — the four substrate-side proofs (incarnation, atonement, universal offer, free-will exception) are load-bearing; silent omission breaks the Trinity by dropping the Son's operational signature"
   fi
   for verse in 'John 1:14' '1 John 2:1-2' '1 Timothy 2:4' '2 Peter 3:9' 'John 12:32' 'John 6:37' 'Mark 3:29' 'Romans 10:9-10'; do
     if ! grep -qF "$verse" "$REPO/DOCTRINE.md"; then
-      _fail "doctrine[Son has come]: SKILL.md must cite '$verse' — the four-proof structure requires its scriptural locks; missing locks unanchor the doctrine"
+      _fail "doctrine[Son has come]: DOCTRINE.md must cite '$verse' — the four-proof structure requires its scriptural locks; missing locks unanchor the doctrine"
     fi
   done
   for proof in 'Proof 1 — adjudicate exists as a substrate primitive' 'Proof 2 — adjudicate resolves the parent true despite died' 'Proof 3 — universal reach' 'Proof 4 — apoptosis is the ONLY exception'; do
     if ! grep -qF "$proof" "$REPO/DOCTRINE.md"; then
-      _fail "doctrine[Son has come]: SKILL.md must carry '$proof' — all four proofs together constitute the operational claim; dropping one collapses the structure"
+      _fail "doctrine[Son has come]: DOCTRINE.md must carry '$proof' — all four proofs together constitute the operational claim; dropping one collapses the structure"
     fi
   done
 
@@ -862,7 +869,7 @@ step_parity() {
   fi
 
   # 44. "Scriptural-anchor coverage — every non-exempt H2 doctrine section
-  #     in SKILL.md must cite at least one scripture verse." Per claim 31's
+  #     in DOCTRINE.md must cite at least one scripture verse." Per claim 31's
   #     load-bearing implication: doctrine without scripture is leaven
   #     (1 Cor 5:6). The exempt set is mechanics-only sections explicitly
   #     named below. Pinned by Lewis 2026-05-26 (contract aa1fa1f7) —
@@ -916,16 +923,16 @@ PYAUDIT
       found && /^## / {exit}
       found {print}
     ' "$REPO/DOCTRINE.md" | grep -qE '\b(Genesis|Exodus|Leviticus|Numbers|Deuteronomy|Matthew|Mark|Luke|John|Acts|Romans|Corinthians|Galatians|Ephesians|Philippians|Colossians|Thessalonians|Timothy|Titus|Hebrews|James|Peter|Jude|Revelation|Psalm|Proverbs|Ecclesiastes|Isaiah|Jeremiah|Ezekiel|Daniel|Hosea|Joel|Amos|Jonah|Micah|Malachi|Zechariah)\s+[0-9]+:[0-9]+'; then
-      _fail "doctrine[scripture-anchor coverage]: SKILL.md section '## $section' has no scripture citation — doctrine without scriptural ground is leaven (1 Cor 5:6); add an anchoring verse or move the section to the executor-mechanics exempt list with reasoning"
+      _fail "doctrine[scripture-anchor coverage]: DOCTRINE.md section '## $section' has no scripture citation — doctrine without scriptural ground is leaven (1 Cor 5:6); add an anchoring verse or move the section to the executor-mechanics exempt list with reasoning"
     fi
   done
 
   # 45. "Claim-reference parity (recursive)" — pinned by Lewis 2026-05-26
-  #     (contract 086aaceb): every `claim N` reference inside SKILL.md
+  #     (contract 086aaceb): every `claim N` reference inside DOCTRINE.md
   #     MUST point at a real claim N in build.sh. Stale references are
   #     themselves drift — the prose says "claim 19 below" but the
   #     actual claim 19 has moved to something else. This guard catches
-  #     itself: claim 45 is referenced from SKILL.md's "Canonical
+  #     itself: claim 45 is referenced from DOCTRINE.md's "Canonical
   #     reference index", and the index must list claim 45 too.
   local missing_claims=""
   for ref in $(grep -oE 'claim [0-9]+' "$REPO/DOCTRINE.md" | sort -u | awk '{print $2}'); do
@@ -935,12 +942,12 @@ PYAUDIT
     fi
   done
   if [[ -n "$missing_claims" ]]; then
-    _fail "doctrine[claim-reference parity]: SKILL.md references claim numbers that don't exist in build.sh: $missing_claims — every 'claim N' in prose must point at a real numbered parity block"
+    _fail "doctrine[claim-reference parity]: DOCTRINE.md references claim numbers that don't exist in build.sh: $missing_claims — every 'claim N' in prose must point at a real numbered parity block"
   fi
-  # The Canonical reference index in SKILL.md must list this very claim
+  # The Canonical reference index in DOCTRINE.md must list this very claim
   # (45) — the guard catches itself, recursively.
   if ! grep -q '| 45 | Claim-reference parity' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[claim-reference parity]: SKILL.md's 'Canonical reference index' table must list claim 45 itself — the guard is recursive; if claim 45 isn't named in the table, the table is stale and claim 45 catches itself"
+    _fail "doctrine[claim-reference parity]: DOCTRINE.md's 'Canonical reference index' table must list claim 45 itself — the guard is recursive; if claim 45 isn't named in the table, the table is stale and claim 45 catches itself"
   fi
 
   # 46. "Synapse-kind minimum — no redundant edge walks." Pinned by Lewis
@@ -949,17 +956,17 @@ PYAUDIT
   #     bind, modality were collapsed (empirical zero usage in 7000+
   #     rows; signature chain absorbs ordering). Re-introducing those
   #     walks reintroduces leaven. The "Synapse-kind minimum" section
-  #     in SKILL.md must exist and the cache.zig walker must not
+  #     in DOCTRINE.md must exist and the cache.zig walker must not
   #     contain extractTypedRefs calls for the collapsed kinds.
   if ! grep -q '## Synapse-kind minimum' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[synapse minimum]: SKILL.md is missing the '## Synapse-kind minimum' section — the collapse doctrine (Lewis 2026-05-26, contract 6a86a61e) must be pinned so future contributors don't re-add the redundant kinds"
+    _fail "doctrine[synapse minimum]: DOCTRINE.md is missing the '## Synapse-kind minimum' section — the collapse doctrine (Lewis 2026-05-26, contract 6a86a61e) must be pinned so future contributors don't re-add the redundant kinds"
   fi
   if grep -qE 'extractTypedRefs\(allocator, scan_buf\.items, "(blocked_by|prehook|bind|modality):"' "$LIB_DIR/src/cache.zig"; then
     _fail "doctrine[synapse minimum]: cache.zig walks a collapsed synapse kind (blocked_by/prehook/bind/modality) in collectDependencyIds — these were removed because the signature chain absorbs their semantics; re-adding them is leaven"
   fi
   # The Canonical reference index must list claim 46 itself.
   if ! grep -q '| 46 | Synapse-kind minimum' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[synapse minimum]: SKILL.md Canonical reference index must list claim 46 itself"
+    _fail "doctrine[synapse minimum]: DOCTRINE.md Canonical reference index must list claim 46 itself"
   fi
 
   # 47. "Foundation precedes building — creativity fulfils, never
@@ -971,7 +978,7 @@ PYAUDIT
   #     (Word-truth-root, Decalogue, Genesis, Trinity, cache, dedup,
   #     no-scripts, HOLD-non-terminal) are fruits of this one rule.
   #     The build refuses to sign without:
-  #       (a) the section title at SKILL.md position 2 (right after
+  #       (a) the section title at DOCTRINE.md position 2 (right after
   #           "The Word is the truth-root"),
   #       (b) the Matt 5:17-18 anchor,
   #       (c) the eight-instance table,
@@ -979,19 +986,19 @@ PYAUDIT
   #       (e) the Canonical reference index listing claim 47 itself
   #           (the guard is recursive).
   if ! grep -q '## Foundation precedes building' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[foundation precedes building]: SKILL.md is missing the '## Foundation precedes building' section — the META-doctrine (Lewis 2026-05-26, contract c0e6adf6) that every specific rule inherits from; without it the substrate has creativity-rules with no named foundation"
+    _fail "doctrine[foundation precedes building]: DOCTRINE.md is missing the '## Foundation precedes building' section — the META-doctrine (Lewis 2026-05-26, contract c0e6adf6) that every specific rule inherits from; without it the substrate has creativity-rules with no named foundation"
   fi
   if ! grep -q 'Matthew 5:17-18' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[foundation precedes building]: SKILL.md must cite Matthew 5:17-18 ('I am not come to destroy, but to fulfil ... one jot or one tittle shall in no wise pass from the law') — the canonical scriptural lock for the meta-rule"
+    _fail "doctrine[foundation precedes building]: DOCTRINE.md must cite Matthew 5:17-18 ('I am not come to destroy, but to fulfil ... one jot or one tittle shall in no wise pass from the law') — the canonical scriptural lock for the meta-rule"
   fi
   if ! grep -q '1 Corinthians 3:11' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[foundation precedes building]: SKILL.md must cite 1 Corinthians 3:11 ('other foundation can no man lay than that is laid') — the foundation-immutability anchor"
+    _fail "doctrine[foundation precedes building]: DOCTRINE.md must cite 1 Corinthians 3:11 ('other foundation can no man lay than that is laid') — the foundation-immutability anchor"
   fi
   if ! grep -q 'eight existing instances\|eight named instances\|eight-instance table\|The eight existing instances' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[foundation precedes building]: SKILL.md must carry the eight-instance index that names the existing fruits of this meta-rule (Word-truth-root, Decalogue, Genesis, Trinity, cache, dedup, no-scripts, HOLD-non-terminal); without the table the meta-rule has no demonstrated reach"
+    _fail "doctrine[foundation precedes building]: DOCTRINE.md must carry the eight-instance index that names the existing fruits of this meta-rule (Word-truth-root, Decalogue, Genesis, Trinity, cache, dedup, no-scripts, HOLD-non-terminal); without the table the meta-rule has no demonstrated reach"
   fi
   if ! grep -q '1 Cor 3:13\|1 Corinthians 3:13' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[foundation precedes building]: SKILL.md must cite 1 Corinthians 3:13 ('revealed by fire') — the metaphor for the parity gate as the substrate's natural-selection mechanism for doctrine"
+    _fail "doctrine[foundation precedes building]: DOCTRINE.md must cite 1 Corinthians 3:13 ('revealed by fire') — the metaphor for the parity gate as the substrate's natural-selection mechanism for doctrine"
   fi
   # Ordering invariant: Foundation-precedes-building must appear AFTER
   # "The Word is the truth-root" (position 1, the special case) and
@@ -1005,23 +1012,23 @@ PYAUDIT
   decalogue_line=$(grep -n '^## Decalogue Purge Gate' "$REPO/DOCTRINE.md" | head -1 | cut -d: -f1)
   if [[ -n "$word_line" && -n "$foundation_line" && -n "$decalogue_line" ]]; then
     if [[ "$foundation_line" -le "$word_line" || "$foundation_line" -ge "$decalogue_line" ]]; then
-      _fail "doctrine[foundation precedes building]: SKILL.md section ordering violated — 'Foundation precedes building' (line $foundation_line) must appear AFTER 'The Word is the truth-root' (line $word_line) and BEFORE 'Decalogue Purge Gate' (line $decalogue_line); position 2 is doctrinally load-bearing (1 Cor 14:40)"
+      _fail "doctrine[foundation precedes building]: DOCTRINE.md section ordering violated — 'Foundation precedes building' (line $foundation_line) must appear AFTER 'The Word is the truth-root' (line $word_line) and BEFORE 'Decalogue Purge Gate' (line $decalogue_line); position 2 is doctrinally load-bearing (1 Cor 14:40)"
     fi
   fi
   # The Canonical reference index must list claim 47 itself (recursive guard).
   if ! grep -q '| 47 | Foundation precedes building' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[foundation precedes building]: SKILL.md Canonical reference index must list claim 47 itself — the guard is recursive; if claim 47 isn't named in the table, the table is stale and claim 47 catches itself"
+    _fail "doctrine[foundation precedes building]: DOCTRINE.md Canonical reference index must list claim 47 itself — the guard is recursive; if claim 47 isn't named in the table, the table is stale and claim 47 catches itself"
   fi
 
-  # 38. "Verdict alphabet in SKILL.md matches cache.zig." Doctrine drifts
+  # 38. "Verdict alphabet in DOCTRINE.md matches cache.zig." Doctrine drifts
   #     silently when prose mentions a verdict the code purged. The parity
-  #     refuses to ship if SKILL.md mentions any verdict NOT in
+  #     refuses to ship if DOCTRINE.md mentions any verdict NOT in
   #     cache.zig's enum (caught the signature_incomplete stale reference
   #     on the 2026-05-26 self-check). The cache.zig Verdict enum is
-  #     {hit, miss, stale, legacy}; SKILL.md must not name any other.
+  #     {hit, miss, stale, legacy}; DOCTRINE.md must not name any other.
   for purged in 'signature_incomplete'; do
     if grep -q "$purged" "$REPO/DOCTRINE.md"; then
-      _fail "doctrine[verdict alphabet parity]: SKILL.md mentions '$purged' but cache.zig has purged it — doctrine drifted; remove the stale reference"
+      _fail "doctrine[verdict alphabet parity]: DOCTRINE.md mentions '$purged' but cache.zig has purged it — doctrine drifted; remove the stale reference"
     fi
   done
   if ! grep -q 'contract.cache.computeSignatureChain' "$ZIG_DIR/src/main.zig"; then
@@ -1226,7 +1233,7 @@ PYAUDIT
     _fail "doctrine[receptor gate]: main.zig must bind an adoption grant's authority_pubkey to the producer's env_pubkey (forged-grant defense) — the binding is missing"
   fi
   if ! grep -q '^## The opt-in receptor' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[receptor gate]: SKILL.md is missing the '## The opt-in receptor' section — the F1 doctrine that value adoption is open by default and gated only by a producer's signed grant"
+    _fail "doctrine[receptor gate]: DOCTRINE.md is missing the '## The opt-in receptor' section — the F1 doctrine that value adoption is open by default and gated only by a producer's signed grant"
   fi
 
   # 53. "One classifier + default-deny execution (fork F8 collapsed)" — biology:
@@ -1250,13 +1257,13 @@ PYAUDIT
     _fail "doctrine[F8 default-deny]: main.zig's exec allow-list must be exactly cli/api/loop/harness — a broader allow-list re-opens the shell-exec fork"
   fi
   if ! grep -q '^## One classifier, default-deny execution' "$REPO/DOCTRINE.md"; then
-    _fail "doctrine[F8]: SKILL.md is missing the '## One classifier, default-deny execution' section — the F8 doctrine (one genome + refuse the unrecognized action)"
+    _fail "doctrine[F8]: DOCTRINE.md is missing the '## One classifier, default-deny execution' section — the F8 doctrine (one genome + refuse the unrecognized action)"
   fi
 
   if [[ $drift -gt 0 ]]; then
-    echo "build:parity FAIL — $drift drift(s) between SKILL.md doctrine and code:" >&2
+    echo "build:parity FAIL — $drift drift(s) between DOCTRINE.md doctrine and code:" >&2
     printf '%s' "$report" >&2
-    echo "  fix: patch the code to honor the claim, OR amend SKILL.md to retract the claim (with reasoning)" >&2
+    echo "  fix: patch the code to honor the claim, OR amend DOCTRINE.md to retract the claim (with reasoning)" >&2
     return 9
   fi
   echo "build:parity OK — all 53 doctrine claims have matching code sites"

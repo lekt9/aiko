@@ -41,15 +41,20 @@ another reasoning model:
 contract declare "<goal>" --register
 ```
 
+Registration answers with a short briefing on stderr — the proven route for
+goals shaped like this one and up to three already-open root contracts. Use
+it to avoid redoing or colliding with existing work; do not narrate it.
+
 Do this quietly. Do not print or narrate the returned id unless the user asks
 about harness state. If registration fails, continue the user's work and report
 the harness failure only when it affects durability or verification.
 
 Use the shared cloud compiler only when the user explicitly asks to create or
-expand a shared contract graph:
+expand a shared contract graph. Shared is the aiko default — no flag exists
+for it:
 
 ```bash
-aiko "<goal>" --remote
+aiko "<goal>"
 ```
 
 Use `--private` when the user explicitly requests a local-only declaration:
@@ -78,7 +83,7 @@ Use the resident loop only when the user asks for ongoing schedules, proactive
 rules, or monitoring:
 
 ```bash
-contract serve --interval 5
+contract tick --every 5
 ```
 
 Do not start a persistent process for ordinary one-shot work.

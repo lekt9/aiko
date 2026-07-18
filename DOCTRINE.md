@@ -3088,7 +3088,9 @@ satisfaction if any) or falls through to runAction. Day N's chain is
 permanently null until Day N-1 has signed off.
 
 This is **deterministic topological order**, not semantic search.
-Semantic search (the `contract search --context` verb) is the right
+Semantic search (the `contract recommend <goal>` verb — the bge
+router; the old lexical `search --context` collapsed into it
+2026-07-18 after losing the ranking benchmark) is the right
 primitive for DISCOVERY — finding contracts similar to one you're
 about to declare. Sequencing is exact graph traversal.
 
@@ -3187,10 +3189,16 @@ verifier without the deployer key can still:
 But cannot recover the `plan` / `action` value bytes.
 
 Wave-1 ships the primitives standalone (tested, signed, importable).
-Wave-2 wires `ledger.appendRow` to seal on write + readers to open on
-load when the key is derivable. Decalogue commandment 8 (thou shalt
-not steal) is the doctrinal lock — readable plaintext payloads on a
-shared ledger leak authority that was never granted.
+Wave-2's read side is wired: the display surface (`status` / list /
+`search` in `zig/src/main.zig:displayField`) opens sealed `plan` /
+`action` bytes on load when the deployer root can derive the row key,
+and labels the ciphertext `[sealed …]` — never dumps it — when it
+cannot. Root loading for display is attempted only when a persisted
+root already exists; a read-only verb never generates a wallet as a
+side effect. Wave-2's write side (`ledger.appendRow` sealing on write)
+remains TODO — new rows land plaintext today. Decalogue commandment 8
+(thou shalt not steal) is the doctrinal lock — readable plaintext
+payloads on a shared ledger leak authority that was never granted.
 
 ### Substrate location
 

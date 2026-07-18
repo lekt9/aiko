@@ -5,11 +5,14 @@ Minimal native aiko/contract-neuron primitive. `aiko` is the public binary;
 shape.
 
 ```bash
-aiko "<goal>" --remote
-aiko "<goal>" --local
+aiko "<goal>"             # shared (default) — declared toward the Unbrowse cloud ledger
+aiko "<goal>" --private   # local-only — never leaves this machine
 ```
 
-The binary is the public verb. It accepts one goal and one execution mode.
+The binary is the public verb. Invoked as `aiko` it accepts one goal and the
+single optional visibility flag `--private`; any other flag is refused. The
+verb surface (`declare`, `status`, `tick`, `serve`, …) rides on the `contract`
+invocation of the same binary (argv[0] selects the persona).
 
 ## The reduced closed loop
 
@@ -31,7 +34,7 @@ contract tick
 or keep it resident:
 
 ```bash
-contract serve --interval 5
+contract tick --every 5
 ```
 
 Import an existing root without placing it in argv or logs:
@@ -90,14 +93,22 @@ An occurrence is materialized once. A new occurrence invalidates cached truth
 and sends the contract back through the same resolver. There is no separate
 cron/pod execution path.
 
-The older `contract` binary remains for compatibility/context activation flows.
-It must behave as an alias over the same aiko shape, not as a second interface.
+The `contract` invocation of the same binary carries five verbs:
+`declare <goal> [--action <ptr>] [--parent <id>] [--fast|--resolve|--register]`
+(a `--register` declare prints the id on stdout and a briefing on stderr —
+the proven route plus open roots), `recommend <goal>` (the learned router),
+`status [<id>]`, `tick [--every <s>]` (one resolver pass, or resident with
+`--every`), and `import-root <seed-file>`. The old `discover` / `search` /
+`serve` / `self` names remain accepted as aliases onto status / recommend /
+tick / the identity line, but are no longer documented surface.
 
-`--remote` is bound to Unbrowse and x402-native. It defaults to
-`https://beta-api.unbrowse.ai`, tags declarations as Corbits/Faremeter Flex
-requests, and forwards `AIKO_X_PAYMENT` / `X_PAYMENT` as `X-PAYMENT`. Without a
-payment header the server returns a 402 payment requirements envelope. `--local`
-uses the same neuron shape against the local scoped ledger.
+The shared (default) aiko path is bound to Unbrowse and x402-native:
+declarations POST to the hardcoded `https://beta-api.unbrowse.ai` — no env
+override remains. Without payment the server returns a 402
+payment-requirements envelope; that is a valid result proving the substrate
+fired, and unpaid declares queue visibly under `~/.contracts/pending-declares/`
+for retry. `--private` uses the same neuron shape against the local scoped
+ledger.
 
 `aiko` guards privacy before network egress. Local declarations are reduced to
 patterns and meta-patterns: obvious emails, local filesystem paths, and
@@ -129,8 +140,8 @@ Adapters are server-side contracts too. Local environments carry only
 Unbrowse LLM compiles the user's prompt text into the root declaration plus the
 child contract graph, including adapter, hook, and verifier contracts.
 
-For `aiko`, the compiler is recursive and same-shaped: one `aiko "<goal>"
---remote` prompt becomes a root aiko contract, and the Unbrowse LLM emits child
+For `aiko`, the compiler is recursive and same-shaped: one shared
+`aiko "<goal>"` prompt becomes a root aiko contract, and the Unbrowse LLM emits child
 prompts as more aiko contracts that may themselves carry child prompts. The
 local binary still sends only one sanitized goal; every child is appended server-side as a
 `neuron` row with a `parent_id` edge.
@@ -155,7 +166,8 @@ signing identity, `replicated_from_contract_id` for paid out-of-lineage copies,
 and `network_tunnel_contract_id` for WireGuard/Tailscale/WARP-style reachability
 adapters.
 
-`UNBROWSE_BASE` routes declarations to the Unbrowse server ledger. Local
-`CONTRACTS_STORE` is only for scoped tests and migrations. Server-spawned
-environments may carry private verifier wiring in `CONTRACT_NEURON_ACTION`; the
-public command still stays `aiko "<goal>" --remote|--local`.
+There are no env knobs: the binary reads only `HOME`, and the Unbrowse
+endpoint is a hardcoded constant. The ledger resolves to
+`<cwd>/.claude/contracts.jsonl` when `<cwd>/.claude/` is a directory, else to
+the global `~/.contracts/contracts.jsonl`. The public command stays
+`aiko "<goal>" [--private]`.

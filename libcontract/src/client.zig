@@ -96,10 +96,11 @@ pub fn paymentHeader(env: std.process.Environ) ?[]const u8 {
     return null;
 }
 
-/// Env-driven remote-mode override removed; the runtime mode is carried by
-/// the explicit --remote/--local flag on the aiko CLI (see parseAikoArgs).
-/// Callers that still ask via this helper get `false` so they fall through
-/// to local; the remote path is taken by callers that opt in directly.
+/// Env-driven remote-mode override removed; visibility is carried by the
+/// aiko CLI's single `--private` flag (see parseAikoArgs — shared is the
+/// default, with no flag of its own). Callers that still ask via this helper
+/// get `false` so they fall through to local; the remote path is taken by
+/// callers that opt in directly.
 pub fn isRemoteMode(env: std.process.Environ) bool {
     _ = env;
     return false;

@@ -288,15 +288,12 @@ fn usage() void {
     , .{BINARY_NAME});
     if (!AIKO_DECLARE_ONLY) {
         errPrint(
+            \\  {s} recommend <goal>
             \\  {s} status [<id>]
-            \\  {s} discover [--scope all|project|global]
-            \\  {s} search --context <text>
-            \\  {s} tick
-            \\  {s} serve [--interval <seconds>]
+            \\  {s} tick [--every <seconds>]
             \\  {s} import-root <seed-file>
-            \\  {s} self [--json]
             \\
-        , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
+        , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
     }
 }
 
@@ -3354,40 +3351,62 @@ fn materializeDueTriggers(allocator: std.mem.Allocator, env: std.process.Environ
 /// The one closed-loop step used by explicit tick, the resident server and
 /// future API/MCP adapters.
 fn resolverTick(allocator: std.mem.Allocator, env: std.process.Environ) !void {
+    // Homeostasis first: an oversized store breaks the library-side read
+    // verbs (recommend et al) at their 16 MiB cap, so the tick's opening
+    // move is the counter-breath. Compaction lives in libcontract's ledger
+    // (contract.lcledger) — the module that owns the store's locks; this
+    // file's slim ledger.zig is a read/append subset over the same path.
+    if (contract.lcledger.compactIfOversized(allocator, env) catch |e| blk: {
+        evidencePrint("tick: compaction failed: {s} — continuing\n", .{@errorName(e)});
+        break :blk false;
+    }) {
+        evidencePrint("tick: compacted oversized store — exhaust archived\n", .{});
+    }
+    // Warm the router's semantic KV cache in strides — each recommend call
+    // embeds at most route.MAX_NEW_EMBEDS_PER_CALL missing plans. The tick
+    // absorbs the embed cost so interactive callers (recommend, the declare
+    // briefing) converge to a single query embed.
+    var warm: usize = 0;
+    while (warm < 4) : (warm += 1) {
+        const j = (contract.recommend(allocator, env, "warm the semantic cache") catch null) orelse break;
+        allocator.free(j);
+    }
     const triggered = try materializeDueTriggers(allocator, env);
     if (triggered > 0) evidencePrint("tick: materialized {d} due occurrence(s)\n", .{triggered});
     try backfillUnresolvedWithBudget(allocator, env, "", 1024, 32);
 }
 
 fn cmdTick(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
-    if (args.len != 0) {
-        err("tick takes no arguments\n");
-        return 2;
-    }
-    try resolverTick(allocator, env);
-    return 0;
-}
-
-fn cmdServe(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
-    var interval: u32 = 5;
+    // One resolver, one verb: bare `tick` = a single pass; `tick --every <s>`
+    // = the resident loop (absorbs the old `serve` verb; `--interval` stays
+    // accepted so existing callers keep working).
+    var every: ?u32 = null;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--interval") and i + 1 < args.len) {
-            interval = std.fmt.parseInt(u32, args[i + 1], 10) catch return 2;
+        if ((std.mem.eql(u8, args[i], "--every") or std.mem.eql(u8, args[i], "--interval")) and i + 1 < args.len) {
+            const v = std.mem.trimEnd(u8, args[i + 1], "s");
+            every = std.fmt.parseInt(u32, v, 10) catch {
+                err("tick --every requires a number of seconds\n");
+                return 2;
+            };
             i += 1;
         } else {
-            errPrint("serve unknown argument: {s}\n", .{args[i]});
+            errPrint("tick unknown argument: {s}\n", .{args[i]});
             return 2;
         }
     }
-    if (interval == 0) interval = 1;
-    evidencePrint("serve: closed loop active (interval={d}s)\n", .{interval});
-    while (true) {
-        resolverTick(allocator, env) catch |e| {
-            evidencePrint("serve: tick failed: {s}; retrying\n", .{@errorName(e)});
-        };
-        _ = sleep(interval);
+    if (every) |iv_raw| {
+        const iv = if (iv_raw == 0) 1 else iv_raw;
+        evidencePrint("tick: resident loop active (every {d}s)\n", .{iv});
+        while (true) {
+            resolverTick(allocator, env) catch |e| {
+                evidencePrint("tick: pass failed: {s}; retrying\n", .{@errorName(e)});
+            };
+            _ = sleep(iv);
+        }
     }
+    try resolverTick(allocator, env);
+    return 0;
 }
 
 fn cmdImportRoot(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
@@ -3494,6 +3513,39 @@ fn backfillUnresolvedWithBudget(allocator: std.mem.Allocator, env: std.process.E
     evidencePrint("drill: deep passes exhausted at {d} (resolved {d} total)\n", .{ max_passes, total_resolved });
 }
 
+/// Post-register briefing — declaring a goal and receiving its context are
+/// one atomic act. Everything prints to stderr so stdout stays the bare
+/// contract id for scripts. Compact by law: the proven route (if the router
+/// knows one) plus up to three open root contracts in this store, nothing
+/// more. Failures are silent — a briefing must never break a registration.
+fn printBriefing(allocator: std.mem.Allocator, env: std.process.Environ, cid: []const u8, plan: []const u8) void {
+    if (contract.recommend(allocator, env, plan) catch null) |json| {
+        defer allocator.free(json);
+        errPrint("proven: {s}\n", .{json});
+    }
+    const rows = parseRows(allocator, env) catch return;
+    defer allocator.free(rows);
+    var shown: usize = 0;
+    var i = rows.len;
+    while (i > 0 and shown < 3) {
+        i -= 1;
+        const r = rows[i];
+        if (!std.mem.eql(u8, r.event, "declared")) continue;
+        if (r.parent_id != null) continue;
+        if (std.mem.eql(u8, r.id, cid)) continue;
+        if (isSatisfied(rows, r.id) or isDead(rows, r.id)) continue;
+        // Substrate heartbeats aren't "open work" a caller could collide
+        // with — only user-shaped goals earn a briefing line.
+        if (std.mem.startsWith(u8, r.plan, "sabbath") or
+            std.mem.startsWith(u8, r.plan, "turn:") or
+            std.mem.startsWith(u8, r.plan, "tool:") or
+            std.mem.startsWith(u8, r.plan, "word:") or
+            std.mem.startsWith(u8, r.plan, "warm the semantic cache")) continue;
+        errPrint("open: {s} — \"{s}\"\n", .{ r.id, displayField(allocator, env, r.id, r.event, r.plan) });
+        shown += 1;
+    }
+}
+
 fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
     const d = parseDeclare(args) catch |e| {
         errPrint("declare argument error: {s}\n", .{@errorName(e)});
@@ -3563,8 +3615,13 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
     outPrint("{s}\n", .{cid});
     // Bookkeeping-only registration must never enter the resolver. Skills use
     // this path to durably record a goal while the calling LLM performs the
-    // work and verification itself.
-    if (d.register) return 0;
+    // work and verification itself. Registration answers with the briefing:
+    // the proven route for goals shaped like this plus what's already open,
+    // so the caller starts oriented without a second command.
+    if (d.register) {
+        printBriefing(allocator, env, cid, d.plan);
+        return 0;
+    }
     // One mutation path: declaration always enters the same resolver tick.
     // --fast/--resolve remain accepted for compatibility; --resolve still
     // materializes its historical word children.
@@ -5169,6 +5226,61 @@ fn writeOpenAiError(msg: []const u8) !void {
     outPrint("{{\"error\":{{\"message\":\"{s}\",\"type\":\"invalid_request_error\"}}}}\n", .{msg});
 }
 
+// ────────── sealed-payload display (the Wave-2 read side) ──────────
+// Older binary generations sealed `plan`/`action` bytes at rest
+// (payload_crypto envelope: nonce(24) || ciphertext || tag(16); key =
+// HKDF of the deployer root by contract id; AAD = id || "\x00" || event
+// kind). The display surface opens them when the local root can derive
+// the key, and labels — rather than dumps — the ciphertext when it
+// cannot. Root loading is attempted once per process and only when a
+// persisted root file already exists: a read-only verb must never
+// generate a wallet as a side effect.
+var display_root: ?[32]u8 = null;
+var display_root_tried: bool = false;
+
+fn displayRoot(allocator: std.mem.Allocator, env: std.process.Environ) ?[32]u8 {
+    if (!display_root_tried) {
+        display_root_tried = true;
+        const home = env.getPosix("HOME") orelse return null;
+        var pbuf: [512]u8 = undefined;
+        const canonical = std.fmt.bufPrintZ(&pbuf, "{s}/.contracts/root.key", .{home}) catch return null;
+        if (std.c.access(canonical.ptr, 0) != 0) return null; // F_OK — no persisted root, never generate one here
+        display_root = lineage_lib.loadOrInitRootKey(allocator, env) catch null;
+    }
+    return display_root;
+}
+
+fn sealedLabel(allocator: std.mem.Allocator, field: []const u8) []const u8 {
+    const head = field[0..@min(field.len, 12)];
+    return std.fmt.allocPrint(allocator, "[sealed {s}…]", .{head}) catch "[sealed]";
+}
+
+/// Best-effort unseal of a row field for display. Returns the plaintext
+/// when the field is a sealed envelope this wallet can open, a
+/// "[sealed …]" label when it looks sealed but cannot be opened, and the
+/// field unchanged otherwise. Allocations ride the CLI's process-lifetime
+/// idiom (see parseRows header comment).
+fn displayField(allocator: std.mem.Allocator, env: std.process.Environ, id: []const u8, event_kind: []const u8, field: []const u8) []const u8 {
+    const pc = contract.payload_crypto;
+    // Cheap reject: sealed envelopes are strict base64 of ≥ nonce+tag bytes;
+    // human plans virtually always carry spaces/punctuation outside base64.
+    if (field.len < 56) return field;
+    for (field) |c| {
+        if (!(std.ascii.isAlphanumeric(c) or c == '+' or c == '/' or c == '=')) return field;
+    }
+    const dec = std.base64.standard.Decoder;
+    const n = dec.calcSizeForSlice(field) catch return field;
+    if (n < pc.NONCE_LEN + pc.TAG_LEN) return field;
+    const sealed = allocator.alloc(u8, n) catch return field;
+    defer allocator.free(sealed);
+    dec.decode(sealed, field) catch return field;
+    const root = displayRoot(allocator, env) orelse return sealedLabel(allocator, field);
+    const key = pc.deriveRowKey(root, id);
+    const aad = pc.buildAad(allocator, id, event_kind) catch return field;
+    defer allocator.free(aad);
+    return pc.open(allocator, key, sealed, aad) catch sealedLabel(allocator, field);
+}
+
 fn cmdList(allocator: std.mem.Allocator, env: std.process.Environ) !u8 {
     const rows = try parseRows(allocator, env);
     defer allocator.free(rows);
@@ -5180,7 +5292,7 @@ fn cmdList(allocator: std.mem.Allocator, env: std.process.Environ) !u8 {
             "dead"
         else
             "pending";
-        outPrint("[{s}] {s} ({s}) — \"{s}\"\n", .{ status, r.id, pointer.inferPointerType(r.action), r.plan });
+        outPrint("[{s}] {s} ({s}) — \"{s}\"\n", .{ status, r.id, pointer.inferPointerType(r.action), displayField(allocator, env, r.id, r.event, r.plan) });
     }
     return 0;
 }
@@ -5641,7 +5753,7 @@ fn cmdStatus(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
         "dead"
     else
         "pending";
-    outPrint("[{s}] {s} ({s})\n  plan:   {s}\n  action: {s}\n", .{ status, id, pointer.inferPointerType(r.action), r.plan, r.action });
+    outPrint("[{s}] {s} ({s})\n  plan:   {s}\n  action: {s}\n", .{ status, id, pointer.inferPointerType(r.action), displayField(allocator, env, r.id, r.event, r.plan), displayField(allocator, env, r.id, r.event, r.action) });
     const ids = try childIds(allocator, rows, id);
     defer allocator.free(ids);
     for (ids) |cid| {
@@ -5652,88 +5764,17 @@ fn cmdStatus(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
                 "dead"
             else
                 "pending";
-            outPrint("  [{s}] {s} ({s}) — {s}\n", .{ cs, cid, pointer.inferPointerType(c.action), c.plan });
+            outPrint("  [{s}] {s} ({s}) — {s}\n", .{ cs, cid, pointer.inferPointerType(c.action), displayField(allocator, env, c.id, c.event, c.plan) });
         }
     }
     return 0;
 }
 
-fn score(query: []const u8, plan: []const u8) u32 {
-    var qbuf: [2048]u8 = undefined;
-    var pbuf: [4096]u8 = undefined;
-    const q = std.ascii.lowerString(qbuf[0..@min(qbuf.len, query.len)], query[0..@min(qbuf.len, query.len)]);
-    const p = std.ascii.lowerString(pbuf[0..@min(pbuf.len, plan.len)], plan[0..@min(pbuf.len, plan.len)]);
-    var total: u32 = 0;
-    var it = std.mem.tokenizeAny(u8, q, " \t\r\n.,:;()[]{}\"'");
-    while (it.next()) |tok| {
-        if (tok.len < 3) continue;
-        if (std.mem.indexOf(u8, p, tok) != null) total += 1;
-    }
-    return total;
-}
-
-fn cmdSearch(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
-    var ctx: []const u8 = "";
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--context")) {
-            i += 1;
-            if (i >= args.len) {
-                err("search --context requires a value\n");
-                return 2;
-            }
-            ctx = args[i];
-        } else {
-            errPrint("search unknown flag: {s}\n", .{args[i]});
-            return 2;
-        }
-    }
-    const rows = try parseRows(allocator, env);
-    defer allocator.free(rows);
-    out("RELATED CONTRACTS (native lexical score):\n\n");
-    for (rows) |r| {
-        if (!std.mem.eql(u8, r.event, "declared")) continue;
-        const s = score(ctx, r.plan);
-        if (s == 0) continue;
-        const status = if (isSatisfied(rows, r.id)) "satisfied" else "pending";
-        outPrint("  [+] score={d} id={s} status={s}\n      plan: {s}\n", .{ s, r.id, status, r.plan });
-    }
-    return 0;
-}
-
-fn cmdDiscover(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--scope")) {
-            i += 1;
-            if (i >= args.len) {
-                err("discover --scope requires all, project, or global\n");
-                return 2;
-            }
-            if (!std.mem.eql(u8, args[i], "all") and
-                !std.mem.eql(u8, args[i], "project") and
-                !std.mem.eql(u8, args[i], "global"))
-            {
-                err("discover --scope requires all, project, or global\n");
-                return 2;
-            }
-        } else {
-            errPrint("discover unknown flag: {s}\n", .{args[i]});
-            return 2;
-        }
-    }
-    const rows = try parseRows(allocator, env);
-    defer allocator.free(rows);
-    var shown: usize = 0;
-    for (rows) |r| {
-        if (!std.mem.eql(u8, r.event, "declared")) continue;
-        const status = if (isSatisfied(rows, r.id)) "satisfied" else "pending";
-        outPrint("[native]  {s} ({s}/{s}) — \"{s}\"\n", .{ r.id, pointer.inferPointerType(r.action), status, r.plan });
-        shown += 1;
-        if (shown >= 80) break;
-    }
-    return 0;
-}
+// cmdSearch (lexical ranker) and cmdDiscover (status-with-a-fake-flag)
+// collapsed 2026-07-18: `search` lost the ranking benchmark to the bge
+// router (22% vs 95% top-1) and `discover` validated a --scope argument
+// it never used. Both verbs remain as dispatch aliases onto the
+// survivors (recommend / status) so existing callers keep working.
 
 // ────────── trio: build / run / eval (stdin JSON, no flags) ──────────
 //
@@ -6226,7 +6267,7 @@ fn cmdSelf(args: []const []const u8) u8 {
     // so the JSON header is built at runtime. The pending-declares retry
     // queue is surfaced as `pending_declares_retry_queue`.
     outPrint(
-        "{{ \"binary\": \"{s}\", \"implementation\": \"zig\", \"version\": \"{s}\", \"public_shape\": \"<binary-name> \\\"<truth claim>\\\" [--private]\", \"visibility_axis\": {{\"default\": \"shared\", \"override\": \"--private\"}}, \"env_reads\": [\"HOME\"], \"unbrowse_base\": \"https://beta-api.unbrowse.ai\", \"llm_compiler_binding\": \"hardcoded\", \"binary_self_attestation\": true, \"shapes\": [\"neuron\"], \"internal_shapes\": [\"cell\",\"funnel\",\"funnel-first\",\"sequence\",\"quorum\",\"loop\",\"harness\",\"contract-ref\"], \"containment_edge\": \"parent_id\", \"cross_edges\": [\"contract-ref\"], \"lineage_assignment\": \"server-side (wallet identity + declare timestamp)\", \"prompt_compiler\": \"unbrowse-llm\", \"prompt_to_contract_graph\": true, \"prompt_text_is_root_declaration\": true, \"server_integrator\": \"unbrowse-llm\", \"pending_declares_retry_queue\": {{\"path\": \"~/.contracts/pending-declares/\", \"trigger\": \"PaymentRequired\", \"max_attempts\": 10, \"abandoned_subdir\": \"abandoned\"}}, \"adapters_are_server_contracts\": true, \"recursive_firing\": true, \"recursive_children\": true, \"breakpoints\": true, \"fractal_environment_layers\": true, \"multidimensional_dag\": true }}\n",
+        "{{ \"binary\": \"{s}\", \"implementation\": \"zig\", \"version\": \"{s}\", \"role\": \"recording/resolving harness — the calling agent plans and reasons; the harness records, resolves, caches, verifies\", \"personas\": {{\"aiko\": \"\\\"<truth claim>\\\" [--private]\", \"contract\": \"declare | recommend | status | tick | import-root\"}}, \"declare_flags\": [\"--action <ptr>\", \"--parent <id>\", \"--fast\", \"--register (default, accepted no-op)\", \"--resolve (opt-in full lifecycle)\"], \"visibility_axis\": {{\"default\": \"shared\", \"override\": \"--private\"}}, \"env_reads\": [\"HOME\"], \"unbrowse_base\": \"https://beta-api.unbrowse.ai\", \"llm_compiler_binding\": \"hardcoded\", \"ledger_store\": \"<cwd>/.claude/contracts.jsonl if <cwd>/.claude/ exists, else ~/.contracts/contracts.jsonl\", \"resolver\": {{\"one_shot\": \"tick\", \"resident\": \"tick --every <s>\", \"schedules\": [\"at:<unix-seconds>\", \"repeat:<N>s|m|h\"]}}, \"dependency_pointer\": \"contract:<id>\", \"onchain\": {{\"default\": \"disabled\", \"tool\": \"broadcast-tool (separate build; refuses without --onchain)\"}}, \"binary_self_attestation\": true, \"shapes\": [\"neuron\"], \"containment_edge\": \"parent_id\", \"cross_edges\": [\"contract-ref\"], \"pending_declares_retry_queue\": {{\"path\": \"~/.contracts/pending-declares/\", \"trigger\": \"PaymentRequired\", \"max_attempts\": 10, \"abandoned_subdir\": \"abandoned\"}} }}\n",
         .{ BINARY_NAME, VERSION },
     );
     return 0;
@@ -6309,10 +6350,21 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         return try cmdAikoGoal(allocator, init.environ, argv_z[1..]);
     }
     if (std.mem.eql(u8, verb, "status")) return try cmdStatus(allocator, init.environ, rest);
-    if (std.mem.eql(u8, verb, "discover")) return try cmdDiscover(allocator, init.environ, rest);
-    if (std.mem.eql(u8, verb, "search")) return try cmdSearch(allocator, init.environ, rest);
+    // Collapsed-verb aliases (2026-07-18): the old names stay callable but
+    // route to the survivors — discover→status, search→recommend, serve→tick.
+    if (std.mem.eql(u8, verb, "discover")) return try cmdStatus(allocator, init.environ, &.{});
+    if (std.mem.eql(u8, verb, "search")) {
+        var fwd = try arena.allocator().alloc([]const u8, rest.len);
+        var n: usize = 0;
+        for (rest) |a| {
+            if (std.mem.eql(u8, a, "--context")) continue;
+            fwd[n] = a;
+            n += 1;
+        }
+        return try cmdRecommend(allocator, init.environ, fwd[0..n]);
+    }
     if (std.mem.eql(u8, verb, "tick")) return try cmdTick(allocator, init.environ, rest);
-    if (std.mem.eql(u8, verb, "serve")) return try cmdServe(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "serve")) return try cmdTick(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "import-root")) return try cmdImportRoot(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "self")) return cmdSelf(rest);
     if (std.mem.eql(u8, verb, "_mark")) return try cmdMark(allocator, init.environ, rest);

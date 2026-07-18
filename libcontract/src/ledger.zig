@@ -343,3 +343,179 @@ pub fn readAll(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
     }
     return try out.toOwnedSlice(allocator);
 }
+
+// ────────── compaction — homeostasis for the append-only store ──────────
+//
+// The resolver exhales exhaust rows (`iterated`, cache probes, guards) at
+// a rate that eventually pushes the store past readAll's 16 MiB cap and
+// every read verb starts failing (observed 2026-07-18: 78k rows, 43 MB,
+// 51k of them `iterated` + 19k orphaned `ebm_proto`). Compaction is the
+// counter-breath: exhaust rows whose contract is already terminal — plus
+// rows no code reads at all — move to `<store>.archive.jsonl` (append-only,
+// nothing is destroyed), and the store keeps the truth skeleton: declared /
+// terminal events / containment edges, and FULL history for still-open ids.
+
+/// Compact when the store crosses this. Below readAll's 16 MiB hard cap so
+/// reads never break before housekeeping kicks in.
+pub const COMPACT_THRESHOLD: u64 = 12 * 1024 * 1024;
+
+/// Uncapped slurp — compaction must be able to read a store that is
+/// already too big for the capped readAll. Private on purpose.
+fn readAllUncapped(allocator: std.mem.Allocator, path_z: [*:0]const u8) ![]u8 {
+    var flags: c.O = .{};
+    flags.ACCMODE = .RDONLY;
+    const fd: c_int = c.open(path_z, flags, @as(c_uint, 0));
+    if (fd < 0) return try allocator.alloc(u8, 0);
+    defer _ = c.close(fd);
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    var chunk: [65536]u8 = undefined;
+    while (true) {
+        const n = c.read(fd, &chunk, chunk.len);
+        if (n <= 0) break;
+        try out.appendSlice(allocator, chunk[0..@intCast(n)]);
+    }
+    return try out.toOwnedSlice(allocator);
+}
+
+/// Minimal string-field extractor tolerant of both `"k": "v"` and `"k":"v"`.
+/// Ledger `event` / `id` values never contain escapes, so no unescaping.
+fn fieldString(line: []const u8, comptime key: []const u8) ?[]const u8 {
+    const kq = "\"" ++ key ++ "\"";
+    const at = std.mem.indexOf(u8, line, kq) orelse return null;
+    var i = at + kq.len;
+    while (i < line.len and (line[i] == ' ' or line[i] == '\t')) i += 1;
+    if (i >= line.len or line[i] != ':') return null;
+    i += 1;
+    while (i < line.len and (line[i] == ' ' or line[i] == '\t')) i += 1;
+    if (i >= line.len or line[i] != '"') return null;
+    i += 1;
+    const vstart = i;
+    while (i < line.len and line[i] != '"') i += 1;
+    return line[vstart..i];
+}
+
+fn isTerminalEvent(ev: []const u8) bool {
+    return std.mem.eql(u8, ev, "satisfied") or
+        std.mem.eql(u8, ev, "died") or
+        std.mem.eql(u8, ev, "purged");
+}
+
+/// Rows nothing replays for closed contracts — resolver exhaust.
+fn isExhaustEvent(ev: []const u8) bool {
+    return std.mem.eql(u8, ev, "iterated") or
+        std.mem.eql(u8, ev, "cache_check") or
+        std.mem.eql(u8, ev, "cache_resolved") or
+        std.mem.eql(u8, ev, "evidence") or
+        std.mem.eql(u8, ev, "guard") or
+        std.mem.eql(u8, ev, "triggered");
+}
+
+/// Rows nothing reads at all — fossils of deleted modules (ebm_store).
+fn isFossilEvent(ev: []const u8) bool {
+    return std.mem.eql(u8, ev, "ebm_proto");
+}
+
+fn writeAllFd(fd: c_int, bytes: []const u8) !void {
+    var off: usize = 0;
+    while (off < bytes.len) {
+        const n = c.write(fd, bytes.ptr + off, bytes.len - off);
+        if (n <= 0) return error.WriteFailed;
+        off += @intCast(n);
+    }
+}
+
+/// Compact the resolved store if it has outgrown COMPACT_THRESHOLD.
+/// Returns true when a compaction ran. Safe under the sidecar lock;
+/// archive is append-only so repeated compactions accumulate history.
+pub fn compactIfOversized(allocator: std.mem.Allocator, env: std.process.Environ) !bool {
+    if (currentSize(allocator, env) <= COMPACT_THRESHOLD) return false;
+
+    const path = try resolvePath(allocator, env);
+    defer allocator.free(path);
+    const path_z = try allocator.dupeZ(u8, path);
+    defer allocator.free(path_z);
+
+    const lock_fd = try acquireExclusive(allocator, env);
+    defer releaseExclusive(lock_fd);
+
+    const data = try readAllUncapped(allocator, path_z.ptr);
+    defer allocator.free(data);
+
+    // Pass 1: which contracts are terminal.
+    var terminal_ids = std.StringHashMap(void).init(allocator);
+    defer terminal_ids.deinit();
+    var it1 = std.mem.splitScalar(u8, data, '\n');
+    while (it1.next()) |line| {
+        if (line.len == 0) continue;
+        const ev = fieldString(line, "event") orelse continue;
+        if (!isTerminalEvent(ev)) continue;
+        const id = fieldString(line, "id") orelse continue;
+        try terminal_ids.put(id, {});
+    }
+
+    // Pass 2: split keep / archive.
+    var keep: std.ArrayList(u8) = .empty;
+    defer keep.deinit(allocator);
+    var arch: std.ArrayList(u8) = .empty;
+    defer arch.deinit(allocator);
+    var it2 = std.mem.splitScalar(u8, data, '\n');
+    while (it2.next()) |line| {
+        if (line.len == 0) continue;
+        const ev = fieldString(line, "event") orelse "";
+        const id = fieldString(line, "id") orelse "";
+        const to_archive = isFossilEvent(ev) or
+            (isExhaustEvent(ev) and terminal_ids.contains(id));
+        const dst = if (to_archive) &arch else &keep;
+        try dst.appendSlice(allocator, line);
+        try dst.append(allocator, '\n');
+    }
+
+    // Archive first (append-only), then atomically replace the store.
+    const arch_path_z = try std.fmt.allocPrintSentinel(allocator, "{s}.archive.jsonl", .{path}, 0);
+    defer allocator.free(arch_path_z);
+    {
+        var flags: c.O = .{};
+        flags.ACCMODE = .WRONLY;
+        flags.CREAT = true;
+        flags.APPEND = true;
+        const fd: c_int = c.open(arch_path_z.ptr, flags, @as(c_uint, 0o644));
+        if (fd < 0) return error.OpenFailed;
+        defer _ = c.close(fd);
+        try writeAllFd(fd, arch.items);
+    }
+    const tmp_path_z = try std.fmt.allocPrintSentinel(allocator, "{s}.compact.tmp", .{path}, 0);
+    defer allocator.free(tmp_path_z);
+    {
+        var flags: c.O = .{};
+        flags.ACCMODE = .WRONLY;
+        flags.CREAT = true;
+        flags.TRUNC = true;
+        const fd: c_int = c.open(tmp_path_z.ptr, flags, @as(c_uint, 0o644));
+        if (fd < 0) return error.OpenFailed;
+        defer _ = c.close(fd);
+        try writeAllFd(fd, keep.items);
+    }
+    if (c.rename(tmp_path_z.ptr, path_z.ptr) != 0) return error.RenameFailed;
+
+    // Drop the size-keyed read memo — the file shrank, size-match must miss.
+    read_cache_buf = null;
+    read_cache_size = 0;
+    return true;
+}
+
+test "fieldString tolerates both spacings and skips near-miss keys" {
+    try std.testing.expectEqualStrings("iterated", fieldString("{\"event\": \"iterated\", \"id\": \"abc\"}", "event").?);
+    try std.testing.expectEqualStrings("ebm_proto", fieldString("{\"event\":\"ebm_proto\",\"id\":\"x\"}", "event").?);
+    try std.testing.expectEqualStrings("abc12345", fieldString("{\"parent_id\": \"zz\", \"id\": \"abc12345\"}", "id").?);
+    try std.testing.expect(fieldString("{\"parent_id\": \"zz\"}", "id") == null);
+}
+
+test "compaction policy: fossils always archive, exhaust only when terminal" {
+    try std.testing.expect(isFossilEvent("ebm_proto"));
+    try std.testing.expect(isExhaustEvent("iterated"));
+    try std.testing.expect(!isExhaustEvent("declared"));
+    try std.testing.expect(!isExhaustEvent("child_added"));
+    try std.testing.expect(isTerminalEvent("satisfied") and isTerminalEvent("died") and isTerminalEvent("purged"));
+    try std.testing.expect(!isTerminalEvent("declared"));
+}
