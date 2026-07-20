@@ -18,6 +18,18 @@ This plan spans:
 
 ## Current State
 
+### Installed verification (2026-07-20)
+
+- Aiko `0.2.102` and the matching Contract ABI v3 dylib are installed
+  from one checksummed `macos-aarch64` package.
+- `net.theclarityproject.aiko.contract-worker` is loaded and running under the
+  per-user launchd domain.
+- The installed binary can list durable tasks and complete an isolated
+  empty-ledger `contract-worker --once` reconciliation without the TUI or a
+  Contract CLI subprocess.
+- The worker log is empty after startup and contains no recognized
+  secret-shaped values.
+
 ### Contract
 
 - The ledger is append-only and reconstructs state from events.
