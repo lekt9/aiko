@@ -4,6 +4,7 @@ use crate::types::tool::{ToolKind, ToolNamespace};
 
 use super::interval::{interval_to_human, parse_interval};
 use super::types::{ScheduledTask, SchedulerCommand, SchedulerHandle};
+use std::sync::OnceLock;
 
 // Canonical /loop wording lives in the light API crate so other consumers can
 // link it without the tools implementation crate; re-exported to keep paths stable.
@@ -56,6 +57,132 @@ fn default_true() -> bool {
     true
 }
 
+fn contract_library_candidates() -> Vec<std::path::PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(path) = std::env::var_os("AIKO_CONTRACT_LIBRARY") {
+        paths.push(path.into());
+    }
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(bin_dir) = executable.parent()
+    {
+        paths.push(bin_dir.join("../lib/libcontract.dylib"));
+    }
+    if let Some(home) = dirs::home_dir() {
+        paths.push(home.join(".aiko/lib/libcontract.dylib"));
+    }
+    paths.push(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../../contract/libcontract/zig-out/lib/libcontract.dylib"),
+    );
+    paths
+}
+
+use std::ffi::{CStr, CString, c_char};
+type AbiVersionFn = unsafe extern "C" fn() -> u32;
+type DeclareFn = unsafe extern "C" fn(*const c_char, *const c_char, u64, bool, i64) -> *mut c_char;
+type CancelFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
+type ListFn = unsafe extern "C" fn() -> *mut c_char;
+type FreeFn = unsafe extern "C" fn(*mut c_char);
+
+struct ScheduleAbi {
+    _library: libloading::Library,
+    declare: DeclareFn,
+    cancel: CancelFn,
+    list: ListFn,
+    free: FreeFn,
+}
+
+fn schedule_abi() -> Option<&'static ScheduleAbi> {
+    static ABI: OnceLock<Option<ScheduleAbi>> = OnceLock::new();
+    ABI.get_or_init(|| {
+        for path in contract_library_candidates() {
+            let Ok(library) = (unsafe { libloading::Library::new(path) }) else {
+                continue;
+            };
+            let Ok(version) = (unsafe { library.get::<AbiVersionFn>(b"contract_abi_version\0") })
+            else {
+                continue;
+            };
+            if unsafe { version() } < 3 {
+                continue;
+            }
+            let Ok(declare) =
+                (unsafe { library.get::<DeclareFn>(b"contract_declare_scheduled\0") })
+            else {
+                continue;
+            };
+            let Ok(cancel) = (unsafe { library.get::<CancelFn>(b"contract_cancel\0") }) else {
+                continue;
+            };
+            let Ok(list) = (unsafe { library.get::<ListFn>(b"contract_list_scheduled_json\0") })
+            else {
+                continue;
+            };
+            let Ok(free) = (unsafe { library.get::<FreeFn>(b"contract_free\0") }) else {
+                continue;
+            };
+            return Some(ScheduleAbi {
+                declare: *declare,
+                cancel: *cancel,
+                list: *list,
+                free: *free,
+                _library: library,
+            });
+        }
+        None
+    })
+    .as_ref()
+}
+
+fn declare_contract_schedule(task: &ScheduledTask, cwd: &std::path::Path) -> Option<String> {
+    let prompt = CString::new(task.prompt.as_str()).ok()?;
+    let cwd = CString::new(cwd.to_string_lossy().as_bytes()).ok()?;
+    let first_due = task.next_fire_at().timestamp();
+    let abi = schedule_abi()?;
+    let ptr = unsafe {
+        (abi.declare)(
+            prompt.as_ptr(),
+            cwd.as_ptr(),
+            task.interval_secs,
+            task.recurring,
+            first_due,
+        )
+    };
+    if ptr.is_null() {
+        return None;
+    }
+    let id = unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe { (abi.free)(ptr) };
+    Some(id)
+}
+
+pub(super) fn cancel_contract_schedule(id: &str) -> bool {
+    let Some(abi) = schedule_abi() else {
+        return false;
+    };
+    let Ok(id) = CString::new(id) else {
+        return false;
+    };
+    unsafe { (abi.cancel)(id.as_ptr(), c"cancelled through scheduler_delete".as_ptr()) == 0 }
+}
+
+pub(super) fn list_contract_schedules() -> Vec<serde_json::Value> {
+    let Some(abi) = schedule_abi() else {
+        return Vec::new();
+    };
+    let ptr = unsafe { (abi.list)() };
+    if ptr.is_null() {
+        return Vec::new();
+    }
+    let raw = unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe { (abi.free)(ptr) };
+    serde_json::from_str::<Vec<serde_json::Value>>(&raw).unwrap_or_default()
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SchedulerCreateOutput {
@@ -86,7 +213,8 @@ Set fire_immediately: true to also fire once on creation; by default the first r
 Usage notes:
 - Interval format: "5m" (minutes), "2h" (hours), "1d" (days), "60s" (seconds, min 60)
 - Maximum 50 scheduled tasks at once
-- Recurring tasks auto-expire after 7 days"#
+- Recurring session-only tasks auto-expire after 7 days
+- Set durable: true when the task must survive closing Aiko or restarting the machine"#
         // TODO: scheduler tools share ToolKind::Other so they can't be template-ized
         // via ${{ tools.by_kind.* }}. If tool name randomization is needed, add
         // dedicated ToolKind variants (SchedulerCreate, SchedulerDelete, SchedulerList).
@@ -146,16 +274,6 @@ impl xai_tool_runtime::Tool for SchedulerCreateTool {
         let interval_secs = parse_interval(&input.interval)
             .map_err(|e| xai_tool_runtime::ToolError::invalid_arguments(e.to_string()))?;
 
-        let sender = {
-            let res = resources.lock().await;
-            res.get::<SchedulerHandle>()
-                .ok_or_else(|| {
-                    xai_tool_runtime::ToolError::custom("missing_resource", "SchedulerHandle")
-                })?
-                .0
-                .clone()
-        };
-
         let durable = input.durable.unwrap_or(false);
         let task = ScheduledTask::with_fire_immediately(
             interval_secs,
@@ -165,6 +283,33 @@ impl xai_tool_runtime::Tool for SchedulerCreateTool {
             input.fire_immediately,
         );
 
+        if durable {
+            let cwd = {
+                let res = resources.lock().await;
+                res.get::<crate::types::resources::Cwd>()
+                    .map(|cwd| cwd.0.clone())
+            };
+            if let Some(id) = cwd
+                .as_deref()
+                .and_then(|cwd| declare_contract_schedule(&task, cwd))
+            {
+                return Ok(SchedulerCreateOutput {
+                    id,
+                    human_schedule: interval_to_human(interval_secs),
+                    recurring: input.recurring,
+                });
+            }
+        }
+
+        let sender = {
+            let res = resources.lock().await;
+            res.get::<SchedulerHandle>()
+                .ok_or_else(|| {
+                    xai_tool_runtime::ToolError::custom("missing_resource", "SchedulerHandle")
+                })?
+                .0
+                .clone()
+        };
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         sender
             .send(SchedulerCommand::Create {

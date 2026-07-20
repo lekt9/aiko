@@ -114,6 +114,10 @@ pub enum SyntheticReason {
     /// Scheduled task (`/loop`) prompt fired by the scheduler.  Wakes the
     /// agent.
     SchedulerFired,
+    /// Durable Contract occurrence fired by the native resolver. Wakes the
+    /// agent through the scheduled-prompt transport while retaining its own
+    /// provenance.
+    ContractWake,
     /// Catch-all for unknown/future variants.  Preserves forward compatibility
     /// so older clients can deserialize sessions written by newer versions.
     #[serde(other)]
@@ -140,7 +144,8 @@ impl SyntheticReason {
             | Self::SubagentCompleted
             | Self::NotificationDrain
             | Self::GoalClassifierNudge
-            | Self::SchedulerFired => true,
+            | Self::SchedulerFired
+            | Self::ContractWake => true,
             Self::CompactionMeta
             | Self::SystemReminder
             | Self::ProjectInstructions
@@ -1046,6 +1051,18 @@ impl ConversationItem {
                 text: Arc::<str>::from(content.into()),
             }],
             synthetic_reason: Some(SyntheticReason::SchedulerFired),
+            prior_turn_interrupt: None,
+            prompt_index: None,
+        })
+    }
+
+    /// Durable Contract occurrence fired by the native resolver.
+    pub fn contract_wake(content: impl Into<String>) -> Self {
+        Self::User(UserItem {
+            content: vec![ContentPart::Text {
+                text: Arc::<str>::from(content.into()),
+            }],
+            synthetic_reason: Some(SyntheticReason::ContractWake),
             prior_turn_interrupt: None,
             prompt_index: None,
         })

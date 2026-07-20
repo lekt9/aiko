@@ -398,7 +398,7 @@ fn record_contract_outcome(
                 else {
                     continue;
                 };
-                if unsafe { abi_version() } != 2 {
+                if !(2..=3).contains(&unsafe { abi_version() }) {
                     continue;
                 }
                 let Ok(record) = (unsafe {

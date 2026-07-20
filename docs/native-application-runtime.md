@@ -36,6 +36,14 @@ contents, and window titles are not written into the learned exemplar.
 Successful outcomes become routable; failures inhibit the cell. Old evidence
 is marked `verified_stale` and cannot auto-route.
 
+Contract also provides the grounded agency layer below capability routing.
+High-risk typed action nodes fail closed without approval and consequence
+coverage. Sensor observations can terminate in command, browser, filesystem,
+HTTP, human, economic, or adapter anchors; evaluators enforce independent
+sources, counter-metrics, freshness, and vetoes. Negative evidence bypasses
+positive cache reuse and propagates invalidation before compatible rollback.
+Legacy Aiko turn rows remain readable and are not assigned invented roles.
+
 The primitive implementation lives in
 `crates/common/xai-application-runtime`. It owns CDP WebSocket request
 correlation, local Chrome launch, direct Electron attachment, accessibility
@@ -72,6 +80,12 @@ refreshes the combined package by default. Run
 workflow or
 `scripts/contract-runtime.sh install` to build, verify, and atomically install
 both components.
+
+Each package invocation rebuilds Contract first, then Aiko, copies those exact
+artifacts into one versioned directory, records their SHA-256 hashes and source
+revisions in `manifest.json`, and creates the tarball from that directory.
+`build-aiko-only` is the sole explicit path that intentionally skips this
+refresh.
 
 During development, `scripts/contract-runtime.sh dev-link` points the installed
 runtime at the Contract repository's build output. Run

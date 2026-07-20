@@ -429,7 +429,11 @@ pub(crate) fn maybe_drain_queue(agent: &mut AgentView) -> Vec<Effect> {
         }
         QueueEntryKind::Cron => {
             let task_id = queued.task_id.as_deref().unwrap_or("unknown");
-            let prompt_id = format!("scheduler-fired-{task_id}-{prompt_id}");
+            let prompt_id = if task_id.starts_with("contract-") {
+                format!("contract-wake-{task_id}-{prompt_id}")
+            } else {
+                format!("scheduler-fired-{task_id}-{prompt_id}")
+            };
             agent.note_self_originated_prompt(&prompt_id);
             agent.start_turn_boundary(Some(&prompt_id));
             agent.session.current_prompt_id = Some(prompt_id.clone());

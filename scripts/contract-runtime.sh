@@ -12,7 +12,7 @@ PACKAGE_ROOT="$AIKO_ROOT/target/aiko-package"
 
 usage() {
     cat <<'EOF'
-Usage: scripts/contract-runtime.sh <command>
+Usage: scripts/contract-runtime.sh [command]
 
 Commands:
   build-contract  Build libcontract.dylib from the sibling Contract repository.
@@ -187,7 +187,7 @@ package_runtime() {
         printf '  "format": 1,\n'
         printf '  "version": "%s",\n' "$VERSION"
         printf '  "platform": "%s",\n' "$PLATFORM"
-        printf '  "contract_abi": 2,\n'
+        printf '  "contract_abi": 3,\n'
         printf '  "application_runtime": "aiko-native-cdp-v1",\n'
         printf '  "aiko_sha256": "%s",\n' "$AIKO_SHA"
         printf '  "aiko_commit": "%s",\n' "$AIKO_COMMIT"

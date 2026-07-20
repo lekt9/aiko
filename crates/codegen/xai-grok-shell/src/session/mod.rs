@@ -85,6 +85,8 @@ pub enum PromptOrigin {
     GoalClassifierNudge,
     /// Scheduled task (`/loop`) prompt fired by the scheduler via the pager.
     SchedulerFired,
+    /// Durable Contract occurrence fired by the native resolver.
+    ContractWake,
     /// Turn injected after a resumed plan-approval decision: the
     /// shell re-parked `exit_plan_mode` on resume, the user approved/revised,
     /// and the shell injects the follow-up turn. Synthetic so the user never
@@ -110,6 +112,8 @@ impl PromptOrigin {
             Self::GoalClassifierNudge
         } else if prompt_id.starts_with("scheduler-fired-") {
             Self::SchedulerFired
+        } else if prompt_id.starts_with("contract-wake-") {
+            Self::ContractWake
         } else if prompt_id.starts_with("plan-resume-") {
             Self::PlanResume
         } else {
@@ -128,7 +132,7 @@ impl PromptOrigin {
     /// real user turns always render.
     pub fn hide_user_echo_from_scrollback(&self) -> bool {
         match self {
-            Self::User | Self::SchedulerFired | Self::PlanResume => false,
+            Self::User | Self::SchedulerFired | Self::ContractWake | Self::PlanResume => false,
             Self::TaskCompleted { .. }
             | Self::SubagentCompleted { .. }
             | Self::NotificationDrain
@@ -147,6 +151,7 @@ impl PromptOrigin {
             | Self::GoalSummary
             | Self::GoalClassifierNudge
             | Self::SchedulerFired
+            | Self::ContractWake
             | Self::PlanResume => None,
         }
     }
@@ -219,6 +224,13 @@ mod tests {
     fn scheduler_fired_origin_from_prompt_id() {
         let origin = PromptOrigin::from_prompt_id("scheduler-fired-019e51a3-abcd-1234");
         assert!(matches!(origin, PromptOrigin::SchedulerFired));
+        assert!(origin.is_synthetic());
+        assert_eq!(origin.completion_id(), None);
+    }
+    #[test]
+    fn contract_wake_origin_from_prompt_id() {
+        let origin = PromptOrigin::from_prompt_id("contract-wake-contract-deadbeef-at-100-uuid");
+        assert!(matches!(origin, PromptOrigin::ContractWake));
         assert!(origin.is_synthetic());
         assert_eq!(origin.completion_id(), None);
     }

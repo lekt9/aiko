@@ -95,6 +95,16 @@ impl xai_tool_runtime::Tool for SchedulerDeleteTool {
         use crate::types::tool_metadata::shared_resources;
         let resources = shared_resources(&ctx)?;
 
+        if input.id.len() == 8
+            && input.id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            && super::create::cancel_contract_schedule(&input.id)
+        {
+            return Ok(SchedulerDeleteOutput {
+                success: true,
+                message: format!("Durable Contract task {} cancelled.", input.id),
+            });
+        }
+
         let sender = {
             let res = resources.lock().await;
             res.get::<SchedulerHandle>()

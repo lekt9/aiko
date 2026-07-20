@@ -31,6 +31,27 @@ ledger remains readable by Contract tooling. If the substrate is temporarily
 unavailable, Aiko continues the user’s work and records a debug event; ledger
 bookkeeping never blocks the agent.
 
+## What Contract contributes
+
+The bundled Contract runtime is more than a completion flag. It supplies one
+signed ledger and resolver with six typed agency roles: purpose, sensor,
+action, evaluator, governor, and development. Governed workflows can bind:
+
+- effect reach and explicit approval for network/deployment/message/payment,
+  on-chain, or human-impacting actions;
+- consequence sensors terminating in hashed external reality anchors;
+- independent evaluators, counter-metrics, vetoes, freshness, and revocation;
+- slow-loop target ownership and frozen boundaries;
+- same-tick bad-news propagation and compatible rollback;
+- atomic, reversible topology-development proposals.
+
+Aiko’s ordinary turn bridge remains non-blocking: it declares the user’s goal
+and records a terminal result through ABI v2. Advanced typed envelopes and
+trust policy are additive, so existing ledgers and turns remain compatible.
+Contract’s causal event stream is local and redacted; the standalone Contract
+CLI can inspect it with `events`, `watch`, and `explain` without requesting
+wallet or Keychain access.
+
 ## Building
 
 Requirements:
@@ -65,7 +86,7 @@ aiko-<version>-<platform>/
 Build and install the combined, checksummed package:
 
 ```sh
-scripts/contract-runtime.sh package
+scripts/contract-runtime.sh build-aiko   # default: build and repackage
 scripts/contract-runtime.sh install
 ```
 
@@ -77,6 +98,12 @@ installs Aiko to `${AIKO_BIN_DIR:-~/bin}/aiko` and Contract to
 the combined Aiko + Contract package by default, so a successful application
 build cannot leave a stale Contract runtime in the distributable. Use
 `build-aiko-only` only for an intentionally unpackaged inner-loop build.
+The package manifest pins both the Aiko and Contract SHA-256 hashes plus their
+source revisions. Packaging fails if either expected artifact is absent, and
+the installer verifies both hashes before atomically replacing the live files.
+
+The complete integration behavior is documented in
+[`docs/contract-agency-runtime.md`](docs/contract-agency-runtime.md).
 
 For linked development, keep Contract as the source of truth:
 

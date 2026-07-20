@@ -18,6 +18,7 @@ pub(crate) fn is_scheduler_fired_prompt(prompt_id: &str) -> bool {
     matches!(
         xai_grok_shell::session::PromptOrigin::from_prompt_id(prompt_id),
         xai_grok_shell::session::PromptOrigin::SchedulerFired
+            | xai_grok_shell::session::PromptOrigin::ContractWake
     )
 }
 

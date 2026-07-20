@@ -41,6 +41,12 @@ type WarmRouterFn = unsafe extern "C" fn(u32) -> u32;
 type FractalContextFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char;
 type TickFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 type SettleExecutionFn = unsafe extern "C" fn(*const c_char) -> i32;
+type EmitSignalFn = unsafe extern "C" fn(*const c_char) -> i32;
+type RenewExecutionFn = unsafe extern "C" fn(*const c_char) -> i32;
+type GetFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
+type ListFn = unsafe extern "C" fn() -> *mut c_char;
+type CancelFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
+type RetryFn = unsafe extern "C" fn(*const c_char) -> i32;
 type FreeFn = unsafe extern "C" fn(*mut c_char);
 
 struct NativeContract {
@@ -53,6 +59,13 @@ struct NativeContract {
     fractal_context: FractalContextFn,
     tick: Option<TickFn>,
     settle_execution: Option<SettleExecutionFn>,
+    emit_signal: Option<EmitSignalFn>,
+    renew_execution: Option<RenewExecutionFn>,
+    get: GetFn,
+    list: ListFn,
+    cancel: Option<CancelFn>,
+    retry: Option<RetryFn>,
+    list_scheduled: Option<ListFn>,
     free: FreeFn,
 }
 
@@ -110,6 +123,33 @@ impl NativeContract {
                     },
                     settle_execution: if abi_version >= 3 {
                         Some(*library.get(b"contract_settle_execution_json\0").ok()?)
+                    } else {
+                        None
+                    },
+                    emit_signal: if abi_version >= 3 {
+                        Some(*library.get(b"contract_emit_signal_json\0").ok()?)
+                    } else {
+                        None
+                    },
+                    renew_execution: if abi_version >= 3 {
+                        Some(*library.get(b"contract_renew_execution_json\0").ok()?)
+                    } else {
+                        None
+                    },
+                    get: *library.get(b"contract_get\0").ok()?,
+                    list: *library.get(b"contract_list\0").ok()?,
+                    cancel: if abi_version >= 3 {
+                        Some(*library.get(b"contract_cancel\0").ok()?)
+                    } else {
+                        None
+                    },
+                    retry: if abi_version >= 3 {
+                        Some(*library.get(b"contract_retry\0").ok()?)
+                    } else {
+                        None
+                    },
+                    list_scheduled: if abi_version >= 3 {
+                        Some(*library.get(b"contract_list_scheduled_json\0").ok()?)
                     } else {
                         None
                     },
@@ -197,6 +237,67 @@ impl NativeContract {
         };
         unsafe { settle(request.as_ptr()) == 0 }
     }
+
+    fn emit_signal(&self, request: &ContractSignal<'_>) -> bool {
+        let Some(emit) = self.emit_signal else {
+            return false;
+        };
+        let Ok(request) = serde_json::to_string(request) else {
+            return false;
+        };
+        let Ok(request) = CString::new(request) else {
+            return false;
+        };
+        unsafe { emit(request.as_ptr()) == 0 }
+    }
+
+    fn renew(&self, request: &ContractRenewal<'_>) -> bool {
+        let Some(renew) = self.renew_execution else {
+            return false;
+        };
+        let Ok(request) = serde_json::to_string(request) else {
+            return false;
+        };
+        let Ok(request) = CString::new(request) else {
+            return false;
+        };
+        unsafe { renew(request.as_ptr()) == 0 }
+    }
+
+    fn get(&self, id: &str) -> Option<String> {
+        let id = CString::new(id).ok()?;
+        self.take_string(unsafe { (self.get)(id.as_ptr()) })
+    }
+
+    fn list(&self) -> Option<String> {
+        self.take_string(unsafe { (self.list)() })
+    }
+
+    fn cancel(&self, id: &str) -> bool {
+        let Some(cancel) = self.cancel else {
+            return false;
+        };
+        let Ok(id) = CString::new(id) else {
+            return false;
+        };
+        unsafe { cancel(id.as_ptr(), c"cancelled by user".as_ptr()) == 0 }
+    }
+
+    fn retry(&self, id: &str) -> bool {
+        let Some(retry) = self.retry else {
+            return false;
+        };
+        let Ok(id) = CString::new(id) else {
+            return false;
+        };
+        unsafe { retry(id.as_ptr()) == 0 }
+    }
+
+    fn list_scheduled(&self) -> Option<Value> {
+        let list = self.list_scheduled?;
+        let raw = self.take_string(unsafe { list() })?;
+        serde_json::from_str(&raw).ok()
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -233,6 +334,21 @@ struct ContractSettlement<'a> {
     occurrence: &'a str,
     outcome: &'a str,
     detail: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct ContractSignal<'a> {
+    name: &'a str,
+    cwd: &'a str,
+    detail: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct ContractRenewal<'a> {
+    owner: &'a str,
+    contract_id: &'a str,
+    occurrence: &'a str,
+    lease_seconds: u32,
 }
 
 fn native_contract() -> Option<&'static NativeContract> {
@@ -283,6 +399,86 @@ pub async fn settle_contract_claim(
     .unwrap_or(false)
 }
 
+/// Emit a privacy-safe application/system event into Contract's native
+/// trigger ledger.
+pub async fn emit_contract_signal(name: String, cwd: PathBuf, detail: String) -> bool {
+    tokio::task::spawn_blocking(move || {
+        native_contract().is_some_and(|contract| {
+            contract.emit_signal(&ContractSignal {
+                name: &name,
+                cwd: &cwd.to_string_lossy(),
+                detail: &detail,
+            })
+        })
+    })
+    .await
+    .unwrap_or(false)
+}
+
+async fn renew_contract_claim(owner: String, claim: ContractClaim, lease_seconds: u32) -> bool {
+    tokio::task::spawn_blocking(move || {
+        native_contract().is_some_and(|contract| {
+            contract.renew(&ContractRenewal {
+                owner: &owner,
+                contract_id: &claim.contract_id,
+                occurrence: &claim.occurrence,
+                lease_seconds,
+            })
+        })
+    })
+    .await
+    .unwrap_or(false)
+}
+
+pub async fn inspect_contract(id: String) -> Option<String> {
+    tokio::task::spawn_blocking(move || native_contract()?.get(&id))
+        .await
+        .ok()
+        .flatten()
+}
+
+pub async fn list_contracts() -> Vec<(String, String)> {
+    tokio::task::spawn_blocking(move || {
+        let raw = native_contract()?.list()?;
+        Some(
+            raw.lines()
+                .filter_map(|line| {
+                    let (id, plan) = line.split_once('\t')?;
+                    Some((id.to_string(), plan.to_string()))
+                })
+                .collect::<Vec<_>>(),
+        )
+    })
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_default()
+}
+
+pub async fn cancel_contract(id: String) -> bool {
+    tokio::task::spawn_blocking(move || {
+        native_contract().is_some_and(|contract| contract.cancel(&id))
+    })
+    .await
+    .unwrap_or(false)
+}
+
+pub async fn retry_contract(id: String) -> bool {
+    tokio::task::spawn_blocking(move || {
+        native_contract().is_some_and(|contract| contract.retry(&id))
+    })
+    .await
+    .unwrap_or(false)
+}
+
+pub async fn list_scheduled_contracts() -> Value {
+    tokio::task::spawn_blocking(move || native_contract()?.list_scheduled())
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| Value::Array(Vec::new()))
+}
+
 #[derive(Debug, Clone)]
 struct PendingContractClaim {
     owner: String,
@@ -316,11 +512,56 @@ pub(crate) fn spawn_contract_coordinator(
     tokio::task::spawn_local(async move {
         loop {
             if session.upgrade().is_none() {
+                let abandoned = pending_contract_claims()
+                    .lock()
+                    .map(|mut pending| {
+                        let task_ids = pending
+                            .iter()
+                            .filter(|(_, item)| item.owner == owner)
+                            .map(|(task_id, _)| task_id.clone())
+                            .collect::<Vec<_>>();
+                        task_ids
+                            .into_iter()
+                            .filter_map(|task_id| pending.remove(&task_id))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                for pending in abandoned {
+                    let _ = settle_contract_claim(
+                        pending.owner,
+                        pending.claim,
+                        "retry",
+                        "Aiko session closed before the ContractWake completed".to_string(),
+                    )
+                    .await;
+                }
                 break;
             }
 
-            let Some(tick) =
-                tick_due_contracts(owner.clone(), Some(cwd.clone()), 32, 3_600).await
+            let now_unix = chrono::Utc::now().timestamp();
+            let renewals = pending_contract_claims()
+                .lock()
+                .map(|pending| {
+                    pending
+                        .iter()
+                        .filter(|(_, item)| {
+                            item.owner == owner
+                                && item.claim.lease_until_unix.saturating_sub(now_unix) <= 900
+                        })
+                        .map(|(task_id, item)| (task_id.clone(), item.claim.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            for (task_id, claim) in renewals {
+                if renew_contract_claim(owner.clone(), claim, 3_600).await
+                    && let Ok(mut pending) = pending_contract_claims().lock()
+                    && let Some(item) = pending.get_mut(&task_id)
+                {
+                    item.claim.lease_until_unix = now_unix.saturating_add(3_600);
+                }
+            }
+
+            let Some(tick) = tick_due_contracts(owner.clone(), Some(cwd.clone()), 32, 3_600).await
             else {
                 // ABI v2 is supported for foreground turns but has no durable
                 // tick surface. Re-check infrequently in case the runtime is
@@ -355,7 +596,10 @@ pub(crate) fn spawn_contract_coordinator(
                     task_id,
                     prompt: prompt.to_string(),
                     human_schedule: format!("Contract {}", claim.occurrence),
-                    next_fire_at: tick.next_wake_unix.map(|unix| unix.to_string()),
+                    next_fire_at: tick.next_wake_unix.and_then(|unix| {
+                        chrono::DateTime::<chrono::Utc>::from_timestamp(unix, 0)
+                            .map(|deadline| deadline.to_rfc3339())
+                    }),
                 });
             }
 
@@ -377,7 +621,8 @@ fn take_claim_for_prompt(prompt_id: &str) -> Option<PendingContractClaim> {
         .keys()
         .find(|task_id| {
             prompt_id
-                .strip_prefix("scheduler-fired-")
+                .strip_prefix("contract-wake-")
+                .or_else(|| prompt_id.strip_prefix("scheduler-fired-"))
                 .is_some_and(|rest| rest.starts_with(&format!("{task_id}-")))
         })
         .cloned()?;
@@ -414,6 +659,20 @@ pub(crate) fn warm_router_background(passes: u32) {
         }
         WARMING.store(false, Ordering::Release);
     });
+}
+
+pub(crate) fn background_worker_installed() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        dirs::home_dir().is_some_and(|home| {
+            home.join("Library/LaunchAgents/net.theclarityproject.aiko.contract-worker.plist")
+                .is_file()
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
 }
 
 fn pending_capability_routes() -> &'static Mutex<HashMap<String, serde_json::Value>> {
@@ -1217,5 +1476,30 @@ mod tests {
             command_name("export API_KEY=secret && curl example.com"),
             None
         );
+    }
+
+    #[test]
+    fn contract_claim_survives_scheduler_prompt_identity() {
+        let claim = ContractClaim {
+            contract_id: "abc12345".to_string(),
+            occurrence: "repeat:60:42".to_string(),
+            prompt: "prepare the report".to_string(),
+            cwd: "/tmp/project".to_string(),
+            due_unix: 2_520,
+            lease_until_unix: 2_820,
+        };
+        let task_id = contract_task_id(&claim);
+        assert_eq!(task_id, "contract-abc12345-repeat-60-42");
+        pending_contract_claims().lock().unwrap().insert(
+            task_id.clone(),
+            PendingContractClaim {
+                owner: "aiko-test".to_string(),
+                claim: claim.clone(),
+            },
+        );
+        let prompt_id = format!("contract-wake-{task_id}-{}", uuid::Uuid::new_v4());
+        let restored = take_claim_for_prompt(&prompt_id).expect("claim should follow prompt");
+        assert_eq!(restored.claim.occurrence, claim.occurrence);
+        assert!(take_claim_for_prompt(&prompt_id).is_none());
     }
 }

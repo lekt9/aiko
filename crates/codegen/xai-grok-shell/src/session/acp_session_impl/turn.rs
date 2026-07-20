@@ -697,6 +697,9 @@ impl SessionActor {
                 super::super::PromptOrigin::SchedulerFired => {
                     ConversationItem::scheduler_fired(user_message)
                 }
+                super::super::PromptOrigin::ContractWake => {
+                    ConversationItem::contract_wake(user_message)
+                }
                 super::super::PromptOrigin::PlanResume => ConversationItem::user(user_message),
                 super::super::PromptOrigin::User => {
                     let mut item = ConversationItem::user(user_message);

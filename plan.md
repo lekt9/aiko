@@ -21,16 +21,30 @@ This plan spans:
 ### Contract
 
 - The ledger is append-only and reconstructs state from events.
+- Typed agency rows distinguish purpose, governor, action, sensor, evaluator,
+  and development while legacy rows remain explicitly ungoverned.
+- High-risk typed actions fail closed without approval and matching consequence
+  coverage; grounded promotion requires fresh independent anchors and respects
+  counter-metric vetoes.
+- Negative evidence bypasses positive cache reuse, propagates invalidation in
+  one resolver tick, and permits rollback only to a verified compatible
+  checkpoint.
+- Causal JSON events, watch/explain, and the offline renderer expose resolver
+  state without entering wallet or Keychain paths.
 - `satisfied`, `died`, and `purged` are the terminal alphabet.
 - Pending/HOLD contracts can carry:
   - `at:<unix-seconds>`
   - `repeat:<N>s|m|h`
-  - `contract:<id>` dependencies
+  - `when:contract:<id>` dependencies
+  - `when:event:<name>` workspace signals
 - `contract tick` materializes due occurrences, invalidates stale cached truth,
   compacts oversized ledgers, and backfills unresolved contracts.
 - `contract tick --every <seconds>` provides a standalone resident loop.
-- The complete resolver tick currently lives in `zig/src/main.zig`, not in
-  `libcontract` and not in the C ABI.
+- Occurrence planning, materialization, leasing, renewal, retry release,
+  settlement, and named signals now live in `libcontract/src/scheduler.zig`.
+- ABI v3 exposes the bounded scheduler tick while preserving all v2 symbols.
+- The CLI delegates occurrence materialization to the same library kernel;
+  its legacy action/backfill executor remains in `zig/src/main.zig`.
 
 ### Aiko
 
@@ -44,9 +58,11 @@ This plan spans:
   - prompt queue deduplication;
   - background monitors and notifications;
   - macOS sleep/wake awareness.
-- These mechanisms are not yet driven by Contract ledger occurrences.
-- When no Aiko process or standalone Contract tick is running, due work does
-  not wake and execute at the relevant time.
+- Durable `scheduler_create` calls now declare Contract schedules directly.
+- Live sessions reconcile workspace-scoped Contract claims into the existing
+  scheduled-prompt rail and settle only owned completed turns.
+- The packaged `contract-worker` runs headlessly under a per-user LaunchAgent,
+  so TUI closure no longer stops reconciliation.
 
 ## Non-Negotiable Invariants
 
@@ -73,6 +89,10 @@ This plan spans:
 10. **Backward compatibility:** existing ledgers, CLI `tick`, scheduler state,
     and packaged Contract ABI v2 installations must continue to work through a
     versioned migration.
+11. **Package coherence by default:** every normal Aiko release build rebuilds
+    and repackages the sibling Contract dylib, and the manifest pins the exact
+    Aiko and Contract hashes. Only `build-aiko-only` may intentionally skip the
+    combined package refresh.
 
 ## Target Architecture
 
@@ -106,10 +126,12 @@ semantics, dependencies, occurrence identity, truth, and verification.
 
 Repository: `/Users/lewis/Unbrowse/contract`
 
-- [ ] Move `TriggerSpec`, trigger parsing, `materializeDueTriggers`,
-      compaction/warming, and unresolved backfill orchestration out of
-      `zig/src/main.zig` into a reusable `libcontract` module.
-- [ ] Keep CLI `contract tick` as a thin adapter over that module.
+- [x] Move `TriggerSpec`, trigger parsing, occurrence planning, atomic
+      materialization, and execution leasing into a reusable `libcontract`
+      module.
+- [ ] Move the remaining compaction/warming and legacy unresolved-action
+      backfill orchestration out of `zig/src/main.zig`.
+- [x] Keep CLI trigger materialization as a thin adapter over that module.
 - [ ] Define a bounded tick input:
   - current wall time or production-clock mode;
   - maximum contracts;
@@ -123,9 +145,10 @@ Repository: `/Users/lewis/Unbrowse/contract`
   - terminal transitions;
   - retryable and permanent errors;
   - next known wake deadline.
-- [ ] Ensure tick never executes an unbounded amount of work in one call.
-- [ ] Preserve occurrence idempotency across process crashes.
-- [ ] Add deterministic clock-injected tests for `at:` and `repeat:`.
+- [x] Ensure tick never leases an unbounded amount of work in one call.
+- [x] Preserve occurrence idempotency across process crashes.
+- [x] Add deterministic clock-injected tests for `at:`, `repeat:`,
+      dependencies, named events, leases, and retry release.
 
 ### Phase 1 acceptance
 
@@ -139,16 +162,16 @@ Repository: `/Users/lewis/Unbrowse/contract`
 
 Repository: `/Users/lewis/Unbrowse/contract`
 
-- [ ] Add a new ABI version without breaking v2 consumers.
-- [ ] Export a function equivalent to:
+- [x] Add ABI v3 without removing v2 symbols; Aiko accepts both versions.
+- [x] Export a function equivalent to:
 
 ```c
 char *contract_tick_json(const char *request_json);
 ```
 
-- [ ] Return owned JSON through the existing Contract allocation/free
+- [x] Return owned JSON through the existing Contract allocation/free
       convention.
-- [ ] Add ABI endpoints for durable execution lifecycle if they are not
+- [x] Add ABI endpoints for durable execution lifecycle:
       expressible with existing calls:
   - claim/lease an occurrence;
   - renew a lease;
@@ -157,7 +180,7 @@ char *contract_tick_json(const char *request_json);
   - submit evidence and terminal verdict.
 - [ ] Use stable error codes and typed JSON, not human console output.
 - [ ] Make unsupported ABI versions fail closed with an actionable error.
-- [ ] Add Zig ABI tests plus a small foreign-language smoke test.
+- [x] Add Zig ABI tests plus a foreign-language dylib smoke test.
 
 ### Phase 2 acceptance
 
@@ -170,21 +193,21 @@ char *contract_tick_json(const char *request_json);
 
 Repository: `/Users/lewis/Unbrowse/aiko`
 
-- [ ] Extend the existing Contract loader with typed wrappers for the new ABI.
-- [ ] Introduce a `ContractCoordinator` owned by the Aiko runtime.
-- [ ] On startup:
+- [x] Extend the existing Contract loader with typed wrappers for ABI v3.
+- [x] Introduce a session-lifetime `ContractCoordinator`.
+- [x] On startup:
   - load and negotiate Contract ABI;
   - reconcile pending/due contracts;
   - recover expired execution leases;
   - compute the next wake deadline.
-- [ ] While running:
+- [x] While running:
   - sleep until the next Contract deadline or a ledger-change notification;
   - tick with bounded work;
   - enqueue runnable occurrences;
   - apply retry backoff with jitter for transient failures.
 - [ ] Use FSEvents/kqueue to wake on ledger changes instead of constant polling.
-- [ ] Use a stable queue key derived from contract id plus occurrence id.
-- [ ] Add `PromptOrigin::ContractWake` rather than disguising Contract work as a
+- [x] Use a stable queue key derived from contract id plus occurrence id.
+- [x] Add `PromptOrigin::ContractWake` rather than disguising Contract work as a
       user prompt or scheduler fire.
 - [ ] Surface coordinator status without leaking prompt payloads.
 
@@ -224,23 +247,24 @@ Repository: `/Users/lewis/Unbrowse/aiko`
 
 ## Phase 5 — Native macOS Background Lifecycle
 
-- [ ] Add an Aiko background-agent/daemon entry point that runs the coordinator
+- [x] Add an Aiko background-agent entry point that runs the coordinator
       without the TUI.
-- [ ] Package and install a per-user `launchd` agent with Aiko.
-- [ ] Use one coordinator process per user and an exclusive lease/lock.
-- [ ] Start at login and restart after crashes with bounded throttling.
+- [x] Package and install a per-user `launchd` agent with Aiko.
+- [x] Use one launchd worker per user plus Contract's exclusive occurrence
+      leases across all live sessions.
+- [x] Start at login and restart after crashes.
 - [ ] Schedule wake deadlines through macOS-native facilities where available;
       reconcile missed deadlines after sleep or reboot.
-- [ ] Share authentication/provider configuration with Aiko without copying raw
+- [x] Share authentication/provider configuration with Aiko without copying raw
       credentials into launchd plists or logs.
-- [ ] Add CLI controls:
-  - `aiko background status`
-  - `aiko background start`
-  - `aiko background stop`
-  - `aiko tasks list`
-  - `aiko tasks inspect <id>`
-  - `aiko tasks retry <id>`
-  - `aiko tasks cancel <id>`
+- [x] Add CLI controls:
+  - [x] `aiko background status`
+  - [x] `aiko background start`
+  - [x] `aiko background stop`
+  - [x] `aiko tasks list`
+  - [x] `aiko tasks inspect <id>`
+  - [x] `aiko tasks retry <id>`
+  - [x] `aiko tasks cancel <id>`
 - [ ] Make installation and removal reversible.
 
 ### Phase 5 acceptance
@@ -252,8 +276,8 @@ Repository: `/Users/lewis/Unbrowse/aiko`
 
 ## Phase 6 — Event Sensors
 
-- [ ] Define a typed sensor adapter interface whose output is evidence, not an
-      unrestricted prompt.
+- [x] Define a native, workspace-scoped named-signal interface whose output is
+      append-only evidence, not an unrestricted prompt.
 - [ ] Implement initial local sensors:
   - file created/changed;
   - process exited;
@@ -341,4 +365,3 @@ Repository: `/Users/lewis/Unbrowse/aiko`
   explicitly terminal.
 - Duplicate delivery cannot produce duplicate committed effects.
 - Contract remains the single source of truth and is invoked natively in-process.
-

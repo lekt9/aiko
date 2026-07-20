@@ -118,7 +118,7 @@ impl xai_tool_runtime::Tool for SchedulerListTool {
             )
         })?;
 
-        let summaries = tasks
+        let mut summaries: Vec<ScheduledTaskSummary> = tasks
             .into_iter()
             .map(|t| {
                 let next_fire = t.next_fire_at().to_rfc3339();
@@ -139,6 +139,36 @@ impl xai_tool_runtime::Tool for SchedulerListTool {
                 }
             })
             .collect();
+        summaries.extend(
+            super::create::list_contract_schedules()
+                .into_iter()
+                .filter_map(|task| {
+                    let id = task.get("id")?.as_str()?.to_string();
+                    let mut prompt = task.get("prompt")?.as_str()?.to_string();
+                    if prompt.len() > 80 {
+                        let cut = crate::util::floor_char_boundary(&prompt, 80);
+                        prompt = format!("{}...", &prompt[..cut]);
+                    }
+                    let trigger = task
+                        .get("trigger")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("Contract trigger")
+                        .to_string();
+                    let occurrence = task
+                        .get("occurrence")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("waiting")
+                        .to_string();
+                    Some(ScheduledTaskSummary {
+                        id,
+                        prompt,
+                        interval_human: trigger.clone(),
+                        next_fire_at: occurrence,
+                        created_at: "Contract ledger".to_string(),
+                        recurring: trigger.contains("repeat:"),
+                    })
+                }),
+        );
 
         Ok(SchedulerListOutput { tasks: summaries })
     }

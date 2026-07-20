@@ -4,6 +4,45 @@ use clap::{ArgAction, Parser, Subcommand, ValueHint};
 use clap_complete::Shell;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+
+#[derive(Debug, clap::Args, Clone)]
+pub struct BackgroundArgs {
+    #[command(subcommand)]
+    pub command: BackgroundCommand,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum BackgroundCommand {
+    /// Show whether the durable Contract worker is loaded.
+    Status,
+    /// Load and start the installed durable Contract worker.
+    Start,
+    /// Stop the durable Contract worker until it is started again.
+    Stop,
+}
+
+#[derive(Debug, clap::Args, Clone)]
+pub struct TasksArgs {
+    #[command(subcommand)]
+    pub command: TasksCommand,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum TasksCommand {
+    /// List Contract-native durable tasks.
+    List {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the append-only ledger history for one task.
+    Inspect { id: String },
+    /// Release the latest occurrence for another attempt.
+    Retry { id: String },
+    /// Permanently cancel a task.
+    Cancel { id: String },
+}
+
 /// Top-level commands for the pager binary.
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
@@ -138,6 +177,10 @@ See ~/.grok/README.md for more information.
     /// `~/.grok/config.toml` or when the `GROK_AGENT_DASHBOARD=0` env
     /// var is set.
     Dashboard,
+    /// Manage Aiko's durable background Contract worker.
+    Background(BackgroundArgs),
+    /// Inspect and control Contract-native durable tasks.
+    Tasks(TasksArgs),
     /// Run the durable Contract background resolver.
     #[command(hide = true)]
     ContractWorker {

@@ -28,6 +28,7 @@ mod jemalloc_malloc_conf {
 use anyhow::Result;
 use std::env;
 use std::net::SocketAddr;
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use xai_grok_pager::app::{
     AgentCmd, Command, HeadlessArgs, LeaderMgmtArgs, LeaderMgmtCommand, LeaderTargetArgs,
@@ -149,12 +150,14 @@ fn init_tracing_simple(app_entrypoint: &'static str) {
 }
 
 async fn run_contract_worker(once: bool, poll_seconds: u64) -> Result<()> {
+    const VERDICT_SCHEMA: &str = r#"{"type":"object","additionalProperties":false,"required":["completed","retryable","evidence"],"properties":{"completed":{"type":"boolean"},"retryable":{"type":"boolean"},"evidence":{"type":"string","minLength":1,"maxLength":2000}}}"#;
+    const WORKER_RULES: &str = "This is a durable Contract occurrence. Execute the task in the recorded workspace using only currently-authorized tools. Verify the requested postcondition after acting. In the required final object, set completed=true only when the postcondition is actually observed; otherwise set completed=false, set retryable appropriately, and summarize privacy-safe evidence without credentials or raw private content.";
     let executable = std::env::current_exe()?;
     let owner = format!("aiko-worker:{}", std::process::id());
     let poll_seconds = poll_seconds.clamp(1, 300);
     loop {
         let Some(tick) =
-            xai_grok_shell::contract_native::tick_due_contracts(owner.clone(), None, 16, 3_600)
+            xai_grok_shell::contract_native::tick_due_contracts(owner.clone(), None, 16, 7_200)
                 .await
         else {
             anyhow::bail!("Contract ABI v3 runtime is not available");
@@ -171,34 +174,76 @@ async fn run_contract_worker(once: bool, poll_seconds: u64) -> Result<()> {
                 .arg(&cwd)
                 .arg("--no-auto-update")
                 .arg("--verbatim")
+                .arg("--output-format")
+                .arg("json")
+                .arg("--json-schema")
+                .arg(VERDICT_SCHEMA)
+                .arg("--rules")
+                .arg(WORKER_RULES)
                 .arg("--single")
                 .arg(&claim.prompt)
                 .env("AIKO_CONTRACT_COORDINATOR", "off")
-                .stdout(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                // A headless child may include task or provider details on
+                // stderr. Do not persist those in the LaunchAgent log.
+                .stderr(std::process::Stdio::null())
                 .kill_on_drop(true);
-            let completed = match tokio::time::timeout(Duration::from_secs(3_600), child.status())
+            let verdict = match tokio::time::timeout(Duration::from_secs(3_600), child.output())
                 .await
             {
-                Ok(Ok(status)) => status.success(),
+                Ok(Ok(output)) if output.status.success() => {
+                    serde_json::from_slice::<serde_json::Value>(&output.stdout)
+                        .ok()
+                        .and_then(|json| json.get("structuredOutput").cloned())
+                }
                 Ok(Err(error)) => {
                     tracing::warn!(%error, contract_id = %claim.contract_id, "Contract worker failed to start Aiko");
-                    false
+                    None
                 }
                 Err(_) => {
                     tracing::warn!(contract_id = %claim.contract_id, "Contract worker timed out");
-                    false
+                    None
                 }
+                Ok(Ok(_)) => None,
             };
-            let detail = if completed {
-                "Aiko background worker completed the Contract occurrence"
+            let completed = verdict
+                .as_ref()
+                .and_then(|value| value.get("completed"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let retryable = verdict
+                .as_ref()
+                .and_then(|value| value.get("retryable"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(true);
+            let evidence = verdict
+                .as_ref()
+                .and_then(|value| value.get("evidence"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|evidence| !evidence.is_empty());
+            let verified = completed && evidence.is_some();
+            let outcome = if verified {
+                "satisfied"
+            } else if retryable {
+                "retry"
             } else {
-                "Aiko background worker did not complete; released for retry"
+                "died"
+            };
+            let detail = if let (true, Some(evidence)) = (verified, evidence) {
+                let redacted = xai_grok_secrets::redact_secrets(evidence);
+                let redacted = xai_grok_secrets::redact_user_paths(redacted.as_ref());
+                format!("Aiko verified postcondition evidence: {redacted}")
+            } else if retryable {
+                "Aiko background worker did not complete; released for retry".to_string()
+            } else {
+                "Aiko background evaluator reported an unrecoverable failure".to_string()
             };
             let _ = xai_grok_shell::contract_native::settle_contract_claim(
                 owner.clone(),
                 claim,
-                if completed { "satisfied" } else { "retry" },
-                detail.to_string(),
+                outcome,
+                detail,
             )
             .await;
         }
@@ -212,6 +257,114 @@ async fn run_contract_worker(once: bool, poll_seconds: u64) -> Result<()> {
             .min(poll_seconds)
             .max(1);
         tokio::time::sleep(Duration::from_secs(delay)).await;
+    }
+}
+
+fn run_background_command(args: xai_grok_pager::app::cli::BackgroundArgs) -> Result<()> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = args;
+        anyhow::bail!("Aiko background service management currently requires macOS");
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use xai_grok_pager::app::cli::BackgroundCommand;
+        const LABEL: &str = "net.theclarityproject.aiko.contract-worker";
+        let uid = unsafe { libc::getuid() };
+        let domain = format!("gui/{uid}");
+        let service = format!("{domain}/{LABEL}");
+        let plist = dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("home directory is unavailable"))?
+            .join("Library/LaunchAgents")
+            .join(format!("{LABEL}.plist"));
+        match args.command {
+            BackgroundCommand::Status => {
+                let status = std::process::Command::new("launchctl")
+                    .args(["print", &service])
+                    .status()?;
+                if status.success() {
+                    println!("Aiko background worker is running.");
+                    Ok(())
+                } else {
+                    anyhow::bail!("Aiko background worker is not loaded")
+                }
+            }
+            BackgroundCommand::Start => {
+                if !plist.is_file() {
+                    anyhow::bail!(
+                        "background worker is not installed; reinstall the Aiko package first"
+                    );
+                }
+                let _ = std::process::Command::new("launchctl")
+                    .args(["bootstrap", &domain])
+                    .arg(&plist)
+                    .status();
+                let status = std::process::Command::new("launchctl")
+                    .args(["kickstart", "-k", &service])
+                    .status()?;
+                if !status.success() {
+                    anyhow::bail!("launchctl could not start the Aiko background worker");
+                }
+                println!("Aiko background worker started.");
+                Ok(())
+            }
+            BackgroundCommand::Stop => {
+                let status = std::process::Command::new("launchctl")
+                    .args(["bootout", &service])
+                    .status()?;
+                if !status.success() {
+                    anyhow::bail!("Aiko background worker was not loaded");
+                }
+                println!("Aiko background worker stopped.");
+                Ok(())
+            }
+        }
+    }
+}
+
+async fn run_tasks_command(args: xai_grok_pager::app::cli::TasksArgs) -> Result<()> {
+    use xai_grok_pager::app::cli::TasksCommand;
+    match args.command {
+        TasksCommand::List { json } => {
+            let tasks = xai_grok_shell::contract_native::list_scheduled_contracts().await;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&tasks)?);
+            } else if let Some(items) = tasks.as_array() {
+                if items.is_empty() {
+                    println!("No durable Contract tasks.");
+                }
+                for task in items {
+                    println!(
+                        "{}  {:<10}  {}",
+                        task.get("id").and_then(|v| v.as_str()).unwrap_or("?"),
+                        task.get("status").and_then(|v| v.as_str()).unwrap_or("?"),
+                        task.get("prompt").and_then(|v| v.as_str()).unwrap_or("")
+                    );
+                }
+            }
+            Ok(())
+        }
+        TasksCommand::Inspect { id } => {
+            let history = xai_grok_shell::contract_native::inspect_contract(id.clone())
+                .await
+                .ok_or_else(|| anyhow::anyhow!("Contract task {id} was not found"))?;
+            print!("{history}");
+            Ok(())
+        }
+        TasksCommand::Retry { id } => {
+            if !xai_grok_shell::contract_native::retry_contract(id.clone()).await {
+                anyhow::bail!("Contract task {id} has no retryable occurrence");
+            }
+            println!("Contract task {id} released for retry.");
+            Ok(())
+        }
+        TasksCommand::Cancel { id } => {
+            if !xai_grok_shell::contract_native::cancel_contract(id.clone()).await {
+                anyhow::bail!("Contract task {id} could not be cancelled");
+            }
+            println!("Contract task {id} cancelled.");
+            Ok(())
+        }
     }
 }
 /// `aiko setup`: rendering + exit codes only; fetch logic lives in `xai_grok_shell::managed_config`.
@@ -1843,6 +1996,12 @@ async fn async_main() -> Result<()> {
             Command::ContractWorker { once, poll_seconds } => {
                 init_tracing_simple("contract-worker");
                 return run_contract_worker(once, poll_seconds).await;
+            }
+            Command::Background(background_args) => {
+                return run_background_command(background_args);
+            }
+            Command::Tasks(tasks_args) => {
+                return run_tasks_command(tasks_args).await;
             }
             Command::Inspect { json } => {
                 let cwd = std::env::current_dir().unwrap_or_default();

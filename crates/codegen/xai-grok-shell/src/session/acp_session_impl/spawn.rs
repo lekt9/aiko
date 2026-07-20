@@ -1565,9 +1565,10 @@ pub(crate) async fn spawn_session_actor(
             xai_grok_telemetry::session_ctx::log_event_dual(telemetry_enabled, ev);
         });
     }
-    if !std::env::var("AIKO_CONTRACT_COORDINATOR")
-        .ok()
-        .is_some_and(|value| matches!(value.trim(), "0" | "false" | "off"))
+    if !crate::contract_native::background_worker_installed()
+        && !std::env::var("AIKO_CONTRACT_COORDINATOR")
+            .ok()
+            .is_some_and(|value| matches!(value.trim(), "0" | "false" | "off"))
     {
         crate::contract_native::spawn_contract_coordinator(
             format!("aiko-session:{}", session.session_info.id.0),
