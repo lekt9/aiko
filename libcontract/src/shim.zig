@@ -8,16 +8,10 @@
 //!   contract-lib-shim get <id>
 //!   contract-lib-shim list
 const std = @import("std");
-const contract = @import("contract.zig");
-const fractal = @import("fractal.zig");
-const guards = @import("guards.zig");
+const contract = @import("contract");
+const fractal = contract.fractal;
+const guards = contract.guards;
 const client = @import("client.zig");
-
-// Pull the C ABI exports into the same translation unit so they're included
-// in the static library when this is the entry source.
-comptime {
-    _ = @import("c_abi.zig");
-}
 
 fn writeFd(fd: c_int, bytes: []const u8) void {
     var rem = bytes;

@@ -29,6 +29,7 @@ const contract = @import("contract");
 const client = @import("contract_client");
 const pointer = @import("pointer.zig");
 const ledger = @import("ledger.zig");
+const activity_log = contract.activity_log;
 // The ONE terminal-event classifier (biology axis 1). Every event->terminal
 // decision in this file routes through it, so isSatisfied/isDead/
 // countTerminalEvents cannot drift apart the way they did before (fork F3 —
@@ -97,6 +98,10 @@ const ChaCha20Poly1305 = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
 // process state. After `main` initialises them they are never written again.
 var BINARY_NAME: []const u8 = "contract";
 var AIKO_DECLARE_ONLY: bool = false;
+var invocation_trace_buf: [96]u8 = undefined;
+var invocation_trace_len: usize = 0;
+var invocation_last_event_buf: [96]u8 = undefined;
+var invocation_last_event_len: usize = 0;
 
 const Row = struct {
     id: []const u8 = "",
@@ -119,6 +124,10 @@ const Row = struct {
     // RBAC grant tuple (only populated for event=="grant" rows)
     actor_pubkey: []const u8 = "",
     role: []const u8 = "",
+    authority_pointer: []const u8 = "",
+    purpose_id: []const u8 = "",
+    cadence_class: []const u8 = "",
+    effect_scope: []const u8 = "",
     scope: []const u8 = "",
     // F1 adoption-grant tuple (only populated for event=="grant" adoption
     // rows): grantee = who may adopt (contract id / glob / ancestor),
@@ -142,6 +151,38 @@ fn writeFd(fd: c_int, bytes: []const u8) void {
         if (n <= 0) return;
         rem = rem[@intCast(n)..];
     }
+}
+
+fn recordInvocationEvent(
+    kind: contract.event_schema.EventKind,
+    state: contract.event_schema.EventState,
+    node_id: []const u8,
+    reason_code: ?[]const u8,
+) void {
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    if (invocation_trace_len == 0) {
+        const trace = std.fmt.bufPrint(&invocation_trace_buf, "invocation-{d}-{d}", .{ std.c.getpid(), tv.sec }) catch return;
+        invocation_trace_len = trace.len;
+    }
+    var event_id_buf: [96]u8 = undefined;
+    const event_id = std.fmt.bufPrint(&event_id_buf, "event-{d}-{d}-{d}", .{ std.c.getpid(), tv.sec, tv.usec }) catch return;
+    const event = contract.event_schema.CausalEvent{
+        .event_id = event_id,
+        .trace_id = invocation_trace_buf[0..invocation_trace_len],
+        .node_id = node_id,
+        .parent_event_id = if (invocation_last_event_len == 0) null else invocation_last_event_buf[0..invocation_last_event_len],
+        .purpose_id = "contract-runtime",
+        .role = "action",
+        .kind = kind,
+        .state = state,
+        .timestamp_ms = @as(i64, tv.sec) * 1000 + @divTrunc(tv.usec, 1000),
+        .reason_code = reason_code,
+    };
+    event.validate() catch return;
+    activity_log.recordEvent(event);
+    @memcpy(invocation_last_event_buf[0..event_id.len], event_id);
+    invocation_last_event_len = event_id.len;
 }
 
 /// Mirror of build.sh's acquire_build_lock loop, read-only side. Block this
@@ -284,17 +325,164 @@ fn usage() void {
     }
     errPrint(
         \\  {s} declare <truth-claim>
+        \\  {s} task begin "<task>" --check "<command>"
+        \\  {s} task status <id>
+        \\  {s} task verify <id>
         \\
-    , .{BINARY_NAME});
+    , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
     if (!AIKO_DECLARE_ONLY) {
         errPrint(
             \\  {s} recommend <goal>
             \\  {s} status [<id>]
+            \\  {s} events [--trace <id>]
+            \\  {s} watch [<trace-id>] [--json]
+            \\  {s} explain <trace-id>
             \\  {s} tick [--every <seconds>]
             \\  {s} import-root <seed-file>
             \\
-        , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
+        , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
     }
+}
+
+fn causalEventsPath(path_buf: []u8) ?[:0]u8 {
+    var cwd_buf: [4096]u8 = undefined;
+    if (std.c.getcwd(&cwd_buf, cwd_buf.len)) |_| {
+        const cwd_len = std.mem.indexOfScalar(u8, &cwd_buf, 0) orelse cwd_buf.len;
+        var local_buf: [4096]u8 = undefined;
+        const local_dir = std.fmt.bufPrintZ(&local_buf, "{s}/.claude", .{cwd_buf[0..cwd_len]}) catch return null;
+        if (std.c.access(local_dir.ptr, 0) == 0)
+            return std.fmt.bufPrintZ(path_buf, "{s}/events.jsonl", .{local_dir}) catch null;
+    }
+    const home_z = std.c.getenv("HOME") orelse return null;
+    const home = std.mem.span(@as([*:0]const u8, @ptrCast(home_z)));
+    return std.fmt.bufPrintZ(path_buf, "{s}/.contracts/events.jsonl", .{home}) catch null;
+}
+
+/// Read-only, local-only trace surface. It deliberately uses no lineage or
+/// client APIs, so observing Contract cannot trigger Keychain or network I/O.
+fn readEvents(args: []const []const u8, follow: bool) u8 {
+    var trace_filter: ?[]const u8 = null;
+    if (args.len != 0) {
+        if (args.len != 2 or !std.mem.eql(u8, args[0], "--trace")) {
+            err("events accepts no arguments or --trace <id>\n");
+            return 2;
+        }
+        trace_filter = args[1];
+    }
+    var path_buf: [4096]u8 = undefined;
+    const path = causalEventsPath(&path_buf) orelse {
+        err("events: no local event path\n");
+        return 1;
+    };
+    var flags: std.c.O = .{};
+    flags.ACCMODE = .RDONLY;
+    const fd = std.c.open(path.ptr, flags, @as(c_uint, 0));
+    if (fd < 0) {
+        out("{\"schema_version\":1,\"events\":[],\"status\":\"no-events\"}\n");
+        return 0;
+    }
+    defer _ = std.c.close(fd);
+    var pending: [8192]u8 = undefined;
+    var used: usize = 0;
+    while (true) {
+        const n = std.c.read(fd, pending[used..].ptr, pending.len - used);
+        if (n < 0) return 1;
+        if (n == 0) {
+            if (!follow) break;
+            _ = sleep(1);
+            continue;
+        }
+        used += @intCast(n);
+        var start: usize = 0;
+        while (std.mem.indexOfScalarPos(u8, pending[0..used], start, '\n')) |end| {
+            const line = pending[start .. end + 1];
+            if (trace_filter) |trace| {
+                if (jsonString(line, "trace_id")) |found| {
+                    if (std.mem.eql(u8, found, trace)) out(line);
+                }
+            } else out(line);
+            start = end + 1;
+        }
+        if (start != 0) {
+            std.mem.copyForwards(u8, pending[0 .. used - start], pending[start..used]);
+            used -= start;
+        }
+        if (used == pending.len) {
+            err("events: record exceeds 8192 bytes\n");
+            return 1;
+        }
+    }
+    return 0;
+}
+
+fn cmdEvents(args: []const []const u8) u8 {
+    return readEvents(args, false);
+}
+
+fn cmdWatch(args: []const []const u8) u8 {
+    var trace: ?[]const u8 = null;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) continue;
+        if (trace != null) {
+            err("watch accepts at most one trace id and optional --json\n");
+            return 2;
+        }
+        trace = arg;
+    }
+    return if (trace) |id| readEvents(&.{ "--trace", id }, true) else readEvents(&.{}, true);
+}
+
+fn cmdExplain(args: []const []const u8) u8 {
+    if (args.len != 1) {
+        err("explain requires exactly <trace-id>\n");
+        return 2;
+    }
+    var path_buf: [4096]u8 = undefined;
+    const path = causalEventsPath(&path_buf) orelse return 1;
+    var flags: std.c.O = .{};
+    flags.ACCMODE = .RDONLY;
+    const fd = std.c.open(path.ptr, flags, @as(c_uint, 0));
+    if (fd < 0) {
+        outPrint("trace {s}: no events\n", .{args[0]});
+        return 0;
+    }
+    defer _ = std.c.close(fd);
+    outPrint("trace {s}\n", .{args[0]});
+    var pending: [8192]u8 = undefined;
+    var used: usize = 0;
+    var found: usize = 0;
+    while (true) {
+        const n = std.c.read(fd, pending[used..].ptr, pending.len - used);
+        if (n <= 0) break;
+        used += @intCast(n);
+        var start: usize = 0;
+        while (std.mem.indexOfScalarPos(u8, pending[0..used], start, '\n')) |end| {
+            const line = pending[start..end];
+            if (jsonString(line, "trace_id")) |trace| {
+                if (std.mem.eql(u8, trace, args[0])) {
+                    const kind = jsonString(line, "kind") orelse "event";
+                    const state = jsonString(line, "state") orelse "unknown";
+                    const role = jsonString(line, "role") orelse "legacy";
+                    const node = jsonString(line, "node_id") orelse "unknown";
+                    const reason = jsonString(line, "reason_code") orelse
+                        jsonString(line, "blocker") orelse
+                        jsonString(line, "anchor_id") orelse "";
+                    outPrint("  {d}. {s}/{s} {s} -> {s}", .{ found + 1, role, node, kind, state });
+                    if (reason.len != 0) outPrint(" ({s})", .{reason});
+                    out("\n");
+                    found += 1;
+                }
+            }
+            start = end + 1;
+        }
+        if (start != 0) {
+            std.mem.copyForwards(u8, pending[0 .. used - start], pending[start..used]);
+            used -= start;
+        }
+        if (used == pending.len) return 1;
+    }
+    if (found == 0) out("  no matching events\n");
+    return 0;
 }
 
 fn jsonString(line: []const u8, key: []const u8) ?[]const u8 {
@@ -445,6 +633,10 @@ fn parseRowLine(allocator: std.mem.Allocator, line: []const u8) Row {
     r.ts = jsonString(line, "ts") orelse "";
     r.actor_pubkey = jsonString(line, "actor_pubkey") orelse "";
     r.role = jsonString(line, "role") orelse "";
+    r.authority_pointer = jsonString(line, "authority_pointer") orelse "";
+    r.purpose_id = jsonString(line, "purpose_id") orelse "";
+    r.cadence_class = jsonString(line, "cadence_class") orelse "";
+    r.effect_scope = jsonString(line, "effect_scope") orelse "";
     r.scope = jsonString(line, "scope") orelse "";
     r.grantee = jsonString(line, "grantee") orelse "";
     r.authority_pubkey = jsonString(line, "authority_pubkey") orelse "";
@@ -1715,6 +1907,65 @@ fn dispatchMcpTool(
         defer allocator.free(json);
         return .{ .text = try allocator.dupe(u8, json), .is_error = false };
     }
+    if (std.mem.eql(u8, tool_name, "trust_evaluate")) {
+        const id = mcpStrField(args, "id") orelse return .{
+            .text = try allocator.dupe(u8, "missing id"),
+            .is_error = true,
+        };
+        const body = contract.lcledger.readAllShared(allocator, env) catch return .{
+            .text = try allocator.dupe(u8, "trust ledger unreadable"),
+            .is_error = true,
+        };
+        const replay = contract.trust.evaluateLedger(
+            allocator,
+            body,
+            id,
+            time(null),
+        ) catch |e| {
+            const message = try std.fmt.allocPrint(allocator, "trust replay failed: {s}", .{@errorName(e)});
+            return .{ .text = message, .is_error = true };
+        };
+        if (replay) |decision| {
+            const json = try std.fmt.allocPrint(
+                allocator,
+                "{{\"governed\":true,\"promote\":{s},\"reason\":\"{s}\"}}",
+                .{ if (decision.promote) "true" else "false", @tagName(decision.reason) },
+            );
+            return .{ .text = json, .is_error = false };
+        }
+        return .{
+            .text = try allocator.dupe(u8, "{\"governed\":false,\"promote\":false,\"reason\":\"no_policy\"}"),
+            .is_error = false,
+        };
+    }
+    if (std.mem.eql(u8, tool_name, "agency_validate")) {
+        const encoded = mcpStrField(args, "envelope") orelse return .{
+            .text = try allocator.dupe(u8, "missing envelope"),
+            .is_error = true,
+        };
+        var parsed = contract.agency.decodeEnvelope(allocator, encoded) catch |e| {
+            const message = try std.fmt.allocPrint(
+                allocator,
+                "{{\"valid\":false,\"error\":\"{s}\"}}",
+                .{@errorName(e)},
+            );
+            return .{ .text = message, .is_error = true };
+        };
+        defer parsed.deinit();
+        const json = try std.fmt.allocPrint(
+            allocator,
+            "{{\"valid\":true,\"role\":\"{s}\",\"authority_pointer\":\"{s}\",\"purpose_id\":\"{s}\",\"cadence_class\":\"{s}\",\"effect_scope\":\"{s}\",\"schema_version\":{d}}}",
+            .{
+                @tagName(parsed.value.role),
+                parsed.value.authority_pointer,
+                parsed.value.purpose_id,
+                @tagName(parsed.value.cadence_class),
+                @tagName(parsed.value.effect_scope),
+                parsed.value.schema_version,
+            },
+        );
+        return .{ .text = json, .is_error = false };
+    }
     return .{ .text = try allocator.dupe(u8, "unknown tool"), .is_error = true };
 }
 
@@ -2658,7 +2909,15 @@ fn runAction(allocator: std.mem.Allocator, env: std.process.Environ, rows: []con
     return .{ .rc = out_capture.rc, .result = "fail" };
 }
 
-const DeclareArgs = struct { plan: []const u8, action: ?[]const u8 = null, parent: ?[]const u8 = null, fast: bool = false, register: bool = false, resolve: bool = false };
+const DeclareArgs = struct {
+    plan: []const u8,
+    action: ?[]const u8 = null,
+    parent: ?[]const u8 = null,
+    agency_json: ?[]const u8 = null,
+    fast: bool = false,
+    register: bool = false,
+    resolve: bool = false,
+};
 
 fn parseDeclare(args: []const []const u8) !DeclareArgs {
     if (args.len == 0) return error.MissingPlan;
@@ -2667,6 +2926,7 @@ fn parseDeclare(args: []const []const u8) !DeclareArgs {
     var plan: ?[]const u8 = null;
     var action: ?[]const u8 = null;
     var parent: ?[]const u8 = null;
+    var agency_json: ?[]const u8 = null;
     var fast: bool = false;
     var register: bool = false;
     var resolve: bool = false;
@@ -2680,6 +2940,11 @@ fn parseDeclare(args: []const []const u8) !DeclareArgs {
         }
         if (std.mem.eql(u8, a, "--parent") and i + 1 < args.len) {
             parent = args[i + 1];
+            i += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, a, "--agency") and i + 1 < args.len) {
+            agency_json = args[i + 1];
             i += 1;
             continue;
         }
@@ -2708,7 +2973,7 @@ fn parseDeclare(args: []const []const u8) !DeclareArgs {
         }
     }
     if (plan == null) return error.MissingPlan;
-    return .{ .plan = plan.?, .action = action, .parent = parent, .fast = fast, .register = register, .resolve = resolve };
+    return .{ .plan = plan.?, .action = action, .parent = parent, .agency_json = agency_json, .fast = fast, .register = register, .resolve = resolve };
 }
 
 /// Visibility axis (not transport).
@@ -2845,6 +3110,141 @@ fn enqueueOwned(allocator: std.mem.Allocator, queue: *std.ArrayList([]u8), id: [
     try queue.append(allocator, copy);
 }
 
+/// Replay append-only trust rows for one claim. A null decision is the
+/// explicit legacy path: no policy has been attached. Once governed, replay
+/// errors and negative verdicts are fail-closed at the resolver boundary.
+fn trustDecisionForClaim(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+) !?contract.trust.Decision {
+    const body = try contract.lcledger.readAllShared(allocator, env);
+    return try contract.trust.evaluateLedger(allocator, body, id, time(null));
+}
+
+/// Nullify the failed claim and every downstream consumer reachable through
+/// parent containment or explicit contract/fulfil/value dependencies. Children
+/// are not invalidated: a parent losing trust does not retroactively falsify
+/// independent observations produced below it.
+fn revokeTrustClosure(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    rows: []const Row,
+    root_id: []const u8,
+    reason: []const u8,
+) !void {
+    var queue: std.ArrayList([]u8) = .empty;
+    defer {
+        for (queue.items) |owned_id| allocator.free(owned_id);
+        queue.deinit(allocator);
+    }
+    try enqueueOwned(allocator, &queue, root_id);
+    var cursor: usize = 0;
+    while (cursor < queue.items.len) : (cursor += 1) {
+        const affected_id = queue.items[cursor];
+        contract.cache.appendCacheInvalidatedRow(
+            allocator,
+            env,
+            affected_id,
+            root_id,
+            "trust_verdict_revoked",
+        ) catch |invalidate_err| {
+            evidencePrint("trust: cache invalidation failed for {s}: {s}\n", .{
+                affected_id,
+                @errorName(invalidate_err),
+            });
+        };
+        if (isSatisfied(rows, affected_id)) {
+            contract.markDied(
+                allocator,
+                env,
+                affected_id,
+                .stale,
+                null,
+                reason,
+            ) catch |death_err| {
+                evidencePrint("trust: verdict revocation failed for {s}: {s}\n", .{
+                    affected_id,
+                    @errorName(death_err),
+                });
+            };
+        }
+        if (latestDeclared(rows, affected_id)) |declared| {
+            if (declared.parent_id) |parent_id|
+                try enqueueOwned(allocator, &queue, parent_id);
+        }
+        const dependents = try dependentIds(allocator, rows, affected_id);
+        defer allocator.free(dependents);
+        for (dependents) |dependent_id|
+            try enqueueOwned(allocator, &queue, dependent_id);
+    }
+}
+
+fn recordTrustPromotion(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    id: []const u8,
+) !void {
+    const body = try contract.lcledger.readAllShared(allocator, env);
+    var context = (try contract.trust.promotionContextFromLedger(
+        allocator,
+        body,
+        id,
+    )) orelse return;
+    defer context.deinit(allocator);
+    const now = time(null);
+    try contract.appendTrustPromotionRow(allocator, env, .{
+        .claim_id = id,
+        .policy_id = context.policy_id,
+        .policy_version = context.policy_version,
+        .evidence_ids = context.evidence_ids,
+        .promoted_at = now,
+        .signer_identity = context.policy_owner_identity,
+    });
+    try contract.appendTrustActivationRow(allocator, env, .{
+        .slot_id = context.deployment_slot,
+        .revision_id = id,
+        .policy_id = context.policy_id,
+        .policy_version = context.policy_version,
+        .activated_at = now,
+        .signer_identity = context.policy_owner_identity,
+    });
+}
+
+fn recordTrustRollback(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    failed_id: []const u8,
+) !?[]u8 {
+    const body = try contract.lcledger.readAllShared(allocator, env);
+    var context = (try contract.trust.promotionContextFromLedger(
+        allocator,
+        body,
+        failed_id,
+    )) orelse return null;
+    defer context.deinit(allocator);
+    const restored = (try contract.trust.selectRollbackFromLedger(
+        allocator,
+        body,
+        context.deployment_slot,
+        failed_id,
+        context.policy_id,
+        context.policy_version,
+        context.policy_owner_identity,
+    )) orelse return null;
+    errdefer allocator.free(restored);
+    try contract.appendTrustRollbackRow(allocator, env, .{
+        .slot_id = context.deployment_slot,
+        .failed_revision_id = failed_id,
+        .restored_revision_id = restored,
+        .policy_id = context.policy_id,
+        .policy_version = context.policy_version,
+        .rolled_back_at = time(null),
+        .signer_identity = context.policy_owner_identity,
+    });
+    return restored;
+}
+
 fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []const u8) !u8 {
     const rows = try parseRows(allocator, env);
     defer allocator.free(rows);
@@ -2868,6 +3268,36 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
     //   stale   — chain present + no recorded snapshot → fall through
     //   legacy  — chain null (pre-signing row) → honor prior satisfaction
     if (isSatisfied(rows, id)) {
+        const trust_decision = trustDecisionForClaim(allocator, env, id) catch |trust_err| {
+            evidencePrint("{s} -> HOLD (trust replay failed: {s})\n", .{ id, @errorName(trust_err) });
+            return 1;
+        };
+        if (trust_decision) |decision| {
+            if (!decision.promote) {
+                const reason = @tagName(decision.reason);
+                revokeTrustClosure(allocator, env, rows, id, reason) catch |cascade_err| {
+                    evidencePrint("trust: downstream revocation failed for {s}: {s}\n", .{
+                        id,
+                        @errorName(cascade_err),
+                    });
+                };
+                if (recordTrustRollback(allocator, env, id)) |restored_opt| {
+                    if (restored_opt) |restored| {
+                        defer allocator.free(restored);
+                        evidencePrint("trust: rollback {s} -> {s}\n", .{ id, restored });
+                    } else {
+                        evidencePrint("trust: no compatible prior champion for {s}; slot remains HOLD\n", .{id});
+                    }
+                } else |rollback_err| {
+                    evidencePrint("trust: rollback planning failed for {s}: {s}\n", .{
+                        id,
+                        @errorName(rollback_err),
+                    });
+                }
+                evidencePrint("{s} -> HOLD (grounded trust revoked: {s})\n", .{ id, reason });
+                return 1;
+            }
+        }
         const sig_chain_opt = contract.cache.computeSignatureChain(allocator, env, id) catch null;
         if (sig_chain_opt) |sig_chain| {
             defer allocator.free(sig_chain);
@@ -2921,6 +3351,48 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
         return 1;
     };
     const wave = latestWave(rows, id) + 1;
+
+    // Typed high-reach actions fail closed until the trust ledger contains a
+    // promotable approval/consequence-sensor verdict for this claim. Legacy
+    // rows retain their historical behavior during bridge migration.
+    const high_reach = std.mem.eql(u8, r.effect_scope, "network_mutation") or
+        std.mem.eql(u8, r.effect_scope, "deployment") or
+        std.mem.eql(u8, r.effect_scope, "message") or
+        std.mem.eql(u8, r.effect_scope, "payment") or
+        std.mem.eql(u8, r.effect_scope, "onchain") or
+        std.mem.eql(u8, r.effect_scope, "human_impact");
+    if (std.mem.eql(u8, r.role, "action") and high_reach) {
+        const reach_verdict = trustDecisionForClaim(allocator, env, id) catch null;
+        if (reach_verdict == null or !reach_verdict.?.promote) {
+            try contract.recordIteration(
+                allocator,
+                env,
+                id,
+                wave,
+                1,
+                "hold:reach-governance — high-risk typed action lacks promotable approval and consequence-sensor evidence",
+            );
+            var reach_event_buf: [96]u8 = undefined;
+            const reach_event_id = std.fmt.bufPrint(&reach_event_buf, "reach-{s}-{d}", .{ id, wave }) catch id;
+            activity_log.recordEvent(.{
+                .event_id = reach_event_id,
+                .trace_id = id,
+                .node_id = id,
+                .contract_id = id,
+                .purpose_id = if (r.purpose_id.len == 0) "legacy" else r.purpose_id,
+                .role = "action",
+                .owner_id = if (r.authority_pointer.len == 0) null else r.authority_pointer,
+                .cadence = if (r.cadence_class.len == 0) null else r.cadence_class,
+                .kind = .vetoed,
+                .state = .waiting_approval,
+                .timestamp_ms = @as(i64, time(null)) * 1000,
+                .effect_scope = r.effect_scope,
+                .blocker = "reach-governance",
+            });
+            evidencePrint("{s} -> HOLD (high-risk reach lacks approval/consequence coverage)\n", .{id});
+            return 1;
+        }
+    }
 
     // Fractal Sabbath (Exodus 20:10 — the seventh day shall be a sabbath
     // unto the LORD thy God; in it thou shalt not do any work). Every
@@ -3082,7 +3554,40 @@ fn resolveOne(allocator: std.mem.Allocator, env: std.process.Environ, id: []cons
         return 1;
     }
 
+    const trust_decision = trustDecisionForClaim(allocator, env, id) catch |trust_err| {
+        evidencePrint("{s} -> HOLD (trust replay failed: {s})\n", .{ id, @errorName(trust_err) });
+        return 1;
+    };
+    if (trust_decision) |decision| {
+        if (!decision.promote) {
+            evidencePrint("{s} -> HOLD (grounded trust gate: {s})\n", .{
+                id,
+                @tagName(decision.reason),
+            });
+            return 1;
+        }
+    }
+
     try contract.markSatisfied(allocator, env, id, wave, "native resolver reached mechanical true");
+    if (trust_decision != null) {
+        recordTrustPromotion(allocator, env, id) catch |promotion_err| {
+            // Satisfaction already landed. Nullify it immediately rather than
+            // leave an accepted claim without its auditable promotion record.
+            contract.markDied(
+                allocator,
+                env,
+                id,
+                .stale,
+                null,
+                "trust promotion record failed",
+            ) catch {};
+            evidencePrint("{s} -> HOLD (trust promotion record failed: {s})\n", .{
+                id,
+                @errorName(promotion_err),
+            });
+            return 1;
+        };
+    }
     // Pin the pointer-chain snapshot — markSatisfied just wrote a
     // signed terminal row, so the chain for `id` is now complete on
     // this pass. If signOutput failed (root key unavailable), the
@@ -3236,7 +3741,7 @@ fn energyRankCandidates(allocator: std.mem.Allocator, rows: []const Row, items: 
         const decl = latestDeclared(rows, r.id) orelse continue;
         ok.foldText(decl.action, reward);
     }
-    if (ok.w <= 0) return; // no training signal yet → keep scan order
+    if (ok.cell.w <= 0) return; // no training signal yet → keep scan order
     const Scored = struct { id: []const u8, e: f64 };
     const scored = allocator.alloc(Scored, items.len) catch return;
     defer allocator.free(scored);
@@ -3260,6 +3765,10 @@ fn backfillUnresolvedDeep(allocator: std.mem.Allocator, env: std.process.Environ
 /// changed. This is the single cache predicate shared by heartbeat, drill and
 /// the resident serve loop.
 fn isStaleSatisfied(allocator: std.mem.Allocator, env: std.process.Environ, id: []const u8) bool {
+    const trust_decision = trustDecisionForClaim(allocator, env, id) catch return true;
+    if (trust_decision) |decision| {
+        if (!decision.promote) return true;
+    }
     const recorded_opt = contract.cache.findLatestResolvedSnapshot(allocator, env, id) catch return false;
     const recorded = recorded_opt orelse return true;
     defer allocator.free(recorded);
@@ -3273,79 +3782,11 @@ fn isStaleSatisfied(allocator: std.mem.Allocator, env: std.process.Environ, id: 
     return contract.cache.hasInvalidationAfter(allocator, env, id, ts) catch false;
 }
 
-const TriggerSpec = union(enum) {
-    none,
-    at_unix: i64,
-    repeat_seconds: u64,
-};
-
-fn triggerToken(text: []const u8, prefix: []const u8) ?[]const u8 {
-    const at = std.mem.indexOf(u8, text, prefix) orelse return null;
-    const start = at + prefix.len;
-    var end = start;
-    while (end < text.len and !std.ascii.isWhitespace(text[end]) and text[end] != ',' and text[end] != ']') : (end += 1) {}
-    return if (end > start) text[start..end] else null;
-}
-
-/// Canonical scheduler syntax is deliberately small:
-///   at:<unix-seconds>
-///   repeat:<N>s | repeat:<N>m | repeat:<N>h
-/// Legacy cron strings remain parseable ledger data but are not a second
-/// scheduler path; callers translate them to an interval at declaration.
-fn triggerFor(r: Row) TriggerSpec {
-    if (triggerToken(r.action, "at:") orelse triggerToken(r.plan, "at:")) |tok| {
-        if (std.fmt.parseInt(i64, tok, 10)) |unix| return .{ .at_unix = unix } else |_| {}
-    }
-    if (triggerToken(r.action, "repeat:") orelse triggerToken(r.plan, "repeat:")) |tok| {
-        if (std.mem.eql(u8, tok, "always")) return .{ .repeat_seconds = 1 };
-        if (tok.len < 2) return .none;
-        const multiplier: u64 = switch (tok[tok.len - 1]) {
-            's' => 1,
-            'm' => 60,
-            'h' => 3600,
-            else => return .none,
-        };
-        const n = std.fmt.parseInt(u64, tok[0 .. tok.len - 1], 10) catch return .none;
-        if (n == 0 or n > std.math.maxInt(u64) / multiplier) return .none;
-        return .{ .repeat_seconds = n * multiplier };
-    }
-    return .none;
-}
-
 fn materializeDueTriggers(allocator: std.mem.Allocator, env: std.process.Environ) !usize {
-    const rows = try parseRows(allocator, env);
-    defer allocator.free(rows);
     const now: i64 = time(null);
-    var seen: std.StringHashMap(void) = .init(allocator);
-    defer seen.deinit();
-    var fired: usize = 0;
-    var i = rows.len;
-    while (i > 0) : (i -= 1) {
-        const r = rows[i - 1];
-        if (!std.mem.eql(u8, r.event, "declared") or seen.contains(r.id) or isDead(rows, r.id)) continue;
-        try seen.put(r.id, {});
-        const occurrence = switch (triggerFor(r)) {
-            .none => continue,
-            .at_unix => |due| blk: {
-                if (now < due) continue;
-                break :blk try std.fmt.allocPrint(allocator, "at:{d}", .{due});
-            },
-            .repeat_seconds => |period| blk: {
-                const bucket: u64 = @intCast(@divFloor(now, @as(i64, @intCast(period))));
-                break :blk try std.fmt.allocPrint(allocator, "repeat:{d}:{d}", .{ period, bucket });
-            },
-        };
-        defer allocator.free(occurrence);
-        const prior_opt = contract.cache.findLatestOccurrence(allocator, env, r.id) catch null;
-        defer if (prior_opt) |prior| allocator.free(prior);
-        if (prior_opt != null and std.mem.eql(u8, prior_opt.?, occurrence)) continue;
-        try contract.cache.appendTriggeredRow(allocator, env, r.id, occurrence);
-        if (isSatisfied(rows, r.id)) {
-            try contract.cache.appendCacheInvalidatedRow(allocator, env, r.id, r.id, "trigger_occurrence_changed");
-        }
-        fired += 1;
-    }
-    return fired;
+    var plan = try contract.scheduler.materializeDueTriggersAt(allocator, env, now, 1024);
+    defer plan.deinit(allocator);
+    return plan.occurrences.len;
 }
 
 /// The one closed-loop step used by explicit tick, the resident server and
@@ -3551,6 +3992,16 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
         errPrint("declare argument error: {s}\n", .{@errorName(e)});
         return 2;
     };
+    // Validate typed semantics before any wallet, lineage, network, or ledger
+    // work. Malformed envelopes fail cheaply and cannot cause a Keychain prompt.
+    var parsed_agency: ?contract.agency.ParsedEnvelope = if (d.agency_json) |encoded|
+        contract.agency.decodeEnvelope(allocator, encoded) catch |e| {
+            errPrint("declare agency envelope refused: {s}\n", .{@errorName(e)});
+            return 2;
+        }
+    else
+        null;
+    defer if (parsed_agency) |*parsed| parsed.deinit();
     // Drills B + C — preflight: wallet permission and binary self-attest.
     // Both fail-closed only when their strict env flag is set; otherwise emit
     // a WARN evidence line so the caller sees the gap without breaking flow.
@@ -3598,6 +4049,10 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
         return 0;
     }
     if (client.isRemoteMode(env)) {
+        if (parsed_agency != null) {
+            err("remote declare does not yet negotiate agency schema v1; refusing semantic downgrade\n");
+            return 2;
+        }
         const body = client.declareRemote(allocator, env, d.plan, action, null, null, null, null, null, null, null) catch |e| {
             errPrint("remote declare failed: {s}\n", .{@errorName(e)});
             return 2;
@@ -3610,7 +4065,10 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
         outPrint("{s}\n", .{id});
         return 0;
     }
-    const cid = try contract.declare(allocator, env, d.plan, action, .{ .parent_id = null });
+    const cid = try contract.declare(allocator, env, d.plan, action, .{
+        .parent_id = d.parent,
+        .agency_envelope = if (parsed_agency) |parsed| parsed.value else null,
+    });
     defer allocator.free(cid);
     outPrint("{s}\n", .{cid});
     // Bookkeeping-only registration must never enter the resolver. Skills use
@@ -5754,6 +6212,14 @@ fn cmdStatus(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
     else
         "pending";
     outPrint("[{s}] {s} ({s})\n  plan:   {s}\n  action: {s}\n", .{ status, id, pointer.inferPointerType(r.action), displayField(allocator, env, r.id, r.event, r.plan), displayField(allocator, env, r.id, r.event, r.action) });
+    if (r.role.len != 0) {
+        outPrint(
+            "  agency: role={s} authority={s} purpose={s} cadence={s} effect_scope={s}\n",
+            .{ r.role, r.authority_pointer, r.purpose_id, r.cadence_class, r.effect_scope },
+        );
+    } else {
+        out("  agency: legacy_ungoverned\n");
+    }
     const ids = try childIds(allocator, rows, id);
     defer allocator.free(ids);
     for (ids) |cid| {
@@ -5768,6 +6234,155 @@ fn cmdStatus(allocator: std.mem.Allocator, env: std.process.Environ, args: []con
         }
     }
     return 0;
+}
+
+/// Explicit task-control lifecycle. Unlike the legacy free-form declare
+/// surface, this grammar is intentionally narrow and self-documenting:
+///
+///   contract task begin "<task>" --check "<command>"
+///   contract task status <id>
+///   contract task verify <id>
+///
+/// `begin` stores the check as a shell pointer but never executes it.
+/// `verify` executes exactly that declared check in the declaration cwd,
+/// records its output/exit as an iteration, and satisfies only on exit 0.
+fn cmdTask(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    if (args.len == 0) {
+        err("task requires: begin, status, or verify\n");
+        return 2;
+    }
+    const subcommand = args[0];
+
+    if (std.mem.eql(u8, subcommand, "begin")) {
+        if (args.len != 4 or !std.mem.eql(u8, args[2], "--check") or
+            args[1].len == 0 or args[3].len == 0)
+        {
+            err("usage: contract task begin \"<task>\" --check \"<command>\"\n");
+            return 2;
+        }
+        const action = try std.fmt.allocPrint(allocator, "shell:{s}", .{args[3]});
+        defer allocator.free(action);
+        return try cmdDeclare(allocator, env, &.{ args[1], "--action", action, "--register" });
+    }
+
+    if (std.mem.eql(u8, subcommand, "status")) {
+        if (args.len != 2) {
+            err("usage: contract task status <id>\n");
+            return 2;
+        }
+        return try cmdStatus(allocator, env, args[1..2]);
+    }
+
+    if (std.mem.eql(u8, subcommand, "verify")) {
+        if (args.len != 2 or args[1].len != 8) {
+            err("usage: contract task verify <8-hex-id>\n");
+            return 2;
+        }
+        const id = args[1];
+        const rows = try parseRows(allocator, env);
+        defer allocator.free(rows);
+        const declared = latestDeclared(rows, id) orelse {
+            errPrint("task verify: no declared task {s}\n", .{id});
+            return 1;
+        };
+        if (isSatisfied(rows, id)) {
+            outPrint("verified: {s} (already satisfied)\n", .{id});
+            return 0;
+        }
+        if (!std.mem.startsWith(u8, declared.action, "shell:") or declared.action.len <= "shell:".len) {
+            errPrint("task verify: {s} has no executable check\n", .{id});
+            return 1;
+        }
+
+        const check = declared.action["shell:".len..];
+        var action_event_buf: [64]u8 = undefined;
+        const action_event_id = std.fmt.bufPrint(&action_event_buf, "task-action-{s}-1", .{id}) catch id;
+        const task_trace = std.fmt.allocPrint(allocator, "task-{s}", .{id}) catch id;
+        defer if (task_trace.ptr != id.ptr) allocator.free(task_trace);
+        const now_ms = @as(i64, time(null)) * 1000;
+        activity_log.recordEvent(.{
+            .event_id = action_event_id,
+            .trace_id = task_trace,
+            .node_id = id,
+            .contract_id = id,
+            .purpose_id = "task-verification",
+            .role = "action",
+            .kind = .started,
+            .state = .working,
+            .timestamp_ms = now_ms,
+            .effect_scope = "local_read",
+        });
+        activity_log.record("task.verify.start", id);
+        const capture = runShellCapture(allocator, check, declared.cwd) catch |e| {
+            activity_log.record("task.verify.error", @errorName(e));
+            errPrint("task verify: check could not run: {s}\n", .{@errorName(e)});
+            return 1;
+        };
+        defer allocator.free(capture.output);
+        var digest: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(capture.output, &digest, .{});
+        var digest_hex: [64]u8 = undefined;
+        lineage_lib.bytesToHex(&digest, &digest_hex);
+        var sensor_event_buf: [64]u8 = undefined;
+        const sensor_event_id = std.fmt.bufPrint(&sensor_event_buf, "task-sensor-{s}-1", .{id}) catch id;
+        var anchor_buf: [64]u8 = undefined;
+        const anchor_id = std.fmt.bufPrint(&anchor_buf, "task-anchor-{s}-1", .{id}) catch id;
+        var evidence_buf: [64]u8 = undefined;
+        const evidence_id = std.fmt.bufPrint(&evidence_buf, "digest-{s}", .{digest_hex[0..16]}) catch id;
+        activity_log.recordEvent(.{
+            .event_id = sensor_event_id,
+            .trace_id = task_trace,
+            .node_id = "command-result-sensor",
+            .parent_event_id = action_event_id,
+            .contract_id = id,
+            .purpose_id = "task-verification",
+            .role = "sensor",
+            .kind = .evidence_collected,
+            .state = .satisfied,
+            .timestamp_ms = @as(i64, time(null)) * 1000,
+            .evidence_id = evidence_id,
+            .anchor_id = anchor_id,
+            .independence_class = "local-command-runner",
+            .effect_scope = "local_read",
+        });
+        try contract.recordIteration(allocator, env, id, 1, capture.rc, capture.output);
+        var evaluator_event_buf: [64]u8 = undefined;
+        const evaluator_event_id = std.fmt.bufPrint(&evaluator_event_buf, "task-evaluator-{s}-1", .{id}) catch id;
+        activity_log.recordEvent(.{
+            .event_id = evaluator_event_id,
+            .trace_id = task_trace,
+            .node_id = "exit-code-evaluator",
+            .parent_event_id = sensor_event_id,
+            .contract_id = id,
+            .purpose_id = "task-verification",
+            .role = "evaluator",
+            .kind = .evaluated,
+            .state = if (capture.rc == 0) .satisfied else .veto,
+            .timestamp_ms = @as(i64, time(null)) * 1000,
+            .evidence_id = evidence_id,
+            .anchor_id = anchor_id,
+            .independence_class = "deterministic-exit-policy",
+            .counter_metric_id = "nonzero-exit",
+            .effect_scope = "local_read",
+            .blocker = if (capture.rc == 0) null else "check-failed",
+        });
+        if (capture.rc != 0) {
+            activity_log.record("task.verify.failed", id);
+            errPrint("task verify: {s} FAILED (exit {d}); remains pending\n", .{ id, capture.rc });
+            if (capture.output.len > 0) err(capture.output);
+            return 1;
+        }
+
+        try contract.markSatisfied(allocator, env, id, 1, "declared task check exited 0");
+        dispatchPosthooks(allocator, env, id);
+        activity_log.record("task.verify.satisfied", id);
+        outPrint("verified: {s} (satisfied)\n", .{id});
+        return 0;
+    }
+
+    errPrint("unknown task subcommand: {s}\n", .{subcommand});
+    err("task requires: begin, status, or verify\n");
+    return 2;
 }
 
 // cmdSearch (lexical ranker) and cmdDiscover (status-with-a-fake-flag)
@@ -6267,13 +6882,13 @@ fn cmdSelf(args: []const []const u8) u8 {
     // so the JSON header is built at runtime. The pending-declares retry
     // queue is surfaced as `pending_declares_retry_queue`.
     outPrint(
-        "{{ \"binary\": \"{s}\", \"implementation\": \"zig\", \"version\": \"{s}\", \"role\": \"recording/resolving harness — the calling agent plans and reasons; the harness records, resolves, caches, verifies\", \"personas\": {{\"aiko\": \"\\\"<truth claim>\\\" [--private]\", \"contract\": \"declare | recommend | status | tick | import-root\"}}, \"declare_flags\": [\"--action <ptr>\", \"--parent <id>\", \"--fast\", \"--register (default, accepted no-op)\", \"--resolve (opt-in full lifecycle)\"], \"visibility_axis\": {{\"default\": \"shared\", \"override\": \"--private\"}}, \"env_reads\": [\"HOME\"], \"unbrowse_base\": \"https://beta-api.unbrowse.ai\", \"llm_compiler_binding\": \"hardcoded\", \"ledger_store\": \"<cwd>/.claude/contracts.jsonl if <cwd>/.claude/ exists, else ~/.contracts/contracts.jsonl\", \"resolver\": {{\"one_shot\": \"tick\", \"resident\": \"tick --every <s>\", \"schedules\": [\"at:<unix-seconds>\", \"repeat:<N>s|m|h\"]}}, \"dependency_pointer\": \"contract:<id>\", \"onchain\": {{\"default\": \"disabled\", \"tool\": \"broadcast-tool (separate build; refuses without --onchain)\"}}, \"binary_self_attestation\": true, \"shapes\": [\"neuron\"], \"containment_edge\": \"parent_id\", \"cross_edges\": [\"contract-ref\"], \"pending_declares_retry_queue\": {{\"path\": \"~/.contracts/pending-declares/\", \"trigger\": \"PaymentRequired\", \"max_attempts\": 10, \"abandoned_subdir\": \"abandoned\"}} }}\n",
+        "{{ \"binary\": \"{s}\", \"implementation\": \"zig\", \"version\": \"{s}\", \"role\": \"recording/resolving harness — the calling agent plans and reasons; the harness records, resolves, caches, verifies\", \"personas\": {{\"aiko\": \"\\\"<truth claim>\\\" [--private]\", \"contract\": \"declare | recommend | status | events | watch | explain | tick | import-root\"}}, \"declare_flags\": [\"--action <ptr>\", \"--parent <id>\", \"--agency <schema-v1-json>\", \"--fast\", \"--register (default, accepted no-op)\", \"--resolve (opt-in full lifecycle)\"], \"visibility_axis\": {{\"default\": \"shared\", \"override\": \"--private\"}}, \"env_reads\": [\"HOME\"], \"unbrowse_base\": \"https://beta-api.unbrowse.ai\", \"llm_compiler_binding\": \"hardcoded\", \"ledger_store\": \"<cwd>/.claude/contracts.jsonl if <cwd>/.claude/ exists, else ~/.contracts/contracts.jsonl\", \"resolver\": {{\"one_shot\": \"tick\", \"resident\": \"tick --every <s>\", \"schedules\": [\"at:<unix-seconds>\", \"repeat:<N>s|m|h\"]}}, \"dependency_pointer\": \"contract:<id>\", \"onchain\": {{\"default\": \"disabled\", \"tool\": \"broadcast-tool (separate build; refuses without --onchain)\"}}, \"binary_self_attestation\": true, \"shapes\": [\"neuron\"], \"containment_edge\": \"parent_id\", \"cross_edges\": [\"contract-ref\"], \"pending_declares_retry_queue\": {{\"path\": \"~/.contracts/pending-declares/\", \"trigger\": \"PaymentRequired\", \"max_attempts\": 10, \"abandoned_subdir\": \"abandoned\"}} }}\n",
         .{ BINARY_NAME, VERSION },
     );
     return 0;
 }
 
-pub fn main(init: std.process.Init.Minimal) !u8 {
+fn runMain(init: std.process.Init.Minimal) !u8 {
     const allocator = std.heap.page_allocator;
     var arena: std.heap.ArenaAllocator = .init(allocator);
     defer arena.deinit();
@@ -6306,7 +6921,36 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     // tool until the 1800s timeout, once per invocation. Same exemption
     // set as the pending-declare sweep below, same reason.
     const verb = argv_z[1];
+    const read_only_task = std.mem.eql(u8, verb, "task") and argv_z.len >= 3 and
+        std.mem.eql(u8, argv_z[2], "status");
+    // aiko's argv[1] is goal text, not a verb. Never copy it into the
+    // operational log; only the fixed persona action is observable.
+    activity_log.record("invocation.dispatch", if (AIKO_DECLARE_ONLY) "aiko-goal" else verb);
+    recordInvocationEvent(.started, .working, if (AIKO_DECLARE_ONLY) "aiko-goal" else verb, null);
+    // Help is a read-only fast path. Handle it before the build wait, retry
+    // sweep, wallet checks, ledger reads, or dispatch so `contract --help` and
+    // `contract declare --help` can never create rows.
+    if (!AIKO_DECLARE_ONLY) {
+        var help_requested = std.mem.eql(u8, verb, "--help") or
+            std.mem.eql(u8, verb, "-h") or
+            std.mem.eql(u8, verb, "help");
+        for (argv_z[2..]) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                help_requested = true;
+                break;
+            }
+        }
+        if (help_requested) {
+            usage();
+            return 0;
+        }
+    }
     if (!std.mem.eql(u8, verb, "self") and
+        !std.mem.eql(u8, verb, "status") and
+        !std.mem.eql(u8, verb, "events") and
+        !std.mem.eql(u8, verb, "watch") and
+        !std.mem.eql(u8, verb, "explain") and
+        !read_only_task and
         !std.mem.eql(u8, verb, "verify-self") and
         !std.mem.eql(u8, verb, "verify-binary") and
         !std.mem.eql(u8, verb, "sign-binary"))
@@ -6328,6 +6972,11 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     // them. Sign-binary is a build-time verb and may run before the
     // wallet is fully online; also skip.
     if (!std.mem.eql(u8, verb, "self") and
+        !std.mem.eql(u8, verb, "status") and
+        !std.mem.eql(u8, verb, "events") and
+        !std.mem.eql(u8, verb, "watch") and
+        !std.mem.eql(u8, verb, "explain") and
+        !read_only_task and
         !std.mem.eql(u8, verb, "verify-self") and
         !std.mem.eql(u8, verb, "verify-binary") and
         !std.mem.eql(u8, verb, "sign-binary"))
@@ -6350,6 +6999,10 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
         return try cmdAikoGoal(allocator, init.environ, argv_z[1..]);
     }
     if (std.mem.eql(u8, verb, "status")) return try cmdStatus(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "events")) return cmdEvents(rest);
+    if (std.mem.eql(u8, verb, "watch")) return cmdWatch(rest);
+    if (std.mem.eql(u8, verb, "explain")) return cmdExplain(rest);
+    if (std.mem.eql(u8, verb, "task")) return try cmdTask(allocator, init.environ, rest);
     // Collapsed-verb aliases (2026-07-18): the old names stay callable but
     // route to the survivors — discover→status, search→recommend, serve→tick.
     if (std.mem.eql(u8, verb, "discover")) return try cmdStatus(allocator, init.environ, &.{});
@@ -6396,4 +7049,24 @@ pub fn main(init: std.process.Init.Minimal) !u8 {
     errPrint("unknown native verb: {s}\n", .{verb});
     usage();
     return 2;
+}
+
+pub fn main(init: std.process.Init.Minimal) !u8 {
+    activity_log.record("invocation.start", "contract-process");
+    recordInvocationEvent(.started, .working, "contract-process", null);
+    const exit_code = runMain(init) catch |e| {
+        activity_log.record("invocation.error", @errorName(e));
+        recordInvocationEvent(.failed, .unresolved, "contract-process", "runtime-error");
+        return e;
+    };
+    var detail_buf: [32]u8 = undefined;
+    const detail = std.fmt.bufPrint(&detail_buf, "exit={d}", .{exit_code}) catch "exit=unknown";
+    activity_log.record("invocation.finish", detail);
+    recordInvocationEvent(
+        if (exit_code == 0) .completed else .failed,
+        if (exit_code == 0) .satisfied else .unresolved,
+        "contract-process",
+        if (exit_code == 0) null else "nonzero-exit",
+    );
+    return exit_code;
 }

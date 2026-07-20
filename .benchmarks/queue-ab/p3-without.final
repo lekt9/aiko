@@ -1,0 +1,19 @@
+Implemented and repaired the durable SQLite queue.
+
+Key changes:
+
+- Atomic cross-instance claiming with SQLite transactions.
+- Durable idempotency via a unique database index.
+- Secure, unpredictable lease tokens.
+- Correct lease expiry, retries, exponential backoff, heartbeat, ack, and dead-job behavior.
+- Thread-safe shared-instance access.
+- Configuration and lease-duration validation.
+- `QueueDataError` for malformed stored payloads.
+- Idempotent `close()`.
+- Expanded tests covering concurrency, expiry, stale tokens, persistence, malformed data, and validation.
+
+Validation:
+
+- `python3 -m unittest -v` — 12 tests passed.
+- Concurrent 12-instance claim stress test passed.
+- Package compilation passed.

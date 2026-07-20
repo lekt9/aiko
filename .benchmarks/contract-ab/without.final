@@ -1,0 +1,18 @@
+Implemented and completed `run_graph` in `scheduler.py`.
+
+Key changes:
+
+- Full graph validation and closed-path cycle detection
+- Deterministic lexicographic scheduling
+- Enforced concurrency limits
+- Independent branch continuation after worker failures
+- Transitive dependent-task skipping
+- Correct prior-result reuse and retry behavior
+- Complete, unique terminal classification and output tracking
+- Added tests for failures, skipping, malformed graphs, cycles, and prior retries
+
+Validation:
+
+- `python3 -m unittest -v` — 6 tests passed
+- Python compilation passed
+- `git diff --check` passed

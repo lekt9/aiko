@@ -14,15 +14,37 @@ single optional visibility flag `--private`; any other flag is refused. The
 verb surface (`declare`, `status`, `tick`, `serve`, …) rides on the `contract`
 invocation of the same binary (argv[0] selects the persona).
 
-## The reduced closed loop
+## The governed graph
 
-There is one execution path:
+Contract still has one resolver and one ledger, but improvement is no longer
+modeled as one unqualified loop. Typed rows can carry one of six agency roles:
+`purpose`, `sensor`, `action`, `evaluator`, `governor`, and `development`.
+Legacy rows remain readable and are reported as `legacy_ungoverned`.
+
+The normal execution path remains:
 
 ```text
 declare → trigger → resolve dependencies → cache hit or execute → verdict
         ↑                                                   │
         └──────────────── invalidate dependants ────────────┘
 ```
+
+For governed work, the resolver adds explicit control edges:
+
+```text
+purpose → governor → action
+                       ↑
+                    sensor ← external reality anchor
+                       ↓
+                   evaluator → veto / promote
+```
+
+High-risk typed actions—network mutation, deployment, messaging, payment,
+on-chain activity, and human-impacting decisions—cannot execute until their
+declared reach has explicit approval and matching consequence-sensor evidence.
+Fresh contradiction bypasses a positive cache, invalidates dependants in the
+same resolver tick, and can roll back only to a verified, unrevoked,
+policy-compatible checkpoint.
 
 Every mutation-facing CLI command enters the same resolver tick. Run it once
 with:
@@ -87,20 +109,41 @@ at:<unix-seconds>
 repeat:<N>s
 repeat:<N>m
 repeat:<N>h
+when:contract:<id>
+when:event:<name>
 ```
 
 An occurrence is materialized once. A new occurrence invalidates cached truth
 and sends the contract back through the same resolver. There is no separate
-cron/pod execution path.
+cron/pod execution path. Dependency occurrences bind to the dependency's
+latest satisfied proof. Named events bind to a workspace-scoped `signal` row.
+Native hosts use ABI v3's bounded tick/lease/settle surface; expired,
+unsettled leases are delivered again.
 
-The `contract` invocation of the same binary carries five verbs:
-`declare <goal> [--action <ptr>] [--parent <id>] [--fast|--resolve|--register]`
+The `contract` invocation of the same binary carries these primary verbs:
+`declare <goal> [--action <ptr>] [--parent <id>] [--agency <schema-v1-json>]
+[--fast|--resolve|--register]`
 (a `--register` declare prints the id on stdout and a briefing on stderr —
 the proven route plus open roots), `recommend <goal>` (the learned router),
 `status [<id>]`, `tick [--every <s>]` (one resolver pass, or resident with
-`--every`), and `import-root <seed-file>`. The old `discover` / `search` /
+`--every`), `events [--trace <id>]`, `watch [<trace-id>] [--json]`,
+`explain <trace-id>`, and `import-root <seed-file>`. The old `discover` / `search` /
 `serve` / `self` names remain accepted as aliases onto status / recommend /
 tick / the identity line, but are no longer documented surface.
+
+`contract task verify <id>` emits a linked action → command-result sensor →
+exit-policy evaluator trace. Inspect it without touching wallet state:
+
+```bash
+contract events --trace "task-<id>"
+contract explain "task-<id>"
+contract watch "task-<id>" --json
+```
+
+The causal stream is written to `.claude/events.jsonl` when the project has a
+`.claude` directory, otherwise to `~/.contracts/events.jsonl`. The offline
+renderer at `tools/contract-events.html` accepts that JSONL by file drop and
+makes no network requests.
 
 The shared (default) aiko path is bound to Unbrowse and x402-native:
 declarations POST to the hardcoded `https://beta-api.unbrowse.ai` — no env
@@ -171,3 +214,23 @@ endpoint is a hardcoded constant. The ledger resolves to
 `<cwd>/.claude/contracts.jsonl` when `<cwd>/.claude/` is a directory, else to
 the global `~/.contracts/contracts.jsonl`. The public command stays
 `aiko "<goal>" [--private]`.
+
+## Keychain and signing boundary
+
+Routine signing first resolves the root from mode-600 file mirrors and caches
+it for the process. A fresh file-backed initialization does not open or write
+Keychain. Help, status, task status, events, watch, explain, and self dispatch
+before wallet, retry, and network paths; observing Contract therefore cannot
+request signing material. Native Keychain access remains explicit for
+keychain-only import, rotation/maintenance, or recovery when both file mirrors
+are absent.
+
+Run the regression checks with:
+
+```bash
+CONTRACT_BIN="$PWD/scripts/contract" ./tools/audit-readonly-keychain.sh
+./tools/scan-runtime-secret-leaks.sh
+```
+
+For the complete schema, migration behavior, adversarial evidence, benchmarks,
+and release proof, start at `docs/AGENCY-SUBSTRATE.md`.

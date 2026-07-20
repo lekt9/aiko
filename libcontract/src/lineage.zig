@@ -18,6 +18,7 @@ const hkdf = std.crypto.kdf.hkdf.HkdfSha256;
 const sha256 = std.crypto.hash.sha2.Sha256;
 const keystore = @import("keystore.zig");
 const ledger = @import("ledger.zig");
+const activity_log = @import("activity_log.zig");
 
 // libc arc4random_buf is the cleanest cross-Apple-platform CSPRNG and ships
 // in libSystem; Zig 0.16's std.posix.getrandom isn't wired on macOS targets.
@@ -39,95 +40,110 @@ pub const ROOT_KEY_HEX_LEN: usize = 64; // 32 bytes * 2
 /// signing tuple. Picked to be unmistakable in audit and human-readable.
 pub const ROOT_PARENT_SENTINEL: []const u8 = "root";
 
+const RootCache = struct {
+    home_hash: u64,
+    seed: [32]u8,
+};
+
+// A contract operation can emit several independently signed rows. Keep the
+// root in process memory after the first resolution so one operation does not
+// repeatedly enter the OS keystore. The HOME hash prevents tests/embedders
+// which swap environments in one process from inheriting another wallet.
+var root_cache_mutex: std.atomic.Mutex = .unlocked;
+var root_cache: ?RootCache = null;
+
+fn lockRootCache() void {
+    while (!root_cache_mutex.tryLock()) std.atomic.spinLoopHint();
+}
+
+fn cacheRoot(home: []const u8, seed: [32]u8) [32]u8 {
+    root_cache = .{
+        .home_hash = std.hash.Wyhash.hash(0, home),
+        .seed = seed,
+    };
+    return seed;
+}
+
 /// Three-tier wallet bootstrap. Resolution order on every aiko invocation:
 ///   1. `$HOME/.contracts/root.key`             (canonical file, mode 600)
 ///   2. `$HOME/.aiko/keys/root.key`             (mirror file, mode 600)
-///   3. macOS Keychain `aiko.root.ed25519.seed` (security CLI shellout)
-///   4. generate fresh + persist to all three (atomic three-way mirror)
+///   3. macOS Keychain `aiko.root.ed25519.seed`
+///   4. generate fresh + persist to the two mode-600 file mirrors
 ///
-/// Idempotent: after first successful read from ANY tier, the missing tiers
-/// are silently back-filled so the next invocation has all three mirrors
-/// populated. Generation only happens when ALL THREE tiers miss (true
-/// first-run on a clean machine).
+/// Normal signing reads the mode-600 file tiers without touching Keychain.
+/// Keychain is consulted only when both files are absent (including deliberate
+/// keychain-only mode). Routine first-run initialization does not write it;
+/// native-store writes belong to explicit import/rotation commands.
+/// The resolved root is cached for the rest of the process.
 pub fn loadOrInitRootKey(allocator: std.mem.Allocator, env: std.process.Environ) ![32]u8 {
     const home = env.getPosix("HOME") orelse return error.NoHome;
+    const home_hash = std.hash.Wyhash.hash(0, home);
+
+    lockRootCache();
+    defer root_cache_mutex.unlock();
+    if (root_cache) |cached| {
+        if (cached.home_hash == home_hash) {
+            activity_log.record("root.resolve", "process-cache");
+            return cached.seed;
+        }
+    }
+
     const canonical = try std.fs.path.join(allocator, &.{ home, ".contracts", "root.key" });
     defer allocator.free(canonical);
     const mirror = try std.fs.path.join(allocator, &.{ home, ".aiko", "keys", "root.key" });
     defer allocator.free(mirror);
 
-    // Tier 1 (Enclave-canonical): OS keystore — the Secure-Enclave vault is the
-    // canonical source; the wallet is bound to the user. Safe now that the
-    // keystore is non-prompting by construction (pay.sh + security are both
-    // gated by a live-keychain-session probe and use only non-biometric verbs).
-    // CORRUPTION GUARD: if the canonical file ALSO exists and DIFFERS from the
-    // vault seed, the file is authoritative (recovery wins over a drifted vault)
-    // and the vault is re-bound — a valid-but-wrong vault seed can never silently
-    // change the wallet.
-    if (readKeychainSeed(allocator)) |ks_seed| {
-        if (readHexFile(canonical)) |file_seed| {
-            if (std.mem.eql(u8, &ks_seed, &file_seed)) {
-                return ks_seed; // match — Enclave canonical, happy path
-            }
-            surface("CORRUPTION GUARD: keystore seed != canonical file {s} — file is authoritative; re-binding keystore", .{canonical});
-            writeKeychainSeed(allocator, &file_seed) catch |e|
-                surface("keystore re-bind from canonical failed: {s}", .{@errorName(e)});
-            return file_seed;
-        } else |err| {
-            if (err != error.FileNotFound) {
-                surface("canonical read errored during keystore cross-check: {s}", .{@errorName(err)});
-                return err;
-            }
-            // No canonical file means keychain-only mode. Do not recreate a
-            // plaintext recovery file behind the operator's back.
-            return ks_seed;
-        }
-    } else |err| if (err != error.NotFound) {
-        surface("keystore tier read errored (not just missing): {s}", .{@errorName(err)});
-        return err;
-    }
-
-    // Tier 2: canonical file (keystore empty — pre-bind, or a non-Enclave host /
-    // dead keychain session where the gate skipped the vault). Back-fill
-    // populates the keystore so the next load in a live session hits tier 1.
+    // Tier 1: canonical mode-600 file. This is the hot path and deliberately
+    // avoids Keychain UI/ACL evaluation during routine signing.
     if (readHexFile(canonical)) |existing| {
-        surface("keystore tier empty/unavailable, served from canonical file {s}", .{canonical});
-        backfillMirrors(allocator, &existing, canonical, mirror) catch |e|
-            surface("backfill from canonical tier failed: {s}", .{@errorName(e)});
-        return existing;
+        activity_log.record("root.resolve", "canonical-file");
+        backfillFileMirrors(allocator, &existing, canonical, mirror) catch |e|
+            surface("file-mirror backfill from canonical tier failed: {s}", .{@errorName(e)});
+        return cacheRoot(home, existing);
     } else |err| if (err != error.FileNotFound) {
         surface("canonical tier read errored (not just missing): {s}", .{@errorName(err)});
         return err;
     }
 
-    // Tier 3: mirror file. keystore + canonical both missed — degraded, surface.
+    // Tier 2: recovery mirror. Repair the canonical file without opening
+    // Keychain; explicit wallet maintenance owns native-store reconciliation.
     if (readHexFile(mirror)) |existing| {
-        surface("keystore + canonical missing, served from mirror tier {s}", .{mirror});
-        backfillMirrors(allocator, &existing, canonical, mirror) catch |e|
-            surface("backfill from mirror tier failed: {s}", .{@errorName(e)});
-        return existing;
+        activity_log.record("root.resolve", "recovery-mirror");
+        surface("canonical missing, served from mirror tier {s}", .{mirror});
+        backfillFileMirrors(allocator, &existing, canonical, mirror) catch |e|
+            surface("file-mirror backfill from mirror tier failed: {s}", .{@errorName(e)});
+        return cacheRoot(home, existing);
     } else |err| if (err != error.FileNotFound) {
         surface("mirror tier read errored (not just missing): {s}", .{@errorName(err)});
+        return err;
+    }
+
+    // Tier 3: OS keystore. Reaching this tier means either recovery or
+    // deliberate keychain-only mode. Do not recreate plaintext files.
+    if (readKeychainSeed(allocator)) |ks_seed| {
+        activity_log.record("root.resolve", "os-keychain");
+        return cacheRoot(home, ks_seed);
+    } else |err| if (err != error.NotFound) {
+        surface("keystore tier read errored (not just missing): {s}", .{@errorName(err)});
         return err;
     }
 
     // Tier 4: fresh generation. ALL tiers missed — true first-run on a clean
     // machine. Surface this loudly: a wallet is being born.
     surface("FIRST RUN — generating fresh ed25519 root seed (no existing material in keystore/canonical/mirror tiers)", .{});
+    activity_log.record("root.resolve", "generated-first-run");
     var fresh: [32]u8 = undefined;
     arc4random_buf(&fresh, fresh.len);
     try writeHexFile(allocator, canonical, &fresh);
-    backfillMirrors(allocator, &fresh, canonical, mirror) catch |e|
+    backfillFileMirrors(allocator, &fresh, canonical, mirror) catch |e|
         surface("backfill after fresh generation failed: {s}", .{@errorName(e)});
-    surface("fresh root persisted to {s} (chmod 600); mirror + keystore back-filled best-effort", .{canonical});
-    return fresh;
+    surface("fresh root persisted to {s} (chmod 600); file mirror back-filled without opening Keychain", .{canonical});
+    return cacheRoot(home, fresh);
 }
 
-/// Best-effort back-fill: ensure the mirror file and Keychain both carry the
-/// same seed as the canonical file. Failures here are non-fatal; the caller
-/// has a valid seed in hand. Run after every successful read so the substrate
-/// self-heals when one tier is wiped or never populated.
-fn backfillMirrors(
+/// Best-effort file repair. Routine reads stop here so normal contract work
+/// never opens a Keychain authorization dialog.
+fn backfillFileMirrors(
     allocator: std.mem.Allocator,
     seed: *const [32]u8,
     canonical_path: []const u8,
@@ -145,7 +161,17 @@ fn backfillMirrors(
             surface("mirror tier backfill write FAILED at {s}: {s} — seed lives only in surviving tier(s)", .{ mirror_path, @errorName(e) }),
         else => surface("mirror tier read errored during backfill: {s}", .{@errorName(err)}),
     }
-    // Keystore.
+}
+
+/// Full three-tier synchronization is reserved for explicit writes:
+/// initialization and rotation. It is never run by the routine read path.
+fn backfillAllMirrors(
+    allocator: std.mem.Allocator,
+    seed: *const [32]u8,
+    canonical_path: []const u8,
+    mirror_path: []const u8,
+) !void {
+    try backfillFileMirrors(allocator, seed, canonical_path, mirror_path);
     if (readKeychainSeed(allocator)) |_| {} else |err| switch (err) {
         error.NotFound => writeKeychainSeed(allocator, seed) catch |e|
             surface("keystore tier backfill write FAILED: {s} — seed lives only in surviving tier(s)", .{@errorName(e)}),
@@ -265,6 +291,9 @@ pub fn importRootKeyFileKeychainOnly(
     const kp = try deriveIdentityKeyPair(seed);
     var pubkey_hex: [PUBKEY_HEX_LEN]u8 = undefined;
     bytesToHex(&kp.public_key.bytes, &pubkey_hex);
+    lockRootCache();
+    _ = cacheRoot(home, seed);
+    root_cache_mutex.unlock();
     return pubkey_hex;
 }
 
@@ -658,8 +687,11 @@ pub fn rotateRootKey(allocator: std.mem.Allocator, env: std.process.Environ) !Ro
     //    keystore are best-effort. If canonical write fails, we leave the
     //    prior root in place across all three tiers — no half-rotated state.
     try writeHexFile(allocator, canonical, &new_root);
-    backfillMirrors(allocator, &new_root, canonical, mirror) catch |e|
+    backfillAllMirrors(allocator, &new_root, canonical, mirror) catch |e|
         surface("rotation backfill of mirror/keystore FAILED: {s} — new root lives only in canonical tier", .{@errorName(e)});
+    lockRootCache();
+    _ = cacheRoot(home, new_root);
+    root_cache_mutex.unlock();
 
     // 10. Append wallet_rotated ledger row (signed by OLD identity sig).
     appendWalletRotatedRow(allocator, env, &old_pubkey_hex, &new_pubkey_hex, &sig_hex, rotated_at) catch |e|

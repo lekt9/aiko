@@ -1,0 +1,13 @@
+Implemented and completed `run_graph`:
+
+- Added graph validation and closed-path cycle detection.
+- Enforced bounded concurrency and lexicographic scheduling.
+- Isolated worker failures and transitively skipped dependents.
+- Correctly resumed reusable prior successes.
+- Ensured complete, exclusive task result classification.
+- Added regression tests covering edge cases.
+
+Validation:
+
+- `python3 -m unittest -v` — 7 tests passed.
+- Python compilation and `git diff --check` passed.

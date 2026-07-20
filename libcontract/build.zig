@@ -50,6 +50,14 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     shim_mod.addEmbedPath(b.path("data"));
+    const shim_contract_mod = b.createModule(.{
+        .root_source_file = b.path("src/contract.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    shim_contract_mod.addEmbedPath(b.path("data"));
+    shim_mod.addImport("contract", shim_contract_mod);
     const shim = b.addExecutable(.{
         .name = "contract-lib-shim",
         .root_module = shim_mod,
@@ -82,6 +90,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run libcontract tests");
 
     const test_files = [_][]const u8{
+        "src/c_abi.zig",
         "src/contract.zig",
         "src/pointer.zig",
         "src/guards.zig",
@@ -90,8 +99,19 @@ pub fn build(b: *std.Build) void {
         "src/client.zig",
         "src/bible.zig",
         "src/cache.zig",
+        "src/scheduler.zig",
         "src/terminal.zig",
         "src/capability.zig",
+        "src/capability_cells.zig",
+        "src/agency.zig",
+        "src/anchor.zig",
+        "src/governance.zig",
+        "src/development.zig",
+        "src/event_schema.zig",
+        "src/workflow.zig",
+        "src/migration.zig",
+        "src/failure.zig",
+        "src/trust.zig",
         "src/gate.zig",
         "src/route.zig",
         "src/embed.zig",
@@ -139,6 +159,16 @@ pub fn build(b: *std.Build) void {
         // available to @embedFile in all test modules (cheap; cost is zero
         // if the file isn't referenced).
         mod.addEmbedPath(b.path("data"));
+        if (std.mem.eql(u8, tf, "src/client.zig")) {
+            const contract_mod = b.createModule(.{
+                .root_source_file = b.path("src/contract.zig"),
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            });
+            contract_mod.addEmbedPath(b.path("data"));
+            mod.addImport("contract", contract_mod);
+        }
         const t = b.addTest(.{ .root_module = mod });
         test_step.dependOn(&b.addRunArtifact(t).step);
     }

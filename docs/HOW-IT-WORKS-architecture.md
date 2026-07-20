@@ -164,8 +164,8 @@ lives in `libcontract/src/shape.zig` / `libcontract/src/pattern.zig` /
 
 | surface | where | what |
 |---|---|---|
-| CLI | `zig/src/main.zig` → installed as `scripts/contract` (signed, `scripts/contract.sig`) | verbs: `declare`, `satisfy`, `recommend`, `status`, … |
-| C ABI | `libcontract/src/c_abi.zig` | `contract_declare/_iterate/_mark_satisfied/_get/_list/_gate/_recommend/_free` |
+| CLI | `zig/src/main.zig` → installed as `scripts/contract` (signed, `scripts/contract.sig`) | declaration/resolution plus read-only `status`, `events`, `watch`, and `explain` |
+| C ABI | `libcontract/src/c_abi.zig` | ABI v3 (v2 symbols preserved) plus native durable tick/lease/settle/signal, agency validation, and trust verdicts |
 | dylib + FFI | `libcontract.dylib` (same `c_abi.zig`, dynamic) | aiko-cli calls it in-process via `bun:ffi` (µs, no subprocess) |
 | MCP | `libcontract/src/mcp_server.zig` | the same core over stdio for agent frameworks |
 
@@ -178,10 +178,78 @@ signature (`DOCTRINE.md` § Self-aware binary).
 
 `scripts/build.sh` walks seven ordered steps ending in signing, and its
 parity step (`DOCTRINE.md` § Doctrine-Reality Parity) mechanically checks
-that every doctrine claim has a live code site — 53 claims at the time of
+that every doctrine claim has a live code site — 54 claims at the time of
 writing. A doctrine sentence without code, or code without doctrine, fails
 the build. That is why this document defers to `DOCTRINE.md`: the doctrine
 is supervised; prose here is not.
+
+## 12. Grounded trust promotion
+
+The signed ledger proves who asserted a row. Governed promotion additionally
+replays `trust_policy`, `trust_evidence`, and `trust_revocation` rows through
+`libcontract/src/trust.zig`. The evaluator requires fresh evidence for primary,
+counter, and constraint metrics; independent evaluator/source/failure domains;
+builder/evaluator separation; and acyclic derivation.
+
+The resolver applies that decision before writing `satisfied` and rechecks it
+on resident ticks. A later expiry or revocation nullifies the accepted claim,
+invalidates downstream consumers, and records rollback to an earlier unrevoked
+activation only when its policy ID and version match exactly. The C ABI and MCP
+surface call the same replay function.
+
+## 13. Agency roles and reach governance
+
+`libcontract/src/agency.zig` adds versioned semantics over the common row:
+`purpose`, `sensor`, `action`, `evaluator`, `governor`, and `development`.
+Every typed envelope binds authority, purpose, cadence, effect scope, evidence
+policy, validity, revocation/supersession pointers, and schema version. Typed
+semantics enter the v3 cache key; an untyped row keeps its historical v2 bytes.
+
+`libcontract/src/governance.zig` checks that action capability covers declared
+reach. High-risk scopes require explicit approval and a fresh consequence
+sensor observing at least that reach. Slow governors own target changes and
+arbitrate conflicting operational loops; fast action nodes cannot amend their
+own target, evaluator, or veto threshold.
+
+## 14. Reality anchors and independent evaluation
+
+`libcontract/src/anchor.zig` distinguishes observation from interpretation.
+Terminal anchors include executed tests, filesystem and HTTP observations,
+browser state, scoped human attestations, economic receipts, and
+physical/adapter measurements. Each carries a content hash, concrete source,
+collection method, time window, failure domain, optional private payload
+pointer, and tamper/revocation status. A ledger assertion cannot anchor itself.
+
+`libcontract/src/workflow.zig` enforces action → sensor → independent evaluator.
+Copied, circular, same-source, or same-failure-domain evidence cannot inflate a
+quorum. Counter-metric disagreement is `contradicted`, not a weak success.
+
+## 15. Failure, recovery, and graph development
+
+`libcontract/src/failure.zig` sends contradiction, sensor loss, anchor expiry,
+capability breach, and compromised evidence around positive caches. Dependants
+are invalidated breadth-first once per resolver tick. Recovery selects only the
+latest verified, unrevoked checkpoint under the active policy.
+
+`libcontract/src/development.zig` separates retrying a loop from changing the
+loop. A development proposal names its actor, required authority, rationale,
+evidence, predicted impact, operations, and inverse operations. Preview and
+apply use the same validator; application is atomic, retained snapshots are
+reversible, and sensitive/split-loop changes require approval.
+
+## 16. Causal observability and wallet isolation
+
+The compatibility health log remains `activity.log`. Stable redacted causal
+events live in `events.jsonl`, with trace/parent links, role, owner, cadence,
+state, reason, anchor/evidence references, independence class, counter-metric,
+reach, and blocker. `contract watch` streams JSON; `contract explain` produces
+a compact narrative; `tools/contract-events.html` renders an existing file
+offline.
+
+Read-only commands are dispatched before queued retries, wallet resolution,
+lineage signing, and network calls. Fresh file-backed wallet initialization
+does not write Keychain. Keychain remains an explicit native-store boundary for
+keychain-only import, maintenance/rotation, and recovery.
 
 ## Further reading
 
@@ -190,3 +258,6 @@ is supervised; prose here is not.
 - The value layer (rewards, cooperative commons, payment envelopes):
   `docs/HOW-IT-WORKS-economics.md`
 - The rules themselves: `DOCTRINE.md`; the lean agent skill: `SKILL.md`
+- Agency schema and operations: `docs/AGENCY-SUBSTRATE.md`
+- Release and adversarial proof: `docs/AGENCY-SUBSTRATE-RELEASE-EVIDENCE.md`
+  and `docs/ADVERSARIAL-AGENCY-EVIDENCE.md`

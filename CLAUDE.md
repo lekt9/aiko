@@ -80,6 +80,9 @@ The pointer index:
   economics canonical in `docs/ECONOMICS-cooperative-commons.md`
 - **Continuous resolver / Pointer-keyed truthy cache**
   → SKILL.md sections of the same name
+- **Governed agency roles / Reach / Anchors / Causal observability**
+  → SKILL.md `Governed agency work`; implementation and evidence in
+  `docs/AGENCY-SUBSTRATE.md`
 - **Doctrine-Reality Parity / Ledger / Outline explainer sync**
   → SKILL.md sections of the same name
 

@@ -81,6 +81,20 @@ pub const TOOLS = [_]ToolSpec{
         \\{"type":"object","properties":{"surface":{"type":"string"}},"required":["surface"]}
         ,
     },
+    .{
+        .name = "trust_evaluate",
+        .description = "Replay the local append-only trust ledger and evaluate one governed claim.",
+        .schema =
+        \\{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}
+        ,
+    },
+    .{
+        .name = "agency_validate",
+        .description = "Validate a canonical six-role agency envelope without touching the ledger or signing path.",
+        .schema =
+        \\{"type":"object","properties":{"envelope":{"type":"string"}},"required":["envelope"]}
+        ,
+    },
 };
 
 const Value = std.json.Value;

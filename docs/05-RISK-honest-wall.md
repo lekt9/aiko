@@ -26,8 +26,13 @@ learns on-fire from verdicts is only as good as its verdicts. Bad or *gamed*
 verdicts don't just add noise — they train the shared prior toward delusion. The
 guard (a canonical, fixed reference anchor + independent multi-party
 corroboration + the reward economics' verification gate) is **load-bearing**: if it fails, the
-collective becomes confidently, collectively wrong. This is the line between
-wisdom-of-crowds and madness-of-crowds, and it is **not automatic.**
+collective becomes confidently, collectively wrong. Contract now supplies typed
+sensor/evaluator roles, evidence independence checks, reality anchors,
+counter-metrics, vetoes, and reach gates (**BUILT+PROVEN** locally). Those
+controls prevent several known false-green paths; they cannot guarantee that a
+sensor is truthful, that a chosen purpose is wise, or that an external anchor
+remains valid. This is the line between wisdom-of-crowds and
+madness-of-crowds, and it is **not automatic.**
 
 **R4 — "Low compute" is low *marginal*, not low *total*.** Embedding and serving
 retrieval over the live web is heavy infrastructure. The compute *moves* from

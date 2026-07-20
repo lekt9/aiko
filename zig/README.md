@@ -1,16 +1,22 @@
 # contract-zig
 
-Zig 0.16 binary implementing the Σ18 bootstrap floor of the `/contract`
-substrate. **Stage 1** ships `declare` + `self` only; `iterate` and `_mark`
-are gap `aa1176c4` (Stage 2 — remote delegation + LOCAL-required fallback)
-and exit 1 with an explicit STAGE 2 PENDING block when invoked.
+Native Zig CLI for the Contract substrate. It writes signed append-only intent
+and verdict rows, resolves contract graphs, exposes task/role status, and emits a
+schema-v1 causal event stream. Typed declarations may carry one of six governed
+agency roles: purpose, governor, action, sensor, evaluator, or development.
 
-Rows written by `declare` are byte-compatible with the existing
-`contract_core.py` reader (same JSON shape, same key order, same
-`pointer_type` and `layer` inference, same ISO-8601 microsecond
-timestamp). Ledger discovery follows `_resolve_ledger()`:
-`$CONTRACTS_STORE` → `<cwd>/.claude/contracts.jsonl` →
-`~/.contracts/contracts.jsonl`.
+The CLI preserves the legacy row shape for untyped declarations while adding
+typed agency envelopes, reach decisions, evidence/anchor checks, failure
+propagation, and attributable graph development. Read-only inspection
+(`help`, `status`, `task status`, `events`, `watch`, and `explain`) stays outside
+wallet and Keychain paths.
 
-Build: `zig build` (output at `zig-out/bin/contract-zig`). Stage 1 satisfies
-gap `2142cc6c` (LAMBDA-ZIG-STAGE1-SCAFFOLD).
+Ledger discovery is deterministic and does not read a `CONTRACTS_STORE`
+environment override:
+
+1. `<cwd>/.claude/contracts.jsonl`
+2. `~/.contracts/contracts.jsonl`
+
+Build from this directory with `zig build`; the binary is written to
+`zig-out/bin/contract-zig`. The repository release gate is
+`../scripts/build.sh`.

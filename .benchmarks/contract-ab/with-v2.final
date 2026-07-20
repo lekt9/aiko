@@ -1,0 +1,12 @@
+Implemented and completed `run_graph`:
+
+- Added graph validation and closed-path cycle detection.
+- Added bounded concurrent scheduling with deterministic task selection.
+- Added failure isolation and transitive dependency skipping.
+- Correctly resumes reusable prior successes.
+- Ensured complete, deterministic result classification.
+- Added tests covering validation, cycles, failures, skips, prior reruns, and invalid concurrency.
+
+Tests: `python3 -m unittest -v` — 8 passed.
+
+Task `609f9b43` verified and reports `satisfied`.

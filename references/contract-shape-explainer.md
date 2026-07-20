@@ -23,11 +23,14 @@ truth claim
 Public surface (the only thing a human or agent types):
 
 ```bash
-aiko "<goal>" --remote      # routes to https://beta-api.unbrowse.ai
-aiko "<goal>" --local       # same shape, scoped local ledger
+aiko "<goal>"             # shared visibility through Unbrowse
+aiko "<goal>" --private   # local-only ledger
 ```
 
-No `spawn`, no `mark satisfied`, no `parent`, no `iterate`, no `action`, no `status`, no `search`. Those existed in the old binary and were deliberately removed. The reduced vocabulary is:
+The public Aiko persona stays this small. The signed `contract` invocation is
+the operator/debug surface for declarations, checked tasks, status, resolver
+ticks, and causal inspection. Internal mutation mechanics are not public Aiko
+flags.
 
 | Token | Meaning |
 |---|---|
@@ -40,6 +43,8 @@ No `spawn`, no `mark satisfied`, no `parent`, no `iterate`, no `action`, no `sta
 | `wallet_identity` | identity pointer used to sign calls |
 | `replicated_from_contract_id` | a paid copy of an out-of-lineage contract |
 | `network_tunnel_contract_id` | server-side connectivity adapter |
+| `purpose / governor / action / sensor / evaluator / development` | typed agency roles over the same row |
+| `reality anchor` | hashed terminal observation from outside the ledger |
 
 That's the entire user vocabulary. The graph mechanics — cells, funnels, loops, quorums, sequences — live on the server, never as flags the caller picks.
 
@@ -63,9 +68,21 @@ This is the right cut. It means:
 - The LLM upgrade path is purely server-side.
 - A child contract's `parent_id` and a child plan's recursive aiko expansion use the *same tree shape* — the compiler is fractal, not multi-format.
 
-### 2.3 Metric-gated truth
+### 2.3 Grounded, metric-gated truth
 
-A neuron does not resolve true because its action returned zero. It resolves true only when evaluator aikos — themselves ordinary contracts with typed pointers to external metrics, ledger metrics, or API metrics — say so. When all evaluators promote, the solved aiko is promoted upward as a `contract:<id>` pointer that becomes the parent's typed stdout.
+A governed neuron does not resolve true because its action returned zero. Its
+sensor must terminate in a fresh external reality anchor—executed test,
+filesystem/API/browser observation, scoped human attestation, economic receipt,
+or physical/adapter measurement—and an independent evaluator must accept the
+primary metric without violating counter-metrics or constraints. Copied,
+circular, expired, revoked, and same-failure-domain evidence does not create a
+quorum.
+
+High-risk action reach is checked before execution. Network mutation,
+deployment, messaging, payment, on-chain, and human-impacting actions require
+explicit approval plus a consequence sensor that covers at least that reach.
+Fresh bad news bypasses a positive cache and invalidates dependants in the same
+resolver tick.
 
 This dissolves the entire class of "fake green" failures. A grep-based verdict cannot promote a node; a metric-bound evaluator can. The same project ledger has captured fake-green pattern discoveries six times this session alone — the pattern is real, and the metric gate is the answer.
 
@@ -131,7 +148,11 @@ Three deeper observations:
 
 **(b) The substrate is self-improving by construction.** Because every promotion writes a `called` row, every metric-gated evaluator runs against the *previous* run's row, and every fake-green is detectable as a discrepancy between declared row and ledger evidence. The graph polices itself. Six fake-green discoveries this session alone, all caught by re-reading the ledger.
 
-**(c) The local binary stays small forever.** Because the compiler is server-side and the verifier wiring is server-selected, the public surface is `aiko "<goal>" --remote|--local` *and nothing else*. There is no CLI feature creep, because new capability is a new server-side adapter contract, not a new flag. This is the same discipline Unbrowse applies at the resolve/execute boundary: two tool calls, never one, with the LLM as the picker.
+**(c) The public surface stays small.** Because the compiler is server-side and
+the verifier wiring is policy-selected, the user-facing surface remains
+`aiko "<goal>" [--private]`. Operator observability and deterministic task
+controls live behind the signed `contract` persona instead of becoming Aiko
+feature flags.
 
 ---
 
@@ -153,17 +174,19 @@ When you see the same shape at the CLI boundary, at the skill graph, at the rule
 ## 6. How to use it today
 
 ```bash
-# Discover what's active (do this first)
-~/.claude/skills/contract/scripts/contract discover --scope all
+# Public declaration
+aiko "<goal>"
+aiko "<goal>" --private
 
-# Search before declaring (avoid duplicates)
-~/.claude/skills/contract/scripts/contract search --context "<plan>"
+# Durable local checked task
+contract task begin "<task>" --check "<command>"
+contract task verify <id>
+contract explain "task-<id>"
 
-# Declare a truth claim — server compiles the children
-aiko "<goal>" --remote
-
-# Cross-project / global — run from a dir without .claude/
-aiko "<goal>" --remote     # writes to ~/.contracts/contracts.jsonl
+# Resolver and causal inspection
+contract tick
+contract events [--trace <id>]
+contract watch [<trace-id>] --json
 ```
 
 The discipline:
@@ -171,7 +194,8 @@ The discipline:
 1. Resolve always returns a shortlist. The LLM picker chooses; aiko never auto-acts on one.
 2. Out-of-lineage contracts must be replicated (paid). Search discovers pointers; payment replicates them; execution calls the paid local copy.
 3. No prose rules. If you find yourself writing "from now on, when X, do Y" — declare a contract.
-4. The ledger is canonical. `CONTRACTS_STORE` exists only for scoped local tests.
+4. The ledger is canonical. Project scope is selected by a local `.claude`
+   directory; otherwise Contract uses `~/.contracts/contracts.jsonl`.
 
 ---
 
@@ -181,7 +205,8 @@ When the substrate binds to ANY environment (macOS, Linux, Windows, iOS, Android
 
 The OS-agnostic abstraction is one interface: `keystore.read(svc)` / `keystore.write(svc, value)` / `keystore.delete(svc)`. The backend is selected at compile time from `builtin.os.tag`:
 
-- **darwin** — macOS Keychain via `security` CLI shellout
+- **darwin** — macOS Keychain through Security.framework, guarded by a
+  non-prompting search-list probe
 - **linux** — libsecret via `secret-tool`, falling back to ChaCha20Poly1305 encrypted file
 - **windows** — Credential Manager (PowerShell), falling back to encrypted file
 - **ios** — Keychain Services FFI
@@ -190,17 +215,21 @@ The OS-agnostic abstraction is one interface: `keystore.read(svc)` / `keystore.w
 
 Adding a new platform = adding one file with three functions. Lineage never knows which backend fired.
 
-Three-tier root-key bootstrap (same shape on every OS):
+Root-key resolution (same shape on every OS):
 1. Canonical file `$HOME/.contracts/root.key`
 2. Mirror file `$HOME/.aiko/keys/root.key`
-3. OS keystore `aiko.root.ed25519.seed`
-4. Generate fresh + write to all three
+3. OS keystore `aiko.root.ed25519.seed` only when both file tiers are absent
+4. Generate fresh + write the two mode-600 file tiers
 
-After any successful read, missing tiers silently back-fill. Generation only happens when all three miss (true first-run on a clean machine).
+Routine reads use the file tiers and process cache without opening Keychain.
+Fresh file-backed initialization does not write Keychain. Native-store access is
+reserved for explicit keychain-only import, rotation/maintenance, or recovery.
+Read-only help, status, task status, events, watch, explain, and self dispatch
+before wallet resolution.
 
 **Native onramp is the cloud's obligation.** When a fresh wallet is born, the local binary's job ends at "seed generated + pubkey advertised". Funding (USDC for x402, gas) is the server-side /contract endpoint's responsibility — adapter contracts know how to fund a wallet for the context it is being asked to act in (Privy onramp, Coinbase Onramp ride-along, Foundry treasury faucet). The client never sees the dance; the first declare may 402 once, then the orchestrator retries and it passes.
 
-**Rotation is a substrate function.** `rotateRootKey()` generates a new seed, signs a successor proof with the OLD identity keypair (HKDF salt `aiko-root-identity-v1`), atomically updates all three tiers, archives the old seed under `$HOME/.aiko/keys/.archived-rotated-<ts>/`, and appends a `wallet_rotated` event to the local ledger. `rotateAllSignedRowsByLineage()` walks every row whose env_pubkey was derived from the old root, re-derives the keypair from the new root + same contract_id, and appends a `resigned` event per affected row — preserving the append-only invariant. Rotation is itself a contract: declare `aiko "wallet:rotate" --remote` and the cloud orchestrates.
+**Rotation is a substrate function.** `rotateRootKey()` generates a new seed, signs a successor proof with the OLD identity keypair (HKDF salt `aiko-root-identity-v1`), atomically updates the managed tiers, archives the old seed under `$HOME/.aiko/keys/.archived-rotated-<ts>/`, and appends a `wallet_rotated` event to the local ledger. `rotateAllSignedRowsByLineage()` walks every row whose env_pubkey was derived from the old root, re-derives the keypair from the new root + same contract_id, and appends a `resigned` event per affected row — preserving the append-only invariant. Rotation is itself a contract: declare `aiko "wallet:rotate"` and the cloud orchestrates.
 
 **Fallbacks are visible, never silent.** Every degradation path emits one line to stderr in `<topic>: <what happened> — <consequence>` shape. The fallback STILL fires (the substrate doesn't break) but it ALWAYS surfaces, because a silent fallback hides degradation until something else breaks downstream and the cause is invisible. Examples that fire during normal operation: `wallet: canonical tier missing at <path>, served from mirror tier <path>`, `wallet: both file tiers missing, served from OS keystore`, `wallet: FIRST RUN — generating fresh ed25519 root seed`, `keystore: linux secret-tool unavailable — falling back to encrypted file`. The happy path stays silent. Silent `catch {}` is an anti-pattern; the evidence stream is the substrate's proprioception.
 
@@ -212,7 +241,11 @@ After any successful read, missing tiers silently back-fill. Generation only hap
 
 ## 7. The one-line summary
 
-A contract is a truth claim with a parent, a set of pointer edges, and a metric-gated verifier; the substrate fires the graph until it settles. Everything else — hooks, adapters, payments, prompts, rules, agents, wallets — is another row.
+A contract is a truth claim with lineage, typed control/dependency edges,
+declared reach, terminal reality anchors, and governed evaluation; the substrate
+fires the graph until it settles or honestly holds. Everything else—hooks,
+adapters, payments, prompts, rules, agents, wallets, and topology
+changes—is another row.
 
 That's why this works.
 

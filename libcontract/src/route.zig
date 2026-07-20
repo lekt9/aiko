@@ -16,6 +16,7 @@ const ledger = @import("ledger.zig");
 const terminal = @import("terminal.zig");
 const embed = @import("embed.zig");
 const bge = @import("bge.zig");
+const ebm = @import("ebm.zig");
 
 // The router embeds with the baked BERT (bge-small, bge.zig) — a real learned
 // sentence embedder that knows phrase-level meaning ("roll back a version"≈git,
@@ -29,29 +30,7 @@ const bge = @import("bge.zig");
 // (honest refusal, null), not a fabricated route from a typed description.
 const SEM = bge.DIM;
 
-const SemProto = struct {
-    mean: [SEM]f32 = [_]f32{0} ** SEM,
-    w: f64 = 0, // reward-weight folded in
-
-    /// Fold a PRE-EMBEDDED goal vector (West 1979 reward-weighted mean) — the caller
-    /// embeds the goal once and reuses it (both for the centroid and exemplar lookup).
-    fn foldVec(self: *SemProto, v: []const f32, reward: f64) void {
-        const w_new = self.w + reward;
-        if (@abs(w_new) < 1e-9) {
-            self.mean = [_]f32{0} ** SEM;
-            self.w = 0;
-            return;
-        }
-        const a: f32 = @floatCast(reward / w_new);
-        for (&self.mean, 0..) |*m, i| m.* += a * (v[i] - m.*);
-        self.w = w_new;
-    }
-
-    fn energyVec(self: SemProto, v: []const f32) f64 {
-        if (self.w <= 0) return std.math.inf(f64);
-        return -@as(f64, embed.cosine(v, &self.mean));
-    }
-};
+const SemProto = ebm.PrototypeFor(SEM);
 
 /// Extract a JSON string field's value (a slice INTO `line`), or null. Handles both
 /// `"key": "v"` and `"key":"v"`; skips backslash-escapes crudely (enough for plans).
@@ -233,7 +212,13 @@ pub fn recommend(allocator: std.mem.Allocator, env: std.process.Environ, context
 
     // Collect candidates cheaply first (no embedding), then bound to the
     // newest RECENT_CANDIDATES before paying for any BERT forward pass.
-    const Cand = struct { bin: []const u8, plan: []const u8, action: []const u8, reward: f64 };
+    const Cand = struct {
+        bin: []const u8,
+        plan: []const u8,
+        action: []const u8,
+        reward: f64,
+        observed_at: []const u8,
+    };
     var cands: std.ArrayList(Cand) = .empty;
     defer cands.deinit(allocator);
     var seen = std.StringHashMap(void).init(allocator);
@@ -258,7 +243,13 @@ pub fn recommend(allocator: std.mem.Allocator, env: std.process.Environ, context
         // bare classifier token — require arguments after the binary name.
         if (d.action.len == bin.len) continue;
         if (looksSealed(d.plan) or looksSealed(bin)) continue;
-        try cands.append(allocator, .{ .bin = bin, .plan = d.plan, .action = d.action, .reward = reward });
+        try cands.append(allocator, .{
+            .bin = bin,
+            .plan = d.plan,
+            .action = d.action,
+            .reward = reward,
+            .observed_at = field(line, "ts") orelse "",
+        });
     }
     const recent = cands.items[cands.items.len -| RECENT_CANDIDATES..];
 
@@ -280,25 +271,52 @@ pub fn recommend(allocator: std.mem.Allocator, env: std.process.Environ, context
         if (!embedCached(allocator, &emb_cache, &new_recs, &embed_budget, cand.plan, &v)) continue;
         const gop = try protos.getOrPut(cand.bin);
         if (!gop.found_existing) gop.value_ptr.* = .{};
-        gop.value_ptr.foldVec(&v, cand.reward);
+        gop.value_ptr.fold(&v, cand.reward);
         if (cand.reward > 0) try usages.append(allocator, .{ .bin = cand.bin, .action = cand.action, .vec = v });
     }
-    appendEmbCache(allocator, cpath, new_recs.items);
-
     // Selection: argmin energy over centroids (same as route). Embed the query once.
+    if (protos.count() == 0) {
+        appendEmbCache(allocator, cpath, new_recs.items);
+        return null;
+    }
     var qv: [SEM]f32 = undefined;
-    bge.embed(context, &qv);
+    var query_budget: usize = 1;
+    _ = embedCached(
+        allocator,
+        &emb_cache,
+        &new_recs,
+        &query_budget,
+        context,
+        &qv,
+    );
+    appendEmbCache(allocator, cpath, new_recs.items);
     var best_bin: ?[]const u8 = null;
     var best_e: f64 = std.math.inf(f64);
     var pit = protos.iterator();
     while (pit.next()) |e| {
-        const en = e.value_ptr.energyVec(&qv);
+        const en = e.value_ptr.energy(&qv);
         if (en < best_e) {
             best_e = en;
             best_bin = e.key_ptr.*;
         }
     }
     const b = best_bin orelse return null;
+    var latest_observed_at: []const u8 = "";
+    var events_ago: usize = recent.len;
+    var reverse_index: usize = recent.len;
+    while (reverse_index > 0) {
+        reverse_index -= 1;
+        const candidate = recent[reverse_index];
+        if (std.mem.eql(u8, candidate.bin, b)) {
+            latest_observed_at = candidate.observed_at;
+            events_ago = recent.len - 1 - reverse_index;
+            break;
+        }
+    }
+    // Freshness is ledger-relative, not wall-clock guesswork: a capability is
+    // fresh while it has an outcome in the newest quarter of the bounded
+    // routing window. Old evidence remains usable but is explicitly stale.
+    const freshness = if (events_ago < RECENT_CANDIDATES / 4) "fresh" else "stale";
 
     // Exemplar: the satisfied row of `b` whose goal is nearest the new goal.
     var ex_action: ?[]const u8 = null;
@@ -321,6 +339,13 @@ pub fn recommend(allocator: std.mem.Allocator, env: std.process.Environ, context
     try out.appendSlice(allocator, "\",\"score\":");
     var scorebuf: [16]u8 = undefined;
     try out.appendSlice(allocator, try std.fmt.bufPrint(&scorebuf, "{d:.3}", .{ex_c}));
+    try out.appendSlice(allocator, ",\"freshness\":\"");
+    try out.appendSlice(allocator, freshness);
+    try out.appendSlice(allocator, "\",\"observed_at\":\"");
+    try appendJsonStr(&out, allocator, latest_observed_at);
+    try out.appendSlice(allocator, "\",\"events_ago\":");
+    var recencybuf: [24]u8 = undefined;
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&recencybuf, "{d}", .{events_ago}));
     try out.append(allocator, '}');
     return try out.toOwnedSlice(allocator);
 }

@@ -1260,13 +1260,63 @@ PYAUDIT
     _fail "doctrine[F8]: DOCTRINE.md is missing the '## One classifier, default-deny execution' section — the F8 doctrine (one genome + refuse the unrecognized action)"
   fi
 
+  # 54. "Grounded trust boundary" — typed, independent, replayable evidence
+  #     governs promotion; revocation cascades; rollback is exact-policy only.
+  for marker in \
+    'pub const EvidenceEnvelope' \
+    'pub const EvaluationPolicy' \
+    'pub fn evaluateLedger' \
+    'pub fn selectRollbackFromLedger' \
+    'pub fn promotionContextFromLedger'; do
+    if ! grep -q "$marker" "$LIB_DIR/src/trust.zig"; then
+      _fail "doctrine[grounded trust]: trust.zig missing '$marker'"
+    fi
+  done
+  for marker in \
+    'fn trustDecisionForClaim' \
+    'fn revokeTrustClosure' \
+    'fn recordTrustPromotion' \
+    'fn recordTrustRollback'; do
+    if ! grep -q "$marker" "$ZIG_DIR/src/main.zig"; then
+      _fail "doctrine[grounded trust resolver]: main.zig missing '$marker'"
+    fi
+  done
+  if ! grep -q 'export fn contract_trust_evaluate' "$LIB_DIR/src/c_abi.zig"; then
+    _fail "doctrine[grounded trust C ABI]: contract_trust_evaluate missing"
+  fi
+  if ! grep -q '.name = "trust_evaluate"' "$LIB_DIR/src/mcp_server.zig"; then
+    _fail "doctrine[grounded trust MCP]: trust_evaluate tool missing"
+  fi
+  for adversary in \
+    'two wallets sharing one source are not independent' \
+    'builder cannot serve as its own evaluator' \
+    'counter metric prevents Goodhart promotion' \
+    'derived evidence cycle is rejected' \
+    'ledger replay rejects frozen policy weakening' \
+    'ledger replay rejects policy fields changed after signing' \
+    'ledger replay rejects evidence provenance changed after signing' \
+    'ledger replay rejects revocation signed by wrong evaluator' \
+    'rollback rejects activation history changed after signing' \
+    'rollback rejects activation signed by non-owner wallet' \
+    'rollback refuses revoked or future champions'; do
+    if ! grep -q "$adversary" "$LIB_DIR/src/trust.zig"; then
+      _fail "doctrine[grounded trust tests]: adversarial test '$adversary' missing"
+    fi
+  done
+  if ! grep -q '^## Grounded trust boundary' "$REPO/DOCTRINE.md"; then
+    _fail "doctrine[grounded trust]: DOCTRINE.md section missing"
+  fi
+  if ! grep -q 'The trust layer is not complete while any unchecked rollout gate remains' "$REPO/docs/TRUST-LAYER.md"; then
+    _fail "doctrine[grounded trust honesty]: rollout checklist missing"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between DOCTRINE.md doctrine and code:" >&2
     printf '%s' "$report" >&2
     echo "  fix: patch the code to honor the claim, OR amend DOCTRINE.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 53 doctrine claims have matching code sites"
+  echo "build:parity OK — all 54 doctrine claims have matching code sites"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────

@@ -12,6 +12,15 @@ const ledger = @import("ledger.zig");
 // cross-importing the files (Zig 0.16 forbids the same file appearing in
 // two modules' dependency graphs).
 pub const lineage = @import("lineage.zig");
+pub const activity_log = @import("activity_log.zig");
+pub const agency = @import("agency.zig");
+pub const anchor = @import("anchor.zig");
+pub const governance = @import("governance.zig");
+pub const development = @import("development.zig");
+pub const event_schema = @import("event_schema.zig");
+pub const workflow = @import("workflow.zig");
+pub const migration = @import("migration.zig");
+pub const failure = @import("failure.zig");
 // Re-export the ledger module so callers (main.zig + future consumers)
 // can use findParentIdForId / findActionForId / readAll without
 // re-importing the file separately. The local main.zig has its own
@@ -23,8 +32,12 @@ pub const env_fingerprint = @import("env_fingerprint.zig");
 pub const verses = @import("verses.zig");
 pub const bible = @import("bible.zig");
 pub const cache = @import("cache.zig");
+pub const scheduler = @import("scheduler.zig");
 pub const terminal = @import("terminal.zig");
 pub const capability = @import("capability.zig");
+pub const trust = @import("trust.zig");
+pub const fractal = @import("fractal.zig");
+pub const guards = @import("guards.zig");
 // Energy-ranking atom (ported from main, verified on arc-lean): embed = native
 // stateless embedding; ebm = per-key centroid + train-on-fire fold + energy.
 // The foundation for energy-ranked resolution (prove-the-atom before on-chain).
@@ -184,6 +197,10 @@ pub const DeclareOptions = struct {
     /// of `?[]const u8` fields (aiko_role, aggregation, audience, …) — any
     /// new attribute is now data on a row, not a new struct field.
     extras: []const Field = &.{},
+    /// Optional typed agency semantics. Absent keeps the exact legacy v2
+    /// cache key and row shape. Present uses a v3 cache key and appends one
+    /// canonical nested `agency` object; the resolver remains shared.
+    agency_envelope: ?agency.NodeEnvelope = null,
 };
 
 /// Compute the v2 layered inputs hash for a contract. Docker-layer shape —
@@ -211,9 +228,10 @@ fn computeInputsHashV2(
     cwd: []const u8,
     file_refs_digest: ?[]const u8,
     parent_id: ?[]const u8,
+    agency_bytes: ?[]const u8,
 ) ![]u8 {
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-    hasher.update("v2|");
+    hasher.update(if (agency_bytes == null) "v2|" else "v3|");
     hasher.update(cwd);
     hasher.update("\n");
     hasher.update(plan);
@@ -226,6 +244,8 @@ fn computeInputsHashV2(
             hasher.update(parent_hash);
         }
     }
+    hasher.update("\n");
+    if (agency_bytes) |encoded| hasher.update(encoded);
     var digest: [32]u8 = undefined;
     hasher.final(&digest);
     const hex_chars = "0123456789abcdef";
@@ -391,6 +411,12 @@ pub fn declare(
     action: []const u8,
     opts: DeclareOptions,
 ) ![]u8 {
+    var owned_agency: ?[]u8 = null;
+    defer if (owned_agency) |encoded| allocator.free(encoded);
+    if (opts.agency_envelope) |node| {
+        try agency.validateEnvelope(node);
+        owned_agency = try agency.encodeEnvelope(allocator, node);
+    }
     // PARALLEL IDEMPOTENCY: the cache-scan + appendRow seam is wrapped in an
     // advisory exclusive flock on a `.lock` sidecar (per wave-40b TOCTOU
     // analysis). N concurrent declares with the same v2 hash resolve to
@@ -426,6 +452,7 @@ pub fn declare(
         cwd,
         opts.inputs_file_refs_digest,
         opts.parent_id,
+        owned_agency,
     );
     // Single owner. Cache-hit returns its own free; cache-miss installs a
     // function-wide defer so every path from here on releases the slice.
@@ -552,12 +579,22 @@ pub fn declare(
     // lookup, and the read-side recompute all agree on one digest.
     try buf.appendSlice(allocator, ", \"inputs_hash\": ");
     try writeJsonString(&buf, allocator, inputs_hash);
-    try buf.appendSlice(allocator, ", \"inputs_hash_version\": 2");
+    try buf.appendSlice(
+        allocator,
+        if (opts.agency_envelope == null)
+            ", \"inputs_hash_version\": 2"
+        else
+            ", \"inputs_hash_version\": 3",
+    );
     if (opts.inputs_file_refs_digest) |d| {
         if (d.len > 0) {
             try buf.appendSlice(allocator, ", \"inputs_file_refs_digest\": ");
             try writeJsonString(&buf, allocator, d);
         }
+    }
+    if (owned_agency) |encoded| {
+        try buf.appendSlice(allocator, ", \"agency\": ");
+        try buf.appendSlice(allocator, encoded);
     }
 
     // Ad-hoc typed metadata. Caller passes typed Field entries; empty values
@@ -727,6 +764,166 @@ pub fn appendEvidenceRow(
     try writeJsonString(&buf, allocator, agent);
     try buf.append(allocator, '}');
     const path = try ledger.appendRow(allocator, env, buf.items);
+    allocator.free(path);
+}
+
+/// Append a typed trust observation. Unlike the legacy evidence row (an
+/// opaque blob pointer), this row contains the provenance, freshness,
+/// independence, and metric-role fields required for grounded evaluation.
+pub fn appendTrustEvidenceRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    item: trust.EvidenceEnvelope,
+) !void {
+    const root = try lineage.loadOrInitRootKey(allocator, env);
+    const evaluator = try lineage.deriveIdentityKeyPair(root);
+    var public_hex: [lineage.PUBKEY_HEX_LEN]u8 = undefined;
+    lineage.bytesToHex(&evaluator.public_key.bytes, &public_hex);
+    var signed_item = item;
+    signed_item.evaluator_identity = &public_hex;
+    signed_item.evaluator_signature = "";
+    var digest: [32]u8 = undefined;
+    trust.evidenceDigest(signed_item, &digest);
+    var signature_hex: [lineage.SIG_HEX_LEN]u8 = undefined;
+    try lineage.signDigest(evaluator, digest, &signature_hex);
+    signed_item.evaluator_signature = &signature_hex;
+    const encoded = try trust.encodeEvidence(allocator, signed_item);
+    defer allocator.free(encoded);
+    const path = try ledger.appendRow(allocator, env, encoded);
+    allocator.free(path);
+}
+
+/// Append an evaluation policy. Frozen-policy amendment authorization must be
+/// checked with trust.authorizeAmendment before this writer is called.
+pub fn appendTrustPolicyRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    item: trust.EvaluationPolicy,
+) !void {
+    const root = try lineage.loadOrInitRootKey(allocator, env);
+    const authority = try lineage.deriveIdentityKeyPair(root);
+    var public_hex: [lineage.PUBKEY_HEX_LEN]u8 = undefined;
+    lineage.bytesToHex(&authority.public_key.bytes, &public_hex);
+    var signed_item = item;
+    signed_item.owner_identity = &public_hex;
+    signed_item.amendment_actor_identity = &public_hex;
+    signed_item.authority_signature = "";
+    var digest: [32]u8 = undefined;
+    trust.policyDigest(signed_item, &digest);
+    var signature_hex: [lineage.SIG_HEX_LEN]u8 = undefined;
+    try lineage.signDigest(authority, digest, &signature_hex);
+    signed_item.authority_signature = &signature_hex;
+    const encoded = try trust.encodePolicy(allocator, signed_item);
+    defer allocator.free(encoded);
+    const path = try ledger.appendRow(allocator, env, encoded);
+    allocator.free(path);
+}
+
+/// Append the evidence set and exact policy version that justified promotion.
+pub fn appendTrustPromotionRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    event: trust.PromotionEvent,
+) !void {
+    const root = try lineage.loadOrInitRootKey(allocator, env);
+    const authority = try lineage.deriveIdentityKeyPair(root);
+    var public_hex: [lineage.PUBKEY_HEX_LEN]u8 = undefined;
+    lineage.bytesToHex(&authority.public_key.bytes, &public_hex);
+    if (event.signer_identity.len > 0 and
+        !std.mem.eql(u8, event.signer_identity, &public_hex))
+        return error.TrustAuthorityMismatch;
+    var signed_event = event;
+    signed_event.signer_identity = &public_hex;
+    signed_event.authority_signature = "";
+    var digest: [32]u8 = undefined;
+    trust.promotionDigest(signed_event, &digest);
+    var signature_hex: [lineage.SIG_HEX_LEN]u8 = undefined;
+    try lineage.signDigest(authority, digest, &signature_hex);
+    signed_event.authority_signature = &signature_hex;
+    const encoded = try trust.encodePromotion(allocator, signed_event);
+    defer allocator.free(encoded);
+    const path = try ledger.appendRow(allocator, env, encoded);
+    allocator.free(path);
+}
+
+/// Append evidence revocation. Resolver-side propagation consumes this event;
+/// no prior evidence or promotion row is rewritten.
+pub fn appendTrustRevocationRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    event: trust.RevocationEvent,
+) !void {
+    const root = try lineage.loadOrInitRootKey(allocator, env);
+    const authority = try lineage.deriveIdentityKeyPair(root);
+    var public_hex: [lineage.PUBKEY_HEX_LEN]u8 = undefined;
+    lineage.bytesToHex(&authority.public_key.bytes, &public_hex);
+    var signed_event = event;
+    signed_event.actor_identity = &public_hex;
+    signed_event.authority_signature = "";
+    var digest: [32]u8 = undefined;
+    trust.revocationDigest(signed_event, &digest);
+    var signature_hex: [lineage.SIG_HEX_LEN]u8 = undefined;
+    try lineage.signDigest(authority, digest, &signature_hex);
+    signed_event.authority_signature = &signature_hex;
+    const encoded = try trust.encodeRevocation(allocator, signed_event);
+    defer allocator.free(encoded);
+    const path = try ledger.appendRow(allocator, env, encoded);
+    allocator.free(path);
+}
+
+/// Record which accepted revision currently occupies a logical deployment
+/// slot. Activations are the only candidates eligible for later rollback.
+pub fn appendTrustActivationRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    event: trust.ActivationEvent,
+) !void {
+    const root = try lineage.loadOrInitRootKey(allocator, env);
+    const authority = try lineage.deriveIdentityKeyPair(root);
+    var public_hex: [lineage.PUBKEY_HEX_LEN]u8 = undefined;
+    lineage.bytesToHex(&authority.public_key.bytes, &public_hex);
+    if (event.signer_identity.len > 0 and
+        !std.mem.eql(u8, event.signer_identity, &public_hex))
+        return error.TrustAuthorityMismatch;
+    var signed_event = event;
+    signed_event.signer_identity = &public_hex;
+    signed_event.authority_signature = "";
+    var digest: [32]u8 = undefined;
+    trust.activationDigest(signed_event, &digest);
+    var signature_hex: [lineage.SIG_HEX_LEN]u8 = undefined;
+    try lineage.signDigest(authority, digest, &signature_hex);
+    signed_event.authority_signature = &signature_hex;
+    const encoded = try trust.encodeActivation(allocator, signed_event);
+    defer allocator.free(encoded);
+    const path = try ledger.appendRow(allocator, env, encoded);
+    allocator.free(path);
+}
+
+/// Record a rollback decision after the failed revision has been revoked.
+/// The restored revision must come from trust.selectRollbackFromLedger.
+pub fn appendTrustRollbackRow(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    event: trust.RollbackEvent,
+) !void {
+    const root = try lineage.loadOrInitRootKey(allocator, env);
+    const authority = try lineage.deriveIdentityKeyPair(root);
+    var public_hex: [lineage.PUBKEY_HEX_LEN]u8 = undefined;
+    lineage.bytesToHex(&authority.public_key.bytes, &public_hex);
+    if (event.signer_identity.len > 0 and
+        !std.mem.eql(u8, event.signer_identity, &public_hex))
+        return error.TrustAuthorityMismatch;
+    var signed_event = event;
+    signed_event.signer_identity = &public_hex;
+    signed_event.authority_signature = "";
+    var digest: [32]u8 = undefined;
+    trust.rollbackDigest(signed_event, &digest);
+    var signature_hex: [lineage.SIG_HEX_LEN]u8 = undefined;
+    try lineage.signDigest(authority, digest, &signature_hex);
+    signed_event.authority_signature = &signature_hex;
+    const encoded = try trust.encodeRollback(allocator, signed_event);
+    defer allocator.free(encoded);
+    const path = try ledger.appendRow(allocator, env, encoded);
     allocator.free(path);
 }
 
@@ -1616,6 +1813,53 @@ test "nowIsoUtc emits Z-terminated ISO-8601 timestamp" {
     const ts = try nowIsoUtc(&buf_ts);
     try std.testing.expect(ts.len >= 20);
     try std.testing.expectEqual(@as(u8, 'Z'), ts[ts.len - 1]);
+}
+
+test "agency semantics enter v3 cache key without changing legacy v2 key" {
+    const legacy_a = try computeInputsHashV2(
+        std.testing.allocator,
+        std.process.Environ.empty,
+        "same plan",
+        "/same/cwd",
+        null,
+        null,
+        null,
+    );
+    defer std.testing.allocator.free(legacy_a);
+    const legacy_b = try computeInputsHashV2(
+        std.testing.allocator,
+        std.process.Environ.empty,
+        "same plan",
+        "/same/cwd",
+        null,
+        null,
+        null,
+    );
+    defer std.testing.allocator.free(legacy_b);
+    try std.testing.expectEqualStrings(legacy_a, legacy_b);
+
+    const typed = agency.NodeEnvelope{
+        .role = .action,
+        .authority_pointer = "identity:operator",
+        .purpose_id = "purpose:root",
+        .cadence_class = .operational,
+        .effect_scope = .local_write,
+        .valid_from = 1,
+        .valid_until = 2,
+    };
+    const encoded = try agency.encodeEnvelope(std.testing.allocator, typed);
+    defer std.testing.allocator.free(encoded);
+    const v3 = try computeInputsHashV2(
+        std.testing.allocator,
+        std.process.Environ.empty,
+        "same plan",
+        "/same/cwd",
+        null,
+        null,
+        encoded,
+    );
+    defer std.testing.allocator.free(v3);
+    try std.testing.expect(!std.mem.eql(u8, legacy_a, v3));
 }
 
 /// Helper mirroring the validator gate in appendCalledRow. Surfaces the

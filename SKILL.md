@@ -88,6 +88,40 @@ contract tick --every 5
 
 Do not start a persistent process for ordinary one-shot work.
 
+## Governed agency work
+
+Use a schema-v1 agency envelope when the work needs explicit purpose,
+authority, cadence, effect reach, evidence policy, or lifecycle ownership.
+Contract uses six roles over the same resolver: purpose, governor, action,
+sensor, evaluator, and development. Do not invent roles for legacy rows.
+
+High-risk typed actions remain in HOLD until their capability, approval, and
+consequence-sensor coverage are promotable. Do not weaken that HOLD by
+redeclaring the work as legacy. Grounded success requires a fresh external
+anchor and independent evaluation; duplicated, circular, expired, revoked, or
+same-failure-domain evidence is not additional confidence.
+
+For checked local work, prefer the narrow task lifecycle:
+
+```bash
+contract task begin "<task>" --check "<command>"
+contract task verify <id>
+contract explain "task-<id>"
+```
+
+The verification emits a causal action → sensor → evaluator trace. For
+inspection or debugging:
+
+```bash
+contract events [--trace <id>]
+contract watch [<trace-id>] --json
+contract explain <trace-id>
+```
+
+These read-only surfaces must remain outside wallet, signing, retry, network,
+and Keychain paths. Use `tools/contract-events.html` to inspect an existing
+event log offline.
+
 Before finishing:
 
 1. Remove unnecessary work.

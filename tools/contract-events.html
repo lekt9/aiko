@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Contract causal trace</title>
+<style>
+  :root{color-scheme:dark;--bg:#0a0b0e;--panel:#111319;--line:#292e39;--muted:#8992a4;--text:#f5f7fb;--good:#63d9a0;--bad:#ff6b79;--wait:#f6c65b}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+  header{position:sticky;top:0;z-index:2;display:flex;gap:18px;align-items:center;padding:18px 24px;border-bottom:1px solid var(--line);background:#0a0b0eee;backdrop-filter:blur(18px)}
+  h1{font:600 17px/1.2 ui-sans-serif,system-ui;margin:0} .sub{color:var(--muted)} input{max-width:320px} button,.file{border:1px solid var(--line);border-radius:8px;padding:7px 11px;background:#171a21;color:var(--text);cursor:pointer}
+  main{padding:28px;max-width:1280px;margin:auto}.empty{min-height:55vh;display:grid;place-items:center;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:16px}
+  .trace{margin:0 0 34px}.trace-head{display:flex;justify-content:space-between;gap:16px;margin:0 0 12px}.trace-id{font-weight:700}.summary{color:var(--muted)}
+  .events{display:grid;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden}.event{display:grid;grid-template-columns:138px 110px 165px 1fr 120px;gap:14px;padding:12px 14px;background:var(--panel);align-items:center}
+  .event:hover{background:#171a22}.kind{font-weight:700}.state{width:max-content;padding:2px 7px;border-radius:99px;background:#242936}.satisfied,.recovered{color:var(--good)}.veto,.failed,.contradicted{color:var(--bad)}.waiting_evidence,.waiting_approval,.stale,.unresolved{color:var(--wait)}
+  .detail{color:var(--muted);overflow-wrap:anywhere}.time{text-align:right;color:var(--muted)}@media(max-width:800px){.event{grid-template-columns:1fr 1fr}.detail,.time{grid-column:1/-1;text-align:left}header{flex-wrap:wrap}}
+</style>
+<header><h1>Contract causal trace</h1><span class="sub" id="stats">No log loaded</span><label class="file">Open events.jsonl<input id="file" type="file" accept=".jsonl,application/json" hidden></label><button id="clear">Clear</button></header>
+<main id="root"><div class="empty">Choose or drop <code>.claude/events.jsonl</code><br>The renderer is local-only and makes no network requests.</div></main>
+<script>
+const root=document.querySelector('#root'),stats=document.querySelector('#stats');
+const redact=s=>String(s??'—').replace(/\b(sk-[A-Za-z0-9_-]{8,}|(?:api[_-]?key|password|private[_-]?key)\s*[:=]\s*\S+|bearer\s+\S+)/gi,'[REDACTED]');
+const esc=s=>redact(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function render(text){const rows=text.split(/\r?\n/).filter(Boolean).map((line,i)=>{try{return JSON.parse(line)}catch{return {kind:'invalid_record',state:'failed',event_id:`line-${i+1}`,reason_code:'invalid_json'}}});
+ const traces=new Map;for(const row of rows){const id=row.trace_id||'unscoped';if(!traces.has(id))traces.set(id,[]);traces.get(id).push(row)}stats.textContent=`${rows.length} events · ${traces.size} traces`;
+ root.innerHTML=[...traces].map(([id,es])=>`<section class=trace><div class=trace-head><span class=trace-id>${esc(id)}</span><span class=summary>${es.length} events · ${esc(es.at(-1)?.state)}</span></div><div class=events>${es.map(e=>`<article class=event><span class=kind>${esc(e.kind)}</span><span class="state ${esc(e.state)}">${esc(e.state)}</span><span>${esc(e.role)} · ${esc(e.node_id)}<br><small class=detail>${esc(e.owner_id)} · ${esc(e.cadence)}</small></span><span class=detail>${esc(e.reason_code||e.blocker||e.anchor_id||e.evidence_id||e.parent_event_id)}<br>${esc(e.effect_scope||e.independence_class||e.counter_metric_id||((e.edge_from||e.edge_to)?`${e.edge_from} → ${e.edge_to}`:null))}</span><time class=time>${e.timestamp_ms==null?'—':new Date(e.timestamp_ms).toISOString()}</time></article>`).join('')}</div></section>`).join('')||'<div class=empty>No events in this file.</div>'}
+function load(file){file.text().then(render)}
+document.querySelector('#file').onchange=e=>e.target.files[0]&&load(e.target.files[0]);
+document.querySelector('#clear').onclick=()=>{root.innerHTML='<div class=empty>Choose or drop <code>.claude/events.jsonl</code><br>The renderer is local-only and makes no network requests.</div>';stats.textContent='No log loaded'};
+addEventListener('dragover',e=>e.preventDefault());addEventListener('drop',e=>{e.preventDefault();e.dataTransfer.files[0]&&load(e.dataTransfer.files[0])});
+</script>
+</html>

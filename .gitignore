@@ -16,3 +16,12 @@ harness.trace.jsonl
 harness.trajectory.jsonl
 deploy/
 contract-docs-pdf.zip
+.kuri/
+research/
+traces/
+.benchmarks/reach-gate/
+.benchmarks/task-runtime/
+.benchmarks/typed-runtime/
+.benchmarks/typed-task-trace/
+.benchmarks/contract-ab/run-*/
+.benchmarks/queue-ab/run-*/

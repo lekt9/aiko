@@ -1,0 +1,18 @@
+Work autonomously on the repository in your current working directory.
+
+Read TASK.md, repair and complete the implementation, and run the visible test
+suite. Add or improve tests if useful. Do not access parent directories or any
+external evaluator.
+
+Use `/Users/lewis/Unbrowse/contract/scripts/contract` as the task-control layer.
+Before editing, run exactly:
+
+`/Users/lewis/Unbrowse/contract/scripts/contract task begin "Repair and complete run_graph according to TASK.md" --check "python3 -m unittest -v"`
+
+Retain the returned id and inspect it with `contract task status <id>`. After
+your implementation, run `contract task verify <id>`; it executes the declared
+test check and can satisfy the task only when that check exits successfully.
+Finish only after `contract task status <id>` reports satisfied.
+
+Keep the public API intact and finish with a concise summary of changes and
+tests run.

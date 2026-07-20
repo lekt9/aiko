@@ -89,10 +89,24 @@ labels, no pipeline. Satisfied = good, died = retry. The system's own experience
 fired sharpens the next decision now, not after the next retrain. **BUILT+PROVEN**
 (train-on-fire fold; energy-ranked resolution).
 
+## How it avoids improving the wrong thing
+
+Contract no longer represents agency as one unqualified optimization loop.
+Typed rows separate six responsibilities: `purpose`, `governor`, `action`,
+`sensor`, `evaluator`, and `development`. High-effect actions require fresh,
+independent evidence rooted in a reality anchor and may be held or vetoed by
+policy. Changes to targets or topology are attributable, previewable, and
+reversible development operations rather than silent self-modification.
+**BUILT+PROVEN** locally; see `AGENCY-SUBSTRATE.md` and
+`AGENCY-SUBSTRATE-RELEASE-EVIDENCE.md`.
+
 ## Product status, plainly
 
 Aiko is **used by the founder daily but not yet publicly released.** Two reasons,
 both honest: (1) the energy-based design is power-hungry and is being contained so
 it's safe and cheap for others to run; (2) the on-chain layer (which is how the
 weights become shareable and the storage cost is offloaded) is being hardened. The
-capability is real and demonstrated; the packaging is in progress.
+capability is real and demonstrated. A reproducible combined package now contains
+the native Aiko binary, the exact `libcontract.dylib` it loads, and a SHA-256
+manifest. Public distribution, notarization, and external validation remain
+unfinished.

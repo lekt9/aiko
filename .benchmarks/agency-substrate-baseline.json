@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-07-20T09:37:00+08:00",
+  "host": {
+    "os": "macOS arm64",
+    "zig": "0.16.0",
+    "contract_version": "0.4.0-guarded-native-shape"
+  },
+  "source_state": {
+    "zig_test_declarations": 248,
+    "contract_binary_sha256": "66c5fa9ae2db85bf29fd9673b7dc7e5440ff4872af6a75bf653f3d66e9e300e9",
+    "working_tree_preexisting_changes": true
+  },
+  "full_suite": {
+    "command": "cd libcontract && zig build test",
+    "cold_elapsed_ms": 143360,
+    "warm_runs_ms": [35166, 35102],
+    "warm_variance_percent": 0.18,
+    "result": "passed"
+  },
+  "read_only_cli": {
+    "command": "./scripts/contract --help && ./scripts/contract status 248377dc",
+    "result": "returned_without_interactive_prompt",
+    "keychain_prompts_observed": 0
+  },
+  "notes": [
+    "The working tree already contained trust-layer and other user changes; the baseline preserves them.",
+    "The status lookup was intentionally read-only and returned contract-not-found in the project-local ledger.",
+    "Task verification, cache-hit, cache-invalidation, and 1k-node graph timings require dedicated isolated fixtures before they can be claimed."
+  ]
+}

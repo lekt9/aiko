@@ -1,0 +1,17 @@
+Implemented and verified the durable leased job queue.
+
+Changes include:
+
+- Atomic SQLite claims across queue instances
+- Persistent idempotency with a unique index
+- Secure, unpredictable lease tokens
+- Correct lease expiry, retry backoff, heartbeat, ack, and dead-letter behavior
+- Configuration and lease-duration validation
+- Thread-safe connection access and idempotent `close()`
+- `QueueDataError` for malformed stored payloads
+- Expanded regression suite from 4 to 10 tests
+
+Validation:
+
+- `python3 -m unittest -v` — 10 tests passed
+- Contract task `369ed9dd` — `satisfied`

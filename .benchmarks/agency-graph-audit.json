@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "date": "2026-07-20",
+  "command": "cd libcontract && zig run src/agency_graph_benchmark.zig -lc",
+  "method": "11 in-process rounds per size; median reported; two warm process runs",
+  "run_1": [
+    {"nodes": 1, "median_ns": 2000},
+    {"nodes": 100, "median_ns": 45000},
+    {"nodes": 1000, "median_ns": 490000},
+    {"nodes": 10000, "median_ns": 4028000}
+  ],
+  "run_2": [
+    {"nodes": 1, "median_ns": 2000},
+    {"nodes": 100, "median_ns": 42000},
+    {"nodes": 1000, "median_ns": 476000},
+    {"nodes": 10000, "median_ns": 4030000}
+  ],
+  "maximum_warm_variance_percent": 6.67,
+  "result": "pass"
+}

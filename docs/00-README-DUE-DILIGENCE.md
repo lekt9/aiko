@@ -21,7 +21,7 @@ a large model for computer use.
 
 | Pillar | The claim | Honest status (see §Status legend) |
 |---|---|---|
-| **Reliable** | Our own Energy-Based model for computer use, trained on-device; twice the reliability, half the cost | Harness + energy router **BUILT+PROVEN**; the "2× / ½" figures are **DESIGN targets, not yet independently benchmarked** |
+| **Reliable** | Our own Energy-Based model for computer use, trained on-device; twice the reliability, half the cost | Harness + energy router + governed agency graph **BUILT+PROVEN**; the "2× / ½" figures are **DESIGN targets, not yet independently benchmarked** |
 | **Private** | Weights on-chain; zero-knowledge credential binding; your data stays yours; Solana volume makes the product pay for itself | Local inference + sealed data + reward economics **BUILT/DESIGNED**; **ZK credential binding is RESEARCH-DIRECTION, not built** |
 | **Powerful** | A new architecture lets Aiko learn *as it works* | Train-on-fire + energy-ranked resolution **BUILT+PROVEN** as a router; "reasoning-grade intelligence" is a **falsifiable bet, not a result** |
 
@@ -51,6 +51,8 @@ of a lookup and a fold**. That is the whole thesis; everything else is mechanism
 | 04 | **PROOF-traction** | What is built and *proven*, with test evidence |
 | 05 | **RISK-honest-wall** | The risk register — where this breaks and what must be true |
 | 06 | **DUE-DILIGENCE-FAQ** | Direct answers to the diligence questions |
+| — | **AGENCY-SUBSTRATE** | How purpose, action, sensing, evaluation, governance, and graph development are separated and grounded |
+| — | **AGENCY-SUBSTRATE-RELEASE-EVIDENCE** | Reproducible tests, benchmarks, adversarial evidence, and release limits |
 
 Start at 01 for the product, 02 for the tech, 04 for the proof, 05 for the risks.
 
@@ -70,9 +72,11 @@ If a claim is not tagged, treat it as narrative framing, not a technical asserti
 ## Where the company is, honestly
 
 One founder, deep in a two-to-three-month build. The harness is real and running
-locally; it has one-shotted tasks most agents cannot (see 04). It is **not yet
-publicly released** — deliberately: the energy-based design is power-hungry and is
-being contained, and the on-chain layer is being hardened. The pivot from the
+locally; it has one-shotted tasks most agents cannot (see 04). The native Aiko
+application and its exact Contract runtime can now be built and packaged together
+with a hash manifest, but the product is **not yet publicly released**. The
+energy-based design is still being contained, and the on-chain layer is being
+hardened. The pivot from the
 original Unbrowse (a commons for agents to browse the internet) to Aiko (an agent
 that "unbrowses" your *own computer's context*) is recent and partial; Unbrowse
 still exists and is the sister project this inverts. This dossier documents the

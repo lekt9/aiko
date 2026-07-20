@@ -8,8 +8,18 @@
 const std = @import("std");
 const contract = @import("contract.zig");
 const gate = @import("gate.zig");
+const fractal = @import("fractal.zig");
+const capability_cells = @import("capability_cells.zig");
+const agency = @import("agency.zig");
 
 const gpa = std.heap.c_allocator;
+pub const ABI_VERSION: u32 = 3;
+extern fn time(timer: ?*i64) i64;
+
+/// Stable compatibility handshake for independently-built Aiko runtimes.
+export fn contract_abi_version() u32 {
+    return ABI_VERSION;
+}
 
 // On POSIX with libc, `environ` is the global env-var array. Wrap it as a
 // std.process.Environ.PosixBlock so contract.zig's existing API (which takes
@@ -28,6 +38,103 @@ fn extEnv() std.process.Environ {
 
 fn cstr(p: [*:0]const u8) []const u8 {
     return std.mem.span(p);
+}
+
+fn returned(value: []const u8) ?[*:0]u8 {
+    const out = gpa.allocSentinel(u8, value.len, 0) catch return null;
+    @memcpy(out, value);
+    return out.ptr;
+}
+
+fn appendJsonString(out: *std.ArrayList(u8), value: []const u8) !void {
+    try out.append(gpa, '"');
+    for (value) |ch| switch (ch) {
+        '"' => try out.appendSlice(gpa, "\\\""),
+        '\\' => try out.appendSlice(gpa, "\\\\"),
+        '\n' => try out.appendSlice(gpa, "\\n"),
+        '\r' => try out.appendSlice(gpa, "\\r"),
+        '\t' => try out.appendSlice(gpa, "\\t"),
+        else => if (ch >= 0x20) try out.append(gpa, ch),
+    };
+    try out.append(gpa, '"');
+}
+
+fn objectString(object: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+    const value = object.get(key) orelse return null;
+    return switch (value) {
+        .string => |string| string,
+        else => null,
+    };
+}
+
+fn objectInt(object: std.json.ObjectMap, key: []const u8) ?i64 {
+    const value = object.get(key) orelse return null;
+    return switch (value) {
+        .integer => |integer| integer,
+        else => null,
+    };
+}
+
+fn jsonStringField(json: []const u8, key: []const u8) ?[]const u8 {
+    var needle_buf: [96]u8 = undefined;
+    const needle = std.fmt.bufPrint(&needle_buf, "\"{s}\":\"", .{key}) catch return null;
+    const start = std.mem.indexOf(u8, json, needle) orelse return null;
+    const value_start = start + needle.len;
+    var i = value_start;
+    while (i < json.len) : (i += 1) {
+        if (json[i] == '\\') {
+            i += 1;
+            continue;
+        }
+        if (json[i] == '"') return json[value_start..i];
+    }
+    return null;
+}
+
+/// Return a string field's unquoted body or any other JSON value's raw slice.
+/// Outcome metadata is stored as privacy-scrubbed string extras, but numeric
+/// durations and structured result schemas must not disappear at the ABI.
+fn jsonValueField(json: []const u8, key: []const u8) ?[]const u8 {
+    if (jsonStringField(json, key)) |value| return value;
+    var needle_buf: [96]u8 = undefined;
+    const needle = std.fmt.bufPrint(&needle_buf, "\"{s}\"", .{key}) catch return null;
+    const key_start = std.mem.indexOf(u8, json, needle) orelse return null;
+    var start = key_start + needle.len;
+    while (start < json.len and (json[start] == ' ' or json[start] == ':')) : (start += 1) {}
+    if (start >= json.len) return null;
+    if (json[start] == '{' or json[start] == '[') {
+        const open = json[start];
+        const close: u8 = if (open == '{') '}' else ']';
+        var depth: usize = 0;
+        var in_string = false;
+        var escaped = false;
+        var i = start;
+        while (i < json.len) : (i += 1) {
+            const c = json[i];
+            if (in_string) {
+                if (escaped) {
+                    escaped = false;
+                } else if (c == '\\') {
+                    escaped = true;
+                } else if (c == '"') {
+                    in_string = false;
+                }
+                continue;
+            }
+            if (c == '"') {
+                in_string = true;
+            } else if (c == open) {
+                depth += 1;
+            } else if (c == close) {
+                depth -= 1;
+                if (depth == 0) return json[start .. i + 1];
+            }
+        }
+        return null;
+    }
+    var end = start;
+    while (end < json.len and json[end] != ',' and json[end] != '}') : (end += 1) {}
+    return std.mem.trim(u8, json[start..end], " \t\r\n");
 }
 
 /// Declare a contract via the C ABI.
@@ -51,6 +158,93 @@ export fn contract_declare(
     const out = gpa.allocSentinel(u8, id.len, 0) catch return null;
     @memcpy(out, id);
     return out.ptr;
+}
+
+/// Additive agency-aware declaration. Existing ABI v2 callers continue to use
+/// `contract_declare`; new callers pass one canonical agency envelope. The
+/// JSON tree remains alive for the duration of declare().
+export fn contract_declare_agency(
+    plan: [*:0]const u8,
+    action: [*:0]const u8,
+    parent_id: ?[*:0]const u8,
+    agent: ?[*:0]const u8,
+    agency_json: [*:0]const u8,
+) ?[*:0]u8 {
+    var parsed = agency.decodeEnvelope(gpa, cstr(agency_json)) catch return null;
+    defer parsed.deinit();
+    const opts = contract.DeclareOptions{
+        .parent_id = if (parent_id) |p| cstr(p) else null,
+        .agent = if (agent) |a| cstr(a) else null,
+        .cwd = null,
+        .agency_envelope = parsed.value,
+    };
+    const id = contract.declare(gpa, extEnv(), cstr(plan), cstr(action), opts) catch return null;
+    defer gpa.free(id);
+    const out = gpa.allocSentinel(u8, id.len, 0) catch return null;
+    @memcpy(out, id);
+    return out.ptr;
+}
+
+/// Pure validation surface for clients that need to fail before touching the
+/// ledger or signing path. Returns 1 for a supported valid envelope, else 0.
+export fn contract_agency_validate(agency_json: [*:0]const u8) u8 {
+    var parsed = agency.decodeEnvelope(gpa, cstr(agency_json)) catch return 0;
+    defer parsed.deinit();
+    return 1;
+}
+
+/// Aiko turn declaration with an explicit workspace context, entirely
+/// in-process. Returns the canonical eight-hex id.
+export fn contract_declare_turn(
+    plan: [*:0]const u8,
+    cwd: ?[*:0]const u8,
+) ?[*:0]u8 {
+    const opts = contract.DeclareOptions{
+        .parent_id = null,
+        .agent = "aiko-native",
+        .cwd = if (cwd) |p| cstr(p) else null,
+    };
+    const id = contract.declare(gpa, extEnv(), cstr(plan), "neuron", opts) catch return null;
+    defer gpa.free(id);
+    return returned(id);
+}
+
+/// Declare durable scheduled work from a native host. The user prompt remains
+/// the plan; scheduling metadata lives in the action so execution receives a
+/// clean prompt. Returns the canonical contract id.
+export fn contract_declare_scheduled(
+    prompt: [*:0]const u8,
+    cwd: [*:0]const u8,
+    interval_seconds: u64,
+    recurring: bool,
+    first_due_unix: i64,
+) ?[*:0]u8 {
+    if (interval_seconds == 0 or interval_seconds > @as(u64, @intCast(std.math.maxInt(i64)))) {
+        return null;
+    }
+    var action: std.ArrayList(u8) = .empty;
+    defer action.deinit(gpa);
+    if (recurring) {
+        action.print(
+            gpa,
+            "neuron:background repeat:{d}s not_before:{d}",
+            .{ interval_seconds, first_due_unix },
+        ) catch return null;
+    } else {
+        action.print(gpa, "neuron:background at:{d}", .{first_due_unix}) catch return null;
+    }
+    const fields = [_]contract.Field{
+        .{ .key = "background", .value = "true" },
+        .{ .key = "authority_policy", .value = "aiko-current-policy" },
+    };
+    const id = contract.declare(gpa, extEnv(), cstr(prompt), action.items, .{
+        .parent_id = null,
+        .agent = "aiko-native",
+        .cwd = cstr(cwd),
+        .extras = &fields,
+    }) catch return null;
+    defer gpa.free(id);
+    return returned(id);
 }
 
 /// Record an `iterated` event.
@@ -95,6 +289,13 @@ export fn contract_list() ?[*:0]u8 {
     return out.ptr;
 }
 
+/// List only native durable schedules with their trigger and execution state.
+export fn contract_list_scheduled_json() ?[*:0]u8 {
+    const json = contract.scheduler.listScheduledJson(gpa, extEnv()) catch return null;
+    defer gpa.free(json);
+    return returned(json);
+}
+
 /// Authorize a tool call: the SIGNED tool-authority policy (gate.zig). Returns a
 /// malloc'd JSON string {"decision","risk","reason"} where decision is
 /// allow|confirm|deny. scope="" ⇒ deny (fail-closed). Caller frees with
@@ -129,6 +330,368 @@ export fn contract_recommend(context: [*:0]const u8) ?[*:0]u8 {
     return out.ptr;
 }
 
+/// Typed capability shortlist: verified learned route plus available cold
+/// descriptors. Cold descriptors never become ledger successes.
+export fn contract_recommend_capabilities(
+    context: [*:0]const u8,
+    availability_json: [*:0]const u8,
+) ?[*:0]u8 {
+    const learned = contract.recommend(gpa, extEnv(), cstr(context)) catch null;
+    defer if (learned) |j| gpa.free(j);
+    const json = capability_cells.recommendJson(
+        gpa,
+        cstr(context),
+        learned,
+        cstr(availability_json),
+        5,
+    ) catch return null;
+    defer gpa.free(json);
+    return returned(json);
+}
+
+/// Incrementally warm verified route embeddings inside the resident process.
+/// Returns the number of completed passes.
+export fn contract_warm_router(passes: u32) u32 {
+    var completed: u32 = 0;
+    const bounded = @min(passes, 64);
+    while (completed < bounded) : (completed += 1) {
+        const json = (contract.recommend(gpa, extEnv(), "warm the semantic cache") catch return completed) orelse return completed;
+        gpa.free(json);
+    }
+    return completed;
+}
+
+/// Reconcile Contract's durable schedule and lease runnable occurrences to a
+/// native host. Request:
+/// {"owner":"aiko:<stable-instance>","now_unix":123,"max_items":32,
+///  "lease_seconds":300}
+///
+/// `now_unix` is optional (wall clock is used); all other optional fields are
+/// conservatively bounded. The returned JSON is owned by libcontract.
+export fn contract_tick_json(request_json: [*:0]const u8) ?[*:0]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, cstr(request_json), .{}) catch return null;
+    defer parsed.deinit();
+    if (parsed.value != .object) return null;
+    const object = parsed.value.object;
+    const owner = objectString(object, "owner") orelse return null;
+    const cwd = objectString(object, "cwd");
+    if (owner.len == 0 or owner.len > 256) return null;
+    const now_unix = objectInt(object, "now_unix") orelse time(null);
+    const max_raw = objectInt(object, "max_items") orelse 32;
+    const lease_raw = objectInt(object, "lease_seconds") orelse 300;
+    if (max_raw < 0 or lease_raw <= 0) return null;
+    const max_items: usize = @intCast(@min(max_raw, 256));
+    const lease_seconds: u32 = @intCast(@min(lease_raw, 86400));
+
+    var batch = contract.scheduler.claimDueAt(
+        gpa,
+        extEnv(),
+        now_unix,
+        max_items,
+        owner,
+        lease_seconds,
+        cwd,
+    ) catch return null;
+    defer batch.deinit(gpa);
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    out.appendSlice(gpa, "{\"abi_version\":3,\"now_unix\":") catch return null;
+    out.print(gpa, "{d}", .{now_unix}) catch return null;
+    out.appendSlice(gpa, ",\"next_wake_unix\":") catch return null;
+    if (batch.next_wake_unix) |deadline| {
+        out.print(gpa, "{d}", .{deadline}) catch return null;
+    } else {
+        out.appendSlice(gpa, "null") catch return null;
+    }
+    out.appendSlice(gpa, ",\"claims\":[") catch return null;
+    for (batch.claims, 0..) |claim, index| {
+        if (index > 0) out.append(gpa, ',') catch return null;
+        out.appendSlice(gpa, "{\"contract_id\":") catch return null;
+        appendJsonString(&out, claim.contract_id) catch return null;
+        out.appendSlice(gpa, ",\"occurrence\":") catch return null;
+        appendJsonString(&out, claim.occurrence) catch return null;
+        out.appendSlice(gpa, ",\"prompt\":") catch return null;
+        appendJsonString(&out, claim.prompt) catch return null;
+        out.appendSlice(gpa, ",\"cwd\":") catch return null;
+        appendJsonString(&out, claim.cwd) catch return null;
+        out.appendSlice(gpa, ",\"due_unix\":") catch return null;
+        out.print(gpa, "{d}", .{claim.due_unix}) catch return null;
+        out.appendSlice(gpa, ",\"lease_until_unix\":") catch return null;
+        out.print(gpa, "{d}", .{claim.lease_until_unix}) catch return null;
+        out.append(gpa, '}') catch return null;
+    }
+    out.appendSlice(gpa, "]}") catch return null;
+    return returned(out.items);
+}
+
+/// Settle one occurrence previously returned by contract_tick_json. Request:
+/// {"owner":"...","contract_id":"...","occurrence":"...",
+///  "outcome":"satisfied|retry|died","detail":"privacy-safe proof"}
+export fn contract_settle_execution_json(request_json: [*:0]const u8) c_int {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, cstr(request_json), .{}) catch return 1;
+    defer parsed.deinit();
+    if (parsed.value != .object) return 1;
+    const object = parsed.value.object;
+    const owner = objectString(object, "owner") orelse return 1;
+    const id = objectString(object, "contract_id") orelse return 1;
+    const occurrence = objectString(object, "occurrence") orelse return 1;
+    const outcome_text = objectString(object, "outcome") orelse return 1;
+    const detail = objectString(object, "detail") orelse "";
+    const outcome: contract.scheduler.SettleOutcome =
+        if (std.mem.eql(u8, outcome_text, "satisfied"))
+            .satisfied
+        else if (std.mem.eql(u8, outcome_text, "retry"))
+            .retry
+        else if (std.mem.eql(u8, outcome_text, "died"))
+            .died
+        else
+            return 1;
+
+    contract.scheduler.settleExecutionAt(
+        gpa,
+        extEnv(),
+        time(null),
+        id,
+        occurrence,
+        owner,
+        outcome,
+        detail,
+    ) catch return 1;
+    if (outcome == .satisfied) {
+        contract.recordIteration(gpa, extEnv(), id, 0, 0, detail) catch return 1;
+        contract.markSatisfied(gpa, extEnv(), id, 0, detail) catch return 1;
+    } else if (outcome == .died) {
+        contract.markDied(gpa, extEnv(), id, .apoptosed, null, detail) catch return 1;
+    }
+    return 0;
+}
+
+/// Renew a live execution lease. Request uses the same identity fields as
+/// settlement plus `lease_seconds`.
+export fn contract_renew_execution_json(request_json: [*:0]const u8) c_int {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, cstr(request_json), .{}) catch return 1;
+    defer parsed.deinit();
+    if (parsed.value != .object) return 1;
+    const object = parsed.value.object;
+    const owner = objectString(object, "owner") orelse return 1;
+    const id = objectString(object, "contract_id") orelse return 1;
+    const occurrence = objectString(object, "occurrence") orelse return 1;
+    const lease_raw = objectInt(object, "lease_seconds") orelse return 1;
+    if (lease_raw <= 0) return 1;
+    const lease_seconds: u32 = @intCast(@min(lease_raw, 86400));
+    _ = contract.scheduler.renewExecutionAt(
+        gpa,
+        extEnv(),
+        time(null),
+        id,
+        occurrence,
+        owner,
+        lease_seconds,
+    ) catch return 1;
+    return 0;
+}
+
+/// Cancel a durable contract by appending an explicit terminal death row.
+export fn contract_cancel(id: [*:0]const u8, reason: ?[*:0]const u8) c_int {
+    const detail = if (reason) |value| cstr(value) else "cancelled by Aiko operator";
+    contract.markDied(gpa, extEnv(), cstr(id), .apoptosed, null, detail) catch return 1;
+    return 0;
+}
+
+/// Reopen the latest occurrence for operator-directed retry.
+export fn contract_retry(id: [*:0]const u8) c_int {
+    contract.scheduler.forceRetryAt(gpa, extEnv(), time(null), cstr(id)) catch return 1;
+    return 0;
+}
+
+/// Append a workspace-scoped event signal for `when:event:<name>` contracts.
+/// Request: {"name":"build-finished","cwd":"/workspace","detail":"..."}
+export fn contract_emit_signal_json(request_json: [*:0]const u8) c_int {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, cstr(request_json), .{}) catch return 1;
+    defer parsed.deinit();
+    if (parsed.value != .object) return 1;
+    const object = parsed.value.object;
+    const name = objectString(object, "name") orelse return 1;
+    const cwd = objectString(object, "cwd") orelse "";
+    const detail = objectString(object, "detail") orelse "";
+    contract.scheduler.emitSignalAt(gpa, extEnv(), time(null), name, cwd, detail) catch return 1;
+    return 0;
+}
+
+const BufferWriter = struct {
+    list: *std.ArrayList(u8),
+
+    pub const Error = std.mem.Allocator.Error;
+
+    pub fn writeAll(self: BufferWriter, bytes: []const u8) Error!void {
+        try self.list.appendSlice(gpa, bytes);
+    }
+
+    pub fn print(self: BufferWriter, comptime fmt: []const u8, args: anytype) Error!void {
+        const value = try std.fmt.allocPrint(gpa, fmt, args);
+        defer gpa.free(value);
+        try self.list.appendSlice(gpa, value);
+    }
+};
+
+/// Native fractal lineage retrieval. The rendered field is diagnostic context;
+/// typed capability dependencies live in contract_recommend_capabilities.
+export fn contract_get_fractal_context(
+    id: [*:0]const u8,
+    event: [*:0]const u8,
+) ?[*:0]u8 {
+    var rendered: std.ArrayList(u8) = .empty;
+    defer rendered.deinit(gpa);
+    fractal.renderContext(gpa, extEnv(), cstr(id), cstr(event), BufferWriter{ .list = &rendered }) catch return null;
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    out.appendSlice(gpa, "{\"id\":\"") catch return null;
+    out.appendSlice(gpa, cstr(id)) catch return null;
+    out.appendSlice(gpa, "\",\"event\":\"") catch return null;
+    out.appendSlice(gpa, cstr(event)) catch return null;
+    out.appendSlice(gpa, "\",\"rendered\":\"") catch return null;
+    for (rendered.items) |ch| switch (ch) {
+        '"' => out.appendSlice(gpa, "\\\"") catch return null,
+        '\\' => out.appendSlice(gpa, "\\\\") catch return null,
+        '\n' => out.appendSlice(gpa, "\\n") catch return null,
+        '\r' => {},
+        else => out.append(gpa, ch) catch return null,
+    };
+    out.appendSlice(gpa, "\"}") catch return null;
+    return returned(out.items);
+}
+
+/// Record one sanitized, typed capability outcome.
+///
+/// `context` is the routing intent; `capability` is a stable primitive id
+/// (for example `application.click`); `exemplar_json` is a shape-only command
+/// with secret/user values removed. Successful outcomes become recommendable;
+/// failed outcomes terminate as `died` and therefore cannot be routed to.
+/// Returns malloc'd JSON {"id", "status"}; caller frees with contract_free.
+export fn contract_record_capability_outcome(
+    context: [*:0]const u8,
+    capability: [*:0]const u8,
+    exemplar_json: [*:0]const u8,
+    success: bool,
+) ?[*:0]u8 {
+    return contract_record_capability_outcome_v2(
+        context,
+        capability,
+        exemplar_json,
+        "{}",
+        success,
+    );
+}
+
+/// V2 outcome recording carries privacy-scrubbed execution metadata and binds
+/// every capability under a stable application root.
+export fn contract_record_capability_outcome_v2(
+    context: [*:0]const u8,
+    capability: [*:0]const u8,
+    exemplar_json: [*:0]const u8,
+    metadata_json: [*:0]const u8,
+    success: bool,
+) ?[*:0]u8 {
+    const context_slice = cstr(context);
+    const capability_slice = cstr(capability);
+    const exemplar_slice = cstr(exemplar_json);
+    const metadata_slice = cstr(metadata_json);
+    if (context_slice.len == 0 or capability_slice.len == 0 or exemplar_slice.len == 0) return null;
+
+    const application = jsonStringField(metadata_slice, "application") orelse "unknown";
+    var root_plan: std.ArrayList(u8) = .empty;
+    defer root_plan.deinit(gpa);
+    root_plan.appendSlice(gpa, "Application capability root: ") catch return null;
+    root_plan.appendSlice(gpa, application) catch return null;
+    var root_action: std.ArrayList(u8) = .empty;
+    defer root_action.deinit(gpa);
+    root_action.appendSlice(gpa, "neuron:application-root ") catch return null;
+    root_action.appendSlice(gpa, application) catch return null;
+    const root_id = contract.declare(gpa, extEnv(), root_plan.items, root_action.items, .{
+        .parent_id = null,
+        .agent = "aiko-native",
+        .cwd = null,
+    }) catch return null;
+    defer gpa.free(root_id);
+
+    var action_buf: std.ArrayList(u8) = .empty;
+    defer action_buf.deinit(gpa);
+    action_buf.appendSlice(gpa, capability_slice) catch return null;
+    action_buf.append(gpa, ' ') catch return null;
+    action_buf.appendSlice(gpa, exemplar_slice) catch return null;
+
+    var fields: [6]contract.Field = undefined;
+    var field_count: usize = 0;
+    const keys = [_][]const u8{
+        "application",
+        "permission",
+        "result_schema",
+        "duration_ms",
+        "permission_outcome",
+        "availability",
+    };
+    for (keys) |key| {
+        if (jsonValueField(metadata_slice, key)) |value| {
+            fields[field_count] = .{ .key = key, .value = value };
+            field_count += 1;
+        }
+    }
+    const opts = contract.DeclareOptions{
+        .parent_id = root_id,
+        .agent = "aiko-native",
+        .cwd = null,
+        .extras = fields[0..field_count],
+    };
+    const id = contract.declare(gpa, extEnv(), context_slice, action_buf.items, opts) catch return null;
+    defer gpa.free(id);
+
+    contract.recordIteration(
+        gpa,
+        extEnv(),
+        id,
+        1,
+        if (success) 0 else 1,
+        if (success) "verified capability outcome" else "capability execution failed",
+    ) catch return null;
+
+    const status = if (success) "satisfied" else "died";
+    if (success) {
+        contract.markSatisfied(gpa, extEnv(), id, 1, "verified by embedded application runtime") catch return null;
+    } else {
+        contract.markDied(gpa, extEnv(), id, .apoptosed, null, "embedded application runtime reported failure") catch return null;
+    }
+
+    var json_buf: std.ArrayList(u8) = .empty;
+    defer json_buf.deinit(gpa);
+    json_buf.appendSlice(gpa, "{\"id\":\"") catch return null;
+    json_buf.appendSlice(gpa, id) catch return null;
+    json_buf.appendSlice(gpa, "\",\"status\":\"") catch return null;
+    json_buf.appendSlice(gpa, status) catch return null;
+    json_buf.appendSlice(gpa, "\"}") catch return null;
+    return returned(json_buf.items);
+}
+
+/// Evaluate one claim against caller-supplied append-only ledger JSONL.
+/// Return values: 1=promote, 0=governed HOLD, -1=legacy/ungoverned,
+/// -2=malformed or invalid trust state. This is the same pure replay used by
+/// the native resolver and MCP surface.
+export fn contract_trust_evaluate(
+    ledger_jsonl: [*:0]const u8,
+    claim_id: [*:0]const u8,
+    now_unix: i64,
+) i32 {
+    const result = contract.trust.evaluateLedger(
+        gpa,
+        cstr(ledger_jsonl),
+        cstr(claim_id),
+        now_unix,
+    ) catch return -2;
+    const decision = result orelse return -1;
+    return if (decision.promote) 1 else 0;
+}
+
 /// Release a buffer previously returned by one of the C ABI getters.
 export fn contract_free(p: ?[*:0]u8) void {
     if (p) |ptr| {
@@ -136,4 +699,47 @@ export fn contract_free(p: ?[*:0]u8) void {
         const full = ptr[0 .. slice.len + 1];
         gpa.free(full);
     }
+}
+
+test "outcome metadata keeps strings numbers and structured schemas" {
+    const metadata =
+        \\{"application":"Notes","duration_ms":17,"result_schema":{"type":"object","fields":["success"]}}
+    ;
+    try std.testing.expectEqualStrings("Notes", jsonValueField(metadata, "application").?);
+    try std.testing.expectEqualStrings("17", jsonValueField(metadata, "duration_ms").?);
+    try std.testing.expectEqualStrings(
+        "{\"type\":\"object\",\"fields\":[\"success\"]}",
+        jsonValueField(metadata, "result_schema").?,
+    );
+}
+
+test "native ABI version is pinned for independently-built Aiko" {
+    try std.testing.expectEqual(@as(u32, 3), contract_abi_version());
+}
+
+test "agency C ABI validation is additive and fail-closed" {
+    const valid =
+        \\{"role":"action","authority_pointer":"identity:operator","purpose_id":"purpose:root","cadence_class":"operational","effect_scope":"local_write","valid_from":1,"valid_until":2,"schema_version":1}
+    ;
+    try std.testing.expectEqual(@as(u8, 1), contract_agency_validate(valid));
+    try std.testing.expectEqual(@as(u8, 0), contract_agency_validate("{}"));
+}
+
+test "trust C ABI distinguishes legacy malformed hold and promote" {
+    try std.testing.expectEqual(
+        @as(i32, -1),
+        contract_trust_evaluate(
+            "{\"event\":\"satisfied\",\"id\":\"legacy\"}",
+            "legacy",
+            100,
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(i32, -2),
+        contract_trust_evaluate(
+            "{\"event\":\"trust_policy\",\"id\":\"broken\"}",
+            "broken",
+            100,
+        ),
+    );
 }

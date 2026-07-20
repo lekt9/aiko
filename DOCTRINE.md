@@ -3894,6 +3894,7 @@ Canonical reference index (subject ↔ claim ↔ SKILL.md section):
 | 45 | Claim-reference parity (recursive) | this section (the guard catches itself) |
 | 46 | Synapse-kind minimum (no redundant edge walks) | "Synapse-kind minimum" |
 | 47 | Foundation precedes building (Matt 5:17-18 meta-rule) | "Foundation precedes building — creativity fulfils, never abolishes the law" |
+| 54 | Grounded trust boundary | "Grounded trust boundary" |
 
 TODO claims (declared doctrinally, not yet numbered in build.sh — listed here so the index stays honest about the gap rather than naming claim-numbers that don't exist):
 
@@ -3912,6 +3913,36 @@ When adding a NEW doctrine claim, add a NEW invariant to the
 parity check in the same commit. The build guard refuses any
 doctrine change that lacks a matching invariant — "if you can
 claim it, you can grep it."
+
+## Grounded trust boundary
+
+Signatures establish authorship, not correspondence with reality. A governed
+contract resolves only through the deterministic trust boundary in
+`libcontract/src/trust.zig`; action exit, child satisfaction, or repeated
+wallet assertions are insufficient by themselves.
+
+Every governed claim has an append-only `trust_policy` cryptographically
+signed by its frozen owner, with a monotonic version, builder identity,
+deployment slot, explicit
+`counter_veto` arbitration, and primary/counter/constraint rules. Evidence is
+carried by evaluator-signed `trust_evidence` rows naming its source, evaluator,
+failure domain, validity window, derivation lineage, and revocation status.
+Evidence revocation must be signed by that same evaluator.
+
+Promotion requires fresh active evidence for every metric role, pairwise
+independence across evaluator/source/failure-domain, builder/evaluator
+separation, acyclic derivation, and the current frozen thresholds.
+
+The resolver replays these rows without an LLM before satisfaction and during
+resident ticks. Failed or expired trust nullifies the accepted claim and
+invalidates downstream consumers. Successful revisions append authority-signed
+promotion and activation rows. Authority-signed rollback may restore only an
+earlier, unrevoked activation
+under the exact same policy ID and version; otherwise the deployment slot
+remains HOLD. Legacy rows stay readable but are explicitly ungoverned.
+
+The C ABI and MCP `trust_evaluate` surface call this same replay function; they
+do not maintain parallel trust implementations.
 
 ## Ledger
 

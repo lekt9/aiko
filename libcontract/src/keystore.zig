@@ -309,21 +309,46 @@ fn darwinKeychainUsable() bool {
 
 fn darwinRead(allocator: std.mem.Allocator, svc: []const u8) !?[]u8 {
     if (!darwinKeychainUsable()) return null; // no keychain → never invoke `security`
-    var cmd_buf: [512]u8 = undefined;
-    const cmd = try std.fmt.bufPrintZ(
-        &cmd_buf,
-        "/usr/bin/security find-generic-password -s {s} -w 2>/dev/null",
-        .{svc},
+    // Use the same Security.framework API as darwinWrite. Mixing a framework
+    // write with a `security` CLI read made fresh items intermittently
+    // invisible in non-interactive sessions even though the write succeeded.
+    const handle = dlopen("/System/Library/Frameworks/Security.framework/Security", 0x2) orelse
+        return null;
+    defer _ = dlclose(handle);
+    const FindFn = *const fn (
+        ?*anyopaque,
+        u32,
+        [*]const u8,
+        u32,
+        [*]const u8,
+        ?*u32,
+        ?*?*anyopaque,
+        ?*?*anyopaque,
+    ) callconv(.c) i32;
+    const FreeFn = *const fn (?*const anyopaque, ?*anyopaque) callconv(.c) i32;
+    const find: FindFn = @ptrCast(@alignCast(
+        dlsym(handle, "SecKeychainFindGenericPassword") orelse return null,
+    ));
+    const free_content: FreeFn = @ptrCast(@alignCast(
+        dlsym(handle, "SecKeychainItemFreeContent") orelse return null,
+    ));
+    const account = "root";
+    var secret_len: u32 = 0;
+    var secret_ptr: ?*anyopaque = null;
+    const status = find(
+        null,
+        @intCast(svc.len),
+        svc.ptr,
+        account.len,
+        account.ptr,
+        &secret_len,
+        &secret_ptr,
+        null,
     );
-    const fp = popen(cmd.ptr, "r") orelse return null;
-    var buf: [4096]u8 = undefined;
-    const n = fread(&buf, 1, buf.len, fp);
-    const rc = pclose(fp);
-    if (rc != 0 or n == 0) return null;
-    var end: usize = n;
-    while (end > 0 and (buf[end - 1] == '\n' or buf[end - 1] == '\r' or buf[end - 1] == ' ')) end -= 1;
-    if (end == 0) return null;
-    return try allocator.dupe(u8, buf[0..end]);
+    if (status != 0 or secret_ptr == null or secret_len == 0) return null;
+    defer _ = free_content(null, secret_ptr);
+    const secret: [*]const u8 = @ptrCast(secret_ptr.?);
+    return try allocator.dupe(u8, secret[0..secret_len]);
 }
 
 fn darwinWrite(allocator: std.mem.Allocator, svc: []const u8, value: []const u8) !void {

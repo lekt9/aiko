@@ -22,25 +22,53 @@ const embed = @import("embed.zig");
 
 pub const DIM = embed.DIM;
 
-pub const Prototype = struct {
-    mean: [DIM]f32 = [_]f32{0} ** DIM,
-    w: f64 = 0, // total reward-weight folded in (the running-mean denominator)
+/// Canonical energy-cell implementation for any embedding width. The substrate
+/// has both the compact feature-hash embedder and the baked BGE sentence
+/// embedder; their cells must share the exact same train/evaluate mathematics.
+pub fn PrototypeFor(comptime dim: usize) type {
+    return struct {
+        mean: [dim]f32 = [_]f32{0} ** dim,
+        w: f64 = 0,
 
-    /// FIRE / train: fold context `x` into the prototype, reward-weighted (West 1979 incremental
-    /// mean). reward>0 pulls the centroid toward x (Hebbian); reward<0 pushes it away (inhibition).
-    pub fn fold(self: *Prototype, x: []const f32, reward: f64) void {
-        const w_new = self.w + reward;
-        if (@abs(w_new) < 1e-9) { // reward fully cancelled the prior mass -> reset honestly
-            self.mean = [_]f32{0} ** DIM;
-            self.w = 0;
-            return;
+        pub fn fold(self: *@This(), x: []const f32, reward: f64) void {
+            const w_new = self.w + reward;
+            if (@abs(w_new) < 1e-9) {
+                self.mean = [_]f32{0} ** dim;
+                self.w = 0;
+                return;
+            }
+            const a: f32 = @floatCast(reward / w_new);
+            for (&self.mean, 0..) |*m, i| m.* += a * (x[i] - m.*);
+            self.w = w_new;
         }
-        const a: f32 = @floatCast(reward / w_new);
-        for (&self.mean, 0..) |*m, i| m.* += a * (x[i] - m.*);
-        self.w = w_new;
+
+        pub fn energy(self: @This(), x: []const f32) f64 {
+            if (self.w <= 0) return std.math.inf(f64);
+            return -@as(f64, cosineN(dim, x, &self.mean));
+        }
+    };
+}
+
+fn cosineN(comptime dim: usize, a: []const f32, b: *const [dim]f32) f32 {
+    var dot: f32 = 0;
+    var na: f32 = 0;
+    var nb: f32 = 0;
+    for (0..dim) |i| {
+        dot += a[i] * b[i];
+        na += a[i] * a[i];
+        nb += b[i] * b[i];
+    }
+    if (na <= 0 or nb <= 0) return 0;
+    return dot / @sqrt(na * nb);
+}
+
+pub const Prototype = struct {
+    cell: PrototypeFor(DIM) = .{},
+
+    pub fn fold(self: *Prototype, x: []const f32, reward: f64) void {
+        self.cell.fold(x, reward);
     }
 
-    /// FIRE on raw text — embeds via the substrate's own feature-hashing embedding, then folds.
     pub fn foldText(self: *Prototype, text: []const u8, reward: f64) void {
         var v: [DIM]f32 = undefined;
         embed.embed(text, &v);
@@ -51,8 +79,7 @@ pub const Prototype = struct {
 /// EVAL: energy = -cosine(x, prototype). Low energy = good fit. +inf when the neuron is cold
 /// (never fired) -- never a fabricated score.
 pub fn energy(p: Prototype, x: []const f32) f64 {
-    if (p.w <= 0) return std.math.inf(f64);
-    return -@as(f64, embed.cosine(x, &p.mean));
+    return p.cell.energy(x);
 }
 
 pub fn energyText(p: Prototype, text: []const u8) f64 {

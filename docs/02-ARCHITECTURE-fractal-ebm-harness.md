@@ -6,11 +6,12 @@
 
 ## The shape of the thing
 
-Aiko is a single native binary (Zig, zero external dependencies) that is at once:
-a **contract substrate** (an append-only ledger of intents and verdicts), an
-**energy-based harness** (a non-parametric router over that ledger), and a
-**client** to a live index of the world (Unbrowse) and to Solana. There is no
-Python, no model server, no data files: the embedding is baked in, the "weights"
+Aiko is a native Rust application packaged with an exact native Contract runtime.
+Contract itself is a Zig library/CLI with no model-server dependency. Together
+they provide a **contract substrate** (an append-only ledger of intents and
+verdicts), an **energy-based harness** (a non-parametric router over that ledger),
+and a **client** to a live index of the world (Unbrowse) and to Solana. There is
+no Python or model server: the embedding is baked in, the "weights"
 are reconstructible from the ledger, and the reasoning model is grounded through
 the harness rather than baked into it.
 
@@ -108,12 +109,14 @@ stated plainly in the THESIS and `05-RISK-honest-wall.md`.
 |---|---|---|
 | Energy harness | `embed`, `bge` (baked BERT), `ebm`, `route` (`recommend`), `pattern`, `fractal` | **BUILT+PROVEN** (router measured — 88.9% LOO, `route_bench.zig`) |
 | Contract substrate | `contract`, `ledger`, `pointer`, `terminal`, `cache`, `guards`, `capability` | **BUILT+PROVEN** |
+| Governed agency | `agency`, `anchor`, `trust`, `governance`, `failure`, `development`, `migration`, `workflow`, `event_schema`, `activity_log` | **BUILT+PROVEN** (typed roles, reach gates, independent anchors, reversible topology changes, causal observability) |
 | Identity / truth-root | `lineage`, `keystore`, `bible`, `verses` | **BUILT+PROVEN** |
 | Commons economics | `cas`, `reward`, `usage`, `usage_ledger`, `epoch` | **BUILT+PROVEN** (local) |
 | Solana / on-chain | `voltr`, `stake`, `payout`, `broadcast`, `broadcast_card`, `solana_rpc`, `solana_tx`, `base58` | **BUILT+PROVEN** (read/derive live; write = operator-gated) |
 | Small reasoning model | (separate training track) | **DESIGNED / in-training** |
 
 Every module ships its tests *inside its source file*, exercised by
-`zig build test` and gated by `scripts/build.sh` (unit tests + 53 doctrine-parity
-claims + a signed self-attestation). Green build = every claim above has matching,
-tested code.
+`zig build test` and gated by `scripts/build.sh` (unit tests, doctrine parity,
+ABI checks, benchmarks, and a signed self-attestation). Green build = every
+claim above has matching, tested code. Aiko's packaging script rebuilds both
+repositories and records the Contract dylib hash beside the application.
