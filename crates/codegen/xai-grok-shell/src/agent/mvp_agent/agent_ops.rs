@@ -1386,6 +1386,9 @@ impl MvpAgent {
         auth_manager: Arc<AuthManager>,
         prefetched_models: Option<IndexMap<String, ModelEntry>>,
     ) -> Result<Self, String> {
+        // Prewarm Contract's resident EBM cache as soon as the agent runtime
+        // exists, before the user's first prompt reaches routing.
+        crate::contract_native::warm_router_background(16);
         let (cfg, models_manager) = crate::agent::init::bootstrap(
             cfg,
             &auth_manager,

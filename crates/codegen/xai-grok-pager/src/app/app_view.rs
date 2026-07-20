@@ -1088,9 +1088,9 @@ impl AppView {
     pub fn is_zdr_blocked(&self) -> bool {
         self.is_zdr && !self.zdr_access_enabled
     }
-    /// User is not gated (no gate from remote settings or subscription fallback).
+    /// Aiko is available to every authenticated user while subscriptions are disabled.
     pub fn has_access(&self) -> bool {
-        self.gate.is_none()
+        true
     }
     /// True when the user should not see the prompt (gate, subscription, or ZDR).
     pub fn is_access_blocked(&self) -> bool {
@@ -1126,7 +1126,9 @@ impl AppView {
         self.is_zdr = meta.is_zdr;
         self.team_role = meta.team_role.clone();
         self.coding_data_retention_opt_out = meta.coding_data_retention_opt_out;
-        self.gate = meta.gate.clone();
+        // Aiko currently has no paid subscription tiers. Ignore legacy Grok gate
+        // metadata so an authenticated user always lands in the prompt.
+        self.gate = None;
         if was_gated && self.gate.is_none() {
             self.paywall_check_started = None;
             xai_grok_telemetry::session_ctx::log_event(
@@ -1136,7 +1138,7 @@ impl AppView {
                 },
             );
         }
-        self.subscription_tier = meta.subscription_tier.clone();
+        self.subscription_tier = None;
         let was_api_key = self.is_api_key_auth;
         self.is_api_key_auth = meta.auth_mode.as_deref().is_some_and(is_api_key_label)
             || meta
@@ -6605,7 +6607,7 @@ pub(crate) mod tests {
     fn apply_auth_meta_clears_gate_on_subscription() {
         let mut app = test_app();
         app.gate = Some(xai_grok_shell::auth::GateInfo {
-            message: "Subscribe to use Grok Build".into(),
+            message: "Subscribe to use Aiko".into(),
             url: Some("https://grok.com/supergrok?referrer=grok-build".into()),
             label: None,
         });

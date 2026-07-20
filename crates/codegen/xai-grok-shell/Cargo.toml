@@ -27,6 +27,7 @@ chrono = { workspace = true }
 indexmap = { workspace = true, features = ["serde"] }
 ignore = { workspace = true }
 jsonschema = { workspace = true }
+libloading = "0.8"
 futures = { workspace = true }
 glob = { workspace = true }
 globset = { workspace = true }

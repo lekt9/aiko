@@ -30,7 +30,12 @@ impl AuthStatus {
             return Self::ApiKey;
         }
         if agent_config.create_auth_manager().current().is_some() {
-            let origin = &agent_config.grok_com_config.grok_ws_origin;
+            let origin = agent_config
+                .grok_com_config
+                .oauth2
+                .as_ref()
+                .map(|oauth| &oauth.issuer)
+                .unwrap_or(&agent_config.grok_com_config.grok_ws_origin);
             let host = origin
                 .strip_prefix("https://")
                 .or_else(|| origin.strip_prefix("http://"))
@@ -165,7 +170,7 @@ mod tests {
 
         assert_eq!(
             AuthStatus::resolve(&Config::default()),
-            AuthStatus::LoggedIn("grok.com".to_owned())
+            AuthStatus::LoggedIn("aiko.theclarityproject.net".to_owned())
         );
     }
 
@@ -259,7 +264,7 @@ mod tests {
         let cfg = config_from_toml(&byok_and_deployment_toml(dm));
         assert_eq!(
             AuthStatus::resolve(&cfg),
-            AuthStatus::LoggedIn("grok.com".to_owned())
+            AuthStatus::LoggedIn("aiko.theclarityproject.net".to_owned())
         );
     }
 

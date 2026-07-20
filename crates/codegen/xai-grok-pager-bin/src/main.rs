@@ -99,7 +99,7 @@ fn print_serve_startup_info(bind_addr: SocketAddr, secret: &str) {
     );
     eprintln!();
 }
-/// Entrypoint tag for `grok -p`; keys the quiet stderr default in `init_tracing_simple`.
+/// Entrypoint tag for `aiko -p`; keys the quiet stderr default in `init_tracing_simple`.
 const HEADLESS_ENTRYPOINT: &str = "headless";
 /// Initialize simple tracing for non-TUI agent modes.
 fn init_tracing_simple(app_entrypoint: &'static str) {
@@ -147,14 +147,81 @@ fn init_tracing_simple(app_entrypoint: &'static str) {
         ),
     );
 }
-/// `grok setup`: rendering + exit codes only; fetch logic lives in `xai_grok_shell::managed_config`.
+
+async fn run_contract_worker(once: bool, poll_seconds: u64) -> Result<()> {
+    let executable = std::env::current_exe()?;
+    let owner = format!("aiko-worker:{}", std::process::id());
+    let poll_seconds = poll_seconds.clamp(1, 300);
+    loop {
+        let Some(tick) =
+            xai_grok_shell::contract_native::tick_due_contracts(owner.clone(), None, 16, 3_600)
+                .await
+        else {
+            anyhow::bail!("Contract ABI v3 runtime is not available");
+        };
+        for claim in tick.claims {
+            let cwd = if claim.cwd.is_empty() {
+                std::env::current_dir()?
+            } else {
+                std::path::PathBuf::from(&claim.cwd)
+            };
+            let mut child = tokio::process::Command::new(&executable);
+            child
+                .arg("--cwd")
+                .arg(&cwd)
+                .arg("--no-auto-update")
+                .arg("--verbatim")
+                .arg("--single")
+                .arg(&claim.prompt)
+                .env("AIKO_CONTRACT_COORDINATOR", "off")
+                .stdout(std::process::Stdio::null())
+                .kill_on_drop(true);
+            let completed = match tokio::time::timeout(Duration::from_secs(3_600), child.status())
+                .await
+            {
+                Ok(Ok(status)) => status.success(),
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, contract_id = %claim.contract_id, "Contract worker failed to start Aiko");
+                    false
+                }
+                Err(_) => {
+                    tracing::warn!(contract_id = %claim.contract_id, "Contract worker timed out");
+                    false
+                }
+            };
+            let detail = if completed {
+                "Aiko background worker completed the Contract occurrence"
+            } else {
+                "Aiko background worker did not complete; released for retry"
+            };
+            let _ = xai_grok_shell::contract_native::settle_contract_claim(
+                owner.clone(),
+                claim,
+                if completed { "satisfied" } else { "retry" },
+                detail.to_string(),
+            )
+            .await;
+        }
+        if once {
+            return Ok(());
+        }
+        let delay = tick
+            .next_wake_unix
+            .map(|deadline| deadline.saturating_sub(tick.now_unix).max(0) as u64)
+            .unwrap_or(poll_seconds)
+            .min(poll_seconds)
+            .max(1);
+        tokio::time::sleep(Duration::from_secs(delay)).await;
+    }
+}
+/// `aiko setup`: rendering + exit codes only; fetch logic lives in `xai_grok_shell::managed_config`.
 /// `json` prints the served configuration instead of installing it.
 async fn run_setup_command(json: bool) {
     use xai_grok_shell::managed_config::{self, SetupOutcome};
     if !managed_config::has_principal() {
         eprintln!("No deployment key or team sign-in found.");
         eprintln!();
-        eprintln!("To install managed configuration, sign in with a team using `grok login`,");
+        eprintln!("To install managed configuration, sign in with a team using `aiko login`,");
         eprintln!("or set a deployment key:");
         eprintln!();
         if cfg!(unix) {
@@ -202,7 +269,7 @@ async fn run_setup_command(json: bool) {
         }
         SetupOutcome::Skipped => {
             eprintln!(
-                "Managed configuration was not applied this run (another process held the apply lock, or the credential changed during the fetch). Run `grok setup` again."
+                "Managed configuration was not applied this run (another process held the apply lock, or the credential changed during the fetch). Run `aiko setup` again."
             );
         }
         SetupOutcome::Failed(e) => {
@@ -363,10 +430,10 @@ fn ensure_control_caps(reg: &LeaderRegistration) -> Result<&LeaderCapabilities> 
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Leader does not advertise capabilities (legacy version)"))
 }
-/// Env override for the `grok workspace` gate: any truthy value enables the
+/// Env override for the `aiko workspace` gate: any truthy value enables the
 /// command locally, a falsy one disables it — bypassing the remote settings flag.
 const WORKSPACE_COMMAND_ENV: &str = "GROK_WORKSPACE_COMMAND";
-/// Resolution of the `grok workspace` gate. `Unknown` is kept separate from
+/// Resolution of the `aiko workspace` gate. `Unknown` is kept separate from
 /// `Disabled` so we don't tell the user the flag is off when the settings were
 /// simply never read (both fail closed, but `Unknown` earns an honest message).
 #[derive(Debug, PartialEq, Eq)]
@@ -424,14 +491,14 @@ async fn run_workspace_mgmt(args: WorkspaceMgmtArgs) -> Result<()> {
         WorkspaceGate::Enabled => {}
         WorkspaceGate::Disabled => {
             anyhow::bail!(
-                "`grok workspace` is not enabled for this account \
+                "`aiko workspace` is not enabled for this account \
              (gated by a server-side feature flag that is currently off)."
             )
         }
         WorkspaceGate::Unknown => {
             anyhow::bail!(
-                "Could not load your settings for `grok workspace`. Check your \
-             network connection (run `grok login` if you are signed out), then \
+                "Could not load your settings for `aiko workspace`. Check your \
+             network connection (run `aiko login` if you are signed out), then \
              try again."
             )
         }
@@ -487,7 +554,7 @@ async fn connect_workspace_control(
     .map_err(|e| {
         anyhow::anyhow!(
             "no running leader for this environment ({e}). \
-             Start a grok session, or run `grok workspace start`."
+             Start a grok session, or run `aiko workspace start`."
         )
     })
 }
@@ -527,14 +594,14 @@ async fn workspace_start(
     );
     if !use_leader {
         anyhow::bail!(
-            "`grok workspace` requires leader mode (the workspace is shared via the leader).\n\
+            "`aiko workspace` requires leader mode (the workspace is shared via the leader).\n\
              Enable it with `[cli] use_leader = true` in ~/.grok/config.toml, or pass --leader."
         );
     }
     ensure_authenticated(
         &agent_config.grok_com_config,
         false,
-        Some("No cached credentials found. Run `grok login` first."),
+        Some("No cached credentials found. Run `aiko login` first."),
     )
     .await?;
     let env_urls = LeaderEnvUrls::from(&agent_config.grok_com_config);
@@ -952,7 +1019,7 @@ fn shutdown_and_flush_telemetry(exit_code: i32) -> ! {
 }
 /// Emitted by both leader guards (server mode and leader-connect) so the two sites
 /// can't drift.
-const PLUGIN_DIR_LEADER_WARNING: &str = "grok: --plugin-dir is ignored in leader mode; run with --no-leader to \
+const PLUGIN_DIR_LEADER_WARNING: &str = "aiko: --plugin-dir is ignored in leader mode; run with --no-leader to \
      load per-process plugins";
 /// Run the `agent` subcommand, dispatching to the appropriate mode.
 async fn run_agent_command(
@@ -1005,7 +1072,7 @@ async fn run_agent_command(
     let is_leader = matches!(agent_args.mode, Some(AgentCmd::Leader(_)));
     if !is_stdio && !is_leader {
         eprintln!(
-            "Grok Build (pager) - v{}",
+            "Aiko - v{}",
             xai_grok_version::display_version_with_commit(
                 env!("VERSION_WITH_COMMIT"),
                 xai_grok_update::channel_label(),
@@ -1038,7 +1105,7 @@ async fn run_agent_command(
         None,
     );
     if let Some(warning) = launch_yolo.blocked_warning {
-        eprintln!("grok: {warning}");
+        eprintln!("aiko: {warning}");
     }
     agent_config.default_yolo_mode = launch_yolo.yolo;
     agent_config.default_auto_mode = xai_grok_shell::util::config::effective_auto_for_launch(
@@ -1428,12 +1495,12 @@ fn raise_fd_limit() {
 fn raise_fd_limit() {}
 /// Single audit point for the `Command::Dashboard` soft-subcommand.
 /// Sets `GROK_OPEN_DASHBOARD_AT_STARTUP=1` if the user asked for
-/// `grok dashboard`, and clears `args.command` so the regular
+/// `aiko dashboard`, and clears `args.command` so the regular
 /// subcommand match doesn't try to handle it.
 ///
 /// The dashboard is independent of leader mode — it renders local
 /// sessions and, when a leader happens to be present, additionally shows
-/// the leader roster — so `grok dashboard` does NOT force leader mode and
+/// the leader roster — so `aiko dashboard` does NOT force leader mode and
 /// is compatible with `--no-leader`.
 ///
 /// The only gate is the feature flag: a disabled dashboard
@@ -1741,7 +1808,7 @@ async fn async_main() -> Result<()> {
                     println!("{}", serde_json::to_string(&payload)?);
                 } else {
                     println!(
-                        "grok {}",
+                        "aiko {}",
                         xai_grok_version::display_version_with_commit(
                             env!("VERSION_WITH_COMMIT"),
                             xai_grok_update::channel_label(),
@@ -1759,7 +1826,7 @@ async fn async_main() -> Result<()> {
                     };
                     anyhow::bail!(
                         "top-level {flag} applies to the pager TUI, not the agent subcommand. \
-                         Use `grok-pager agent {flag}` instead."
+                         Use `aiko agent {flag}` instead."
                     );
                 }
                 enforce_minimum_version_or_exit(&update_config).await;
@@ -1772,6 +1839,10 @@ async fn async_main() -> Result<()> {
                     &update_config,
                 )
                 .await;
+            }
+            Command::ContractWorker { once, poll_seconds } => {
+                init_tracing_simple("contract-worker");
+                return run_contract_worker(once, poll_seconds).await;
             }
             Command::Inspect { json } => {
                 let cwd = std::env::current_dir().unwrap_or_default();
@@ -1930,7 +2001,7 @@ async fn async_main() -> Result<()> {
             None,
         );
         if let Some(warning) = launch_yolo.blocked_warning {
-            eprintln!("grok: {warning}");
+            eprintln!("aiko: {warning}");
         }
         let json_schema = args
             .json_schema
@@ -2013,9 +2084,9 @@ async fn async_main() -> Result<()> {
         Ok(true) => {
             let adopted = bg_update_wait.lock().await.take();
             if finish_update_on_exit(adopted, &update_config).await {
-                eprintln!("Update installed. Run `grok` to start.");
+                eprintln!("Update installed. Run `aiko` to start.");
             } else {
-                eprintln!("Update did not complete. Run `grok update` to retry.");
+                eprintln!("Update did not complete. Run `aiko update` to retry.");
             }
             Ok(())
         }
@@ -2026,11 +2097,11 @@ async fn async_main() -> Result<()> {
 /// Complete the update after a quit-for-update (Ctrl+U) exit. Returns `true`
 /// when an update path completed without a reported failure.
 ///
-/// Prefers awaiting the parked waiter for the background `grok update` child
+/// Prefers awaiting the parked waiter for the background `aiko update` child
 /// spawned at startup — the download is usually already done or in flight.
 /// Only when there is no waiter (spawn failed, or no download was needed
 /// because the target was already on disk) or the child failed does this
-/// fall back to a fresh blocking `grok update`, which itself resolves to
+/// fall back to a fresh blocking `aiko update`, which itself resolves to
 /// "Already up to date" without downloading when the disk is current.
 async fn finish_update_on_exit(
     adopted: Option<tokio::task::JoinHandle<std::io::Result<std::process::ExitStatus>>>,
@@ -2190,7 +2261,7 @@ async fn run_update_command(
     }
     Ok(())
 }
-/// After a successful `grok update`, ask any running leader on this machine that
+/// After a successful `aiko update`, ask any running leader on this machine that
 /// is older than `installed_version` to relaunch onto the new binary (bounded
 /// grace; running sessions close and reconnect via `session/load`).
 ///
@@ -2460,7 +2531,7 @@ mod tests {
         );
     }
     use clap::Parser as _;
-    /// `grok dashboard` flags the startup hook without forcing leader mode —
+    /// `aiko dashboard` flags the startup hook without forcing leader mode —
     /// the dashboard is independent of leader mode, so the launch keeps
     /// whatever leader setting the user (or config) chose.
     #[serial_test::serial(GROK_AGENT_DASHBOARD)]
@@ -2481,7 +2552,7 @@ mod tests {
         );
         unsafe { std::env::remove_var("GROK_OPEN_DASHBOARD_AT_STARTUP") };
     }
-    /// `grok dashboard --no-leader` is allowed — the dashboard does not
+    /// `aiko dashboard --no-leader` is allowed — the dashboard does not
     /// require a leader, so the combination launches into the dashboard in
     /// non-leader mode.
     #[serial_test::serial(GROK_AGENT_DASHBOARD)]

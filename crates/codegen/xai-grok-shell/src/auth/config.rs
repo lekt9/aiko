@@ -10,15 +10,14 @@ fn default_oidc_scopes() -> Vec<String> {
         "api:access".into(),
     ]
 }
-/// Default scopes for the xAI OAuth2 provider. Includes `grok-cli:access`
-/// which authorizes the token for API proxy requests.
+/// Default scopes for Aiko's OAuth2 provider.
 fn default_oauth2_scopes() -> Vec<String> {
     vec![
         "openid".into(),
         "profile".into(),
         "email".into(),
         "offline_access".into(),
-        "grok-cli:access".into(),
+        "aiko:access".into(),
         "api:access".into(),
         "conversations:read".into(),
         "conversations:write".into(),
@@ -129,7 +128,9 @@ pub struct OAuth2ProviderConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub referrer: Option<String>,
 }
-pub const XAI_OAUTH2_ISSUER: &str = "https://auth.x.ai";
+/// First-party Aiko OAuth issuer. The legacy name is retained internally to
+/// avoid breaking persisted auth/session compatibility.
+pub const XAI_OAUTH2_ISSUER: &str = "https://aiko.theclarityproject.net";
 /// Production accounts-app origin allowlist — the only origins builds without
 /// non-production builds accept. Lives in its own const, referenced by both
 /// profiles below, so the frozen-contract test (monorepo CI compiles with
@@ -165,7 +166,7 @@ pub fn accounts_app_cors_layer(method: axum::http::Method) -> tower_http::cors::
 }
 /// Local-dev OAuth2 issuer (accounts-app running on localhost).
 const XAI_OAUTH2_LOCAL_ISSUER: &str = "http://localhost:22255";
-const DEFAULT_OAUTH2_REFERRER: &str = "grok-build";
+const DEFAULT_OAUTH2_REFERRER: &str = "aiko";
 /// Returns `true` when `GROK_LOCAL_AUTH=1` is set,
 /// indicating the local accounts-app should be used as the OAuth2 issuer.
 pub fn use_local_auth() -> bool {
@@ -229,8 +230,12 @@ impl OAuth2ProviderConfig {
         self.principal_type.as_deref() == Some(TEAM_PRINCIPAL_TYPE)
     }
     pub fn from_env() -> Option<Self> {
-        let issuer = std::env::var("GROK_OAUTH2_ISSUER").ok()?;
-        let client_id = std::env::var("GROK_OAUTH2_CLIENT_ID").ok()?;
+        let issuer = std::env::var("AIKO_OAUTH2_ISSUER")
+            .or_else(|_| std::env::var("GROK_OAUTH2_ISSUER"))
+            .ok()?;
+        let client_id = std::env::var("AIKO_OAUTH2_CLIENT_ID")
+            .or_else(|_| std::env::var("GROK_OAUTH2_CLIENT_ID"))
+            .ok()?;
         let principal_type = std::env::var("GROK_OAUTH2_PRINCIPAL_TYPE").ok();
         let principal_id = std::env::var("GROK_OAUTH2_PRINCIPAL_ID").ok();
         let default_scopes = match principal_type.as_deref() {
@@ -276,7 +281,7 @@ impl Default for GrokComConfig {
             Some(
                 OAuth2ProviderConfig::from_env().unwrap_or_else(|| OAuth2ProviderConfig {
                     issuer: xai_oauth2_issuer().to_owned(),
-                    client_id: obfstr::obfstr!("b1a00492-073a-47ea-816f-4c329264a828").to_owned(),
+                    client_id: "aiko-cli".to_owned(),
                     scopes: default_oauth2_scopes(),
                     principal_type: None,
                     principal_id: None,
@@ -289,11 +294,14 @@ impl Default for GrokComConfig {
                 .unwrap_or_else(|_| PROD_WS_ORIGIN.to_owned()),
             grok_ws_url: std::env::var("GROK_WS_URL")
                 .unwrap_or_else(|_| PROD_RELAY_WS_URL.to_owned()),
-            token_header: "xai-grok-cli".to_owned(),
+            token_header: "aiko-cli".to_owned(),
             oidc,
             oauth2,
             auth_provider_command: std::env::var("GROK_AUTH_PROVIDER_COMMAND").ok(),
-            auth_provider_label: std::env::var("GROK_AUTH_PROVIDER_LABEL").ok(),
+            auth_provider_label: std::env::var("AIKO_AUTH_PROVIDER_LABEL")
+                .or_else(|_| std::env::var("GROK_AUTH_PROVIDER_LABEL"))
+                .ok()
+                .or_else(|| Some("Aiko".to_owned())),
             auth_token_ttl: std::env::var("GROK_AUTH_TOKEN_TTL")
                 .ok()
                 .and_then(|v| v.parse().ok()),
@@ -399,7 +407,7 @@ mod tests {
                 "profile",
                 "email",
                 "offline_access",
-                "grok-cli:access",
+                "aiko:access",
                 "api:access",
                 "conversations:read",
                 "conversations:write",

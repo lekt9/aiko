@@ -823,9 +823,9 @@ impl acp::Agent for MvpAgent {
         &self,
         arguments: acp::NewSessionRequest,
     ) -> Result<acp::NewSessionResponse, acp::Error> {
-        tracing::debug!(
-            config = ? self.sampling_config, "Received new session request {arguments:?}"
-        );
+        // `SamplerConfig` contains bearer credentials. Never include its Debug
+        // representation in logs, even at debug level.
+        tracing::debug!("Received new session request {arguments:?}");
         let init = self
             .initialize_request
             .get()
@@ -2299,11 +2299,24 @@ impl acp::Agent for MvpAgent {
                     .data("outputSchema must be a JSON object describing a JSON Schema"),
             );
         }
+        // Aiko is Contract-native: register the original request, then attach a
+        // privacy-bounded local machine snapshot and learned EBM route without
+        // requiring the user to call Contract or configure context manually.
+        let grounded = crate::contract_native::ground_turn(
+            &arguments.prompt,
+            std::path::Path::new(&handle.info.cwd),
+        )
+        .await;
+        let turn_contract = grounded.contract;
+        crate::contract_native::store_capability_route(
+            &prompt_id,
+            grounded.capability_route.clone(),
+        );
         handle
             .cmd_tx
             .send(SessionCommand::Prompt {
                 prompt_id: prompt_id.clone(),
-                prompt_blocks: arguments.prompt.clone(),
+                prompt_blocks: grounded.prompt,
                 prompt_mode,
                 artifact_upload_ctx: trace_context
                     .as_ref()
@@ -2319,6 +2332,7 @@ impl acp::Agent for MvpAgent {
                 parsed_prompt_tx,
             })
             .map_err(|e| {
+                let _ = crate::contract_native::take_capability_route(&prompt_id);
                 acp::Error::internal_error()
                     .data(format!("failed to dispatch prompt to session: {e}"))
             })?;
@@ -2883,6 +2897,11 @@ impl acp::Agent for MvpAgent {
                     } => Some("max_turns_reached".to_string()),
                     _ => None,
                 };
+                if matches!(stop_reason, acp::StopReason::EndTurn) {
+                    if let Some(turn_contract) = turn_contract {
+                        turn_contract.satisfy().await;
+                    }
+                }
                 Ok(
                     acp::PromptResponse::new(stop_reason)
                         .meta(

@@ -705,6 +705,8 @@ impl ToolRegistryBuilder {
         b.register::<opencode::OpenCodeGlobTool>();
         b.register::<opencode::OpenCodeTodoWriteTool>();
         b.register::<opencode::OpenCodeSkillTool>();
+        b.register::<crate::implementations::application::ApplicationObserveTool>();
+        b.register::<crate::implementations::application::ApplicationActTool>();
         b.register::<crate::implementations::memory::search_tool::MemorySearchImpl>();
         b.register::<crate::implementations::memory::get_tool::MemoryGetImpl>();
         b.register::<crate::implementations::search_tool::SearchTool>();

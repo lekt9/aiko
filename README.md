@@ -1,140 +1,116 @@
-<div align="center">
+# Aiko
 
-<h1>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://media.x.ai/v1/website/spacexai-symbol-white-transparent-0c31957f.png">
-    <source media="(prefers-color-scheme: light)" srcset="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png">
-    <img alt="SpaceXAI logo" src="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" width="96">
-  </picture>
-  <br>
-  Grok Build (<code>grok</code>)
-</h1>
-
-**Grok Build** is SpaceXAI's terminal-based AI coding agent. It runs as a
-full-screen TUI that understands your codebase, edits files, executes shell
-commands, searches the web, and manages long-running tasks — interactively,
-headlessly for scripting/CI, or embedded in editors via the Agent Client
-Protocol (ACP).
-
-[Installing the released binary](#installing-the-released-binary) ·
-[Building from source](#building-from-source) ·
-[Documentation](#documentation) ·
-[Repository layout](#repository-layout) ·
-[Development](#development) ·
-[Contributing](#contributing) ·
-[License](#license)
-
-![Grok Build TUI](https://media.x.ai/v1/website/universe-tui-screenshot-6f7a0837.png)
-
-**Learn more about Grok Build at [x.ai/cli](https://x.ai/cli)**
-
-This repository contains the Rust source for the `grok` CLI/TUI and its agent
-runtime. It is synced periodically from the SpaceXAI monorepo.
-
-A small `SOURCE_REV` file at the root records the full monorepo commit SHA
-for the version of the code present in this tree.
-
-</div>
-
----
-
-## Installing the released binary
-
-Prebuilt binaries are published for macOS, Linux, and Windows:
+**Aiko** is a Contract-native agent for your laptop. It understands a
+codebase, edits files, runs commands, searches the web, and manages long-running
+work from a terminal TUI, headless scripts, or editors using ACP.
 
 ```sh
-curl -fsSL https://x.ai/cli/install.sh | bash   # macOS / Linux / Git Bash
-irm https://x.ai/cli/install.ps1 | iex          # Windows PowerShell
-grok --version
+aiko
+aiko "fix the failing test"
+aiko --single "review this repository"
 ```
 
-See the [changelog](https://x.ai/build/changelog) for the latest fixes,
-features, and improvements in each release.
+Contract is built into the turn lifecycle. Users ask Aiko for an outcome; Aiko
+automatically declares that goal in the local Contract ledger before work
+starts and appends a satisfied verdict only when the agent reaches a genuine
+end-of-turn result. There is no `/contract` command and users do not need to
+invoke the `contract` binary themselves.
 
-## Building from source
+The split is intentional:
+
+- **Aiko** is the public agent, environment, and binary.
+- **Contract** is the local signed ledger row and resolver substrate.
+- A prompt becomes one contract declaration.
+- Successful completion becomes the contract verdict.
+- Cancelled and failed turns remain unresolved instead of being reported as
+  successful.
+
+The bridge loads Contract's canonical dylib once and uses its native ABI and
+row schema, so the same
+ledger remains readable by Contract tooling. If the substrate is temporarily
+unavailable, Aiko continues the user’s work and records a debug event; ledger
+bookkeeping never blocks the agent.
+
+## Building
 
 Requirements:
 
-- **Rust** — the toolchain is pinned by [`rust-toolchain.toml`](rust-toolchain.toml);
-  `rustup` installs it automatically on first build.
-- **[DotSlash](https://dotslash-cli.com)** — required so hermetic tools under
-  [`bin/`](bin/) (notably [`bin/protoc`](bin/protoc)) can download and run.
-  Install it and ensure `dotslash` is on your `PATH` **before** building:
-
-  ```sh
-  cargo install dotslash
-  # or: prebuilt packages — https://dotslash-cli.com/docs/installation/
-  /usr/bin/env dotslash --help   # sanity check
-  ```
-
-- **protoc** — proto codegen resolves [`bin/protoc`](bin/protoc) via DotSlash,
-  or falls back to a `protoc` on `PATH` / `$PROTOC`.
-- macOS and Linux are supported build hosts; Windows builds are best-effort
-  and not currently tested from this tree.
+- Rust (the repository pins its toolchain in `rust-toolchain.toml`)
+- DotSlash for the hermetic tools under `bin/`
+- Contract's `libcontract.dylib` installed at `~/.aiko/lib/` (or selected with
+  `AIKO_CONTRACT_LIBRARY`)
 
 ```sh
-cargo run -p xai-grok-pager-bin              # build + launch the TUI
-cargo build -p xai-grok-pager-bin --release  # release binary: target/release/xai-grok-pager
-cargo check -p xai-grok-pager-bin            # fast validation
+cargo run -p xai-grok-pager-bin
+scripts/contract-runtime.sh build-aiko
+cargo check -p xai-grok-pager-bin
 ```
 
-The binary artifact is named `xai-grok-pager`; official installs ship it as
-`grok`. On first launch it opens your browser to authenticate — see the
-[authentication guide](crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md).
+The release artifact is `target/release/aiko`. Internal crate names retain
+their existing `xai-grok-*` names for source and workspace compatibility.
 
-## Documentation
+## Contract runtime packaging
 
-Full online documentation is available at
-[docs.x.ai/build/overview](https://docs.x.ai/build/overview).
+Aiko and Contract remain separate source repositories. Contract is built as a
+native runtime library and shipped in the same package as Aiko:
 
-The user guide ships with the pager crate:
-[`crates/codegen/xai-grok-pager/docs/user-guide/`](crates/codegen/xai-grok-pager/docs/user-guide/)
-— getting started, keyboard shortcuts, slash commands, configuration, theming,
-MCP servers, skills, plugins, hooks, headless mode, sandboxing, and more.
+```text
+aiko-<version>-<platform>/
+├── bin/aiko
+├── lib/libcontract.dylib
+├── manifest.json
+└── install.sh
+```
+
+Build and install the combined, checksummed package:
+
+```sh
+scripts/contract-runtime.sh package
+scripts/contract-runtime.sh install
+```
+
+Packages are written under `target/aiko-package/`. The installer atomically
+installs Aiko to `${AIKO_BIN_DIR:-~/bin}/aiko` and Contract to
+`${AIKO_HOME:-~/.aiko}/lib/libcontract.dylib`.
+
+`build-aiko` and invoking `contract-runtime.sh` with no command both refresh
+the combined Aiko + Contract package by default, so a successful application
+build cannot leave a stale Contract runtime in the distributable. Use
+`build-aiko-only` only for an intentionally unpackaged inner-loop build.
+
+For linked development, keep Contract as the source of truth:
+
+```sh
+scripts/contract-runtime.sh dev-link
+scripts/contract-runtime.sh watch
+```
+
+`dev-link` makes the installed Contract library a symlink to the sibling
+Contract repository's `zig-out` artifact. `watch` rebuilds that artifact when
+Contract sources change; newly started Aiko processes load the new build
+without copying it into this repository or rebuilding Aiko.
 
 ## Repository layout
 
 | Path | Contents |
 |------|----------|
-| `crates/codegen/xai-grok-pager-bin` | Composition-root package; builds the `xai-grok-pager` binary |
-| `crates/codegen/xai-grok-pager` | The TUI: scrollback, prompt, modals, rendering |
-| `crates/codegen/xai-grok-shell` | Agent runtime + leader/stdio/headless entry points |
-| `crates/codegen/xai-grok-tools` | Tool implementations (terminal, file edit, search, ...) |
-| `crates/codegen/xai-grok-workspace` | Host filesystem, VCS, execution, checkpoints |
-| `crates/codegen/...` | The rest of the CLI crate closure (config, MCP, markdown, sandbox, ...) |
-| `crates/common/`, `crates/build/`, `prod/mc/` | Small shared leaf crates pulled in by the closure |
-| `third_party/` | Vendored upstream source (Mermaid diagram stack) — see below |
+| `crates/codegen/xai-grok-pager-bin` | Composition root for the `aiko` binary |
+| `crates/codegen/xai-grok-pager` | TUI, prompts, modals, and rendering |
+| `crates/codegen/xai-grok-shell` | Agent runtime and the Contract-native turn bridge |
+| `crates/codegen/xai-grok-tools` | Terminal, file, search, and other tools |
+| `crates/common/xai-application-runtime` | Aiko-owned CDP and Electron primitives |
+| `crates/codegen/xai-grok-workspace` | Filesystem, VCS, execution, and checkpoints |
+| `third_party/` | Vendored upstream source |
 
-> [!IMPORTANT]
-> The root `Cargo.toml` (workspace members, dependency versions, lints,
-> profiles) is **generated** — treat it as read-only. Prefer editing per-crate
-> `Cargo.toml` files.
+The root `Cargo.toml` is generated. Prefer editing individual crate manifests.
 
 ## Development
 
 ```sh
-cargo check -p <crate>        # always target specific crates; full-workspace builds are slow
-cargo test -p xai-grok-config # per-crate tests
-cargo clippy -p <crate>       # lint config: clippy.toml at the repo root
-cargo fmt --all               # rustfmt.toml at the repo root
+cargo test -p xai-grok-shell contract_native
+cargo test -p xai-grok-pager app::cli
+cargo fmt --all
 ```
 
-## Contributing
-
-> [!NOTE]
-> External contributions are not accepted. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
-
-## License
-
-First-party code in this repository is licensed under the **Apache License,
-Version 2.0** — see [`LICENSE`](LICENSE).
-
-Third-party and vendored code remains under its original licenses. See:
-
-- [`THIRD-PARTY-NOTICES`](THIRD-PARTY-NOTICES) — crates.io / git dependencies,
-  bundled UI themes, and **in-tree source ports** (including openai/codex and
-  sst/opencode tool implementations)
-- [`crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md`](crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md)
-  — crate-local notice for the codex and opencode ports (license texts +
-  Apache §4(b) change notice)
-- [`third_party/NOTICE`](third_party/NOTICE) — vendored Mermaid-stack index
+First-party code is licensed under Apache License 2.0. See `LICENSE` and
+`THIRD-PARTY-NOTICES`.

@@ -42,8 +42,12 @@ pub const DEFAULT_AGENT_TYPE: &str = "grok-build-plan";
 pub fn default_agent_type() -> String {
     DEFAULT_AGENT_TYPE.to_owned()
 }
-/// Default base URL for the cli chat proxy.
-pub const CLI_CHAT_PROXY_BASE_URL_DEFAULT: &str = "https://cli-chat-proxy.grok.com/v1";
+/// Default base URL for Aiko's authenticated, provider-neutral inference gateway.
+///
+/// The gateway owns upstream provider credentials and accounts usage to the
+/// OAuth bearer token. Clients must never receive a Codegraff (or other
+/// provider) API key.
+pub const CLI_CHAT_PROXY_BASE_URL_DEFAULT: &str = "https://aiko.theclarityproject.net/v1";
 /// Default base URL for the public xAI API.
 pub const XAI_API_BASE_URL_DEFAULT: &str = "https://api.x.ai/v1";
 /// Default base URL for the asset server (profile images, etc.).
@@ -4686,7 +4690,7 @@ pub fn inject_url_derived_headers(
     if crate::util::is_cli_chat_proxy_url(base_url) {
         headers
             .entry("X-XAI-Token-Auth".to_string())
-            .or_insert_with(|| "xai-grok-cli".to_string());
+            .or_insert_with(|| GrokComConfig::default().token_header);
         headers
             .entry("x-authenticateresponse".to_string())
             .or_insert_with(|| "authenticate-response".to_string());

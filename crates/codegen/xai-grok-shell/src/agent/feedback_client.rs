@@ -504,7 +504,10 @@ impl FeedbackClient {
         // User-token auth requires the companion marker header for proxy
         // routing. Deployment keys do not need it.
         if self.credentials.deployment_key.is_none() {
-            builder.header("X-XAI-Token-Auth", "xai-grok-cli")
+            builder.header(
+                "X-XAI-Token-Auth",
+                crate::auth::GrokComConfig::default().token_header,
+            )
         } else {
             builder
         }

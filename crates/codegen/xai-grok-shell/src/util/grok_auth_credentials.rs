@@ -124,7 +124,7 @@ impl GrokAuthCredentials {
                 .header("Authorization", format!("Bearer {}", token))
                 .header(
                     obfstr::obfstr!("X-XAI-Token-Auth"),
-                    obfstr::obfstr!("xai-grok-cli"),
+                    crate::auth::GrokComConfig::default().token_header,
                 )
         } else {
             builder

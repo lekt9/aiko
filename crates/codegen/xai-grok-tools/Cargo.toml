@@ -28,6 +28,7 @@ base64 = { workspace = true }
 crc32fast = { workspace = true }
 ignore = { workspace = true }
 infer = { workspace = true }
+libloading = "0.8"
 globset = { workspace = true }
 image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff", "ico"] }
 pdf_oxide = { workspace = true }
@@ -54,6 +55,7 @@ xai-tool-types = { workspace = true }
 xai-tool-protocol = { workspace = true }
 xai-computer-hub-core = { workspace = true }
 xai-computer-hub-sdk = { workspace = true }
+xai-application-runtime = { path = "../../common/xai-application-runtime" }
 
 futures = { workspace = true }
 similar = { workspace = true }

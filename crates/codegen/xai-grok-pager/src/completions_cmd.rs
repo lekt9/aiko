@@ -12,7 +12,7 @@ use crate::app::PagerArgs;
 pub fn run(shell: Shell) {
     // Ensure the script always uses the public "grok" name (matches historical
     // behavior and what the installers + docs expect).
-    let mut cmd = PagerArgs::command().name("grok");
+    let mut cmd = PagerArgs::command().name("aiko");
     if shell != Shell::Zsh {
         generate(shell, &mut cmd, "grok", &mut std::io::stdout());
         return;
@@ -80,7 +80,7 @@ mod tests {
 
     /// Generate the zsh completion script exactly like `run` does.
     fn zsh_script() -> String {
-        let mut cmd = PagerArgs::command().name("grok");
+        let mut cmd = PagerArgs::command().name("aiko");
         let mut buf = Vec::new();
         generate(Shell::Zsh, &mut cmd, "grok", &mut buf);
         String::from_utf8(buf).expect("completion script is UTF-8")

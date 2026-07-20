@@ -396,19 +396,15 @@ mod tests {
     fn update_catalog_preserves_user_effort_when_model_unchanged() {
         let id = acp::ModelId::new(Arc::from("grok-build"));
         let mut state = ModelState::default();
-        state.available.insert(
-            id.clone(),
-            model_with_effort("grok-build", "Grok Build", "high"),
-        );
+        state
+            .available
+            .insert(id.clone(), model_with_effort("grok-build", "Aiko", "high"));
         state.set_current(id.clone(), Some(ReasoningEffort::Xhigh));
         assert_eq!(state.reasoning_effort, Some(ReasoningEffort::Xhigh));
 
         // The broadcast carries the model's static default (high) for the same model.
         let mut refreshed = IndexMap::new();
-        refreshed.insert(
-            id.clone(),
-            model_with_effort("grok-build", "Grok Build", "high"),
-        );
+        refreshed.insert(id.clone(), model_with_effort("grok-build", "Aiko", "high"));
         state.update_catalog(refreshed, Some(id.clone()));
 
         assert_eq!(

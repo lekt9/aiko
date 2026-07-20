@@ -297,10 +297,27 @@ impl AuthManager {
             tracing::warn!("GROK_AUTH set but failed to parse as JSON, falling back to file");
         }
 
-        // GROK_AUTH_PATH: custom file path (overrides default $GROK_HOME/auth.json).
-        let path = std::env::var("GROK_AUTH_PATH")
+        // Keep Aiko and upstream Grok credentials in separate files. Both
+        // binaries may run on the same machine and use different OAuth scopes;
+        // sharing ~/.grok/auth.json lets either writer discard the other's
+        // scope. Explicit auth-path overrides still win.
+        let default_auth_path = if grok_com_config
+            .oauth2
+            .as_ref()
+            .is_some_and(|oauth| oauth.issuer == crate::auth::XAI_OAUTH2_ISSUER)
+        {
+            grok_home
+                .parent()
+                .unwrap_or(grok_home)
+                .join(".aiko")
+                .join("auth.json")
+        } else {
+            grok_home.join("auth.json")
+        };
+        let path = std::env::var("AIKO_AUTH_PATH")
+            .or_else(|_| std::env::var("GROK_AUTH_PATH"))
             .map(PathBuf::from)
-            .unwrap_or_else(|_| grok_home.join("auth.json"));
+            .unwrap_or(default_auth_path);
 
         let (auth, auth_read_detail, initial_disk_state) = match read_auth_json(&path) {
             Ok(map) => {

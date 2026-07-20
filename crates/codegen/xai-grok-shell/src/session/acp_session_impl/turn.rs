@@ -231,6 +231,20 @@ impl SessionActor {
             .sum();
         tracing::Span::current().record("prompt_length", prompt_length as i64);
         *self.active_skill.lock() = None;
+        // Install the pre-model Contract decision into the live tool
+        // dispatcher. Application primitives now consume the same typed route
+        // that grounded the prompt; it is not merely advisory prompt text.
+        let capability_route = crate::contract_native::take_capability_route(prompt_id);
+        self.agent
+            .borrow()
+            .tool_bridge()
+            .update_resource(
+                xai_grok_tools::implementations::application::ApplicationCapabilityRoute {
+                    prompt_id: prompt_id.to_owned(),
+                    route: capability_route,
+                },
+            )
+            .await;
         xai_grok_telemetry::unified_log::info(
             "shell.handle_prompt.start",
             Some(self.session_info.id.0.as_ref()),

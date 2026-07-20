@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use strum::{AsRefStr, Display, EnumIter, EnumString, IntoStaticStr};
+use xai_grok_tools::implementations::application;
 use xai_grok_tools::implementations::codex;
 use xai_grok_tools::implementations::grok_build;
 use xai_grok_tools::implementations::grok_build_concise;
@@ -280,6 +281,8 @@ fn default_grok_build_toolset() -> ToolServerConfig {
             (&search_tool::SearchTool).into(),
             (&use_tool::UseTool).into(),
             (&grok_build::UpdateGoalTool).into(),
+            (&application::ApplicationObserveTool).into(),
+            (&application::ApplicationActTool).into(),
         ],
         behavior_preset: None,
     }
@@ -413,6 +416,8 @@ fn grok_build_plan_toolset() -> ToolServerConfig {
             (&grok_build::EnterPlanModeTool).into(),
             (&grok_build::ExitPlanModeTool).into(),
             (&grok_build::AskUserQuestionTool).into(),
+            (&application::ApplicationObserveTool).into(),
+            (&application::ApplicationActTool).into(),
         ],
         behavior_preset: None,
     }
@@ -482,6 +487,8 @@ fn grok_build_plan_no_subagents_toolset() -> ToolServerConfig {
             (&grok_build::EnterPlanModeTool).into(),
             (&grok_build::ExitPlanModeTool).into(),
             (&grok_build::AskUserQuestionTool).into(),
+            (&application::ApplicationObserveTool).into(),
+            (&application::ApplicationActTool).into(),
         ],
         behavior_preset: None,
     }
@@ -511,6 +518,8 @@ fn grok_build_ask_user_toolset() -> ToolServerConfig {
             (&use_tool::UseTool).into(),
             (&grok_build::UpdateGoalTool).into(),
             (&grok_build::AskUserQuestionTool).into(),
+            (&application::ApplicationObserveTool).into(),
+            (&application::ApplicationActTool).into(),
         ],
         behavior_preset: None,
     }
@@ -2194,6 +2203,33 @@ description: Test default tool config
             !def.tool_config.tools.is_empty(),
             "default tool_config should have grok_build tools"
         );
+        for id in ["GrokBuild:application_observe", "GrokBuild:application_act"] {
+            assert!(
+                def.tool_config.tools.iter().any(|tool| tool.id == id),
+                "default tool_config should expose {id}"
+            );
+        }
+    }
+    #[test]
+    fn test_managed_grok_build_toolsets_expose_contract_native_application_tools() {
+        let toolsets = [
+            ("grok-build", default_grok_build_toolset()),
+            ("grok-build-plan", grok_build_plan_toolset()),
+            (
+                "grok-build-plan-no-subagents",
+                grok_build_plan_no_subagents_toolset(),
+            ),
+            ("grok-build-ask-user", grok_build_ask_user_toolset()),
+        ];
+
+        for (name, toolset) in toolsets {
+            for id in ["GrokBuild:application_observe", "GrokBuild:application_act"] {
+                assert!(
+                    toolset.tools.iter().any(|tool| tool.id == id),
+                    "{name} should expose {id}"
+                );
+            }
+        }
     }
     #[test]
     fn test_permission_mode_round_trips() {

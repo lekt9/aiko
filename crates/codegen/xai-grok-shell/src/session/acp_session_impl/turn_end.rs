@@ -180,6 +180,7 @@ impl SessionActor {
             current_prompt_id.is_none()
         };
         if became_idle {
+            crate::contract_native::warm_router_background(8);
             self.flush_pending_skill_reminders().await;
             // Idle-gated: a stale completion must not clobber the promoted turn's resources.
             self.agent
@@ -254,6 +255,23 @@ impl SessionActor {
         // Drop the state guard before the async emit so the persist/broadcast
         // fork doesn't run under the state lock.
         drop(state);
+
+        if owned_completion {
+            let succeeded = matches!(
+                &result,
+                Ok(PromptTurnOk {
+                    completion_kind: PromptCompletionKind::Completed,
+                    ..
+                })
+            );
+            let detail = if succeeded {
+                "Aiko ContractWake turn completed"
+            } else {
+                "Aiko ContractWake turn did not complete; released for retry"
+            };
+            let _ =
+                crate::contract_native::settle_contract_prompt(&prompt_id, succeeded, detail).await;
+        }
 
         // Durable twin of the fire-and-forget `prompt_complete` (emitted from
         // `MvpAgent::prompt`): publish the turn's terminal on the persisted +

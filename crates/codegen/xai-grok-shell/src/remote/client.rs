@@ -742,7 +742,7 @@ pub(crate) fn fetch_models_blocking(
             })?;
             request = request
                 .header("Authorization", format!("Bearer {}", &auth.key))
-                .header("X-XAI-Token-Auth", "xai-grok-cli")
+                .header("X-XAI-Token-Auth", GrokComConfig::default().token_header)
                 .header("x-userid", &auth.user_id)
                 .header("x-grok-client-version", xai_grok_version::VERSION)
                 .header(

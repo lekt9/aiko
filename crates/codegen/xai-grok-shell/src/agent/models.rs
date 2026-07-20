@@ -1374,7 +1374,7 @@ impl ModelsCacheManager {
 ///
 /// Each entry is keyed by its `id` field (falling back to the `model` slug
 /// when `id` is absent). This lets A/B experiments that share the same
-/// routing slug (e.g. "Auto" and "Grok Build" both route to `grok-build`)
+/// routing slug (e.g. "Auto" and "Aiko" both route to `grok-build`)
 /// coexist in the catalog without collision.
 fn build_prefetched_map(
     models: Vec<config::ModelEntryConfig>,
@@ -3397,7 +3397,7 @@ mod tests {
     fn build_prefetched_map_distinct_ids_same_slug() {
         let entries = vec![
             make_entry_config_with_id(Some("auto"), "grok-build", Some("Auto")),
-            make_entry_config_with_id(Some("grok-build"), "grok-build", Some("Grok Build")),
+            make_entry_config_with_id(Some("grok-build"), "grok-build", Some("Aiko")),
             make_entry_config_with_id(
                 Some("grok-composer-2.5-fast"),
                 "grok-composer-2.5-fast",
@@ -3466,11 +3466,7 @@ mod tests {
     /// No id field — falls back to slug as key.
     #[test]
     fn build_prefetched_map_none_id_falls_back_to_slug() {
-        let entries = vec![make_entry_config_with_id(
-            None,
-            "grok-build",
-            Some("Grok Build"),
-        )];
+        let entries = vec![make_entry_config_with_id(None, "grok-build", Some("Aiko"))];
         let map = build_prefetched_map(entries, None);
 
         assert_eq!(map.len(), 1);
