@@ -356,9 +356,44 @@ pub struct HookRunEntryDto {
     pub output: Option<String>,
 }
 
+/// Privacy-safe candidate summary for native FECH diagnostics.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct CapabilityCandidateDto {
+    pub capability_id: String,
+    pub capability_version: String,
+    pub provider: String,
+    pub tool: String,
+    pub action: String,
+    pub status: String,
+    pub score: f64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reason_codes: Vec<String>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "sessionUpdate")]
 pub enum SessionUpdate {
+    /// FECH's prompt-scoped capability routing decision. Clients render this
+    /// as compact diagnostics; it is not model conversation content.
+    CapabilityPlan {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selected_route: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        candidates: Vec<CapabilityCandidateDto>,
+        /// `selected`, `fallback`, or `degraded`.
+        status: String,
+        confidence: f64,
+        #[serde(default)]
+        automatic: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        freshness: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        prerequisites: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        reason_codes: Vec<String>,
+        /// `unverified`, `learning`, `learned`, or `unavailable`.
+        learning_status: String,
+    },
     /// A diff review request containing one or more file diffs for user review.
     DiffReview {
         /// The diff content to be reviewed.
@@ -2311,5 +2346,37 @@ mod tests {
         assert!(serde_json::from_str::<SessionUpdate>(missing_prompt_id).is_err());
         let missing_stop_reason = r#"{"sessionUpdate": "turn_completed", "prompt_id": "p-1"}"#;
         assert!(serde_json::from_str::<SessionUpdate>(missing_stop_reason).is_err());
+    }
+
+    #[test]
+    fn capability_plan_is_a_structured_non_chat_update() {
+        let update = SessionUpdate::CapabilityPlan {
+            selected_route: Some("unbrowse.clinic.appointments@2".to_owned()),
+            candidates: vec![CapabilityCandidateDto {
+                capability_id: "unbrowse.clinic.appointments".to_owned(),
+                capability_version: "2".to_owned(),
+                provider: "unbrowse".to_owned(),
+                tool: "Bash".to_owned(),
+                action: "unbrowse execute --skill clinic --endpoint appointments".to_owned(),
+                status: "verified_fresh".to_owned(),
+                score: 0.91,
+                reason_codes: vec!["proven_success".to_owned()],
+            }],
+            status: "selected".to_owned(),
+            confidence: 0.91,
+            automatic: true,
+            freshness: Some("fresh".to_owned()),
+            prerequisites: vec!["application.attach".to_owned()],
+            reason_codes: vec!["proven_success".to_owned()],
+            learning_status: "learned".to_owned(),
+        };
+        let encoded = serde_json::to_value(&update).unwrap();
+        assert_eq!(encoded["sessionUpdate"], "capability_plan");
+        assert_eq!(encoded["selected_route"], "unbrowse.clinic.appointments@2");
+        assert!(encoded.get("content").is_none());
+        assert_eq!(
+            serde_json::from_value::<SessionUpdate>(encoded).unwrap(),
+            update
+        );
     }
 }

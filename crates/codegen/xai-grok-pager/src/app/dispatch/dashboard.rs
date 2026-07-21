@@ -21,6 +21,7 @@ use crate::app::agent::AgentId;
 use crate::app::agent_view::AgentView;
 use crate::app::app_view::{ActiveView, AppView, TrustState};
 use agent_client_protocol as acp;
+use xai_grok_shell::provider::Provider;
 
 // ---------------------------------------------------------------------------
 // Agent Dashboard dispatchers
@@ -1289,9 +1290,11 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
             let token = invocation.token.to_string();
             if let Some(d) = app.dashboard.as_mut() {
                 d.dispatch.set_text("");
+                let provider = Provider::from_env();
                 d.set_error_toast(&format!(
-                    "/{token} requires SuperGrok — upgrade at {}",
-                    super::billing::UPSELL_URL_UPGRADE
+                    "/{token} requires {} — upgrade at {}",
+                    provider.premium_tier_display(),
+                    super::billing::upsell_url_upgrade(provider),
                 ));
             }
             return vec![];

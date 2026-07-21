@@ -3,6 +3,7 @@
 //! The merged result is the **default** config; requirements layers
 //! sit on top via [`crate::validation`].
 
+use std::io::Write;
 use std::path::Path;
 
 use crate::paths::{system_config_dir, user_grok_home};
@@ -80,8 +81,32 @@ pub fn load_config_file(path: &Path) -> std::io::Result<toml::Value> {
     Ok(v)
 }
 
+const DEFAULT_USER_CONFIG: &str = "[models]\ndefault = \"mimo-v2.5\"\n";
+
+/// Seed a minimal first-run config without ever replacing an existing file.
+///
+/// `create_new` makes concurrent Aiko startups safe: exactly one process wins
+/// creation and every other process leaves that file untouched.
+fn ensure_default_user_config(home: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(home)?;
+    let path = home.join("config.toml");
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(mut file) => file.write_all(DEFAULT_USER_CONFIG.as_bytes()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 pub fn load_from_disk() -> std::io::Result<toml::Value> {
-    load_user_config_layer(user_grok_home().as_deref(), "config.toml")
+    let home = user_grok_home();
+    if let Some(home) = home.as_deref() {
+        ensure_default_user_config(home)?;
+    }
+    load_user_config_layer(home.as_deref(), "config.toml")
 }
 
 /// Managed config filename, shared by the loaders in this module.
@@ -634,6 +659,30 @@ mod tests {
         // cwd-relative .grok read.
         let v = load_user_config_layer(None, "config.toml").unwrap();
         assert_eq!(v.as_table().map(|t| t.is_empty()), Some(true));
+    }
+
+    #[test]
+    fn first_run_config_defaults_to_mimo() {
+        let dir = tempfile::tempdir().unwrap();
+
+        ensure_default_user_config(dir.path()).unwrap();
+
+        let raw = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+        let parsed: toml::Value = toml::from_str(&raw).unwrap();
+        assert_eq!(parsed["models"]["default"].as_str(), Some("mimo-v2.5"));
+    }
+
+    #[test]
+    fn first_run_config_never_overwrites_existing_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[models]\ndefault = \"custom-model\"\n").unwrap();
+
+        ensure_default_user_config(dir.path()).unwrap();
+
+        let raw = std::fs::read_to_string(path).unwrap();
+        assert!(raw.contains("custom-model"));
+        assert!(!raw.contains("mimo-v2.5"));
     }
 
     #[test]

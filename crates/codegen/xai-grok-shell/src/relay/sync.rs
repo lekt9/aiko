@@ -25,10 +25,11 @@ const MAX_PENDING: usize = 256;
 const DROP_BATCH_SIZE: usize = 64;
 
 /// Build the share URL for a session.
-/// Format: https://grok.com/build/{sessionId}
+/// The public base is Aiko-owned and can be overridden for self-hosted deployments.
 pub fn build_share_url(session_id: &str) -> String {
-    let base_url =
-        std::env::var("GROK_CODE_WEB_URL").unwrap_or_else(|_| "https://grok.com".to_string());
+    let base_url = std::env::var("AIKO_WEB_URL")
+        .or_else(|_| std::env::var("GROK_CODE_WEB_URL"))
+        .unwrap_or_else(|_| "https://aiko.theclarityproject.net".to_string());
     format!("{}/build/{}", base_url, session_id)
 }
 

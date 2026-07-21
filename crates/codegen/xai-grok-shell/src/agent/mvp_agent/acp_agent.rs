@@ -2412,7 +2412,7 @@ impl acp::Agent for MvpAgent {
             self.gateway
                 .forward_fire_and_forget(
                     acp::ExtNotification::new(
-                        "x.ai/session/prompt_complete",
+                        "aiko/session/prompt_complete",
                         params.into(),
                     ),
                 );

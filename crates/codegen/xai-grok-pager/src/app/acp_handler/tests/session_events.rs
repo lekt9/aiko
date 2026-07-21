@@ -136,7 +136,11 @@
 
     #[test]
     fn retry_exhausted_rate_limited_empty_reason_uses_oauth_fallback() {
-        use xai_grok_shell::sampling::error::RATE_LIMITED_USER_MESSAGE_OAUTH;
+        // OAuth message is generic (same for all providers).
+        let expected = xai_grok_shell::sampling::error::rate_limited_user_message(
+            false,
+            xai_grok_shell::provider::Provider::Grok,
+        );
 
         let empty = RetryState::Exhausted {
             attempts: 3,
@@ -149,7 +153,7 @@
         apply_retry_state(&empty, &mut session, &mut scrollback, false);
         match last_session_event(&scrollback) {
             Some(SessionEvent::RetryFailed { error, .. }) => {
-                assert_eq!(error, RATE_LIMITED_USER_MESSAGE_OAUTH);
+                assert_eq!(error, expected);
             }
             other => panic!("expected empty-rate-limit RetryFailed, got {other:?}"),
         }
@@ -178,7 +182,13 @@
 
     #[test]
     fn retry_exhausted_api_key_rewrites_consumer_subscription_upsell() {
-        use xai_grok_shell::sampling::error::RATE_LIMITED_USER_MESSAGE_API_KEY;
+        // Use Grok provider so the Grok.com upsell in the server detail is detected.
+        // SAFETY: serial_test ensures no concurrent env mutation.
+        unsafe { std::env::set_var("AIKO_PROVIDER", "grok") };
+        let expected = xai_grok_shell::sampling::error::rate_limited_user_message(
+            true,
+            xai_grok_shell::provider::Provider::Grok,
+        );
 
         let rpm = RetryState::Exhausted {
             attempts: 2,
@@ -194,11 +204,12 @@
         apply_retry_state(&rpm, &mut session, &mut scrollback, true);
         match last_session_event(&scrollback) {
             Some(SessionEvent::RetryFailed { error, .. }) => {
-                assert_eq!(error, RATE_LIMITED_USER_MESSAGE_API_KEY);
+                assert_eq!(error, expected);
                 assert!(!error.contains("grok.com/supergrok"));
             }
             other => panic!("expected API-key rate-limit RetryFailed, got {other:?}"),
         }
+        unsafe { std::env::remove_var("AIKO_PROVIDER") };
     }
 
     #[test]

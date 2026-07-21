@@ -4,6 +4,9 @@ use super::auth::{
     dispatch_switch_account,
 };
 use super::billing::dispatch_open_supergrok_url;
+use super::contracts::{
+    dispatch_exit_contracts, dispatch_open_contracts, dispatch_refresh_contracts,
+};
 use super::ctx::{
     active_agent_session_id, get_active_agent_mut, navigate_clearing_selection, open_url_or_show,
     sync_sleep_inhibitor, with_active_agent, with_scrollback,
@@ -1170,6 +1173,9 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         }
         Action::OpenDashboard => dispatch_open_dashboard(app),
         Action::ExitDashboard => dispatch_exit_dashboard(app),
+        Action::OpenContracts => dispatch_open_contracts(app),
+        Action::ExitContracts => dispatch_exit_contracts(app),
+        Action::RefreshContracts => dispatch_refresh_contracts(app),
         Action::DashboardAttach(id) => dispatch_dashboard_attach(app, id),
         Action::DashboardDispatch { text, attach } => {
             dispatch_dashboard_dispatch(app, text, attach)

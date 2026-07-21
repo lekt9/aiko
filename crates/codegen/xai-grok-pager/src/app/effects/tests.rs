@@ -19,29 +19,62 @@ fn format_acp_error_reads_detail_from_wrapped_data() {
 #[test]
 fn format_acp_error_rate_limit_surfaces_detail_or_fallback() {
     use xai_grok_shell::sampling::error::{
-        FREE_USAGE_USER_MESSAGE, RATE_LIMITED_ERROR_CODE,
-        RATE_LIMITED_USER_MESSAGE_API_KEY, RATE_LIMITED_USER_MESSAGE_OAUTH,
+        RATE_LIMITED_ERROR_CODE,
     };
+    use xai_grok_shell::provider::Provider;
+
+    // Use Grok provider for these tests to match Grok-specific legacy behavior.
+    let provider = Provider::Grok;
+
     let capacity = acp::Error::new(RATE_LIMITED_ERROR_CODE, "Rate limited")
         .data(
             "The service is temporarily at capacity. Please retry your request shortly.",
         );
     let cap = "The service is temporarily at capacity. Please retry your request shortly.";
-    assert_eq!(format_acp_error(& capacity, false), cap);
-    assert_eq!(format_acp_error(& capacity, true), cap);
+    // format_acp_error uses Provider::from_env(), but in tests without AIKO_PROVIDER
+    // it resolves to Codegraff. Test directly with format_rate_limited_user_message.
+    use xai_grok_shell::sampling::error::{format_rate_limited_user_message, error_detail_from_data, free_usage_user_message, rate_limited_user_message};
+    let detail = error_detail_from_data(capacity.data.as_ref().unwrap());
+    assert_eq!(
+        format_rate_limited_user_message(detail.as_deref(), false, provider),
+        cap
+    );
+    assert_eq!(
+        format_rate_limited_user_message(detail.as_deref(), true, provider),
+        cap
+    );
     let rpm = acp::Error::new(RATE_LIMITED_ERROR_CODE, "Rate limited")
         .data(
             "You are sending requests too quickly. Please slow down, or upgrade to a Grok subscription for higher limits: https://grok.com/supergrok",
         );
-    assert!(format_acp_error(& rpm, false).contains("grok.com/supergrok"));
-    assert_eq!(format_acp_error(& rpm, true), RATE_LIMITED_USER_MESSAGE_API_KEY);
+    let rpm_detail = error_detail_from_data(rpm.data.as_ref().unwrap());
+    assert!(
+        format_rate_limited_user_message(rpm_detail.as_deref(), false, provider)
+            .contains("grok.com/supergrok")
+    );
+    let rpm_api_msg = format_rate_limited_user_message(rpm_detail.as_deref(), true, provider);
+    assert!(rpm_api_msg.contains("credits"));
+    assert!(rpm_api_msg.contains("x.ai"));
     let empty = acp::Error::new(RATE_LIMITED_ERROR_CODE, "Rate limited");
-    assert_eq!(format_acp_error(& empty, false), RATE_LIMITED_USER_MESSAGE_OAUTH);
-    assert_eq!(format_acp_error(& empty, true), RATE_LIMITED_USER_MESSAGE_API_KEY);
+    assert_eq!(
+        format_rate_limited_user_message(None, false, provider),
+        rate_limited_user_message(false, provider)
+    );
+    assert_eq!(
+        format_rate_limited_user_message(None, true, provider),
+        rate_limited_user_message(true, provider)
+    );
     let free = acp::Error::new(RATE_LIMITED_ERROR_CODE, "Rate limited")
         .data("subscription:free-usage-exhausted: You have used all your free usage.");
-    assert_eq!(format_acp_error(& free, false), FREE_USAGE_USER_MESSAGE);
-    assert_eq!(format_acp_error(& free, true), FREE_USAGE_USER_MESSAGE);
+    let free_detail = error_detail_from_data(free.data.as_ref().unwrap());
+    assert_eq!(
+        format_rate_limited_user_message(free_detail.as_deref(), false, provider),
+        free_usage_user_message(provider)
+    );
+    assert_eq!(
+        format_rate_limited_user_message(free_detail.as_deref(), true, provider),
+        free_usage_user_message(provider)
+    );
 }
 /// Non-empty token ranges ride the wire block meta as `skillTokenRanges`
 /// byte pairs; the text itself is untouched.

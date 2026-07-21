@@ -210,7 +210,7 @@ impl SessionActor {
     pub(super) async fn handle_prompt(
         self: &Arc<Self>,
         prompt_id: &str,
-        prompt_blocks: Vec<acp::ContentBlock>,
+        mut prompt_blocks: Vec<acp::ContentBlock>,
         prompt_mode: PromptMode,
         trace_gcs_config: Option<crate::session::repo_changes::TraceExportConfig>,
         artifact_tracker: Option<crate::upload::manifest::ArtifactTracker>,
@@ -234,7 +234,45 @@ impl SessionActor {
         // Install the pre-model Contract decision into the live tool
         // dispatcher. Application primitives now consume the same typed route
         // that grounded the prompt; it is not merely advisory prompt text.
-        let capability_route = crate::contract_native::take_capability_route(prompt_id);
+        let legacy_capability_route = crate::contract_native::take_capability_route(prompt_id);
+        let routing_goal = prompt_blocks
+            .iter()
+            .filter_map(|block| match block {
+                acp::ContentBlock::Text(text) if !text.text.starts_with("<system-reminder>") => {
+                    Some(text.text.as_str())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let live_tool_definitions = self.agent.borrow().tool_definitions().await;
+        let dynamic_capability_route = crate::contract_native::refresh_capabilities_and_recommend(
+            live_tool_definitions,
+            std::path::PathBuf::from(&self.session_info.cwd),
+            routing_goal.clone(),
+        )
+        .await;
+        if let Some(plan) = &dynamic_capability_route {
+            prompt_blocks.push(acp::ContentBlock::Text(acp::TextContent::new(format!(
+                "<system-reminder>\n{}\n</system-reminder>",
+                crate::contract_native::render_capability_plan_context(plan)
+            ))));
+        }
+        crate::contract_native::set_active_capability_plan(
+            self.session_info.id.0.as_ref(),
+            routing_goal,
+            dynamic_capability_route.clone(),
+        );
+        if crate::contract_native::should_emit_capability_diagnostic(
+            self.session_info.id.0.as_ref(),
+            dynamic_capability_route.is_some(),
+        ) {
+            self.send_xai_notification(crate::contract_native::capability_plan_notification(
+                dynamic_capability_route.as_ref(),
+            ))
+            .await;
+        }
+        let capability_route = dynamic_capability_route.or(legacy_capability_route);
         self.agent
             .borrow()
             .tool_bridge()

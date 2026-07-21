@@ -7,6 +7,7 @@ pub mod block_viewer;
 pub mod btw_overlay;
 pub mod completion_dropdown;
 pub mod context_bar;
+pub mod contracts;
 pub mod credit_bar;
 pub mod dashboard;
 pub mod debug_style;

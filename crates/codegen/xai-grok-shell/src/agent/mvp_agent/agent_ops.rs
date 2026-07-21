@@ -71,7 +71,8 @@ impl MvpAgent {
             }
         };
         let model = config.model.clone();
-        let client = OaiCompatClient::new(config).map_err(map_sampling_err_to_acp)?;
+        let client = OaiCompatClient::new(config)
+            .map_err(|e| map_sampling_err_to_acp(e, Provider::from_env()))?;
         Ok((client, model))
     }
     fn has_proxy_credentials(&self) -> bool {

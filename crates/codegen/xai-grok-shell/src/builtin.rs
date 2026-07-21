@@ -6,6 +6,7 @@ const HELP_SKILL_MD: &str = include_str!("../skills/help/SKILL.md");
 const CREATE_SKILL_MD: &str = include_str!("../skills/create-skill/SKILL.md");
 const CODE_REVIEW_SKILL_MD: &str = include_str!("../skills/code-review/SKILL.md");
 const IMAGINE_SKILL_MD: &str = include_str!("../skills/imagine/SKILL.md");
+const CONTRACT_SKILL_MD: &str = include_str!("../skills/contract/SKILL.md");
 /// Compiled-in SKILL.md content for `/check-work` (available to headless mode).
 pub const CHECK_SKILL_MD: &str = include_str!("../skills/check-work/SKILL.md");
 /// Compiled-in SKILL.md content for headless `--best-of-n` (not extracted as
@@ -58,6 +59,7 @@ const BUNDLED_SKILLS: &[(&str, &str)] = &[
     ("code-review", CODE_REVIEW_SKILL_MD),
     ("imagine", IMAGINE_SKILL_MD),
     ("check-work", CHECK_SKILL_MD),
+    ("contract", CONTRACT_SKILL_MD),
 ];
 
 /// True when a discovered skill is the copy `extract_bundled_files` wrote to
@@ -270,6 +272,20 @@ mod tests {
                 "{name} should not be a bundled skill"
             );
         }
+    }
+
+    #[test]
+    fn contract_skill_is_bundled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+
+        extract_bundled_files(home);
+
+        let skill = std::fs::read_to_string(home.join("skills/contract/SKILL.md")).unwrap();
+        assert!(skill.contains("contract task begin"));
+        assert!(skill.contains("contract task verify"));
+        assert!(skill.contains("application_observe"));
+        assert!(skill.contains("application_act"));
     }
 
     #[tokio::test]

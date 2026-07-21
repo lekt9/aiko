@@ -47,7 +47,7 @@ optional routing metadata shown here:
       "model": "deepseek-v4-pro",
       "name": "DeepSeek V4 Pro",
       "description": "Codegraff",
-      "contextWindow": 128000,
+      "contextWindow": 1000000,
       "apiBackend": "chat_completions",
       "baseUrl": "https://aiko.theclarityproject.net/v1"
     }

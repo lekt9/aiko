@@ -71,6 +71,27 @@ fn interrupted_wait_tool_result_with_msg(args: &serde_json::Value, msg: &str) ->
         effective_tool_name: None,
     }
 }
+
+fn classify_fech_tool_error(message: &str) -> crate::capability_catalog::ObservationError {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("timed out") || lower.contains("timeout") {
+        crate::capability_catalog::ObservationError::Timeout
+    } else if lower.contains("unavailable")
+        || lower.contains("disconnected")
+        || lower.contains("not connected")
+        || lower.contains("provider not found")
+    {
+        crate::capability_catalog::ObservationError::ProviderUnavailable
+    } else if lower.contains("invalid input")
+        || lower.contains("invalid argument")
+        || lower.contains("parse error")
+        || lower.contains("schema")
+    {
+        crate::capability_catalog::ObservationError::InvalidInput
+    } else {
+        crate::capability_catalog::ObservationError::ProviderFailure
+    }
+}
 /// Clears `awaiting_plan_approval` (and re-persists) when the
 /// [`SessionActor::request_plan_approval`] await **resolves** (a decision came
 /// back) or is **dropped** (the model turn was cancelled) — so a cancelled
@@ -522,6 +543,13 @@ impl SessionActor {
                 Ok(tool_result) => tool_result.output.is_error(),
                 Err(_) => true,
             };
+            let fech_error = match &result {
+                Ok(tool_result) if tool_result.output.is_error() => {
+                    Some(classify_fech_tool_error(&tool_result.prompt_text))
+                }
+                Err(error) => Some(classify_fech_tool_error(&error.to_string())),
+                Ok(_) => None,
+            };
             let tool_loop = match result {
                 Ok(tool_result) => {
                     let effective_tool_name = tool_result
@@ -647,6 +675,16 @@ impl SessionActor {
                 }
             };
             let duration_ms = tool_start.elapsed().as_millis() as u64;
+            crate::contract_native::record_active_capability_observation(
+                self.session_info.id.0.as_ref(),
+                &prepared.tool_name,
+                Some(&prepared.raw_arguments),
+                fech_error.is_none(),
+                duration_ms,
+                crate::capability_catalog::PermissionResult::Allowed,
+                fech_error,
+                crate::capability_catalog::ResultShape::Object,
+            );
             self.signals_handle()
                 .record_tool_duration(&prepared.tool_name, duration_ms);
             self.emit_event(crate::session::events::Event::ToolCompleted {
@@ -1164,6 +1202,16 @@ impl SessionActor {
                         Some(&resolved_tool_name),
                     )
                     .await;
+                    crate::contract_native::record_active_capability_observation(
+                        self.session_info.id.0.as_ref(),
+                        &call.function.name,
+                        Some(&call.function.arguments),
+                        false,
+                        0,
+                        crate::capability_catalog::PermissionResult::Denied,
+                        Some(crate::capability_catalog::ObservationError::PermissionDenied),
+                        crate::capability_catalog::ResultShape::Null,
+                    );
                     let loop_action = if is_policy_deny {
                         ToolLoop::Continue
                     } else {

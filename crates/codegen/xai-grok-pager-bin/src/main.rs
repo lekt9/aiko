@@ -5,6 +5,7 @@
     unreachable_code,
     dead_code
 )]
+mod native_api;
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
@@ -155,6 +156,13 @@ async fn run_contract_worker(once: bool, poll_seconds: u64) -> Result<()> {
     let executable = std::env::current_exe()?;
     let owner = format!("aiko-worker:{}", std::process::id());
     let poll_seconds = poll_seconds.clamp(1, 300);
+    if !once {
+        tokio::spawn(async {
+            if let Err(error) = native_api::serve(native_api::DEFAULT_ADDR).await {
+                tracing::warn!(%error, "Aiko native frontend API stopped");
+            }
+        });
+    }
     loop {
         let Some(tick) =
             xai_grok_shell::contract_native::tick_due_contracts(owner.clone(), None, 16, 7_200)
@@ -1836,6 +1844,11 @@ fn main() {
         );
         std::process::exit(2);
     }
+    // The collective runtime is part of the application lifecycle. Its
+    // default-off network gate guarantees this performs no socket activity on
+    // a new profile; failures never prevent the existing local app from
+    // starting and remain inspectable through collective_status().
+    let _ = xai_grok_shell::collective_host::initialize_collective();
     let _sentry_guard = xai_grok_telemetry::sentry::init(xai_grok_telemetry::sentry::Config {
         client: "grok-pager",
         client_version: PAGER_CLIENT_VERSION,
@@ -2002,6 +2015,9 @@ async fn async_main() -> Result<()> {
             }
             Command::Tasks(tasks_args) => {
                 return run_tasks_command(tasks_args).await;
+            }
+            Command::Native(native_args) => {
+                return native_api::run_command(native_args).await;
             }
             Command::Inspect { json } => {
                 let cwd = std::env::current_dir().unwrap_or_default();

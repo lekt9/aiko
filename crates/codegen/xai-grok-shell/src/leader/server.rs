@@ -506,7 +506,7 @@ fn extract_interaction_resolved_tool_call_id(json: &serde_json::Value) -> Option
 /// Extract session_id from a prompt-complete notification.
 fn extract_session_id_from_prompt_complete(json: &serde_json::Value) -> Option<String> {
     let method = json.get("method")?.as_str()?;
-    if method != "x.ai/session/prompt_complete" {
+    if method != "aiko/session/prompt_complete" && method != "x.ai/session/prompt_complete" {
         return None;
     }
     json.get("params")?

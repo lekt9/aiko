@@ -17,6 +17,7 @@ anyhow = { workspace = true }
 xai-grok-announcements = { workspace = true }
 xai-prompt-queue = { workspace = true }
 xai-grok-version = { workspace = true }
+xai-aiko-collective = { workspace = true }
 
 async-openai = { workspace = true }
 async-trait = { workspace = true }

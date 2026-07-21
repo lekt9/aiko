@@ -106,6 +106,18 @@ pub enum SessionEvent {
         /// The hook message
         message: String,
     },
+    /// Compact FECH route diagnostics, kept outside normal chat content.
+    CapabilityPlan {
+        selected_route: Option<String>,
+        candidate_routes: Vec<String>,
+        status: String,
+        confidence: f64,
+        automatic: bool,
+        freshness: Option<String>,
+        prerequisites: Vec<String>,
+        reason_codes: Vec<String>,
+        learning_status: String,
+    },
     /// The session's persisted model is no longer available after re-auth.
     /// Both IDs are empty when re-shown on blocked prompt attempts.
     ModelUnavailable {
@@ -227,6 +239,42 @@ impl SessionEvent {
                 format!("Compaction completed in {}.", format_duration(*elapsed))
             }
             SessionEvent::HookAnnotation { message } => message.clone(),
+            SessionEvent::CapabilityPlan {
+                selected_route,
+                candidate_routes,
+                status,
+                confidence,
+                automatic,
+                freshness,
+                prerequisites,
+                reason_codes,
+                learning_status,
+            } => {
+                let route = selected_route.as_deref().unwrap_or("normal Aiko reasoning");
+                let freshness = freshness.as_deref().unwrap_or("no evidence");
+                let mode = if *automatic { "auto" } else { "suggested" };
+                let mut details = vec![
+                    format!("{status}: {route}"),
+                    format!("confidence {:.0}%", confidence * 100.0),
+                    mode.to_string(),
+                    freshness.to_string(),
+                    learning_status.clone(),
+                ];
+                if !prerequisites.is_empty() {
+                    details.push(format!("after {}", prerequisites.join(" → ")));
+                }
+                if !reason_codes.is_empty() {
+                    details.push(reason_codes.join(", "));
+                }
+                if candidate_routes.len() > 1 {
+                    details.push(format!(
+                        "top {}: {}",
+                        candidate_routes.len(),
+                        candidate_routes.join(", ")
+                    ));
+                }
+                format!("Aiko route · {}", details.join(" · "))
+            }
             SessionEvent::ModelUnavailable {
                 new_model_id,
                 reason,

@@ -9,6 +9,7 @@ use crate::unified_log as ulog;
 use xai_grok_shell::sampling::error::{
     RATE_LIMITED_ERROR_CODE, error_detail_from_data, format_rate_limited_user_message,
 };
+use xai_grok_shell::provider::Provider;
 use xai_grok_shell::session::ExtMethodResult;
 /// Typed progress message for session restore.
 /// Keeps the progress channel from accepting arbitrary `TaskResult` variants.
@@ -88,7 +89,7 @@ pub(super) async fn fetch_plugin_cta_mcps(
 pub(super) fn format_acp_error(err: &acp::Error, is_api_key_auth: bool) -> String {
     if i32::from(err.code) == RATE_LIMITED_ERROR_CODE {
         let detail = err.data.as_ref().and_then(error_detail_from_data);
-        return format_rate_limited_user_message(detail.as_deref(), is_api_key_auth);
+        return format_rate_limited_user_message(detail.as_deref(), is_api_key_auth, Provider::from_env());
     }
     if err.code == acp::ErrorCode::InvalidParams && let Some(data) = &err.data
         && let Some(msg) = error_detail_from_data(data) && !msg.is_empty()

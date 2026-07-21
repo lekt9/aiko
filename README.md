@@ -117,6 +117,24 @@ Contract repository's `zig-out` artifact. `watch` rebuilds that artifact when
 Contract sources change; newly started Aiko processes load the new build
 without copying it into this repository or rebuilding Aiko.
 
+## Native frontend API
+
+The installed background worker also exposes an authenticated, loopback-only
+API for Swift, Electron, and local web frontends. It keeps ACP as the
+full-duplex agent-mail protocol and Contract ABI v3 as the ledger/task
+authority.
+
+```sh
+aiko native discovery
+aiko native manifest
+```
+
+The mode-`0600` discovery document at `~/.aiko/native/api.json` contains the
+active URL and bearer token. See
+[`docs/aiko-native-api.md`](docs/aiko-native-api.md), the
+[OpenAPI 3.1 document](docs/aiko-native-api.openapi.json), and the
+[TypeScript client](sdk/aiko-native/README.md).
+
 ## Repository layout
 
 | Path | Contents |
@@ -127,6 +145,7 @@ without copying it into this repository or rebuilding Aiko.
 | `crates/codegen/xai-grok-tools` | Terminal, file, search, and other tools |
 | `crates/common/xai-application-runtime` | Aiko-owned CDP and Electron primitives |
 | `crates/codegen/xai-grok-workspace` | Filesystem, VCS, execution, and checkpoints |
+| `sdk/aiko-native` | Typed frontend client for discovery, Contract, and agent mail |
 | `third_party/` | Vendored upstream source |
 
 The root `Cargo.toml` is generated. Prefer editing individual crate manifests.

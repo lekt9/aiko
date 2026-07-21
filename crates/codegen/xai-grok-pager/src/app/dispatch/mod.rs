@@ -14,6 +14,7 @@
 
 mod auth;
 mod billing;
+mod contracts;
 mod cta;
 mod ctx;
 mod dashboard;
@@ -37,7 +38,7 @@ mod turn;
 mod voice;
 
 pub(crate) use billing::{
-    UPSELL_URL_PAYG, UPSELL_URL_UPGRADE, is_credit_limit_error, is_free_usage_exhausted_error,
+    is_credit_limit_error, is_free_usage_exhausted_error, upsell_url_payg, upsell_url_upgrade,
 };
 pub(crate) use modes::{downgrade_displayed_auto_if_gated, effective_auto};
 pub(crate) use notes::{recap_unavailable_toast, scrollback_has_user_messages};

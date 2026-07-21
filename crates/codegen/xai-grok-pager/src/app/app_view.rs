@@ -196,6 +196,8 @@ pub enum ActiveView {
     Agent(AgentId),
     /// The top-level Agent Dashboard. State lives in `AppView::dashboard`.
     AgentDashboard,
+    /// The contract tasks view. State lives in `AppView::contracts`.
+    Contracts,
 }
 /// Tick cadence demanded by the current view state — see
 /// [`AppView::tick_demand`]. Ordered: `None < Slow < Fast`.
@@ -1052,6 +1054,11 @@ pub struct AppView {
     /// Held outside the `ActiveView` discriminant because `DashboardState`
     /// is not `Copy` (owns its prompt widget, peek panel, etc.).
     pub dashboard: Option<crate::views::dashboard::DashboardState>,
+    /// Contracts task view state. `Some(_)` only when the contracts view
+    /// is active (`active_view == Contracts`) or was recently open.
+    /// Held outside the `ActiveView` discriminant because `ContractsState`
+    /// is not `Copy` (owns entry vec, toast, inspect detail, etc.).
+    pub contracts: Option<crate::views::contracts::ContractsState>,
     /// Persisted dashboard configuration (pinned rows, reorderings,
     /// grouping). Loaded once on startup from
     /// `~/.grok/config.toml`. `None` when the file/section is absent
@@ -1180,6 +1187,7 @@ impl AppView {
         welcome_prompt.adopt_slash_mru(slash_mru.clone());
         Self {
             active_view: ActiveView::Welcome,
+            contracts: None,
             auth_return_view: None,
             agents: IndexMap::new(),
             next_agent_id: 0,
@@ -1713,6 +1721,11 @@ impl AppView {
                     d.error_toast = Some(crate::glyphs::legacy_glyph_fallback(msg).into_owned());
                 }
             }
+            ActiveView::Contracts => {
+                if let Some(c) = self.contracts.as_mut() {
+                    c.set_toast(msg.to_string());
+                }
+            }
             ActiveView::Welcome => {}
         }
     }
@@ -2041,6 +2054,19 @@ impl AppView {
                 }
                 if let Some(ref mut dashboard) = self.dashboard {
                     dashboard.handle_scroll(lines);
+                }
+            }
+            ActiveView::Contracts => {
+                if let Some(contracts) = self.contracts.as_mut() {
+                    if lines > 0 {
+                        for _ in 0..lines.unsigned_abs() {
+                            contracts.select_next();
+                        }
+                    } else {
+                        for _ in 0..lines.unsigned_abs() {
+                            contracts.select_prev();
+                        }
+                    }
                 }
             }
         }
@@ -2510,6 +2536,107 @@ impl AppView {
                     InputOutcome::Unchanged
                 }
             }
+            ActiveView::Contracts => {
+                // Global Esc: exit contracts view.
+                if let Event::Key(key) = ev
+                    && key.kind != KeyEventKind::Release
+                {
+                    if key.code == KeyCode::Esc && key.modifiers.is_empty() {
+                        return InputOutcome::Action(Action::ExitContracts);
+                    }
+                    // Look up action in the contracts-focused context.
+                    match self
+                        .registry
+                        .lookup(key, crate::actions::When::ContractsFocused)
+                    {
+                        Some(crate::actions::ActionId::ExitContracts) => {
+                            return InputOutcome::Action(Action::ExitContracts);
+                        }
+                        Some(crate::actions::ActionId::OpenDashboard) => {
+                            return InputOutcome::Action(Action::ExitContracts);
+                        }
+                        _ => {}
+                    }
+                    if key.code == KeyCode::Enter && key.modifiers.is_empty() {
+                        // Toggle inspect detail for the selected entry.
+                        if let Some(c) = self.contracts.as_mut() {
+                            if c.inspect_detail.is_some() {
+                                c.inspect_detail = None;
+                            } else if !c.entries.is_empty() {
+                                let entry = &c.entries[c.selected];
+                                c.inspect_detail = Some(format!(
+                                    "ID: {}\nStatus: {}\nPrompt: {}",
+                                    entry.id, entry.status, entry.prompt
+                                ));
+                            }
+                        }
+                        return InputOutcome::Changed;
+                    }
+                    if key.code == KeyCode::Char('r') && key.modifiers.is_empty() {
+                        return InputOutcome::Action(Action::RefreshContracts);
+                    }
+                    // Navigation: j/k or up/down.
+                    let mut changed = false;
+                    match key.code {
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            if let Some(c) = self.contracts.as_mut() {
+                                changed = c.select_next();
+                            }
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if let Some(c) = self.contracts.as_mut() {
+                                changed = c.select_prev();
+                            }
+                        }
+                        KeyCode::Home | KeyCode::Char('g') => {
+                            if let Some(c) = self.contracts.as_mut() {
+                                changed = c.select_first();
+                            }
+                        }
+                        KeyCode::End | KeyCode::Char('G') => {
+                            if let Some(c) = self.contracts.as_mut() {
+                                changed = c.select_last();
+                            }
+                        }
+                        _ => {}
+                    }
+                    if changed {
+                        return InputOutcome::Changed;
+                    }
+                }
+                // Mouse: handle row hover + click.
+                if let Event::Mouse(mouse) = ev {
+                    if let Some(c) = self.contracts.as_mut() {
+                        if c.last_area.width > 0 && c.last_area.height > 0 {
+                            let list_area = crate::views::contracts::layout::list_area(c.last_area);
+                            if mouse.column >= list_area.x
+                                && mouse.column < list_area.x + list_area.width
+                                && mouse.row >= list_area.y
+                                && mouse.row < list_area.y + list_area.height
+                            {
+                                let clicked_idx = c.scroll.saturating_add(
+                                    (mouse.row.saturating_sub(list_area.y)) as usize,
+                                );
+                                if clicked_idx < c.entries.len() {
+                                    if matches!(
+                                        mouse.kind,
+                                        crossterm::event::MouseEventKind::Down(
+                                            crossterm::event::MouseButton::Left
+                                        )
+                                    ) {
+                                        c.selected = clicked_idx;
+                                        return InputOutcome::Changed;
+                                    }
+                                    c.hovered_row = Some(clicked_idx);
+                                    return InputOutcome::Changed;
+                                }
+                            }
+                        }
+                        c.hovered_row = None;
+                    }
+                }
+                InputOutcome::Unchanged
+            }
         };
         if let InputOutcome::Action(Action::Quit) = &outcome {
             return self.apply_quit_confirmation(key_event);
@@ -2621,6 +2748,7 @@ impl AppView {
                 git_ref: None,
             },
             ActionId::OpenDashboard => Action::OpenDashboard,
+            ActionId::OpenContracts => Action::OpenContracts,
             ActionId::VoiceToggle => Action::VoiceToggle,
             _ => return InputOutcome::Unchanged,
         };
@@ -4273,6 +4401,22 @@ impl AppView {
                             return (cursor, Self::merge_escapes(notif_escapes, popup_post_flush));
                         }
                     }
+                    ActiveView::Contracts => {
+                        if let Some(contracts) = self.contracts.as_mut() {
+                            let cursor = crate::views::contracts::render_contracts(
+                                f.buffer_mut(),
+                                view_area,
+                                contracts,
+                            );
+                            if let Some(fps) = &fps_overlay {
+                                fps.render(full_area, f.buffer_mut());
+                            }
+                            if let Some(panel) = &scroll_debug_panel {
+                                panel.render(full_area, f.buffer_mut());
+                            }
+                            return (cursor, Self::merge_escapes(notif_escapes, None));
+                        }
+                    }
                 }
             }
             if let Some(fps) = &fps_overlay {
@@ -4321,6 +4465,7 @@ impl AppView {
                     .as_ref()
                     .is_some_and(|d| d.upgrade_cta_hit.rect.is_some()),
             ),
+            ActiveView::Contracts => (false, false, false, false),
         };
         if !(banner || welcome || header || dashboard) {
             return;
@@ -5005,6 +5150,7 @@ impl AppView {
                     TickDemand::None
                 }
             }
+            ActiveView::Contracts => TickDemand::None,
             ActiveView::Welcome => TickDemand::Slow,
         }
     }
@@ -5140,6 +5286,7 @@ pub(crate) mod tests {
         AppView {
             active_view: ActiveView::Welcome,
             auth_return_view: None,
+            contracts: None,
             agents: indexmap::IndexMap::new(),
             next_agent_id: 0,
             models: ModelState::default(),

@@ -131,6 +131,11 @@ pub enum ActionId {
     DashboardToggleAutoApprove,
     DashboardOpenLocationPicker,
     DashboardToggleWorktree,
+
+    // Contracts
+    OpenContracts,
+    ExitContracts,
+    RefreshContracts,
 }
 /// When an action is available / visible.
 ///
@@ -155,6 +160,8 @@ pub enum When {
     /// dashboard, prev/next session) from the dashboard LIST shortcuts so the
     /// cheatsheet can dim whichever set isn't applicable to the current view.
     DashboardOverlay,
+    /// Only when the Contracts view is focused.
+    ContractsFocused,
 }
 
 /// Action category (for grouping in command palette).
@@ -168,6 +175,8 @@ pub enum Category {
     Session,
     /// Agent Dashboard shortcuts.
     Dashboard,
+    /// Contract Tasks view shortcuts.
+    Contracts,
 }
 
 /// A registered action definition.

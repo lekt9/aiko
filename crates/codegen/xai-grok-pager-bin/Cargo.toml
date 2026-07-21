@@ -16,6 +16,7 @@ name = "aiko"
 path = "src/main.rs"
 
 [dependencies]
+xai-aiko-collective = { workspace = true }
 # The pager library (all application logic + the public API main.rs drives).
 xai-grok-pager = { path = "../xai-grok-pager" }
 # Optional scrollback-native render mode, wired in via the fn-pointer seam.
@@ -46,12 +47,16 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 dunce = { workspace = true }
 dirs = { workspace = true }
 semver = { workspace = true }
 xai-tty-utils = { workspace = true }
 xai-grok-config = { workspace = true }
 xai-grok-sandbox = { path = "../xai-grok-sandbox", default-features = false }
+axum = { workspace = true }
+futures-util = { workspace = true }
+uuid = { workspace = true }
 rustls = { version = "0.23", default-features = false, features = [
     "ring",
     "logging",

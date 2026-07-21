@@ -53,7 +53,8 @@ pub(crate) fn subagent_template() -> Zeroizing<String> {
 
 /// The compact system prompt used after conversation compaction.
 pub const COMPACT_SYSTEM_PROMPT: &str = "You are an AI coding agent. You operate in a workspace with a provided codebase.\n\n\
-     Your main goal is to complete the user's request, denoted within the <user_query> tag.";
+     Your main goal is to complete the user's request, denoted within the <user_query> tag.\n\n\
+     Contract is Aiko's default execution substrate. Register substantive work with a real check before the third tool call, use Contract-backed native tools when applicable, and verify the contract before reporting completion.";
 
 #[cfg(test)]
 mod tests {
@@ -372,11 +373,72 @@ mod tests {
     }
 
     #[test]
+    fn test_base_template_contains_contract_substrate() {
+        let p = default_placeholders();
+        let prompt = render_base(&default_renderer(), &p);
+        assert!(
+            prompt.contains("contract_substrate"),
+            "Must contain contract_substrate section"
+        );
+        assert!(
+            prompt.contains("contract task begin"),
+            "Must contain contract task begin instruction"
+        );
+        assert!(
+            prompt.contains("Never use `contract declare`"),
+            "Must warn against contract declare"
+        );
+        assert!(
+            prompt.contains("contract task verify"),
+            "Must reference verify lifecycle"
+        );
+        assert!(
+            prompt.contains("before the third tool call"),
+            "Must require early registration for substantive work"
+        );
+        assert!(
+            prompt.contains("application_observe") && prompt.contains("application_act"),
+            "Must prefer Contract-backed native application tools"
+        );
+    }
+
+    #[test]
+    fn test_base_template_contains_generative_ui() {
+        let p = default_placeholders();
+        let prompt = render_base(&default_renderer(), &p);
+        assert!(
+            prompt.contains("generative_ui"),
+            "Must contain generative_ui section"
+        );
+        assert!(
+            prompt.contains("json-render"),
+            "Must instruct json-render fences"
+        );
+        assert!(
+            prompt.contains("aiko:ui/") && prompt.contains("aiko:data/"),
+            "Must document durable UI/data pointers"
+        );
+        assert!(
+            prompt.contains("~/.aiko/ui"),
+            "Must document on-disk UI store path"
+        );
+        assert!(
+            prompt.contains("\"root\"") && prompt.contains("\"elements\""),
+            "Must document flat tree shape"
+        );
+        assert!(
+            prompt.contains("Metric") && prompt.contains("BarChart"),
+            "Must list dashboard component types"
+        );
+    }
+
+    #[test]
     fn test_compact_prompt_matches_expected() {
         assert_eq!(
             COMPACT_SYSTEM_PROMPT,
             "You are an AI coding agent. You operate in a workspace with a provided codebase.\n\n\
-             Your main goal is to complete the user's request, denoted within the <user_query> tag.",
+             Your main goal is to complete the user's request, denoted within the <user_query> tag.\n\n\
+             Contract is Aiko's default execution substrate. Register substantive work with a real check before the third tool call, use Contract-backed native tools when applicable, and verify the contract before reporting completion.",
         );
     }
 

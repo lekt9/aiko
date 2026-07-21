@@ -25,21 +25,24 @@ pub enum UpdateRunMode {
 
 const PROMPT_UPDATE_NOW: &str = "Update now? [Y/n/d]";
 const MSG_AUTO_UPDATE_BACKGROUND: &str = "Auto-update running in background.";
-const MSG_RUN_UPDATE_MANUAL: &str = "Run `grok update` to get the latest version.";
-/// Manual-install one-liner for this platform's bootstrap installer.
+const MSG_RUN_UPDATE_MANUAL: &str = "Run `aiko update` to get the latest version.";
+/// Aiko deliberately has no vendor fallback installer. This prevents an
+/// unconfigured build from crossing over to Grok's release infrastructure.
 fn manual_install_cmd() -> &'static str {
-    if cfg!(windows) {
-        "irm https://x.ai/cli/install.ps1 | iex"
-    } else {
-        "curl -fsSL https://x.ai/cli/install.sh | bash"
-    }
+    "configure AIKO_UPDATE_BASE_URL, then run `aiko update`"
 }
 
 /// Build a reinstall hint for a known installer type.
 fn reinstall_hint(installer: &str) -> String {
     match installer {
-        "npm" => "Please reinstall via npm:\n  npm i -g @xai-official/grok".to_string(),
-        "gh-release" => "Please reinstall via GitHub Releases:\n  gh release download --repo xai-org-shared/grok-build --pattern 'grok-*' --output grok && chmod +x grok".to_string(),
+        "npm" => format!(
+            "Please reinstall via npm:\n  npm i -g {}",
+            std::env::var("AIKO_NPM_PACKAGE").unwrap_or_else(|_| "@unbrowse/aiko".to_string())
+        ),
+        "gh-release" => format!(
+            "Please reinstall via GitHub Releases:\n  gh release download --repo {} --pattern 'aiko-*' --output aiko && chmod +x aiko",
+            crate::version::release_repo()
+        ),
         _ => format!("Please reinstall via:\n  {}", manual_install_cmd()),
     }
 }
@@ -65,10 +68,7 @@ pub fn print_update_status(status: &UpdateStatus, json: bool) -> anyhow::Result<
     }
 
     if let Some(error) = status.error.as_deref() {
-        println!(
-            "Grok Build - v{} [{}]",
-            status.current_version, status.channel
-        );
+        println!("Aiko - v{} [{}]", status.current_version, status.channel);
         println!("Update check failed: {error}");
         return Ok(());
     }
@@ -78,24 +78,24 @@ pub fn print_update_status(status: &UpdateStatus, json: bool) -> anyhow::Result<
     if status.update_available {
         if let Some(latest_version) = status.latest_version.as_deref() {
             println!(
-                "A new version of Grok Build is available: {} -> {}{}",
+                "A new version of Aiko is available: {} -> {}{}",
                 status.current_version, latest_version, channel_label
             );
         } else {
-            println!("A new version of Grok Build is available.");
+            println!("A new version of Aiko is available.");
         }
         return Ok(());
     }
 
     if let Some(latest_version) = status.latest_version.as_deref() {
         println!(
-            "Grok Build - v{} (latest: {}){}",
+            "Aiko - v{} (latest: {}){}",
             status.current_version, latest_version, channel_label
         );
         return Ok(());
     }
 
-    println!("Grok Build - v{}{}", status.current_version, channel_label);
+    println!("Aiko - v{}{}", status.current_version, channel_label);
     Ok(())
 }
 
@@ -525,7 +525,7 @@ pub async fn run_update_if_available(
     let channel_label = format!(" [{}]", update_config.channel);
     if auto_update {
         eprintln!(
-            "A new version of Grok Build is available: {} -> {}{}",
+            "A new version of Aiko is available: {} -> {}{}",
             current_version, latest_version, channel_label
         );
         if interactive {
@@ -553,7 +553,7 @@ pub async fn run_update_if_available(
             return Ok(false);
         }
         eprintln!(
-            "A new version of Grok Build is available: {} -> {}{}",
+            "A new version of Aiko is available: {} -> {}{}",
             current_version, latest_version, channel_label
         );
         if interactive {
@@ -1090,7 +1090,9 @@ async fn download_cli_artifact_from_gcs(
 }
 
 async fn install_internal(target: Option<&str>, update_config: &UpdateConfig) -> Result<()> {
-    install_internal_from_bases(target, update_config, crate::version::CLI_BASE_URLS).await
+    let configured = crate::version::release_base_urls();
+    let bases: Vec<&str> = configured.iter().map(String::as_str).collect();
+    install_internal_from_bases(target, update_config, &bases).await
 }
 
 /// Try the base-dependent install phase ([`download_verified_from_base`]:
@@ -1193,10 +1195,10 @@ async fn download_verified_from_base(
     let download_dir = grok_home.join("downloads");
     tokio::fs::create_dir_all(&download_dir).await?;
 
-    let binary_name = format!("grok-{}-{}", version, platform);
+    let binary_name = format!("aiko-{}-{}", version, platform);
     let binary_path = download_dir.join(&binary_name);
 
-    eprintln!("  Downloading grok v{} ({})...", version, platform);
+    eprintln!("  Downloading Aiko v{} ({})...", version, platform);
 
     // Published already +x (see `publish_downloaded_artifact`).
     download_cli_artifact_from_gcs(gcs_base_url, &binary_name, &binary_path, true).await?;
@@ -1237,8 +1239,7 @@ async fn activate_verified_download(download: &VerifiedDownload) -> Result<()> {
     eprintln!();
 
     // Clean up old versioned binaries (keeps current + 1 previous).
-    cleanup_old_downloads(&download_dir, "grok", &download.version).await;
-    cleanup_old_downloads(&download_dir, "grok-pager", &download.version).await;
+    cleanup_old_downloads(&download_dir, "aiko", &download.version).await;
 
     // Persist installer to config.toml so future runs auto-detect internal.
     let _ = config::update_config(|st| {
@@ -1966,13 +1967,14 @@ async fn gh_release_download(tag: &str, pattern: &str, dest: &std::path::Path) -
     );
     pb.enable_steady_tick(Duration::from_millis(100));
 
+    let repository = crate::version::release_repo();
     let mut cmd = tokio::process::Command::new("gh");
     cmd.args([
         "release",
         "download",
         tag,
         "--repo",
-        crate::version::GH_RELEASE_REPO,
+        &repository,
         "--pattern",
         pattern,
         "--output",
@@ -1994,14 +1996,14 @@ async fn gh_release_download(tag: &str, pattern: &str, dest: &std::path::Path) -
             "gh release download failed for {} tag {} from {}: {}",
             pattern,
             tag,
-            crate::version::GH_RELEASE_REPO,
+            repository,
             stderr.trim()
         );
     }
     Ok(())
 }
 
-/// Download and install grok from GitHub Releases (xai-org-shared/grok-build).
+/// Download and install Aiko from its configured GitHub Releases repository.
 ///
 /// Uses `gh release download` to fetch the binary matching the current platform.
 /// This works anywhere the `gh` CLI is authenticated, without needing npm or
@@ -2021,12 +2023,12 @@ async fn install_gh_release(target: Option<&str>) -> Result<()> {
     tokio::fs::create_dir_all(&download_dir).await?;
     tokio::fs::create_dir_all(&bin_dir).await?;
 
-    let binary_name = format!("grok-{}-{}", version, platform);
+    let binary_name = format!("aiko-{}-{}", version, platform);
     let binary_path = download_dir.join(&binary_name);
     let tag = format!("v{}", version);
 
     eprintln!(
-        "  Downloading grok v{} ({}) from GitHub Releases...",
+        "  Downloading Aiko v{} ({}) from GitHub Releases...",
         version, platform
     );
 
@@ -2171,8 +2173,9 @@ fn install_npm(target: Option<&str>, channel: &str, npm_registry: Option<&str>) 
     #[cfg(target_os = "macos")]
     warn_if_other_grok_processes_running();
 
+    let package = crate::version::npm_package();
     let version_arg = match target {
-        Some(ver) => format!("@xai-official/grok@{ver}"),
+        Some(ver) => format!("{package}@{ver}"),
         None => {
             // All current callers resolve the version via get_latest_version
             // (which applies max(stable, alpha) for the alpha channel) before
@@ -2183,7 +2186,8 @@ fn install_npm(target: Option<&str>, channel: &str, npm_registry: Option<&str>) 
                 "install_npm called without a resolved version, falling back to dist-tag"
             );
             format!(
-                "@xai-official/grok@{}",
+                "{}@{}",
+                package,
                 if channel == "alpha" {
                     "alpha"
                 } else {
@@ -2290,7 +2294,7 @@ pub async fn run_update(
             anyhow::bail!("{e}");
         }
         eprintln!(
-            "Installing Grok {} (current: {})...",
+            "Installing Aiko {} (current: {})...",
             version, current_version
         );
         eprintln!();
@@ -2303,8 +2307,8 @@ pub async fn run_update(
         {
             tracing::warn!("Failed to persist auto_update=false for pinned install: {e}");
         }
-        eprintln!("  ✓ grok v{} installed successfully!", version);
-        eprintln!("  Please restart Grok.");
+        eprintln!("  ✓ Aiko v{} installed successfully!", version);
+        eprintln!("  Please restart Aiko.");
         return Ok(Some(version.to_string()));
     }
 
@@ -2401,12 +2405,12 @@ pub async fn run_update(
         .unwrap_or(true)
     {
         eprintln!(
-            "Forcing reinstall of Grok {} (already up to date)",
+            "Forcing reinstall of Aiko {} (already up to date)",
             effective_current
         );
         &effective_current
     } else {
-        eprintln!("Updating Grok {} → {}", effective_current, install_target);
+        eprintln!("Updating Aiko {} → {}", effective_current, install_target);
         &install_target
     };
 
@@ -2418,10 +2422,10 @@ pub async fn run_update(
     let stable_ptr = try_fetch_stable_pointer().await;
     write_version_cache(target_version, stable_ptr.as_deref()).await;
     refresh_deployment_config().await;
-    eprintln!("  ✓ grok v{} installed successfully!", target_version);
+    eprintln!("  ✓ Aiko v{} installed successfully!", target_version);
 
-    if !force && std::env::var_os("GROK_AUTO_UPDATE").is_none() {
-        eprintln!("  Please restart Grok.");
+    if !force && std::env::var_os("AIKO_AUTO_UPDATE").is_none() {
+        eprintln!("  Please restart Aiko.");
     }
     Ok(Some(target_version.to_string()))
 }
@@ -3448,7 +3452,7 @@ mod tests {
         let hint = reinstall_hint("npm");
         assert!(hint.contains("npm i -g"), "should suggest npm i -g: {hint}");
         assert!(
-            hint.contains("@xai-official/grok"),
+            hint.contains("@unbrowse/aiko"),
             "should name the package: {hint}"
         );
     }
@@ -3461,7 +3465,7 @@ mod tests {
             "should suggest gh release download: {hint}"
         );
         assert!(
-            hint.contains("xai-org-shared/grok-build"),
+            hint.contains("Unbrowse/aiko"),
             "should name the repo: {hint}"
         );
     }
@@ -3469,19 +3473,7 @@ mod tests {
     #[test]
     fn test_reinstall_hint_internal_mentions_platform_installer() {
         let hint = reinstall_hint("internal");
-        if cfg!(windows) {
-            assert!(hint.contains("irm"), "should suggest irm install: {hint}");
-            assert!(
-                hint.contains("install.ps1"),
-                "should reference install.ps1: {hint}"
-            );
-        } else {
-            assert!(hint.contains("curl"), "should suggest curl install: {hint}");
-            assert!(
-                hint.contains("install.sh"),
-                "should reference install.sh: {hint}"
-            );
-        }
+        assert!(hint.contains("AIKO_UPDATE_BASE_URL"), "{hint}");
     }
 
     #[test]

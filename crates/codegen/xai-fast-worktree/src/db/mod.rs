@@ -338,15 +338,31 @@ pub fn now_epoch_secs() -> i64 {
 }
 
 pub fn resolve_grok_home() -> Result<PathBuf> {
+    if let Ok(v) = std::env::var("AIKO_HOME") {
+        return Ok(PathBuf::from(v));
+    }
     if let Ok(v) = std::env::var("GROK_HOME") {
         return Ok(PathBuf::from(v));
     }
-    let home = PathBuf::from(std::env::var("HOME").context("neither $GROK_HOME nor $HOME is set")?);
-    // Canonicalize the home dir so worktree paths share the same physical .grok
+    let home = PathBuf::from(
+        std::env::var("HOME").context("none of $AIKO_HOME, $GROK_HOME, or $HOME is set")?,
+    );
+    // Canonicalize the home dir so worktree paths share the same physical tree
     // tree as trust/hooks even when it is symlinked. The dunce canonicalization
     // must stay in sync with xai_grok_config::default_grok_home();
     // home resolution deliberately differs ($HOME here vs std::env::home_dir()).
-    Ok(dunce::canonicalize(&home).unwrap_or(home).join(".grok"))
+    let home = dunce::canonicalize(&home).unwrap_or(home);
+    let preferred = home.join(".aiko");
+    let legacy = home.join(".grok");
+    let preferred_has_identity =
+        preferred.join("config.toml").exists() || preferred.join("auth.json").exists();
+    let legacy_has_identity =
+        legacy.join("config.toml").exists() || legacy.join("auth.json").exists();
+    Ok(if !preferred_has_identity && legacy_has_identity {
+        legacy
+    } else {
+        preferred
+    })
 }
 
 /// Serializes tests that mutate the process-global `GROK_HOME` env var so they

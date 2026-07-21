@@ -1,9 +1,9 @@
-//! Filesystem locations for grok config files and binaries.
+//! Filesystem locations for Aiko config files and binaries.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-static GROK_HOME: OnceLock<PathBuf> = OnceLock::new();
+static AIKO_HOME: OnceLock<PathBuf> = OnceLock::new();
 
 #[cfg(target_os = "macos")]
 const CLAUDE_MANAGED_SETTINGS_PATH: &str =
@@ -11,8 +11,8 @@ const CLAUDE_MANAGED_SETTINGS_PATH: &str =
 #[cfg(target_os = "linux")]
 const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.json";
 
-/// The default user grok directory (`~/.grok`, canonicalized) used when
-/// `GROK_HOME` is unset. Exposed so callers (e.g. display helpers) can detect
+/// The default Aiko directory (`~/.aiko`, canonicalized) used for new installs.
+/// The legacy function name is retained as an internal source-compatibility API.
 /// whether [`grok_home()`] is the default without duplicating the computation.
 ///
 /// Uses [`dunce::canonicalize`] instead of [`std::fs::canonicalize`]: on
@@ -28,20 +28,40 @@ const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.js
 pub fn default_grok_home() -> PathBuf {
     #[allow(deprecated)]
     let home = std::env::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    dunce::canonicalize(&home).unwrap_or(home).join(".grok")
+    dunce::canonicalize(&home).unwrap_or(home).join(".aiko")
 }
 
-/// Per-user config directory: `$GROK_HOME` or `~/.grok`. Created if needed.
+/// Per-user Aiko directory.
+///
+/// `AIKO_HOME` is canonical. `GROK_HOME` remains a compatibility alias. When
+/// neither is set, an existing `~/.grok` containing config/auth is used until
+/// it is migrated; otherwise new installs use `~/.aiko`.
 pub fn grok_home() -> PathBuf {
-    GROK_HOME
+    AIKO_HOME
         .get_or_init(|| {
-            let grok_home = if let Ok(v) = std::env::var("GROK_HOME") {
+            let aiko_home = if let Ok(v) = std::env::var("AIKO_HOME") {
+                PathBuf::from(v)
+            } else if let Ok(v) = std::env::var("GROK_HOME") {
+                tracing::warn!("GROK_HOME is deprecated; use AIKO_HOME");
                 PathBuf::from(v)
             } else {
-                default_grok_home()
+                let preferred = default_grok_home();
+                let legacy = preferred
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .join(".grok");
+                let preferred_has_identity =
+                    preferred.join("config.toml").exists() || preferred.join("auth.json").exists();
+                let legacy_has_identity =
+                    legacy.join("config.toml").exists() || legacy.join("auth.json").exists();
+                if !preferred_has_identity && legacy_has_identity {
+                    legacy
+                } else {
+                    preferred
+                }
             };
-            let _ = std::fs::create_dir_all(&grok_home);
-            grok_home
+            let _ = std::fs::create_dir_all(&aiko_home);
+            aiko_home
         })
         .clone()
 }
@@ -53,7 +73,9 @@ pub fn grok_home() -> PathBuf {
 /// mistake a project's `.grok` tree for the user-global one when no home resolves.
 pub fn user_grok_home() -> Option<PathBuf> {
     #[allow(deprecated)]
-    let resolvable = std::env::var_os("GROK_HOME").is_some() || std::env::home_dir().is_some();
+    let resolvable = std::env::var_os("AIKO_HOME").is_some()
+        || std::env::var_os("GROK_HOME").is_some()
+        || std::env::home_dir().is_some();
     resolvable.then(grok_home)
 }
 
@@ -312,7 +334,7 @@ mod tests {
         // canonicalization must yield a plain path. No-op assertion on Unix.
         let home = default_grok_home();
         assert!(!home.to_string_lossy().starts_with(r"\\?\"));
-        assert!(home.ends_with(".grok"));
+        assert!(home.ends_with(".aiko"));
     }
 
     #[test]

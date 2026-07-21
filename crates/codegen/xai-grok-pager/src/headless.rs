@@ -17,6 +17,7 @@ use xai_acp_lib::{AcpAgentTx, AcpClientMessageBox, AcpClientRx, acp_send};
 use xai_grok_shell::agent::auth_method::AuthMethodKind;
 use xai_grok_shell::agent::config::Config as AgentConfig;
 use xai_grok_shell::extensions::task::{CancelSubagentRequest, KillTaskRequest};
+use xai_grok_shell::provider::Provider;
 use xai_grok_shell::sampling::error::{
     RATE_LIMITED_ERROR_CODE, error_detail_from_data, format_rate_limited_user_message,
 };
@@ -509,14 +510,14 @@ fn auto_respond_to_permissions(
 /// "Not signed in" error message, tailored to the session type.
 fn auth_required_message(interactive: bool) -> String {
     if interactive {
-        "Not signed in. Run `grok login` to authenticate \
-         (or `grok login --device-code` if no browser is available)."
+        "Not signed in. Run `aiko login` to authenticate \
+         (or `aiko login --device-code` if no browser is available)."
             .to_string()
     } else {
         "Not signed in. To authenticate without a browser, run:\n  \
-         grok login --device-code\n\n\
-         Alternatively, set the XAI_API_KEY environment variable \
-         or run `grok login` on a machine with a browser."
+         aiko login --device-code\n\n\
+         Alternatively, configure a provider API key \
+         or run `aiko login` on a machine with a browser."
             .to_string()
     }
 }
@@ -1324,7 +1325,11 @@ pub async fn run_single_turn(
         Some(Err(err)) => {
             let msg = if i32::from(err.code) == RATE_LIMITED_ERROR_CODE {
                 let detail = err.data.as_ref().and_then(error_detail_from_data);
-                format_rate_limited_user_message(detail.as_deref(), is_api_key_auth)
+                format_rate_limited_user_message(
+                    detail.as_deref(),
+                    is_api_key_auth,
+                    Provider::from_env(),
+                )
             } else {
                 err.to_string()
             };

@@ -1203,6 +1203,50 @@ pub fn default_actions(mouse_reporting_toggle_enabled: bool) -> Vec<ActionDef> {
                 "Inside a session overlay, stops the attached agent and closes it, returning you to the dashboard list.\nRequires confirmation: press Ctrl+X twice.\nCtrl+. still opens the cheatsheet here; only Ctrl+X is taken over by stop.",
             ),
         },
+        // ── Contracts View ───────────────────────────────────────────
+        ActionDef {
+            id: ActionId::OpenContracts,
+            label: "contracts",
+            description: "Open the Contract Tasks view",
+            default_key: key!('C', CONTROL | SHIFT),
+            alt_keys: vec![],
+            category: Category::Contracts,
+            context: When::Always,
+            hint_priority: None,
+            hint_key_display: Some("Ctrl+Shift+C"),
+            requires_confirmation: false,
+            long_help: Some(
+                "Opens the Contract Tasks view showing active, completed, and failed contract tasks.\nPress Ctrl+Shift+C again or Esc to close.",
+            ),
+        },
+        ActionDef {
+            id: ActionId::ExitContracts,
+            label: "close",
+            description: "Close the Contracts view",
+            default_key: key!(Esc),
+            alt_keys: vec![key!('C', CONTROL | SHIFT)],
+            category: Category::Contracts,
+            context: When::ContractsFocused,
+            hint_priority: None,
+            hint_key_display: Some("Esc"),
+            requires_confirmation: false,
+            long_help: None,
+        },
+        ActionDef {
+            id: ActionId::RefreshContracts,
+            label: "refresh",
+            description: "Refresh the contracts list",
+            default_key: key!('r'),
+            alt_keys: vec![],
+            category: Category::Contracts,
+            context: When::ContractsFocused,
+            hint_priority: None,
+            hint_key_display: Some("r"),
+            requires_confirmation: false,
+            long_help: Some(
+                "Re-fetches the contract task list from the contract runtime.",
+            ),
+        },
     ]);
 
     actions

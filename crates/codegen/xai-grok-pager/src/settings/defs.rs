@@ -46,8 +46,8 @@ const THEME_CHOICES: &[EnumChoice] = &[
     },
     EnumChoice {
         canonical: "groknight",
-        display: "Grok Night",
-        description: "Neutral dark with magenta accent.",
+        display: "Aiko Night",
+        description: "Deep ink with restrained pastel-blue accents.",
     },
     EnumChoice {
         canonical: "grokday",

@@ -7,6 +7,7 @@ use crate::app::agent_view::AgentView;
 use crate::app::app_view::AppView;
 use crate::scrollback::block::RenderBlock;
 use std::time::Duration;
+use xai_grok_shell::provider::Provider;
 use xai_grok_telemetry::events::{SuperGrokUpsell, SuperGrokUpsellClicked};
 use xai_grok_telemetry::session_ctx::log_event;
 
@@ -17,26 +18,25 @@ pub(crate) use xai_grok_shell::sampling::error::is_free_usage_exhausted_error;
 /// After this, the user can still manually check via the [Refresh] button.
 pub(super) const PAYWALL_AUTO_CHECK_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
-/// Whether the user is at the highest subscription tier (SuperGrok Heavy).
+/// Whether the user is at the highest subscription tier.
 ///
 /// Returns `true` only when `subscription_tier` **positively matches** a
-/// known max-tier identifier. When the tier is unknown (`None`) or any
-/// other value, returns `false` — the user gets the Q&A modal so lower-
-/// tier users always see the upgrade option.
-pub(super) fn is_max_tier(subscription_tier: Option<&str>) -> bool {
-    let Some(t) = subscription_tier else {
-        return false; // Unknown — default to Q&A.
-    };
-    // Normalize: lowercase + spaces→underscores to match both JWT-derived
-    // keys ("supergrok_heavy") and CCP display names ("SuperGrok Heavy").
-    t.to_ascii_lowercase().replace(' ', "_") == "supergrok_heavy"
+/// known max-tier identifier for the active provider. When the tier is
+/// unknown (`None`) or any other value, returns `false` — the user gets
+/// the Q&A modal so lower-tier users always see the upgrade option.
+pub(super) fn is_max_tier(subscription_tier: Option<&str>, provider: Provider) -> bool {
+    provider.is_max_tier(subscription_tier)
 }
 
 /// URL for upgrading the subscription tier.
-pub(crate) const UPSELL_URL_UPGRADE: &str = "https://grok.com/supergrok?referrer=grok-build";
+pub(crate) fn upsell_url_upgrade(provider: Provider) -> &'static str {
+    provider.upgrade_url()
+}
 
 /// URL for managing pay-as-you-go / on-demand spending / purchasing credits.
-pub(crate) const UPSELL_URL_PAYG: &str = "https://grok.com?_s=usage";
+pub(crate) fn upsell_url_payg(provider: Provider) -> &'static str {
+    provider.usage_url()
+}
 
 /// Billing mode for credit-limit upsell copy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +99,7 @@ pub(super) fn open_credit_limit_upsell(
     agent: &mut AgentView,
     mode: CreditLimitUpsellMode,
     max_tier: bool,
+    provider: Provider,
 ) {
     use crate::scrollback::blocks::CreditLimitCardAction;
 
@@ -120,7 +121,7 @@ pub(super) fn open_credit_limit_upsell(
         bool,
     ) = match mode {
         CreditLimitUpsellMode::UnifiedCredits => (
-            "You hit your weekly limit.",
+            "You don’t have enough credits for this request.",
             "Upgrade to a higher tier for more usage",
             "Buy more credits",
             "Purchase credits to keep using Aiko",
@@ -161,7 +162,7 @@ pub(super) fn open_credit_limit_upsell(
         agent.scrollback.push_block(RenderBlock::credit_limit_card(
             heading,
             card_action,
-            UPSELL_URL_PAYG,
+            upsell_url_payg(provider),
         ));
         return;
     }
@@ -190,13 +191,13 @@ pub(super) fn open_credit_limit_upsell(
                 label: "Upgrade tier".into(),
                 description: upgrade_tier_desc.into(),
                 preview: None,
-                id: Some(UPSELL_URL_UPGRADE.into()),
+                id: Some(upsell_url_upgrade(provider).into()),
             },
             QuestionOption {
                 label: secondary_label.into(),
                 description: secondary_desc.into(),
                 preview: None,
-                id: Some(UPSELL_URL_PAYG.into()),
+                id: Some(upsell_url_payg(provider).into()),
             },
         ],
         multi_select: Some(false),
@@ -229,7 +230,12 @@ pub(super) fn open_credit_limit_upsell(
 /// which viewers never receive). `auth_method` feeds the
 /// `SuperGrokUpsellShown` funnel event.
 pub(super) fn open_free_usage_upsell(agent: &mut AgentView, auth_method: Option<String>) {
-    open_supergrok_upsell(agent, UpsellReason::FreeUsageLimit, auth_method);
+    open_supergrok_upsell(
+        agent,
+        UpsellReason::FreeUsageLimit,
+        auth_method,
+        Provider::from_env(),
+    );
 }
 
 /// Open the SuperGrok upsell for a tier-restricted slash command
@@ -240,7 +246,12 @@ pub(super) fn open_restricted_command_upsell(
     agent: &mut AgentView,
     auth_method: Option<String>,
 ) -> bool {
-    open_supergrok_upsell(agent, UpsellReason::RestrictedCommand, auth_method)
+    open_supergrok_upsell(
+        agent,
+        UpsellReason::RestrictedCommand,
+        auth_method,
+        Provider::from_env(),
+    )
 }
 
 /// Which situation opened the SuperGrok upsell modal. Controls the heading
@@ -261,6 +272,7 @@ fn open_supergrok_upsell(
     agent: &mut AgentView,
     reason: UpsellReason,
     auth_method: Option<String>,
+    provider: Provider,
 ) -> bool {
     use crate::views::question_view::{LocalQuestionKind, QuestionViewState};
     use xai_grok_tools::implementations::grok_build::ask_user_question::{
@@ -273,14 +285,17 @@ fn open_supergrok_upsell(
         return false;
     }
 
+    let premium_tier = provider.premium_tier_display();
+    let max_tier = provider.max_tier_display();
+
     let (heading, source, modal_id_prefix) = match reason {
         UpsellReason::FreeUsageLimit => (
-            "You hit your free usage limit.",
+            "You hit your free usage limit.".to_string(),
             SuperGrokUpsell::FreeUsagePaywall,
             "free-usage-upsell",
         ),
         UpsellReason::RestrictedCommand => (
-            "Unlock all features with SuperGrok.",
+            format!("Unlock all features with {premium_tier}."),
             SuperGrokUpsell::RestrictedCommand,
             "restricted-command-upsell",
         ),
@@ -291,20 +306,21 @@ fn open_supergrok_upsell(
         auth_method,
     });
 
+    let upgrade_url = upsell_url_upgrade(provider);
     let options = vec![
         QuestionOption {
-            label: "Upgrade to SuperGrok".into(),
+            label: format!("Upgrade to {premium_tier}"),
             description: "For everyday coding and productivity tasks".into(),
             preview: None,
-            id: Some(UPSELL_URL_UPGRADE.into()),
+            id: Some(upgrade_url.into()),
         },
         QuestionOption {
-            label: "Upgrade to SuperGrok Heavy".into(),
+            label: format!("Upgrade to {max_tier}"),
             description: "Get the most out of Aiko. Highest usage limits.".into(),
             preview: None,
-            // No Heavy-specific URL exists; the /supergrok page lists
+            // No tier-specific URL exists; the pricing page lists
             // both plans, so both upgrade options land there.
-            id: Some(UPSELL_URL_UPGRADE.into()),
+            id: Some(upgrade_url.into()),
         },
     ];
     let question = Question {
@@ -517,8 +533,9 @@ pub(super) fn handle_credit_limit_recheck_complete(
             .as_ref()
             .or(app.credit_balance.as_ref());
         let mode = credit_limit_upsell_mode(balance);
-        let max_tier = is_max_tier(app.subscription_tier.as_deref());
-        open_credit_limit_upsell(agent, mode, max_tier);
+        let provider = Provider::from_env();
+        let max_tier = is_max_tier(app.subscription_tier.as_deref(), provider);
+        open_credit_limit_upsell(agent, mode, max_tier, provider);
     }
     // Either way, drop the stashed prompt.
     agent.credit_limit_stashed_prompt = None;
@@ -539,11 +556,12 @@ pub(super) fn dispatch_open_supergrok_url(app: &mut AppView) -> Vec<Effect> {
         source: SuperGrokUpsell::WelcomeScreen,
         auth_method: app.login_method_id.as_ref().map(|id| id.0.to_string()),
     });
+    let fallback = Provider::from_env().upgrade_url();
     let url = app
         .gate
         .as_ref()
         .and_then(|g| g.url.as_deref())
-        .unwrap_or("https://grok.com/supergrok?referrer=grok-build");
+        .unwrap_or(fallback);
     // Funnel attribution: tag CLI-originated SuperGrok upsell clicks
     // with `referrer=grok-build`, matching the OAuth consent flow and
     // x.ai/cli marketing links. Applied even when the URL came from

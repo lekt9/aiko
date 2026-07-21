@@ -3,6 +3,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/codegen/xai-aiko-collective",
     "crates/build/xai-proto-build",
     "crates/codegen/ptyctl",
     "crates/codegen/ptyctl-cli",
@@ -65,6 +66,7 @@ members = [
     "crates/codegen/xai-system-power",
     "crates/codegen/xai-token-estimation",
     "crates/codegen/xai-tracing-macros",
+    "crates/codegen/xai-telegram-daemon",
     "crates/codegen/xai-tty-utils",
     "crates/common/xai-circuit-breaker",
     "crates/common/xai-application-runtime",
@@ -90,6 +92,7 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+xai-aiko-collective = { path = "crates/codegen/xai-aiko-collective" }
 agent-client-protocol = { version = "0.10.4", features = ["unstable"] }
 alacritty_terminal = "0.26.0"
 ansi-to-tui = "7.0.0"
@@ -318,6 +321,7 @@ xai-tool-protocol = { path = "crates/common/xai-tool-protocol" }
 xai-tool-runtime = { path = "crates/common/xai-tool-runtime" }
 xai-tool-types = { path = "crates/common/xai-tool-types" }
 xai-tracing = { path = "crates/common/xai-tracing" }
+xai-telegram-daemon = { path = "crates/codegen/xai-telegram-daemon" }
 xai-tty-utils = { path = "crates/codegen/xai-tty-utils" }
 zbus = { version = "5" }
 zstd = "0.13"

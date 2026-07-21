@@ -751,6 +751,12 @@ pub enum Action {
     OpenDashboard,
     /// Close the dashboard, returning to the previous `ActiveView`.
     ExitDashboard,
+    /// Open the Contracts view (`Ctrl+Shift+C`).
+    OpenContracts,
+    /// Close the contracts view, returning to the previous view.
+    ExitContracts,
+    /// Refresh the contracts list from the contract FFI.
+    RefreshContracts,
     /// Attach to a dashboard row — switches to the parent agent and
     /// (for subagent rows) sets the parent's `active_subagent`.
     DashboardAttach(crate::views::dashboard::DashboardRowId),
@@ -2042,6 +2048,9 @@ pub enum Effect {
     PreparePromptImagePreview {
         preparation: crate::prompt_images::PromptImagePreviewPreparation,
     },
+    /// Refresh the contracts view data from the contract FFI
+    /// (`contract_native::list_scheduled_contracts()`).
+    AsyncContractRefresh,
 }
 /// Outcome of an `x.ai/subagent/cancel` request, telling dispatch whether the
 /// pager must finalize the subagent row itself.
@@ -2727,6 +2736,11 @@ pub enum TaskResult {
     },
     /// Shared prompt-image preview state was resolved off-thread.
     PromptImagePreviewPrepared,
+    /// Contract tasks loaded from the contract FFI
+    /// (`contract_native::list_scheduled_contracts()`).
+    ContractsLoaded {
+        json: serde_json::Value,
+    },
 }
 #[cfg(test)]
 mod tests {

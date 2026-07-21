@@ -43,6 +43,144 @@ pub enum TasksCommand {
     Cancel { id: String },
 }
 
+#[derive(Debug, clap::Args, Clone)]
+pub struct NativeArgs {
+    #[command(subcommand)]
+    pub command: NativeCommand,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum NativeCommand {
+    /// Print the versioned Aiko-native interface manifest.
+    Manifest,
+    /// Print the local API discovery document, including its bearer token.
+    Discovery,
+    /// Run the authenticated loopback API in the foreground.
+    Serve {
+        /// Loopback address for the native frontend API.
+        #[arg(long, default_value = "127.0.0.1:19420")]
+        addr: SocketAddr,
+    },
+    /// Manage disposable email inboxes for AI agents (x402 Pay-based).
+    AgentMail {
+        #[command(subcommand)]
+        command: AgentMailCommand,
+    },
+    /// Solve CAPTCHA challenges (x402 Pay-based 2Captcha).
+    Captcha {
+        #[command(subcommand)]
+        command: CaptchaCommand,
+    },
+    /// Manage the native Telegram bridge — onboarding, pairing, and status.
+    Telegram {
+        #[command(subcommand)]
+        command: TelegramCommand,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum AgentMailCommand {
+    /// Create a new disposable inbox ($2.00 via x402).
+    CreateInbox {
+        /// Display name for the inbox.
+        #[arg(long, default_value = "Aiko Build")]
+        name: String,
+    },
+    /// List all disposable inboxes (free).
+    ListInboxes,
+    /// List email threads across all inboxes (free).
+    ListThreads,
+    /// Get a thread with all messages (free).
+    GetThread {
+        /// Thread ID.
+        #[arg(long, value_name = "THREAD_ID")]
+        id: String,
+    },
+    /// Poll for a new thread containing a verification code.
+    WaitForCode {
+        /// Maximum seconds to wait.
+        #[arg(long, default_value_t = 120)]
+        timeout: u64,
+        /// Polling interval in seconds.
+        #[arg(long, default_value_t = 5)]
+        poll: u64,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum TelegramCommand {
+    /// Show Telegram bridge status, token mask, and approved users.
+    Status {
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Save or replace the Telegram bot token.
+    SetToken {
+        /// Bot token from @BotFather.
+        #[arg(long, value_name = "TOKEN")]
+        token: String,
+    },
+    /// Approve a pairing code so a contact can chat with Aiko.
+    ApprovePair {
+        /// 4–6 character hex pairing code.
+        #[arg(long, value_name = "CODE")]
+        code: String,
+    },
+    /// Show recent bridge log lines.
+    Log {
+        /// Number of lines to show (default 20, max 200).
+        #[arg(long, default_value_t = 20)]
+        tail: usize,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum CaptchaCommand {
+    /// Solve an hCaptcha challenge ($0.01 via x402).
+    SolveHcaptcha {
+        /// hCaptcha site key.
+        #[arg(long, value_name = "SITE_KEY")]
+        site_key: String,
+        /// Page URL where the captcha appears.
+        #[arg(long, value_name = "PAGE_URL")]
+        page_url: String,
+        /// Whether the captcha is invisible.
+        #[arg(long)]
+        invisible: bool,
+    },
+    /// Solve a reCAPTCHA challenge ($0.01 via x402).
+    SolveRecaptcha {
+        /// reCAPTCHA site key.
+        #[arg(long, value_name = "SITE_KEY")]
+        site_key: String,
+        /// Page URL where the captcha appears.
+        #[arg(long, value_name = "PAGE_URL")]
+        page_url: String,
+        /// Minimum score threshold (v3 only).
+        #[arg(long)]
+        min_score: Option<f64>,
+    },
+    /// Get the result of a captcha solve task (free).
+    GetResult {
+        /// Task ID from solve-hcaptcha or solve-recaptcha.
+        #[arg(long, value_name = "TASK_ID")]
+        task_id: u64,
+    },
+    /// Block until a captcha solve completes.
+    WaitForSolution {
+        /// Task ID from solve-hcaptcha or solve-recaptcha.
+        #[arg(long, value_name = "TASK_ID")]
+        task_id: u64,
+        /// Maximum seconds to wait.
+        #[arg(long, default_value_t = 120)]
+        timeout: u64,
+        /// Polling interval in seconds.
+        #[arg(long, default_value_t = 5)]
+        poll: u64,
+    },
+}
+
 /// Top-level commands for the pager binary.
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
@@ -181,6 +319,8 @@ See ~/.grok/README.md for more information.
     Background(BackgroundArgs),
     /// Inspect and control Contract-native durable tasks.
     Tasks(TasksArgs),
+    /// Discover and serve Aiko's versioned frontend-native interfaces.
+    Native(NativeArgs),
     /// Run the durable Contract background resolver.
     #[command(hide = true)]
     ContractWorker {

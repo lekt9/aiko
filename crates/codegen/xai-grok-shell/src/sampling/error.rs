@@ -7,6 +7,7 @@
 // Re-export everything from the standalone crate.
 pub use xai_grok_sampling_types::error::*;
 
+use crate::provider::Provider;
 use agent_client_protocol as acp;
 
 /// ACP error code for rate-limited requests (HTTP 429).
@@ -29,17 +30,19 @@ pub const RATE_LIMITED_USER_MESSAGE_OAUTH: &str =
 /// See https://docs.x.ai/developers/rate-limits#rate-limit-tiers
 pub const RATE_LIMITED_USER_MESSAGE_API_KEY: &str = "You\u{2019}ve hit your team\u{2019}s API rate limit. Ask a team admin to purchase more credits for higher limits, or try again later. See https://docs.x.ai/developers/rate-limits#rate-limit-tiers";
 
-/// Pick rate-limit copy from the *active* auth method.
+/// Pick rate-limit copy from the *active* auth method and provider.
 ///
 /// Pass the real `is_api_key_auth` flag (pager `AppView`, `AuthMethodKind::is_api_key`
 /// for the selected method). Do **not** decide from `has_xai_api_key_env()` alone:
 /// when both an env key and a cached OAuth session exist, auth prefers the
 /// cached session over the API key.
-pub fn rate_limited_user_message(is_api_key_auth: bool) -> &'static str {
+///
+/// The `provider` controls the API-key message URL (Codegraff docs vs xAI docs).
+pub fn rate_limited_user_message(is_api_key_auth: bool, provider: Provider) -> String {
     if is_api_key_auth {
-        RATE_LIMITED_USER_MESSAGE_API_KEY
+        provider.rate_limited_message_api_key()
     } else {
-        RATE_LIMITED_USER_MESSAGE_OAUTH
+        provider.rate_limited_message_oauth()
     }
 }
 
@@ -51,7 +54,11 @@ pub const FREE_USAGE_EXHAUSTED_ERROR_CODE: &str = "subscription:free-usage-exhau
 
 /// User-facing free-usage exhaustion copy (paywall). Deliberately promises no
 /// reset duration — the quota window is backend-config-driven.
-pub const FREE_USAGE_USER_MESSAGE: &str = "You\u{2019}ve reached your free Aiko usage limit for now. Get SuperGrok for much higher limits, or try again later: https://grok.com/supergrok?referrer=grok-build";
+/// Delegates to [`Provider::free_usage_message`] so the message matches the
+/// active provider (Codegraff or Grok).
+pub fn free_usage_user_message(provider: Provider) -> String {
+    provider.free_usage_message()
+}
 
 /// Whether flattened server detail is free-usage-quota exhaustion (paywall),
 /// not transient throttling. Sniffs the well-known code embedded by
@@ -62,10 +69,10 @@ pub fn is_free_usage_exhausted_error(detail: &str) -> bool {
 
 /// User-facing text for an ACP -32003 rate-limit error.
 ///
-/// 1. Free-usage well-known code → [`FREE_USAGE_USER_MESSAGE`] (OAuth product paywall).
-/// 2. Non-empty body that pushes a **personal** Grok subscription, when the
-///    caller is on **API key** auth → [`RATE_LIMITED_USER_MESSAGE_API_KEY`]
-///    (team credits / console rate-limit tiers; not grok.com SuperGrok).
+/// 1. Free-usage well-known code → [`free_usage_user_message`] (product paywall).
+/// 2. Non-empty body that pushes a **personal** provider subscription, when the
+///    caller is on **API key** auth → team credits / rate-limit tiers message
+///    (not a personal plan upgrade).
 /// 3. Any other non-empty body → shown as-is (capacity, team RPS limits, etc.).
 /// 4. Empty body → [`rate_limited_user_message`].
 ///
@@ -74,31 +81,31 @@ pub fn is_free_usage_exhausted_error(detail: &str) -> bool {
 pub fn format_rate_limited_user_message(
     server_detail: Option<&str>,
     is_api_key_auth: bool,
+    provider: Provider,
 ) -> String {
     if server_detail.is_some_and(is_free_usage_exhausted_error) {
-        return FREE_USAGE_USER_MESSAGE.to_string();
+        return free_usage_user_message(provider);
     }
     if let Some(detail) = server_detail.map(str::trim).filter(|s| !s.is_empty()) {
-        if is_api_key_auth && pushes_consumer_subscription_upsell(detail) {
-            return RATE_LIMITED_USER_MESSAGE_API_KEY.to_string();
+        if is_api_key_auth && pushes_consumer_subscription_upsell(detail, provider) {
+            return provider.rate_limited_message_api_key();
         }
         return detail.to_string();
     }
-    rate_limited_user_message(is_api_key_auth).to_string()
+    rate_limited_user_message(is_api_key_auth, provider)
 }
 
 /// IC sometimes reuses OAuth free-tier upsell copy on 429s ("upgrade to a Grok
 /// subscription" / grok.com/supergrok). That is wrong for API-key / team auth:
 /// higher limits come from credits and spend-based rate-limit tiers, not a
 /// personal SuperGrok plan.
-fn pushes_consumer_subscription_upsell(detail: &str) -> bool {
-    let d = detail.to_ascii_lowercase();
-    d.contains("grok.com/supergrok") || d.contains("upgrade to a grok subscription")
+fn pushes_consumer_subscription_upsell(detail: &str, provider: Provider) -> bool {
+    provider.is_consumer_subscription_upsell(detail)
 }
 
 /// Map a `SamplingError` to an ACP `Error` for client-facing responses.
 /// This stays in xai-grok-shell because it depends on `agent_client_protocol::Error`.
-pub fn map_sampling_err_to_acp(err: SamplingError) -> acp::Error {
+pub fn map_sampling_err_to_acp(err: SamplingError, provider: Provider) -> acp::Error {
     use reqwest::StatusCode;
     match err {
         SamplingError::Auth(msg) => acp::Error::auth_required().data(msg),
@@ -118,7 +125,7 @@ pub fn map_sampling_err_to_acp(err: SamplingError) -> acp::Error {
             // explanation visible to the user without triggering the client's
             // re-auth flow on -32000.
             StatusCode::FORBIDDEN => {
-                let message = if message.contains("requires a Grok subscription")
+                let message = if provider.is_subscription_required(&message)
                     && crate::agent::auth_method::has_xai_api_key_env()
                 {
                     format!(
@@ -372,41 +379,45 @@ mod tests {
 
     #[test]
     fn rate_limited_user_message_oauth_vs_api_key() {
+        // OAuth message is generic (same for all providers).
         assert_eq!(
-            rate_limited_user_message(false),
+            rate_limited_user_message(false, Provider::Grok),
             RATE_LIMITED_USER_MESSAGE_OAUTH
         );
-        assert_eq!(
-            rate_limited_user_message(true),
-            RATE_LIMITED_USER_MESSAGE_API_KEY
-        );
-        assert!(RATE_LIMITED_USER_MESSAGE_OAUTH.contains("Upgrade your account"));
-        assert!(RATE_LIMITED_USER_MESSAGE_API_KEY.contains("team"));
-        assert!(RATE_LIMITED_USER_MESSAGE_API_KEY.contains("credits"));
-        assert!(
-            RATE_LIMITED_USER_MESSAGE_API_KEY
-                .contains("https://docs.x.ai/developers/rate-limits#rate-limit-tiers")
-        );
-        assert!(!RATE_LIMITED_USER_MESSAGE_API_KEY.contains("Upgrade your account"));
+        // API-key message is provider-specific; test with Grok.
+        let grok_api = rate_limited_user_message(true, Provider::Grok);
+        assert!(grok_api.contains("team"));
+        assert!(grok_api.contains("credits"));
+        assert!(grok_api.contains("https://docs.x.ai/developers/rate-limits#rate-limit-tiers"));
+        assert!(!grok_api.contains("Upgrade your account"));
+
+        // Codegraff returns its own API-key message.
+        let cg_api = rate_limited_user_message(true, Provider::Codegraff);
+        assert!(cg_api.contains("team"));
+        assert!(cg_api.contains("credits"));
+        assert!(cg_api.contains("codegraff.com/docs/rate-limits"));
     }
 
     #[test]
     fn format_rate_limited_surfaces_nonempty_server_detail() {
         let service = "The service is temporarily at capacity. Please retry your request shortly.";
         assert_eq!(
-            format_rate_limited_user_message(Some(service), false),
+            format_rate_limited_user_message(Some(service), false, Provider::Grok),
             service
         );
         assert_eq!(
-            format_rate_limited_user_message(Some(service), true),
+            format_rate_limited_user_message(Some(service), true, Provider::Grok),
             service
         );
 
         // Team console rate-limit copy has no personal SuperGrok upsell — surface as-is.
         let team = "resource-exhausted: Too many requests for team abc. See https://console.x.ai/team/default/rate-limits.";
-        assert_eq!(format_rate_limited_user_message(Some(team), true), team);
         assert_eq!(
-            format_rate_limited_user_message(Some("slow down"), false),
+            format_rate_limited_user_message(Some(team), true, Provider::Grok),
+            team
+        );
+        assert_eq!(
+            format_rate_limited_user_message(Some("slow down"), false, Provider::Grok),
             "slow down"
         );
     }
@@ -417,17 +428,14 @@ mod tests {
              Please slow down, or upgrade to a Grok subscription for higher limits: \
              https://grok.com/supergrok";
         // OAuth keeps the IC body (personal plan upgrade is correct).
-        assert_eq!(format_rate_limited_user_message(Some(rpm), false), rpm);
-        // API key must not push grok.com SuperGrok — team credits / rate-limit tiers.
         assert_eq!(
-            format_rate_limited_user_message(Some(rpm), true),
-            RATE_LIMITED_USER_MESSAGE_API_KEY
+            format_rate_limited_user_message(Some(rpm), false, Provider::Grok),
+            rpm
         );
-        assert!(
-            RATE_LIMITED_USER_MESSAGE_API_KEY
-                .contains("https://docs.x.ai/developers/rate-limits#rate-limit-tiers")
-        );
-        assert!(!RATE_LIMITED_USER_MESSAGE_API_KEY.contains("grok.com/supergrok"));
+        // API key must not push grok.com SuperGrok — team credits / rate-limit tiers.
+        let grok_api_msg = format_rate_limited_user_message(Some(rpm), true, Provider::Grok);
+        assert!(grok_api_msg.contains("https://docs.x.ai/developers/rate-limits#rate-limit-tiers"));
+        assert!(!grok_api_msg.contains("grok.com/supergrok"));
     }
 
     #[test]
@@ -447,33 +455,35 @@ mod tests {
     #[test]
     fn format_rate_limited_free_usage_uses_paywall_copy() {
         let detail = "subscription:free-usage-exhausted: You have used all your free usage.";
+        let expected = free_usage_user_message(Provider::Grok);
         assert_eq!(
-            format_rate_limited_user_message(Some(detail), false),
-            FREE_USAGE_USER_MESSAGE
+            format_rate_limited_user_message(Some(detail), false, Provider::Grok),
+            expected
         );
         assert_eq!(
-            format_rate_limited_user_message(Some(detail), true),
-            FREE_USAGE_USER_MESSAGE
+            format_rate_limited_user_message(Some(detail), true, Provider::Grok),
+            expected
         );
     }
 
     #[test]
     fn format_rate_limited_empty_detail_uses_auth_aware_fallback() {
         assert_eq!(
-            format_rate_limited_user_message(None, false),
+            format_rate_limited_user_message(None, false, Provider::Grok),
             RATE_LIMITED_USER_MESSAGE_OAUTH
         );
         assert_eq!(
-            format_rate_limited_user_message(Some(""), false),
+            format_rate_limited_user_message(Some(""), false, Provider::Grok),
             RATE_LIMITED_USER_MESSAGE_OAUTH
         );
+        let grok_api = rate_limited_user_message(true, Provider::Grok);
         assert_eq!(
-            format_rate_limited_user_message(None, true),
-            RATE_LIMITED_USER_MESSAGE_API_KEY
+            format_rate_limited_user_message(None, true, Provider::Grok),
+            grok_api
         );
         assert_eq!(
-            format_rate_limited_user_message(Some("   "), true),
-            RATE_LIMITED_USER_MESSAGE_API_KEY
+            format_rate_limited_user_message(Some("   "), true, Provider::Grok),
+            grok_api
         );
     }
 
@@ -486,7 +496,7 @@ mod tests {
             retry_after_secs: None,
             should_retry: None,
         };
-        let acp_err = map_sampling_err_to_acp(err);
+        let acp_err = map_sampling_err_to_acp(err, Provider::Grok);
         assert_eq!(acp_err.code, acp::ErrorCode::from(RATE_LIMITED_ERROR_CODE));
         assert_eq!(acp_err.message, "Rate limited");
         assert_eq!(
@@ -505,7 +515,7 @@ mod tests {
             should_retry: None,
         };
         assert_eq!(err.retry_after(), Some(60));
-        let acp_err = map_sampling_err_to_acp(err);
+        let acp_err = map_sampling_err_to_acp(err, Provider::Grok);
         assert_eq!(acp_err.code, acp::ErrorCode::from(RATE_LIMITED_ERROR_CODE));
         assert_eq!(acp_err.message, "Rate limited");
     }
@@ -526,8 +536,8 @@ mod tests {
             retry_after_secs: None,
             should_retry: None,
         };
-        let rate_acp = map_sampling_err_to_acp(rate_err);
-        let server_acp = map_sampling_err_to_acp(server_err);
+        let rate_acp = map_sampling_err_to_acp(rate_err, Provider::Grok);
+        let server_acp = map_sampling_err_to_acp(server_err, Provider::Grok);
 
         assert_eq!(rate_acp.code, acp::ErrorCode::from(RATE_LIMITED_ERROR_CODE));
         assert_ne!(rate_acp.code, server_acp.code);
@@ -543,7 +553,7 @@ mod tests {
             retry_after_secs: None,
             should_retry: None,
         };
-        let acp_err = map_sampling_err_to_acp(err);
+        let acp_err = map_sampling_err_to_acp(err, Provider::Grok);
         assert_eq!(acp_err.code, acp::Error::auth_required().code);
     }
 
@@ -565,7 +575,7 @@ mod tests {
             retry_after_secs: None,
             should_retry: None,
         };
-        let acp_err = map_sampling_err_to_acp(err);
+        let acp_err = map_sampling_err_to_acp(err, Provider::Grok);
         assert_ne!(
             acp_err.code,
             acp::Error::auth_required().code,
@@ -621,7 +631,7 @@ mod tests {
                 retry_after_secs: None,
                 should_retry: None,
             };
-            let acp_err = map_sampling_err_to_acp(err);
+            let acp_err = map_sampling_err_to_acp(err, Provider::Grok);
             let data = acp_err.data.unwrap();
             let msg = data.as_str().unwrap();
             assert!(
@@ -646,7 +656,7 @@ mod tests {
                 retry_after_secs: None,
                 should_retry: None,
             };
-            let acp_err = map_sampling_err_to_acp(err);
+            let acp_err = map_sampling_err_to_acp(err, Provider::Grok);
             let data = acp_err.data.unwrap();
             let msg = data.as_str().unwrap();
             assert!(
@@ -667,7 +677,7 @@ mod tests {
                 retry_after_secs: None,
                 should_retry: None,
             };
-            let acp_err = map_sampling_err_to_acp(err);
+            let acp_err = map_sampling_err_to_acp(err, Provider::Grok);
             let data = acp_err.data.unwrap();
             let msg = data.as_str().unwrap();
             assert!(
@@ -727,7 +737,7 @@ mod tests {
     /// The typed max-tokens kind round-trips through `acp::Error.data` to the uploaded stop_reason.
     #[test]
     fn stop_reason_for_turn_error_distinguishes_max_tokens() {
-        let err = map_sampling_err_to_acp(SamplingError::MaxTokensTruncation);
+        let err = map_sampling_err_to_acp(SamplingError::MaxTokensTruncation, Provider::Grok);
         assert_eq!(stop_reason_for_turn_error(&err), "MaxTokens");
         assert_eq!(
             stop_reason_for_turn_error(&acp::Error::internal_error()),

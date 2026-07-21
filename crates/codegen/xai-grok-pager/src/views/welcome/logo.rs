@@ -1,4 +1,4 @@
-//! Logo component — renders the braille art logo.
+//! Aiko logo component — renders the responsive braille monogram.
 //!
 //! Hidden entirely on legacy Windows consoles: the U+2800 braille block is
 //! not covered by the ConHost raster fonts and would render as tofu.

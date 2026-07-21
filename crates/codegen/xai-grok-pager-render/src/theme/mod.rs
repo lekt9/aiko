@@ -1,7 +1,7 @@
 //! Theming for the pager.
 //!
 //! All colors come from the `Theme` struct. No hardcoded colors elsewhere.
-//! The default theme is GrokNight (neutral gray base with TokyoNight accents).
+//! The default theme is Aiko Night (deep ink with pastel-blue accents).
 //!
 //! ## Color support
 //!
@@ -73,6 +73,8 @@ impl ThemeKind {
     /// Human-readable display name.
     pub fn display_name(self) -> &'static str {
         match self {
+            // Persist the historical key for config compatibility. The UI
+            // presents this palette as Aiko Night.
             Self::GrokNight => "groknight",
             Self::TokyoNight => "tokyonight",
             Self::GrokDay => "grokday",
@@ -105,7 +107,9 @@ impl ThemeKind {
         let lower = name.to_lowercase();
         match lower.as_str() {
             "auto" | "system" => Some(Self::Auto),
-            "groknight" | "grok-night" | "dark" => Some(Self::GrokNight),
+            "aiko" | "aiko-night" | "aikonight" | "groknight" | "grok-night" | "dark" => {
+                Some(Self::GrokNight)
+            }
             "tokyonight" | "tokyo-night" | "tokyo" => Some(Self::TokyoNight),
             "grokday" | "grok-day" | "light" | "day" => Some(Self::GrokDay),
             "rosepine" | "rose-pine" | "rosepine-moon" | "rose-pine-moon" => {
@@ -143,7 +147,7 @@ pub fn canonical_name(value: &str) -> Option<&'static str> {
 pub fn display_name_for_canonical(value: &str) -> &str {
     match value {
         "auto" => "Auto",
-        "groknight" => "Grok Night",
+        "aiko-night" | "groknight" => "Aiko Night",
         "grokday" => "Grok Day",
         "tokyonight" => "Tokyo Night",
         "rosepine-moon" => "Rose Pine Moon",

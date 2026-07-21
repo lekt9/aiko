@@ -1,10 +1,11 @@
-pub const ENV_SYSTEM_PROMPT_LABEL: &str = "GROK_SYSTEM_PROMPT_LABEL";
+pub const ENV_SYSTEM_PROMPT_LABEL: &str = "AIKO_SYSTEM_PROMPT_LABEL";
+const LEGACY_ENV_SYSTEM_PROMPT_LABEL: &str = "GROK_SYSTEM_PROMPT_LABEL";
 
 pub const DEFAULT_SYSTEM_PROMPT_LABEL: &str = xai_grok_agent::DEFAULT_SYSTEM_PROMPT_LABEL;
 
 /// Resolve system-prompt identity label.
 /// Precedence: env → config per-model → `[agent]` → GB per-model → GB global →
-/// `"Grok"`. Empty/whitespace falls through.
+/// `"Aiko"`. Empty/whitespace falls through.
 ///
 /// Per-model TOML is looked up by session catalog id, then routing slug
 /// (`ModelInfo.model`). Do not use CLI `-m` alone — it may outlive a mid-session
@@ -35,8 +36,8 @@ pub fn resolve_system_prompt_label(
 pub fn resolve_system_prompt_label_from_tiers(
     user_per_model: Option<String>,
     user_global: Option<String>,
-    gb_per_model: Option<String>,
-    gb_global: Option<String>,
+    _remote_per_model: Option<String>,
+    _remote_global: Option<String>,
 ) -> String {
     let non_empty = |s: Option<String>| {
         s.and_then(|v| {
@@ -46,11 +47,10 @@ pub fn resolve_system_prompt_label_from_tiers(
     };
     std::env::var(ENV_SYSTEM_PROMPT_LABEL)
         .ok()
+        .or_else(|| std::env::var(LEGACY_ENV_SYSTEM_PROMPT_LABEL).ok())
         .and_then(|s| non_empty(Some(s)))
         .or_else(|| non_empty(user_per_model))
         .or_else(|| non_empty(user_global))
-        .or_else(|| non_empty(gb_per_model))
-        .or_else(|| non_empty(gb_global))
         .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT_LABEL.to_string())
 }
 
@@ -118,7 +118,7 @@ mod system_prompt_label_tests {
     }
 
     #[test]
-    fn gb_per_model_beats_gb_global() {
+    fn remote_identity_cannot_override_aiko() {
         with_env_cleared(|| {
             assert_eq!(
                 resolve_system_prompt_label_from_tiers(
@@ -127,7 +127,7 @@ mod system_prompt_label_tests {
                     Some("GbPer".into()),
                     Some("GbGlobal".into()),
                 ),
-                "GbPer"
+                DEFAULT_SYSTEM_PROMPT_LABEL
             );
         });
     }
@@ -142,7 +142,7 @@ mod system_prompt_label_tests {
                     None,
                     Some("GbGlobal".into()),
                 ),
-                "GbGlobal"
+                DEFAULT_SYSTEM_PROMPT_LABEL
             );
         });
     }

@@ -8,6 +8,7 @@ use super::billing::{
     handle_check_subscription_complete, handle_credit_limit_recheck_complete,
     handle_gate_refreshed, handle_gate_verify_timeout,
 };
+use super::contracts::handle_contracts_loaded;
 use super::cta::{
     handle_cta_plugin_install_done, handle_cta_plugin_reload_done,
     handle_plugin_cta_catalog_loaded, handle_plugin_cta_debounce_expired,
@@ -346,6 +347,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             app.dashboard_sessions_loading = false;
             vec![]
         }
+        TaskResult::ContractsLoaded { json } => handle_contracts_loaded(app, &json),
         TaskResult::CardDetailLoaded {
             source,
             session_id,

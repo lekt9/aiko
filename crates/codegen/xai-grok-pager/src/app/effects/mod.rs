@@ -4162,6 +4162,12 @@ pub(crate) fn execute(
                     }
                 });
         }
+        Effect::AsyncContractRefresh => {
+            tasks.spawn(async {
+                let json = xai_grok_shell::contract_native::list_scheduled_contracts().await;
+                TaskResult::ContractsLoaded { json }
+            });
+        }
     }
     (false, meta)
 }

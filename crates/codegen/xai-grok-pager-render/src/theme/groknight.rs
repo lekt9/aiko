@@ -1,4 +1,4 @@
-//! GrokNight theme — neutral gray base with TokyoNight accent colors.
+//! Aiko Night theme — deep ink surfaces with restrained pastel-blue accents.
 //!
 //! The canonical palette is defined in RGB (`Color::Rgb`). At startup the
 //! theme is run through [`Theme::quantized`] which downgrades every color
@@ -13,54 +13,50 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color {
     Color::Rgb(r, g, b)
 }
 
-// GrokNight palette — neutral gray base + TokyoNight accent colors.
-//
-// Backgrounds and text use a custom grayscale ramp anchored at:
-//   • bg  = #141414 (20)
-//   • fg  = #f3f3f3 (243)
-//
-// Accent colors are the original TokyoNight Night hex values.
+// Aiko's desktop palette translated to terminal-safe semantic roles. The
+// historical `groknight` config key remains an alias so existing installs do
+// not lose their saved theme when upgrading.
 #[allow(dead_code)]
 mod palette {
     use super::*;
 
     // ── Backgrounds ─────────────────────────────────────────────────────
-    pub const BG: Color = rgb(10, 10, 10); //  #0a0a0a — Night (terminal bg)
-    pub const BG_DARK: Color = rgb(12, 12, 12); //  #0c0c0c — darkest
-    pub const BG_STORM_DARK: Color = rgb(17, 17, 17); //  #111111 — dark bg
-    pub const BG_STORM: Color = rgb(20, 20, 20); //  #141414 — main bg
-    pub const BG_HIGHLIGHT: Color = rgb(36, 36, 36); //  #242424 — highlight bg
+    pub const BG: Color = rgb(7, 12, 25); // #070c19 — terminal well
+    pub const BG_DARK: Color = rgb(9, 16, 32); // #091020 — deepest plane
+    pub const BG_STORM_DARK: Color = rgb(12, 21, 40); // #0c1528 — inset plane
+    pub const BG_STORM: Color = rgb(15, 26, 48); // #0f1a30 — canvas
+    pub const BG_HIGHLIGHT: Color = rgb(29, 45, 76); // #1d2d4c — raised plane
 
     // ── Text / grays ────────────────────────────────────────────────────
-    pub const FG: Color = rgb(225, 225, 225); // #e1e1e1 — primary text
-    pub const FG_DARK: Color = rgb(200, 200, 200); // #c8c8c8 — secondary text
-    pub const FG_GUTTER: Color = rgb(65, 65, 65); //  #414141 — dim
-    pub const COMMENT: Color = rgb(108, 108, 108); //  #6c6c6c — muted
-    pub const DARK3: Color = rgb(90, 90, 90); //  #5a5a5a — medium gray
-    pub const DARK5: Color = rgb(120, 120, 120); // #787878 — bright gray
+    pub const FG: Color = rgb(224, 232, 248); // #e0e8f8 — primary text
+    pub const FG_DARK: Color = rgb(177, 193, 221); // #b1c1dd — secondary text
+    pub const FG_GUTTER: Color = rgb(67, 84, 116); // #435474 — dim chrome
+    pub const COMMENT: Color = rgb(105, 124, 157); // #697c9d — muted
+    pub const DARK3: Color = rgb(86, 105, 139); // #56698b — medium
+    pub const DARK5: Color = rgb(130, 150, 185); // #8296b9 — bright muted
 
     // ── Accent colors (TokyoNight Night) ─────────────────────────────────
-    pub const BLUE: Color = rgb(122, 162, 247); // #7aa2f7
-    pub const BLUE0: Color = rgb(61, 89, 161); // #3d59a1
-    pub const BLUE1: Color = rgb(58, 149, 171); // #3A95AB
-    pub const CYAN: Color = rgb(125, 207, 255); // #7dcfff
-    pub const GREEN: Color = rgb(158, 206, 106); // #9ece6a
-    pub const GREEN1: Color = rgb(115, 218, 202); // #73daca
-    pub const MAGENTA: Color = rgb(187, 154, 247); // #bb9af7
-    pub const ORANGE: Color = rgb(255, 158, 100); // #ff9e64
-    pub const PURPLE: Color = rgb(157, 124, 216); // #9d7cd8
-    pub const RED: Color = rgb(247, 118, 142); // #f7768e
+    pub const BLUE: Color = rgb(145, 177, 235); // #91b1eb — cornflower
+    pub const BLUE0: Color = rgb(75, 105, 170); // #4b69aa
+    pub const BLUE1: Color = rgb(117, 180, 207); // #75b4cf — fog cyan
+    pub const CYAN: Color = rgb(154, 207, 229); // #9acfe5
+    pub const GREEN: Color = rgb(141, 196, 174); // #8dc4ae
+    pub const GREEN1: Color = rgb(126, 197, 188); // #7ec5bc
+    pub const MAGENTA: Color = rgb(174, 166, 226); // #aea6e2 — periwinkle
+    pub const ORANGE: Color = rgb(231, 175, 139); // #e7af8b — apricot
+    pub const PURPLE: Color = rgb(156, 151, 214); // #9c97d6
+    pub const RED: Color = rgb(226, 133, 151); // #e28597
     pub const RED1: Color = rgb(219, 75, 75); // #db4b4b
-    pub const TEAL: Color = rgb(26, 188, 156); // #1abc9c
-    pub const YELLOW: Color = rgb(224, 175, 104); // #e0af68
+    pub const TEAL: Color = rgb(105, 185, 190); // #69b9be
+    pub const YELLOW: Color = rgb(225, 184, 126); // #e1b87e
 
-    pub const RED_DARK: Color = rgb(66, 14, 20); // #420e14 — quantizes to 256-color red, not gray
-    pub const GREEN_DARK: Color = rgb(6, 56, 6); // #063806 — quantizes to 256-color green, not gray
+    pub const RED_DARK: Color = rgb(57, 25, 43);
+    pub const GREEN_DARK: Color = rgb(15, 48, 48);
 }
 use palette::*;
 
 impl Theme {
-    /// GrokNight theme — neutral gray base with TokyoNight accents.
+    /// Aiko Night theme, retained under the `groknight` compatibility key.
     ///
     /// Colors are defined in RGB. Call [`Theme::quantized`] to downgrade
     /// them to the terminal's supported color level before rendering.
@@ -68,12 +64,12 @@ impl Theme {
         Self {
             bg_base: BG_STORM,
             bg_light: BG_HIGHLIGHT,
-            bg_dark: rgb(28, 28, 28), // lighter than bg_base for visible code blocks
+            bg_dark: rgb(11, 20, 39),
             bg_highlight: BG_HIGHLIGHT,
-            bg_hover: rgb(44, 44, 44),
+            bg_hover: rgb(35, 53, 87),
             bg_terminal: BG,
 
-            accent_user: FG_DARK,
+            accent_user: BLUE,
             accent_assistant: MAGENTA,
             accent_thinking: MAGENTA,
             accent_tool: DARK5,
@@ -86,7 +82,7 @@ impl Theme {
             text_primary: FG,
             text_secondary: FG_DARK,
 
-            gray_dim: rgb(88, 88, 88), // #585858 — slightly brighter than FG_GUTTER
+            gray_dim: rgb(76, 94, 127),
             gray: COMMENT,
             gray_bright: DARK5,
 
@@ -97,7 +93,7 @@ impl Theme {
 
             fuzzy_accent: BLUE,
 
-            accent_plan: rgb(255, 219, 141), // #FFDB8D — golden
+            accent_plan: ORANGE,
 
             accent_verify: rgb(187, 154, 247), // #bb9af7 — violet
 
@@ -105,10 +101,10 @@ impl Theme {
 
             accent_remember: Color::Rgb(139, 195, 74), // #8BC34A — Material Design light green
 
-            selection_border: rgb(60, 60, 65),
-            prompt_border: rgb(50, 50, 55), // #323237 — dimmer prompt chrome
-            prompt_border_active: rgb(80, 80, 88), // #505058 — brighter when focused
-            hover_border: rgb(30, 30, 34),
+            selection_border: rgb(82, 111, 170),
+            prompt_border: rgb(43, 64, 103),
+            prompt_border_active: BLUE,
+            hover_border: rgb(54, 77, 119),
 
             accent_model: TEAL,
 
@@ -122,7 +118,7 @@ impl Theme {
             diff_equal_fg: COMMENT,
             diff_gutter_fg: COMMENT,
 
-            bg_visual: rgb(54, 54, 54),
+            bg_visual: rgb(38, 58, 96),
 
             paste_bg: BG_STORM_DARK,
             paste_fg: FG_DARK,
@@ -144,9 +140,9 @@ impl Theme {
             md_task_checked: GREEN,
             md_task_unchecked: FG_DARK, // text_secondary
             md_muted: COMMENT,
-            md_code_bg: rgb(28, 28, 28),
+            md_code_bg: rgb(11, 20, 39),
             md_text: FG_DARK,
-            link_fg: rgb(122, 166, 218), // #7aa6da -- soft blue for dark bg
+            link_fg: BLUE,
         }
     }
 }

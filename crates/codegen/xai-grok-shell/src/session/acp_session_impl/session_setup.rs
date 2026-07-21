@@ -2,6 +2,7 @@
 //! readiness, skills reload and reminders, session info, and model-metadata
 //! refresh.
 use super::*;
+use crate::provider::Provider;
 impl SessionActor {
     /// `true` for session-based ACP auth methods.
     fn is_session_based_auth(&self) -> bool {
@@ -29,7 +30,7 @@ impl SessionActor {
             );
             return acp::Error::auth_required().data(msg);
         }
-        map_sampling_err_to_acp(err)
+        map_sampling_err_to_acp(err, Provider::from_env())
     }
     /// Set up `[system, skill_reminder?]` — prefix is deferred to background.
     pub(super) async fn initialize(&self, system_prompt: String) {

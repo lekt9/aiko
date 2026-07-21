@@ -610,7 +610,9 @@ fn handle_ext_notification(notif: &acp::ExtNotification, app: &mut AppView) -> b
         "x.ai/sessions/changed" => handle_sessions_changed(notif, app),
         "x.ai/queue/changed" => handle_queue_changed(notif, app),
         // TODO(prompt_complete-deprecation): Legacy removal (gated): durable turn_completed is already consumed via finalize_turn_from_terminal; keep & re-point the lost-RPC reconcile to the durable rail before deleting.
-        "x.ai/session/prompt_complete" => handle_prompt_complete(notif, app),
+        "aiko/session/prompt_complete" | "x.ai/session/prompt_complete" => {
+            handle_prompt_complete(notif, app)
+        }
         "x.ai/session/interjection" => handle_interjection(notif, app),
         "x.ai/monitor_event" => handle_monitor_event(notif, app),
         "x.ai/scheduled_task_created" => handle_scheduled_task_created(notif, app),

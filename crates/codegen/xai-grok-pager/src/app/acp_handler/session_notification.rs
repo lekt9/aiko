@@ -1,4 +1,5 @@
 use super::*;
+use xai_grok_shell::provider::Provider;
 use xai_grok_shell::sampling::error::format_rate_limited_user_message;
 /// Stash a live stop/stop_failure batch under `stash_pid` for the turn marker
 /// to fold. `merge_same_name` merges a same-name repeat instead of standalone.
@@ -611,6 +612,40 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
                 .scrollback
                 .push_block(RenderBlock::session_event(SessionEvent::HookAnnotation {
                     message,
+                }));
+            true
+        }
+        XaiSessionUpdate::CapabilityPlan {
+            selected_route,
+            candidates,
+            status,
+            confidence,
+            automatic,
+            freshness,
+            prerequisites,
+            reason_codes,
+            learning_status,
+        } => {
+            agent
+                .scrollback
+                .push_block(RenderBlock::session_event(SessionEvent::CapabilityPlan {
+                    selected_route,
+                    candidate_routes: candidates
+                        .into_iter()
+                        .map(|candidate| {
+                            format!(
+                                "{}@{}",
+                                candidate.capability_id, candidate.capability_version
+                            )
+                        })
+                        .collect(),
+                    status,
+                    confidence,
+                    automatic,
+                    freshness,
+                    prerequisites,
+                    reason_codes,
+                    learning_status,
                 }));
             true
         }
@@ -1272,7 +1307,11 @@ pub(super) fn apply_retry_state(
                 scrollback.push_block(RenderBlock::session_event(SessionEvent::ReAuthRequired));
             } else {
                 let error = if *rate_limited {
-                    format_rate_limited_user_message(Some(reason.as_str()), is_api_key_auth)
+                    format_rate_limited_user_message(
+                        Some(reason.as_str()),
+                        is_api_key_auth,
+                        Provider::from_env(),
+                    )
                 } else {
                     format!("failed after {attempts} retries: {reason}")
                 };

@@ -148,6 +148,7 @@ use ratatui::text::Line;
 use ratatui::widgets::Widget;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
+use xai_grok_shell::provider::Provider;
 mod cta;
 mod input;
 mod interactions;
@@ -1630,7 +1631,7 @@ fn translate_local_submit(
             let url = q
                 .and_then(|q| q.options.get(*idx))
                 .and_then(|o| o.id.as_deref())
-                .unwrap_or(super::dispatch::UPSELL_URL_PAYG);
+                .unwrap_or(super::dispatch::upsell_url_payg(Provider::from_env()));
             let choice = choices
                 .get(*idx)
                 .copied()
@@ -1649,7 +1650,7 @@ fn translate_local_submit(
                 .first()
                 .and_then(|q| q.options.get(*idx))
                 .and_then(|o| o.id.as_deref())
-                .unwrap_or(super::dispatch::UPSELL_URL_UPGRADE);
+                .unwrap_or(super::dispatch::upsell_url_upgrade(Provider::from_env()));
             xai_grok_telemetry::session_ctx::log_event(
                 xai_grok_telemetry::events::SuperGrokUpsellClicked {
                     source,
@@ -2057,7 +2058,10 @@ fn resolve_action(action_id: Option<ActionId>) -> Option<InputOutcome> {
         | ActionId::DashboardOverlayStop
         | ActionId::DashboardToggleAutoApprove
         | ActionId::DashboardOpenLocationPicker
-        | ActionId::DashboardToggleWorktree => return None,
+        | ActionId::DashboardToggleWorktree
+        | ActionId::OpenContracts
+        | ActionId::ExitContracts
+        | ActionId::RefreshContracts => return None,
     };
     Some(InputOutcome::Action(action))
 }

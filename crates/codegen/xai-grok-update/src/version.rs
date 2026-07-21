@@ -10,21 +10,39 @@ use xai_grok_shell::env::GrokBuildEnvironment;
 use xai_grok_shell::util::grok_home::grok_home;
 
 const TTL_SECONDS_BEFORE_AUTO_UPDATE: Duration = Duration::from_secs(60 * 30);
-const NPM_PACKAGE: &str = "@xai-official/grok";
-pub const GH_RELEASE_REPO: &str = "xai-org-shared/grok-build";
+const DEFAULT_NPM_PACKAGE: &str = "@unbrowse/aiko";
+pub const DEFAULT_RELEASE_REPO: &str = "Unbrowse/aiko";
 
-/// Primary CLI base URL: Cloudflare-fronted x.ai endpoint with edge caching
-/// for binaries and origin-respecting no-cache for channel pointers.
-pub(crate) const CLI_BASE_URL_PRIMARY: &str = "https://x.ai/cli";
+/// Aiko release origins are deliberately deployment-owned rather than
+/// inherited from Grok. `AIKO_UPDATE_BASE_URLS` accepts a comma-separated
+/// preference list; `AIKO_UPDATE_BASE_URL` is the convenient single-origin
+/// form. With neither set, updating fails closed instead of ever consulting a
+/// Grok/x.ai release service.
+pub(crate) fn release_base_urls() -> Vec<String> {
+    let configured = std::env::var("AIKO_UPDATE_BASE_URLS")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| std::env::var("AIKO_UPDATE_BASE_URL").ok());
+    configured
+        .into_iter()
+        .flat_map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| value.trim_end_matches('/').to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
 
-/// Fallback CLI base URL: direct GCS, used when the primary is unreachable
-/// (Cloudflare outage, regional CF egress issue, DNS hijack, etc.).
-pub(crate) const CLI_BASE_URL_FALLBACK: &str =
-    "https://storage.googleapis.com/grok-build-public-artifacts/cli";
+pub(crate) fn npm_package() -> String {
+    std::env::var("AIKO_NPM_PACKAGE").unwrap_or_else(|_| DEFAULT_NPM_PACKAGE.to_string())
+}
 
-/// CLI base URLs in preference order. Callers (channel-pointer fetch, binary
-/// download, in-app updater) try each in turn and stop at the first success.
-pub(crate) const CLI_BASE_URLS: &[&str] = &[CLI_BASE_URL_PRIMARY, CLI_BASE_URL_FALLBACK];
+pub fn release_repo() -> String {
+    std::env::var("AIKO_RELEASE_REPO").unwrap_or_else(|_| DEFAULT_RELEASE_REPO.to_string())
+}
 
 /// Minimal configuration the update system needs from the environment.
 ///
@@ -61,14 +79,14 @@ impl UpdateConfig {
 }
 
 #[derive(Debug, serde::Serialize, Deserialize)]
-struct GrokVersion {
+struct AikoVersion {
     version: String,
     #[serde(default)]
     stable_version: Option<String>,
     checked_at: String,
 }
 
-impl GrokVersion {
+impl AikoVersion {
     fn is_fresh(&self, now: time::OffsetDateTime, ttl: Duration) -> bool {
         if let Ok(dt) = time::OffsetDateTime::parse(
             &self.checked_at,
@@ -137,9 +155,9 @@ pub async fn fetch_npm_version_for_test(
 
 async fn fetch_npm_tag(tag: &str, npm_registry: Option<&str>) -> Result<String> {
     let pkg_spec = if tag == "latest" {
-        NPM_PACKAGE.to_string()
+        npm_package()
     } else {
-        format!("{}@{}", NPM_PACKAGE, tag)
+        format!("{}@{}", npm_package(), tag)
     };
     let mut args = vec!["view", &pkg_spec, "version", "--json"];
     let registry_flag;
@@ -188,11 +206,12 @@ pub async fn fetch_gh_release_version(channel: &str) -> Result<String> {
 }
 
 async fn fetch_gh_release_latest(exclude_pre: bool) -> Result<String> {
+    let repository = release_repo();
     let mut args = vec![
         "release",
         "list",
         "--repo",
-        GH_RELEASE_REPO,
+        &repository,
         "--limit",
         "1",
         "--exclude-drafts",
@@ -219,7 +238,7 @@ async fn fetch_gh_release_latest(exclude_pre: bool) -> Result<String> {
     // Tags are formatted as "v0.1.141", strip the leading "v"
     let version = tag.strip_prefix('v').unwrap_or(&tag).to_string();
     if version.is_empty() {
-        anyhow::bail!("No releases found in {}", GH_RELEASE_REPO);
+        anyhow::bail!("No Aiko releases found in {}", release_repo());
     }
     Ok(version)
 }
@@ -233,17 +252,23 @@ async fn fetch_gh_release_latest(exclude_pre: bool) -> Result<String> {
 /// returns the semver-greater, matching the behavior of the npm and
 /// gh-release paths.
 ///
-/// Tries each base URL in [`CLI_BASE_URLS`] in order and stops at the first
+/// Tries each configured Aiko base URL in order and stops at the first
 /// success. Each individual base also retries up to 3 times with exponential
 /// backoff (1s, 2s, 4s) on transient failures before falling through to the
 /// next base.
 pub(crate) async fn fetch_gcs_version(channel: &str) -> Result<String> {
     let mut last_err: Option<anyhow::Error> = None;
-    for (i, base) in CLI_BASE_URLS.iter().enumerate() {
+    let bases = release_base_urls();
+    if bases.is_empty() {
+        anyhow::bail!(
+            "Aiko updates are not configured; set AIKO_UPDATE_BASE_URL or AIKO_UPDATE_BASE_URLS"
+        );
+    }
+    for (i, base) in bases.iter().enumerate() {
         match fetch_gcs_version_from_base(channel, base).await {
             Ok(v) => return Ok(v),
             Err(e) => {
-                if i + 1 < CLI_BASE_URLS.len() {
+                if i + 1 < bases.len() {
                     tracing::warn!(
                         "channel pointer fetch from {} failed ({:#}); trying next base URL",
                         base,
@@ -359,7 +384,7 @@ pub async fn fetch_latest_version(installer: &str, config: &UpdateConfig) -> Res
 pub async fn write_version_cache(version: &str, stable_version: Option<&str>) {
     let version_path = grok_home().join("version.json");
     let now = time::OffsetDateTime::now_utc();
-    let json = GrokVersion::new(
+    let json = AikoVersion::new(
         version.to_string(),
         stable_version.map(|s| s.to_string()),
         now,
@@ -406,7 +431,7 @@ pub async fn is_version_cache_fresh() -> bool {
     let version_path = grok_home().join("version.json");
     let now = time::OffsetDateTime::now_utc();
     if let Ok(version_str) = fs::read_to_string(&version_path).await
-        && let Ok(version) = serde_json::from_str::<GrokVersion>(&version_str)
+        && let Ok(version) = serde_json::from_str::<AikoVersion>(&version_str)
         && version.is_fresh(now, TTL_SECONDS_BEFORE_AUTO_UPDATE)
     {
         return true;
@@ -478,7 +503,7 @@ pub(crate) fn version_from_versioned_binary_name(name: &str, bin_prefix: &str) -
 
 /// Fetch the stable channel pointer for caching alongside the version.
 ///
-/// Tries each base URL in [`CLI_BASE_URLS`] and returns the first success.
+/// Tries each configured Aiko base URL and returns the first success.
 /// Best-effort: returns `None` on any failure (the caller will simply omit
 /// the stable pointer from the cache, and `channel_label()` will return `""`
 /// until the next successful fetch).
@@ -490,8 +515,8 @@ pub(crate) fn version_from_versioned_binary_name(name: &str, bin_prefix: &str) -
 /// (~30 min). This keeps startup and post-install paths fast.
 pub(crate) async fn try_fetch_stable_pointer() -> Option<String> {
     tokio::time::timeout(Duration::from_millis(500), async {
-        for base in CLI_BASE_URLS {
-            if let Ok(v) = fetch_gcs_channel_pointer("stable", base).await {
+        for base in release_base_urls() {
+            if let Ok(v) = fetch_gcs_channel_pointer("stable", &base).await {
                 return Some(v);
             }
         }
@@ -508,7 +533,7 @@ pub(crate) async fn try_fetch_stable_pointer() -> Option<String> {
 pub fn cached_stable_version() -> Option<String> {
     let version_path = grok_home().join("version.json");
     let content = std::fs::read_to_string(&version_path).ok()?;
-    let gv: GrokVersion = serde_json::from_str(&content).ok()?;
+    let gv: AikoVersion = serde_json::from_str(&content).ok()?;
     gv.stable_version
 }
 
@@ -578,7 +603,7 @@ mod tests {
     fn test_is_fresh_rejects_future_timestamp() {
         let now = time::OffsetDateTime::now_utc();
         let future = now + Duration::from_secs(600);
-        let v = GrokVersion::new("0.1.200".to_string(), None, future);
+        let v = AikoVersion::new("0.1.200".to_string(), None, future);
         assert!(
             !v.is_fresh(now, Duration::from_secs(30)),
             "Future timestamp must not be considered fresh (clock-skew guard)."
@@ -703,22 +728,22 @@ mod tests {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // GrokVersion JSON shape — backward compatibility invariants
+    // AikoVersion JSON shape — backward compatibility invariants
     // ──────────────────────────────────────────────────────────────────────
 
     #[test]
     fn test_version_json_backward_compat() {
         // Old format (no stable_version) must parse — serde(default) fills None.
         let old = r#"{"version":"0.1.180","checked_at":"2026-04-22T10:30:00Z"}"#;
-        let v: GrokVersion = serde_json::from_str(old).unwrap();
+        let v: AikoVersion = serde_json::from_str(old).unwrap();
         assert_eq!(v.version, "0.1.180");
         assert!(v.stable_version.is_none());
 
         // New format with stable_version round-trips correctly.
         let now = time::OffsetDateTime::now_utc();
-        let new = GrokVersion::new("0.2.5".to_string(), Some("0.2.3".to_string()), now);
+        let new = AikoVersion::new("0.2.5".to_string(), Some("0.2.3".to_string()), now);
         let json = serde_json::to_string(&new).unwrap();
-        let parsed: GrokVersion = serde_json::from_str(&json).unwrap();
+        let parsed: AikoVersion = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.version, "0.2.5");
         assert_eq!(parsed.stable_version.as_deref(), Some("0.2.3"));
 
@@ -733,11 +758,11 @@ mod tests {
 
         // Unknown fields are ignored (forward-compat).
         let future = r#"{"version":"0.1.180","checked_at":"2026-04-22T10:30:00Z","future":"ok"}"#;
-        assert!(serde_json::from_str::<GrokVersion>(future).is_ok());
+        assert!(serde_json::from_str::<AikoVersion>(future).is_ok());
 
         // Missing required field (checked_at) is rejected.
         let missing = r#"{"version":"0.1.180"}"#;
-        assert!(serde_json::from_str::<GrokVersion>(missing).is_err());
+        assert!(serde_json::from_str::<AikoVersion>(missing).is_err());
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -747,7 +772,7 @@ mod tests {
     #[test]
     fn test_is_fresh_ttl_boundaries() {
         let now = time::OffsetDateTime::now_utc();
-        let v = GrokVersion::new("0.1.200".to_string(), None, now);
+        let v = AikoVersion::new("0.1.200".to_string(), None, now);
 
         // Within TTL → fresh
         assert!(v.is_fresh(now, Duration::from_secs(60)));
@@ -763,7 +788,7 @@ mod tests {
         assert!(!v.is_fresh(now, Duration::ZERO));
 
         // Malformed timestamp → not fresh
-        let bad = GrokVersion {
+        let bad = AikoVersion {
             version: "0.1.200".to_string(),
             stable_version: None,
             checked_at: "not-rfc3339".to_string(),

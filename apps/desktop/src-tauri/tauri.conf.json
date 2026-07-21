@@ -1,0 +1,55 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Aiko",
+  "version": "0.1.0",
+  "identifier": "ai.aiko.desktop",
+  "build": {
+    "beforeDevCommand": "npm run runtime:prepare && npm run dev",
+    "beforeBuildCommand": "npm run runtime:prepare && npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Aiko",
+        "width": 1320,
+        "height": 860,
+        "minWidth": 760,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "backgroundColor": "#0b1020"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost ws://127.0.0.1:* ws://localhost:*; font-src 'self'; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "externalBin": ["binaries/aiko"],
+    "resources": ["resources/contract/*"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "A Contract-native agent for your laptop",
+    "longDescription": "Aiko understands your workspace, executes verified work, and keeps durable goals moving.",
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "hardenedRuntime": true
+    },
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    }
+  }
+}

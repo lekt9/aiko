@@ -1,379 +1,275 @@
-# Native Contract Background Execution for Aiko
+# Active Goal — FECH Core Capability Intelligence
 
-## Goal
+## Outcome
 
-Make user-defined work durable and mechanically resumable without requiring the
-Aiko TUI to remain open or requiring users to invoke Contract manually.
+Build the smallest useful Fractal Energy Cell Harness across Aiko and
+`../contract`: normalize Aiko-native tools, MCP tools, installed skills, and
+Unbrowse routes into one typed capability descriptor; rank them locally using
+Contract's existing energy/evidence machinery; return a conservative execution
+plan; execute it through Aiko's existing permissioned runtime; and record a
+privacy-safe outcome so future routing improves.
 
-Aiko must load Contract in-process, reconcile time/dependency/event-triggered
-contracts through the native dylib ABI, enqueue due work through Aiko's existing
-synthetic prompt infrastructure, execute with the user's saved permission
-policy, verify the postcondition, and append a terminal or continued-HOLD
-outcome to the Contract ledger.
+The proof is not a new distributed network. The proof is that Aiko selects a
+working, previously-proven capability more quickly and reliably than blind tool
+selection or browser fallback.
 
-This plan spans:
-
-- `/Users/lewis/Unbrowse/contract`
-- `/Users/lewis/Unbrowse/aiko`
-
-## Current State
-
-### Installed verification (2026-07-20)
-
-- Aiko `0.2.102` and the matching Contract ABI v3 dylib are installed
-  from one checksummed `macos-aarch64` package.
-- `net.theclarityproject.aiko.contract-worker` is loaded and running under the
-  per-user launchd domain.
-- The installed binary can list durable tasks and complete an isolated
-  empty-ledger `contract-worker --once` reconciliation without the TUI or a
-  Contract CLI subprocess.
-- The worker log is empty after startup and contains no recognized
-  secret-shaped values.
-
-### Contract
-
-- The ledger is append-only and reconstructs state from events.
-- Typed agency rows distinguish purpose, governor, action, sensor, evaluator,
-  and development while legacy rows remain explicitly ungoverned.
-- High-risk typed actions fail closed without approval and matching consequence
-  coverage; grounded promotion requires fresh independent anchors and respects
-  counter-metric vetoes.
-- Negative evidence bypasses positive cache reuse, propagates invalidation in
-  one resolver tick, and permits rollback only to a verified compatible
-  checkpoint.
-- Causal JSON events, watch/explain, and the offline renderer expose resolver
-  state without entering wallet or Keychain paths.
-- `satisfied`, `died`, and `purged` are the terminal alphabet.
-- Pending/HOLD contracts can carry:
-  - `at:<unix-seconds>`
-  - `repeat:<N>s|m|h`
-  - `when:contract:<id>` dependencies
-  - `when:event:<name>` workspace signals
-- `contract tick` materializes due occurrences, invalidates stale cached truth,
-  compacts oversized ledgers, and backfills unresolved contracts.
-- `contract tick --every <seconds>` provides a standalone resident loop.
-- Occurrence planning, materialization, leasing, renewal, retry release,
-  settlement, and named signals now live in `libcontract/src/scheduler.zig`.
-- ABI v3 exposes the bounded scheduler tick while preserving all v2 symbols.
-- The CLI delegates occurrence materialization to the same library kernel;
-  its legacy action/backfill executor remains in `zig/src/main.zig`.
-
-### Aiko
-
-- Contract is loaded directly as `libcontract.dylib`.
-- Contract routing already influences prompt grounding and native tool choice.
-- Aiko already has:
-  - scheduled one-shot and recurring prompts;
-  - persisted durable scheduler state;
-  - missed one-shot recovery after session restoration;
-  - synthetic auto-wake prompt origins;
-  - prompt queue deduplication;
-  - background monitors and notifications;
-  - macOS sleep/wake awareness.
-- Durable `scheduler_create` calls now declare Contract schedules directly.
-- Live sessions reconcile workspace-scoped Contract claims into the existing
-  scheduled-prompt rail and settle only owned completed turns.
-- The packaged `contract-worker` runs headlessly under a per-user LaunchAgent,
-  so TUI closure no longer stops reconciliation.
-
-## Non-Negotiable Invariants
-
-1. **One ledger:** Contract remains the source of durable task truth. Do not
-   introduce a second authoritative task database.
-2. **One resolver:** move the existing resolver tick into `libcontract`; do not
-   independently reimplement Contract resolution in Rust.
-3. **Native integration:** Aiko calls Contract through the dylib ABI. It must
-   not spawn the Contract CLI for normal operation.
-4. **At-least-once delivery, idempotent effects:** crashes may redeliver an
-   occurrence, but stable occurrence keys and execution leases must prevent
-   duplicate side effects.
-5. **No false satisfaction:** an execution attempt cannot append `satisfied`
-   without postcondition evidence accepted by Contract.
-6. **HOLD is resumable:** missing permission, unavailable credentials, offline
-   services, sleeping machines, and unmet dependencies remain non-terminal.
-7. **Explicit terminal failure:** only unrecoverable or policy-directed failure
-   appends `died` or `purged`.
-8. **Permission continuity:** background work may use only the authority the
-   user granted when defining the task. A background model cannot silently
-   widen it.
-9. **Privacy by default:** persisted prompts, evidence, notifications, and logs
-   must redact secret-shaped values and unnecessary personal identifiers.
-10. **Backward compatibility:** existing ledgers, CLI `tick`, scheduler state,
-    and packaged Contract ABI v2 installations must continue to work through a
-    versioned migration.
-11. **Package coherence by default:** every normal Aiko release build rebuilds
-    and repackages the sibling Contract dylib, and the manifest pins the exact
-    Aiko and Contract hashes. Only `build-aiko-only` may intentionally skip the
-    combined package refresh.
-
-## Target Architecture
+## Product Boundary
 
 ```text
-macOS launchd
-      |
-      v
-Aiko background coordinator
-      |
-      | native ABI: contract_tick / claim / settle
-      v
-libcontract.dylib -----> append-only Contract ledger
-      |
-      | due occurrence descriptors
-      v
-Aiko durable execution queue
-      |
-      | synthetic ContractWake prompt
-      v
-Aiko native tools and provider routing
-      |
-      | observations + postcondition evidence
-      v
-Contract verdict: satisfied | HOLD | died | purged
+Aiko inventory
+  native tools + MCP tools + skills + Unbrowse routes
+                         ↓
+              normalized descriptors
+                         ↓
+        Contract ranking + evidence + plan
+                         ↓
+          Aiko permissions + execution
+                         ↓
+           sanitized outcome feedback
 ```
 
-The coordinator owns process lifecycle and execution. Contract owns scheduling
-semantics, dependencies, occurrence identity, truth, and verification.
+### Contract owns
 
-## Phase 1 — Extract the Contract Resolver Kernel
+- capability descriptor storage and version-aware identity;
+- energy ranking over task context and verified observations;
+- freshness, success/failure evidence, inhibition, and invalidation;
+- prerequisite sequences and conservative parallel-group recommendations;
+- the stable native ABI used by Aiko.
 
-Repository: `/Users/lewis/Unbrowse/contract`
+### Aiko owns
 
-- [x] Move `TriggerSpec`, trigger parsing, occurrence planning, atomic
-      materialization, and execution leasing into a reusable `libcontract`
-      module.
-- [ ] Move the remaining compaction/warming and legacy unresolved-action
-      backfill orchestration out of `zig/src/main.zig`.
-- [x] Keep CLI trigger materialization as a thin adapter over that module.
-- [ ] Define a bounded tick input:
-  - current wall time or production-clock mode;
-  - maximum contracts;
-  - maximum passes;
-  - optional ledger/workspace scope;
-  - caller identity.
-- [ ] Define a structured tick result containing:
-  - newly materialized occurrences;
-  - contracts that became runnable;
-  - contracts still on HOLD and their typed blocker;
-  - terminal transitions;
-  - retryable and permanent errors;
-  - next known wake deadline.
-- [x] Ensure tick never leases an unbounded amount of work in one call.
-- [x] Preserve occurrence idempotency across process crashes.
-- [x] Add deterministic clock-injected tests for `at:`, `repeat:`,
-      dependencies, named events, leases, and retry release.
+- discovering the four capability sources;
+- resolving live availability and permission requirements;
+- prompt-scoped recommendation delivery;
+- agent choice, execution, concurrency, cancellation, and approvals;
+- sanitizing execution observations before passing them to Contract;
+- UI/TUI diagnostics explaining what was selected and why.
 
-### Phase 1 acceptance
+### Unbrowse owns
 
-- The CLI tick and library tick produce identical ledger transitions for the
-  same fixture.
-- Repeating the same tick produces no duplicate occurrence.
-- Advancing into a new repeat bucket produces exactly one new occurrence.
-- Existing Contract tests and real-ledger replay fixtures pass.
+- discovering and replaying website API routes;
+- authentication/capture details for those routes;
+- exporting route metadata as capability descriptors.
 
-## Phase 2 — Add a Versioned Native Tick ABI
+## Core Data Types
 
-Repository: `/Users/lewis/Unbrowse/contract`
+### Capability descriptor
 
-- [x] Add ABI v3 without removing v2 symbols; Aiko accepts both versions.
-- [x] Export a function equivalent to:
-
-```c
-char *contract_tick_json(const char *request_json);
+```json
+{
+  "schema_version": 1,
+  "id": "provider.capability",
+  "capability_version": "1",
+  "provider": "aiko | mcp:<server> | skill | unbrowse",
+  "tool": "tool_name",
+  "action": "action_name",
+  "description": "Short agent-readable purpose",
+  "input_schema": {},
+  "output_schema": {},
+  "requires": [],
+  "permission": "read | write | network | purchase",
+  "effects": ["read_only"],
+  "available": true
+}
 ```
 
-- [x] Return owned JSON through the existing Contract allocation/free
-      convention.
-- [x] Add ABI endpoints for durable execution lifecycle:
-      expressible with existing calls:
-  - claim/lease an occurrence;
-  - renew a lease;
-  - record an attempt;
-  - release back to HOLD with next retry time;
-  - submit evidence and terminal verdict.
-- [ ] Use stable error codes and typed JSON, not human console output.
-- [ ] Make unsupported ABI versions fail closed with an actionable error.
-- [x] Add Zig ABI tests plus a foreign-language dylib smoke test.
+Descriptors contain stable capability facts. They do not contain mutable
+success rates, usage counts, credentials, raw examples, or machine paths.
 
-### Phase 2 acceptance
+### Capability observation
 
-- A standalone test process can load the dylib, tick a fixture ledger, claim
-  one occurrence, settle it, free all returned memory, and exit cleanly.
-- No Contract CLI subprocess is involved.
-- ABI fuzz/malformed-input tests do not crash or mutate the ledger.
+```json
+{
+  "capability_id": "provider.capability",
+  "capability_version": "1",
+  "success": true,
+  "duration_ms": 42,
+  "permission_result": "allowed",
+  "error_class": null,
+  "result_shape": "object",
+  "observed_at": "ISO-8601"
+}
+```
 
-## Phase 3 — Build the Native Aiko Contract Coordinator
+Observations must never contain raw arguments, prompts, URLs, credentials,
+page contents, response bodies, command output, or user-entered values.
 
-Repository: `/Users/lewis/Unbrowse/aiko`
+### Capability plan
 
-- [x] Extend the existing Contract loader with typed wrappers for ABI v3.
-- [x] Introduce a session-lifetime `ContractCoordinator`.
-- [x] On startup:
-  - load and negotiate Contract ABI;
-  - reconcile pending/due contracts;
-  - recover expired execution leases;
-  - compute the next wake deadline.
-- [x] While running:
-  - sleep until the next Contract deadline or a ledger-change notification;
-  - tick with bounded work;
-  - enqueue runnable occurrences;
-  - apply retry backoff with jitter for transient failures.
-- [ ] Use FSEvents/kqueue to wake on ledger changes instead of constant polling.
-- [x] Use a stable queue key derived from contract id plus occurrence id.
-- [x] Add `PromptOrigin::ContractWake` rather than disguising Contract work as a
-      user prompt or scheduler fire.
-- [ ] Surface coordinator status without leaking prompt payloads.
+```json
+{
+  "version": 1,
+  "candidates": [],
+  "sequence": ["capability.id"],
+  "parallel": [],
+  "confidence": 0.0,
+  "margin": 0.0,
+  "automatic": false,
+  "reason_codes": []
+}
+```
 
-### Phase 3 acceptance
+V1 supports one capability, one prerequisite sequence, or one parallel group
+of independent read-only capabilities. Arbitrary recursive execution is out of
+scope.
 
-- A due fixture contract becomes one synthetic Aiko turn.
-- Duplicate ticks and process restarts do not create concurrent duplicate
-  turns.
-- A newly satisfied dependency wakes its dependent on the next reconciliation.
-- Existing user, scheduler, subagent, and auto-wake prompt behavior is unchanged.
+## Implementation Phases
 
-## Phase 4 — Execution, Permission, and Verification Envelope
+### Phase 0 — Freeze the integration contract
 
-- [ ] Persist a task authority envelope when the user defines background work:
-  - permitted tools/capabilities;
-  - allowed applications, hosts, and filesystem roots;
-  - whether external writes/messages/purchases are allowed;
-  - expiry and revocation metadata;
-  - required interactive approvals.
-- [ ] Bind the authority envelope cryptographically to the Contract occurrence.
-- [ ] Prevent providers or prompts from widening the envelope.
-- [ ] Route each occurrence through Contract before model sampling.
-- [ ] Prefer deterministic/native execution when Contract supplies a complete
-      action and evaluator; use a model only for unresolved typed holes.
-- [ ] Record execution attempt, tool outcomes, independent observations, and
-      evaluator evidence.
-- [ ] Submit the evidence to Contract for the final verdict.
-- [ ] On recoverable failure, append HOLD/retry evidence and a next-attempt time.
-- [ ] On required approval, notify the user and remain HOLD.
+- [x] Audit the current Contract ABI v3 capability routing and outcome fields.
+- [x] Reconcile stale ABI documentation and make one integration document
+      canonical.
+- [x] Define descriptor, observation, availability, and plan JSON Schemas.
+- [x] Define stable ID/version rules and when old evidence is invalidated.
+- [x] Add golden fixtures shared by Aiko Rust tests and Contract Zig tests.
 
-### Phase 4 acceptance
+Acceptance:
 
-- A background task cannot call a tool outside its saved authority.
-- A tool exit code alone cannot satisfy a task whose postcondition is false.
-- A transient offline failure resumes later.
-- A revoked task cannot execute even if it was already queued.
+- The schemas reject credentials, raw execution content, and unknown effect or
+  permission classes.
+- An incompatible capability version cannot inherit previous success evidence.
+- Aiko and Contract parse the same golden fixtures.
 
-## Phase 5 — Native macOS Background Lifecycle
+### Phase 1 — General capability registry in Contract
 
-- [x] Add an Aiko background-agent entry point that runs the coordinator
-      without the TUI.
-- [x] Package and install a per-user `launchd` agent with Aiko.
-- [x] Use one launchd worker per user plus Contract's exclusive occurrence
-      leases across all live sessions.
-- [x] Start at login and restart after crashes.
-- [ ] Schedule wake deadlines through macOS-native facilities where available;
-      reconcile missed deadlines after sleep or reboot.
-- [x] Share authentication/provider configuration with Aiko without copying raw
-      credentials into launchd plists or logs.
-- [x] Add CLI controls:
-  - [x] `aiko background status`
-  - [x] `aiko background start`
-  - [x] `aiko background stop`
-  - [x] `aiko tasks list`
-  - [x] `aiko tasks inspect <id>`
-  - [x] `aiko tasks retry <id>`
-  - [x] `aiko tasks cancel <id>`
-- [ ] Make installation and removal reversible.
+- [x] Replace the application-only static catalog boundary with a registry that
+      accepts normalized descriptors while retaining built-in application priors.
+- [x] Add native ABI operations to register/replace a source snapshot and list
+      the effective catalog.
+- [x] Keep descriptor state separate from append-only outcome evidence.
+- [x] Deduplicate by stable ID, provider, and version.
+- [x] Remove descriptors that disappear from a refreshed source snapshot
+      without deleting their historical evidence.
 
-### Phase 5 acceptance
+Proposed ABI additions:
 
-- Define a one-shot task, close the TUI, and observe verified completion.
-- Reboot across its deadline and observe one recovery execution after login.
-- Killing the coordinator during execution causes safe lease recovery without
-  duplicate committed side effects.
+- `contract_register_capabilities(source, descriptors_json)`
+- `contract_list_capabilities(filter_json)`
+- `contract_recommend_plan(context, availability_json, limit)`
+- `contract_record_capability_observation(context, observation_json)` reuses
+  the existing append-only outcome machinery; v2 remains compatible.
 
-## Phase 6 — Event Sensors
+Acceptance:
 
-- [x] Define a native, workspace-scoped named-signal interface whose output is
-      append-only evidence, not an unrestricted prompt.
-- [ ] Implement initial local sensors:
-  - file created/changed;
-  - process exited;
-  - application launched/closed;
-  - browser/Electron page or API condition;
-  - network reachability;
-  - Git/workspace change.
-- [ ] Add remote adapters only behind explicit authorization:
-  - webhook;
-  - API polling;
-  - email/calendar/provider events.
-- [ ] Persist sensor cursors so restarts neither lose nor duplicate events.
-- [ ] Feed sensor truth into Contract and let dependencies determine what wakes.
-- [ ] Rate-limit noisy sensors and coalesce equivalent occurrences.
+- Registering the same snapshot twice is idempotent.
+- A removed or unavailable capability is never automatically selected.
+- A catalog of 1,000 descriptors can be refreshed without ledger corruption.
 
-### Phase 6 acceptance
+### Phase 2 — Four Aiko normalizers
 
-- “When file X appears, process it” survives an Aiko restart.
-- Replaying the same filesystem or webhook event does not repeat a committed
-  side effect.
-- A false or stale sensor observation cannot satisfy the dependent contract.
+- [x] Normalize Aiko's built-in tool definitions.
+- [x] Normalize connected MCP `tools/list` definitions and refresh them when
+      tools change or a server disconnects.
+- [x] Normalize installed `SKILL.md` metadata without treating prose as an
+      executable interface.
+- [x] Normalize Unbrowse route contracts through an explicit export adapter.
+- [x] Produce live availability facts separately from descriptors.
 
-## Phase 7 — Observability and Operations
+Acceptance:
 
-- [ ] Provide a redacted task timeline:
-  - declared;
-  - waiting and blocker;
-  - triggered;
-  - leased;
-  - executing;
-  - evidence collected;
-  - satisfied/died/purged;
-  - retry scheduled.
-- [ ] Expose next wake time and coordinator health.
-- [ ] Add structured metrics for:
-  - trigger-to-start latency;
-  - completion latency;
-  - retry count;
-  - duplicate suppression;
-  - stale leases;
-  - unresolved pending age.
-- [ ] Alert on contracts pending beyond policy limits.
-- [ ] Ensure debug logs never contain credentials, device codes, private prompt
-      contents, or unredacted personal identifiers.
+- Every advertised descriptor resolves back to a real Aiko execution target.
+- Disconnected MCP servers and unavailable Unbrowse routes are inhibited.
+- Descriptor collection reads no credentials and emits no credential-bearing
+  fields.
 
-## End-to-End Test Matrix
+### Phase 3 — Ranking and conservative composition
 
-1. **Time, live process:** one-shot `at:` fires once.
-2. **Time, TUI closed:** background agent executes and verifies.
-3. **Time, asleep/rebooted:** missed deadline reconciles once.
-4. **Recurring:** one occurrence per interval bucket; no overlap duplicates.
-5. **Dependency:** B remains HOLD until A satisfies, then wakes.
-6. **Dependency failure:** A dies; B follows declared policy rather than running.
-7. **File event:** matching creation wakes; unrelated changes do not.
-8. **Application event:** Electron/API condition wakes through native runtime.
-9. **Permission HOLD:** task pauses for approval and resumes after approval.
-10. **Credential HOLD:** expired auth pauses; refresh/login later resumes.
-11. **Crash before effect:** lease expires and work retries.
-12. **Crash after effect:** idempotency/evidence prevents a duplicate commit.
-13. **Revocation:** cancelled task never executes from an old queue entry.
-14. **ABI mismatch:** coordinator reports degraded state and performs no mutation.
-15. **Privacy:** secret fixtures never appear in ledger, logs, notifications, or UI.
+- [x] Rank using context affinity, verified success/failure, freshness,
+      availability, permission/effect fit, and measured duration.
+- [x] Return the top three candidates with machine-readable reason codes.
+- [x] Support prerequisite sequences from typed `requires` edges.
+- [x] Parallelize only independent read-only capabilities with no shared lock,
+      session, or mutation effect.
+- [x] Refuse automatic routing when confidence, margin, freshness, or
+      availability thresholds are not met.
+- [x] Fall back to normal Aiko reasoning and tools when no safe route qualifies.
 
-## Rollout
+Acceptance:
 
-1. Ship the Contract library tick behind an ABI feature flag.
-2. Run Aiko coordinator in observe-only mode and compare its due set with the
-   standalone Contract CLI.
-3. Enable execution for local read-only tasks.
-4. Enable reversible local writes with saved authority.
-5. Enable external side effects only after idempotency and approval tests pass.
-6. Make the background agent opt-in during beta.
-7. Promote to default only after crash/reboot/sleep soak tests show no duplicate
-   committed effects.
+- Correct capability appears in the top three on at least 85% of the checked-in
+  evaluation set.
+- Automatic-route false positives remain at or below 2%.
+- Stale successes cannot override fresh failures or unavailability.
+- No write, purchase, message-send, or external mutation runs in an automatic
+  parallel group.
+
+### Phase 4 — Aiko execution and generic feedback
+
+- [x] Deliver the plan through the existing prompt-scoped Contract route.
+- [x] Let the model choose among non-automatic candidates.
+- [x] Execute through Aiko's existing tool dispatcher, approval boundary,
+      cancellation, and progress events.
+- [x] Record one sanitized observation after every routed execution.
+- [x] Classify permission denial, unavailable provider, timeout, invalid input,
+      provider failure, and success separately.
+- [x] Bind observations to descriptor version and provider identity.
+
+Acceptance:
+
+- Contract never invokes Aiko tools directly.
+- Existing Aiko permission prompts remain authoritative.
+- Failed or denied calls lower/inhibit the matching route without poisoning
+  unrelated capabilities.
+- Automated privacy tests prove that raw arguments and results are absent from
+  the Contract ledger.
+
+### Phase 5 — Explainability, UI, and benchmarks
+
+- [x] Expose selected candidates, status, confidence, freshness, prerequisites,
+      and reason codes through Aiko's native interface.
+- [x] Add compact TUI/UI treatment for selected route, fallback, and learning
+      status without dumping internal ledger terminology into normal chat.
+- [x] Benchmark warm ranking, catalog refresh, route accuracy, route execution,
+      and browser fallback on a fixed corpus.
+- [x] Add end-to-end tests for one capability from each of the four sources.
+
+Acceptance:
+
+- Warm local ranking p50 is at most 50 ms and p95 at most 150 ms.
+- Refreshing 1,000 descriptors completes within 500 ms on the reference machine.
+- Read-only parallel plans complete successfully at least 90% of the time on
+  the evaluation suite.
+- A representative cached Unbrowse route beats browser fallback on measured
+  latency and tool-call count.
+- Aiko remains fully usable if Contract is missing or incompatible, with one
+  visible degraded-state warning.
+
+## Required End-to-End Scenarios
+
+1. A native application task selects `application_observe` prerequisites and
+   executes through the existing permission rail.
+2. An MCP capability ranks, executes, records success, and ranks higher for a
+   similar later task.
+3. A disconnected MCP capability is inhibited immediately.
+4. An installed skill is recommended as guidance but is not falsely executed
+   as a tool.
+5. An Unbrowse route is preferred over browser automation when available and
+   proven.
+6. A failed Unbrowse route falls back to the browser path and records a typed
+   failure without retaining request or response content.
+7. Two independent read-only capabilities run in parallel; any mutation or
+   shared-session requirement forces sequential, permissioned execution.
+8. Updating a descriptor to an incompatible version prevents old evidence
+   from making it automatic.
+
+## Explicitly Out of Scope
+
+- P2P, DHT, gossip, or federated discovery;
+- the public Unbrowse collective and contract publication;
+- shared accounts, multi-brain sync, and cross-user permissions;
+- marketplaces, monetization, reputation, and contribution incentives;
+- EVM, Solana, settlement, and other on-chain work;
+- scanning or wrapping arbitrary local binaries and data sources;
+- viral/seed propagation;
+- recursive autonomous inter-contract execution;
+- a second ledger or replacement contract row schema;
+- replacing Aiko reasoning or its existing permission runtime.
 
 ## Definition of Done
 
-- Users can define time-, dependency-, or sensor-triggered work in natural
-  language.
-- Aiko compiles it into Contract-backed durable state with an explicit authority
-  envelope and postcondition.
-- Work resumes without the TUI and without manual Contract commands.
-- Restarts, sleep, missed deadlines, and transient failures are reconciled.
-- Every occurrence is visibly satisfied, still on HOLD with a typed reason, or
-  explicitly terminal.
-- Duplicate delivery cannot produce duplicate committed effects.
-- Contract remains the single source of truth and is invoked natively in-process.
+The FECH core is complete when Aiko can inventory the four supported capability
+sources, Contract can rank and conservatively compose them from versioned local
+evidence, Aiko can execute the selected plan through existing permissions, and
+the sanitized result changes a later recommendation. All eight end-to-end
+scenarios and the performance/privacy thresholds above must pass.

@@ -1,19 +1,20 @@
 //! Tests for credit-limit upsells, paywall gating, and auto-topup.
 
 use super::*;
+use xai_grok_shell::provider::Provider;
 
 // ── Credit-limit upsell / max-tier tests ───────────────────────────
 
 /// Open the non-max-tier Q&A upsell modal. Panics if the modal was not created.
 fn open_upsell_qa(app: &mut AppView, mode: CreditLimitUpsellMode) {
     let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-    open_credit_limit_upsell(agent, mode, false);
+    open_credit_limit_upsell(agent, mode, false, Provider::Grok);
 }
 
 /// Open the max-tier inline scrollback card upsell.
 fn open_upsell_max_card(app: &mut AppView, mode: CreditLimitUpsellMode) {
     let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-    open_credit_limit_upsell(agent, mode, true);
+    open_credit_limit_upsell(agent, mode, true, Provider::Grok);
 }
 
 /// Return the `QuestionViewState` from agent 0. Panics if absent.
@@ -106,32 +107,36 @@ fn credit_limit_retry_preserves_image_submission_state() {
 
 #[test]
 fn is_max_tier_positive_match() {
-    assert!(is_max_tier(Some("supergrok_heavy")));
-    assert!(is_max_tier(Some("SuperGrok Heavy")));
-    assert!(is_max_tier(Some("SUPERGROK_HEAVY")));
+    let provider = Provider::Grok;
+    assert!(is_max_tier(Some("supergrok_heavy"), provider));
+    assert!(is_max_tier(Some("SuperGrok Heavy"), provider));
+    assert!(is_max_tier(Some("SUPERGROK_HEAVY"), provider));
 }
 
 #[test]
 fn is_max_tier_non_max_and_unknown() {
-    assert!(!is_max_tier(Some("supergrok")));
-    assert!(!is_max_tier(Some("premium")));
-    assert!(!is_max_tier(Some("free")));
+    let provider = Provider::Grok;
+    assert!(!is_max_tier(Some("supergrok"), provider));
+    assert!(!is_max_tier(Some("premium"), provider));
+    assert!(!is_max_tier(Some("free"), provider));
     // Unknown defaults to non-max → Q&A shown.
-    assert!(!is_max_tier(None));
+    assert!(!is_max_tier(None, provider));
 }
 
 #[test]
 fn is_max_tier_handles_mixed_case_and_whitespace() {
-    assert!(is_max_tier(Some("SuperGrok_Heavy")));
-    assert!(is_max_tier(Some("supergrok heavy")));
-    assert!(is_max_tier(Some("SUPERGROK HEAVY")));
+    let provider = Provider::Grok;
+    assert!(is_max_tier(Some("SuperGrok_Heavy"), provider));
+    assert!(is_max_tier(Some("supergrok heavy"), provider));
+    assert!(is_max_tier(Some("SUPERGROK HEAVY"), provider));
 }
 
 #[test]
 fn is_max_tier_rejects_partial_matches() {
-    assert!(!is_max_tier(Some("supergrok_heav")));
-    assert!(!is_max_tier(Some("supergrok_heavy_plus")));
-    assert!(!is_max_tier(Some("")));
+    let provider = Provider::Grok;
+    assert!(!is_max_tier(Some("supergrok_heav"), provider));
+    assert!(!is_max_tier(Some("supergrok_heavy_plus"), provider));
+    assert!(!is_max_tier(Some(""), provider));
 }
 
 #[test]
@@ -144,9 +149,15 @@ fn upsell_non_max_shows_qa_with_two_options() {
     let q = &agent_qv(&app).questions[0];
     assert_eq!(q.options.len(), 2);
     assert_eq!(q.options[0].label, "Upgrade tier");
-    assert_eq!(q.options[0].id.as_deref(), Some(UPSELL_URL_UPGRADE));
+    assert_eq!(
+        q.options[0].id.as_deref(),
+        Some(upsell_url_upgrade(Provider::Grok))
+    );
     assert_eq!(q.options[1].label, "Pay as you go");
-    assert_eq!(q.options[1].id.as_deref(), Some(UPSELL_URL_PAYG));
+    assert_eq!(
+        q.options[1].id.as_deref(),
+        Some(upsell_url_payg(Provider::Grok))
+    );
 }
 
 #[test]
@@ -249,7 +260,7 @@ fn upsell_non_max_unified_shows_buy_credits() {
     let mut app = test_app_with_agent();
     open_upsell_qa(&mut app, CreditLimitUpsellMode::UnifiedCredits);
     let q = &agent_qv(&app).questions[0];
-    assert!(q.question.contains("weekly limit"));
+    assert!(q.question.contains("enough credits"));
     assert_eq!(
         q.options[0].description,
         "Upgrade to a higher tier for more usage"
@@ -271,7 +282,7 @@ fn upsell_max_unified_card_mentions_purchasing() {
         blk.action,
         crate::scrollback::blocks::CreditLimitCardAction::PurchaseCredits
     );
-    assert!(blk.heading.contains("weekly limit"));
+    assert!(blk.heading.contains("enough credits"));
 }
 
 #[test]
@@ -414,7 +425,7 @@ fn upsell_max_tier_pushes_scrollback_card_payg_off() {
         blk.action,
         crate::scrollback::blocks::CreditLimitCardAction::EnablePayg
     );
-    assert_eq!(blk.url, UPSELL_URL_PAYG);
+    assert_eq!(blk.url, upsell_url_payg(Provider::Grok));
 }
 
 #[test]
@@ -433,7 +444,7 @@ fn upsell_max_tier_pushes_scrollback_card_payg_on() {
         blk.action,
         crate::scrollback::blocks::CreditLimitCardAction::IncreasePaygLimit
     );
-    assert_eq!(blk.url, UPSELL_URL_PAYG);
+    assert_eq!(blk.url, upsell_url_payg(Provider::Grok));
 }
 
 #[test]
@@ -457,7 +468,10 @@ fn upsell_max_tier_scrollback_card_url_is_payg() {
         &mut app,
         CreditLimitUpsellMode::LegacyPayg { enabled: false },
     );
-    assert_eq!(last_credit_limit_block(&app, before).url, UPSELL_URL_PAYG);
+    assert_eq!(
+        last_credit_limit_block(&app, before).url,
+        upsell_url_payg(Provider::Grok)
+    );
 }
 
 #[test]
@@ -828,12 +842,12 @@ fn free_usage_upsell_shows_two_options_with_exact_labels() {
         (
             "Upgrade to SuperGrok",
             "For everyday coding and productivity tasks",
-            Some(UPSELL_URL_UPGRADE),
+            Some(upsell_url_upgrade(Provider::Grok)),
         ),
         (
             "Upgrade to SuperGrok Heavy",
             "Get the most out of Aiko. Highest usage limits.",
-            Some(UPSELL_URL_UPGRADE),
+            Some(upsell_url_upgrade(Provider::Grok)),
         ),
     ];
     assert_eq!(q.options.len(), expected.len());
@@ -924,7 +938,9 @@ fn free_usage_translate_local_submit_maps_options() {
     for idx in [0, 1] {
         qv.selections[0] = QuestionSelection::Single(Some(idx));
         match translate_local_submit_for_test(&qv, kind(), false) {
-            InputOutcome::Action(Action::OpenUrl(url)) => assert_eq!(url, UPSELL_URL_UPGRADE),
+            InputOutcome::Action(Action::OpenUrl(url)) => {
+                assert_eq!(url, upsell_url_upgrade(Provider::Grok))
+            }
             other => panic!("expected OpenUrl for option {idx}, got {other:?}"),
         }
     }
@@ -969,9 +985,15 @@ fn restricted_command_submit_opens_two_option_upsell() {
     assert_eq!(q.question, "Unlock all features with SuperGrok.");
     assert_eq!(q.options.len(), 2);
     assert_eq!(q.options[0].label, "Upgrade to SuperGrok");
-    assert_eq!(q.options[0].id.as_deref(), Some(UPSELL_URL_UPGRADE));
+    assert_eq!(
+        q.options[0].id.as_deref(),
+        Some(upsell_url_upgrade(Provider::Grok))
+    );
     assert_eq!(q.options[1].label, "Upgrade to SuperGrok Heavy");
-    assert_eq!(q.options[1].id.as_deref(), Some(UPSELL_URL_UPGRADE));
+    assert_eq!(
+        q.options[1].id.as_deref(),
+        Some(upsell_url_upgrade(Provider::Grok))
+    );
 }
 
 /// Aliases of a restricted command hit the same upsell (deny-list
@@ -1004,7 +1026,12 @@ fn restricted_command_with_open_modal_keeps_composer_text() {
         let agent = app.agents.get_mut(&id).unwrap();
         agent.set_restricted_commands(&["imagine".to_string()]);
         // A question modal is already up (credit-limit upsell).
-        open_credit_limit_upsell(agent, CreditLimitUpsellMode::UnifiedCredits, false);
+        open_credit_limit_upsell(
+            agent,
+            CreditLimitUpsellMode::UnifiedCredits,
+            false,
+            Provider::Grok,
+        );
         assert!(agent.question_view.is_some());
         // The user typed the restricted command into the composer.
         agent.prompt.set_text("/imagine a sunset");
@@ -1079,7 +1106,7 @@ fn open_url_shows_manual_url_when_browser_unavailable() {
 
     let mut app = test_app_with_agent();
     let before = agent_scrollback_len(&app);
-    let url = UPSELL_URL_UPGRADE;
+    let url = upsell_url_upgrade(Provider::Grok);
     let effects = dispatch(Action::OpenUrl(url.to_string()), &mut app);
     assert!(effects.is_empty());
 
@@ -1119,7 +1146,7 @@ fn open_url_does_not_show_fallback_when_opener_succeeds() {
 
     let mut app = test_app_with_agent();
     let before = agent_scrollback_len(&app);
-    let url = UPSELL_URL_PAYG;
+    let url = upsell_url_payg(Provider::Grok);
     let _ = dispatch(Action::OpenUrl(url.to_string()), &mut app);
 
     assert_eq!(
@@ -1176,7 +1203,7 @@ fn credit_limit_upsell_submit_shows_url_when_browser_unavailable() {
     else {
         panic!("expected OpenUrl from upsell submit");
     };
-    assert_eq!(url, UPSELL_URL_PAYG);
+    assert_eq!(url, upsell_url_payg(Provider::Grok));
 
     let before = agent_scrollback_len(&app);
     let _ = dispatch(Action::OpenUrl(url.clone()), &mut app);

@@ -3,6 +3,7 @@
 use super::session::lifecycle::dispatch_new_session;
 use crate::app::actions::Effect;
 use crate::app::app_view::{ActiveView, AppView, VoiceState, VoiceTarget};
+use xai_grok_shell::provider::Provider;
 
 /// Tear down voice when a prompt box is **submitted** (Enter / send): release
 /// the mic and forget the session entirely (no trailing final) so a late
@@ -58,9 +59,11 @@ fn open_voice_tier_upsell(app: &mut AppView) -> Vec<Effect> {
         }
         ActiveView::AgentDashboard => {
             if let Some(d) = app.dashboard.as_mut() {
+                let provider = Provider::from_env();
                 d.set_error_toast(&format!(
-                    "/voice requires SuperGrok — upgrade at {}",
-                    super::billing::UPSELL_URL_UPGRADE
+                    "/voice requires {} — upgrade at {}",
+                    provider.premium_tier_display(),
+                    provider.upgrade_url(),
                 ));
             }
         }
