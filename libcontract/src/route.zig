@@ -50,7 +50,26 @@ fn field(line: []const u8, key: []const u8) ?[]const u8 {
     return line[start..i];
 }
 
-const Decl = struct { plan: []const u8, action: []const u8 };
+fn numberField(line: []const u8, key: []const u8) ?f64 {
+    var kbuf: [64]u8 = undefined;
+    const needle = std.fmt.bufPrint(&kbuf, "\"{s}\"", .{key}) catch return null;
+    const key_index = std.mem.indexOf(u8, line, needle) orelse return null;
+    var index = key_index + needle.len;
+    while (index < line.len and (line[index] == ':' or line[index] == ' ')) index += 1;
+    const start = index;
+    while (index < line.len and (std.ascii.isDigit(line[index]) or line[index] == '.' or line[index] == '-')) index += 1;
+    if (index == start) return null;
+    return std.fmt.parseFloat(f64, line[start..index]) catch null;
+}
+
+fn numberOrStringField(line: []const u8, key: []const u8) ?f64 {
+    return numberField(line, key) orelse if (field(line, key)) |value|
+        std.fmt.parseFloat(f64, value) catch null
+    else
+        null;
+}
+
+const Decl = struct { plan: []const u8, action: []const u8, duration_ms: ?f64 };
 
 // ────────── semantic KV cache + recency bound ──────────
 //
@@ -87,7 +106,12 @@ fn isInternalBin(bin: []const u8) bool {
     for (internal) |x| if (std.mem.eql(u8, bin, x)) return true;
     // Typed-pointer prefixes ("word:where", "tool:read_file") arrive with the
     // colon attached to the first token — same exhaust, same exclusion.
-    if (std.mem.indexOfScalar(u8, bin, ':') != null) return true;
+    // Version-qualified FECH capability keys intentionally contain provider
+    // colons (for example `mcp:github.issues.list@1`). The `@version` suffix
+    // distinguishes them from substrate pointer prefixes such as
+    // `word:where`, which remain internal exhaust.
+    if (std.mem.indexOfScalar(u8, bin, ':') != null and
+        std.mem.indexOfScalar(u8, bin, '@') == null) return true;
     return false;
 }
 
@@ -207,7 +231,11 @@ pub fn recommend(allocator: std.mem.Allocator, env: std.process.Environ, context
         if (line.len == 0 or std.mem.indexOf(u8, line, "\"declared\"") == null) continue;
         const id = field(line, "id") orelse continue;
         const plan = field(line, "plan") orelse continue;
-        try declared.put(id, .{ .plan = plan, .action = field(line, "action") orelse "" });
+        try declared.put(id, .{
+            .plan = plan,
+            .action = field(line, "action") orelse "",
+            .duration_ms = numberOrStringField(line, "duration_ms"),
+        });
     }
 
     // Collect candidates cheaply first (no embedding), then bound to the
@@ -218,6 +246,7 @@ pub fn recommend(allocator: std.mem.Allocator, env: std.process.Environ, context
         action: []const u8,
         reward: f64,
         observed_at: []const u8,
+        duration_ms: ?f64,
     };
     var cands: std.ArrayList(Cand) = .empty;
     defer cands.deinit(allocator);
@@ -249,6 +278,7 @@ pub fn recommend(allocator: std.mem.Allocator, env: std.process.Environ, context
             .action = d.action,
             .reward = reward,
             .observed_at = field(line, "ts") orelse "",
+            .duration_ms = d.duration_ms,
         });
     }
     const recent = cands.items[cands.items.len -| RECENT_CANDIDATES..];
@@ -302,6 +332,8 @@ pub fn recommend(allocator: std.mem.Allocator, env: std.process.Environ, context
     }
     const b = best_bin orelse return null;
     var latest_observed_at: []const u8 = "";
+    var latest_duration_ms: ?f64 = null;
+    var latest_reward: f64 = 0;
     var events_ago: usize = recent.len;
     var reverse_index: usize = recent.len;
     while (reverse_index > 0) {
@@ -309,6 +341,8 @@ pub fn recommend(allocator: std.mem.Allocator, env: std.process.Environ, context
         const candidate = recent[reverse_index];
         if (std.mem.eql(u8, candidate.bin, b)) {
             latest_observed_at = candidate.observed_at;
+            latest_duration_ms = candidate.duration_ms;
+            latest_reward = candidate.reward;
             events_ago = recent.len - 1 - reverse_index;
             break;
         }
@@ -335,7 +369,11 @@ pub fn recommend(allocator: std.mem.Allocator, env: std.process.Environ, context
     try out.appendSlice(allocator, "{\"binary\":\"");
     try appendJsonStr(&out, allocator, b);
     try out.appendSlice(allocator, "\",\"example\":\"");
-    if (ex_action) |a| try appendJsonStr(&out, allocator, a);
+    // A fresh terminal failure is an inhibition, even when an older success
+    // remains the nearest usage exemplar for semantic training.
+    if (latest_reward > 0) {
+        if (ex_action) |a| try appendJsonStr(&out, allocator, a);
+    }
     try out.appendSlice(allocator, "\",\"score\":");
     var scorebuf: [16]u8 = undefined;
     try out.appendSlice(allocator, try std.fmt.bufPrint(&scorebuf, "{d:.3}", .{ex_c}));
@@ -346,8 +384,96 @@ pub fn recommend(allocator: std.mem.Allocator, env: std.process.Environ, context
     try out.appendSlice(allocator, "\",\"events_ago\":");
     var recencybuf: [24]u8 = undefined;
     try out.appendSlice(allocator, try std.fmt.bufPrint(&recencybuf, "{d}", .{events_ago}));
+    try out.appendSlice(allocator, ",\"duration_ms\":");
+    if (latest_duration_ms) |duration| {
+        var duration_buf: [32]u8 = undefined;
+        try out.appendSlice(allocator, try std.fmt.bufPrint(&duration_buf, "{d:.0}", .{duration}));
+    } else {
+        try out.appendSlice(allocator, "null");
+    }
     try out.append(allocator, '}');
     return try out.toOwnedSlice(allocator);
+}
+
+/// Reconstruct the latest exact-version FECH outcome for every capability
+/// directly from the canonical ledger. This is deterministic evidence input
+/// for the dynamic registry after process restart; no second store exists.
+pub fn latestCapabilityEvidenceJson(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
+    const data = try ledger.readAll(allocator, env);
+    defer allocator.free(data);
+    var declared = std.StringHashMap(Decl).init(allocator);
+    defer declared.deinit();
+    var lines = std.mem.splitScalar(u8, data, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0 or std.mem.indexOf(u8, line, "\"declared\"") == null) continue;
+        const id = field(line, "id") orelse continue;
+        try declared.put(id, .{
+            .plan = field(line, "plan") orelse "",
+            .action = field(line, "action") orelse "",
+            .duration_ms = numberOrStringField(line, "duration_ms"),
+        });
+    }
+    const Latest = struct {
+        action: []const u8,
+        success: bool,
+        observed_at: []const u8,
+        duration_ms: ?f64,
+        terminal_index: usize,
+    };
+    var latest = std.StringHashMap(Latest).init(allocator);
+    defer latest.deinit();
+    var terminal_count: usize = 0;
+    lines = std.mem.splitScalar(u8, data, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        const event = field(line, "event") orelse continue;
+        const class = terminal.classify(event);
+        if (class != .satisfied and class != .dead) continue;
+        const id = field(line, "id") orelse continue;
+        const declaration = declared.get(id) orelse continue;
+        const end = std.mem.indexOfScalar(u8, declaration.action, ' ') orelse declaration.action.len;
+        const bin = declaration.action[0..end];
+        if (bin.len == 0 or std.mem.indexOfScalar(u8, bin, '@') == null or isInternalBin(bin)) continue;
+        try latest.put(bin, .{
+            .action = declaration.action,
+            .success = class == .satisfied,
+            .observed_at = field(line, "ts") orelse "",
+            .duration_ms = declaration.duration_ms,
+            .terminal_index = terminal_count,
+        });
+        terminal_count += 1;
+    }
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    try out.append(allocator, '[');
+    var iterator = latest.iterator();
+    var first = true;
+    while (iterator.next()) |entry| {
+        if (!first) try out.append(allocator, ',');
+        first = false;
+        try out.appendSlice(allocator, "{\"binary\":\"");
+        try appendJsonStr(&out, allocator, entry.key_ptr.*);
+        try out.appendSlice(allocator, "\",\"example\":\"");
+        if (entry.value_ptr.success) try appendJsonStr(&out, allocator, entry.value_ptr.action);
+        try out.appendSlice(allocator, "\",\"score\":");
+        try out.appendSlice(allocator, if (entry.value_ptr.success) "1" else "-1");
+        try out.appendSlice(allocator, ",\"freshness\":\"");
+        const events_ago = terminal_count -| (entry.value_ptr.terminal_index + 1);
+        try out.appendSlice(allocator, if (events_ago < RECENT_CANDIDATES / 4) "fresh" else "stale");
+        try out.appendSlice(allocator, "\",\"observed_at\":\"");
+        try appendJsonStr(&out, allocator, entry.value_ptr.observed_at);
+        try out.appendSlice(allocator, "\",\"duration_ms\":");
+        if (entry.value_ptr.duration_ms) |duration| {
+            var duration_buf: [32]u8 = undefined;
+            try out.appendSlice(allocator, try std.fmt.bufPrint(&duration_buf, "{d:.0}", .{duration}));
+        } else {
+            try out.appendSlice(allocator, "null");
+        }
+        try out.append(allocator, '}');
+    }
+    try out.append(allocator, ']');
+    return out.toOwnedSlice(allocator);
 }
 
 test "recommend: the JSON field parser (the ledger-row glue)" {
@@ -358,6 +484,8 @@ test "recommend: the JSON field parser (the ledger-row glue)" {
     try std.testing.expectEqualStrings("commit my changes", field(line, "plan").?);
     try std.testing.expectEqualStrings("git commit", field(line, "action").?);
     try std.testing.expect(field(line, "missing") == null);
+    try std.testing.expectEqual(@as(f64, 42), numberField("{\"duration_ms\":42}", "duration_ms").?);
+    try std.testing.expectEqual(@as(f64, 42), numberOrStringField("{\"duration_ms\":\"42\"}", "duration_ms").?);
 }
 
 test "recommend: JSON string escaping keeps the example well-formed" {
@@ -366,4 +494,11 @@ test "recommend: JSON string escaping keeps the example well-formed" {
     defer buf.deinit(A);
     try appendJsonStr(&buf, A, "grep -rn \"foo\\bar\" src/");
     try std.testing.expectEqualStrings("grep -rn \\\"foo\\\\bar\\\" src/", buf.items);
+}
+
+test "version-qualified FECH provider ids are routable but pointer exhaust is not" {
+    try std.testing.expect(!isInternalBin("mcp:github.issues.list@1"));
+    try std.testing.expect(!isInternalBin("aiko.read_file.invoke@abc123"));
+    try std.testing.expect(isInternalBin("word:where"));
+    try std.testing.expect(isInternalBin("neuron:application-root"));
 }

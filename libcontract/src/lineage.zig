@@ -13,23 +13,101 @@
 //! is the single root key.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const ed = std.crypto.sign.Ed25519;
 const hkdf = std.crypto.kdf.hkdf.HkdfSha256;
 const sha256 = std.crypto.hash.sha2.Sha256;
 const keystore = @import("keystore.zig");
 const ledger = @import("ledger.zig");
 const activity_log = @import("activity_log.zig");
+const is_windows = builtin.os.tag == .windows;
+
+extern fn _open(path: [*:0]const u8, flags: c_int, ...) c_int;
+extern fn _close(fd: c_int) c_int;
+extern fn _read(fd: c_int, buffer: [*]u8, count: c_uint) c_int;
+extern fn _write(fd: c_int, buffer: [*]const u8, count: c_uint) c_int;
+extern fn _mkdir(path: [*:0]const u8) c_int;
+extern fn _time64(timer: ?*i64) i64;
+
+const O_RDONLY: c_int = 0x0000;
+const O_WRONLY: c_int = 0x0001;
+const O_CREAT: c_int = 0x0100;
+const O_TRUNC: c_int = 0x0200;
+const O_BINARY: c_int = 0x8000;
+
+fn openRead(path: [*:0]const u8) c_int {
+    if (is_windows) return _open(path, O_RDONLY | O_BINARY);
+    var flags: std.c.O = .{};
+    flags.ACCMODE = .RDONLY;
+    return std.c.open(path, flags, @as(c_uint, 0));
+}
+
+fn openWrite(path: [*:0]const u8, mode: c_uint) c_int {
+    if (is_windows) return _open(path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, @as(c_int, @intCast(mode)));
+    var flags: std.c.O = .{};
+    flags.ACCMODE = .WRONLY;
+    flags.CREAT = true;
+    flags.TRUNC = true;
+    return std.c.open(path, flags, mode);
+}
+
+fn closeFd(fd: c_int) void {
+    _ = if (is_windows) _close(fd) else std.c.close(fd);
+}
+
+fn readFd(fd: c_int, buffer: []u8) isize {
+    if (is_windows) return _read(fd, buffer.ptr, @intCast(@min(buffer.len, std.math.maxInt(c_uint))));
+    return std.c.read(fd, buffer.ptr, buffer.len);
+}
+
+fn writeFd(fd: c_int, buffer: []const u8) isize {
+    if (is_windows) return _write(fd, buffer.ptr, @intCast(@min(buffer.len, std.math.maxInt(c_uint))));
+    return std.c.write(fd, buffer.ptr, buffer.len);
+}
+
+fn makeDir(path: [*:0]const u8, mode: c_uint) void {
+    _ = if (is_windows) _mkdir(path) else std.c.mkdir(path, mode);
+}
 
 // libc arc4random_buf is the cleanest cross-Apple-platform CSPRNG and ships
 // in libSystem; Zig 0.16's std.posix.getrandom isn't wired on macOS targets.
 extern fn arc4random_buf(buf: [*]u8, len: usize) void;
+extern fn rand_s(value: *c_uint) c_int;
+
+fn fillRandom(buffer: []u8) void {
+    if (!is_windows) return arc4random_buf(buffer.ptr, buffer.len);
+    var offset: usize = 0;
+    while (offset < buffer.len) {
+        var value: c_uint = 0;
+        if (rand_s(&value) != 0) @panic("Windows CSPRNG failed");
+        const bytes = std.mem.asBytes(&value);
+        const count = @min(bytes.len, buffer.len - offset);
+        @memcpy(buffer[offset .. offset + count], bytes[0..count]);
+        offset += count;
+    }
+}
+
+fn homePath(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
+    if (is_windows) return env.getAlloc(allocator, "USERPROFILE") catch error.NoHome;
+    const home = env.getPosix("HOME") orelse return error.NoHome;
+    return allocator.dupe(u8, home);
+}
+
+fn wallTime() std.c.timeval {
+    var tv: std.c.timeval = undefined;
+    if (is_windows) {
+        tv.sec = _time64(null);
+        tv.usec = 0;
+    } else _ = std.c.gettimeofday(&tv, null);
+    return tv;
+}
 
 /// Surface a fallback or degradation event to stderr. Same contract as
 /// keystore.surface — fallbacks must never be silent. Format: `wallet: <msg>`.
 fn surface(comptime fmt: []const u8, args: anytype) void {
     var buf: [1024]u8 = undefined;
     const line = std.fmt.bufPrint(&buf, "wallet: " ++ fmt ++ "\n", args) catch return;
-    _ = std.c.write(std.c.STDERR_FILENO, line.ptr, line.len);
+    _ = if (is_windows) _write(2, line.ptr, @intCast(line.len)) else std.c.write(std.c.STDERR_FILENO, line.ptr, line.len);
 }
 
 pub const PUBKEY_HEX_LEN: usize = 64; // 32 bytes * 2
@@ -76,7 +154,8 @@ fn cacheRoot(home: []const u8, seed: [32]u8) [32]u8 {
 /// native-store writes belong to explicit import/rotation commands.
 /// The resolved root is cached for the rest of the process.
 pub fn loadOrInitRootKey(allocator: std.mem.Allocator, env: std.process.Environ) ![32]u8 {
-    const home = env.getPosix("HOME") orelse return error.NoHome;
+    const home = try homePath(allocator, env);
+    defer allocator.free(home);
     const home_hash = std.hash.Wyhash.hash(0, home);
 
     lockRootCache();
@@ -133,7 +212,7 @@ pub fn loadOrInitRootKey(allocator: std.mem.Allocator, env: std.process.Environ)
     surface("FIRST RUN — generating fresh ed25519 root seed (no existing material in keystore/canonical/mirror tiers)", .{});
     activity_log.record("root.resolve", "generated-first-run");
     var fresh: [32]u8 = undefined;
-    arc4random_buf(&fresh, fresh.len);
+    fillRandom(&fresh);
     try writeHexFile(allocator, canonical, &fresh);
     backfillFileMirrors(allocator, &fresh, canonical, mirror) catch |e|
         surface("backfill after fresh generation failed: {s}", .{@errorName(e)});
@@ -220,7 +299,8 @@ pub fn importRootKeyFileKeychainOnly(
     env: std.process.Environ,
     source_path: []const u8,
 ) ![PUBKEY_HEX_LEN]u8 {
-    const home = env.getPosix("HOME") orelse return error.NoHome;
+    const home = try homePath(allocator, env);
+    defer allocator.free(home);
     const canonical = try std.fs.path.join(allocator, &.{ home, ".contracts", "root.key" });
     defer allocator.free(canonical);
     const mirror = try std.fs.path.join(allocator, &.{ home, ".aiko", "keys", "root.key" });
@@ -369,16 +449,14 @@ pub fn fileSha256(allocator: std.mem.Allocator, path: []const u8, out: *[32]u8) 
     const path_z = try allocator.dupeZ(u8, path);
     defer allocator.free(path_z);
 
-    var flags: std.c.O = .{};
-    flags.ACCMODE = .RDONLY;
-    const fd: c_int = std.c.open(path_z.ptr, flags, @as(c_uint, 0));
+    const fd = openRead(path_z.ptr);
     if (fd < 0) return error.FileNotFound;
-    defer _ = std.c.close(fd);
+    defer closeFd(fd);
 
     var hasher = sha256.init(.{});
     var chunk: [16384]u8 = undefined;
     while (true) {
-        const n = std.c.read(fd, &chunk, chunk.len);
+        const n = readFd(fd, &chunk);
         if (n <= 0) break;
         hasher.update(chunk[0..@intCast(n)]);
     }
@@ -404,18 +482,14 @@ pub fn signBinary(
     const sig_path_z = try allocator.dupeZ(u8, sig_path);
     defer allocator.free(sig_path_z);
 
-    var flags: std.c.O = .{};
-    flags.ACCMODE = .WRONLY;
-    flags.CREAT = true;
-    flags.TRUNC = true;
-    const fd: c_int = std.c.open(sig_path_z.ptr, flags, @as(c_uint, 0o644));
+    const fd = openWrite(sig_path_z.ptr, 0o644);
     if (fd < 0) return error.OpenFailed;
-    defer _ = std.c.close(fd);
+    defer closeFd(fd);
 
     var with_nl: [SIG_HEX_LEN + 1]u8 = undefined;
     @memcpy(with_nl[0..SIG_HEX_LEN], &sig_hex);
     with_nl[SIG_HEX_LEN] = '\n';
-    const n = std.c.write(fd, &with_nl, with_nl.len);
+    const n = writeFd(fd, &with_nl);
     if (n < @as(isize, with_nl.len)) return error.WriteFailed;
 }
 
@@ -440,14 +514,12 @@ pub fn verifyBinary(
 
     const sig_path_z = try allocator.dupeZ(u8, sig_path);
     defer allocator.free(sig_path_z);
-    var flags: std.c.O = .{};
-    flags.ACCMODE = .RDONLY;
-    const fd: c_int = std.c.open(sig_path_z.ptr, flags, @as(c_uint, 0));
+    const fd = openRead(sig_path_z.ptr);
     if (fd < 0) return error.SignatureMissing;
-    defer _ = std.c.close(fd);
+    defer closeFd(fd);
 
     var buf: [SIG_HEX_LEN + 8]u8 = undefined;
-    const n = std.c.read(fd, &buf, buf.len);
+    const n = readFd(fd, &buf);
     if (n < @as(isize, SIG_HEX_LEN)) return error.SignatureTruncated;
     try verifyDigest(buf[0..SIG_HEX_LEN], &pubkey_hex, digest);
 }
@@ -486,14 +558,12 @@ fn readHexFile(path: []const u8) ![32]u8 {
     path_buf[path.len] = 0;
     const path_z: [*:0]const u8 = @ptrCast(&path_buf);
 
-    var flags: std.c.O = .{};
-    flags.ACCMODE = .RDONLY;
-    const fd: c_int = std.c.open(path_z, flags, @as(c_uint, 0));
+    const fd = openRead(path_z);
     if (fd < 0) return error.FileNotFound;
-    defer _ = std.c.close(fd);
+    defer closeFd(fd);
 
     var buf: [128]u8 = undefined;
-    const n = std.c.read(fd, &buf, buf.len);
+    const n = readFd(fd, &buf);
     if (n < @as(isize, ROOT_KEY_HEX_LEN)) return error.RootKeyTooShort;
     // Strip trailing whitespace (newline).
     var end: usize = @intCast(n);
@@ -511,15 +581,13 @@ fn readHexFile(path: []const u8) ![32]u8 {
 fn readImportSeed(path: []const u8) ![32]u8 {
     const path_z = try std.heap.page_allocator.dupeZ(u8, path);
     defer std.heap.page_allocator.free(path_z);
-    var flags: std.c.O = .{};
-    flags.ACCMODE = .RDONLY;
-    const fd: c_int = std.c.open(path_z.ptr, flags, @as(c_uint, 0));
+    const fd = openRead(path_z.ptr);
     if (fd < 0) return error.FileNotFound;
-    defer _ = std.c.close(fd);
+    defer closeFd(fd);
 
     var raw: [256]u8 = undefined;
     defer @memset(&raw, 0);
-    const n_read = std.c.read(fd, &raw, raw.len);
+    const n_read = readFd(fd, &raw);
     if (n_read <= 0) return error.RootKeyTooShort;
 
     var compact: [256]u8 = undefined;
@@ -557,34 +625,30 @@ fn writeHexFile(allocator: std.mem.Allocator, path: []const u8, bytes: *const [3
     if (std.fs.path.dirname(path)) |parent| {
         var i: usize = 0;
         while (i < parent.len) : (i += 1) {
-            if (parent[i] == '/' and i > 0) {
+            if ((parent[i] == '/' or (is_windows and parent[i] == '\\')) and i > 0) {
                 const partial = try allocator.dupeZ(u8, parent[0..i]);
                 defer allocator.free(partial);
-                _ = std.c.mkdir(partial.ptr, 0o755);
+                makeDir(partial.ptr, 0o755);
             }
         }
         const full_parent = try allocator.dupeZ(u8, parent);
         defer allocator.free(full_parent);
-        _ = std.c.mkdir(full_parent.ptr, 0o755);
+        makeDir(full_parent.ptr, 0o755);
     }
 
     const path_z = try allocator.dupeZ(u8, path);
     defer allocator.free(path_z);
 
-    var flags: std.c.O = .{};
-    flags.ACCMODE = .WRONLY;
-    flags.CREAT = true;
-    flags.TRUNC = true;
-    const fd: c_int = std.c.open(path_z.ptr, flags, @as(c_uint, 0o600));
+    const fd = openWrite(path_z.ptr, 0o600);
     if (fd < 0) return error.OpenFailed;
-    defer _ = std.c.close(fd);
+    defer closeFd(fd);
 
     var hex: [ROOT_KEY_HEX_LEN]u8 = undefined;
     bytesToHex(bytes, &hex);
     var with_nl: [ROOT_KEY_HEX_LEN + 1]u8 = undefined;
     @memcpy(with_nl[0..ROOT_KEY_HEX_LEN], &hex);
     with_nl[ROOT_KEY_HEX_LEN] = '\n';
-    const n = std.c.write(fd, &with_nl, with_nl.len);
+    const n = writeFd(fd, &with_nl);
     if (n < @as(isize, with_nl.len)) return error.WriteFailed;
 }
 
@@ -621,7 +685,8 @@ pub const RotationResult = struct {
 /// Emits a signed `wallet_rotated` row to the local ledger so the chain of
 /// custody is auditable.
 pub fn rotateRootKey(allocator: std.mem.Allocator, env: std.process.Environ) !RotationResult {
-    const home = env.getPosix("HOME") orelse return error.NoHome;
+    const home = try homePath(allocator, env);
+    defer allocator.free(home);
     const canonical = try std.fs.path.join(allocator, &.{ home, ".contracts", "root.key" });
     defer allocator.free(canonical);
     const mirror = try std.fs.path.join(allocator, &.{ home, ".aiko", "keys", "root.key" });
@@ -652,15 +717,14 @@ pub fn rotateRootKey(allocator: std.mem.Allocator, env: std.process.Environ) !Ro
 
     // 4-5. Generate NEW seed + derive NEW identity.
     var new_root: [32]u8 = undefined;
-    arc4random_buf(&new_root, new_root.len);
+    fillRandom(&new_root);
     const new_kp = try deriveIdentityKeyPair(new_root);
     var new_pubkey_hex: [PUBKEY_HEX_LEN]u8 = undefined;
     bytesToHex(&new_kp.public_key.bytes, &new_pubkey_hex);
 
     // 6. Successor message digest:
     //    sha256("wallet_rotated|" || old_pubkey_hex || new_pubkey_hex || ts_ascii)
-    var tv: std.c.timeval = undefined;
-    _ = std.c.gettimeofday(&tv, null);
+    const tv = wallTime();
     const rotated_at: i64 = @intCast(tv.sec);
     var ts_buf: [32]u8 = undefined;
     const ts_str = try std.fmt.bufPrint(&ts_buf, "{d}", .{rotated_at});
@@ -719,40 +783,34 @@ fn archiveRoot(allocator: std.mem.Allocator, home: []const u8, canonical: []cons
     // mkdir -p
     var i: usize = 0;
     while (i < dir.len) : (i += 1) {
-        if (dir[i] == '/' and i > 0) {
+        if ((dir[i] == '/' or (is_windows and dir[i] == '\\')) and i > 0) {
             const partial = try allocator.dupeZ(u8, dir[0..i]);
             defer allocator.free(partial);
-            _ = std.c.mkdir(partial.ptr, 0o755);
+            makeDir(partial.ptr, 0o755);
         }
     }
     const full = try allocator.dupeZ(u8, dir);
     defer allocator.free(full);
-    _ = std.c.mkdir(full.ptr, 0o700);
+    makeDir(full.ptr, 0o700);
 
     const dst = try std.fs.path.join(allocator, &.{ dir, "root.key" });
     defer allocator.free(dst);
 
     const src_z = try allocator.dupeZ(u8, canonical);
     defer allocator.free(src_z);
-    var rflags: std.c.O = .{};
-    rflags.ACCMODE = .RDONLY;
-    const src_fd = std.c.open(src_z.ptr, rflags, @as(c_uint, 0));
+    const src_fd = openRead(src_z.ptr);
     if (src_fd < 0) return; // nothing to archive
-    defer _ = std.c.close(src_fd);
+    defer closeFd(src_fd);
     var buf: [256]u8 = undefined;
-    const n = std.c.read(src_fd, &buf, buf.len);
+    const n = readFd(src_fd, &buf);
     if (n <= 0) return;
 
     const dst_z = try allocator.dupeZ(u8, dst);
     defer allocator.free(dst_z);
-    var wflags: std.c.O = .{};
-    wflags.ACCMODE = .WRONLY;
-    wflags.CREAT = true;
-    wflags.TRUNC = true;
-    const dst_fd = std.c.open(dst_z.ptr, wflags, @as(c_uint, 0o600));
+    const dst_fd = openWrite(dst_z.ptr, 0o600);
     if (dst_fd < 0) return;
-    defer _ = std.c.close(dst_fd);
-    _ = std.c.write(dst_fd, &buf, @intCast(n));
+    defer closeFd(dst_fd);
+    _ = writeFd(dst_fd, buf[0..@intCast(n)]);
 }
 
 fn appendWalletRotatedRow(
@@ -765,7 +823,7 @@ fn appendWalletRotatedRow(
 ) !void {
     // 8-hex event id from CSPRNG.
     var idr: [4]u8 = undefined;
-    arc4random_buf(&idr, idr.len);
+    fillRandom(&idr);
     var event_id: [8]u8 = undefined;
     const alpha = "0123456789abcdef";
     for (idr, 0..) |b, i| {
@@ -786,8 +844,7 @@ fn appendWalletRotatedRow(
 }
 
 fn nowIsoUtc(buf: []u8) ![]u8 {
-    var tv: std.c.timeval = undefined;
-    _ = std.c.gettimeofday(&tv, null);
+    const tv = wallTime();
     const secs_total: i64 = @intCast(tv.sec);
     const us_remainder: i64 = @intCast(tv.usec);
     const epoch_secs = std.time.epoch.EpochSeconds{ .secs = @intCast(secs_total) };
@@ -881,16 +938,14 @@ pub fn rotateAllSignedRowsByLineage(
 fn readFileAll(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     const path_z = try allocator.dupeZ(u8, path);
     defer allocator.free(path_z);
-    var flags: std.c.O = .{};
-    flags.ACCMODE = .RDONLY;
-    const fd: c_int = std.c.open(path_z.ptr, flags, @as(c_uint, 0));
+    const fd = openRead(path_z.ptr);
     if (fd < 0) return error.FileNotFound;
-    defer _ = std.c.close(fd);
+    defer closeFd(fd);
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
     var chunk: [8192]u8 = undefined;
     while (true) {
-        const n = std.c.read(fd, &chunk, chunk.len);
+        const n = readFd(fd, &chunk);
         if (n <= 0) break;
         try out.appendSlice(allocator, chunk[0..@intCast(n)]);
         if (out.items.len > 32 * 1024 * 1024) return error.LedgerTooLarge;
@@ -901,14 +956,16 @@ fn readFileAll(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
 fn appendBytesToFile(allocator: std.mem.Allocator, path: []const u8, bytes: []const u8) !void {
     const path_z = try allocator.dupeZ(u8, path);
     defer allocator.free(path_z);
-    var flags: std.c.O = .{};
-    flags.ACCMODE = .WRONLY;
-    flags.CREAT = true;
-    flags.APPEND = true;
-    const fd: c_int = std.c.open(path_z.ptr, flags, @as(c_uint, 0o644));
+    const fd: c_int = if (is_windows) _open(path_z.ptr, O_WRONLY | O_CREAT | 0x0008 | O_BINARY, @as(c_int, 0o644)) else blk: {
+        var flags: std.c.O = .{};
+        flags.ACCMODE = .WRONLY;
+        flags.CREAT = true;
+        flags.APPEND = true;
+        break :blk std.c.open(path_z.ptr, flags, @as(c_uint, 0o644));
+    };
     if (fd < 0) return error.OpenFailed;
-    defer _ = std.c.close(fd);
-    const n = std.c.write(fd, bytes.ptr, bytes.len);
+    defer closeFd(fd);
+    const n = writeFd(fd, bytes);
     if (n < @as(isize, @intCast(bytes.len))) return error.WriteFailed;
 }
 
@@ -1009,7 +1066,7 @@ test "rotateAllSignedRowsByLineage re-signs every old-root row" {
 
     // Write the row to a tmp ledger file.
     var rnd: [4]u8 = undefined;
-    arc4random_buf(&rnd, rnd.len);
+    fillRandom(&rnd);
     const tmp_path = try std.fmt.allocPrint(
         allocator,
         "/tmp/contract-rotation-test-{x:0>2}{x:0>2}{x:0>2}{x:0>2}.jsonl",

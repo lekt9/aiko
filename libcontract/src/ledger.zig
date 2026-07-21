@@ -5,13 +5,49 @@
 //!   1. <cwd>/.claude/contracts.jsonl if <cwd>/.claude/ is a directory
 //!   2. ~/.contracts/contracts.jsonl global fallback
 const std = @import("std");
+const builtin = @import("builtin");
 
 const c = std.c;
+const is_windows = builtin.os.tag == .windows;
+
+extern fn _open(path: [*:0]const u8, flags: c_int, ...) c_int;
+extern fn _close(fd: c_int) c_int;
+extern fn _read(fd: c_int, buffer: [*]u8, count: c_uint) c_int;
+extern fn _write(fd: c_int, buffer: [*]const u8, count: c_uint) c_int;
+extern fn _lseek(fd: c_int, offset: c_long, origin: c_int) c_long;
+extern fn _mkdir(path: [*:0]const u8) c_int;
+extern fn _access(path: [*:0]const u8, mode: c_int) c_int;
+extern fn _getcwd(buffer: [*]u8, max_len: c_int) ?[*]u8;
+extern fn _locking(fd: c_int, mode: c_int, bytes: c_long) c_int;
+
+const O_RDONLY: c_int = 0x0000;
+const O_WRONLY: c_int = 0x0001;
+const O_RDWR: c_int = 0x0002;
+const O_APPEND: c_int = 0x0008;
+const O_CREAT: c_int = 0x0100;
+const O_BINARY: c_int = 0x8000;
+
+fn closeFd(fd: c_int) void {
+    _ = if (is_windows) _close(fd) else c.close(fd);
+}
+
+fn readFd(fd: c_int, buffer: []u8) isize {
+    if (is_windows) return _read(fd, buffer.ptr, @intCast(@min(buffer.len, std.math.maxInt(c_uint))));
+    return c.read(fd, buffer.ptr, buffer.len);
+}
+
+fn seekEnd(fd: c_int) i64 {
+    if (is_windows) return _lseek(fd, 0, 2);
+    return c.lseek(fd, 0, c.SEEK.END);
+}
 
 /// Resolve the ledger path. Returns an owned slice the caller must free.
 pub fn resolvePath(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
     var cwd_buf: [4096]u8 = undefined;
-    const cwd_ptr = c.getcwd(&cwd_buf, cwd_buf.len);
+    const cwd_ptr = if (is_windows)
+        _getcwd(&cwd_buf, @intCast(cwd_buf.len))
+    else
+        c.getcwd(&cwd_buf, cwd_buf.len);
     if (cwd_ptr == null) return error.CwdFailed;
     const cwd: []const u8 = std.mem.span(@as([*:0]const u8, @ptrCast(cwd_ptr.?)));
 
@@ -22,6 +58,11 @@ pub fn resolvePath(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8
         return try std.fs.path.join(allocator, &.{ cwd, ".claude", "contracts.jsonl" });
     }
 
+    if (is_windows) {
+        const home = env.getAlloc(allocator, "USERPROFILE") catch return error.NoHome;
+        defer allocator.free(home);
+        return try std.fs.path.join(allocator, &.{ home, ".contracts", "contracts.jsonl" });
+    }
     const home = env.getPosix("HOME") orelse return error.NoHome;
     return try std.fs.path.join(allocator, &.{ home, ".contracts", "contracts.jsonl" });
 }
@@ -33,6 +74,7 @@ extern fn closedir(dirp: *anyopaque) c_int;
 fn isDirectory(allocator: std.mem.Allocator, path: []const u8) bool {
     const path_z = allocator.dupeZ(u8, path) catch return false;
     defer allocator.free(path_z);
+    if (is_windows) return _access(path_z.ptr, 0) == 0;
     const d = opendir(path_z.ptr);
     if (d == null) return false;
     _ = closedir(d.?);
@@ -43,15 +85,15 @@ fn makePath(allocator: std.mem.Allocator, path: []const u8) !void {
     // mkdir each component recursively, ignoring "already exists".
     var i: usize = 0;
     while (i < path.len) : (i += 1) {
-        if (path[i] == '/' and i > 0) {
+        if ((path[i] == '/' or (is_windows and path[i] == '\\')) and i > 0) {
             const partial = try allocator.dupeZ(u8, path[0..i]);
             defer allocator.free(partial);
-            _ = c.mkdir(partial.ptr, 0o755);
+            _ = if (is_windows) _mkdir(partial.ptr) else c.mkdir(partial.ptr, 0o755);
         }
     }
     const full = try allocator.dupeZ(u8, path);
     defer allocator.free(full);
-    _ = c.mkdir(full.ptr, 0o755);
+    _ = if (is_windows) _mkdir(full.ptr) else c.mkdir(full.ptr, 0o755);
 }
 
 /// Append one JSON row (no trailing newline expected) followed by '\n'.
@@ -69,21 +111,27 @@ pub fn appendRow(allocator: std.mem.Allocator, env: std.process.Environ, row_jso
     const path_z = try allocator.dupeZ(u8, path);
     defer allocator.free(path_z);
 
-    var flags: c.O = .{};
-    flags.ACCMODE = .WRONLY;
-    flags.CREAT = true;
-    flags.APPEND = true;
-    const fd: c_int = c.open(path_z.ptr, flags, @as(c_uint, 0o644));
+    const fd: c_int = if (is_windows) blk: {
+        break :blk _open(path_z.ptr, O_WRONLY | O_CREAT | O_APPEND | O_BINARY, @as(c_int, 0o644));
+    } else blk: {
+        var flags: c.O = .{};
+        flags.ACCMODE = .WRONLY;
+        flags.CREAT = true;
+        flags.APPEND = true;
+        break :blk c.open(path_z.ptr, flags, @as(c_uint, 0o644));
+    };
     if (fd < 0) return error.OpenFailed;
-    defer _ = c.close(fd);
+    defer closeFd(fd);
 
     // One writev so the row+newline land as a single syscall.
     const iovecs = [_]c.iovec_const{
         .{ .base = row_json.ptr, .len = row_json.len },
         .{ .base = "\n", .len = 1 },
     };
-    const n = c.writev(fd, &iovecs, iovecs.len);
-    if (n < 0) return error.WriteFailed;
+    if (is_windows) {
+        if (_write(fd, row_json.ptr, @intCast(row_json.len)) < 0 or _write(fd, "\n", 1) < 0)
+            return error.WriteFailed;
+    } else if (c.writev(fd, &iovecs, iovecs.len) < 0) return error.WriteFailed;
 
     return path;
 }
@@ -116,17 +164,21 @@ pub fn acquireExclusive(allocator: std.mem.Allocator, env: std.process.Environ) 
     const lock_path_z = try allocator.dupeZ(u8, lock_path);
     defer allocator.free(lock_path_z);
 
-    var flags: c.O = .{};
-    flags.ACCMODE = .RDWR;
-    flags.CREAT = true;
-    const fd: c_int = c.open(lock_path_z.ptr, flags, @as(c_uint, 0o644));
+    const fd: c_int = if (is_windows) blk: {
+        break :blk _open(lock_path_z.ptr, O_RDWR | O_CREAT | O_BINARY, @as(c_int, 0o644));
+    } else blk: {
+        var flags: c.O = .{};
+        flags.ACCMODE = .RDWR;
+        flags.CREAT = true;
+        break :blk c.open(lock_path_z.ptr, flags, @as(c_uint, 0o644));
+    };
     if (fd < 0) return error.OpenFailed;
-    errdefer _ = c.close(fd);
+    errdefer closeFd(fd);
 
     // Blocking exclusive lock. Returns 0 on success; -1 on signal interrupt
     // (which we retry, since callers want serialized semantics).
     while (true) {
-        const r = flock(fd, LOCK_EX);
+        const r = if (is_windows) _locking(fd, 1, 1) else flock(fd, LOCK_EX);
         if (r == 0) break;
         // EINTR retry — any other error is fatal.
         const errno = std.c._errno().*;
@@ -140,8 +192,8 @@ pub fn acquireExclusive(allocator: std.mem.Allocator, env: std.process.Environ) 
 /// fd implicitly releases the flock; we still call LOCK_UN explicitly so
 /// the unlock is visible even if some BSD variant defers fd-close cleanup.
 pub fn releaseExclusive(fd: c_int) void {
-    _ = flock(fd, LOCK_UN);
-    _ = c.close(fd);
+    _ = if (is_windows) _locking(fd, 0, 1) else flock(fd, LOCK_UN);
+    closeFd(fd);
 }
 
 /// Scan the resolved ledger for a `declared` row with the given contract id
@@ -282,12 +334,14 @@ pub fn currentSize(allocator: std.mem.Allocator, env: std.process.Environ) u64 {
     defer allocator.free(path);
     const path_z = allocator.dupeZ(u8, path) catch return 0;
     defer allocator.free(path_z);
-    var flags: c.O = .{};
-    flags.ACCMODE = .RDONLY;
-    const fd: c_int = c.open(path_z.ptr, flags, @as(c_uint, 0));
+    const fd: c_int = if (is_windows) _open(path_z.ptr, O_RDONLY | O_BINARY) else blk: {
+        var flags: c.O = .{};
+        flags.ACCMODE = .RDONLY;
+        break :blk c.open(path_z.ptr, flags, @as(c_uint, 0));
+    };
     if (fd < 0) return 0;
-    defer _ = c.close(fd);
-    const off = c.lseek(fd, 0, c.SEEK.END);
+    defer closeFd(fd);
+    const off = seekEnd(fd);
     return if (off < 0) 0 else @intCast(off);
 }
 
@@ -322,21 +376,23 @@ pub fn readAll(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
     const path_z = try allocator.dupeZ(u8, path);
     defer allocator.free(path_z);
 
-    var flags: c.O = .{};
-    flags.ACCMODE = .RDONLY;
-    const fd: c_int = c.open(path_z.ptr, flags, @as(c_uint, 0));
+    const fd: c_int = if (is_windows) _open(path_z.ptr, O_RDONLY | O_BINARY) else blk: {
+        var flags: c.O = .{};
+        flags.ACCMODE = .RDONLY;
+        break :blk c.open(path_z.ptr, flags, @as(c_uint, 0));
+    };
     if (fd < 0) {
         // Missing ledger is a normal bootstrap state — return empty.
         return try allocator.alloc(u8, 0);
     }
-    defer _ = c.close(fd);
+    defer closeFd(fd);
 
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
 
     var chunk: [8192]u8 = undefined;
     while (true) {
-        const n = c.read(fd, &chunk, chunk.len);
+        const n = readFd(fd, &chunk);
         if (n <= 0) break;
         try out.appendSlice(allocator, chunk[0..@intCast(n)]);
         if (out.items.len > 16 * 1024 * 1024) return error.LedgerTooLarge;
@@ -362,16 +418,18 @@ pub const COMPACT_THRESHOLD: u64 = 12 * 1024 * 1024;
 /// Uncapped slurp — compaction must be able to read a store that is
 /// already too big for the capped readAll. Private on purpose.
 fn readAllUncapped(allocator: std.mem.Allocator, path_z: [*:0]const u8) ![]u8 {
-    var flags: c.O = .{};
-    flags.ACCMODE = .RDONLY;
-    const fd: c_int = c.open(path_z, flags, @as(c_uint, 0));
+    const fd: c_int = if (is_windows) _open(path_z, O_RDONLY | O_BINARY) else blk: {
+        var flags: c.O = .{};
+        flags.ACCMODE = .RDONLY;
+        break :blk c.open(path_z, flags, @as(c_uint, 0));
+    };
     if (fd < 0) return try allocator.alloc(u8, 0);
-    defer _ = c.close(fd);
+    defer closeFd(fd);
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
     var chunk: [65536]u8 = undefined;
     while (true) {
-        const n = c.read(fd, &chunk, chunk.len);
+        const n = readFd(fd, &chunk);
         if (n <= 0) break;
         try out.appendSlice(allocator, chunk[0..@intCast(n)]);
     }
@@ -419,7 +477,10 @@ fn isFossilEvent(ev: []const u8) bool {
 fn writeAllFd(fd: c_int, bytes: []const u8) !void {
     var off: usize = 0;
     while (off < bytes.len) {
-        const n = c.write(fd, bytes.ptr + off, bytes.len - off);
+        const n = if (is_windows)
+            _write(fd, bytes.ptr + off, @intCast(@min(bytes.len - off, std.math.maxInt(c_uint))))
+        else
+            c.write(fd, bytes.ptr + off, bytes.len - off);
         if (n <= 0) return error.WriteFailed;
         off += @intCast(n);
     }
@@ -475,25 +536,29 @@ pub fn compactIfOversized(allocator: std.mem.Allocator, env: std.process.Environ
     const arch_path_z = try std.fmt.allocPrintSentinel(allocator, "{s}.archive.jsonl", .{path}, 0);
     defer allocator.free(arch_path_z);
     {
-        var flags: c.O = .{};
-        flags.ACCMODE = .WRONLY;
-        flags.CREAT = true;
-        flags.APPEND = true;
-        const fd: c_int = c.open(arch_path_z.ptr, flags, @as(c_uint, 0o644));
+        const fd: c_int = if (is_windows) _open(arch_path_z.ptr, O_WRONLY | O_CREAT | O_APPEND | O_BINARY, @as(c_int, 0o644)) else blk: {
+            var flags: c.O = .{};
+            flags.ACCMODE = .WRONLY;
+            flags.CREAT = true;
+            flags.APPEND = true;
+            break :blk c.open(arch_path_z.ptr, flags, @as(c_uint, 0o644));
+        };
         if (fd < 0) return error.OpenFailed;
-        defer _ = c.close(fd);
+        defer closeFd(fd);
         try writeAllFd(fd, arch.items);
     }
     const tmp_path_z = try std.fmt.allocPrintSentinel(allocator, "{s}.compact.tmp", .{path}, 0);
     defer allocator.free(tmp_path_z);
     {
-        var flags: c.O = .{};
-        flags.ACCMODE = .WRONLY;
-        flags.CREAT = true;
-        flags.TRUNC = true;
-        const fd: c_int = c.open(tmp_path_z.ptr, flags, @as(c_uint, 0o644));
+        const fd: c_int = if (is_windows) _open(tmp_path_z.ptr, O_WRONLY | O_CREAT | 0x0200 | O_BINARY, @as(c_int, 0o644)) else blk: {
+            var flags: c.O = .{};
+            flags.ACCMODE = .WRONLY;
+            flags.CREAT = true;
+            flags.TRUNC = true;
+            break :blk c.open(tmp_path_z.ptr, flags, @as(c_uint, 0o644));
+        };
         if (fd < 0) return error.OpenFailed;
-        defer _ = c.close(fd);
+        defer closeFd(fd);
         try writeAllFd(fd, keep.items);
     }
     if (c.rename(tmp_path_z.ptr, path_z.ptr) != 0) return error.RenameFailed;

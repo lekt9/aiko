@@ -32,61 +32,94 @@ submission is disabled unless the user explicitly enables and requests it.
 - Do not expose secrets, private keys, root seeds, Keychain values, or payment
   credentials in prompts, commands, output, or contract bodies.
 
-## Record substantive work
+## Record substantive work — always use task begin
 
-For substantive multi-step work, register the user's goal without sending it to
-another reasoning model:
-
-```bash
-contract declare "<goal>" --register
-```
-
-Registration answers with a short briefing on stderr — the proven route for
-goals shaped like this one and up to three already-open root contracts. Use
-it to avoid redoing or colliding with existing work; do not narrate it.
-
-Do this quietly. Do not print or narrate the returned id unless the user asks
-about harness state. If registration fails, continue the user's work and report
-the harness failure only when it affects durability or verification.
-
-Use the shared cloud compiler only when the user explicitly asks to create or
-expand a shared contract graph. Shared is the aiko default — no flag exists
-for it:
+For substantive multi-step work, register as a contract task with a real
+**check command** that proves the work is done:
 
 ```bash
-aiko "<goal>"
+contract task begin "<goal>" --check "<real shell command that exits 0 on success>"
 ```
 
-Use `--private` when the user explicitly requests a local-only declaration:
+The check command is the proof. It must be a real shell command — not a
+placeholder, not an echo. Examples:
+
+| Task | Check |
+|------|-------|
+| Create a file | `ls path/to/file` |
+| Build passes | `cargo build 2>&1` |
+| Scraper works | `python3 scraper.py --dry-run && ls output.csv` |
+| Deploy succeeds | `curl -s https://my.app/health \| jq -e '.status == "ok"'` |
+
+After work is done, verify:
 
 ```bash
-aiko "<goal>" --private
+contract task verify <id>
 ```
 
-Remote failure never authorizes a silent local-model fallback. A payment-required
-request may be queued visibly for retry; do not fabricate a successful graph.
+This re-runs the check command and records the outcome in the ledger.
 
-## Resolve only when requested
+### Do NOT use `contract declare` for local work
 
-Do not run the resolver merely because goal registration wrote a ledger row.
-Claude performs and verifies ordinary work directly; registration is bookkeeping,
-not a request for the harness to execute the goal.
+`contract declare` triggers a full resolver pass on all legacy rows. In repos
+with history (many have stale rows with broken temp dirs/worktrees), it will
+loop indefinitely. Use `contract task begin --check` instead — it scopes to
+a single task and completes instantly.
 
-Run one resolver pass only when the user explicitly asks to resolve, retry, or
-advance registered contracts:
+`contract declare` is reserved for:
+- Shared cloud compiler graphs (`aiko "<goal>"`)
+- On-chain anchor declarations
+- User explicitly requests shared/remote compilation
+
+### Task lifecycle (preferred for local work)
 
 ```bash
-contract tick
+contract task begin "<task>" --check "<command>"   # register
+contract task verify <id>                           # verify (re-runs check)
+contract task status <id>                           # inspect
+contract status                                     # list all
+contract explain <id>                               # evidence trace
 ```
 
-Use the resident loop only when the user asks for ongoing schedules, proactive
-rules, or monitoring:
+## Daemon persistence (limbs)
+
+Aiko runs as a **daemon-first agent**. Beyond one-shot contract tasks, she
+maintains persistent background processes ("limbs") that:
+
+- Poll channel APIs (Telegram, Discord, Slack, email) for incoming messages
+- Dispatch every inbound message as a contract task
+- Use every channel affordance (typing indicators, rich formatting, file
+  uploads, voice, inline keyboards, message editing, reactions)
+- Survive agent session restarts — the daemon is the substrate, the session
+  is a conversation
+
+Each limb is registered as a contract task with a health-check command
+that proves the daemon is alive:
 
 ```bash
-contract tick --every 5
+contract task begin "telegram limb health" --check "curl -s 'https://api.telegram.org/bot$TOKEN/getMe' | jq -e '.ok'"
 ```
 
-Do not start a persistent process for ordinary one-shot work.
+The daemon lifecycle: `contract task begin` → start daemon → `monitor` stdout
+→ verify health check. When a limb goes down, the contract task fails its
+verify and Aiko restarts it.
+
+### Limb generation
+
+Aiko generates new channel integrations as contract tasks. The telegram
+daemon at `crates/codegen/xai-telegram-daemon/` is the reference template:
+api types → bot logic → daemon loop → health check. To add a new limb,
+register a contract task, generate the crate following the template, build,
+and start the daemon.
+
+## Verify, don't resolve
+
+Task verification (`contract task verify <id>`) re-runs the check command.
+This is the primary feedback loop — not the resolver.
+
+Only run `contract tick` when the user explicitly asks to resolve, retry, or
+advance registered contracts. Do not start a persistent process for ordinary
+one-shot work.
 
 ## Governed agency work
 

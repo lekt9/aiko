@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "capability_id": "mcp:github.issues.list",
+  "capability_version": "1",
+  "success": true,
+  "duration_ms": 42,
+  "permission_result": "allowed",
+  "error_class": null,
+  "result_shape": "array",
+  "observed_at": "2026-07-21T00:00:00Z"
+}

@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "measured_at": "2026-07-21T06:14:00+08:00",
+  "reference_machine": "Apple Silicon macOS",
+  "contract_acceptance": {
+    "top3_accuracy": 1.0,
+    "automatic_false_positive_rate": 0.0,
+    "parallel_success_rate": 0.9,
+    "warm_ranking_p50_ms": 0.472,
+    "warm_ranking_p95_ms": 0.504,
+    "refresh_1000_ms": 4.249,
+    "scenarios_passed": 8,
+    "privacy_sentinels_absent": true
+  },
+  "unbrowse_route_vs_browser": {
+    "runtime_version": "11.1.9",
+    "same_public_site": true,
+    "cached_execute_seconds": 0.23,
+    "cached_execute_tool_calls": 1,
+    "browser_go_seconds": 1.52,
+    "browser_close_seconds": 1.46,
+    "browser_total_seconds": 2.98,
+    "browser_tool_calls": 2,
+    "latency_speedup": 12.96,
+    "result": "cached_route_wins"
+  },
+  "reproduce": [
+    "cd ../contract/libcontract && zig build -Doptimize=ReleaseSafe",
+    "cd ../contract && ./scripts/fech_verify.py"
+  ]
+}

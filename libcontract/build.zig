@@ -39,6 +39,23 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(dylib);
 
+    // Portable deterministic Collective-only ABI. It deliberately excludes
+    // the legacy filesystem ledger so cross-platform desktop packages can
+    // always embed the trust kernel even while host persistence differs.
+    const collective_mod = b.createModule(.{
+        .root_source_file = b.path("src/collective_c_abi.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const collective_lib = b.addLibrary(.{
+        .name = "contract_collective",
+        .linkage = .dynamic,
+        .root_module = collective_mod,
+    });
+    const collective_library_step = b.step("collective-library", "Build the portable Aiko Collective shared library");
+    collective_library_step.dependOn(&b.addInstallArtifact(collective_lib, .{}).step);
+
     // ── contract-lib-shim ────────────────────────────────────────────────
     // Tiny CLI for the bash parity tests. Calls contract.zig directly (no
     // FFI roundtrip) but pulls c_abi.zig into the same module so static
@@ -82,6 +99,23 @@ pub fn build(b: *std.Build) void {
     const bt_step = b.step("broadcast-tool", "Build the operator broadcast utility");
     bt_step.dependOn(&b.addInstallArtifact(broadcast_tool, .{}).step);
 
+    // Pure collective protocol conformance runner. It accepts a checked-in
+    // golden-vector path as its sole argument and performs no network I/O.
+    const collective_conformance_mod = b.createModule(.{
+        .root_source_file = b.path("src/collective_conformance.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const collective_conformance = b.addExecutable(.{
+        .name = "collective-conformance",
+        .root_module = collective_conformance_mod,
+    });
+    const collective_run = b.addRunArtifact(collective_conformance);
+    if (b.args) |args| collective_run.addArgs(args);
+    const collective_step = b.step("collective-conformance", "Verify Aiko Collective golden vectors");
+    collective_step.dependOn(&collective_run.step);
+
     // ── tests ────────────────────────────────────────────────────────────
     // Σ27 (a4e162c8) — the-binary-IS-the-interface: every doctrine has its
     // tests INSIDE the source file, exercised by `zig build test`. No
@@ -103,6 +137,12 @@ pub fn build(b: *std.Build) void {
         "src/terminal.zig",
         "src/capability.zig",
         "src/capability_cells.zig",
+        "src/capability_registry.zig",
+        "src/collective_object.zig",
+        "src/collective_rank.zig",
+        "src/collective_checkpoint.zig",
+        "src/collective_admission.zig",
+        "src/collective_state.zig",
         "src/agency.zig",
         "src/anchor.zig",
         "src/governance.zig",
@@ -118,6 +158,7 @@ pub fn build(b: *std.Build) void {
         "src/bge.zig",
         "src/ebm.zig",
         "src/cas.zig",
+        "src/collective_object.zig",
         "src/reward.zig",
         "src/usage.zig",
         "src/usage_ledger.zig",

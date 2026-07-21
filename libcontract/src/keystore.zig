@@ -31,6 +31,27 @@ const builtin = @import("builtin");
 const hkdf = std.crypto.kdf.hkdf.HkdfSha256;
 const sha256 = std.crypto.hash.sha2.Sha256;
 const ChaCha20Poly1305 = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
+const is_windows = builtin.os.tag == .windows;
+
+extern fn _open(path: [*:0]const u8, flags: c_int, ...) c_int;
+extern fn _close(fd: c_int) c_int;
+extern fn _read(fd: c_int, buffer: [*]u8, count: c_uint) c_int;
+extern fn _write(fd: c_int, buffer: [*]const u8, count: c_uint) c_int;
+extern fn _mkdir(path: [*:0]const u8) c_int;
+extern fn rand_s(value: *c_uint) c_int;
+
+fn fillRandom(buffer: []u8) void {
+    if (!is_windows) return arc4random_buf(buffer.ptr, buffer.len);
+    var offset: usize = 0;
+    while (offset < buffer.len) {
+        var value: c_uint = 0;
+        if (rand_s(&value) != 0) @panic("Windows CSPRNG failed");
+        const bytes = std.mem.asBytes(&value);
+        const count = @min(bytes.len, buffer.len - offset);
+        @memcpy(buffer[offset .. offset + count], bytes[0..count]);
+        offset += count;
+    }
+}
 
 // libc shellout primitives mirrored from lineage.zig so this file is self-contained.
 extern fn popen(command: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
@@ -55,7 +76,7 @@ fn surface(comptime fmt: []const u8, args: anytype) void {
     const line = std.fmt.bufPrint(&buf, "keystore: " ++ fmt ++ "\n", args) catch return;
     // Best-effort write to stderr (fd 2). Never throw from a surface emitter —
     // surfacing is observability, not flow control.
-    _ = std.c.write(std.c.STDERR_FILENO, line.ptr, line.len);
+    _ = if (is_windows) _write(2, line.ptr, @intCast(line.len)) else std.c.write(std.c.STDERR_FILENO, line.ptr, line.len);
 }
 
 pub const KeystoreError = error{
@@ -509,7 +530,7 @@ fn fallbackWrite(allocator: std.mem.Allocator, svc: []const u8, value: []const u
     var key: [32]u8 = undefined;
     try deriveFallbackKey(allocator, &key);
     var nonce: [12]u8 = undefined;
-    arc4random_buf(&nonce, nonce.len);
+    fillRandom(&nonce);
     var tag: [16]u8 = undefined;
     const ct = try allocator.alloc(u8, value.len);
     defer allocator.free(ct);
@@ -576,7 +597,7 @@ fn deriveFallbackKey(allocator: std.mem.Allocator, out: *[32]u8) !void {
 
 fn getHome(allocator: std.mem.Allocator) ![]u8 {
     // Honor $HOME via libc getenv — keeps the file self-contained (no env arg).
-    const home_z = std.c.getenv("HOME");
+    const home_z = std.c.getenv(if (is_windows) "USERPROFILE" else "HOME");
     if (home_z == null) return KeystoreError.NoHome;
     const home = std.mem.span(@as([*:0]const u8, @ptrCast(home_z.?)));
     return try allocator.dupe(u8, home);
@@ -585,16 +606,18 @@ fn getHome(allocator: std.mem.Allocator) ![]u8 {
 fn readFile(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     const path_z = try allocator.dupeZ(u8, path);
     defer allocator.free(path_z);
-    var flags: std.c.O = .{};
-    flags.ACCMODE = .RDONLY;
-    const fd: c_int = std.c.open(path_z.ptr, flags, @as(c_uint, 0));
+    const fd: c_int = if (is_windows) _open(path_z.ptr, 0x8000) else blk: {
+        var flags: std.c.O = .{};
+        flags.ACCMODE = .RDONLY;
+        break :blk std.c.open(path_z.ptr, flags, @as(c_uint, 0));
+    };
     if (fd < 0) return error.FileNotFound;
-    defer _ = std.c.close(fd);
+    defer _ = if (is_windows) _close(fd) else std.c.close(fd);
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
     var chunk: [4096]u8 = undefined;
     while (true) {
-        const n = std.c.read(fd, &chunk, chunk.len);
+        const n = if (is_windows) _read(fd, &chunk, chunk.len) else std.c.read(fd, &chunk, chunk.len);
         if (n <= 0) break;
         try out.appendSlice(allocator, chunk[0..@intCast(n)]);
         if (out.items.len > 1024 * 1024) return error.FileTooLarge;
@@ -605,14 +628,16 @@ fn readFile(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
 fn writeFileAtomic(allocator: std.mem.Allocator, tmp_path: []const u8, final_path: []const u8, bytes: []const u8) !void {
     const tmp_z = try allocator.dupeZ(u8, tmp_path);
     defer allocator.free(tmp_z);
-    var flags: std.c.O = .{};
-    flags.ACCMODE = .WRONLY;
-    flags.CREAT = true;
-    flags.TRUNC = true;
-    const fd: c_int = std.c.open(tmp_z.ptr, flags, @as(c_uint, 0o600));
+    const fd: c_int = if (is_windows) _open(tmp_z.ptr, 0x0001 | 0x0100 | 0x0200 | 0x8000, @as(c_int, 0o600)) else blk: {
+        var flags: std.c.O = .{};
+        flags.ACCMODE = .WRONLY;
+        flags.CREAT = true;
+        flags.TRUNC = true;
+        break :blk std.c.open(tmp_z.ptr, flags, @as(c_uint, 0o600));
+    };
     if (fd < 0) return KeystoreError.WriteFailed;
-    const n = std.c.write(fd, bytes.ptr, bytes.len);
-    _ = std.c.close(fd);
+    const n = if (is_windows) _write(fd, bytes.ptr, @intCast(bytes.len)) else std.c.write(fd, bytes.ptr, bytes.len);
+    _ = if (is_windows) _close(fd) else std.c.close(fd);
     if (n < @as(isize, @intCast(bytes.len))) return KeystoreError.WriteFailed;
 
     const final_z = try allocator.dupeZ(u8, final_path);
@@ -623,22 +648,22 @@ fn writeFileAtomic(allocator: std.mem.Allocator, tmp_path: []const u8, final_pat
 fn makePath(allocator: std.mem.Allocator, path: []const u8) !void {
     var i: usize = 0;
     while (i < path.len) : (i += 1) {
-        if (path[i] == '/' and i > 0) {
+        if ((path[i] == '/' or (is_windows and path[i] == '\\')) and i > 0) {
             const partial = try allocator.dupeZ(u8, path[0..i]);
             defer allocator.free(partial);
-            _ = std.c.mkdir(partial.ptr, 0o755);
+            _ = if (is_windows) _mkdir(partial.ptr) else std.c.mkdir(partial.ptr, 0o755);
         }
     }
     const full = try allocator.dupeZ(u8, path);
     defer allocator.free(full);
-    _ = std.c.mkdir(full.ptr, 0o700);
+    _ = if (is_windows) _mkdir(full.ptr) else std.c.mkdir(full.ptr, 0o700);
 }
 
 test "keystore round-trip on this platform" {
     const allocator = std.testing.allocator;
     // Unique svc per run so concurrent CI runs don't clobber each other.
     var rnd: [4]u8 = undefined;
-    arc4random_buf(&rnd, rnd.len);
+    fillRandom(&rnd);
     var svc_buf: [64]u8 = undefined;
     const svc = try std.fmt.bufPrint(&svc_buf, "aiko.test.ks-{x:0>2}{x:0>2}{x:0>2}{x:0>2}", .{ rnd[0], rnd[1], rnd[2], rnd[3] });
 

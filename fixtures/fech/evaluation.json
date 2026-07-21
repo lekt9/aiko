@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "aiko": [
+      {"schema_version":1,"id":"aiko.read_file.invoke","capability_version":"1","provider":"aiko","tool":"read_file","action":"invoke","description":"Read file contents","input_schema":{},"output_schema":{},"requires":[],"permission":"read","effects":["read_only"],"available":true},
+      {"schema_version":1,"id":"aiko.search_files.invoke","capability_version":"1","provider":"aiko","tool":"search_files","action":"invoke","description":"Search text across workspace files","input_schema":{},"output_schema":{},"requires":[],"permission":"read","effects":["read_only"],"available":true},
+      {"schema_version":1,"id":"aiko.git_status.invoke","capability_version":"1","provider":"aiko","tool":"git_status","action":"invoke","description":"Inspect git repository status and changed files","input_schema":{},"output_schema":{},"requires":[],"permission":"read","effects":["read_only"],"available":true}
+    ],
+    "mcp:github": [
+      {"schema_version":1,"id":"mcp:github.issues_list.invoke","capability_version":"1","provider":"mcp:github","tool":"issues_list","action":"invoke","description":"List GitHub repository issues","input_schema":{},"output_schema":{},"requires":[],"permission":"network","effects":["network_read"],"available":true},
+      {"schema_version":1,"id":"mcp:github.pull_requests.invoke","capability_version":"1","provider":"mcp:github","tool":"pull_requests","action":"invoke","description":"List GitHub pull requests and reviews","input_schema":{},"output_schema":{},"requires":[],"permission":"network","effects":["network_read"],"available":true},
+      {"schema_version":1,"id":"mcp:github.issue_create.invoke","capability_version":"1","provider":"mcp:github","tool":"issue_create","action":"invoke","description":"Create a GitHub repository issue","input_schema":{},"output_schema":{},"requires":[],"permission":"network","effects":["network_write"],"available":true}
+    ],
+    "mcp:weather": [
+      {"schema_version":1,"id":"mcp:weather.forecast.invoke","capability_version":"1","provider":"mcp:weather","tool":"forecast","action":"invoke","description":"Read local weather forecast and temperature","input_schema":{},"output_schema":{},"requires":[],"permission":"network","effects":["network_read"],"available":true}
+    ],
+    "skill": [
+      {"schema_version":1,"id":"skill.skill.deploy","capability_version":"1","provider":"skill","tool":"Skill","action":"deploy","description":"Load deployment workflow guidance","input_schema":{},"output_schema":{},"requires":[],"permission":"read","effects":["read_only"],"available":true},
+      {"schema_version":1,"id":"skill.skill.accessibility","capability_version":"1","provider":"skill","tool":"Skill","action":"accessibility","description":"Load accessibility audit guidance","input_schema":{},"output_schema":{},"requires":[],"permission":"read","effects":["read_only"],"available":true}
+    ],
+    "unbrowse": [
+      {"schema_version":1,"id":"unbrowse.clinic.appointments","capability_version":"1","provider":"unbrowse","tool":"Bash","action":"unbrowse execute --skill clinic --endpoint appointments","description":"List clinic appointment availability","input_schema":{},"output_schema":{},"requires":[],"permission":"network","effects":["network_read"],"available":true},
+      {"schema_version":1,"id":"unbrowse.shop.products","capability_version":"1","provider":"unbrowse","tool":"Bash","action":"unbrowse execute --skill shop --endpoint products","description":"List shop products and prices","input_schema":{},"output_schema":{},"requires":[],"permission":"network","effects":["network_read"],"available":true}
+    ],
+    "mcp:browser": [
+      {"schema_version":1,"id":"mcp:browser.clinic_fallback.invoke","capability_version":"1","provider":"mcp:browser","tool":"clinic_fallback","action":"invoke","description":"Browser fallback for clinic appointment availability","input_schema":{},"output_schema":{},"requires":[],"permission":"network","effects":["network_read"],"available":true}
+    ]
+  },
+  "queries": [
+    ["read the workspace file", "aiko.read_file.invoke"],
+    ["show file contents", "aiko.read_file.invoke"],
+    ["search workspace text", "aiko.search_files.invoke"],
+    ["find text across files", "aiko.search_files.invoke"],
+    ["inspect changed git files", "aiko.git_status.invoke"],
+    ["show repository git status", "aiko.git_status.invoke"],
+    ["list GitHub issues", "mcp:github.issues_list.invoke"],
+    ["repository issue list", "mcp:github.issues_list.invoke"],
+    ["show pull request reviews", "mcp:github.pull_requests.invoke"],
+    ["list GitHub pull requests", "mcp:github.pull_requests.invoke"],
+    ["create a repository issue", "mcp:github.issue_create.invoke"],
+    ["file a GitHub issue", "mcp:github.issue_create.invoke"],
+    ["weather temperature forecast", "mcp:weather.forecast.invoke"],
+    ["read the local forecast", "mcp:weather.forecast.invoke"],
+    ["load deployment guidance", "skill.skill.deploy"],
+    ["use the accessibility audit guidance", "skill.skill.accessibility"],
+    ["list clinic appointment availability", "unbrowse.clinic.appointments"],
+    ["available clinic appointments", "unbrowse.clinic.appointments"],
+    ["list shop product prices", "unbrowse.shop.products"],
+    ["show products from the shop", "unbrowse.shop.products"]
+  ],
+  "parallel_queries": [
+    ["compare both git status and weather forecast in parallel", ["aiko.git_status.invoke", "mcp:weather.forecast.invoke"]],
+    ["compare both workspace search and GitHub issues in parallel", ["aiko.search_files.invoke", "mcp:github.issues_list.invoke"]],
+    ["compare both file contents and clinic appointments in parallel", ["aiko.read_file.invoke", "unbrowse.clinic.appointments"]],
+    ["compare both weather forecast and shop products in parallel", ["mcp:weather.forecast.invoke", "unbrowse.shop.products"]],
+    ["compare both pull requests and clinic appointments in parallel", ["mcp:github.pull_requests.invoke", "unbrowse.clinic.appointments"]],
+    ["simultaneously read git status and shop products", ["aiko.git_status.invoke", "unbrowse.shop.products"]],
+    ["simultaneously read the file and weather forecast", ["aiko.read_file.invoke", "mcp:weather.forecast.invoke"]],
+    ["compare workspace text and pull request reviews at the same time", ["aiko.search_files.invoke", "mcp:github.pull_requests.invoke"]],
+    ["read clinic appointments and git status in parallel", ["unbrowse.clinic.appointments", "aiko.git_status.invoke"]],
+    ["compare shop products and GitHub issues in parallel", ["unbrowse.shop.products", "mcp:github.issues_list.invoke"]]
+  ]
+}

@@ -15,9 +15,35 @@
 
 const std = @import("std");
 const Sha256 = std.crypto.hash.sha2.Sha256;
+const Blake3 = std.crypto.hash.Blake3;
 
 pub const HASH_LEN = 32;
 pub const HEX_LEN = 64;
+
+/// Explicit algorithm/version selection for protocol-facing content IDs.
+/// Legacy `contentHash` remains SHA-256 for ABI compatibility; new protocols
+/// must call `domainHash` and pin both the algorithm and a non-empty domain.
+pub const HashAlgorithm = enum { sha256_v1, blake3_v1 };
+
+pub fn domainHash(algorithm: HashAlgorithm, domain: []const u8, bytes: []const u8) [HASH_LEN]u8 {
+    std.debug.assert(domain.len != 0);
+    var out: [HASH_LEN]u8 = undefined;
+    switch (algorithm) {
+        .sha256_v1 => {
+            var hasher = Sha256.init(.{});
+            hasher.update(domain);
+            hasher.update(bytes);
+            hasher.final(&out);
+        },
+        .blake3_v1 => {
+            var hasher = Blake3.init(.{});
+            hasher.update(domain);
+            hasher.update(bytes);
+            hasher.final(&out);
+        },
+    }
+    return out;
+}
 
 pub fn contentHash(bytes: []const u8) [HASH_LEN]u8 {
     var h: [HASH_LEN]u8 = undefined;
@@ -154,4 +180,12 @@ test "reproduces: a matching re-run verifies; a drifted one does not" {
     try std.testing.expect(!reproduces(&key, "route shape v2 (drifted)"));
     // a malformed/absent key length → unverified, not an error
     try std.testing.expect(!reproduces("deadbeef", "route shape v1"));
+}
+
+test "protocol hashes bind algorithm and version domain" {
+    const a = domainHash(.blake3_v1, "aiko.collective.object.v1\x00", "same");
+    const b = domainHash(.blake3_v1, "aiko.collective.object.v2\x00", "same");
+    const c = domainHash(.sha256_v1, "aiko.collective.object.v1\x00", "same");
+    try std.testing.expect(!std.mem.eql(u8, &a, &b));
+    try std.testing.expect(!std.mem.eql(u8, &a, &c));
 }

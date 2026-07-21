@@ -7,14 +7,40 @@
 //! allocator (no caller-owned arena required).
 const std = @import("std");
 const contract = @import("contract.zig");
+const route = @import("route.zig");
 const gate = @import("gate.zig");
 const fractal = @import("fractal.zig");
 const capability_cells = @import("capability_cells.zig");
+const capability_registry = @import("capability_registry.zig");
+const collective_object = @import("collective_object.zig");
+const collective_rank = @import("collective_rank.zig");
+const collective_checkpoint = @import("collective_checkpoint.zig");
+const collective_admission = @import("collective_admission.zig");
+const collective_state = @import("collective_state.zig");
 const agency = @import("agency.zig");
 
 const gpa = std.heap.c_allocator;
 pub const ABI_VERSION: u32 = 3;
 extern fn time(timer: ?*i64) i64;
+
+var registry_mutex: std.atomic.Mutex = .unlocked;
+var registry_state: ?capability_registry.Registry = null;
+
+fn lockRegistry() void {
+    while (!registry_mutex.tryLock()) std.atomic.spinLoopHint();
+}
+
+fn registry() *capability_registry.Registry {
+    if (registry_state == null) {
+        var initialized = capability_registry.Registry.init(gpa);
+        if (capability_cells.descriptorsJson(gpa)) |descriptors| {
+            defer gpa.free(descriptors);
+            _ = initialized.replaceSource("aiko_builtin", descriptors) catch {};
+        } else |_| {}
+        registry_state = initialized;
+    }
+    return &registry_state.?;
+}
 
 /// Stable compatibility handshake for independently-built Aiko runtimes.
 export fn contract_abi_version() u32 {
@@ -27,6 +53,9 @@ export fn contract_abi_version() u32 {
 extern var environ: [*:null]const ?[*:0]const u8;
 
 fn extEnv() std.process.Environ {
+    if (@import("builtin").os.tag == .windows) {
+        return .{ .block = .global };
+    }
     var count: usize = 0;
     while (environ[count] != null) : (count += 1) {}
     // PosixBlock.slice is [:null]const ?[*:0]const u8 — a sentinel-terminated
@@ -349,6 +378,48 @@ export fn contract_recommend_capabilities(
     return returned(json);
 }
 
+/// Atomically replace one FECH provider snapshot. Descriptors are fully
+/// validated before the live catalog changes. Returns a small status object or
+/// NULL on malformed/unsafe input; caller frees with contract_free.
+export fn contract_register_capabilities(
+    source: [*:0]const u8,
+    descriptors_json: [*:0]const u8,
+) ?[*:0]u8 {
+    lockRegistry();
+    defer registry_mutex.unlock();
+    const count = registry().replaceSource(cstr(source), cstr(descriptors_json)) catch return null;
+    var buf: [160]u8 = undefined;
+    const json = std.fmt.bufPrint(&buf, "{{\"schema_version\":1,\"source\":\"{s}\",\"count\":{d}}}", .{ cstr(source), count }) catch return null;
+    return returned(json);
+}
+
+/// List the effective dynamic FECH catalog. `filter_json` is `{}` or an
+/// optional `{"source":"..."}` selector.
+export fn contract_list_capabilities(filter_json: [*:0]const u8) ?[*:0]u8 {
+    lockRegistry();
+    defer registry_mutex.unlock();
+    const json = registry().listJson(gpa, cstr(filter_json)) catch return null;
+    defer gpa.free(json);
+    return returned(json);
+}
+
+/// Rank the dynamic FECH catalog and return the conservative v1 plan shape.
+/// Live availability is version-qualified and supplied by Aiko per prompt.
+export fn contract_recommend_plan(
+    context: [*:0]const u8,
+    availability_json: [*:0]const u8,
+    limit: u32,
+) ?[*:0]u8 {
+    if (cstr(context).len == 0 or limit == 0) return null;
+    const learned = route.latestCapabilityEvidenceJson(gpa, extEnv()) catch return null;
+    defer gpa.free(learned);
+    lockRegistry();
+    defer registry_mutex.unlock();
+    const json = registry().recommendPlan(gpa, cstr(context), learned, cstr(availability_json), limit) catch return null;
+    defer gpa.free(json);
+    return returned(json);
+}
+
 /// Incrementally warm verified route embeddings inside the resident process.
 /// Returns the number of completed passes.
 export fn contract_warm_router(passes: u32) u32 {
@@ -594,10 +665,22 @@ export fn contract_record_capability_outcome_v2(
     metadata_json: [*:0]const u8,
     success: bool,
 ) ?[*:0]u8 {
-    const context_slice = cstr(context);
-    const capability_slice = cstr(capability);
-    const exemplar_slice = cstr(exemplar_json);
-    const metadata_slice = cstr(metadata_json);
+    return recordCapabilityOutcomeParts(
+        cstr(context),
+        cstr(capability),
+        cstr(exemplar_json),
+        cstr(metadata_json),
+        success,
+    );
+}
+
+fn recordCapabilityOutcomeParts(
+    context_slice: []const u8,
+    capability_slice: []const u8,
+    exemplar_slice: []const u8,
+    metadata_slice: []const u8,
+    success: bool,
+) ?[*:0]u8 {
     if (context_slice.len == 0 or capability_slice.len == 0 or exemplar_slice.len == 0) return null;
 
     const application = jsonStringField(metadata_slice, "application") orelse "unknown";
@@ -622,7 +705,7 @@ export fn contract_record_capability_outcome_v2(
     action_buf.append(gpa, ' ') catch return null;
     action_buf.appendSlice(gpa, exemplar_slice) catch return null;
 
-    var fields: [6]contract.Field = undefined;
+    var fields: [12]contract.Field = undefined;
     var field_count: usize = 0;
     const keys = [_][]const u8{
         "application",
@@ -631,6 +714,11 @@ export fn contract_record_capability_outcome_v2(
         "duration_ms",
         "permission_outcome",
         "availability",
+        "capability_version",
+        "permission_result",
+        "error_class",
+        "result_shape",
+        "observed_at",
     };
     for (keys) |key| {
         if (jsonValueField(metadata_slice, key)) |value| {
@@ -673,6 +761,97 @@ export fn contract_record_capability_outcome_v2(
     return returned(json_buf.items);
 }
 
+/// Record one FECH v1 observation. The raw JSON is validated and then
+/// discarded; only typed, bounded fields are re-serialized into Contract's
+/// existing append-only row machinery. `context` remains a separate routing
+/// intent and is never part of the observation payload.
+export fn contract_record_capability_observation(
+    context: [*:0]const u8,
+    observation_json: [*:0]const u8,
+) ?[*:0]u8 {
+    const context_slice = cstr(context);
+    const observation_slice = cstr(observation_json);
+    if (context_slice.len == 0) return null;
+    capability_registry.validateObservation(gpa, observation_slice) catch return null;
+
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, observation_slice, .{}) catch return null;
+    defer parsed.deinit();
+    const object = parsed.value.object;
+    const id = objectString(object, "capability_id") orelse return null;
+    const version = objectString(object, "capability_version") orelse return null;
+    const success = switch (object.get("success") orelse return null) {
+        .bool => |value| value,
+        else => return null,
+    };
+    const result_shape = objectString(object, "result_shape") orelse return null;
+
+    var capability_key: std.ArrayList(u8) = .empty;
+    defer capability_key.deinit(gpa);
+    capability_key.appendSlice(gpa, id) catch return null;
+    capability_key.append(gpa, '@') catch return null;
+    capability_key.appendSlice(gpa, version) catch return null;
+
+    var exemplar: std.ArrayList(u8) = .empty;
+    defer exemplar.deinit(gpa);
+    exemplar.appendSlice(gpa, "{\"result_shape\":") catch return null;
+    appendJsonString(&exemplar, result_shape) catch return null;
+    exemplar.append(gpa, '}') catch return null;
+
+    var metadata: std.ArrayList(u8) = .empty;
+    defer metadata.deinit(gpa);
+    var writer = BufferWriter{ .list = &metadata };
+    writer.writeAll("{\"application\":\"fech\",\"capability_version\":") catch return null;
+    appendJsonString(&metadata, version) catch return null;
+    const typed_keys = [_][]const u8{
+        "duration_ms",
+        "permission_result",
+        "error_class",
+        "result_shape",
+        "observed_at",
+    };
+    for (typed_keys) |key| {
+        const value = object.get(key) orelse return null;
+        metadata.appendSlice(gpa, ",\"") catch return null;
+        metadata.appendSlice(gpa, key) catch return null;
+        metadata.appendSlice(gpa, "\":") catch return null;
+        var allocating: std.Io.Writer.Allocating = .init(gpa);
+        defer allocating.deinit();
+        var stringify = std.json.Stringify{ .writer = &allocating.writer };
+        stringify.write(value) catch return null;
+        metadata.appendSlice(gpa, allocating.writer.buffered()) catch return null;
+    }
+    metadata.append(gpa, '}') catch return null;
+
+    // Contract declarations are content-addressed/idempotent by plan. Give
+    // each distinct typed outcome its own safe observation identity so a
+    // later failure cannot collapse onto an older satisfied row with the
+    // same routing context. Only bounded ABI fields are appended.
+    const observed_at = objectString(object, "observed_at") orelse return null;
+    var observation_context: std.ArrayList(u8) = .empty;
+    defer observation_context.deinit(gpa);
+    observation_context.appendSlice(gpa, context_slice) catch return null;
+    observation_context.appendSlice(gpa, "\nFECH observation ") catch return null;
+    observation_context.appendSlice(gpa, observed_at) catch return null;
+    observation_context.appendSlice(gpa, if (success) " success" else " failure") catch return null;
+
+    const recorded = recordCapabilityOutcomeParts(
+        observation_context.items,
+        capability_key.items,
+        exemplar.items,
+        metadata.items,
+        success,
+    );
+    if (recorded != null) {
+        lockRegistry();
+        defer registry_mutex.unlock();
+        registry().recordObservation(observation_slice) catch {
+            contract_free(recorded.?);
+            return null;
+        };
+    }
+    return recorded;
+}
+
 /// Evaluate one claim against caller-supplied append-only ledger JSONL.
 /// Return values: 1=promote, 0=governed HOLD, -1=legacy/ungoverned,
 /// -2=malformed or invalid trust state. This is the same pure replay used by
@@ -690,6 +869,206 @@ export fn contract_trust_evaluate(
     ) catch return -2;
     const decision = result orelse return -1;
     return if (decision.promote) 1 else 0;
+}
+
+fn collectiveError(error_value: anyerror) ?[*:0]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    out.appendSlice(gpa, "{\"verdict\":\"reject\",\"reason_codes\":[") catch return null;
+    appendJsonString(&out, @errorName(error_value)) catch return null;
+    out.appendSlice(gpa, "]}") catch return null;
+    return returned(out.items);
+}
+
+fn appendCollectiveIdentity(out: *std.ArrayList(u8), result: collective_object.Result) !void {
+    try out.appendSlice(gpa, "\"object_id\":");
+    try appendJsonString(out, &result.object_id);
+    try out.appendSlice(gpa, ",\"schema_version\":1");
+}
+
+/// Canonicalize and content-address a bounded unsigned collective object.
+/// The returned JSON embeds `canonical` as an object, not an escaped byte
+/// string, so independent callers can reserialize and compare the exact form.
+export fn contract_collective_canonicalize(
+    candidate_json: [*:0]const u8,
+) ?[*:0]u8 {
+    const result = collective_object.canonicalize(gpa, cstr(candidate_json)) catch |err|
+        return collectiveError(err);
+    defer result.deinit(gpa);
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    out.append(gpa, '{') catch return null;
+    appendCollectiveIdentity(&out, result) catch return null;
+    out.appendSlice(gpa, ",\"canonical\":") catch return null;
+    out.appendSlice(gpa, result.canonical) catch return null;
+    out.appendSlice(gpa, ",\"verdict\":\"valid\"}") catch return null;
+    return returned(out.items);
+}
+
+/// Apply Contract's fail-closed publication classifier. Aiko owns the actual
+/// user setting and publication action; `publishable` is not an execution or
+/// network side effect.
+export fn contract_collective_publication_verdict(
+    candidate_json: [*:0]const u8,
+) ?[*:0]u8 {
+    const result = collective_object.canonicalize(gpa, cstr(candidate_json)) catch |err|
+        return collectiveError(err);
+    defer result.deinit(gpa);
+    const decision = collective_object.publicationDecision(cstr(candidate_json), gpa) catch |err|
+        return collectiveError(err);
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    out.appendSlice(gpa, "{\"verdict\":") catch return null;
+    appendJsonString(&out, @tagName(decision.verdict)) catch return null;
+    out.appendSlice(gpa, ",\"classification\":") catch return null;
+    appendJsonString(&out, @tagName(decision.classification)) catch return null;
+    out.appendSlice(gpa, ",\"reason_codes\":[") catch return null;
+    appendJsonString(&out, decision.reason_code) catch return null;
+    out.appendSlice(gpa, "],") catch return null;
+    appendCollectiveIdentity(&out, result) catch return null;
+    out.appendSlice(gpa, ",\"sanitized_descriptor\":") catch return null;
+    out.appendSlice(gpa, result.canonical) catch return null;
+    out.append(gpa, '}') catch return null;
+    return returned(out.items);
+}
+
+/// Return the domain-separated 32-byte digest that Aiko's local keystore must
+/// sign. Private key material never crosses this ABI.
+export fn contract_collective_signing_payload(
+    candidate_json: [*:0]const u8,
+) ?[*:0]u8 {
+    const result = collective_object.canonicalize(gpa, cstr(candidate_json)) catch |err|
+        return collectiveError(err);
+    defer result.deinit(gpa);
+    const digest = collective_object.signingDigest(collective_object.objectDigest(result.canonical));
+    var digest_hex: [64]u8 = undefined;
+    const alphabet = "0123456789abcdef";
+    for (digest, 0..) |byte, i| {
+        digest_hex[i * 2] = alphabet[byte >> 4];
+        digest_hex[i * 2 + 1] = alphabet[byte & 0x0f];
+    }
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    out.appendSlice(gpa, "{") catch return null;
+    appendCollectiveIdentity(&out, result) catch return null;
+    out.appendSlice(gpa, ",\"domain\":") catch return null;
+    appendJsonString(&out, collective_object.SIGNING_DOMAIN[0 .. collective_object.SIGNING_DOMAIN.len - 1]) catch return null;
+    out.appendSlice(gpa, ",\"payload_encoding\":\"hex\",\"payload_hex\":") catch return null;
+    appendJsonString(&out, &digest_hex) catch return null;
+    out.append(gpa, '}') catch return null;
+    return returned(out.items);
+}
+
+/// Verify exact object identity, publisher binding, expiry, and Ed25519
+/// signature. `claimed_object_id` is the hash requested from the peer/DHT.
+export fn contract_collective_verify(
+    candidate_json: [*:0]const u8,
+    claimed_object_id: [*:0]const u8,
+    signature_hex: [*:0]const u8,
+    publisher_key_hex: [*:0]const u8,
+    now_iso: [*:0]const u8,
+) ?[*:0]u8 {
+    const result = collective_object.verify(
+        gpa,
+        cstr(candidate_json),
+        cstr(claimed_object_id),
+        cstr(signature_hex),
+        cstr(publisher_key_hex),
+        cstr(now_iso),
+    ) catch |err| return collectiveError(err);
+    defer result.deinit(gpa);
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    out.appendSlice(gpa, "{\"verdict\":\"verified\",\"reason_codes\":[\"signature_valid\",\"object_id_valid\",\"time_valid\"],") catch return null;
+    appendCollectiveIdentity(&out, result) catch return null;
+    out.append(gpa, '}') catch return null;
+    return returned(out.items);
+}
+
+/// Deterministically combine bounded semantic affinity with public evidence.
+/// The caller owns retrieval and supplies no task text or private context.
+export fn contract_collective_rank(
+    candidates_json: [*:0]const u8,
+    limit: u32,
+) ?[*:0]u8 {
+    const ranked = collective_rank.rank(gpa, cstr(candidates_json), @min(limit, 100)) catch |err|
+        return collectiveError(err);
+    defer gpa.free(ranked);
+    return returned(ranked);
+}
+
+/// Build a deterministic content checkpoint from an unordered JSON array of
+/// admitted object IDs. Persistence and witness gossip remain Aiko-owned.
+export fn contract_collective_checkpoint(object_ids_json: [*:0]const u8) ?[*:0]u8 {
+    const checkpoint = collective_checkpoint.rootForIds(gpa, cstr(object_ids_json)) catch |err|
+        return collectiveError(err);
+    defer gpa.free(checkpoint);
+    return returned(checkpoint);
+}
+
+/// Build a logarithmic inclusion proof for one object under the deterministic
+/// checkpoint root. This is additive: the existing checkpoint ABI and every
+/// pre-collective symbol retain their original signatures.
+export fn contract_collective_inclusion_proof(
+    object_ids_json: [*:0]const u8,
+    target_object_id: [*:0]const u8,
+) ?[*:0]u8 {
+    const proof = collective_checkpoint.proofForId(
+        gpa,
+        cstr(object_ids_json),
+        cstr(target_object_id),
+    ) catch |err| return collectiveError(err);
+    defer gpa.free(proof);
+    return returned(proof);
+}
+
+export fn contract_collective_verify_inclusion_proof(proof_json: [*:0]const u8) ?[*:0]u8 {
+    const valid = collective_checkpoint.verifyProof(gpa, cstr(proof_json)) catch |err|
+        return collectiveError(err);
+    return returned(if (valid)
+        "{\"verdict\":\"verified\",\"reason_codes\":[\"inclusion_valid\"]}"
+    else
+        "{\"verdict\":\"rejected\",\"reason_codes\":[\"inclusion_invalid\"]}");
+}
+
+/// Verify and classify a complete signed envelope received by Aiko. The
+/// returned ledger effect is an instruction for the existing Contract ledger;
+/// this function performs no persistence itself.
+export fn contract_collective_admit(
+    envelope_json: [*:0]const u8,
+    source_peer: [*:0]const u8,
+    received_at: [*:0]const u8,
+) ?[*:0]u8 {
+    const admission = collective_admission.admit(gpa, cstr(envelope_json), cstr(source_peer), cstr(received_at)) catch |err|
+        return collectiveError(err);
+    defer admission.deinit(gpa);
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    out.appendSlice(gpa, "{\"verdict\":\"admitted\",\"reason_codes\":[\"signature_valid\",\"publication_policy_valid\"],\"object_id\":") catch return null;
+    appendJsonString(&out, &admission.result.object_id) catch return null;
+    out.appendSlice(gpa, ",\"kind\":") catch return null;
+    appendJsonString(&out, admission.kind) catch return null;
+    out.appendSlice(gpa, ",\"ledger_effects\":[") catch return null;
+    appendJsonString(&out, admission.ledger_effect) catch return null;
+    out.appendSlice(gpa, "]}") catch return null;
+    return returned(out.items);
+}
+
+export fn contract_collective_merge(admitted_metadata_json: [*:0]const u8) ?[*:0]u8 {
+    const projection = collective_state.merge(gpa, cstr(admitted_metadata_json)) catch |err|
+        return collectiveError(err);
+    defer gpa.free(projection);
+    return returned(projection);
+}
+
+export fn contract_collective_apply_revocations(
+    revocation_envelopes_json: [*:0]const u8,
+    now_iso: [*:0]const u8,
+) ?[*:0]u8 {
+    const projection = collective_state.applyRevocations(gpa, cstr(revocation_envelopes_json), cstr(now_iso)) catch |err|
+        return collectiveError(err);
+    defer gpa.free(projection);
+    return returned(projection);
 }
 
 /// Release a buffer previously returned by one of the C ABI getters.
@@ -742,4 +1121,23 @@ test "trust C ABI distinguishes legacy malformed hold and promote" {
             100,
         ),
     );
+}
+
+test "collective C ABI is additive deterministic and fail closed" {
+    const candidate =
+        \\{"protocol":"aiko-collective/1","kind":"capability","publisher":"ed25519:0000000000000000000000000000000000000000000000000000000000000000","sequence":1,"created_at":"2026-07-21T00:00:00Z","expires_at":"2026-08-20T00:00:00Z","payload":{"capability_id":"unbrowse.registry.search","capability_version":"1","origin":"registry.example","operation":"search","summary":"Search public package metadata","input_shape":{"query":{"type":"string","required":true}},"output_shape":{"items":{"type":"array","required":true,"items_type":"object"}},"permission":"network","effects":["network_read","read_only"],"requires":[],"sanitizer_version":1}}
+    ;
+    const canonical_ptr = contract_collective_canonicalize(candidate) orelse return error.OutOfMemory;
+    defer contract_free(canonical_ptr);
+    const canonical_json = std.mem.span(canonical_ptr);
+    try std.testing.expect(std.mem.indexOf(u8, canonical_json, "\"verdict\":\"valid\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, canonical_json, "\"object_id\":\"blake3:") != null);
+
+    const publication_ptr = contract_collective_publication_verdict(candidate) orelse return error.OutOfMemory;
+    defer contract_free(publication_ptr);
+    try std.testing.expect(std.mem.indexOf(u8, std.mem.span(publication_ptr), "\"verdict\":\"publishable\"") != null);
+
+    const rejected_ptr = contract_collective_canonicalize("{\"token\":\"secret\"}") orelse return error.OutOfMemory;
+    defer contract_free(rejected_ptr);
+    try std.testing.expect(std.mem.indexOf(u8, std.mem.span(rejected_ptr), "\"verdict\":\"reject\"") != null);
 }

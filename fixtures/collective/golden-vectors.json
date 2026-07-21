@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "canonicalization": "aiko-jcs-subset/1",
+  "object_hash_domain": "aiko.collective.object.v1\\u0000",
+  "signature_domain": "aiko.collective.signature.v1\\u0000",
+  "vectors": [
+    {
+      "name": "minimal_public_capability",
+      "input_unsigned": {
+        "protocol": "aiko-collective/1",
+        "payload": {
+          "summary": "Search public package metadata",
+          "operation": "search",
+          "origin": "registry.example",
+          "output_shape": { "items": { "required": true, "type": "array", "items_type": "object" } },
+          "input_shape": { "query": { "required": true, "type": "string" } },
+          "capability_version": "1",
+          "effects": ["network_read", "read_only"],
+          "requires": [],
+          "sanitizer_version": 1,
+          "permission": "network",
+          "capability_id": "unbrowse.registry.search"
+        },
+        "expires_at": "2026-08-20T00:00:00Z",
+        "created_at": "2026-07-21T00:00:00Z",
+        "sequence": 1,
+        "publisher": "ed25519:0000000000000000000000000000000000000000000000000000000000000000",
+        "kind": "capability"
+      },
+      "canonical_unsigned": "{\"created_at\":\"2026-07-21T00:00:00Z\",\"expires_at\":\"2026-08-20T00:00:00Z\",\"kind\":\"capability\",\"payload\":{\"capability_id\":\"unbrowse.registry.search\",\"capability_version\":\"1\",\"effects\":[\"network_read\",\"read_only\"],\"input_shape\":{\"query\":{\"required\":true,\"type\":\"string\"}},\"operation\":\"search\",\"origin\":\"registry.example\",\"output_shape\":{\"items\":{\"items_type\":\"object\",\"required\":true,\"type\":\"array\"}},\"permission\":\"network\",\"requires\":[],\"sanitizer_version\":1,\"summary\":\"Search public package metadata\"},\"protocol\":\"aiko-collective/1\",\"publisher\":\"ed25519:0000000000000000000000000000000000000000000000000000000000000000\",\"sequence\":1}",
+      "expected_object_id": "blake3:9bd6fff51c98667ada9e34e064b4862f94e9b7d94ec1ac9a4df9efc08efa94f5"
+    },
+    {
+      "name": "privacy_safe_success_attestation",
+      "input_unsigned": {
+        "protocol": "aiko-collective/1",
+        "kind": "attestation",
+        "publisher": "ed25519:1111111111111111111111111111111111111111111111111111111111111111",
+        "sequence": 7,
+        "created_at": "2026-07-21T01:00:00Z",
+        "expires_at": "2026-07-28T01:00:00Z",
+        "payload": {
+          "subject": "blake3:2222222222222222222222222222222222222222222222222222222222222222",
+          "capability_version": "1",
+          "outcome": "success",
+          "latency_bucket_ms": 100,
+          "environment": "macos-arm64",
+          "observed_bucket": "2026-07-21T01:00:00Z"
+        }
+      },
+      "canonical_unsigned": "{\"created_at\":\"2026-07-21T01:00:00Z\",\"expires_at\":\"2026-07-28T01:00:00Z\",\"kind\":\"attestation\",\"payload\":{\"capability_version\":\"1\",\"environment\":\"macos-arm64\",\"latency_bucket_ms\":100,\"observed_bucket\":\"2026-07-21T01:00:00Z\",\"outcome\":\"success\",\"subject\":\"blake3:2222222222222222222222222222222222222222222222222222222222222222\"},\"protocol\":\"aiko-collective/1\",\"publisher\":\"ed25519:1111111111111111111111111111111111111111111111111111111111111111\",\"sequence\":7}",
+      "expected_object_id": "blake3:f68b18cd0af6e53e34f04e677d9338f83e74ce7a8240ca35d49b80a05157e82e"
+    }
+  ],
+  "must_reject": [
+    { "name": "credential_field", "fragment": { "credential": "never-public" }, "reason": "forbidden_field" },
+    { "name": "raw_url", "fragment": { "url": "https://private.example/account/1" }, "reason": "forbidden_field" },
+    { "name": "request_body", "fragment": { "body": { "query": "private" } }, "reason": "forbidden_field" },
+    { "name": "unknown_effect", "fragment": { "effects": ["message_send"] }, "reason": "unsafe_effect" },
+    { "name": "oversized_nesting", "nesting_depth": 17, "reason": "limit_exceeded" },
+    { "name": "duplicate_json_key", "raw": "{\"kind\":\"capability\",\"kind\":\"attestation\"}", "reason": "duplicate_key" },
+    { "name": "floating_point_number", "raw": "{\"sequence\":1.5}", "reason": "noncanonical_number" }
+  ]
+}

@@ -56,6 +56,57 @@ pub const CELLS = [_]Cell{
     .{ .id = "application.evaluate", .tool = "application_act", .action = "evaluate", .description = "Call a renderer API intentionally exposed through an Electron preload bridge.", .keywords = &.{ "evaluate", "preload", "renderer api", "invoke api", "javascript", "electron api" }, .read_only = false, .permission = "write", .requires = &.{"expression"}, .sequence = &.{ "application.attach", "application.evaluate" } },
 };
 
+/// Export Contract-owned application priors through the same strict FECH
+/// descriptor shape as dynamic providers. Prerequisites are capability edges
+/// derived from the cell's safe execution sequence (the terminal cell itself
+/// is omitted).
+pub fn descriptorsJson(allocator: std.mem.Allocator) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    var out = std.json.Stringify{ .writer = &aw.writer };
+    try out.beginArray();
+    for (CELLS) |cell| {
+        try out.beginObject();
+        try out.objectField("schema_version");
+        try out.write(1);
+        try out.objectField("id");
+        try out.write(cell.id);
+        try out.objectField("capability_version");
+        try out.write("1");
+        try out.objectField("provider");
+        try out.write("aiko_builtin");
+        try out.objectField("tool");
+        try out.write(cell.tool);
+        try out.objectField("action");
+        try out.write(cell.action);
+        try out.objectField("description");
+        try out.write(cell.description);
+        try out.objectField("input_schema");
+        try out.beginObject();
+        try out.endObject();
+        try out.objectField("output_schema");
+        try out.beginObject();
+        try out.endObject();
+        try out.objectField("requires");
+        try out.beginArray();
+        for (cell.sequence) |step| {
+            if (!std.mem.eql(u8, step, cell.id)) try out.write(step);
+        }
+        try out.endArray();
+        try out.objectField("permission");
+        try out.write(cell.permission);
+        try out.objectField("effects");
+        try out.beginArray();
+        try out.write(if (cell.read_only) "read_only" else "local_write");
+        try out.endArray();
+        try out.objectField("available");
+        try out.write(true);
+        try out.endObject();
+    }
+    try out.endArray();
+    return aw.toOwnedSlice();
+}
+
 const Ranked = struct {
     cell: Cell,
     score: f64,
