@@ -38,6 +38,8 @@ pub fn build(b: *std.Build) void {
         .root_module = dylib_mod,
     });
     b.installArtifact(dylib);
+    const contract_library_step = b.step("contract-library", "Build the full Contract shared library");
+    contract_library_step.dependOn(&b.addInstallArtifact(dylib, .{}).step);
 
     // Portable deterministic Collective-only ABI. It deliberately excludes
     // the legacy filesystem ledger so cross-platform desktop packages can

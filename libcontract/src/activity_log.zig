@@ -104,7 +104,7 @@ pub fn record(event: []const u8, detail: []const u8) void {
 
     var tv: std.c.timeval = undefined;
     if (is_windows) {
-        tv.sec = _time64(null);
+        tv.sec = @intCast(_time64(null));
         tv.usec = 0;
     } else _ = std.c.gettimeofday(&tv, null);
     var line_buf: [768]u8 = undefined;

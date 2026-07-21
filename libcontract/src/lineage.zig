@@ -96,7 +96,7 @@ fn homePath(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
 fn wallTime() std.c.timeval {
     var tv: std.c.timeval = undefined;
     if (is_windows) {
-        tv.sec = _time64(null);
+        tv.sec = @intCast(_time64(null));
         tv.usec = 0;
     } else _ = std.c.gettimeofday(&tv, null);
     return tv;

@@ -124,6 +124,12 @@ fn looksSealed(s: []const u8) bool {
 }
 const CACHE_REC: usize = 8 + SEM * 4;
 const libc = std.c;
+const builtin = @import("builtin");
+const is_windows = builtin.os.tag == .windows;
+extern fn _open(path: [*:0]const u8, flags: c_int, ...) c_int;
+extern fn _close(fd: c_int) c_int;
+extern fn _read(fd: c_int, buffer: [*]u8, count: c_uint) c_int;
+extern fn _write(fd: c_int, buffer: [*]const u8, count: c_uint) c_int;
 
 fn cachePath(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
     const lp = try ledger.resolvePath(allocator, env);
@@ -134,16 +140,18 @@ fn cachePath(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
 fn loadEmbCache(allocator: std.mem.Allocator, map: *std.AutoHashMap(u64, [SEM]f32), path: []const u8) void {
     const path_z = allocator.dupeZ(u8, path) catch return;
     defer allocator.free(path_z);
-    var flags: libc.O = .{};
-    flags.ACCMODE = .RDONLY;
-    const fd: c_int = libc.open(path_z.ptr, flags, @as(c_uint, 0));
+    const fd: c_int = if (is_windows) _open(path_z.ptr, 0x8000) else blk: {
+        var flags: libc.O = .{};
+        flags.ACCMODE = .RDONLY;
+        break :blk libc.open(path_z.ptr, flags, @as(c_uint, 0));
+    };
     if (fd < 0) return;
-    defer _ = libc.close(fd);
+    defer _ = if (is_windows) _close(fd) else libc.close(fd);
     var data: std.ArrayList(u8) = .empty;
     defer data.deinit(allocator);
     var chunk: [65536]u8 = undefined;
     while (true) {
-        const n = libc.read(fd, &chunk, chunk.len);
+        const n = if (is_windows) _read(fd, &chunk, chunk.len) else libc.read(fd, &chunk, chunk.len);
         if (n <= 0) break;
         data.appendSlice(allocator, chunk[0..@intCast(n)]) catch return;
     }
@@ -160,16 +168,21 @@ fn appendEmbCache(allocator: std.mem.Allocator, path: []const u8, recs: []const 
     if (recs.len == 0) return;
     const path_z = allocator.dupeZ(u8, path) catch return;
     defer allocator.free(path_z);
-    var flags: libc.O = .{};
-    flags.ACCMODE = .WRONLY;
-    flags.CREAT = true;
-    flags.APPEND = true;
-    const fd: c_int = libc.open(path_z.ptr, flags, @as(c_uint, 0o644));
+    const fd: c_int = if (is_windows) _open(path_z.ptr, 0x0001 | 0x0008 | 0x0100 | 0x8000, @as(c_int, 0o644)) else blk: {
+        var flags: libc.O = .{};
+        flags.ACCMODE = .WRONLY;
+        flags.CREAT = true;
+        flags.APPEND = true;
+        break :blk libc.open(path_z.ptr, flags, @as(c_uint, 0o644));
+    };
     if (fd < 0) return;
-    defer _ = libc.close(fd);
+    defer _ = if (is_windows) _close(fd) else libc.close(fd);
     var off: usize = 0;
     while (off < recs.len) {
-        const n = libc.write(fd, recs.ptr + off, recs.len - off);
+        const n = if (is_windows)
+            _write(fd, recs.ptr + off, @intCast(recs.len - off))
+        else
+            libc.write(fd, recs.ptr + off, recs.len - off);
         if (n <= 0) return;
         off += @intCast(n);
     }

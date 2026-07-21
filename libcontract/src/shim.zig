@@ -12,11 +12,16 @@ const contract = @import("contract");
 const fractal = contract.fractal;
 const guards = contract.guards;
 const client = @import("client.zig");
+const is_windows = @import("builtin").os.tag == .windows;
+extern fn _write(fd: c_int, buffer: [*]const u8, count: c_uint) c_int;
 
 fn writeFd(fd: c_int, bytes: []const u8) void {
     var rem = bytes;
     while (rem.len > 0) {
-        const n = std.c.write(fd, rem.ptr, rem.len);
+        const n = if (is_windows)
+            _write(fd, rem.ptr, @intCast(rem.len))
+        else
+            std.c.write(fd, rem.ptr, rem.len);
         if (n <= 0) return;
         rem = rem[@intCast(n)..];
     }
