@@ -57,6 +57,8 @@ export interface PipelineResult {
   allowed: boolean;
   /** Trace of every hook step for debugging/learning */
   trace: HookStep[];
+  /** Metadata set by hooks (e.g. voiceFile from voice-circuit) */
+  meta: Record<string, unknown>;
 }
 
 /**
@@ -131,12 +133,28 @@ export function listHooks(): Array<{ name: string; scope: string; priority: numb
  *
  * Hooks run in priority order. If any hook blocks, the pipeline stops.
  */
+/**
+ * Wildcard scope matching. `*:output` matches `telegram:output`,
+ * `agent:output`, `bash:output`, etc. `*:*` matches everything.
+ * Exact match always wins (no wildcard needed).
+ */
+function scopeMatches(hookScope: string, actualScope: string): boolean {
+  if (hookScope === actualScope) return true;
+  const hookParts = hookScope.split(":");
+  const actualParts = actualScope.split(":");
+  if (hookParts.length !== actualParts.length) return false;
+  for (let i = 0; i < hookParts.length; i++) {
+    if (hookParts[i] !== "*" && hookParts[i] !== actualParts[i]) return false;
+  }
+  return true;
+}
+
 export async function runPipeline(scope: string, initial: HookContext): Promise<PipelineResult> {
   const trace: HookStep[] = [];
   let ctx: HookContext = { ...initial, meta: { ...initial.meta } };
   let allowed = true;
 
-  const matching = registry.filter((r) => r.hook.scope === scope);
+  const matching = registry.filter((r) => scopeMatches(r.hook.scope, scope));
 
   for (const entry of matching) {
     const hook = entry.hook;
@@ -205,5 +223,5 @@ export async function runPipeline(scope: string, initial: HookContext): Promise<
     trace.push({ hook: hook.name, neuronId, decision, transformed });
   }
 
-  return { text: ctx.text, allowed, trace };
+  return { text: ctx.text, allowed, trace, meta: ctx.meta };
 }

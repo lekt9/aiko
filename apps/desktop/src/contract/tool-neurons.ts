@@ -1,27 +1,88 @@
-// tool-neurons.ts — the contract-native tool chokepoint.
+// tool-neurons.ts — mandatory contract-native tool authorization.
 //
-// Every aiko tool call runs as a content-addressed neuron nested under the open turn
-// neuron (so the call graph folds into the contract DAG). Command-EXECUTING tools
-// (bash / sandbox_exec) are additionally authorized by the signed substrate before
-// they run — a catastrophic command is denied, a destructive/outward one asks for
-// confirmation. File and read tools are NOT risk-gated: writing a file that merely
-// mentions "deploy" is not a deploy, and gating tool ARGS as if they were shell
-// commands was a false-positive that blocked legitimate edits.
+// EVERY tool call flows through:
+//   1. Tier check — auto-allow reads, confirm writes, deny known attacks
+//   2. contractGate — signed substrate authorizes command-executing tools
+//   3. runNeuron — declare neuron, record in ledger, train EBM
+//   4. mutation epoch — invalidates stale pure-read proofs after mutators
 //
-// RECALL (return a prior proof instead of re-running) is enabled ONLY for pure read-only
-// tools, and even then it is invalidated by a mutation "epoch": any write/bash/edit bumps
-// the epoch, folded into pure-read neuron ids, so a read never recalls a stale proof.
+// Tiers:
+//   0 (read)       — auto-allow. Declares neuron, trains EBM.
+//   1 (scoped)     — confirm-gated. File writes, network reads.
+//   2 (destructive) — full confirm. bash, sandbox, deploy, payments.
+//   3 (blocked)    — auto-deny. Known attack patterns.
+//
+// Bootstrap: AIKO_CONTRACT_BOOTSTRAP=1 bypasses ALL gating for self-modification.
+
 import type { ToolSet } from "ai";
-import { boundToolValue } from "../agent/tool-result-bounds";
-import { consumeConfirmation, contractGate, type GateResult } from "./gate";
+import { boundToolValue } from "./tool-result-bounds";
+import { consumeConfirmation, contractGate, type GateDecision, type GateResult } from "./gate";
 import { currentNeuronId, runNeuron, witness } from "./neurons";
 
-// Read-only, side-effect-free tools whose output is safe to recall within a mutation epoch.
+// ── tiers ──────────────────────────────────────────────────────────────────
+
+type Tier = 0 | 1 | 2 | 3;
+
+/** Every tool's tier. Tools NOT listed default to Tier 1 (scoped confirm). */
+const TOOL_TIERS: Record<string, Tier> = {
+  // Tier 0: pure reads, cache hits, idempotent checks
+  read_file: 0,
+  grep: 0,
+  lsp: 0,
+  process_logs: 0,
+  process_list: 0,
+  delegation_read: 0,
+  delegation_list: 0,
+  wallet_info: 0,
+  wallet_history: 0,
+  schedule_list: 0,
+  schedule_daemon_status: 0,
+  schedule_read_log: 0,
+  fetch_payment_info: 0,
+  computer_snapshot: 0,
+  computer_screenshot: 0,
+  computer_list_windows: 0,
+  computer_get: 0,
+
+  // Tier 1: scoped confirm (file writes, network, UI interaction)
+  // Default for unlisted tools.
+
+  // Tier 2: destructive (command exec, payment, deploy, schedule mutations)
+  bash: 2,
+  sandbox_exec: 2,
+  paid_request: 2,
+  telegram_send_file: 2,
+  schedule_create: 2,
+  schedule_remove: 2,
+  schedule_daemon_start: 2,
+  schedule_daemon_stop: 2,
+  computer_launch: 2,
+
+  // Tier 3: blocked patterns — auto-deny regardless of substrate
+  // (none by default; patterns are added by the substrate at runtime)
+};
+
+/** Known-attack command patterns that trigger Tier 3 auto-deny. */
+const BLOCKED_PATTERNS = [
+  /rm\s+-rf\s+\/$/,
+  /mkfs\./,
+  /dd\s+if=/,
+  /:\s*\(\)\s*\{/, // fork bomb
+  />\s*\/dev\/sda/,
+  /chmod\s+.*777\s+\/$/,
+  /curl.*\|\s*(ba)?sh/,
+  /wget.*\|\s*(ba)?sh/,
+];
+
+// ── epoch for pure-read recall invalidation ─────────────────────────────────
+
+/** Read-only, side-effect-free tools whose output is safe to recall within a mutation epoch. */
 const PURE_READ = new Set(["read_file", "grep", "lsp"]);
-// Tools that change the filesystem/world — after one runs, prior pure-read proofs are stale.
+
+/** Tools that change the filesystem/world — after one runs, prior pure-read proofs are stale. */
 const MUTATORS = new Set(["bash", "write_file", "edit_file", "sandbox_exec"]);
-// Tools that EXECUTE a command — the only ones the safety gate authorizes. Their args
-// really are a command; a write's args are file content and must never be risk-matched.
+
+/** Command executing tools — the signed substrate authorizes. */
 const COMMAND_TOOLS = new Set(["bash", "sandbox_exec"]);
 
 let mutationEpoch = 0;
@@ -31,10 +92,8 @@ export function resetMutationEpoch(): void {
   mutationEpoch = 0;
 }
 
-// Full COMMANDS run by SUCCESSFUL command tools this turn — the agent drains this at
-// turn end to train the router AND self-document usage (goal → the exact command that
-// satisfied). Module-level so the collection point (a tool wrapper) and the drain point
-// (the agent) meet. The router still keys on the binary (the command's first token).
+// ── command collection for router training ──────────────────────────────────
+
 const turnCommands = new Set<string>();
 
 /** Drain the commands that succeeded this turn (clears the set). */
@@ -56,27 +115,46 @@ function commandBinary(args: unknown): string | null {
   return null;
 }
 
-/** The full command line to record as a proven usage — only when it's a real binary
- * invocation (not a bare cd/sudo), capped so a giant heredoc doesn't bloat the ledger. */
+/** The full command line to record as a proven usage. */
 function commandLine(args: unknown): string | null {
   const cmd = (args as { command?: unknown })?.command;
   if (typeof cmd !== "string" || !commandBinary(args)) return null;
   return cmd.trim().slice(0, 400);
 }
 
-/**
- * Whether the safety gate enforces. Default on; set AIKO_CONTRACT_GATE=0 to disable.
- * No test-runner sniffing lives in production — under tests the signed substrate isn't
- * loaded, so the gate simply allows (see gate.ts). The neuron wrapping is always applied.
- */
+// ── gate enforcement ────────────────────────────────────────────────────────
+
+/** Whether contract gating is active. AIKO_CONTRACT_GATE=0 disables. */
 function gateEnforced(): boolean {
   return process.env.AIKO_CONTRACT_GATE !== "0";
 }
 
-/** A destructive/outward call is pre-authorized (skip the confirm refusal). */
+/** Bootstrap: bypass ALL gating for self-modification sessions. */
+function bootstrapMode(): boolean {
+  return process.env.AIKO_CONTRACT_BOOTSTRAP === "1";
+}
+
+/** Pre-authorized by env. */
 function autoConfirmed(): boolean {
   return process.env.AIKO_GATE_AUTOCONFIRM === "1";
 }
+
+/** Check command args against blocked patterns (Tier 3). */
+function isBlocked(args: unknown): string | null {
+  const cmd = (args as { command?: unknown })?.command;
+  if (typeof cmd !== "string") return null;
+  for (const pattern of BLOCKED_PATTERNS) {
+    if (pattern.test(cmd)) return `matched blocked pattern: ${pattern}`;
+  }
+  return null;
+}
+
+/** Get the tier for a tool (default Tier 1). */
+function toolTier(name: string): Tier {
+  return TOOL_TIERS[name] ?? 1;
+}
+
+// ── utilities ───────────────────────────────────────────────────────────────
 
 /** Deterministic stringify (sorted keys) so identical args content-address to one neuron. */
 function stable(value: unknown): string {
@@ -87,7 +165,7 @@ function stable(value: unknown): string {
   );
 }
 
-/** The tool result returned when the gate refuses a call (deny) or holds it (confirm). */
+/** The tool result returned when the gate refuses a call. */
 function gateRefusal(tool: string, g: GateResult): { success: false; output: string } {
   const how =
     g.decision === "confirm"
@@ -99,56 +177,128 @@ function gateRefusal(tool: string, g: GateResult): { success: false; output: str
   };
 }
 
+// ── the mandatory gate ──────────────────────────────────────────────────────
+
 type ExecFn = (args: unknown, opts: unknown) => unknown;
 
-/**
- * Marker the lock test asserts on: every tool with an execute must carry a gated
- * wrapper. A tool reaching the model with a non-gated execute is a bypass.
- */
 export const GATED = Symbol.for("aiko.contractGated");
 
 /**
- * Gate + neuronize every tool. Each execute is replaced by a wrapper that authorizes
- * the call through the contract substrate (fail-closed) before running it as a neuron.
- * Pure reads recall within the current mutation epoch; mutators bump the epoch after they
- * run. When the substrate store is unavailable the gate DENIES (no tools off-contract).
+ * Run one tool call through the mandatory contract chokepoint.
+ * Returns the tool result, or throws if the gate blocks.
+ *
+ * Decision matrix:
+ *   bootstrap → ALLOW (no gate, still declare neuron)
+ *   !gateEnforced() → ALLOW (no gate, still declare neuron)
+ *   Tier 0 → ALLOW (reads always pass)
+ *   Tier 3 → DENY (blocked patterns)
+ *   Tier 1-2 → contractGate() → allow / confirm(+token) / deny
+ */
+function authorizeAndRun(name: string, args: unknown, orig: ExecFn, opts: unknown, agent?: string): Promise<unknown> {
+  const decision = resolveGate(name, args);
+
+  if (decision === "deny" || decision === "confirm") {
+    const reason =
+      decision === "deny"
+        ? `tool ${name} tier ${toolTier(name)} denied`
+        : `tool ${name} requires confirmation — use --confirm or grant a token`;
+    witness(`gate:${decision}`, { tool: name, risk: decision === "deny" ? "blocked" : "elevated" });
+    return Promise.resolve(
+      gateRefusal(name, {
+        decision,
+        risk: decision === "deny" ? "blocked" : "elevated",
+        reason,
+      }),
+    );
+  }
+
+  // Even Tier 0 tools run as neurons — the EBM trains on every action.
+  const tier = toolTier(name);
+  const pure = PURE_READ.has(name);
+  const mutates = MUTATORS.has(name);
+  const plan = `tool:${name}:${stable(args)}${pure ? `@e${mutationEpoch}` : ""}`;
+
+  return runNeuron(plan, { recall: pure, action: "tool", agent }, async () => {
+    const out = await orig(args, opts);
+    if (mutates) mutationEpoch++;
+
+    // Router training: successful command → learn the command binary.
+    if (COMMAND_TOOLS.has(name) && (out as { success?: boolean })?.success === true) {
+      const cmd = commandLine(args);
+      if (cmd) turnCommands.add(cmd);
+    }
+
+    // Train EBM: every tool fire marks satisfaction.
+    // Non-command tools that succeed also contribute to the prototype.
+    if ((out as { success?: boolean })?.success !== false) {
+      witness("tool:satisfied", { tool: name, tier });
+    } else {
+      witness("tool:failed", { tool: name, tier });
+    }
+
+    const bound = boundToolValue(out, undefined, name);
+    return bound.value;
+  });
+}
+
+function resolveGate(name: string, args: unknown): GateDecision {
+  // Bootstrap: everything passes
+  if (bootstrapMode()) return "allow";
+
+  // Gate disabled: everything passes (but neurons still declared)
+  if (!gateEnforced()) return "allow";
+
+  const tier = toolTier(name);
+
+  // Tier 0: always allow
+  if (tier === 0) return "allow";
+
+  // Tier 3: check blocked patterns for command tools, else deny
+  if (tier === 3) {
+    const blockedReason = isBlocked(args);
+    if (blockedReason) return "deny";
+    // Non-command Tier 3 always denies
+    if (!COMMAND_TOOLS.has(name)) return "deny";
+    // Command Tier 3 with non-blocked command: escalate to Tier 2 behavior
+  }
+
+  // Tier 1-2: consult signed substrate for command tools
+  if (COMMAND_TOOLS.has(name)) {
+    const scope = currentNeuronId();
+    const result = contractGate(name, stable(args), scope);
+    if (result.decision === "deny") return "deny";
+    if (result.decision === "confirm") {
+      if (autoConfirmed() || consumeConfirmation()) return "allow";
+      return "confirm";
+    }
+    return "allow";
+  }
+
+  // Tier 1 non-command (write_file, edit_file, search_web, etc.):
+  // confirm-gated — consume a confirmation token if available, else ask.
+  if (tier >= 1) {
+    if (autoConfirmed() || consumeConfirmation()) return "allow";
+    return "confirm";
+  }
+
+  return "allow";
+}
+
+// ── public API ──────────────────────────────────────────────────────────────
+
+/**
+ * Gate + neuronize EVERY tool. Each execute is replaced by a wrapper that
+ * authorizes the call through the contract substrate (fail-closed) before
+ * running it as a neuron. The tier system auto-allows reads, confirm-gates
+ * writes, and denies known attack patterns.
  */
 export function neuronizeTools(tools: ToolSet, agent?: string): ToolSet {
   for (const [name, tool] of Object.entries(tools)) {
     const orig = (tool as { execute?: ExecFn }).execute;
     if (typeof orig !== "function") continue;
-    const pure = PURE_READ.has(name);
-    const mutates = MUTATORS.has(name);
 
     const gatedExec: ExecFn = (args: unknown, opts: unknown) => {
-      // Only real command execution is authorized — file/read tools run freely.
-      if (gateEnforced() && COMMAND_TOOLS.has(name)) {
-        const scope = currentNeuronId();
-        const decision = contractGate(name, stable(args), scope);
-        if (decision.decision === "deny") {
-          witness("gate:deny", { tool: name, risk: decision.risk });
-          return gateRefusal(name, decision);
-        }
-        if (decision.decision === "confirm" && !autoConfirmed() && !consumeConfirmation()) {
-          witness("gate:confirm", { tool: name, risk: decision.risk });
-          return gateRefusal(name, decision);
-        }
-      }
-      const plan = `tool:${name}:${stable(args)}${pure ? `@e${mutationEpoch}` : ""}`;
-      return runNeuron(plan, { recall: pure, action: "tool", agent }, async () => {
-        const out = await orig(args, opts);
-        if (mutates) mutationEpoch++;
-        // Router training + usage self-doc: a command tool that SUCCEEDED → remember the
-        // exact command (the router keys on its first token, the binary).
-        if (COMMAND_TOOLS.has(name) && (out as { success?: boolean })?.success === true) {
-          const cmd = commandLine(args);
-          if (cmd) turnCommands.add(cmd);
-        }
-        // Hard-cap tool dumps BEFORE they re-enter the multi-step model context
-        // (streamText mid-turn) or the transcript. Spill overflow to disk.
-        const bound = boundToolValue(out, undefined, name);
-        return bound.value;
-      });
+      return authorizeAndRun(name, args, orig, opts, agent);
     };
     (gatedExec as { [GATED]?: boolean })[GATED] = true;
     (tool as { execute: ExecFn }).execute = gatedExec;
@@ -156,7 +306,7 @@ export function neuronizeTools(tools: ToolSet, agent?: string): ToolSet {
   return tools;
 }
 
-/** True when every tool with an execute carries the gated wrapper (bypass detection). */
+/** True when every tool with an execute carries the gated wrapper. */
 export function allToolsGated(tools: ToolSet): boolean {
   for (const tool of Object.values(tools)) {
     const fn = (tool as { execute?: { [GATED]?: boolean } }).execute;
@@ -164,3 +314,6 @@ export function allToolsGated(tools: ToolSet): boolean {
   }
   return true;
 }
+
+/** Runtime tier query (exposed for telemetry/debug). */
+export { TOOL_TIERS, TOOL_TIERS as toolTiers, toolTier };

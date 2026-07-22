@@ -190,10 +190,34 @@ export function createFractalEBM() {
   function fire(channelId: string, _context: string, reward: number, vector?: Float32Array | null): void {
     totalFires++;
 
+    // Resolve channelId to a tree node. Three strategies:
+    //   1. Exact match on hierarchical id (e.g. "system.network.telegram:output")
+    //   2. Match by channelKey in the tree spec (e.g. "telegram:output" → node)
+    //   3. Partial match — any node whose channelKey is a prefix of channelId
+    //      (e.g. "telegram:send" matches node with channelKey "telegram:output"
+    //       because the closest channel to "telegram:send" is "telegram:output")
+    //   4. Fallback to system root
     let node = nodes[channelId];
     if (!node) {
-      for (const [id, n] of Object.entries(nodes)) {
-        if (id.endsWith(channelId) && n.depth > (node?.depth ?? -1)) node = n;
+      // Try channelKey match
+      for (const spec of TREE_SPEC) {
+        if (spec.channelKey === channelId && nodes[spec.channelId]) {
+          node = nodes[spec.channelId];
+          break;
+        }
+      }
+    }
+    if (!node) {
+      // Try prefix match — find the channelKey that is the longest prefix
+      // of channelId. E.g. "telegram:send" → "telegram:output" (same prefix "telegram:")
+      let bestKey = "";
+      for (const spec of TREE_SPEC) {
+        if (channelId.startsWith(spec.channelKey.split(":")[0] + ":")) {
+          if (spec.channelKey.length > bestKey.length) {
+            bestKey = spec.channelKey;
+            node = nodes[spec.channelId];
+          }
+        }
       }
     }
     if (!node) {
@@ -203,8 +227,14 @@ export function createFractalEBM() {
 
     const now = Math.floor(Date.now() / 1000);
 
+    // When we have a real embedding vector, fold it into the centroid
+    // (Welford running mean). When we don't, still update the weight so
+    // the tree learns which channels are hot — weight-as-count is a
+    // first-order signal; centroid is the second-order refinement.
     if (vector && vector.length === DIM) {
       node.weight = foldCentroid(node.centroid, node.weight, vector, reward);
+    } else {
+      node.weight += reward;
     }
     node.fires++;
     node.lastFireUnix = now;
@@ -223,6 +253,8 @@ export function createFractalEBM() {
       const decayedReward = reward / (1 + level);
       if (vector && vector.length === DIM && Math.abs(decayedReward) > 1e-9) {
         parent.weight = foldCentroid(parent.centroid, parent.weight, vector, decayedReward);
+      } else if (Math.abs(decayedReward) > 1e-9) {
+        parent.weight += decayedReward;
       }
       parent.fires++;
       parent.lastFireUnix = now;

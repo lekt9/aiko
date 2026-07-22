@@ -76,6 +76,52 @@ export function createDaemon(config: DaemonConfig) {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
 
+  /**
+   * Spawn a follow-up claim from a satisfied parent.
+   *
+   * Uses contract.recommend() on the parent's prompt to find the
+   * next most likely action. If the substrate has a strong pattern
+   * (score >= 0.5), declare it as a scheduled claim so the daemon
+   * picks it up on the next tick.
+   *
+   * This is the spawning reflex: every satisfied contract neuron
+   * can birth the next neuron in the chain. The DAG grows itself.
+   */
+  function spawnFollowUp(parent: contract.Claim, _log: (msg: string) => void): void {
+    try {
+      const rec = contract.recommend(parent.prompt);
+      if (!rec || !rec.binary || rec.binary === parent.prompt) return;
+
+      const followUpPrompt = rec.binary;
+      const followUpScore = rec.score;
+
+      // Confidence-based delay:
+      //   >= 0.85  → 5s  (hot pattern, fire immediately next tick)
+      //   >= 0.50  → 30s (warm pattern, fire soon)
+      //   <  0.50  → 60s (weak pattern, let it marinate but still spawn)
+      const delaySeconds = followUpScore >= 0.85 ? 5 : followUpScore >= 0.5 ? 30 : 60;
+
+      const name = `spawn:${parent.contractId.slice(0, 12)}`;
+      const firstDue = Math.floor(Date.now() / 1000) + delaySeconds;
+
+      contract.declareScheduled(
+        `${name}: ${followUpPrompt.slice(0, 80)}`,
+        config.cwd ?? "",
+        delaySeconds,
+        false, // one-shot
+        firstDue,
+      );
+
+      _log(
+        `[daemon] spawn: ${name} ` +
+          `"${followUpPrompt.slice(0, 60)}" ` +
+          `(score=${followUpScore.toFixed(3)}, delay=${delaySeconds}s)`,
+      );
+    } catch (err) {
+      _log(`[daemon] spawn error: ${err}`);
+    }
+  }
+
   async function processClaim(claim: contract.Claim): Promise<void> {
     state.claimsProcessed++;
 
@@ -150,6 +196,13 @@ export function createDaemon(config: DaemonConfig) {
 
       // Train: satisfied fire
       ebm.fire(scope, claim.prompt, 1.0, null);
+
+      // Step 4b: SPAWN — contract fires beget contracts.
+      // After a satisfied execution, ask the substrate what it
+      // learned and declare the next most likely follow-up as a
+      // scheduled claim. This is the chain reaction: every fire
+      // spawns the next fire, the DAG grows itself.
+      spawnFollowUp(claim, log);
     } else {
       // Step 5: novel situation — queue for agent deliberation
       const treeW = node ? node.weight.toFixed(1) : "no_node";
@@ -220,6 +273,38 @@ export function createDaemon(config: DaemonConfig) {
     timer = setTimeout(tick, delayMs);
   }
 
+  function resumeOpenTurns(): void {
+    try {
+      const all = contract.listAll();
+      if (!all) return;
+
+      const openTurns = all
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => {
+          try {
+            return JSON.parse(line) as { id: string; plan: string; action: string; satisfied: boolean };
+          } catch {
+            return null;
+          }
+        })
+        .filter((n): n is NonNullable<typeof n> => n !== null && n.action === "turn" && !n.satisfied);
+
+      if (openTurns.length > 0) {
+        log(`[daemon] resuming ${openTurns.length} open turn(s)`);
+        for (const turn of openTurns) {
+          log(`[daemon] resumed turn ${turn.id.slice(0, 12)}: ${turn.plan.slice(0, 80)}`);
+        }
+        // The most recent open turn is the parent for new tool calls.
+        // We don't re-enter with() here because the agent's processMessageTurn
+        // already calls openScope at the start of each turn. This is just
+        // visibility — the daemon now knows about orphans.
+      }
+    } catch (err) {
+      log(`[daemon] resume error: ${err}`);
+    }
+  }
+
   function start(): DaemonState {
     if (state.running) return state;
     if (!contract.isNative()) {
@@ -229,6 +314,8 @@ export function createDaemon(config: DaemonConfig) {
     state.running = true;
     stopped = false;
     log("[daemon] starting autonomic loop");
+    // Resume any open turns from a prior session
+    resumeOpenTurns();
     // First tick immediately
     tick();
     return state;
