@@ -7,6 +7,8 @@ const CREATE_SKILL_MD: &str = include_str!("../skills/create-skill/SKILL.md");
 const CODE_REVIEW_SKILL_MD: &str = include_str!("../skills/code-review/SKILL.md");
 const IMAGINE_SKILL_MD: &str = include_str!("../skills/imagine/SKILL.md");
 const CONTRACT_SKILL_MD: &str = include_str!("../skills/contract/SKILL.md");
+const TELEGRAM_CONTRACTS_SKILL_MD: &str =
+    include_str!("../../../../.agents/skills/telegram-contracts/SKILL.md");
 /// Compiled-in SKILL.md content for `/check-work` (available to headless mode).
 pub const CHECK_SKILL_MD: &str = include_str!("../skills/check-work/SKILL.md");
 /// Compiled-in SKILL.md content for headless `--best-of-n` (not extracted as
@@ -60,6 +62,34 @@ const BUNDLED_SKILLS: &[(&str, &str)] = &[
     ("imagine", IMAGINE_SKILL_MD),
     ("check-work", CHECK_SKILL_MD),
     ("contract", CONTRACT_SKILL_MD),
+    ("telegram-contracts", TELEGRAM_CONTRACTS_SKILL_MD),
+];
+
+/// Resources belonging to compiled-in skills. Paths are relative to that
+/// skill's directory under `<aiko-home>/skills/`.
+const BUNDLED_SKILL_RESOURCES: &[(&str, &str, &[u8])] = &[
+    (
+        "telegram-contracts",
+        "agents/openai.yaml",
+        include_bytes!("../../../../.agents/skills/telegram-contracts/agents/openai.yaml"),
+    ),
+    (
+        "telegram-contracts",
+        "assets/capabilities.json",
+        include_bytes!("../../../../.agents/skills/telegram-contracts/assets/capabilities.json"),
+    ),
+    (
+        "telegram-contracts",
+        "references/telegram-api.md",
+        include_bytes!("../../../../.agents/skills/telegram-contracts/references/telegram-api.md"),
+    ),
+    (
+        "telegram-contracts",
+        "scripts/build_contract_pack.py",
+        include_bytes!(
+            "../../../../.agents/skills/telegram-contracts/scripts/build_contract_pack.py"
+        ),
+    ),
 ];
 
 /// True when a discovered skill is the copy `extract_bundled_files` wrote to
@@ -140,6 +170,7 @@ pub fn extract_bundled_files(grok_home: &std::path::Path) {
             tracing::debug!(error = %e, name, "Failed to write skill");
         }
     }
+    extract_skill_resources(grok_home, false);
 
     let _ = std::fs::write(&marker, version);
     tracing::debug!(version, "Extracted bundled files");
@@ -156,6 +187,22 @@ fn extract_missing_skills(grok_home: &std::path::Path) {
         let _ = std::fs::create_dir_all(skill_md.parent().unwrap());
         let content = resolve_skill_content(name, raw, grok_home);
         let _ = std::fs::write(&skill_md, content);
+    }
+    extract_skill_resources(grok_home, true);
+}
+
+fn extract_skill_resources(grok_home: &std::path::Path, missing_only: bool) {
+    for &(name, relative, content) in BUNDLED_SKILL_RESOURCES {
+        let destination = grok_home.join("skills").join(name).join(relative);
+        if missing_only && destination.exists() {
+            continue;
+        }
+        if let Some(parent) = destination.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(error) = std::fs::write(&destination, content) {
+            tracing::debug!(%error, name, relative, "Failed to write bundled skill resource");
+        }
     }
 }
 
@@ -286,6 +333,27 @@ mod tests {
         assert!(skill.contains("contract task verify"));
         assert!(skill.contains("application_observe"));
         assert!(skill.contains("application_act"));
+    }
+
+    #[test]
+    fn telegram_contracts_skill_and_resources_are_bundled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+
+        extract_bundled_files(home);
+
+        let root = home.join("skills/telegram-contracts");
+        let skill = std::fs::read_to_string(root.join("SKILL.md")).unwrap();
+        assert!(skill.contains("Declare every inbound update before filtering"));
+        assert!(root.join("agents/openai.yaml").is_file());
+        assert!(root.join("assets/capabilities.json").is_file());
+        assert!(root.join("references/telegram-api.md").is_file());
+        assert!(root.join("scripts/build_contract_pack.py").is_file());
+
+        // Same-version startup repairs a missing resource just like SKILL.md.
+        std::fs::remove_file(root.join("assets/capabilities.json")).unwrap();
+        extract_bundled_files(home);
+        assert!(root.join("assets/capabilities.json").is_file());
     }
 
     #[tokio::test]

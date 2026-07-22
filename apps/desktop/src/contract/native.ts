@@ -57,6 +57,7 @@ function candidatePaths(): string[] {
     out.push(join(home, "libcontract", lib));
   }
   const repo = join(homedir(), "Unbrowse", "contract", "libcontract");
+  out.push(join(homedir(), ".aiko", "lib", lib));
   out.push(join(repo, "zig-out", "lib", lib)); // canonical build output
   out.push(join(repo, lib));
   out.push(join(homedir(), ".config", "contract", "lib", lib));

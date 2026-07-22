@@ -1087,12 +1087,18 @@ mod completion_token_tests {
 
     #[test]
     fn mimo_gets_a_safe_explicit_output_budget_when_catalog_omits_it() {
-        assert_eq!(resolved_max_completion_tokens("mimo-v2.5", None), Some(32_768));
+        assert_eq!(
+            resolved_max_completion_tokens("mimo-v2.5", None),
+            Some(32_768)
+        );
         assert_eq!(
             resolved_max_completion_tokens("mimo-v2.5-pro", None),
             Some(32_768)
         );
-        assert_eq!(resolved_max_completion_tokens("mimo-v2.5", Some(12_000)), Some(12_000));
+        assert_eq!(
+            resolved_max_completion_tokens("mimo-v2.5", Some(12_000)),
+            Some(12_000)
+        );
         assert_eq!(resolved_max_completion_tokens("other-model", None), None);
     }
 }

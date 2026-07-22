@@ -25,6 +25,15 @@ export interface TelegramBridgeOptions {
   onError?: (message: string) => void;
   /** Contract-native reply transformation (ThinkFeel persona, voice, etc.). Called before every send. */
   transformReply?: (userId: number, text: string) => Promise<{ text: string; voiceFile?: string }>;
+  /** Contract-first ingress hook. It runs before the authorization gate so no
+   * event disappears merely because its sender is not paired yet. */
+  onInboundMessage?: (event: {
+    turnKey: string;
+    userId: number;
+    content: string;
+    authorized: boolean;
+    kind: "text" | "voice" | "audio";
+  }) => void | Promise<void>;
 }
 
 export interface TelegramBridgeHandle {
@@ -200,6 +209,17 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
     };
     reply: (text: string) => Promise<unknown>;
   }) => {
+    const inboundUserId = ctx.from?.id;
+    const kind = ctx.message.voice ? "voice" : "audio";
+    if (inboundUserId !== undefined) {
+      await opts.onInboundMessage?.({
+        turnKey: buildTurnKey(ctx),
+        userId: inboundUserId,
+        content: `[${kind} message]`,
+        authorized: opts.getApprovedUserIds().includes(inboundUserId),
+        kind,
+      });
+    }
     const userId = await ensureApprovedUser(ctx);
     if (userId === null) return;
 
@@ -237,6 +257,17 @@ export function createTelegramBridge(opts: TelegramBridgeOptions): TelegramBridg
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text;
     if (text.startsWith("/")) return;
+
+    const inboundUserId = ctx.from?.id;
+    if (inboundUserId !== undefined) {
+      await opts.onInboundMessage?.({
+        turnKey: buildTurnKey(ctx),
+        userId: inboundUserId,
+        content: text,
+        authorized: opts.getApprovedUserIds().includes(inboundUserId),
+        kind: "text",
+      });
+    }
 
     const userId = await ensureApprovedUser(ctx);
     if (userId === null) return;

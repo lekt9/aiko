@@ -96,6 +96,9 @@ sync_contract() {
     TMP="$LIB_DIR/.libcontract.dylib.sync.$$"
     trap 'rm -f "$TMP"' EXIT HUP INT TERM
     install -m 755 "$CONTRACT_DYLIB" "$TMP"
+    if [ "$(uname -s)" = "Darwin" ]; then
+        codesign --force --sign - "$TMP"
+    fi
     mv -f "$TMP" "$LIB_DIR/libcontract.dylib"
     trap - EXIT HUP INT TERM
     echo "Synced Contract runtime to $LIB_DIR/libcontract.dylib"
@@ -165,6 +168,9 @@ package_runtime() {
     mkdir -p "$DEST/bin" "$DEST/lib"
     install -m 755 "$BIN" "$DEST/bin/aiko"
     install -m 755 "$CONTRACT_DYLIB" "$DEST/lib/libcontract.dylib"
+    if [ "$(uname -s)" = "Darwin" ]; then
+        codesign --force --sign - "$DEST/lib/libcontract.dylib"
+    fi
     install -m 755 "$AIKO_ROOT/scripts/install-aiko-package.sh" "$DEST/install.sh"
 
     AIKO_SHA=$(sha256_file "$DEST/bin/aiko")
@@ -187,7 +193,7 @@ package_runtime() {
         printf '  "format": 1,\n'
         printf '  "version": "%s",\n' "$VERSION"
         printf '  "platform": "%s",\n' "$PLATFORM"
-        printf '  "contract_abi": 3,\n'
+        printf '  "contract_abi": 4,\n'
         printf '  "application_runtime": "aiko-native-cdp-v1",\n'
         printf '  "aiko_sha256": "%s",\n' "$AIKO_SHA"
         printf '  "aiko_commit": "%s",\n' "$AIKO_COMMIT"

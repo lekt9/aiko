@@ -74,6 +74,10 @@ type RegisterCapabilitiesFn = unsafe extern "C" fn(*const c_char, *const c_char)
 type ListCapabilitiesFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 type RecommendPlanFn = unsafe extern "C" fn(*const c_char, *const c_char, u32) -> *mut c_char;
 type RecordObservationFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char;
+type MuscleObserveFn =
+    unsafe extern "C" fn(*const c_char, *const c_char, *const c_char, *const c_char, f64) -> bool;
+type MuscleRecallFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
+type MusclePredictFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char;
 /// Learned proven-command router: returns JSON {binary, example, score, …}.
 type RecommendProvenFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 type WarmRouterFn = unsafe extern "C" fn(u32) -> u32;
@@ -98,6 +102,9 @@ struct NativeContract {
     list_capabilities: Option<ListCapabilitiesFn>,
     recommend_plan: Option<RecommendPlanFn>,
     record_observation: Option<RecordObservationFn>,
+    muscle_observe: Option<MuscleObserveFn>,
+    muscle_recall: Option<MuscleRecallFn>,
+    muscle_predict: Option<MusclePredictFn>,
     recommend_proven: Option<RecommendProvenFn>,
     warm_router: WarmRouterFn,
     fractal_context: FractalContextFn,
@@ -171,7 +178,7 @@ impl NativeContract {
                 continue;
             };
             let abi_version = unsafe { abi_version() };
-            if !(2..=3).contains(&abi_version) {
+            if !(2..=4).contains(&abi_version) {
                 continue;
             }
             let loaded = unsafe {
@@ -198,6 +205,21 @@ impl NativeContract {
                         .get(b"contract_record_capability_observation\0")
                         .ok()
                         .map(|symbol| *symbol),
+                    muscle_observe: if abi_version >= 4 {
+                        Some(*library.get(b"contract_muscle_observe\0").ok()?)
+                    } else {
+                        None
+                    },
+                    muscle_recall: if abi_version >= 4 {
+                        Some(*library.get(b"contract_muscle_recall\0").ok()?)
+                    } else {
+                        None
+                    },
+                    muscle_predict: if abi_version >= 4 {
+                        Some(*library.get(b"contract_muscle_predict\0").ok()?)
+                    } else {
+                        None
+                    },
                     recommend_proven: library.get(b"contract_recommend\0").ok().map(|s| *s),
                     warm_router: *library.get(b"contract_warm_router\0").ok()?,
                     fractal_context: *library.get(b"contract_get_fractal_context\0").ok()?,
@@ -329,6 +351,55 @@ impl NativeContract {
         let observation = CString::new(serde_json::to_vec(observation).ok()?).ok()?;
         let raw = self.take_string(unsafe { record(context.as_ptr(), observation.as_ptr()) })?;
         serde_json::from_str(&raw).ok()
+    }
+
+    fn observe_muscle(
+        &self,
+        context: &str,
+        binary: &str,
+        before: &str,
+        after: &str,
+        reward: f64,
+    ) -> bool {
+        let Some(observe) = self.muscle_observe else {
+            return false;
+        };
+        let Ok(context) = CString::new(context) else {
+            return false;
+        };
+        let Ok(binary) = CString::new(binary) else {
+            return false;
+        };
+        let Ok(before) = CString::new(before) else {
+            return false;
+        };
+        let Ok(after) = CString::new(after) else {
+            return false;
+        };
+        unsafe {
+            observe(
+                context.as_ptr(),
+                binary.as_ptr(),
+                before.as_ptr(),
+                after.as_ptr(),
+                reward.clamp(-1.0, 1.0),
+            )
+        }
+    }
+
+    #[allow(dead_code)]
+    fn recall_muscle(&self, context: &str) -> Option<String> {
+        let recall = self.muscle_recall?;
+        let context = CString::new(context).ok()?;
+        self.take_string(unsafe { recall(context.as_ptr()) })
+    }
+
+    #[allow(dead_code)]
+    fn predict_muscle(&self, before: &str, target: &str) -> Option<String> {
+        let predict = self.muscle_predict?;
+        let before = CString::new(before).ok()?;
+        let target = CString::new(target).ok()?;
+        self.take_string(unsafe { predict(before.as_ptr(), target.as_ptr()) })
     }
 
     /// Nearest proven command for a goal (`contract recommend`).
@@ -2580,14 +2651,16 @@ pub fn set_active_capability_plan(session_id: &str, context: String, plan: Optio
     let Ok(mut plans) = active_capability_plans().lock() else {
         return;
     };
-    if let Some(plan) = plan {
-        plans.insert(
-            session_id.to_owned(),
-            ActiveCapabilityPlan { context, plan },
-        );
-    } else {
-        plans.remove(session_id);
-    }
+    // The task context is useful muscle-memory supervision even when the
+    // catalog cannot recommend a known contract yet. A null plan simply means
+    // that this invocation can train a new context -> binary association.
+    plans.insert(
+        session_id.to_owned(),
+        ActiveCapabilityPlan {
+            context,
+            plan: plan.unwrap_or(Value::Null),
+        },
+    );
 }
 
 fn descriptor_matches_tool(
@@ -2610,6 +2683,60 @@ fn descriptor_matches_tool(
     true
 }
 
+/// Describe a tool input without retaining values. This is the state seen by
+/// the transition learner, so credentials and user data never become weights.
+fn structural_json(value: &Value, depth: usize) -> Value {
+    if depth >= 3 {
+        return Value::String("…".into());
+    }
+    match value {
+        Value::Null => Value::String("null".into()),
+        Value::Bool(_) => Value::String("bool".into()),
+        Value::Number(_) => Value::String("number".into()),
+        Value::String(_) => Value::String("string".into()),
+        Value::Array(items) => json!({
+            "array": items.len(),
+            "items": items.first().map(|item| structural_json(item, depth + 1))
+        }),
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .take(32)
+                .map(|(key, value)| (key.clone(), structural_json(value, depth + 1)))
+                .collect(),
+        ),
+    }
+}
+
+fn muscle_before_state(tool_name: &str, raw_arguments: Option<&str>) -> String {
+    let input = raw_arguments
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .map(|value| structural_json(&value, 0))
+        .unwrap_or_else(|| Value::String("unparsed".into()));
+    json!({ "tool": tool_name, "input": input }).to_string()
+}
+
+fn muscle_after_state(
+    success: bool,
+    duration_ms: u64,
+    result_shape: crate::capability_catalog::ResultShape,
+    error_class: Option<crate::capability_catalog::ObservationError>,
+) -> String {
+    let duration_bucket = match duration_ms {
+        0..=99 => "<100ms",
+        100..=999 => "<1s",
+        1_000..=9_999 => "<10s",
+        _ => ">=10s",
+    };
+    json!({
+        "success": success,
+        "duration": duration_bucket,
+        "result": result_shape,
+        "error": error_class,
+    })
+    .to_string()
+}
+
 pub fn record_active_capability_observation(
     session_id: &str,
     tool_name: &str,
@@ -2625,43 +2752,60 @@ pub fn record_active_capability_observation(
         .ok()
         .and_then(|plans| plans.get(session_id).cloned());
     let Some(active) = active else { return };
+    let before = muscle_before_state(tool_name, raw_arguments);
+    let after = muscle_after_state(success, duration_ms, result_shape, error_class);
     let candidates = active
         .plan
         .get("candidates")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let descriptors = match registered_capability_descriptors().lock() {
-        Ok(value) => value,
-        Err(_) => return,
-    };
-    let selected = candidates.iter().find_map(|candidate| {
-        let id = candidate.get("capability_id")?.as_str()?;
-        let version = candidate.get("capability_version")?.as_str()?;
-        let descriptor = descriptors.get(id)?;
-        (descriptor.capability_version == version
-            && descriptor_matches_tool(descriptor, tool_name, raw_arguments))
-        .then(|| (id.to_owned(), version.to_owned()))
+    let selected = registered_capability_descriptors()
+        .lock()
+        .ok()
+        .and_then(|descriptors| {
+            candidates.iter().find_map(|candidate| {
+                let id = candidate.get("capability_id")?.as_str()?;
+                let version = candidate.get("capability_version")?.as_str()?;
+                let descriptor = descriptors.get(id)?;
+                (descriptor.capability_version == version
+                    && descriptor_matches_tool(descriptor, tool_name, raw_arguments))
+                .then(|| (id.to_owned(), version.to_owned()))
+            })
+        });
+    let observation = selected.map(|(capability_id, capability_version)| {
+        crate::capability_catalog::CapabilityObservation {
+            schema_version: 1,
+            capability_id,
+            capability_version,
+            success,
+            duration_ms: duration_ms.min(86_400_000),
+            permission_result,
+            error_class,
+            result_shape,
+            observed_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        }
     });
-    drop(descriptors);
-    let Some((capability_id, capability_version)) = selected else {
-        return;
-    };
-    let observation = crate::capability_catalog::CapabilityObservation {
-        schema_version: 1,
-        capability_id,
-        capability_version,
-        success,
-        duration_ms: duration_ms.min(86_400_000),
-        permission_result,
-        error_class,
-        result_shape,
-        observed_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-    };
     let context = active.context;
+    let binary = tool_name.to_owned();
     tokio::task::spawn_blocking(move || {
-        let recorded =
-            native_contract().and_then(|native| native.record_observation(&context, &observation));
+        let native = native_contract();
+        let learned = native.is_some_and(|native| {
+            native.observe_muscle(
+                &context,
+                &binary,
+                &before,
+                &after,
+                if success { 1.0 } else { -1.0 },
+            )
+        });
+        if !learned {
+            tracing::debug!(tool = %binary, "Contract muscle observation was not recorded");
+        }
+        let Some(observation) = observation else {
+            return;
+        };
+        let recorded = native.and_then(|native| native.record_observation(&context, &observation));
         if recorded.is_none() {
             tracing::warn!(
                 capability_id = %observation.capability_id,
@@ -3713,6 +3857,20 @@ mod tests {
             command_name("export API_KEY=secret && curl example.com"),
             None
         );
+    }
+
+    #[test]
+    fn muscle_state_keeps_shape_but_never_argument_values() {
+        let state = muscle_before_state(
+            "shell",
+            Some(r#"{"command":"curl example.test","token":"cg_secret","nested":{"count":7}}"#),
+        );
+        assert!(state.contains("command"));
+        assert!(state.contains("token"));
+        assert!(state.contains("nested"));
+        assert!(state.contains("string"));
+        assert!(!state.contains("example.test"));
+        assert!(!state.contains("cg_secret"));
     }
 
     #[test]

@@ -80,52 +80,6 @@ export function createDaemon(config: DaemonConfig) {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
 
-  /**
-   * Spawn a follow-up claim from a satisfied parent.
-   *
-   * Uses contract.recommend() on the parent's prompt to find the
-   * next most likely action. If the substrate has a strong pattern
-   * (score >= 0.5), declare it as a scheduled claim so the daemon
-   * picks it up on the next tick.
-   *
-   * This is the spawning reflex: every satisfied contract neuron
-   * can birth the next neuron in the chain. The DAG grows itself.
-   */
-  function spawnFollowUp(parent: contract.Claim, _log: (msg: string) => void): void {
-    try {
-      const rec = contract.recommend(parent.prompt);
-      if (!rec || !rec.binary || rec.binary === parent.prompt) return;
-
-      const followUpPrompt = rec.binary;
-      const followUpScore = rec.score;
-
-      // Confidence-based delay:
-      //   >= 0.85  → 5s  (hot pattern, fire immediately next tick)
-      //   >= 0.50  → 30s (warm pattern, fire soon)
-      //   <  0.50  → 60s (weak pattern, let it marinate but still spawn)
-      const delaySeconds = followUpScore >= 0.85 ? 5 : followUpScore >= 0.5 ? 30 : 60;
-
-      const name = `spawn:${parent.contractId.slice(0, 12)}`;
-      const firstDue = Math.floor(Date.now() / 1000) + delaySeconds;
-
-      contract.declareScheduled(
-        `${name}: ${followUpPrompt.slice(0, 80)}`,
-        config.cwd ?? "",
-        delaySeconds,
-        false, // one-shot
-        firstDue,
-      );
-
-      _log(
-        `[daemon] spawn: ${name} ` +
-          `"${followUpPrompt.slice(0, 60)}" ` +
-          `(score=${followUpScore.toFixed(3)}, delay=${delaySeconds}s)`,
-      );
-    } catch (err) {
-      _log(`[daemon] spawn error: ${err}`);
-    }
-  }
-
   async function processClaim(claim: contract.Claim): Promise<void> {
     state.claimsProcessed++;
 
@@ -186,12 +140,11 @@ export function createDaemon(config: DaemonConfig) {
       );
       state.autoExecuted++;
 
-      // FRACTAL SPAWN: fork a separate Aiko process for this claim.
-      // The child declares itself as a neuron, runs the prompt, settles,
-      // and exits. The parent (daemon) doesn't block — it fire-and-forgets.
+      // Fork a separate stateless Aiko process. Do not call spawning success:
+      // the child exit is the mechanical observation for this leaf.
       const spawned = spawnNeuron(claim.prompt, {
         action: "daemon-auto",
-        detach: true,
+        detach: false,
         maxToolRounds: 100,
         cwd: config.cwd,
       });
@@ -203,22 +156,20 @@ export function createDaemon(config: DaemonConfig) {
         );
       }
 
-      // The child process will settle the claim when it exits.
-      // We also settle it here as the daemon's view (the child
-      // settlement is the ground truth).
+      const exitCode = spawned?.done ? await spawned.done : 1;
+      const satisfied = exitCode === 0;
       contract.settleExecution(
         config.owner,
         claim.contractId,
         claim.occurrence,
-        "satisfied",
-        `auto-executed via fractal spawn: ${node.channelId}`,
+        satisfied ? "satisfied" : "retry",
+        `isolated Aiko worker exited ${exitCode}: ${node.channelId}`,
       );
 
-      // Train: satisfied fire
-      ebm.fire(scope, claim.prompt, 1.0, null);
+      ebm.fire(scope, claim.prompt, satisfied ? 1.0 : -1.0, null);
 
-      // Step 4b: SPAWN — contract fires beget contracts.
-      spawnFollowUp(claim, log);
+      // Any follow-up set is declared by the worker as an explicit child wave.
+      // Never collapse the next frontier to one router recommendation here.
     } else {
       // Step 5: novel situation — queue for agent deliberation
       const treeW = node ? node.weight.toFixed(1) : "no_node";
@@ -229,6 +180,21 @@ export function createDaemon(config: DaemonConfig) {
       state.agentQueued++;
       if (config.onAgentClaim) {
         await config.onAgentClaim(claim);
+      } else {
+        const worker = spawnNeuron(claim.prompt, {
+          action: "daemon-deliberate",
+          detach: false,
+          maxToolRounds: 100,
+          cwd: config.cwd,
+        });
+        const exitCode = worker?.done ? await worker.done : 1;
+        contract.settleExecution(
+          config.owner,
+          claim.contractId,
+          claim.occurrence,
+          exitCode === 0 ? "satisfied" : "retry",
+          `isolated deliberation worker exited ${exitCode}`,
+        );
       }
     }
   }
@@ -262,9 +228,9 @@ export function createDaemon(config: DaemonConfig) {
           `next wake ${result.nextWakeUnix ? new Date(result.nextWakeUnix * 1000).toISOString() : "none"}`,
       );
 
-      for (const claim of result.claims) {
-        await processClaim(claim);
-      }
+      // Claims returned by one tick are separately leased and therefore form
+      // a parallel wave. Individual channel gates and file locks still apply.
+      await Promise.allSettled(result.claims.map((claim) => processClaim(claim)));
     }
 
     scheduleNext();

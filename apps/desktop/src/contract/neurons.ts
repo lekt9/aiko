@@ -12,7 +12,6 @@
 // a process tree. This is the fractal execution model.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import * as native from "./native";
 
 const parentStore = new AsyncLocalStorage<string | null>();
@@ -162,6 +161,37 @@ export interface SpawnResult {
   kill: () => void;
 }
 
+export function buildSpawnCommand(plan: string, opts: SpawnOptions, parentId: string | null): {
+  command: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+} {
+  const command = opts.env?.AIKO_BIN ?? process.env.AIKO_BIN ?? "aiko";
+  const args = [
+    "-p",
+    plan,
+    "--output-format",
+    "json",
+    "--permission-mode",
+    "auto",
+    "--max-turns",
+    String(opts.maxToolRounds ?? 200),
+    "--no-memory",
+    "--rules",
+    "You are one isolated Contract worker. Load relevant skills, expand independent work into bounded child contracts, run safe siblings in parallel, and ground completion in observed child outcomes.",
+  ];
+  if (opts.cwd) args.push("--cwd", opts.cwd);
+  return {
+    command,
+    args,
+    env: {
+      ...process.env,
+      ...opts.env,
+      AIKO_CONTRACT_PARENT_ID: parentId ?? "",
+    },
+  };
+}
+
 /**
  * Spawn a neuron as a separate Aiko process. Each spawn IS a self-contained
  * `node dist/index.js --neuron-id <id> --prompt "..."` run. The child declares
@@ -179,34 +209,18 @@ export function spawnNeuron(
 
   const parentId = opts.parent ?? currentParent();
 
-  // Content-address the neuron id from plan + parent + nonce so identical
-  // plans from different parents or times get distinct ids.
-  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const cid = createHash("sha256")
-    .update(`${parentId ?? "root"}:${plan}:${nonce}`)
-    .digest("hex")
-    .slice(0, 8);
-
-  // Declare the neuron in the ledger NOW (parent process records intent).
-  // The child will re-declare on startup (idempotent — same plan + parent → same id).
-  native.declare(plan, opts.action ?? "spawn", parentId, opts.agent ?? null);
+  // The native declaration is the identity. Never invent an unrelated process
+  // id in TypeScript: lineage and execution must point at the same contract.
+  const cid = native.declare(plan, opts.action ?? "spawn", parentId, opts.agent ?? null);
+  if (!cid) return null;
 
   const maxRounds = opts.maxToolRounds ?? 200;
   const timeoutMs = opts.timeoutMs ?? 300_000;
 
-  const args = [
-    "dist/index.js",
-    "--neuron-id", cid,
-    "--prompt", plan,
-    "--max-tool-rounds", String(maxRounds),
-    "--yes", // auto-confirm in non-interactive mode
-  ];
-  if (parentId) args.push("--parent-id", parentId);
-  if (opts.cwd) args.push("--directory", opts.cwd);
-
-  const child = spawn("node", args, {
+  const invocation = buildSpawnCommand(plan, { ...opts, maxToolRounds: maxRounds }, parentId);
+  const child = spawn(invocation.command, invocation.args, {
     cwd: opts.cwd ?? process.cwd(),
-    env: { ...process.env, ...opts.env },
+    env: invocation.env,
     stdio: "pipe",
     timeout: timeoutMs,
   });
@@ -248,4 +262,14 @@ export function spawnNeuron(
   });
 
   return { neuronId: cid, pid: child.pid ?? -1, done, kill };
+}
+
+/** Spawn one dependency-safe wave. Every plan becomes an isolated Aiko
+ * process and all siblings begin immediately; callers await the wave barrier
+ * before spawning dependent children. */
+export function spawnNeuronWave(plans: readonly string[], opts: SpawnOptions = {}): SpawnResult[] {
+  return plans
+    .slice(0, 16)
+    .map((plan) => spawnNeuron(plan, opts))
+    .filter((result): result is SpawnResult => result !== null);
 }

@@ -71,39 +71,16 @@ function ensurePairCodeFile(pairCodeFile: string): void {
 }
 
 function buildTelegramAgentFactory(startupConfig: TelegramHeadlessStartupConfig): (userId: number) => Agent {
-  const agents = new Map<number, Agent>();
-
   return (userId: number) => {
-    const existing = agents.get(userId);
-    if (existing) {
-      return existing;
-    }
-
-    const settings = loadUserSettings();
-    const sessionId = settings.telegram?.sessionsByUserId?.[String(userId)];
-    const agent = new Agent(
+    // Deliberately do not reuse a mutable Agent/session. Durable continuity is
+    // supplied by Contract; each inbound event gets an isolated reasoning worker.
+    return new Agent(
       startupConfig.apiKey,
       startupConfig.baseURL,
       startupConfig.model,
       startupConfig.maxToolRounds,
-      { session: sessionId, sandboxMode: startupConfig.sandboxMode, sandboxSettings: startupConfig.sandboxSettings },
+      { sandboxMode: startupConfig.sandboxMode, sandboxSettings: startupConfig.sandboxSettings },
     );
-
-    const nextSessionId = agent.getSessionId();
-    if (!sessionId && nextSessionId) {
-      saveUserSettings({
-        telegram: {
-          ...settings.telegram,
-          sessionsByUserId: {
-            ...settings.telegram?.sessionsByUserId,
-            [String(userId)]: nextSessionId,
-          },
-        },
-      });
-    }
-
-    agents.set(userId, agent);
-    return agent;
   };
 }
 
@@ -179,19 +156,26 @@ export async function runTelegramHeadlessBridge(options: TelegramHeadlessBridgeO
     autoExecuteThreshold: 0.85,
     fractalEBM,
     log: (msg) => appendLog(paths.logFile, msg),
-    onAgentClaim: async (_claim) => {
-      // Novel claims queue here for agent deliberation.
-      // Currently logged; future: push to bridge for user approval.
-    },
   });
 
-  const coordinator = createTurnCoordinator();
+  const coordinator = createTurnCoordinator(4);
   const getTelegramAgent = buildTelegramAgentFactory(startupConfig);
   const bridge = createTelegramBridge({
     token,
     getApprovedUserIds: () => loadUserSettings().telegram?.approvedUserIds ?? [],
     coordinator,
     getTelegramAgent,
+    onInboundMessage: (event) => {
+      const authorization = event.authorized ? "authorized" : "pending-authorization";
+      const plan =
+        `Telegram ${event.kind} from user ${event.userId} (${authorization}): ` +
+        truncate(event.content, 500);
+      const neuronId = contract.declare(plan, "channel-event", null, `telegram:${event.userId}`);
+      appendLog(
+        paths.logFile,
+        `inbound_contract user=${event.userId} authorized=${event.authorized} neuron=${neuronId ?? "unavailable"}`,
+      );
+    },
     onUserMessage: (event) => {
       appendLog(paths.logFile, `user ${event.userId}: ${truncate(event.content)}`);
     },
