@@ -163,7 +163,7 @@ Debloat opportunities identified (will be executed):
 **Verification gate**:
 - A custom adapter or evaluator declared as a plain contract automatically gets cache, value surfacing, propagation, etc. without extra code.
 - No behaviour change for legacy paths.
-- `aiko` binary size reduced; complexity of adding a new "primitive" is now "declare a contract + evaluator row".
+- `contract-goal` binary size reduced; complexity of adding a new "primitive" is now "declare a contract + evaluator row".
 
 ### Phase 5 — ARC-AGI-3 End-to-End Validation + Harness Integration
 **Goal**: Express 2-3 small ARC-style tasks as contract declarations. Use the full new machinery (neurons, value-surfacing pointers, fulfilment deps, cache hits on approved solutions). Run complete substrate loop to satisfied + correct output. Score via existing graff/harness.
@@ -175,7 +175,7 @@ Debloat opportunities identified (will be executed):
 
 **Implementation**:
 - Add `examples/arc-agi3/` (or under references/) with tiny JSON grids + plans.
-- Declare via `aiko` (or test harness) the root claim + child neurons + fulfilment links.
+- Declare via `contract-goal` (or test harness) the root claim + child neurons + fulfilment links.
 - Use `contract:` / `value-of:` / `fulfil:` synapses.
 - Expect: declare succeeds, resolver runs (possibly multiple waves), cache hit on second identical solve, fulfilment passes, root satisfied with correct grid as result.
 - Evidence lines show value surfacing + fulfilment checks.
@@ -200,7 +200,7 @@ Debloat opportunities identified (will be executed):
 
 ## 3. ARC-AGI-3 Minimal Task Definitions (for execution)
 
-(Will be materialized as files + aiko declares during Phase 5.)
+(Will be materialized as files + contract-goal declarations during Phase 5.)
 
 Example root plan:
 ```
@@ -480,7 +480,7 @@ satisfied  action_result='[[1,4,7],[2,5,8],[3,6,9]]'            <- correct grid 
   (self-describing fixtures in `examples/arc-agi3/tasks/*.json`: input, expected,
   and a quote-free python `solver`).
 - **Mutation-proven**: a wrong solver output turns the runner red (verified).
-- Runs **offline** via the `contract` persona — `aiko` is the remote LLM-compile
+- Runs **offline** via the `contract` persona — `contract-goal` is the remote LLM-compile
   persona, so leaf execution + backfill live in the native binary. This is a
   real finding the plan did not anticipate: the local declare path cannot mint a
   leaf-executor action (`actionFromPlan` recognizes only pointer/graph prefixes;

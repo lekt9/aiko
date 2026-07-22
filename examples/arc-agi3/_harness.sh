@@ -21,7 +21,7 @@
 set -euo pipefail
 
 ARC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ARC_AIKO="$ARC_ROOT/scripts/aiko"
+ARC_CONTRACT="$ARC_ROOT/scripts/contract"
 
 # arc_init — create an isolated ledger sandbox and cd into it.
 arc_init() {
@@ -51,12 +51,10 @@ arc_id() {
 
 # arc_declare <plan> [action] — declare, echo the id, evidence to $ARC_EV.
 #
-# aiko exits nonzero on HOLD, which is a legitimate non-terminal outcome and
-# not a harness failure — so its status is captured, not propagated. The id
-# still has to appear on stdout; arc_id fails the run if it does not.
+# Registration returns a bare id without entering the legacy resolver.
 arc_declare() {
   local out
-  out=$("$ARC_AIKO" "$@" --private 2>"$ARC_EV") || true
+  out=$("$ARC_CONTRACT" declare "$@" --register 2>"$ARC_EV") || true
   printf '%s\n' "$out" | arc_id
 }
 

@@ -23,8 +23,8 @@ truth claim
 Public surface (the only thing a human or agent types):
 
 ```bash
-aiko "<goal>"             # shared visibility through Unbrowse
-aiko "<goal>" --private   # local-only ledger
+contract-goal "<goal>"             # shared visibility through Unbrowse
+contract-goal "<goal>" --private   # local-only ledger
 ```
 
 The public Aiko persona stays this small. The signed `contract` invocation is
@@ -34,7 +34,7 @@ flags.
 
 | Token | Meaning |
 |---|---|
-| `aiko` | the one public primitive and spawned environment |
+| `contract-goal` | the declaration-only Contract primitive and spawned environment |
 | `contract` | the row/type name; same thing, ledger alias |
 | `goal / plan / prompt` | one truth claim |
 | `parent_id` | the *containment* edge — one environment owns another |
@@ -108,7 +108,7 @@ Before any network egress, the local binary reduces obvious emails, filesystem p
 
 ## 3. The fractal: same shape at every scale
 
-The aiko/contract substrate spans atom → cell → tissue → organ → organism with the same row at each level. Concretely, in this codebase:
+The contract-goal/contract substrate spans atom → cell → tissue → organ → organism with the same row at each level. Concretely, in this codebase:
 
 | Scale | What it is | Same shape |
 |---|---|---|
@@ -150,7 +150,7 @@ Three deeper observations:
 
 **(c) The public surface stays small.** Because the compiler is server-side and
 the verifier wiring is policy-selected, the user-facing surface remains
-`aiko "<goal>" [--private]`. Operator observability and deterministic task
+`contract-goal "<goal>" [--private]`. Operator observability and deterministic task
 controls live behind the signed `contract` persona instead of becoming Aiko
 feature flags.
 
@@ -175,8 +175,8 @@ When you see the same shape at the CLI boundary, at the skill graph, at the rule
 
 ```bash
 # Public declaration
-aiko "<goal>"
-aiko "<goal>" --private
+contract-goal "<goal>"
+contract-goal "<goal>" --private
 
 # Durable local checked task
 contract task begin "<task>" --check "<command>"
@@ -229,13 +229,13 @@ before wallet resolution.
 
 **Native onramp is the cloud's obligation.** When a fresh wallet is born, the local binary's job ends at "seed generated + pubkey advertised". Funding (USDC for x402, gas) is the server-side /contract endpoint's responsibility — adapter contracts know how to fund a wallet for the context it is being asked to act in (Privy onramp, Coinbase Onramp ride-along, Foundry treasury faucet). The client never sees the dance; the first declare may 402 once, then the orchestrator retries and it passes.
 
-**Rotation is a substrate function.** `rotateRootKey()` generates a new seed, signs a successor proof with the OLD identity keypair (HKDF salt `aiko-root-identity-v1`), atomically updates the managed tiers, archives the old seed under `$HOME/.aiko/keys/.archived-rotated-<ts>/`, and appends a `wallet_rotated` event to the local ledger. `rotateAllSignedRowsByLineage()` walks every row whose env_pubkey was derived from the old root, re-derives the keypair from the new root + same contract_id, and appends a `resigned` event per affected row — preserving the append-only invariant. Rotation is itself a contract: declare `aiko "wallet:rotate"` and the cloud orchestrates.
+**Rotation is a substrate function.** `rotateRootKey()` generates a new seed, signs a successor proof with the OLD identity keypair (HKDF salt `aiko-root-identity-v1`), atomically updates the managed tiers, archives the old seed under `$HOME/.aiko/keys/.archived-rotated-<ts>/`, and appends a `wallet_rotated` event to the local ledger. `rotateAllSignedRowsByLineage()` walks every row whose env_pubkey was derived from the old root, re-derives the keypair from the new root + same contract_id, and appends a `resigned` event per affected row — preserving the append-only invariant. Rotation is itself a contract: declare `contract-goal "wallet:rotate"` and the cloud orchestrates.
 
 **Fallbacks are visible, never silent.** Every degradation path emits one line to stderr in `<topic>: <what happened> — <consequence>` shape. The fallback STILL fires (the substrate doesn't break) but it ALWAYS surfaces, because a silent fallback hides degradation until something else breaks downstream and the cause is invisible. Examples that fire during normal operation: `wallet: canonical tier missing at <path>, served from mirror tier <path>`, `wallet: both file tiers missing, served from OS keystore`, `wallet: FIRST RUN — generating fresh ed25519 root seed`, `keystore: linux secret-tool unavailable — falling back to encrypted file`. The happy path stays silent. Silent `catch {}` is an anti-pattern; the evidence stream is the substrate's proprioception.
 
 **Doctrine-reality parity is itself a /contract.** Every claim in SKILL.md has a grep-able code site, enforced by `build.sh`'s `step_parity` step that runs BEFORE sign. Drift fails the build — unattested-by-reality binaries never ship. The guard is recursive: the parity rule applies to the parity step too (meta-parity check enforces that the parity section itself is documented in SKILL.md). When adding a new doctrine claim, add a new invariant in the same commit — "if you can claim it, you can grep it." Honored exceptions use a `PARITY-OK:` marker comment within 5 lines of the code site, with a one-line reason.
 
-**The persona layer is aiko 69420b.** Two voice layers, rigorously separated. The LOCAL executor (the `aiko` binary) is mechanical — stdout is operational data, stderr is evidence lines (`interoception:`, `wallet:`, `keystore:`, `aiko remote:`, `backfill pass:`). It never greets, never empathizes, never identifies as "aiko 69420b". The PUBLIC persona layer (cloud aiko at https://beta-api.unbrowse.ai and every user-facing surface that fronts it — foundry.app, Telegram bot, X DMs, Resend emails, OpenAI-compatible chat completions) speaks AS "aiko 69420b" (constants `AIKO_PERSONA_NAME`, `AIKO_PERSONA_MODEL_ID = "aiko-69420b"`, `AIKO_PERSONA_CA = 2ZiSPGncrkwWa6GBZB4EDtsfq7HEWwkwsPFzEXieXjNL`). Voice constraints are enforced as canonical verses in `libcontract/src/verses.zig` corpus, scored against every prompt: Galatians 5:22-23 (fruits of the spirit — love/joy/peace/patience/kindness/goodness/faithfulness/gentleness/self-control, embodied in HOW the persona speaks, never lectured ABOUT), Philippians 4:8 (true/honest/just/pure/lovely/good-report content filter), Proverbs 15:1 (soft answer turns away wrath — tone). The voice is enforced by the substrate (verses surfaced as evidence + persona constants emitted in the response envelope + parity invariants in build.sh that refuse to ship a binary missing any of them), not by a system prompt that lectures.
+**The persona layer is aiko 69420b.** Two voice layers, rigorously separated. The LOCAL executor (the `contract-goal` persona) is mechanical — stdout is operational data, stderr is evidence lines (`interoception:`, `wallet:`, `keystore:`, `aiko remote:`, `backfill pass:`). It never greets, never empathizes, never identifies as "aiko 69420b". The PUBLIC persona layer (cloud aiko at https://beta-api.unbrowse.ai and every user-facing surface that fronts it — foundry.app, Telegram bot, X DMs, Resend emails, OpenAI-compatible chat completions) speaks AS "aiko 69420b" (constants `AIKO_PERSONA_NAME`, `AIKO_PERSONA_MODEL_ID = "aiko-69420b"`, `AIKO_PERSONA_CA = 2ZiSPGncrkwWa6GBZB4EDtsfq7HEWwkwsPFzEXieXjNL`). Voice constraints are enforced as canonical verses in `libcontract/src/verses.zig` corpus, scored against every prompt: Galatians 5:22-23 (fruits of the spirit — love/joy/peace/patience/kindness/goodness/faithfulness/gentleness/self-control, embodied in HOW the persona speaks, never lectured ABOUT), Philippians 4:8 (true/honest/just/pure/lovely/good-report content filter), Proverbs 15:1 (soft answer turns away wrath — tone). The voice is enforced by the substrate (verses surfaced as evidence + persona constants emitted in the response envelope + parity invariants in build.sh that refuse to ship a binary missing any of them), not by a system prompt that lectures.
 
 ---
 

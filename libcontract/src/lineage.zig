@@ -66,7 +66,8 @@ fn writeFd(fd: c_int, buffer: []const u8) isize {
 }
 
 fn makeDir(path: [*:0]const u8, mode: c_uint) void {
-    _ = if (is_windows) _mkdir(path) else std.c.mkdir(path, mode);
+    // Zig 0.16: std.c.mkdir mode is mode_t (u16 on Darwin), not c_uint.
+    _ = if (is_windows) _mkdir(path) else std.c.mkdir(path, @as(std.c.mode_t, @intCast(mode)));
 }
 
 // libc arc4random_buf is the cleanest cross-Apple-platform CSPRNG and ships

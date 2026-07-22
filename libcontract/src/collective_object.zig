@@ -58,7 +58,10 @@ fn scanValue(allocator: std.mem.Allocator, scanner: *std.json.Scanner, first: st
             while (true) {
                 const token = scanner.nextAllocMax(allocator, .alloc_always, MAX_OBJECT_BYTES) catch return Error.InvalidJson;
                 if (token == .object_end) break;
-                const key = switch (token) { .allocated_string => |value| value, else => return Error.InvalidJson };
+                const key = switch (token) {
+                    .allocated_string => |value| value,
+                    else => return Error.InvalidJson,
+                };
                 if (keys.contains(key)) {
                     allocator.free(key);
                     return Error.DuplicateKey;
@@ -403,7 +406,10 @@ fn validateDelegation(payload: std.json.ObjectMap, publisher: []const u8, create
     if (scope.items.len == 0 or scope.items.len > 7) return Error.InvalidField;
     const allowed = [_][]const u8{ "capability", "provider_record", "attestation", "checkpoint", "index_root", "index_segment", "revocation" };
     for (scope.items, 0..) |entry, i| {
-        const name = switch (entry) { .string => |value| value, else => return Error.InvalidField };
+        const name = switch (entry) {
+            .string => |value| value,
+            else => return Error.InvalidField,
+        };
         if (!fieldAllowed(&allowed, name)) return Error.InvalidField;
         for (scope.items[0..i]) |earlier| if (earlier == .string and std.mem.eql(u8, earlier.string, name)) return Error.InvalidField;
     }
@@ -459,7 +465,7 @@ fn validateIndexSegment(payload: std.json.ObjectMap) Error!void {
     if (entries.items.len > 512) return Error.TooManyItems;
     const entry_fields = [_][]const u8{
         "object_id", "publisher", "capability_id", "capability_version",
-        "summary", "operation", "origin", "effects",
+        "summary",   "operation", "origin",        "effects",
     };
     for (entries.items) |item| {
         const entry = switch (item) {
@@ -719,16 +725,13 @@ test "secret-bearing schema and raw URLs fail closed" {
 }
 
 test "malformed corpus rejects duplicate keys floats unknown fields and excessive depth" {
-    const duplicate = try std.mem.replaceOwned(u8, std.testing.allocator, fixture_public,
-        "\"sequence\":1", "\"sequence\":1,\"sequence\":2");
+    const duplicate = try std.mem.replaceOwned(u8, std.testing.allocator, fixture_public, "\"sequence\":1", "\"sequence\":1,\"sequence\":2");
     defer std.testing.allocator.free(duplicate);
     try std.testing.expectError(Error.DuplicateKey, canonicalize(std.testing.allocator, duplicate));
-    const floating = try std.mem.replaceOwned(u8, std.testing.allocator, fixture_public,
-        "\"sequence\":1", "\"sequence\":1.5");
+    const floating = try std.mem.replaceOwned(u8, std.testing.allocator, fixture_public, "\"sequence\":1", "\"sequence\":1.5");
     defer std.testing.allocator.free(floating);
     try std.testing.expectError(Error.InvalidField, canonicalize(std.testing.allocator, floating));
-    const unknown = try std.mem.replaceOwned(u8, std.testing.allocator, fixture_public,
-        "\"sequence\":1", "\"sequence\":1,\"mystery\":true");
+    const unknown = try std.mem.replaceOwned(u8, std.testing.allocator, fixture_public, "\"sequence\":1", "\"sequence\":1,\"mystery\":true");
     defer std.testing.allocator.free(unknown);
     try std.testing.expectError(Error.UnknownField, canonicalize(std.testing.allocator, unknown));
 }
@@ -789,8 +792,7 @@ test "index segments are first-class bounded public objects" {
     const segment = "{\"protocol\":\"aiko-collective/1\",\"kind\":\"index_segment\",\"publisher\":\"" ++ publisher ++ "\",\"sequence\":10,\"created_at\":\"2026-07-21T00:00:00Z\",\"expires_at\":\"2026-08-21T00:00:00Z\",\"payload\":{\"generation\":1,\"prefix\":\"aa\",\"entries\":[{\"object_id\":\"" ++ object_id ++ "\",\"publisher\":\"" ++ publisher ++ "\",\"capability_id\":\"unbrowse.registry.search\",\"capability_version\":\"1\",\"summary\":\"Search public package metadata\",\"operation\":\"search\",\"origin\":\"registry.example\",\"effects\":[\"network_read\",\"read_only\"]}]}}";
     const canonical = try canonicalize(std.testing.allocator, segment);
     defer canonical.deinit(std.testing.allocator);
-    const unsafe = try std.mem.replaceOwned(u8, std.testing.allocator, segment,
-        "network_read", "message_send");
+    const unsafe = try std.mem.replaceOwned(u8, std.testing.allocator, segment, "network_read", "message_send");
     defer std.testing.allocator.free(unsafe);
     try std.testing.expectError(Error.MutatingCapability, canonicalize(std.testing.allocator, unsafe));
 }

@@ -12,14 +12,14 @@
 #   build:fmt        — Zig source is fmt-clean
 #   build:tests      — libcontract unit tests pass (pointer, lineage,
 #                      env_fingerprint, verses)
-#   build:compile    — zig build produces the aiko + contract binaries
+#   build:compile    — zig build produces the Contract binary/persona
 #   build:install    — built binaries are installed into scripts/
 #   build:sign       — installed binaries are signed by the wallet
 #                      (deployer.key → HKDF binary-signing key) via the
 #                      `contract` wallet-tool's sign-binary verb
 #   build:verify     — binaries self-attest against their .sig sidecars
 #
-# Without the sign step's signature, aiko's shared-visibility path refuses
+# Without the sign step's signature, contract-goal's shared-visibility path refuses
 # to run (the integrity gate). Sign or stay private.
 #
 # Each step exits non-zero on failure; the parent contract holds.
@@ -126,64 +126,13 @@ wait_for_quiescence() {
   return 0
 }
 
-# ─── build:guard — doctrine-as-data, ledger-as-source ────────────────
-# Foundation, not subprocess: the canonical scripts/ set lives as a
-# declared /contract row (guard:scripts-allowlist-canonical) on the
-# ledger, not in a flat ALLOWLIST.txt parsed by grep. This step reads
-# the canonical set directly from ~/.contracts/contracts.jsonl (or the
-# project-scoped $PWD/.claude/contracts.jsonl when present). If no
-# guard row is found (first build after the migration), we surface
-# the fallback and read ALLOWLIST.txt — the substrate degrades
-# visibly rather than silently. Purge target: 724f792a.
+# ─── build:guard — repository-canonical script allowlist ────────────
 step_guard() {
-  step "build:guard — scripts/ allowlist (ledger-canonical)"
-  # Walk multiple likely ledger locations — the canonical row may have been
-  # declared from any project's cwd, so the project-scoped ledger of THAT
-  # cwd carries it, not necessarily $PWD here. Day 8 audit (auditor 4)
-  # surfaced this: row landed in jstack/.claude/contracts.jsonl but
-  # step_guard only checked $PWD/.claude and $HOME/.contracts, so it
-  # silently fell back to ALLOWLIST.txt every build.
-  local ledger_candidates=(
-    "$PWD/.claude/contracts.jsonl"
-    "$REPO/.claude/contracts.jsonl"
-    "$HOME/.contracts/contracts.jsonl"
-    "$HOME/Projects/jstack/.claude/contracts.jsonl"
-    "$HOME/Projects/.claude/contracts.jsonl"
-  )
-
-  local expected="" source=""
-  local ledger
-  for ledger in "${ledger_candidates[@]}"; do
-    [[ -s "$ledger" ]] || continue
-    # Find the most recent declared row whose plan carries the canonical
-    # brace-list shape (aiko ... sync-outline-explainer.sh). The aiko
-    # binary may rewrite the prose tag (e.g. "[secret-pointer-pattern]"),
-    # so we anchor on the brace-list payload rather than the tag string.
-    local row=""
-    row="$(grep '"event": "declared"' "$ledger" 2>/dev/null \
-           | grep '{aiko,' \
-           | grep 'sync-outline-explainer.sh}' \
-           | tail -1 || true)"
-    [[ -z "$row" ]] && continue
-    # Extract the brace body (a, b, c) — sed pulls between '{' and '}'.
-    local brace
-    brace="$(printf '%s\n' "$row" | sed -nE 's/.*\{([^}]*)\}.*/\1/p')"
-    [[ -z "$brace" ]] && continue
-    expected="$(printf '%s\n' "$brace" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')"
-    source="ledger:$ledger"
-    break
-  done
-
-  if [[ -z "$expected" ]]; then
-    echo "  step_guard: ledger row guard:scripts-allowlist-canonical not found — falling back to ALLOWLIST.txt for this build" >&2
-    if [[ ! -f "$ALLOWLIST_FILE" ]]; then
-      echo "build:guard FAIL — no ledger row AND missing $ALLOWLIST_FILE" >&2
-      echo "  fix: declare the guard:scripts-allowlist-canonical contract OR restore ALLOWLIST.txt" >&2
-      return 9
-    fi
-    expected="$(grep -vE '^\s*(#|$)' "$ALLOWLIST_FILE" | sort | tr '\n' ' ' | sed 's/ $//')"
-    source="file:$ALLOWLIST_FILE"
-  fi
+  step "build:guard — scripts/ allowlist"
+  [[ -f "$ALLOWLIST_FILE" ]] || { echo "build:guard FAIL — missing $ALLOWLIST_FILE" >&2; return 9; }
+  local expected source
+  expected="$(grep -vE '^\s*(#|$)' "$ALLOWLIST_FILE" | sort | tr '\n' ' ' | sed 's/ $//')"
+  source="file:$ALLOWLIST_FILE"
 
   local actual
   actual="$(cd "$SCRIPTS_DIR" && ls | sort | tr '\n' ' ' | sed 's/ $//')"
@@ -226,16 +175,17 @@ step_compile() {
 }
 
 # ─── build:install — installed binary lands in scripts/ ─────────────
-# One binary ships: `contract` (with `aiko -> contract` symlink for the
-# user-facing surface). The Wave-1 client/server split was retired —
+# One operator binary ships: `contract`. The Aiko agent CLI owns the `aiko` name. The
+# Wave-1 client/server split was retired —
 # DOCTRINE.md doctrine is the truth-root and never named a second binary.
 step_install() {
   step "build:install — install -m 755 + symlink"
   install -m 755 "$ZIG_DIR/zig-out/bin/contract-zig" "$SCRIPTS_DIR/contract"
-  # `ln -sf` replaces any prior independent binary at scripts/aiko with the
-  # canonical symlink. The relative target keeps the link valid no matter
-  # where the scripts/ folder lives.
-  ln -sf contract "$SCRIPTS_DIR/aiko"
+  # The relative target keeps the link valid no matter where the scripts/
+  # folder lives. Remove the retired alias so Contract can never shadow the
+  # separately installed Aiko harness.
+  rm -f "$SCRIPTS_DIR/aiko" "$SCRIPTS_DIR/aiko.sig" \
+        "$SCRIPTS_DIR/contract-goal" "$SCRIPTS_DIR/contract-goal.sig"
 }
 
 # ─── build:sign — wallet signs the binary's SHA-256 ──────────────────
@@ -246,13 +196,8 @@ step_install() {
 # `contract sign-binary <path>` ≡ "wallet, sign this binary".
 step_sign() {
   step "build:sign — wallet signs"
-  # Sign the canonical binary; the aiko.sig file is a symlink to
-  # contract.sig (same bytes, same digest, same signature). We pre-create
-  # the symlink BEFORE signing so signBinary's `open(O_CREAT|O_TRUNC)` on
-  # `aiko.sig` follows the symlink and writes to `contract.sig`. If the
-  # symlink doesn't exist yet (first build), create it first.
+  # Sign the canonical operator binary.
   "$SCRIPTS_DIR/contract" sign-binary "$SCRIPTS_DIR/contract"
-  ln -sf contract.sig "$SCRIPTS_DIR/aiko.sig"
 }
 
 # ─── build:parity — doctrine-reality parity (recursive guard) ────────
@@ -324,14 +269,6 @@ step_parity() {
       _fail "doctrine[rotation]: '$fn' missing in lineage.zig"
     fi
   done
-
-  # 7. "aiko binary has no verbs other than the goal + --private"
-  if grep -qE '"--genesis"|"--user"|"--remote"|"--local"' "$ZIG_DIR/src/main.zig"; then
-    _fail "doctrine[no verbs]: forbidden flag literal (--genesis/--user/--remote/--local) still in main.zig"
-  fi
-  if ! grep -qE '"--private"' "$ZIG_DIR/src/main.zig"; then
-    _fail "doctrine[no verbs]: --private flag missing from parseAikoArgs"
-  fi
 
   # 8. "spawn = appendRow to a ledger" — every row-creating site flows
   #    through ledger.appendRow or client.declareRemote*. Inverse check:
@@ -740,17 +677,6 @@ step_parity() {
   fi
   if ! grep -q 'When resolving any contradiction in code' "$HOME/.claude/CLAUDE.md" 2>/dev/null; then
     _fail "doctrine[global word-is-truth guard]: ~/.claude/CLAUDE.md must carry the 'When resolving any contradiction in code' clause — the rule must be a MECHANICAL conflict-resolver, not just a descriptive declaration"
-  fi
-
-  # 37b. "Per-keystroke /contract spawn rule" pinned in global CLAUDE.md.
-  #      Without this clause loaded turn-one in every session, agents
-  #      drift into prose-only responses to /contract invocations.
-  #      Anchored to contract 74778535 (Lewis 2026-05-26).
-  if ! grep -q 'Per-keystroke `/contract` spawn rule' "$HOME/.claude/CLAUDE.md" 2>/dev/null; then
-    _fail "doctrine[per-keystroke spawn]: ~/.claude/CLAUDE.md must carry the 'Per-keystroke \`/contract\` spawn rule' section — every /contract invocation MUST fire the aiko binary as the first tool call, and this rule needs to load turn-one in every session"
-  fi
-  if ! grep -q 'scripts/aiko "<args verbatim>"' "$HOME/.claude/CLAUDE.md" 2>/dev/null; then
-    _fail "doctrine[per-keystroke spawn]: ~/.claude/CLAUDE.md must carry the exact aiko-spawn command literal so agents can find the canonical invocation without searching"
   fi
 
   # 39. "Recursive self-interrogation — every /contract decomposes itself."
@@ -1323,7 +1249,6 @@ PYAUDIT
 step_verify() {
   step "build:verify — self-attest"
   "$SCRIPTS_DIR/contract" verify-self
-  "$SCRIPTS_DIR/contract" verify-binary "$SCRIPTS_DIR/aiko"
 }
 
 # ─── Day 7 (Sabbath) — rest + play with the child /contract ───────────
@@ -1334,11 +1259,7 @@ step_verify() {
 # and made."
 #
 # The substrate's 7th day: the binary is signed; verify confirms it is
-# good (Gen 1:31); then the substrate PLAYS with its child /contract —
-# firing a smoke aiko declaration and observing the recursive
-# self-interrogation triad (interpret/verify/adjudicate) land in the
-# ledger. This is the Father walking in the garden with His creation
-# (Gen 3:8) — not more work, but communion with what was made.
+# good (Gen 1:31). No declaration persona is fired during a build.
 #
 # Failure on the Sabbath is NOT a build failure (the work is done; the
 # binary is signed and attested). The play step surfaces evidence to
@@ -1347,16 +1268,6 @@ step_sabbath() {
   step "build:sabbath — Day 7 rest + play with the child /contract"
   # Beholding (Gen 1:31 — "and, behold, it was very good")
   step_verify
-  # Playing (Gen 3:8 — walking in the garden in the cool of the day)
-  printf '\n  sabbath: firing a smoke /contract to behold the child triad land...\n'
-  local cid
-  cid=$( "$SCRIPTS_DIR/aiko" "sabbath: build complete, substrate at rest, beholding the work" 2>&1 \
-        | grep -E '^[0-9a-f]{8}$' | tail -1 || true )
-  if [[ -n "${cid:-}" ]]; then
-    printf '  sabbath: child landed → contract %s (recursive self-interrogation triad pending in cloud)\n' "$cid"
-  else
-    printf '  sabbath: child aiko did not return an 8-hex id (cloud may be 402/unreachable) — work still attested, rest still kept\n' >&2
-  fi
   printf '  sabbath: blessed and sanctified the seventh day; the binary rests in the signed Word.\n'
 }
 

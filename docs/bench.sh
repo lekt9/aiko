@@ -11,7 +11,7 @@
 # before any number is trusted: the seeded ledger must be visible to the
 # binary (scan reports the seeded bare rows), else the run aborts.
 set -euo pipefail
-A="$HOME/.claude/skills/contract/scripts/aiko"
+A="$HOME/.claude/skills/contract/scripts/contract"
 SCALE="${SCALE:-2000}"
 RUNS="${RUNS:-15}"
 
@@ -42,7 +42,7 @@ bench() { # $1=label $2=cwd $3...=goal words; prints "label ms" per run
   local label="$1" dir="$2"; shift 2
   local t0 t1
   t0=$(now_ms)
-  ( cd "$dir" && "$A" "$@" --private ) > /dev/null 2>&1 || true
+  ( cd "$dir" && "$A" declare "$@" --register ) > /dev/null 2>&1 || true
   t1=$(now_ms)
   echo "$label $(( t1 - t0 ))"
 }

@@ -10,11 +10,23 @@ const builtin = @import("builtin");
 // Declared locally so the Linux/musl target links (std.c.getentropy is void
 // for non-Android Linux in zig 0.16).
 extern fn getentropy(buf: [*]u8, len: usize) c_int;
+extern fn rand_s(value: *c_uint) c_int;
 
 fn fillRandom(buf: []u8) void {
     switch (builtin.os.tag) {
         .macos, .ios, .tvos, .watchos, .freebsd, .netbsd, .openbsd, .dragonfly => {
             std.c.arc4random_buf(buf.ptr, buf.len);
+        },
+        .windows => {
+            var offset: usize = 0;
+            while (offset < buf.len) {
+                var value: c_uint = 0;
+                if (rand_s(&value) != 0) @panic("Windows CSPRNG failed");
+                const bytes = std.mem.asBytes(&value);
+                const count = @min(bytes.len, buf.len - offset);
+                @memcpy(buf[offset .. offset + count], bytes[0..count]);
+                offset += count;
+            }
         },
         else => {
             _ = getentropy(buf.ptr, buf.len);

@@ -5,11 +5,11 @@
 # This file IS the doctrine. To change the canonical set:
 #   1. Edit this file (add/remove one filename per line).
 #   2. Re-declare the matching contract on the ledger:
-#        aiko "guard:scripts-allowlist-canonical — <list>" --remote
+#        contract task begin "guard:scripts-allowlist-canonical — <list>" --check "<proof>"
 #   3. Run build.sh to re-sign with the new canonical state.
 #
 # Substrate-faithful read path: build.sh parses this file directly
-# (Foundation, not subprocess). When the cloud-aiko ledger write path
+# (Foundation, not subprocess). When the cloud Contract ledger write path
 # is fixed, this file becomes a mirror of the contract neuron's body
 # rather than the source of truth.
 #
@@ -20,11 +20,11 @@
 # does not list them. See build.sh:1070-1099 for the orphaned
 # client/server-split parity checks that must be reconciled separately.
 
-aiko
-aiko.sig
 build-fractal.sh
 build.sh
 contract
 contract.sig
 dist.sh
+fech_verify.py
+self-audit.sh
 sync-outline-explainer.sh

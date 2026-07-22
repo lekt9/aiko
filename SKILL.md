@@ -66,10 +66,9 @@ with history (many have stale rows with broken temp dirs/worktrees), it will
 loop indefinitely. Use `contract task begin --check` instead — it scopes to
 a single task and completes instantly.
 
-`contract declare` is reserved for:
-- Shared cloud compiler graphs (`aiko "<goal>"`)
-- On-chain anchor declarations
-- User explicitly requests shared/remote compilation
+`contract declare` is reserved for low-level ledger maintenance, on-chain
+anchors, and explicitly requested remote compilation. Ordinary work uses
+checked tasks.
 
 ### Task lifecycle (preferred for local work)
 

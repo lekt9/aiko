@@ -38,7 +38,7 @@ the public edge. This repo (`~/.agent-skills/contract/`) is closed.
 The thin client is a **protocol speaker**, not a port of the substrate:
 - Wire format (declare payload + response envelope) — stable surface, re-implemented in TS
 - Wallet bootstrap — three-tier ladder adapted for Node (fs-only, no Keychain shellout)
-- Binary-stdin convention — when the local aiko binary IS installed, the
+- Binary-stdin convention — when the local contract-goal persona IS installed, the
   thin client pipes to it; when not, falls through to cloud HTTP
 - Tunnel client — ripped from chisel/rathole/yamux/noise; the relay
   (`contract-tunnel-relay`) already exists separately

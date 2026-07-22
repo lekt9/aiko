@@ -83,21 +83,9 @@ const lineage_lib = @import("contract").Lineage;
 const HkdfSha256 = std.crypto.kdf.hkdf.HkdfSha256;
 const X25519 = std.crypto.dh.X25519;
 const ChaCha20Poly1305 = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
-// Persona is selected at RUNTIME from argv[0]'s basename. One binary, two
-// faces: invoked as `aiko` → declare-only (no verbs, just the goal +
-// optional --private); invoked as anything else (canonical `contract`) →
-// full verb dispatcher. The previous compile-time discriminator
-// (`build_options.binary_name`) produced two byte-different binaries; the
-// runtime path lets one binary serve both via a symlink (`aiko -> contract`)
-// without behavior drift.
-//
-// Both globals are initialised exactly once at the top of `main` BEFORE any
-// dispatch reads them. They are `var` because Zig requires runtime-computed
-// values to live in mutable globals (or be threaded through every callsite);
-// init-once-then-read matches the substrate's existing style for ambient
-// process state. After `main` initialises them they are never written again.
+// Contract has one operator-facing command surface. Aiko owns the user-facing
+// `aiko` name and links the deterministic kernel through libcontract.
 var BINARY_NAME: []const u8 = "contract";
-var AIKO_DECLARE_ONLY: bool = false;
 var invocation_trace_buf: [96]u8 = undefined;
 var invocation_trace_len: usize = 0;
 var invocation_last_event_buf: [96]u8 = undefined;
@@ -299,49 +287,24 @@ fn substrateEvidence(comptime fmt: []const u8, args: anytype) void {
 
 fn usage() void {
     errPrint("{s} {s}\n\nUsage:\n", .{ BINARY_NAME, VERSION });
-    if (AIKO_DECLARE_ONLY) {
-        errPrint(
-            \\  {s} "<truth claim>" [--private]
-            \\
-            \\No verbs, no env knobs, no escape hatches. The substrate
-            \\reads only the goal and an optional visibility flag;
-            \\lineage, hooks, adapters, and child neurons are
-            \\server-determined.
-            \\
-            \\Default (no flag) → shared visibility. The row joins the
-            \\substrate's shared graph: cloud declare via Unbrowse;
-            \\failed or unpaid requests remain visible and retryable;
-            \\there is no local inference fallback.
-            \\
-            \\--private → never leaves this machine. Runs the one-shot
-            \\Genesis-days lifecycle against the on-disk ledger only.
-            \\Use when the goal contains PII, secrets, or anything the
-            \\operator does not want federated.
-            \\
-            \\The vocabulary is visibility, not transport.
-            \\
-        , .{BINARY_NAME});
-        return;
-    }
     errPrint(
         \\  {s} declare <truth-claim>
         \\  {s} task begin "<task>" --check "<command>"
         \\  {s} task status <id>
         \\  {s} task verify <id>
+        \\  {s} evidence record <source> <trace> <node> <role> <kind> <state> [parent|-] [reason]
         \\
-    , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
-    if (!AIKO_DECLARE_ONLY) {
-        errPrint(
-            \\  {s} recommend <goal>
-            \\  {s} status [<id>]
-            \\  {s} events [--trace <id>]
-            \\  {s} watch [<trace-id>] [--json]
-            \\  {s} explain <trace-id>
-            \\  {s} tick [--every <seconds>]
-            \\  {s} import-root <seed-file>
-            \\
-        , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
-    }
+    , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
+    errPrint(
+        \\  {s} recommend <goal>
+        \\  {s} status [<id>]
+        \\  {s} events [--trace <id>]
+        \\  {s} watch [<trace-id>] [--json]
+        \\  {s} explain <trace-id>
+        \\  {s} tick [--every <seconds>]
+        \\  {s} import-root <seed-file>
+        \\
+    , .{ BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME, BINARY_NAME });
 }
 
 fn causalEventsPath(path_buf: []u8) ?[:0]u8 {
@@ -2002,12 +1965,11 @@ fn walletPermissionReject(allocator: std.mem.Allocator, env: std.process.Environ
     return null;
 }
 
-/// Drill C — runtime self-attest before ledger mutation. When
-/// CONTRACT_REQUIRE_SIGNED=1 (opt-in for now; will flip default later) every
-/// declare verifies the running binary's own SHA-256 against the lineage
-/// signing key before any ledger row is appended. Tampered binaries are
-/// refused with a NAMED cause; without the env var we emit an evidence
-/// line only.
+/// Drill C — runtime self-attest before ledger mutation. Every declaration
+/// verifies the running binary's own SHA-256 against the active lineage
+/// signing key before any ledger row is appended. Missing, stale, foreign, or
+/// tampered signatures fail closed with a named cause. Read-only and explicit
+/// bootstrap/signing verbs dispatch outside this mutation preflight.
 fn binaryAttestReject(allocator: std.mem.Allocator, env: std.process.Environ) ?[]const u8 {
     var exe_buf: [4096]u8 = undefined;
     var buf_size: u32 = exe_buf.len;
@@ -2015,8 +1977,9 @@ fn binaryAttestReject(allocator: std.mem.Allocator, env: std.process.Environ) ?[
     const exe_len = std.mem.indexOfScalar(u8, &exe_buf, 0) orelse exe_buf.len;
     const exe_path = exe_buf[0..exe_len];
     lineage_lib.verifyBinary(allocator, env, exe_path) catch |e| {
-        substrateEvidence("binary-attest: WARN self-verify failed ({s})\n", .{@errorName(e)});
-        return null;
+        substrateEvidence("binary-attest: REFUSED self-verify failed ({s})\n", .{@errorName(e)});
+        return std.fmt.allocPrint(allocator, "binary self-attestation failed ({s})", .{@errorName(e)}) catch
+            "binary self-attestation failed";
     };
     return null;
 }
@@ -4002,9 +3965,8 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
     else
         null;
     defer if (parsed_agency) |*parsed| parsed.deinit();
-    // Drills B + C — preflight: wallet permission and binary self-attest.
-    // Both fail-closed only when their strict env flag is set; otherwise emit
-    // a WARN evidence line so the caller sees the gap without breaking flow.
+    // Drills B + C — fail-closed wallet permission and binary self-attest
+    // preflight before declaration mutates the ledger.
     if (walletPermissionReject(allocator, env)) |cause| {
         errPrint("declare refused: {s}\n", .{cause});
         return 2;
@@ -4030,24 +3992,6 @@ fn cmdDeclare(allocator: std.mem.Allocator, env: std.process.Environ, args: []co
     // Honor an explicit --action (e.g. "git commit" — names the binary for the EBM
     // router); fall back to inferring the action type from the plan when omitted.
     const action = d.action orelse actionFromPlan(d.plan);
-    if (AIKO_DECLARE_ONLY) {
-        const safe_plan = redactAikoPlan(allocator, d.plan) catch |e| {
-            errPrint("aiko privacy guard failed: {s}\n", .{@errorName(e)});
-            return 2;
-        };
-        defer allocator.free(safe_plan);
-        const body = client.declareRemoteAiko(allocator, env, safe_plan, action, null, null, null, null, null, null, null) catch |e| {
-            errPrint("aiko declare failed against Unbrowse: {s}\n", .{@errorName(e)});
-            return 2;
-        };
-        defer allocator.free(body);
-        const id = jsonString(body, "id") orelse {
-            err("remote declare response missing id\n");
-            return 2;
-        };
-        outPrint("{s}\n", .{id});
-        return 0;
-    }
     if (client.isRemoteMode(env)) {
         if (parsed_agency != null) {
             err("remote declare does not yet negotiate agency schema v1; refusing semantic downgrade\n");
@@ -5337,9 +5281,6 @@ fn cmdSpeak(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     }
 }
 
-/// Backward-compat alias. `aiko ...` and `contract <claim>` both route here.
-const cmdAikoGoal = cmdSpeak;
-
 /// ────────── cmdOpenAi ──────────
 /// OpenAI-compatible adapter. Reads a Chat Completions JSON request from
 /// stdin, extracts the last user message, routes through the same remote
@@ -6295,8 +6236,12 @@ fn cmdTask(allocator: std.mem.Allocator, env: std.process.Environ, args: []const
         }
 
         const check = declared.action["shell:".len..];
+        // A retry is a new causal attempt, not a rewrite of attempt 1. The
+        // iteration wave is already the durable per-task attempt counter, so
+        // use its successor consistently for ledger and event identities.
+        const attempt = latestWave(rows, id) +| 1;
         var action_event_buf: [64]u8 = undefined;
-        const action_event_id = std.fmt.bufPrint(&action_event_buf, "task-action-{s}-1", .{id}) catch id;
+        const action_event_id = std.fmt.bufPrint(&action_event_buf, "task-action-{s}-{d}", .{ id, attempt }) catch id;
         const task_trace = std.fmt.allocPrint(allocator, "task-{s}", .{id}) catch id;
         defer if (task_trace.ptr != id.ptr) allocator.free(task_trace);
         const now_ms = @as(i64, time(null)) * 1000;
@@ -6324,9 +6269,9 @@ fn cmdTask(allocator: std.mem.Allocator, env: std.process.Environ, args: []const
         var digest_hex: [64]u8 = undefined;
         lineage_lib.bytesToHex(&digest, &digest_hex);
         var sensor_event_buf: [64]u8 = undefined;
-        const sensor_event_id = std.fmt.bufPrint(&sensor_event_buf, "task-sensor-{s}-1", .{id}) catch id;
+        const sensor_event_id = std.fmt.bufPrint(&sensor_event_buf, "task-sensor-{s}-{d}", .{ id, attempt }) catch id;
         var anchor_buf: [64]u8 = undefined;
-        const anchor_id = std.fmt.bufPrint(&anchor_buf, "task-anchor-{s}-1", .{id}) catch id;
+        const anchor_id = std.fmt.bufPrint(&anchor_buf, "task-anchor-{s}-{d}", .{ id, attempt }) catch id;
         var evidence_buf: [64]u8 = undefined;
         const evidence_id = std.fmt.bufPrint(&evidence_buf, "digest-{s}", .{digest_hex[0..16]}) catch id;
         activity_log.recordEvent(.{
@@ -6345,9 +6290,9 @@ fn cmdTask(allocator: std.mem.Allocator, env: std.process.Environ, args: []const
             .independence_class = "local-command-runner",
             .effect_scope = "local_read",
         });
-        try contract.recordIteration(allocator, env, id, 1, capture.rc, capture.output);
+        try contract.recordIteration(allocator, env, id, attempt, capture.rc, capture.output);
         var evaluator_event_buf: [64]u8 = undefined;
-        const evaluator_event_id = std.fmt.bufPrint(&evaluator_event_buf, "task-evaluator-{s}-1", .{id}) catch id;
+        const evaluator_event_id = std.fmt.bufPrint(&evaluator_event_buf, "task-evaluator-{s}-{d}", .{ id, attempt }) catch id;
         activity_log.recordEvent(.{
             .event_id = evaluator_event_id,
             .trace_id = task_trace,
@@ -6373,7 +6318,7 @@ fn cmdTask(allocator: std.mem.Allocator, env: std.process.Environ, args: []const
             return 1;
         }
 
-        try contract.markSatisfied(allocator, env, id, 1, "declared task check exited 0");
+        try contract.markSatisfied(allocator, env, id, attempt, "declared task check exited 0");
         dispatchPosthooks(allocator, env, id);
         activity_log.record("task.verify.satisfied", id);
         outPrint("verified: {s} (satisfied)\n", .{id});
@@ -6417,6 +6362,102 @@ fn readStdinJson(allocator: std.mem.Allocator) ![]u8 {
         if (buf.items.len > 4 * 1024 * 1024) break; // 4 MiB cap
     }
     return try buf.toOwnedSlice(allocator);
+}
+
+/// Native evidence boundary for external sensors such as ARC environments.
+/// Rich payloads arrive only on stdin, are validated as JSON, stored in the
+/// private content-addressed blob store, and referenced from both the semantic
+/// ledger and the redacted schema-v1 causal event stream. The CLI never accepts
+/// evidence payloads as argv, preventing shell-history disclosure.
+fn cmdEvidence(allocator: std.mem.Allocator, env: std.process.Environ, args: []const []const u8) !u8 {
+    if (args.len < 7 or args.len > 9 or !std.mem.eql(u8, args[0], "record")) {
+        err("usage: contract evidence record <source> <trace> <node> <role> <kind> <state> [parent|-] [reason]\n");
+        return 2;
+    }
+    const source_id = args[1];
+    const trace_id = args[2];
+    const node_id = args[3];
+    const role = args[4];
+    const kind = std.meta.stringToEnum(contract.event_schema.EventKind, args[5]) orelse {
+        err("evidence: unknown event kind\n");
+        return 2;
+    };
+    const state = std.meta.stringToEnum(contract.event_schema.EventState, args[6]) orelse {
+        err("evidence: unknown event state\n");
+        return 2;
+    };
+    const parent: ?[]const u8 = if (args.len >= 8 and !std.mem.eql(u8, args[7], "-")) args[7] else null;
+    const reason: ?[]const u8 = if (args.len == 9) args[8] else null;
+    const payload = try readStdinJson(allocator);
+    defer allocator.free(payload);
+    if (payload.len == 0 or payload.len > 4 * 1024 * 1024) {
+        err("evidence: payload must be 1..4194304 bytes\n");
+        return 2;
+    }
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, payload, .{}) catch {
+        err("evidence: stdin is not valid JSON\n");
+        return 2;
+    };
+    defer parsed.deinit();
+
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(payload, &digest, .{});
+    var hex_buf: [64]u8 = undefined;
+    const hex = sha256Hex(digest, &hex_buf);
+    const dir = try resolveBlobsDir(allocator, env);
+    defer allocator.free(dir);
+    const dir_z = try allocator.dupeZ(u8, dir);
+    defer allocator.free(dir_z);
+    _ = std.c.mkdir(dir_z.ptr, 0o700);
+    const blob_path = try std.fs.path.join(allocator, &.{ dir, hex });
+    defer allocator.free(blob_path);
+    const blob_path_z = try allocator.dupeZ(u8, blob_path);
+    defer allocator.free(blob_path_z);
+    var st: c_stat = .{};
+    if (stat(blob_path_z.ptr, &st) != 0) {
+        var flags: std.c.O = .{};
+        flags.ACCMODE = .WRONLY;
+        flags.CREAT = true;
+        flags.EXCL = true;
+        const fd = std.c.open(blob_path_z.ptr, flags, @as(c_uint, 0o600));
+        if (fd < 0) return error.EvidenceBlobOpenFailed;
+        defer _ = std.c.close(fd);
+        writeFd(fd, payload);
+    }
+
+    var pointer_buf: [96]u8 = undefined;
+    const pointer_str = try std.fmt.bufPrint(&pointer_buf, "sha256-private:{s}", .{hex});
+    try contract.appendEvidenceRow(allocator, env, source_id, pointer_str, "private", payload.len);
+    var evidence_buf: [80]u8 = undefined;
+    const evidence_id = try std.fmt.bufPrint(&evidence_buf, "digest-{s}", .{hex[0..16]});
+    var tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&tv, null);
+    var event_buf: [96]u8 = undefined;
+    const event_id = try std.fmt.bufPrint(
+        &event_buf,
+        "evidence-{d}-{d}-{s}",
+        .{ std.c.getpid(), tv.usec, hex[0..12] },
+    );
+    const event = contract.event_schema.CausalEvent{
+        .event_id = event_id,
+        .trace_id = trace_id,
+        .node_id = node_id,
+        .parent_event_id = parent,
+        .contract_id = source_id,
+        .purpose_id = "arc-causal-learning",
+        .role = role,
+        .kind = kind,
+        .state = state,
+        .timestamp_ms = @as(i64, tv.sec) * 1000 + @divTrunc(tv.usec, 1000),
+        .evidence_id = evidence_id,
+        .independence_class = if (std.mem.eql(u8, role, "sensor")) "arc-environment" else "model-or-policy",
+        .effect_scope = "local_game",
+        .reason_code = reason,
+    };
+    try event.validate();
+    activity_log.recordEvent(event);
+    outPrint("{{\"event_id\":\"{s}\",\"evidence_id\":\"{s}\",\"pointer\":\"{s}\"}}\n", .{ event_id, evidence_id, pointer_str });
+    return 0;
 }
 
 /// `aiko build` — read a /contract JSON envelope (event=declared) from
@@ -6882,7 +6923,7 @@ fn cmdSelf(args: []const []const u8) u8 {
     // so the JSON header is built at runtime. The pending-declares retry
     // queue is surfaced as `pending_declares_retry_queue`.
     outPrint(
-        "{{ \"binary\": \"{s}\", \"implementation\": \"zig\", \"version\": \"{s}\", \"role\": \"recording/resolving harness — the calling agent plans and reasons; the harness records, resolves, caches, verifies\", \"personas\": {{\"aiko\": \"\\\"<truth claim>\\\" [--private]\", \"contract\": \"declare | recommend | status | events | watch | explain | tick | import-root\"}}, \"declare_flags\": [\"--action <ptr>\", \"--parent <id>\", \"--agency <schema-v1-json>\", \"--fast\", \"--register (default, accepted no-op)\", \"--resolve (opt-in full lifecycle)\"], \"visibility_axis\": {{\"default\": \"shared\", \"override\": \"--private\"}}, \"env_reads\": [\"HOME\"], \"unbrowse_base\": \"https://beta-api.unbrowse.ai\", \"llm_compiler_binding\": \"hardcoded\", \"ledger_store\": \"<cwd>/.claude/contracts.jsonl if <cwd>/.claude/ exists, else ~/.contracts/contracts.jsonl\", \"resolver\": {{\"one_shot\": \"tick\", \"resident\": \"tick --every <s>\", \"schedules\": [\"at:<unix-seconds>\", \"repeat:<N>s|m|h\"]}}, \"dependency_pointer\": \"contract:<id>\", \"onchain\": {{\"default\": \"disabled\", \"tool\": \"broadcast-tool (separate build; refuses without --onchain)\"}}, \"binary_self_attestation\": true, \"shapes\": [\"neuron\"], \"containment_edge\": \"parent_id\", \"cross_edges\": [\"contract-ref\"], \"pending_declares_retry_queue\": {{\"path\": \"~/.contracts/pending-declares/\", \"trigger\": \"PaymentRequired\", \"max_attempts\": 10, \"abandoned_subdir\": \"abandoned\"}} }}\n",
+        "{{ \"binary\": \"{s}\", \"implementation\": \"zig\", \"version\": \"{s}\", \"role\": \"recording/resolving harness — the calling agent plans and reasons; the harness records, resolves, caches, verifies\", \"commands\": \"declare | task | recommend | status | events | watch | explain | tick | import-root\", \"declare_flags\": [\"--action <ptr>\", \"--parent <id>\", \"--agency <schema-v1-json>\", \"--fast\", \"--register (default, accepted no-op)\", \"--resolve (opt-in full lifecycle)\"], \"env_reads\": [\"HOME\"], \"ledger_store\": \"<cwd>/.claude/contracts.jsonl if <cwd>/.claude/ exists, else ~/.contracts/contracts.jsonl\", \"resolver\": {{\"one_shot\": \"tick\", \"resident\": \"tick --every <s>\", \"schedules\": [\"at:<unix-seconds>\", \"repeat:<N>s|m|h\"]}}, \"dependency_pointer\": \"contract:<id>\", \"onchain\": {{\"default\": \"disabled\", \"tool\": \"broadcast-tool (separate build; refuses without --onchain)\"}}, \"binary_self_attestation\": true, \"shapes\": [\"neuron\"], \"containment_edge\": \"parent_id\", \"cross_edges\": [\"contract-ref\"] }}\n",
         .{ BINARY_NAME, VERSION },
     );
     return 0;
@@ -6893,16 +6934,10 @@ fn runMain(init: std.process.Init.Minimal) !u8 {
     var arena: std.heap.ArenaAllocator = .init(allocator);
     defer arena.deinit();
     const argv_z = try init.args.toSlice(arena.allocator());
-    // Persona selection from argv[0] basename — must precede any read of
-    // BINARY_NAME / AIKO_DECLARE_ONLY (usage() reads both, so even the
-    // `argv_z.len < 2` short-circuit below depends on these being set).
-    // std.fs.path.basename handles `/abs/path/to/aiko`, `./aiko`, and bare
-    // `aiko` uniformly. argv_z is guaranteed at least one element by the
-    // process loader on every supported OS; defensively fall through to
-    // the default if it isn't.
+    // Use argv[0] only for accurate help text; behavior no longer changes by
+    // basename because the redundant declaration persona was removed.
     if (argv_z.len >= 1) {
         BINARY_NAME = std.fs.path.basename(argv_z[0]);
-        AIKO_DECLARE_ONLY = std.mem.eql(u8, BINARY_NAME, "aiko");
     }
     if (argv_z.len < 2) {
         usage();
@@ -6923,17 +6958,14 @@ fn runMain(init: std.process.Init.Minimal) !u8 {
     const verb = argv_z[1];
     const read_only_task = std.mem.eql(u8, verb, "task") and argv_z.len >= 3 and
         std.mem.eql(u8, argv_z[2], "status");
-    // aiko's argv[1] is goal text, not a verb. Never copy it into the
-    // operational log; only the fixed persona action is observable.
-    activity_log.record("invocation.dispatch", if (AIKO_DECLARE_ONLY) "aiko-goal" else verb);
-    recordInvocationEvent(.started, .working, if (AIKO_DECLARE_ONLY) "aiko-goal" else verb, null);
+    activity_log.record("invocation.dispatch", verb);
+    recordInvocationEvent(.started, .working, verb, null);
     // Help is a read-only fast path. Handle it before the build wait, retry
     // sweep, wallet checks, ledger reads, or dispatch so `contract --help` and
     // `contract declare --help` can never create rows.
-    if (!AIKO_DECLARE_ONLY) {
+    {
         var help_requested = std.mem.eql(u8, verb, "--help") or
-            std.mem.eql(u8, verb, "-h") or
-            std.mem.eql(u8, verb, "help");
+            std.mem.eql(u8, verb, "-h") or std.mem.eql(u8, verb, "help");
         for (argv_z[2..]) |arg| {
             if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
                 help_requested = true;
@@ -6948,6 +6980,7 @@ fn runMain(init: std.process.Init.Minimal) !u8 {
     if (!std.mem.eql(u8, verb, "self") and
         !std.mem.eql(u8, verb, "status") and
         !std.mem.eql(u8, verb, "events") and
+        !std.mem.eql(u8, verb, "evidence") and
         !std.mem.eql(u8, verb, "watch") and
         !std.mem.eql(u8, verb, "explain") and
         !read_only_task and
@@ -6974,6 +7007,7 @@ fn runMain(init: std.process.Init.Minimal) !u8 {
     if (!std.mem.eql(u8, verb, "self") and
         !std.mem.eql(u8, verb, "status") and
         !std.mem.eql(u8, verb, "events") and
+        !std.mem.eql(u8, verb, "evidence") and
         !std.mem.eql(u8, verb, "watch") and
         !std.mem.eql(u8, verb, "explain") and
         !read_only_task and
@@ -6987,7 +7021,6 @@ fn runMain(init: std.process.Init.Minimal) !u8 {
     for (argv_z[2..], 0..) |a, i| rest[i] = a;
 
     if (std.mem.eql(u8, verb, "declare")) {
-        if (AIKO_DECLARE_ONLY) return try cmdAikoGoal(allocator, init.environ, rest);
         return try cmdDeclare(allocator, init.environ, rest);
     }
     // OpenAI-compatible adapter: stdin chat-completions JSON → stdout
@@ -6995,14 +7028,12 @@ fn runMain(init: std.process.Init.Minimal) !u8 {
     if (std.mem.eql(u8, verb, "openai") or std.mem.eql(u8, verb, "--openai")) {
         return try cmdOpenAi(allocator, init.environ, rest);
     }
-    if (AIKO_DECLARE_ONLY) {
-        return try cmdAikoGoal(allocator, init.environ, argv_z[1..]);
-    }
     if (std.mem.eql(u8, verb, "status")) return try cmdStatus(allocator, init.environ, rest);
     if (std.mem.eql(u8, verb, "events")) return cmdEvents(rest);
     if (std.mem.eql(u8, verb, "watch")) return cmdWatch(rest);
     if (std.mem.eql(u8, verb, "explain")) return cmdExplain(rest);
     if (std.mem.eql(u8, verb, "task")) return try cmdTask(allocator, init.environ, rest);
+    if (std.mem.eql(u8, verb, "evidence")) return try cmdEvidence(allocator, init.environ, rest);
     // Collapsed-verb aliases (2026-07-18): the old names stay callable but
     // route to the survivors — discover→status, search→recommend, serve→tick.
     if (std.mem.eql(u8, verb, "discover")) return try cmdStatus(allocator, init.environ, &.{});

@@ -11,7 +11,7 @@
 #
 # Each task in tasks/*.json is self-describing: {input, expected, solver}, where
 # `solver` is quote-free python operating on `g` (the input). Backfill runs
-# through the `contract` persona (aiko is the remote LLM-compile persona; offline
+# through the `contract` persona (contract-goal is the remote LLM-compile persona; offline
 # leaf execution + backfill live in the native binary). Pass a task file to run
 # just one; with no arg, runs every tasks/*.json.
 set -euo pipefail

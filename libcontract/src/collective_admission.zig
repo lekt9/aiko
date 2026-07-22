@@ -56,13 +56,25 @@ pub fn admit(
     };
     if (root.count() != 4 or !root.contains("protocol") or !root.contains("object_id") or
         !root.contains("unsigned") or !root.contains("signature")) return Error.InvalidEnvelope;
-    const protocol = switch (root.get("protocol").?) { .string => |v| v, else => return Error.InvalidEnvelope };
+    const protocol = switch (root.get("protocol").?) {
+        .string => |v| v,
+        else => return Error.InvalidEnvelope,
+    };
     if (!std.mem.eql(u8, protocol, object.PROTOCOL)) return Error.UnsupportedProtocol;
-    const object_id = switch (root.get("object_id").?) { .string => |v| v, else => return Error.InvalidObjectId };
-    const signature = switch (root.get("signature").?) { .string => |v| v, else => return Error.InvalidSignature };
+    const object_id = switch (root.get("object_id").?) {
+        .string => |v| v,
+        else => return Error.InvalidObjectId,
+    };
+    const signature = switch (root.get("signature").?) {
+        .string => |v| v,
+        else => return Error.InvalidSignature,
+    };
     if (signature.len != 136 or !std.mem.startsWith(u8, signature, "ed25519:")) return Error.InvalidSignature;
     const unsigned_value = root.get("unsigned").?;
-    const unsigned_root = switch (unsigned_value) { .object => |map| map, else => return Error.InvalidEnvelope };
+    const unsigned_root = switch (unsigned_value) {
+        .object => |map| map,
+        else => return Error.InvalidEnvelope,
+    };
     const publisher = switch (unsigned_root.get("publisher") orelse return Error.InvalidEnvelope) {
         .string => |v| v,
         else => return Error.InvalidPublisher,
@@ -101,17 +113,14 @@ test "admission verifies signed envelope and describes existing-ledger projectio
     var pub_hex: [64]u8 = undefined;
     _ = std.fmt.bufPrint(&pub_hex, "{x}", .{pair.public_key.bytes}) catch unreachable;
     const base = @embedFile("fixtures/collective-valid-capability.json");
-    const candidate = try std.mem.replaceOwned(u8, std.testing.allocator, base,
-        "0000000000000000000000000000000000000000000000000000000000000000", &pub_hex);
+    const candidate = try std.mem.replaceOwned(u8, std.testing.allocator, base, "0000000000000000000000000000000000000000000000000000000000000000", &pub_hex);
     defer std.testing.allocator.free(candidate);
     const canonical = try object.canonicalize(std.testing.allocator, candidate);
     defer canonical.deinit(std.testing.allocator);
     const signature = try pair.sign(&object.signingDigest(object.objectDigest(canonical.canonical)), null);
     var sig_hex: [128]u8 = undefined;
     _ = std.fmt.bufPrint(&sig_hex, "{x}", .{signature.toBytes()}) catch unreachable;
-    const envelope = try std.fmt.allocPrint(std.testing.allocator,
-        "{{\"protocol\":\"aiko-collective/1\",\"object_id\":\"{s}\",\"unsigned\":{s},\"signature\":\"ed25519:{s}\"}}",
-        .{ &canonical.object_id, canonical.canonical, &sig_hex });
+    const envelope = try std.fmt.allocPrint(std.testing.allocator, "{{\"protocol\":\"aiko-collective/1\",\"object_id\":\"{s}\",\"unsigned\":{s},\"signature\":\"ed25519:{s}\"}}", .{ &canonical.object_id, canonical.canonical, &sig_hex });
     defer std.testing.allocator.free(envelope);
     const accepted = try admit(std.testing.allocator, envelope, "local", "2026-08-01T00:00:00Z");
     defer accepted.deinit(std.testing.allocator);

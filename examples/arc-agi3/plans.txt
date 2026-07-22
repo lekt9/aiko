@@ -1,4 +1,4 @@
-# ARC-AGI-3 minimal tasks as /contract plans (use with aiko --private)
+# ARC-AGI-3 minimal tasks as /contract plans (use with contract-goal --private)
 # Task 1: copy-color (3x3 single cell object)
 
 # Root claim (the one we want to satisfy with correct grid)

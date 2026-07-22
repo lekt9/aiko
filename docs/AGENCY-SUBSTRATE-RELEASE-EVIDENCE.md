@@ -69,7 +69,7 @@ The build pipeline reported:
 - doctrine/reality parity: 54/54;
 - binary signing: pass;
 - `verify-self`: pass;
-- `verify-binary` for the `aiko` persona: pass;
+- `verify-self` for the sole `contract` CLI: pass;
 - signed smoke declaration: pass.
 
 ## Authority boundary

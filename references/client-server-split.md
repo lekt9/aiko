@@ -12,7 +12,7 @@ implementer should read first.
 source tree:
 
 - `scripts/contract` — built with `-Dcontract_binary_profile=client`.
-  This is the canonical operator-facing binary. `scripts/aiko -> contract`
+  This is the canonical operator-facing binary. `scripts/contract-goal -> contract`
   is the declare-only persona symlink (runtime argv[0] dispatch picks
   the persona; one binary serves both faces).
 - `scripts/contract-server` — built with `-Dcontract_binary_profile=server`.
@@ -55,7 +55,7 @@ The replacement is hard-fail-closed:
 2. The original invocation surfaces ONE evidence line ("aiko: cloud
    declare returned 402 — payload queued at pending-declares/<sha>")
    and exits with status 2.
-3. The TOP of `main` on every subsequent aiko invocation calls
+3. The TOP of `main` on every subsequent contract-goal invocation calls
    `retryQueuedDeclares` — sweeps the dir, re-POSTs each payload via
    `client.declareRemoteAiko`, deletes the file on 2xx, increments
    `attempt_count` on 402, and moves the file to

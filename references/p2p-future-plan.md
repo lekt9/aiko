@@ -87,7 +87,7 @@ collision); when they happen, Deut 19:15 quorum decides.
 
 - Each peer declares `peer:<wallet_pubkey>` with WireGuard endpoint:
   ```
-  aiko "peer:<wallet_pubkey> endpoint:<wg_ip:port> allowed_ips:<...>
+  contract-goal "peer:<wallet_pubkey> endpoint:<wg_ip:port> allowed_ips:<...>
   capabilities:<ledger,compiler,evaluator>"
   ```
 - The peer-registry IS the ledger projection — read declared peer

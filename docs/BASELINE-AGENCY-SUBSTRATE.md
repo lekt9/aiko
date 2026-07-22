@@ -69,7 +69,7 @@ and 4.028–4.030 ms at 10,000 nodes. Machine-readable results are in
 
 | Surface | Must remain compatible | Baseline |
 |---|---|---|
-| `aiko "<goal>" [--private]` | public declaration persona | present |
+| `contract task begin "<goal>" --check "<proof>"` | checked task declaration | present |
 | `contract declare` | legacy untyped declaration | present |
 | `contract task begin/status/verify` | check-backed task workflow | present |
 | `contract status` | ledger inspection | present |

@@ -187,3 +187,33 @@ test "ranking is deterministic evidence weighted and fail closed" {
     const b = std.mem.indexOf(u8, output, "blake3:bbbbbbbb").?;
     try std.testing.expect(a < b);
 }
+
+test "fresh verified failures lower only the matching capability version" {
+    const input =
+        \\[
+        \\ {"object_id":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","capability_version":"1","evidence_version":"1","semantic_score_bps":8000,"success_count":8,"failure_count":0,"independent_publishers":4,"freshness_seconds":60,"latency_bucket_ms":100,"revoked":false,"available":true},
+        \\ {"object_id":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","capability_version":"1","evidence_version":"1","semantic_score_bps":8000,"success_count":0,"failure_count":8,"independent_publishers":4,"freshness_seconds":60,"latency_bucket_ms":100,"revoked":false,"available":true},
+        \\ {"object_id":"blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","capability_version":"2","evidence_version":"1","semantic_score_bps":8000,"success_count":0,"failure_count":100,"independent_publishers":100,"freshness_seconds":1,"latency_bucket_ms":1,"revoked":false,"available":true}
+        \\]
+    ;
+    const output = try rank(std.testing.allocator, input, 3);
+    defer std.testing.allocator.free(output);
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, output, .{});
+    defer parsed.deinit();
+    const candidates = parsed.value.object.get("candidates").?.array.items;
+    try std.testing.expectEqualStrings(
+        "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        candidates[0].object.get("object_id").?.string,
+    );
+    var failed_v1: ?std.json.ObjectMap = null;
+    var mismatched_v2: ?std.json.ObjectMap = null;
+    for (candidates) |candidate| {
+        const object = candidate.object;
+        const object_id = object.get("object_id").?.string;
+        if (std.mem.startsWith(u8, object_id, "blake3:bbbb")) failed_v1 = object;
+        if (std.mem.startsWith(u8, object_id, "blake3:cccc")) mismatched_v2 = object;
+    }
+    try std.testing.expect(candidates[0].object.get("score_bps").?.integer > failed_v1.?.get("score_bps").?.integer);
+    // The v2 candidate's mismatched evidence is ignored rather than poisoning v1.
+    try std.testing.expectEqual(@as(i64, 0), mismatched_v2.?.get("features").?.object.get("reliability_bps").?.integer);
+}

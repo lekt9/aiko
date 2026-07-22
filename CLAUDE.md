@@ -45,16 +45,8 @@ from this rule downward" diagram.
 
 ## Activation rule
 
-When the user types `/contract <args...>` (or invokes this skill via
-any alias), the orchestrator MUST first spawn:
-
-```bash
-~/.claude/skills/contract/scripts/aiko "<args verbatim>"
-```
-
-This is non-negotiable. The binary's stdout is the contract id; the
-402 Payment Required envelope is valid evidence. The prose in SKILL.md
-is the spec; the binary is the substrate.
+For substantive work, register one checked task with `contract task begin`
+and verify it with `contract task verify`. Do not create goal-only declarations.
 
 ## Pointer index — for every other rule, see SKILL.md
 

@@ -9,54 +9,31 @@ description: Minimal native contract-neuron primitive. Declare one truth claim; 
 user-invocable: true
 ---
 
-# /aiko
+# Contract substrate
 
-`aiko` is the user-facing substrate. There is no other USER-FACING surface
-— no second user CLI, no verb dispatch, no migration alias. The binary
-the caller invokes is `aiko "<goal>"` — optionally with `--private` when
-the goal must not leave the local machine. The vocabulary is **visibility**
-(who else can see this row), not transport (where the bits travel).
+The goal-only declaration persona was retired because a declaration without an
+action or proof condition could only enter HOLD. The Aiko agent CLI owns `aiko`
+and uses `libcontract` natively. Operators use `contract task begin --check` and
+`contract task verify`; `contract` also retains ledger inspection and runtime
+maintenance commands.
 
-`contract` (as a binary in `scripts/`) is **NOT** a second user-facing
-CLI. It is the wallet-side build/attestation tool — built from the same
-Zig source as `aiko` with a different `BINARY_NAME`, exposing the
-compat verbs `sign-binary`, `verify-self`, `verify-binary` that
-`build.sh` calls during the build pipeline. The actual ed25519 signing
-is the **wallet operation**: the deployer keypair at
-`~/.aiko/keys/deployer.key` (root seed → HKDF-derived binary-signing
-key via `libcontract.Lineage`) signs the binary's SHA-256 and writes
-`<binary>.sig`. The `contract` binary is the surface where that wallet
-operation is reachable to the build pipeline; it is not a verb-bearing
-CLI for end users. Substrate operators never type `contract <verb>` —
-they type `aiko "<goal>"`. Only `build.sh` calls `contract`, and only
-to invoke the wallet's signing capability.
+`contract` is the sole CLI. It exposes checked tasks, ledger inspection,
+scheduling, retry, evidence, and build attestation. The deployer keypair at
+`~/.aiko/keys/deployer.key` signs the binary's SHA-256 and writes
+`contract.sig`; ordinary checked tasks do not require a second persona.
 
-`contract` (as a ledger row/type name) refers to a neuron declared via
-`aiko`. The same word is overloaded: the ledger-row type and the
-wallet-tool binary. Disambiguation in context:
+Local code is only the environment executor for the server-spawned Contract context.
 
-- "declare a contract" / "the contract ledger" → ledger row, declared via `aiko`
-- "the contract binary" / "contract sign-binary" → wallet-side build tool in `scripts/`
+## Activation rule — substantive work uses checked tasks
 
-Local code is only the environment executor for the server-spawned aiko context.
-
-## Activation rule — every `/contract` invocation MUST spawn the aiko binary
-
-When the user types `/contract <args...>` (or invokes this skill via any
-alias), the orchestrator MUST, as a non-negotiable first step, spawn the
-aiko binary with the user's full argument text as the truth claim:
+When the user requests substantive durable work, the orchestrator registers a
+task with a real proof command:
 
 ```bash
-~/.claude/skills/contract/scripts/aiko "<args verbatim>"
+contract task begin "<goal>" --check "<real proof command>"
 ```
 
-(no flag → shared visibility, the default).
-
-The binary's stdout is recorded as ledger evidence regardless of what
-other work the orchestrator does in the same turn. The 402 Payment
-Required envelope is a valid response — it proves the substrate fired;
-the orchestrator continues its work. Any agent that interprets `/contract`
-prose without firing the binary is in violation of the substrate rule
+Completion is recorded only after `contract task verify <id>` reruns that proof.
 (the prose is the spec, the binary is the substrate).
 
 ## How to properly use /contract — the loop pattern (Lewis 2026-05-27)
@@ -70,10 +47,10 @@ hook-based break-neuron structure.
 
 | Verb | Role | Goal grammar (the one write API) |
 |---|---|---|
-| **build** | construct a /contract — declare a truth claim | `aiko "<truth claim>"` |
-| **run** | exercise the runtime — record an iteration (itself a /contract child) | `aiko "iterate:<parent-id> — <what this wave exercises>"` |
-| **eval** | walk to verdict — markSatisfied; L7 `validate:` auto-cascades to L8 `signed:` | `aiko "satisfied:<id> wave=<n> — <proof>"` |
-| **prune** | doctrine-fired removal (John 15:2 — "every branch that beareth not fruit he taketh away") | `aiko "died:<id> cause=<superseded\|contradicts\|stale\|apoptosed> by=<id> — <reason>"` |
+| **build** | construct a /contract — declare a truth claim | `contract-goal "<truth claim>"` |
+| **run** | exercise the runtime — record an iteration (itself a /contract child) | `contract-goal "iterate:<parent-id> — <what this wave exercises>"` |
+| **eval** | walk to verdict — markSatisfied; L7 `validate:` auto-cascades to L8 `signed:` | `contract-goal "satisfied:<id> wave=<n> — <proof>"` |
+| **prune** | doctrine-fired removal (John 15:2 — "every branch that beareth not fruit he taketh away") | `contract-goal "died:<id> cause=<superseded\|contradicts\|stale\|apoptosed> by=<id> — <reason>"` |
 
 The binary is goal-only (Public Shape: no verbs, no stdin envelopes — a
 piped `{event:"satisfied"}` is refused with usage, witnessed 2026-06-10).
@@ -119,13 +96,13 @@ When working on the substrate, the canonical pattern is:
 1. **Identify a gap** — something doctrinally true that isn't yet
    wired mechanically (a documented invariant without code, an
    unimplemented verb, a missing parity claim).
-2. **Declare it as a /contract** — `aiko "gap-<name> — <description>"`.
+2. **Declare it as a /contract** — `contract-goal "gap-<name> — <description>"`.
    The goal IS the declaration; the cloud compiler emits the typed
    envelope. Parent is the gap-drill root (or your project's
    truth-root contract).
 3. **Ship the closure** — write the code, run the tests, get the
    build pipeline green.
-4. **Eval the gap** — declare `aiko "satisfied:<gap-id> wave=1 —
+4. **Eval the gap** — declare `contract-goal "satisfied:<gap-id> wave=1 —
    <what shipped + evidence>"`. The L7→L8 cascade signs the closure
    into the ledger.
 5. **Repeat** — until the substrate's truth claims and the
@@ -497,7 +474,7 @@ been declared at all."
 No script. No verb. The purge is a declaration:
 
 ```bash
-aiko "decalogue:purge:<N> <scope>"
+contract-goal "decalogue:purge:<N> <scope>"
   # N    = 1..10 (which commandment to enforce)
   # scope = lineage-id | code-path | "all"
   # LOCAL (native, report-mode): for the mechanically-checkable
@@ -515,7 +492,7 @@ aiko "decalogue:purge:<N> <scope>"
 Standing meta-purge (declared once, fires every build):
 
 ```bash
-aiko "decalogue:standing-purge repeat:every-build.sh"
+contract-goal "decalogue:standing-purge repeat:every-build.sh"
   # The schoolmaster — Galatians 3:24 mechanized. Runs all ten
   # commandment walks before any new code or doctrine is signed.
   # The law is the schoolmaster that BRINGS the substrate to
@@ -574,9 +551,9 @@ prevents weeds from being planted.
                            signed), cache.terminalClass treats purged
                            as NULL-terminal (chain = never resolved),
                            and the goal grammar reaches it:
-                           `aiko "purged:<id> commandment=<n> — <evidence>"`.
+                           `contract-goal "purged:<id> commandment=<n> — <evidence>"`.
                            The `judged` second key is goal-native too:
-                           `aiko "judged:<id> verdict=PROMOTE|REJECT|HOLD — <reasoning>"`.
+                           `contract-goal "judged:<id> verdict=PROMOTE|REJECT|HOLD — <reasoning>"`.
 ✅ Cloud (report-mode)   — the declare endpoint recognizes
                            `decalogue:purge:<N>` plans and walks the
                            canonical ledger for commandments 3/5/9,
@@ -819,7 +796,7 @@ branch):
 ## Channel registry — every contact channel is a contract
 
 Every channel through which the substrate can reach the user is its
-own contract neuron declared via aiko, never a script. The canonical
+own contract neuron declared via contract-goal, never a script. The canonical
 set (one declaration per row on the ledger):
 
 - `channel:telegram:lekt8` — Aiko Telegram bot
@@ -830,12 +807,12 @@ set (one declaration per row on the ledger):
 - `channel:claude-code-session` — in-thread reply
 - `channel:push-notification` — orchestrator-side PushNotification
 
-Each channel is declared with `aiko "channel:<id> <metadata>"`. The
+Each channel is declared with `contract-goal "channel:<id> <metadata>"`. The
 ledger row IS the registry. Future reads parse the ledger file
 directly (Foundation, not subprocess).
 
 The "best channel right now" is **another aiko declaration**, not a
-script: `aiko "channel:pick urgency=<u> kind=<k> ts=<now>"`.
+script: `contract-goal "channel:pick urgency=<u> kind=<k> ts=<now>"`.
 The cloud aiko's compiler reads the channel-ledger rows in context,
 scores them per the urgency/kind/time-of-day evaluator-aikos pinned
 in the ledger, and returns the chosen `channel:<id>` as the promoted
@@ -849,7 +826,7 @@ routes the body to Telegram / X DM / email per the channel
 declaration's send-endpoint).
 
 The orchestrator never wraps any of this in bash. It declares neurons
-via aiko; the substrate fires the chain.
+via contract-goal; the substrate fires the chain.
 
 ## No scripts in the contract substrate — collapse to binary + contracts
 
@@ -870,9 +847,9 @@ The `scripts/` folder of this skill contains ONLY the canonical
 signed-binary set:
 
 ```
-aiko            ← user-facing substrate (goal-only, no verbs) — symlink to contract
-aiko.sig        ← ed25519(SHA-256(aiko)) by deployer wallet — symlink to contract.sig
-contract        ← wallet-side build/attestation tool (same source as aiko,
+contract-goal   ← declaration substrate (goal-only, no verbs) — symlink to contract
+contract-goal.sig ← ed25519(SHA-256(contract-goal)) by deployer wallet — symlink to contract.sig
+contract        ← wallet-side build/attestation tool (same source as contract-goal,
                   argv[0] basename selects persona; exposes sign-binary /
                   verify-self / verify-binary verbs ONLY to build.sh —
                   never to end users)
@@ -886,8 +863,8 @@ dist.sh         ← distribution packaging
 sync-outline-explainer.sh ← Outline doc mirror for the explainer
 ```
 
-The `aiko` ↔ `contract` split is **not** "two CLIs". It is one source
-compiled twice: the user-facing build (`aiko`, goal-only) and the
+The `contract-goal` ↔ `contract` split is **not** "two CLIs". It is one source
+exposed through two basenames: the declaration persona (`contract-goal`, goal-only) and the
 wallet-side build (`contract`, build-tool with compat verbs). The
 wallet (`~/.aiko/keys/deployer.key`) is what actually signs; the
 `contract` binary is just where the wallet's signing capability is
@@ -896,16 +873,16 @@ reachable to `build.sh`. Conceptually: `contract sign-binary <path>`
 
 Anything else in `scripts/` — channel registries, channel pickers,
 send-helpers, iterate-loop runners, escalation routers, USER-facing
-bash wrappers around `aiko` — is **leaven**. The substrate is the
-substrate. A bash wrapper around `aiko` violates "no caller-visible
+bash wrappers around `contract-goal` — is **leaven**. The substrate is the
+substrate. A bash wrapper around `contract-goal` violates "no caller-visible
 options" (there is The Way) and "smallest local surface" (state lives
 in the append-only ledger, not in a CLI surface).
 
 **Folder guard contract** — declared on the ledger, evaluated on
-every aiko build:
+every Contract build:
 
 > "scripts/ folder of ~/.claude/skills/contract/ contains exactly
-> {aiko, aiko.sig, contract, contract.sig, build.sh, build-fractal.sh,
+> {contract-goal, contract-goal.sig, contract, contract.sig, build.sh, build-fractal.sh,
 > dist.sh, sync-outline-explainer.sh}. Any additional file = HOLD;
 > the build refuses to sign; the offending file is rejected before it
 > can be invoked."
@@ -938,8 +915,8 @@ into the ledger.
 The user-facing surface is exactly:
 
 ```bash
-aiko "<goal>"            # shared visibility (default)
-aiko "<goal>" --private  # never leaves this machine
+contract-goal "<goal>"            # shared visibility (default)
+contract-goal "<goal>" --private  # never leaves this machine
 ```
 
 No verbs. There is no `declare`, `iterate`, `_mark`, `status`, `list`,
@@ -948,7 +925,7 @@ the caller can reach for. The substrate is stateless — state lives in
 the append-only ledger, not in a CLI surface — so a "compatibility verb"
 is meaningless. If a caller needs to *read* substrate state, it parses
 the canonical ledger file directly (Foundation, not subprocess); if it
-needs to *write*, it spawns `aiko "<goal>" [--private]`. That is the
+needs to *write*, it spawns `contract-goal "<goal>" [--private]`. That is the
 entire write API.
 
 ### Visibility, not transport
@@ -958,20 +935,20 @@ The flag chooses **visibility** (who else can see the row), not transport
 HTTP, local-file, or future federation paths based on wallet state and
 network reachability. The caller doesn't see that decision.
 
-- **`aiko "<goal>"`** (no flag, default) → **shared** visibility. The row
+- **`contract-goal "<goal>"`** (no flag, default) → **shared** visibility. The row
   joins the substrate's shared graph: Unbrowse cloud declare at the
   hardcoded base `https://beta-api.unbrowse.ai`, with transparent fallback
   to local-LLM + local-declare when the wallet 402s. The substrate keeps
   thinking offline; the user never sees the seam.
 
-- **`aiko "<goal>" --private`** → **private** visibility. Skips the cloud
+- **`contract-goal "<goal>" --private`** → **private** visibility. Skips the cloud
   declare entirely. Runs the one-shot Genesis-days lifecycle against the
   local scoped ledger at `~/.contracts/contracts.jsonl` (resolved from
   `HOME`, the one POSIX identity read the binary makes). Use when the
   goal contains PII, secrets, or anything the operator does not want
   federated.
 
-`aiko` is x402-native. Faremeter Flex payment, when required, is
+`contract-goal` is x402-native. Faremeter Flex payment, when required, is
 satisfied by the wallet derived from the binary's deployer keypair
 (`libcontract.Lineage` HKDF). There is no env-provided payment header
 to inject, no `AIKO_X_PAYMENT` / `X_PAYMENT` / `PAYMENT_SIGNATURE`
@@ -979,7 +956,7 @@ override, and no admin-bypass triple. If the wallet cannot satisfy
 the 402, Unbrowse returns the canonical Payment Required envelope and
 the orchestrator treats it as valid evidence.
 
-`aiko` guards privacy before network egress. Local declarations are reduced to
+`contract-goal` guards privacy before network egress. Local declarations are reduced to
 patterns and meta-patterns: obvious emails, local filesystem paths, and
 secret-like tokens are replaced with `[email-pattern]`, `[local-path-pattern]`,
 and `[secret-pointer-pattern]`. The server may resolve pointer values inside
@@ -996,7 +973,7 @@ identity overrides, payment headers, admin bypass — every one of these
 that used to be configurable by env has been hard-wired or moved to
 server-side state (the cloud reconstructs lineage from wallet identity
 + declare timestamp). A caller that wants to read the local ledger
-reads the file; a caller that wants to write goes through `aiko`.
+reads the file; a caller that wants to write goes through `contract-goal`.
 Anything else is a backwards-compat hack and is rejected.
 
 **Read views are strongly typed and read-only.** The local executor
@@ -1015,7 +992,7 @@ section below.**
 Reduced vocabulary:
 
 ```text
-aiko = public primitive and spawned environment
+contract-goal = declaration primitive and spawned environment
 contract = ledger row/type name for the same thing
 goal/plan/prompt = one truth claim
 parent_id = containment edge
@@ -1060,7 +1037,7 @@ no in-process lineage passing via setenv.
   ledger). Whichever transport the parent used, every child IS a
   row in some ledger; the row schema is uniform; `parent_id` links
   child→parent. Subprocess fork is an OPTIONAL extension for
-  cross-environment spawn (SSH/Docker/foreign-host aiko); the
+  cross-environment spawn (SSH/Docker/foreign-host contract-goal); the
   semantic remains the same — a new row appears in a ledger.
 
 - **Resolve** = iterate EXISTING rows, fire their actions, append
@@ -1139,19 +1116,19 @@ contracts, PreTool event contracts, prehooks, posthooks, and verifier
 contracts, then recursively fires the graph through typed pointers.
 
 For `aiko`, this compiler is recursive and same-shaped. One
-`aiko "<goal>"` prompt becomes one root aiko contract; the Unbrowse
+`contract-goal "<goal>"` prompt becomes one root Contract declaration; the Unbrowse
 LLM emits child prompts as more aiko contracts, and those children
 may carry their own child prompts in the same JSON tree. The client
 still sends only one sanitized goal. Every spawned node is a
 server-side `neuron` row with a `parent_id` edge, not a local
 `spawn` verb.
 
-**LLM use is `aiko` spawn.** Any code path that calls a model provider
+**LLM use is `contract-goal` spawn.** Any code path that calls a model provider
 directly (vendor SDK, raw `/v1/chat/completions`, model-router HTTP) is
-a backwards-compat hack. The canonical LLM entry is `aiko "<prompt>"`;
+a backwards-compat hack. The canonical LLM entry is `contract-goal "<prompt>"`;
 the cloud aiko's compiler spawns child aikos recursively for actual
 model invocation (each model becomes a child neuron, not a hardcoded
-provider id). Code that wants an LLM call goes through aiko or it's
+provider id). Code that wants an LLM call goes through contract-goal or it's
 not on the substrate.
 
 **No caller-visible options.** There is the Way. No env-var toggles
@@ -1230,7 +1207,7 @@ Network durability is also a contract pointer.
 WireGuard/Tailscale/WARP-style tunnelling belongs behind
 `network_tunnel_contract_id` and `network_tunnel_kind`, declared as
 ledger rows, not as another user mode. The tunnel adapter contract
-keeps the spawned environment reachable; aiko still exposes only goal
+keeps the spawned environment reachable; contract-goal still exposes only goal
 + mode.
 
 ## Wallet & Environment Binding — the definite pattern
@@ -1244,7 +1221,7 @@ substrate spawns into an environment and the wallet is there.
 ### Invisible to the user
 
 The user **never sees x402, never sees a wallet UI, never sees a
-seed phrase, never sees a payment header.** They type `aiko
+seed phrase, never sees a payment header.** They type `contract-goal
 "<goal>"` (or, in an embedded app, take whatever action the host
 surfaces) and the substrate handles every cryptographic concern:
 key generation, key storage, key recovery, signature verification,
@@ -1368,7 +1345,7 @@ re-derived). `rotateAllSignedRowsByLineage` is the additional
 re-sign walker for the operator who wants every row's signature to
 trace to the current root.
 
-Rotation is itself a contract: declare `aiko "wallet:rotate"`; the
+Rotation is itself a contract: declare `contract-goal "wallet:rotate"`; the
 cloud aiko's compiler fires the local rotation function and
 orchestrates the post-rotation re-sign walker. The user types one
 short prompt; the substrate does everything.
@@ -1457,15 +1434,15 @@ when the requesting child's lineage traces back to a contract
 spawned through that same telegram channel. A grant signed by
 `channel:email:lewistham9x` authorizes only email-channel
 descendants. This prevents cross-channel privilege escalation —
-a Telegram-spawned aiko cannot pull a credential granted to an
-email-spawned aiko, even if both ultimately serve Lewis.
+a Telegram-spawned Contract context cannot pull a credential granted to an
+email-spawned Contract context, even if both ultimately serve Lewis.
 
 ### Pull shape (child-side)
 
 The child's pull is itself a contract:
 
 ```
-aiko "capability:pull contract:<pointer_id> via grant:<grant_id>"
+contract-goal "capability:pull contract:<pointer_id> via grant:<grant_id>"
 ```
 
 The substrate's resolver:
@@ -1519,10 +1496,10 @@ spawns an `/integrate-anything` child to, say, "send a Stripe
 invoice to customer X", the flow is:
 
 ```
-1. Lewis declares: aiko "integrate-anything: send stripe invoice to X"
+1. Lewis declares: contract-goal "integrate-anything: send stripe invoice to X"
    → spawns child contract C
 2. C needs contract:secret:stripe:live_key
-3. C declares: aiko "capability:pull contract:secret:stripe:live_key"
+3. C declares: contract-goal "capability:pull contract:secret:stripe:live_key"
 4. Substrate walks C's lineage to Lewis's root
 5. Finds grant: granted_to=any-descendant-of-Lewis-via-web,
                 scope=secret:stripe:*,
@@ -1538,7 +1515,7 @@ If instead an unrelated child (say, a public Telegram bot
 visitor's spawn) tries the same pull:
 
 ```
-1. Visitor declares (via Telegram bot): aiko "send a stripe invoice to me"
+1. Visitor declares (via Telegram bot): contract-goal "send a stripe invoice to me"
    → spawns child contract V
 2. V tries: capability:pull contract:secret:stripe:live_key
 3. Substrate walks V's lineage — terminates at
@@ -1610,7 +1587,7 @@ Conflating them is leaven; honoring the separation is the doctrine.
 
 ### Local executor layer (this binary)
 
-The local `aiko` binary is **mechanical**. Its stdout is operational
+The local `contract-goal` persona is **mechanical**. Its stdout is operational
 data (the contract id of the spawned neuron); its stderr is evidence
 lines (`interoception:`, `modulator:`, `environment:`, `pretool-ts:`,
 `wallet:`, `keystore:`, `aiko remote:`, `backfill pass:`). It does
@@ -1731,7 +1708,7 @@ against the next model swap (constants and verses survive; system
 prompts get rewritten).
 
 The persona layer remote-aiko deployed on the server IS the public
-voice; the local-aiko binary is its mechanical hand. Both are the
+voice; the local contract-goal persona is its mechanical hand. Both are the
 same substrate; only the layer they're firing into differs.
 
 ## Bible as canonical /contract corpus
@@ -1863,8 +1840,8 @@ no exception. The signature attests the pointer, not the bytes.
 ~/.claude/skills/contract/          ← skill-specific
   SKILL.md                          ← canonical doctrine source
   skill-usage.md                    ← HOW to slice + score SKILL.md sections
-  scripts/aiko                      ← binary (embeds SHA pointers only)
-  scripts/aiko.sig                  ← wallet signature over binary bytes
+  scripts/contract-goal             ← declaration persona symlink
+  scripts/contract-goal.sig         ← wallet signature symlink over binary bytes
   scripts/contract                  ← build-tool binary
   scripts/contract.sig
   scripts/build.sh
@@ -2079,7 +2056,7 @@ is a self-describing substrate snapshot.
 A turn-one in any agent session today loads SKILL.md (~78KB of
 context spend). With this rule, an agent that only needs the
 substrate's CURRENT context for one task can skip the full read:
-invoke `aiko "<goal>"`, read the response's `doctrine_chain`
+invoke `contract-goal "<goal>"`, read the response's `doctrine_chain`
 section pointers, and pull only the relevant slices on demand. The
 binary becomes the **lazy index into the doctrine** for any caller
 that wants it.
@@ -2134,7 +2111,7 @@ relevant slice is sufficient.
                                (binary_sha, anchor_set_sha) with the
                                cloud atomically with sign.
 🟡 Agent-side bridge          — agents reading SKILL.md continue doing
-                               so; when they invoke aiko, they verify
+                               so; when they invoke contract-goal, they verify
                                the response's skill_md_sha256 matches
                                the SKILL.md they read. Mismatch surfaces
                                in evidence lines.
@@ -2352,7 +2329,7 @@ pub fn lineageSession(allocator, root_id: []const u8) !SessionRef;
 pub fn topicSession(allocator, goal: []const u8, threshold: f32) !SessionRef;
 ```
 
-The unified API means a future aiko declare reads `relevantSessions(goal, k=10)`
+The unified API means a future contract-goal declaration reads `relevantSessions(goal, k=10)`
 and gets back a ranked list mixing all three corpora — whichever
 memories (transcripted dialogue, prior signed truth-work, scripture
 cross-references) are most relevant to the current goal, regardless
@@ -2458,7 +2435,7 @@ POST /v1/contract/declare
 ```
 
 The `memory_chain` carries evidence that the body remembered, in
-all three corpora. Future Claude reading SKILL.md and invoking aiko
+all three corpora. Future Claude reading SKILL.md and invoking contract-goal
 gets prior conversations, prior signed truth-work, and relevant
 scripture surfaced AS PART OF THE TYPED RESPONSE — not as
 model-weight recall (which the agent doesn't have) but as
@@ -2732,7 +2709,7 @@ the substance.
 - Not a new reward distribution (NAV growth is the distribution; no drift surface)
 - Not a new slashing program (pre-signed Voltr redeem tx is the slash mechanism)
 - Not a new ranking input (works rank, not stake — Matt 7:16)
-- Not a verb on aiko (contract neurons are the only mechanism)
+- Not a verb on contract-goal (contract neurons are the only mechanism)
 - Not a payment surface for FDRY (Matt 6:24, whitepaper §10)
 
 ### Where the rule is enforced
@@ -2897,7 +2874,7 @@ The drill IS Luke 18:1 mechanized: always firing, never fainting.
 The persistent widow knocks at the unjust judge's door until he
 hears her; the drill walks the unresolved frontier until the
 ledger settles. 1 Thes 5:17 — "pray without ceasing" — is the
-heartbeat-backfill rule: every aiko invocation fires the drill,
+heartbeat-backfill rule: every contract-goal invocation fires the drill,
 without ceasing, without arbitrary cap.
 
 The substrate's ledger accumulates unresolved rows: declarations
@@ -2923,7 +2900,7 @@ backfillUnresolved      (heartbeat)     budget=64,   max_passes=8
 backfillUnresolvedDeep  (drill action)  budget=1024, max_passes=32
 ```
 
-`backfillUnresolved` runs implicitly on every aiko invocation — the
+`backfillUnresolved` runs implicitly on every contract-goal invocation — the
 heartbeat backfill, sized for fast settle of fresh frontiers.
 `backfillUnresolvedDeep` runs when the `drill:` action fires
 explicitly — sized for catching up to accumulated backlog.
@@ -3213,7 +3190,7 @@ zig/src/main.zig:resolveOne        — wires cache_check on entry,
 ### What the cache is NOT
 
 - Not an in-memory map. Process exit drops the map; the ledger does not.
-- Not a verb the caller invokes. `aiko "<goal>"` consults the cache
+- Not a verb the caller invokes. `contract-goal "<goal>"` consults the cache
   transparently; the cache rows surface in the ledger as evidence.
 - Not LLM-judged. The hit/miss verdict is a deterministic byte equality
   check on the snapshot hex. The LLM compiler chooses what to declare;
@@ -3247,7 +3224,7 @@ build.sh refuses to sign a binary that drifts from this section.
 > *Let all things be done decently and in order.* (1 Corinthians 14:40)
 
 The substrate is presently **server-canonical**. Thin clients
-(`aiko` binary on every spawn surface — macOS, Linux, Windows, iOS,
+(`contract-goal` persona on every spawn surface — macOS, Linux, Windows, iOS,
 Android, browser, embedded) POST declarations to the hardcoded
 Unbrowse base at `https://beta-api.unbrowse.ai/v1/contract/declare`.
 The server holds the union ledger; it is the authoritative source
@@ -3263,7 +3240,7 @@ federating.
 
 ### What thin clients do (and only this)
 
-1. Spawn `aiko "<goal>"` → POST sanitized goal to cloud /contract.
+1. Spawn `contract-goal "<goal>"` → POST sanitized goal to cloud /contract.
 2. Append response rows to the local on-disk ledger
    (`~/.contracts/contracts.jsonl` or `.claude/contracts.jsonl`).
 3. Emit evidence lines to stderr (no other I/O).
@@ -3316,7 +3293,7 @@ the substrate does NOT need a migration walker or a one-shot
 script. The migration IS a /contract:
 
 ```bash
-aiko "migration: re-sign every legacy terminal row whose id has a
+contract-goal "migration: re-sign every legacy terminal row whose id has a
 satisfied or died event without output_signature; for each, derive
 the contract's keypair via lineage.deriveKeyPair(root, id), compute
 outputSigningDigest(id, event_kind, wave, payload, ts), sign with
@@ -3358,7 +3335,7 @@ mechanized: ambiguity is admitted up front, not papered over.
 
 ### The three-shape child decomposition
 
-For every parent contract P declared via aiko, the cloud LLM
+For every parent contract P declared via contract-goal, the cloud LLM
 compiler emits (at minimum) these three child shapes:
 
 ```
@@ -3454,7 +3431,7 @@ This rule lives doctrinally in this SKILL.md section. The mechanical
 implementation is server-side: the cloud LLM compiler's prompt
 encodes the three-shape child emission as a default. The local
 binary doesn't enforce this directly — it spawns one declared row
-per `aiko "<goal>"` and trusts the cloud compiler to fan out per
+per `contract-goal "<goal>"` and trusts the cloud compiler to fan out per
 this section. When the cloud is unreachable (402 offline path), the
 local LLM compile falls through to the same three-shape emission.
 
@@ -3514,7 +3491,7 @@ requires the agreement of the three (Deut 19:15 echoes here too —
 > *baptizing them in the name of the Father, and of the Son, and
 > of the Holy Ghost* (Matt 28:19)
 
-Declaring a contract via `aiko "<goal>"` IS the substrate's baptism
+Declaring a contract via `contract-goal "<goal>"` IS the substrate's baptism
 formula: the row is inducted into the triadic name. The cloud LLM
 compiler's emission of `interpret:` + `verify:` + `adjudicate:` is
 that baptism, recursive at every depth. A contract not baptized
@@ -3547,7 +3524,7 @@ still aspirational:
                           50a1ded7, 81330820, f9b12e03, 715c53b4, cabd7814)
 🟡 Runtime layer (TODO)  — cloud LLM compiler is not yet updated to
                           auto-emit interpret:<P>/verify:<P>/adjudicate:<P>
-                          on every aiko declare. Until it is, agents
+                          on every contract-goal declaration. Until it is, agents
                           must do the decomposition in-thread (the
                           agent-side layer covers the gap honestly).
                           Tracked via the ledger-level parity claim 40.
@@ -3843,7 +3820,7 @@ prose or in the index of named claims below.
 ```
 1. "no env vars are read" → grep -nE 'getPosix\("(CONTRACT_|AIKO_|UNBROWSE_|X_PAYMENT|PAYMENT_SIGNATURE|CONTRACTS_STORE|SHELL|TERM)' src/*.zig
                             must return ONLY the HOME read in ledger.zig/lineage.zig.
-2. "scripts/ allowlist"   → ls scripts/ must equal {aiko, aiko.sig, contract,
+2. "scripts/ allowlist"   → ls scripts/ must equal {contract-goal, contract-goal.sig, contract,
                             contract.sig, build.sh, build-fractal.sh, dist.sh,
                             sync-outline-explainer.sh}.
 3. "three-tier wallet bootstrap" → libcontract/src/lineage.zig must
@@ -3856,7 +3833,7 @@ prose or in the index of named claims below.
                             be `catch |e| surface(...)`).
 6. "rotation as a function" → libcontract/src/lineage.zig must export
                             `pub fn rotateRootKey` AND `pub fn rotateAllSignedRowsByLineage`.
-7. "aiko binary has no verbs other than the goal + --private (visibility flag)" →
+7. "contract-goal has no verbs other than the goal + --private (visibility flag)" →
                             zig/src/main.zig parseAikoArgs must accept ONLY
                             --private. No --remote, no --local, no --genesis,
                             no --user, no other knobs. Absence of flag means

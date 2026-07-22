@@ -116,7 +116,7 @@ pub fn isKnownAction(action: []const u8) bool {
 /// Layer convention (contract:d10b3dbb): 1=system, 2=cell, 3=graph,
 /// 4=transport, 5=value, 6=operator.
 ///
-/// META-INVARIANT (Lewis 2026-05-27 gap `7783ca73`): **any prefix
+/// META-INVARIANT (Lewis 2026-05-27 gap `7783ca73`): ** any prefix
 /// that returns layer 4 is a valid edge carrier between contracts at
 /// any higher layer (5/6/7/8).** Layer 4 IS the transport layer; the
 /// substrate refuses to enumerate a fixed edge-carrier whitelist

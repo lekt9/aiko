@@ -1,18 +1,16 @@
-# /aiko
+# Contract
 
-Minimal native aiko/contract-neuron primitive. `aiko` is the public binary;
-`contract` is the ledger row/type name and compatibility alias for the same
-shape.
+Minimal native Contract-neuron primitive. `contract` is the checked-task,
+ledger, inspection, and operator surface. The separate Aiko agent harness owns
+the `aiko` command and links the kernel directly through `libcontract`.
 
 ```bash
-aiko "<goal>"             # shared (default) — declared toward the Unbrowse cloud ledger
-aiko "<goal>" --private   # local-only — never leaves this machine
+contract task begin "<goal>" --check "<real proof command>"
+contract task verify <id>
 ```
 
-The binary is the public verb. Invoked as `aiko` it accepts one goal and the
-single optional visibility flag `--private`; any other flag is refused. The
-verb surface (`declare`, `status`, `tick`, `serve`, …) rides on the `contract`
-invocation of the same binary (argv[0] selects the persona).
+There is no goal-only public persona. Aiko records conversational turns through
+the native ABI; actionable work uses checked tasks so completion has evidence.
 
 ## The governed graph
 
@@ -145,24 +143,9 @@ The causal stream is written to `.claude/events.jsonl` when the project has a
 renderer at `tools/contract-events.html` accepts that JSONL by file drop and
 makes no network requests.
 
-The shared (default) aiko path is bound to Unbrowse and x402-native:
-declarations POST to the hardcoded `https://beta-api.unbrowse.ai` — no env
-override remains. Without payment the server returns a 402
-payment-requirements envelope; that is a valid result proving the substrate
-fired, and unpaid declares queue visibly under `~/.contracts/pending-declares/`
-for retry. `--private` uses the same neuron shape against the local scoped
-ledger.
-
-`aiko` guards privacy before network egress. Local declarations are reduced to
-patterns and meta-patterns: obvious emails, local filesystem paths, and
-secret-like tokens are replaced with `[email-pattern]`, `[local-path-pattern]`,
-and `[secret-pointer-pattern]`. The server may resolve pointer values inside
-typed context, but the local binary does not leak machine-specific private
-values.
-
-Every declaration is a `neuron` row. The server-side DAG owns verifier
-selection, child spawning, evidence integration, threshold firing, and recursive
-propagation to parent and contract-ref neurons.
+Every checked task is a ledger row with an executable proof condition. Aiko's
+foreground turns use the same kernel through the native ABI without invoking
+the operator CLI.
 
 `parent_id` is the containment edge: each parent wraps the child as a new
 environment layer. `contract:<id>` is a cross-edge dependency. The Unbrowse LLM
@@ -183,17 +166,11 @@ Adapters are server-side contracts too. Local environments carry only
 Unbrowse LLM compiles the user's prompt text into the root declaration plus the
 child contract graph, including adapter, hook, and verifier contracts.
 
-For `aiko`, the compiler is recursive and same-shaped: one shared
-`aiko "<goal>"` prompt becomes a root aiko contract, and the Unbrowse LLM emits child
-prompts as more aiko contracts that may themselves carry child prompts. The
-local binary still sends only one sanitized goal; every child is appended server-side as a
-`neuron` row with a `parent_id` edge.
-
 Aiko truth is metric-gated. A node resolves true only when the declared goal is
 true against evaluator aikos bound to external metrics, ledger metrics, or API
-metrics. When the goal and its evaluators resolve true, the solved aiko is
+metrics. When the goal and its evaluators resolve true, the solved neuron is
 promoted upward as a parent-layer `contract:<id>` pointer. That pointer is the
-child's typed stdout for the parent aiko that requested it. The compiler is
+child's typed stdout for the parent neuron that requested it. The compiler is
 stateless: prompt in, typed tree out; state lives in the append-only ledger.
 
 Posthook webhooks are declared as pointers on the contract. After promotion,
@@ -202,18 +179,18 @@ a `called` row with `call_kind=posthook`. That is how local and remote aikos
 call each other after resolution: write the webhook pointer into the contract,
 then call the pointer after the contract resolves.
 
-The reduced vocabulary is: `aiko` for the primitive/environment, `contract` for
-the row type, `parent_id` for containment, `contract:<id>` for dependency
+The reduced vocabulary is: `contract` for checked task operations and the row
+type, `parent_id` for containment, `contract:<id>` for dependency
 pointers, `posthook_pointer` for after-resolution calls, `wallet_identity` for
 signing identity, `replicated_from_contract_id` for paid out-of-lineage copies,
 and `network_tunnel_contract_id` for WireGuard/Tailscale/WARP-style reachability
 adapters.
 
 There are no env knobs: the binary reads only `HOME`, and the Unbrowse
-endpoint is a hardcoded constant. The ledger resolves to
+The ledger resolves to
 `<cwd>/.claude/contracts.jsonl` when `<cwd>/.claude/` is a directory, else to
-the global `~/.contracts/contracts.jsonl`. The public command stays
-`aiko "<goal>" [--private]`.
+the global `~/.contracts/contracts.jsonl`. The public operator command is
+`contract`.
 
 ## Keychain and signing boundary
 

@@ -688,7 +688,7 @@ pub fn collectDependencyIds(
 /// The signatures are themselves pointers: each one resolves (via
 /// keypair derivation from the root + verify) to a truth-claim.
 ///
-/// **Defensive**: returns null if ANY required signature is missing —
+/// ** Defensive**: returns null if ANY required signature is missing —
 /// either the contract's declared parent_signature OR any dependency's
 /// latest terminal output_signature. The substrate REFUSES to assert
 /// a cache verdict from an incomplete pointer chain; the resolver

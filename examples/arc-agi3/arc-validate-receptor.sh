@@ -40,7 +40,7 @@ friend=aa11bb22    # the grantee
 stranger=cc33dd44  # not granted
 attacker=ee55ff66  # tries to self-authorize via a forged cross-authority grant
 
-# grant-adopt goes through the `contract` persona: the `aiko` persona compiles
+# grant-adopt goes through the `contract` persona: the `contract-goal` persona compiles
 # every non-declare arg as an LLM goal. Same root/HOME → same derived key, so
 # authority binding matches each producer's declared env_pubkey.
 ARC_CONTRACT="$ARC_ROOT/scripts/contract"

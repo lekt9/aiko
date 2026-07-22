@@ -114,7 +114,7 @@ pub fn build(b: *std.Build) void {
         .root_module = collective_conformance_mod,
     });
     const collective_run = b.addRunArtifact(collective_conformance);
-    if (b.args) |args| collective_run.addArgs(args);
+    // b.args removed in Zig 0.17 — args passthrough skipped
     const collective_step = b.step("collective-conformance", "Verify Aiko Collective golden vectors");
     collective_step.dependOn(&collective_run.step);
 
