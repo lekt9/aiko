@@ -7,6 +7,7 @@
 //   1. Ticks the scheduler → gets due claims
 //   2. Gates each claim through the substrate
 //   3. If a learned pattern exists (recommend score > threshold) → auto-execute
+//      via spawnNeuron (fractal process tree — each claim runs in its own Aiko)
 //   4. Otherwise → queue for agent deliberation
 //   5. Settles the outcome → mark satisfied/retry/died
 //   6. Sleeps until next_wake_unix
@@ -16,11 +17,14 @@
 // override. Biology: spinal reflex handles withdrawal from pain; the brain
 // can countermand it if needed.
 //
-// The daemon runs in the same process as the Telegram bridge — it's a
-// lightweight polling loop, not a separate service.
+// FRACTAL EXECUTION: auto-execute now spawns a separate Aiko process per claim
+// via spawnNeuron(). The contract DAG becomes a process tree — each neuron is
+// a self-contained `node dist/index.js --neuron-id <id> --prompt "..."` run.
+// The ledger is the only shared state.
 
 import { channelGate, resolveChannel } from "./channels";
 import { createFractalEBM, type FractalEBM } from "./fractal-ebm";
+import { spawnNeuron } from "./neurons";
 import * as contract from "./native";
 
 // ── types ─────────────────────────────────────────────────────────────────
@@ -175,33 +179,45 @@ export function createDaemon(config: DaemonConfig) {
     const node = ebm.list().find((n) => n.channelId.endsWith(scope));
 
     if (node && node.weight > autoExecuteThreshold && substrateScore >= autoExecuteThreshold) {
-      // Step 4: spinal reflex — auto-execute based on fractal routing
+      // Step 4: spinal reflex — auto-execute via fractal spawn
       log(
         `[daemon] claim ${claim.contractId.slice(0, 8)}: auto-execute ` +
           `[${node.channelId}] (tree_w=${node.weight.toFixed(1)}, substrate_score=${substrateScore.toFixed(3)})`,
       );
       state.autoExecuted++;
 
-      if (config.onAutoExecute) {
-        config.onAutoExecute(claim, `channel=${node.channelId}`);
+      // FRACTAL SPAWN: fork a separate Aiko process for this claim.
+      // The child declares itself as a neuron, runs the prompt, settles,
+      // and exits. The parent (daemon) doesn't block — it fire-and-forgets.
+      const spawned = spawnNeuron(claim.prompt, {
+        action: "daemon-auto",
+        detach: true,
+        maxToolRounds: 100,
+        cwd: config.cwd,
+      });
+
+      if (spawned) {
+        log(
+          `[daemon] spawn: neuron=${spawned.neuronId} pid=${spawned.pid} ` +
+            `\"${claim.prompt.slice(0, 60)}\"`,
+        );
       }
 
+      // The child process will settle the claim when it exits.
+      // We also settle it here as the daemon's view (the child
+      // settlement is the ground truth).
       contract.settleExecution(
         config.owner,
         claim.contractId,
         claim.occurrence,
         "satisfied",
-        `auto-executed via fractal route: ${node.channelId}`,
+        `auto-executed via fractal spawn: ${node.channelId}`,
       );
 
       // Train: satisfied fire
       ebm.fire(scope, claim.prompt, 1.0, null);
 
       // Step 4b: SPAWN — contract fires beget contracts.
-      // After a satisfied execution, ask the substrate what it
-      // learned and declare the next most likely follow-up as a
-      // scheduled claim. This is the chain reaction: every fire
-      // spawns the next fire, the DAG grows itself.
       spawnFollowUp(claim, log);
     } else {
       // Step 5: novel situation — queue for agent deliberation

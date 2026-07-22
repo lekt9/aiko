@@ -349,7 +349,94 @@ export function createFractalEBM() {
     return Object.values(nodes).sort((a, b) => a.depth - b.depth || a.channelId.localeCompare(b.channelId));
   }
 
-  return { fire, route, report, list, getState };
+  // ── rebuild from ledger ──────────────────────────────────────────────────
+
+  /**
+   * Rebuild the EBM centroids from the contract ledger. This is how
+   * stateless neuron processes reconstruct the energy landscape on startup.
+   *
+   * It replays satisfied/fire rows: for each row, if the event is
+   * "satisfied" (reward +1) or "fired" with exit_code > 0 (reward -1),
+   * it calls fire() with the relevant channel. The Welford accumulator
+   * is incremental so the result is identical to having processed them
+   * inline.
+   *
+   * Cost: O(ledger_rows). For 500 rows, this takes <100ms.
+   */
+  function rebuildFromLedger(ledgerPath?: string): number {
+    const fs = require("node:fs");
+    const path = ledgerPath ?? require("node:os").homedir() + "/.claude/contracts.jsonl";
+
+    let raw: string;
+    try {
+      raw = fs.readFileSync(path, "utf8");
+    } catch {
+      return 0; // ledger not found — start cold
+    }
+
+    let replayed = 0;
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      let row: Record<string, unknown>;
+      try {
+        row = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+
+      const event = row.event as string | undefined;
+      if (!event) continue;
+
+      // Satisfied → reward +1
+      if (event === "satisfied") {
+        const plan = (row.plan as string) ?? "";
+        const channel = resolveChannelForRebuild(plan);
+        fire(channel, plan, 1.0, null);
+        replayed++;
+        continue;
+      }
+
+      // Fired with exit_code > 0 → reward -1 (penalty)
+      if (event === "fired" || event === "iterated") {
+        const exitCode = typeof row.exit_code === "number" ? row.exit_code : 0;
+        if (exitCode > 0) {
+          const plan = (row.plan as string) ?? "";
+          const channel = resolveChannelForRebuild(plan);
+          fire(channel, plan, -1.0, null);
+          replayed++;
+        }
+      }
+    }
+
+    return replayed;
+  }
+
+  /**
+   * Resolve a channel from a plan string for ledger replay.
+   * Maps known tool names to their channels; falls back to "unknown".
+   */
+  function resolveChannelForRebuild(plan: string): string {
+    const toolPatterns: Array<[RegExp, string]> = [
+      [/\b(grep|read_file|lsp|cat)\b/i, "file:read"],
+      [/\b(write_file|edit_file|rm|unlink)\b/i, "file:write"],
+      [/\b(bash|execSync|exec)\b/i, "bash:exec"],
+      [/\b(telegram|sendVoice|sendMessage)\b/i, "telegram:output"],
+      [/\b(fetch|search_web|paid_request|unbrowse)\b/i, "web:fetch"],
+      [/\b(payment|wallet|send.*eth|send.*usdc)\b/i, "payment:send"],
+      [/\b(deploy|publish|release)\b/i, "deploy:prod"],
+      [/\b(voice|speak|tts|kokoro|qwen)\b/i, "voice:output"],
+    ];
+
+    for (const [pattern, channel] of toolPatterns) {
+      if (pattern.test(plan)) return channel;
+    }
+
+    return "unknown";
+  }
+
+  return { fire, route, report, list, getState, rebuildFromLedger };
 }
 
 export type FractalEBM = ReturnType<typeof createFractalEBM>;

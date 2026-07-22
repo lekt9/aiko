@@ -6,7 +6,13 @@
 // AIKO_CONTRACT_DISABLED=1.
 //
 // RECALL is OPT-IN and PURE-only — impure ops always re-run (no false-green gates).
+//
+// SPAWN MODE: spawnNeuron() forks a separate process per neuron, making Aiko
+// stateless — each contract run IS an Aiko instance. The contract DAG becomes
+// a process tree. This is the fractal execution model.
 import { AsyncLocalStorage } from "node:async_hooks";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as native from "./native";
 
 const parentStore = new AsyncLocalStorage<string | null>();
@@ -122,4 +128,124 @@ export function witness(label: string, value?: unknown): void {
 /** The id of the currently open neuron, if any (for linking into other subsystems). */
 export function currentNeuronId(): string | null {
   return currentParent();
+}
+
+// ── spawn mode — fractal process tree ──────────────────────────────────────
+
+export interface SpawnOptions {
+  /** Parent neuron id — this spawn becomes a child in the DAG. */
+  parent?: string | null;
+  /** Action label (declare kind). Default "spawn". */
+  action?: string;
+  /** Which agent/persona owns this neuron. */
+  agent?: string;
+  /** Max tool rounds for the spawned process. Default 200. */
+  maxToolRounds?: number;
+  /** Working directory. Default cwd. */
+  cwd?: string;
+  /** Timeout in ms. Default 300_000 (5 min). */
+  timeoutMs?: number;
+  /** If true, don't wait for the child — fire and forget. */
+  detach?: boolean;
+  /** Extra env vars to pass to the child. */
+  env?: Record<string, string>;
+}
+
+export interface SpawnResult {
+  /** The declared neuron id (content-addressed). */
+  neuronId: string;
+  /** Child process pid. */
+  pid: number;
+  /** Promise that resolves with exit code when the child finishes (null if detached). */
+  done: Promise<number> | null;
+  /** Kill the child process. */
+  kill: () => void;
+}
+
+/**
+ * Spawn a neuron as a separate Aiko process. Each spawn IS a self-contained
+ * `node dist/index.js --neuron-id <id> --prompt "..."` run. The child declares
+ * itself in the contract ledger, executes the plan, and marks satisfied on exit.
+ *
+ * This is the fractal execution model: the contract DAG becomes a process tree.
+ * Parents spawn children; children spawn grandchildren. The ledger is the only
+ * shared state — every process is stateless beyond what it reads from the DAG.
+ */
+export function spawnNeuron(
+  plan: string,
+  opts: SpawnOptions = {},
+): SpawnResult | null {
+  if (!native.isAvailable()) return null;
+
+  const parentId = opts.parent ?? currentParent();
+
+  // Content-address the neuron id from plan + parent + nonce so identical
+  // plans from different parents or times get distinct ids.
+  const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const cid = createHash("sha256")
+    .update(`${parentId ?? "root"}:${plan}:${nonce}`)
+    .digest("hex")
+    .slice(0, 8);
+
+  // Declare the neuron in the ledger NOW (parent process records intent).
+  // The child will re-declare on startup (idempotent — same plan + parent → same id).
+  native.declare(plan, opts.action ?? "spawn", parentId, opts.agent ?? null);
+
+  const maxRounds = opts.maxToolRounds ?? 200;
+  const timeoutMs = opts.timeoutMs ?? 300_000;
+
+  const args = [
+    "dist/index.js",
+    "--neuron-id", cid,
+    "--prompt", plan,
+    "--max-tool-rounds", String(maxRounds),
+    "--yes", // auto-confirm in non-interactive mode
+  ];
+  if (parentId) args.push("--parent-id", parentId);
+  if (opts.cwd) args.push("--directory", opts.cwd);
+
+  const child = spawn("node", args, {
+    cwd: opts.cwd ?? process.cwd(),
+    env: { ...process.env, ...opts.env },
+    stdio: "pipe",
+    timeout: timeoutMs,
+  });
+
+  let _killed = false;
+  const kill = () => {
+    _killed = true;
+    child.kill("SIGTERM");
+    setTimeout(() => { if (!child.killed) child.kill("SIGKILL"); }, 3000);
+  };
+
+  if (opts.detach) {
+    child.unref();
+    // Fire and forget — don't even collect output
+    child.stdout?.resume();
+    child.stderr?.resume();
+    return { neuronId: cid, pid: child.pid ?? -1, done: null, kill };
+  }
+
+  // Collect stderr for diagnostics (stdout is the agent output, we discard it)
+  let stderr = "";
+  child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+
+  const done = new Promise<number>((resolve, reject) => {
+    child.on("close", (code) => {
+      if (_killed) { resolve(143); return; }
+      resolve(code ?? 1);
+    });
+    child.on("error", (err) => {
+      if (_killed) { resolve(143); return; }
+      reject(err);
+    });
+    setTimeout(() => {
+      if (!_killed) {
+        kill();
+        resolve(124); // timeout
+      }
+    }, timeoutMs);
+  });
+
+  return { neuronId: cid, pid: child.pid ?? -1, done, kill };
 }

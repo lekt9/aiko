@@ -42,8 +42,17 @@ export {
 export { contractGate, type GateDecision, type GateResult } from "./gate";
 // ── the signed binding: declare / get / settle / gate (dylib, in-process) ────────
 export { declare, fire, get, isAvailable, isNative, markSatisfied } from "./native";
-// ── neuron scopes (turn → tool → subagent DAG) ───────────────────────────────────
-export { currentNeuronId, type NeuronOptions, openScope, settleScope, witness } from "./neurons";
+// ── neuron scopes (turn → tool → subagent DAG) + fractal spawn ────────────────────
+export {
+  currentNeuronId,
+  type NeuronOptions,
+  openScope,
+  settleScope,
+  spawnNeuron,
+  type SpawnOptions,
+  type SpawnResult,
+  witness,
+} from "./neurons";
 // ── the aiko-native planner + shared record types ────────────────────────────────
 export { contentId, type StoreEvent, type StoreRow } from "./store";
 // ── when to contract ─────────────────────────────────────────────────────────────
