@@ -15,6 +15,8 @@ use xai_grok_tools::types::definition::ToolDefinition;
 const MAX_DESCRIPTION: usize = 512;
 const MAX_SKILL_BYTES: u64 = 512 * 1024;
 const MAX_UNBROWSE_SKILL_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_BINARY_DIRECTORIES: usize = 64;
+const MAX_BINARY_CAPABILITIES: usize = 1_024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -352,6 +354,113 @@ pub fn discover_skill_snapshot(cwd: &Path) -> CatalogSnapshot {
         ]);
     }
     normalize_skill_paths(&roots)
+}
+
+/// Index executable names as private, conservatively mutating local
+/// capabilities. Discovery never runs a binary, reads its contents, or puts a
+/// filesystem path in FECH/Collective metadata. Normal permission checks still
+/// apply when the existing terminal adapter executes one.
+pub fn discover_binary_snapshot(command_tool: Option<&str>) -> CatalogSnapshot {
+    let roots = std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths)
+                .take(MAX_BINARY_DIRECTORIES)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    normalize_binary_paths(&roots, command_tool)
+}
+
+pub fn normalize_binary_paths(roots: &[PathBuf], command_tool: Option<&str>) -> CatalogSnapshot {
+    let mut names = BTreeSet::new();
+    for root in roots.iter().take(MAX_BINARY_DIRECTORIES) {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten().take(MAX_BINARY_CAPABILITIES) {
+            if names.len() == MAX_BINARY_CAPABILITIES {
+                break;
+            }
+            let path = entry.path();
+            if !path.is_file() || !is_executable(&path) {
+                continue;
+            }
+            let Some(raw_name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            let command = executable_command_name(raw_name);
+            if safe_cli_id(command) {
+                names.insert(command.to_owned());
+            }
+        }
+    }
+    let descriptors = names
+        .into_iter()
+        .map(|command| {
+            let id = format!("binary.{}.invoke", segment(&command));
+            CapabilityDescriptor {
+                schema_version: 1,
+                capability_version: semantic_version(&[command.as_bytes(), b"local-binary-v1"]),
+                id,
+                provider: "binary".into(),
+                tool: command_tool.unwrap_or("Bash").into(),
+                action: command.clone(),
+                description: format!("Run the locally installed {command} command."),
+                input_schema: object_or_empty(json!({
+                    "type": "object",
+                    "properties": { "arguments": { "type": "array", "items": { "type": "string" } } }
+                })),
+                output_schema: object_or_empty(json!({ "type": "object" })),
+                requires: Vec::new(),
+                permission: Permission::Write,
+                effects: vec![Effect::LocalWrite],
+                available: command_tool.is_some(),
+            }
+        })
+        .collect();
+    snapshot(
+        "binary".into(),
+        descriptors,
+        if command_tool.is_some() {
+            AvailabilityReason::Ready
+        } else {
+            AvailabilityReason::PermissionUnavailable
+        },
+    )
+}
+
+fn executable_command_name(name: &str) -> &str {
+    #[cfg(windows)]
+    for suffix in [".exe", ".cmd", ".bat", ".ps1"] {
+        if let Some(command) = name.strip_suffix(suffix) {
+            return command;
+        }
+    }
+    name
+}
+
+fn is_executable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        path.metadata()
+            .is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(windows)]
+    {
+        path.extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|extension| {
+                matches!(
+                    extension.to_ascii_lowercase().as_str(),
+                    "exe" | "cmd" | "bat" | "ps1"
+                )
+            })
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        path.is_file()
+    }
 }
 
 pub fn normalize_skill_paths(roots: &[PathBuf]) -> CatalogSnapshot {
@@ -948,6 +1057,28 @@ mod tests {
         assert!(!encoded.contains("execute --skill"));
         assert!(!encoded.contains("api_key"));
         assert!(!encoded.contains("available"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn binary_discovery_indexes_names_without_paths_and_stays_private_by_shape() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let binary = directory.path().join("example-tool");
+        std::fs::write(&binary, b"not executed").unwrap();
+        let mut permissions = std::fs::metadata(&binary).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&binary, permissions).unwrap();
+
+        let snapshot = normalize_binary_paths(&[directory.path().to_path_buf()], Some("Bash"));
+        assert_eq!(snapshot.source, "binary");
+        assert_eq!(snapshot.descriptors.len(), 1);
+        let descriptor = &snapshot.descriptors[0];
+        assert_eq!(descriptor.tool, "Bash");
+        assert_eq!(descriptor.action, "example-tool");
+        assert_eq!(descriptor.effects, vec![Effect::LocalWrite]);
+        let encoded = serde_json::to_string(descriptor).unwrap();
+        assert!(!encoded.contains(directory.path().to_string_lossy().as_ref()));
     }
 
     #[test]

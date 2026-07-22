@@ -9,10 +9,9 @@ use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
-use serde::Deserialize;
 use serde_json::{Value, json};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::{Path as FsPath, PathBuf};
@@ -223,14 +222,6 @@ pub async fn serve(address: SocketAddr) -> Result<()> {
         .route("/v1/contracts/{id}/retry", post(retry_contract))
         .route("/v1/contracts/{id}/cancel", post(cancel_contract))
         .route("/v1/collective", get(collective_status))
-        .route(
-            "/v1/collective/participation",
-            put(set_collective_participation),
-        )
-        .route(
-            "/v1/collective/publication-mode",
-            put(set_collective_publication_mode),
-        )
         .route("/v1/signals", post(emit_signal))
         .route("/v1/leaders", get(leaders))
         .route("/v1/agent-mail", get(agent_mail))
@@ -250,69 +241,48 @@ pub async fn serve(address: SocketAddr) -> Result<()> {
         .route("/v1/telegram/pair", post(telegram_approve_pair))
         .route("/v1/telegram/log", get(telegram_get_log))
         .route("/v1/collective/status", get(collective_status))
+        .route("/v1/collective/audit", get(collective_audit))
+        .route("/v1/collective/objects", get(collective_objects))
+        .route(
+            "/v1/collective/equivocations",
+            get(collective_equivocations),
+        )
+        .route("/v1/collective/query-local", post(collective_query_local))
+        .route("/v1/collective/discover", post(collective_discover))
+        .route("/v1/collective/review", get(collective_review_queue))
+        .route(
+            "/v1/collective/review/{object_id}/approve",
+            post(collective_review_approve),
+        )
+        .route(
+            "/v1/collective/review/{object_id}/reject",
+            post(collective_review_reject),
+        )
+        .route(
+            "/v1/collective/objects/{object_id}",
+            delete(collective_erase_object),
+        )
+        .route(
+            "/v1/collective/objects/{object_id}/revoke",
+            post(collective_revoke_object),
+        )
         .route(
             "/v1/collective/participation",
-            post(collective_set_participation),
+            put(collective_set_participation).post(collective_set_participation),
         )
         .route(
             "/v1/collective/publication-mode",
-            post(collective_set_publication_mode),
+            put(collective_set_publication_mode).post(collective_set_publication_mode),
+        )
+        .route(
+            "/v1/collective/evidence-sharing",
+            put(collective_set_evidence_sharing).post(collective_set_evidence_sharing),
         )
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .with_state(state);
     axum::serve(listener, app)
         .await
         .context("Aiko native API server failed")
-}
-
-async fn collective_status() -> Response {
-    Json(xai_grok_shell::collective_host::collective_status()).into_response()
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ParticipationRequest {
-    enabled: bool,
-}
-
-async fn set_collective_participation(Json(request): Json<ParticipationRequest>) -> Response {
-    match xai_grok_shell::collective_host::set_collective_participation(request.enabled) {
-        Ok(status) => Json(status).into_response(),
-        Err(error) => api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "collective_participation_failed",
-            &error,
-        ),
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PublicationModeRequest {
-    mode: String,
-}
-
-async fn set_collective_publication_mode(Json(request): Json<PublicationModeRequest>) -> Response {
-    let mode = match request.mode.as_str() {
-        "disabled" => xai_aiko_collective::PublicationMode::Disabled,
-        "safe_public_shapes" => xai_aiko_collective::PublicationMode::SafePublicShapes,
-        "review_every_object" => xai_aiko_collective::PublicationMode::ReviewEveryObject,
-        _ => {
-            return api_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_publication_mode",
-                "Expected disabled, safe_public_shapes, or review_every_object.",
-            );
-        }
-    };
-    match xai_grok_shell::collective_host::set_collective_publication_mode(mode) {
-        Ok(status) => Json(status).into_response(),
-        Err(error) => api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "collective_publication_mode_failed",
-            &error,
-        ),
-    }
 }
 
 async fn require_auth(State(state): State<ApiState>, request: Request, next: Next) -> Response {
@@ -396,30 +366,190 @@ async fn collective_status() -> Json<Value> {
     }))
 }
 
+async fn collective_audit() -> Response {
+    match xai_grok_shell::collective_host::collective_publication_audit() {
+        Ok(items) => Json(json!({ "schema": SCHEMA, "items": items })).into_response(),
+        Err(error) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "collective_error",
+            &error,
+        ),
+    }
+}
+
+async fn collective_objects() -> Response {
+    match xai_grok_shell::collective_host::collective_objects() {
+        Ok(items) => Json(json!({ "schema": SCHEMA, "items": items })).into_response(),
+        Err(error) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "collective_error",
+            &error,
+        ),
+    }
+}
+
+async fn collective_equivocations() -> Response {
+    match xai_grok_shell::collective_host::collective_equivocations() {
+        Ok(items) => Json(json!({ "schema": SCHEMA, "items": items })).into_response(),
+        Err(error) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "collective_error",
+            &error,
+        ),
+    }
+}
+
+async fn collective_query_local(Json(body): Json<Value>) -> Response {
+    let Some(task) = body.get("task").and_then(Value::as_str) else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "`task` is required.",
+        );
+    };
+    let limit = body.get("limit").and_then(Value::as_u64).unwrap_or(20) as u32;
+    match xai_grok_shell::collective_host::query_collective_local(task, limit) {
+        Ok(ranked) => Json(json!({ "schema": SCHEMA, "ranked": ranked })).into_response(),
+        Err(error) => api_error(StatusCode::BAD_REQUEST, "collective_error", &error),
+    }
+}
+
+async fn collective_discover(Json(body): Json<Value>) -> Response {
+    let query = match serde_json::from_value::<xai_aiko_collective::PublicQuery>(
+        body.get("query").cloned().unwrap_or(Value::Null),
+    ) {
+        Ok(query) => query,
+        Err(_) => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "`query` must contain bounded public capability_terms, operations, and effects.",
+            );
+        }
+    };
+    let limit = body.get("limit").and_then(Value::as_u64).unwrap_or(20);
+    let Ok(limit) = u16::try_from(limit) else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "`limit` is invalid.",
+        );
+    };
+    match xai_grok_shell::collective_host::discover_collective(query, limit) {
+        Ok(ranked) => Json(json!({ "schema": SCHEMA, "ranked": ranked })).into_response(),
+        Err(error) => api_error(StatusCode::BAD_REQUEST, "collective_error", &error),
+    }
+}
+
+async fn collective_review_queue() -> Response {
+    match xai_grok_shell::collective_host::collective_review_queue() {
+        Ok(items) => Json(json!({ "schema": SCHEMA, "items": items })).into_response(),
+        Err(error) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "collective_error",
+            &error,
+        ),
+    }
+}
+
+async fn collective_review_approve(Path(object_id): Path<String>) -> Response {
+    match xai_grok_shell::collective_host::approve_collective_review(&object_id) {
+        Ok(published_object_id) => Json(json!({
+            "schema": SCHEMA,
+            "publishedObjectId": published_object_id,
+        }))
+        .into_response(),
+        Err(error) => api_error(StatusCode::BAD_REQUEST, "collective_error", &error),
+    }
+}
+
+async fn collective_review_reject(Path(object_id): Path<String>) -> Response {
+    match xai_grok_shell::collective_host::reject_collective_review(&object_id) {
+        Ok(()) => Json(json!({ "schema": SCHEMA, "rejected": true })).into_response(),
+        Err(error) => api_error(StatusCode::BAD_REQUEST, "collective_error", &error),
+    }
+}
+
+async fn collective_erase_object(Path(object_id): Path<String>) -> Response {
+    match xai_grok_shell::collective_host::erase_collective_object(&object_id) {
+        Ok(status) => Json(json!({ "schema": SCHEMA, "collective": status })).into_response(),
+        Err(error) => api_error(StatusCode::BAD_REQUEST, "collective_error", &error),
+    }
+}
+
+async fn collective_revoke_object(
+    Path(object_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Response {
+    let reason = body
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("publisher_request");
+    match xai_grok_shell::collective_host::revoke_collective_object(&object_id, reason) {
+        Ok(revocation_object_id) => Json(json!({
+            "schema": SCHEMA,
+            "objectId": object_id,
+            "revocationObjectId": revocation_object_id,
+        }))
+        .into_response(),
+        Err(error) => api_error(StatusCode::BAD_REQUEST, "collective_error", &error),
+    }
+}
+
 async fn collective_set_participation(Json(body): Json<Value>) -> Response {
     let Some(enabled) = body.get("enabled").and_then(Value::as_bool) else {
-        return api_error(StatusCode::BAD_REQUEST, "invalid_request", "`enabled` must be boolean.");
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "`enabled` must be boolean.",
+        );
     };
     match xai_grok_shell::collective_host::set_collective_participation(enabled) {
         Ok(status) => Json(json!({ "schema": SCHEMA, "collective": status })).into_response(),
-        Err(error) => api_error(StatusCode::INTERNAL_SERVER_ERROR, "collective_error", &error),
+        Err(error) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "collective_error",
+            &error,
+        ),
     }
 }
 
 async fn collective_set_publication_mode(Json(body): Json<Value>) -> Response {
     let mode = match body.get("mode").and_then(Value::as_str) {
-        Some("disabled") => xai_aiko_collective::PublicationMode::Disabled,
-        Some("safe_public_shapes") => xai_aiko_collective::PublicationMode::SafePublicShapes,
-        Some("review_every_object") => xai_aiko_collective::PublicationMode::ReviewEveryObject,
-        _ => return api_error(
+        Some(mode @ ("disabled" | "safe_public_shapes" | "review_every_object")) => mode,
+        _ => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "`mode` must be disabled, safe_public_shapes, or review_every_object.",
+            );
+        }
+    };
+    match xai_grok_shell::collective_host::set_collective_publication_mode_name(mode) {
+        Ok(status) => Json(json!({ "schema": SCHEMA, "collective": status })).into_response(),
+        Err(error) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "collective_error",
+            &error,
+        ),
+    }
+}
+
+async fn collective_set_evidence_sharing(Json(body): Json<Value>) -> Response {
+    let Some(enabled) = body.get("enabled").and_then(Value::as_bool) else {
+        return api_error(
             StatusCode::BAD_REQUEST,
             "invalid_request",
-            "`mode` must be disabled, safe_public_shapes, or review_every_object.",
-        ),
+            "`enabled` must be boolean.",
+        );
     };
-    match xai_grok_shell::collective_host::set_collective_publication_mode(mode) {
+    match xai_grok_shell::collective_host::set_collective_evidence_sharing(enabled) {
         Ok(status) => Json(json!({ "schema": SCHEMA, "collective": status })).into_response(),
-        Err(error) => api_error(StatusCode::INTERNAL_SERVER_ERROR, "collective_error", &error),
+        Err(error) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "collective_error",
+            &error,
+        ),
     }
 }
 

@@ -8,8 +8,12 @@ Double-click install.cmd. The installer places Aiko in:
   %LOCALAPPDATA%\Programs\Aiko
 
 It creates Start Menu and desktop shortcuts and starts Aiko. The bundled
-aiko.exe runtime launches automatically with the desktop application; no
-separate CLI installation is required.
+aiko.exe runtime and Contract trust kernel launch automatically with the
+desktop application; no separate CLI or network daemon installation is
+required. Collective participation remains disabled until you enable it.
+The portable folder must keep contract\contract.dll in its supplied
+subdirectory beside aiko.exe and aiko-desktop.exe; it is the deterministic
+Contract trust kernel.
 
 Identity and uninstall
 ----------------------

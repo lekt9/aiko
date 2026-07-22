@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "runtime:prepare": "node scripts/prepare-runtime.mjs",
+    "package:windows": "node scripts/package-windows.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

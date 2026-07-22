@@ -61,7 +61,25 @@ pub fn render_contracts(
 
 fn render_header(buf: &mut Buffer, area: Rect, state: &ContractsState, theme: &Theme) {
     // Title line.
-    let title = "Contract Tasks";
+    let network = if state.collective.participation_enabled {
+        format!("Collective · {} peers", state.collective.connected_peers)
+    } else {
+        "Collective · offline".to_string()
+    };
+    let mode = match state.collective.publication_mode {
+        xai_aiko_collective::PublicationMode::Disabled => "private",
+        xai_aiko_collective::PublicationMode::SafePublicShapes => "safe shapes",
+        xai_aiko_collective::PublicationMode::ReviewEveryObject => "review",
+    };
+    let review = state.collective_review_ids.len();
+    let evidence = if state.collective.publish_aggregate_attestations {
+        "evidence on"
+    } else {
+        "evidence off"
+    };
+    let title = format!(
+        "Contract Tasks                    {network} · {mode} · {evidence} · {review} review"
+    );
     let subtitle = if state.loading {
         "Loading…".to_string()
     } else {
@@ -77,9 +95,23 @@ fn render_header(buf: &mut Buffer, area: Rect, state: &ContractsState, theme: &T
             .iter()
             .filter(|e| e.status == "failed")
             .count();
+        let status = &state.collective;
+        let collective = if !status.available {
+            "collective unavailable".to_owned()
+        } else if status.participation_enabled {
+            format!(
+                "collective {} peers · {} objects · {:?}",
+                status.connected_peers, status.objects, status.publication_mode
+            )
+        } else {
+            format!(
+                "collective offline · {} local objects · {:?}",
+                status.objects, status.publication_mode
+            )
+        };
         format!(
-            "{} total — {} active, {} satisfied, {} failed",
-            total, active, satisfied, failed
+            "{} total — {} active, {} satisfied, {} failed  |  {}",
+            total, active, satisfied, failed, collective
         )
     };
 
@@ -213,9 +245,10 @@ fn render_footer(buf: &mut Buffer, area: Rect, state: &ContractsState, theme: &T
     let help = if state.inspect_detail.is_some() {
         "Esc close  ↑↓ scroll".to_string()
     } else if state.entries.is_empty() {
-        "Ctrl+Shift+C close  r refresh".to_string()
+        "Ctrl+Shift+C close  r refresh  p network  m publication  e evidence  a approve  x private"
+            .to_string()
     } else {
-        "↑↓ nav  Enter inspect  r refresh  Ctrl+Shift+C close".to_string()
+        "↑↓ nav  Enter inspect  r refresh  p network  m publication  e evidence  a approve  x private  Ctrl+Shift+C close".to_string()
     };
 
     let span = Span::styled(help, Style::default().fg(theme.gray_dim));

@@ -245,6 +245,22 @@ impl SessionActor {
             })
             .collect::<Vec<_>>()
             .join("\n");
+        if let Some(answer) = crate::telegram_native::telegram_health_fast_path(&routing_goal).await
+        {
+            self.send_update(
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    acp::ContentBlock::Text(acp::TextContent::new(answer)),
+                )),
+                None,
+            )
+            .await;
+            if let Err(error) =
+                crate::session::replay_events::flush_replay_actor(&self.event_tx).await
+            {
+                tracing::warn!(?error, "Telegram health fast path replay flush failed");
+            }
+            return crate::session::commands::ok_end_turn(0, None);
+        }
         let live_tool_definitions = self.agent.borrow().tool_definitions().await;
         let dynamic_capability_route = crate::contract_native::refresh_capabilities_and_recommend(
             live_tool_definitions,

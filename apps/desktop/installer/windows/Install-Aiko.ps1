@@ -8,8 +8,9 @@ $source = Split-Path -Parent $MyInvocation.MyCommand.Path
 $payload = Join-Path $source "payload"
 $desktopExe = Join-Path $payload "aiko-desktop.exe"
 $runtimeExe = Join-Path $payload "aiko.exe"
+$contractDll = Join-Path $payload "contract.dll"
 
-if (-not (Test-Path $desktopExe) -or -not (Test-Path $runtimeExe)) {
+if (-not (Test-Path $desktopExe) -or -not (Test-Path $runtimeExe) -or -not (Test-Path $contractDll)) {
   throw "The Aiko installer payload is incomplete. Keep the payload folder beside this script."
 }
 
@@ -20,8 +21,10 @@ $startMenuLink = Join-Path $startMenuDir "Aiko.lnk"
 $uninstallLink = Join-Path $startMenuDir "Uninstall Aiko.lnk"
 
 New-Item -ItemType Directory -Force -Path $installDir, $startMenuDir | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $installDir "contract") | Out-Null
 Copy-Item -Force $desktopExe (Join-Path $installDir "aiko-desktop.exe")
 Copy-Item -Force $runtimeExe (Join-Path $installDir "aiko.exe")
+Copy-Item -Force $contractDll (Join-Path $installDir "contract\contract.dll")
 Copy-Item -Force (Join-Path $source "Uninstall-Aiko.ps1") (Join-Path $installDir "Uninstall-Aiko.ps1")
 
 $shell = New-Object -ComObject WScript.Shell

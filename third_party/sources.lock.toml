@@ -11,7 +11,7 @@ name = "rust-libp2p"
 repository = "https://github.com/libp2p/rust-libp2p.git"
 revision = "0f90c086a8df3c45f72368a0cb3a1c9c2f886c41"
 license = "MIT"
-usage = "planned_cargo_dependency_and_transport_spike"
+usage = "cargo_dependency_primary_peer_transport"
 
 [[source]]
 name = "libp2p-specs"
@@ -74,7 +74,7 @@ name = "tantivy"
 repository = "https://github.com/quickwit-oss/tantivy.git"
 revision = "31ca1a8ba290b425f871d2e2384592045ec01b8d"
 license = "MIT"
-usage = "planned_local_index_dependency"
+usage = "cargo_dependency_local_and_replicated_metadata_index"
 
 [[source]]
 name = "rust-tuf"

@@ -2,6 +2,16 @@
 //! facts/gates and retry, sampler config reconstruction, sampling-failure
 //! recovery, and per-response usage recording.
 use super::*;
+
+const MIMO_DEFAULT_MAX_COMPLETION_TOKENS: u32 = 32_768;
+
+fn resolved_max_completion_tokens(model: &str, configured: Option<u32>) -> Option<u32> {
+    configured.or_else(|| {
+        model
+            .starts_with("mimo-v2.5")
+            .then_some(MIMO_DEFAULT_MAX_COMPLETION_TOKENS)
+    })
+}
 /// Auth-failure detector for tool errors. Matches strictly on HTTP 401
 /// when the error carries a structured status code, mirroring
 /// `SamplingError::is_auth_error` in xai-grok-sampling-types: 403 is
@@ -307,11 +317,13 @@ impl SessionActor {
                 extra_headers.insert("x-compaction-at".to_string(), value.to_string());
             }
         }
+        let max_completion_tokens =
+            resolved_max_completion_tokens(&cfg.model, cfg.max_completion_tokens);
         SamplingConfig {
             api_key: creds.api_key,
             base_url: cfg.base_url,
             model: cfg.model,
-            max_completion_tokens: cfg.max_completion_tokens,
+            max_completion_tokens,
             temperature: cfg.temperature,
             top_p: cfg.top_p,
             api_backend: cfg.api_backend,
@@ -1066,5 +1078,21 @@ impl SessionActor {
         }
         self.chat_state_handle
             .push_assistant_response(assistant_item);
+    }
+}
+
+#[cfg(test)]
+mod completion_token_tests {
+    use super::resolved_max_completion_tokens;
+
+    #[test]
+    fn mimo_gets_a_safe_explicit_output_budget_when_catalog_omits_it() {
+        assert_eq!(resolved_max_completion_tokens("mimo-v2.5", None), Some(32_768));
+        assert_eq!(
+            resolved_max_completion_tokens("mimo-v2.5-pro", None),
+            Some(32_768)
+        );
+        assert_eq!(resolved_max_completion_tokens("mimo-v2.5", Some(12_000)), Some(12_000));
+        assert_eq!(resolved_max_completion_tokens("other-model", None), None);
     }
 }

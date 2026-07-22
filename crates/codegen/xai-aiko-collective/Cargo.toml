@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 blake3 = { workspace = true }
+chrono = { workspace = true }
 libloading = "0.8"
 futures = { workspace = true }
 libp2p = { version = "0.56.0", default-features = false, features = ["autonat", "cbor", "ed25519", "identify", "kad", "macros", "mdns", "memory-connection-limits", "ping", "quic", "relay", "request-response", "tokio"] }

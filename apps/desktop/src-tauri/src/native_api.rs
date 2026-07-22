@@ -142,6 +142,7 @@ pub async fn native_api_request(request: NativeRequest) -> Result<Value, Command
     let method = match request.method.as_str() {
         "GET" => Method::GET,
         "POST" => Method::POST,
+        "PUT" => Method::PUT,
         "DELETE" => Method::DELETE,
         _ => return Err(BridgeError::MethodRejected.into()),
     };

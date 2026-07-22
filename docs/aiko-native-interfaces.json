@@ -85,6 +85,29 @@
       ]
     },
     {
+      "id": "collective.local-control",
+      "version": 1,
+      "kind": "read-write",
+      "description": "Inspect the local-first Collective host and explicitly control networking and publication. New profiles default to participation disabled and publication disabled.",
+      "operations": [
+        "GET /v1/collective",
+        "GET /v1/collective/audit",
+        "GET /v1/collective/objects",
+        "GET /v1/collective/equivocations",
+        "POST /v1/collective/query-local",
+        "POST /v1/collective/discover",
+        "GET /v1/collective/review",
+        "POST /v1/collective/review/{object_id}/approve",
+        "POST /v1/collective/review/{object_id}/reject",
+        "DELETE /v1/collective/objects/{object_id}",
+        "POST /v1/collective/objects/{object_id}/revoke",
+        "PUT /v1/collective/participation",
+        "PUT /v1/collective/publication-mode",
+        "PUT /v1/collective/evidence-sharing"
+      ],
+      "authority": "Aiko local host; deterministic object and publication verdicts remain Contract-owned"
+    },
+    {
       "id": "agent.sessions",
       "version": 1,
       "kind": "duplex",

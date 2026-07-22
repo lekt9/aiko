@@ -18,6 +18,7 @@ pub(super) fn dispatch_open_contracts(app: &mut AppView) -> Vec<Effect> {
     }
     if let Some(state) = app.contracts.as_mut() {
         state.set_loading();
+        state.refresh_collective();
     }
 
     app.active_view = ActiveView::Contracts;
@@ -45,6 +46,7 @@ pub(super) fn dispatch_exit_contracts(app: &mut AppView) -> Vec<Effect> {
 pub(super) fn dispatch_refresh_contracts(app: &mut AppView) -> Vec<Effect> {
     if let Some(state) = app.contracts.as_mut() {
         state.set_loading();
+        state.refresh_collective();
     }
     vec![Effect::AsyncContractRefresh]
 }

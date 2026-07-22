@@ -54,7 +54,7 @@ pub(crate) fn subagent_template() -> Zeroizing<String> {
 /// The compact system prompt used after conversation compaction.
 pub const COMPACT_SYSTEM_PROMPT: &str = "You are an AI coding agent. You operate in a workspace with a provided codebase.\n\n\
      Your main goal is to complete the user's request, denoted within the <user_query> tag.\n\n\
-     Contract is Aiko's default execution substrate. Register substantive work with a real check before the third tool call, use Contract-backed native tools when applicable, and verify the contract before reporting completion.";
+     Inspect the actual repository state and authoritative tests, make the smallest complete change, and verify the requested outcome before reporting completion.";
 
 #[cfg(test)]
 mod tests {
@@ -392,44 +392,64 @@ mod tests {
             prompt.contains("contract task verify"),
             "Must reference verify lifecycle"
         );
+    }
+
+    #[test]
+    fn test_headless_prompt_prioritizes_engineering_execution() {
+        let mut p = default_placeholders();
+        p["is_non_interactive"] = serde_json::json!(true);
+        let prompt = render_base(&default_renderer(), &p);
+        assert!(prompt.contains("<engineering_execution>"));
+        assert!(prompt.contains("Locate the authoritative verifier or test command early"));
+        assert!(prompt.contains("Separate observed facts from assumptions"));
+        assert!(prompt.contains("record delimiter or label is not a frequency weight"));
+        assert!(prompt.contains("Apply documented defaults before filtering"));
+        assert!(prompt.contains("Preserve identifiers and source representations"));
+        assert!(prompt.contains("stop or reject predicate must terminate"));
+        assert!(prompt.contains("Verify behavioral invariants"));
+        assert!(prompt.contains("authoritative test or build command"));
+        assert!(!prompt.contains("<channel_occupancy>"));
+        assert!(!prompt.contains("<generative_ui>"));
+        assert!(prompt.contains("<contract_substrate>"));
+        assert!(!prompt.contains("Standing orders (native contract ledger"));
         assert!(
-            prompt.contains("before the third tool call"),
-            "Must require early registration for substantive work"
-        );
-        assert!(
-            prompt.contains("application_observe") && prompt.contains("application_act"),
-            "Must prefer Contract-backed native application tools"
+            prompt.len() < 10_000,
+            "headless engineering prompt regressed to {} characters",
+            prompt.len()
         );
     }
 
     #[test]
-    fn test_base_template_contains_generative_ui() {
+    fn test_base_template_routes_generative_ui_to_skill() {
         let p = default_placeholders();
         let prompt = render_base(&default_renderer(), &p);
         assert!(
-            prompt.contains("generative_ui"),
-            "Must contain generative_ui section"
+            prompt.contains("Generative UI is an on-demand skill"),
+            "Must route generative UI through its skill"
         );
         assert!(
-            prompt.contains("json-render"),
-            "Must instruct json-render fences"
+            prompt.contains("`generative-ui` skill"),
+            "Must name the generative-ui skill"
         );
         assert!(
-            prompt.contains("aiko:ui/") && prompt.contains("aiko:data/"),
-            "Must document durable UI/data pointers"
+            !prompt.contains("aiko:ui/") && !prompt.contains("aiko:data/"),
+            "Base prompt must not embed persistence schema"
         );
         assert!(
-            prompt.contains("~/.aiko/ui"),
-            "Must document on-disk UI store path"
+            !prompt.contains("\"root\"") && !prompt.contains("BarChart"),
+            "Base prompt must not embed the json-render registry"
         );
-        assert!(
-            prompt.contains("\"root\"") && prompt.contains("\"elements\""),
-            "Must document flat tree shape"
-        );
-        assert!(
-            prompt.contains("Metric") && prompt.contains("BarChart"),
-            "Must list dashboard component types"
-        );
+    }
+
+    #[test]
+    fn test_base_template_stops_after_sufficient_verification() {
+        let prompt = render_base(&default_renderer(), &default_placeholders());
+        assert!(prompt.contains("Verify proportionally"));
+        assert!(prompt.contains("stop using tools and give the final answer"));
+        assert!(prompt.contains("Do not create a second ad-hoc test suite"));
+        assert!(prompt.contains("every individual tool invocation consumes a turn"));
+        assert!(prompt.contains("Never print or imitate tool-call markup"));
+        assert!(prompt.contains("do not invent `update_goal`"));
     }
 
     #[test]
@@ -438,7 +458,7 @@ mod tests {
             COMPACT_SYSTEM_PROMPT,
             "You are an AI coding agent. You operate in a workspace with a provided codebase.\n\n\
              Your main goal is to complete the user's request, denoted within the <user_query> tag.\n\n\
-             Contract is Aiko's default execution substrate. Register substantive work with a real check before the third tool call, use Contract-backed native tools when applicable, and verify the contract before reporting completion.",
+             Inspect the actual repository state and authoritative tests, make the smallest complete change, and verify the requested outcome before reporting completion.",
         );
     }
 

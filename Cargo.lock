@@ -14292,6 +14292,7 @@ name = "xai-aiko-collective"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "chrono",
  "futures",
  "keyring",
  "libloading",
@@ -14912,6 +14913,7 @@ dependencies = [
  "wait-timeout",
  "windows-sys 0.59.0",
  "xai-acp-lib",
+ "xai-aiko-collective",
  "xai-crash-handler",
  "xai-fast-worktree",
  "xai-file-utils",
@@ -14967,6 +14969,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "xai-acp-lib",
+ "xai-aiko-collective",
  "xai-crash-handler",
  "xai-grok-config",
  "xai-grok-pager",

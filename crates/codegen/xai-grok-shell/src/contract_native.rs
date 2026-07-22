@@ -18,6 +18,8 @@ use std::time::Duration;
 use tokio::process::Command;
 use xai_grok_tools::notification::{ScheduledTaskFired, ToolNotificationHandle};
 
+mod contract_learning;
+
 const LOCAL_COMMAND_TIMEOUT: Duration = Duration::from_millis(800);
 const MAX_CONTEXT_BYTES: usize = 14_000;
 const CONTEXT_DISABLED_ENV: &str = "AIKO_MACHINE_CONTEXT";
@@ -27,6 +29,7 @@ const TURN_FEEDBACK_LIMIT: usize = 8;
 pub struct TurnContract {
     id: String,
     goal: String,
+    learning_family: Option<String>,
 }
 
 #[derive(Debug)]
@@ -882,7 +885,11 @@ pub async fn declare_turn(blocks: &[acp::ContentBlock], cwd: &Path) -> Option<Tu
             .ok()
             .flatten()?;
     if id.len() == 8 && id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        Some(TurnContract { id, goal })
+        Some(TurnContract {
+            id,
+            goal,
+            learning_family: None,
+        })
     } else {
         tracing::debug!(raw_id = %id, "contract returned an invalid row id");
         None
@@ -920,6 +927,11 @@ impl TurnContract {
                 "satisfy_failed".into()
             }),
         });
+        if marked {
+            if let Some(family) = self.learning_family {
+                contract_learning::observe(&family, contract_learning::Verdict::Supported);
+            }
+        }
     }
 }
 
@@ -2589,7 +2601,10 @@ fn descriptor_matches_tool(
     if !tool_name.eq_ignore_ascii_case(&descriptor.tool) {
         return false;
     }
-    if matches!(descriptor.provider.as_str(), "skill" | "unbrowse") {
+    if matches!(
+        descriptor.provider.as_str(),
+        "skill" | "unbrowse" | "binary"
+    ) {
         return raw_arguments.is_some_and(|arguments| arguments.contains(&descriptor.action));
     }
     true
@@ -2652,6 +2667,14 @@ pub fn record_active_capability_observation(
                 capability_id = %observation.capability_id,
                 "Contract rejected or could not persist sanitized FECH observation"
             );
+        } else if let Err(error) =
+            crate::collective_host::publish_collective_observation(&observation)
+        {
+            tracing::warn!(
+                capability_id = %observation.capability_id,
+                %error,
+                "Collective aggregate attestation was not published"
+            );
         }
     });
 }
@@ -2675,6 +2698,9 @@ pub async fn refresh_capabilities_and_recommend(
         )
         .then_some(name)
     });
+    snapshots.push(crate::capability_catalog::discover_binary_snapshot(
+        command_tool,
+    ));
     snapshots.push(crate::capability_catalog::discover_unbrowse_snapshot(
         command_tool,
     ));
@@ -2698,6 +2724,9 @@ pub async fn refresh_capabilities_and_recommend(
         for snapshot in &snapshots {
             native.register_capabilities(&snapshot.source, &snapshot.descriptors)?;
             availability.extend(snapshot.availability.iter().cloned());
+        }
+        if let Err(error) = crate::collective_host::publish_collective_snapshots(&snapshots) {
+            tracing::warn!(%error, "Collective publication pipeline could not process the refreshed capability catalog");
         }
         if let Ok(mut sources) = registered_capability_sources().lock() {
             *sources = current;
@@ -3008,6 +3037,7 @@ struct BuiltContext {
     visual_path: Option<PathBuf>,
     visual_note: Option<String>,
     feedback: TurnFeedback,
+    learning_family: Option<String>,
 }
 
 async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
@@ -3091,6 +3121,17 @@ async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
         std::env::consts::ARCH,
         cwd.display()
     ));
+
+    let learning_family = proven.as_ref().and_then(|route| {
+        let binary = route.get("binary")?.as_str()?;
+        contract_learning::propose_route(binary, &goal, cwd)
+    });
+    // ARC-style defeasible memory, generalized to project work: relevant
+    // learnings survive turns, while repeatedly refuted tactic families are
+    // withheld from the model instead of becoming sticky prompt folklore.
+    if let Some(learning_context) = contract_learning::render_context(&goal, cwd) {
+        sections.push(learning_context);
+    }
 
     // Standing orders outrank everything — durable ledger contracts, harness-enforced.
     if let Some(learned) = &learned {
@@ -3353,6 +3394,7 @@ async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
         visual_path: visual.map(|(p, _)| p),
         visual_note: feedback.visual_note.clone(),
         feedback,
+        learning_family,
     }
 }
 
@@ -3372,7 +3414,7 @@ fn persist_last_context(context: &str) {
 /// excluded. Set `AIKO_MACHINE_CONTEXT=off` for a fully ungrounded turn.
 pub async fn ground_turn(blocks: &[acp::ContentBlock], cwd: &Path) -> GroundedTurn {
     warm_router_background(4);
-    let contract = declare_turn(blocks, cwd).await;
+    let mut contract = declare_turn(blocks, cwd).await;
     if contract.is_none() && goal_from_blocks(blocks).is_some() {
         static HOOK_WARNING_EMITTED: AtomicBool = AtomicBool::new(false);
         if !HOOK_WARNING_EMITTED.swap(true, Ordering::Relaxed) {
@@ -3397,6 +3439,9 @@ pub async fn ground_turn(blocks: &[acp::ContentBlock], cwd: &Path) -> GroundedTu
         };
     };
     let built = build_context(&goal, cwd).await;
+    if let Some(turn) = contract.as_mut() {
+        turn.learning_family = built.learning_family.clone();
+    }
     if built.text.is_empty() {
         return GroundedTurn {
             prompt: blocks.to_vec(),

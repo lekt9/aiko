@@ -4,6 +4,11 @@
 codebase, edits files, runs commands, searches the web, and manages long-running
 work from a terminal TUI, headless scripts, or editors using ACP.
 
+For a visual tour of the entire repository—runtime flows, ownership boundaries,
+persistent state, crate inventory, builds, and where to make changes—start with
+the [repository field guide](docs/REPOSITORY-GUIDE.md) or the
+[documentation map](docs/README.md).
+
 ```sh
 aiko
 aiko "fix the failing test"

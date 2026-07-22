@@ -167,14 +167,20 @@ contract_collective_verify(object_bytes, signature, publisher_key, now)
 contract_collective_admit(object_bytes, source_peer, received_at)
   -> { reject | quarantine | admitted, reason_codes, ledger_effects }
 
-contract_collective_apply_revocations(revocation_objects, now)
+contract_collective_apply_revocations(revocation_objects_with_target_owners, now)
   -> { accepted, rejected, effective_projection }
 
 contract_collective_rank(query_features, candidate_metadata, local_availability)
   -> ranked candidates and reason codes
 
 contract_collective_checkpoint(object_ids)
-  -> deterministic root and inclusion-proof material
+  -> deterministic root
+
+contract_collective_inclusion_proof(object_ids, target_object_id)
+  -> deterministic logarithmic inclusion-proof material for that object
+
+contract_collective_verify_inclusion_proof(proof)
+  -> verified | rejected without filesystem or network access
 ```
 
 Raw URLs, credentials, arguments, results, page content, and task text are not
@@ -254,7 +260,16 @@ already established community network.
     repeats the publication gate before Aiko announces it.
 ```
 
+For revocation projection, Aiko resolves a target object's publisher only from
+its Contract-admitted local catalog and supplies that owner beside the signed
+revocation envelope. Contract binds signer to owner before producing an
+effective target. Signature validity alone never conveys revocation authority.
+
 No step permits a peer, index, or Contract to invoke a tool directly.
+Possessing a verified object blob is not local availability: Aiko marks a
+candidate available only when its private FECH catalog contains a currently
+available adapter with the same capability ID and version. Otherwise Contract
+ranks it as discovery evidence only and automatic execution remains closed.
 
 ## Publication Defaults
 
@@ -276,6 +291,13 @@ The user-facing default can be one onboarding preference—“Contribute safe
 public API shapes”—backed by a deterministic classifier, sanitizer, local
 publication log, preview, revocation, and a global kill switch. Per-route
 approval should be available without becoming the normal workflow.
+
+The native implementation enforces this boundary at the FECH-to-Collective
+bridge: `safe_public_shapes` may automatically publish only descriptors from
+the sanitized Unbrowse public-route inventory. Merely having local execution
+authority is never publication authority; Aiko tools, skills, MCP providers,
+binaries, local data, and ambiguous origins remain private and are recorded as
+such in the bounded local decision audit.
 
 ## Core Objects
 
@@ -318,7 +340,11 @@ transport, expiry, and optional reachability hints. It contains no user data.
 A privacy-safe, version-bound statement about success, failure class, latency
 bucket, environment class, and time bucket. It never contains invocation or
 result content. Local observations remain private by default; publication of
-aggregate attestations is separately configurable.
+aggregate attestations is separately configurable. The implemented setting is
+off by default and publishes at most one categorical outcome and latency bucket
+per local publisher/capability/hour after Contract approves the exact bytes;
+arguments, prompts, request/result content, and precise timestamps never enter
+the public object.
 
 ### 4. Revocation record
 
@@ -347,14 +373,32 @@ Minimum protocol messages:
 - `GET_OBJECT`: fetch a content-addressed object with range/chunk support;
 - `ANNOUNCE_PROVIDER`: advertise a short-lived provider record;
 - `FIND_CONTRACTS`: coarse structured lookup returning hashes, not execution;
+- `GET_INDEX_ROOTS`: enumerate bounded newer signed index roots for mirroring;
 - `GET_INDEX_SEGMENT`: retrieve verifiable search shards;
 - `PUSH_ATTESTATION`: publish an opted-in sanitized observation;
-- `GET_REVOCATIONS`: synchronize signed revocation/checkpoint records;
+- `GET_REVOCATIONS`: synchronize signed revocation/checkpoint records (the
+  response is a bounded set of independently Contract-admitted envelopes);
 - `PEER_EXCHANGE`: learn bounded, reputation-filtered peers.
+- `PUSH_WITNESS` / `GET_WITNESSES`: gossip bounded observations of already
+  Contract-admitted signed index roots so equivocation can be detected without
+  exposing task or invocation content.
 
 Every message needs explicit size limits, timeouts, quotas, replay protection,
 and a stable binary schema. Unknown fields should be forward-compatible;
 unknown security-critical enum values must fail closed.
+
+The implemented `/aiko/collective/1` request/response schema applies these
+initial hard limits before dispatch: 64 KiB object chunks, 256 KiB signed
+records, 32 structured public-query terms per field, 256 lookup/revocation
+results, and 256 peer addresses. `FIND_CONTRACTS` accepts only normalized
+public capability/operation/effect tokens; it has no task-text or arbitrary
+string field. Unknown additive fields are ignored, while an unknown tagged
+message kind or security enum fails decoding. Every received object or signed
+record still passes through Contract admission after these transport bounds.
+The initial host additionally caps the swarm at 128 established connections,
+64 inbound connections, two connections per peer, and 120 requests per peer
+per minute; exceeding the request window yields a neutral rejection rather
+than mutating reputation.
 
 ## Bootstrap Without Mandatory Cloud
 
@@ -472,7 +516,9 @@ the source lock described below must pin the reviewed revision.
 `rust-libp2p` is the deliberate primary choice: it provides the complete
 decentralized discovery toolbox and avoids coupling the protocol to a hosted
 relay or DNS service. Use only the required features so the desktop binary does
-not inherit the entire stack.
+not inherit the entire stack. The reproducible three-node comparison and its
+measured limitations are recorded in `spikes/transport-comparison.md`; the Iroh
+source and runnable pinned spike live in `spikes/iroh-transport/`.
 
 ### Clone as references or focused spikes
 

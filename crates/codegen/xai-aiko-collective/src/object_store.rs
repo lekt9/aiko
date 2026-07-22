@@ -294,6 +294,55 @@ impl CollectiveStore {
         Ok(path)
     }
 
+    /// Admit the canonical signed envelope used by gossip messages. The
+    /// envelope is hostile input: it is bounded, quarantined, decoded under a
+    /// closed shape, and then passed through the same Contract verification as
+    /// chunked object replication.
+    pub fn verify_and_admit_envelope(
+        &self,
+        contract: &CollectiveContract,
+        envelope_bytes: &[u8],
+        now_iso: &str,
+    ) -> Result<PathBuf, StoreError> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Envelope {
+            protocol: String,
+            object_id: String,
+            unsigned: serde_json::Value,
+            signature: String,
+        }
+
+        self.quarantine(envelope_bytes)?;
+        let result = (|| {
+            let envelope: Envelope = serde_json::from_slice(envelope_bytes)?;
+            if envelope.protocol != "aiko-collective/1" {
+                return Err(StoreError::InvalidPack);
+            }
+            let signature = envelope
+                .signature
+                .strip_prefix("ed25519:")
+                .ok_or(StoreError::InvalidPack)?;
+            let publisher_key = envelope
+                .unsigned
+                .get("publisher")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|publisher| publisher.strip_prefix("ed25519:"))
+                .ok_or(StoreError::InvalidPack)?;
+            let candidate = serde_json::to_vec(&envelope.unsigned)?;
+            self.verify_and_admit(
+                contract,
+                &candidate,
+                &envelope.object_id,
+                signature,
+                publisher_key,
+                now_iso,
+            )
+        })();
+        self.remove_quarantine(envelope_bytes);
+        result
+    }
+
     pub fn read(&self, object_id: &str) -> Result<StoredObject, StoreError> {
         let bytes = fs::read(self.object_path(object_id)?)?;
         Ok(serde_json::from_slice(&bytes)?)
@@ -303,6 +352,25 @@ impl CollectiveStore {
     /// admitted objects have an object path, so this can never serve quarantine.
     pub fn read_transport_bytes(&self, object_id: &str) -> Result<Vec<u8>, StoreError> {
         Ok(fs::read(self.object_path(object_id)?)?)
+    }
+
+    /// Erase this node's local copy. This cannot retract immutable copies that
+    /// peers already retained; future discovery is stopped separately by a
+    /// signed revocation object.
+    pub fn erase_local(&self, object_id: &str) -> Result<bool, StoreError> {
+        let digest = Self::validate_object_id(object_id)?;
+        let path = self.object_path(object_id)?;
+        let existed = match fs::remove_file(&path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error.into()),
+        };
+        let _ = fs::remove_file(self.root.join("pins").join(digest));
+        self.metadata.remove(object_id)?;
+        if let Some(parent) = path.parent() {
+            let _ = fs::remove_dir(parent);
+        }
+        Ok(existed)
     }
 
     /// Produce a stable, length-delimited pack. Entries are sorted by content
@@ -419,6 +487,25 @@ impl CollectiveStore {
         Ok(())
     }
 
+    pub fn pinned_object_ids(&self) -> Result<Vec<String>, StoreError> {
+        let mut ids = Vec::new();
+        for entry in fs::read_dir(self.root.join("pins"))? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let object_id = fs::read_to_string(entry.path())?;
+            let object_id = object_id.trim().to_owned();
+            Self::validate_object_id(&object_id)?;
+            if self.object_path(&object_id)?.is_file() {
+                ids.push(object_id);
+            }
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(ids)
+    }
+
     pub fn stats(&self) -> Result<StoreStats, StoreError> {
         let mut stats = StoreStats::default();
         for prefix in fs::read_dir(self.root.join("objects"))? {
@@ -474,11 +561,12 @@ impl CollectiveStore {
         }
         candidates.sort_unstable_by(|left, right| left.0.cmp(&right.0));
         let mut report = GcReport::default();
-        for (_, path, bytes) in candidates {
+        for (digest, path, bytes) in candidates {
             if stats.objects <= target_objects && stats.object_bytes <= target_bytes {
                 break;
             }
             fs::remove_file(path)?;
+            self.metadata.remove(&format!("blake3:{digest}"))?;
             stats.objects = stats.objects.saturating_sub(1);
             stats.object_bytes = stats.object_bytes.saturating_sub(bytes);
             report.removed_objects += 1;
@@ -586,11 +674,42 @@ mod tests {
         CollectiveStore::atomic_write(&store.object_path(&first).unwrap(), b"first").unwrap();
         CollectiveStore::atomic_write(&store.object_path(&second).unwrap(), b"second").unwrap();
         store.pin(&first).unwrap();
+        assert_eq!(store.pinned_object_ids().unwrap(), vec![first.clone()]);
 
         let report = store.garbage_collect(0, 0).unwrap();
         assert_eq!(report.removed_objects, 1);
         assert!(store.object_path(&first).unwrap().is_file());
         assert!(!store.object_path(&second).unwrap().exists());
         assert_eq!(report.remaining_objects, 1);
+    }
+
+    #[test]
+    fn local_erase_removes_blob_pin_and_catalog_projection() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = CollectiveStore::open(directory.path()).unwrap();
+        let object_id = format!("blake3:{}", "3".repeat(64));
+        CollectiveStore::atomic_write(&store.object_path(&object_id).unwrap(), b"stored").unwrap();
+        store.pin(&object_id).unwrap();
+        store
+            .metadata()
+            .put(&ObjectMetadata {
+                object_id: object_id.clone(),
+                kind: "capability".into(),
+                publisher: format!("ed25519:{}", "4".repeat(64)),
+                admitted_at: "2026-07-21T00:00:00Z".into(),
+                capability_id: "example.erase".into(),
+                capability_version: "1".into(),
+                summary: String::new(),
+                operation: String::new(),
+                origin: String::new(),
+                effects: Vec::new(),
+            })
+            .unwrap();
+
+        assert!(store.erase_local(&object_id).unwrap());
+        assert!(!store.object_path(&object_id).unwrap().exists());
+        assert_eq!(store.stats().unwrap().pinned, 0);
+        assert!(store.metadata().get(&object_id).unwrap().is_none());
+        assert!(!store.erase_local(&object_id).unwrap());
     }
 }

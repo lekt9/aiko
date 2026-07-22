@@ -2575,6 +2575,36 @@ impl AppView {
                     if key.code == KeyCode::Char('r') && key.modifiers.is_empty() {
                         return InputOutcome::Action(Action::RefreshContracts);
                     }
+                    if key.code == KeyCode::Char('p') && key.modifiers.is_empty() {
+                        if let Some(c) = self.contracts.as_mut() {
+                            c.toggle_collective_participation();
+                        }
+                        return InputOutcome::Changed;
+                    }
+                    if key.code == KeyCode::Char('m') && key.modifiers.is_empty() {
+                        if let Some(c) = self.contracts.as_mut() {
+                            c.cycle_collective_publication_mode();
+                        }
+                        return InputOutcome::Changed;
+                    }
+                    if key.code == KeyCode::Char('e') && key.modifiers.is_empty() {
+                        if let Some(c) = self.contracts.as_mut() {
+                            c.toggle_collective_evidence_sharing();
+                        }
+                        return InputOutcome::Changed;
+                    }
+                    if key.code == KeyCode::Char('a') && key.modifiers.is_empty() {
+                        if let Some(c) = self.contracts.as_mut() {
+                            c.approve_oldest_collective_review();
+                        }
+                        return InputOutcome::Changed;
+                    }
+                    if key.code == KeyCode::Char('x') && key.modifiers.is_empty() {
+                        if let Some(c) = self.contracts.as_mut() {
+                            c.reject_oldest_collective_review();
+                        }
+                        return InputOutcome::Changed;
+                    }
                     // Navigation: j/k or up/down.
                     let mut changed = false;
                     match key.code {

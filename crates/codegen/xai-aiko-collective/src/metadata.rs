@@ -101,6 +101,27 @@ impl MetadataIndex {
             .transpose()
     }
 
+    pub fn remove(&self, object_id: &str) -> Result<bool, MetadataError> {
+        let database = Database::create(&self.path)
+            .map_err(|error| MetadataError::Database(error.to_string()))?;
+        let write = database
+            .begin_write()
+            .map_err(|error| MetadataError::Database(error.to_string()))?;
+        let removed = {
+            let mut table = write
+                .open_table(OBJECTS)
+                .map_err(|error| MetadataError::Database(error.to_string()))?;
+            table
+                .remove(object_id)
+                .map_err(|error| MetadataError::Database(error.to_string()))?
+                .is_some()
+        };
+        write
+            .commit()
+            .map_err(|error| MetadataError::Database(error.to_string()))?;
+        Ok(removed)
+    }
+
     pub fn all(&self) -> Result<Vec<ObjectMetadata>, MetadataError> {
         let database = Database::create(&self.path)
             .map_err(|error| MetadataError::Database(error.to_string()))?;

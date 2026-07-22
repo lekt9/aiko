@@ -4164,7 +4164,9 @@ pub(crate) fn execute(
         }
         Effect::AsyncContractRefresh => {
             tasks.spawn(async {
-                let json = xai_grok_shell::contract_native::list_scheduled_contracts().await;
+                let tasks = xai_grok_shell::contract_native::list_scheduled_contracts().await;
+                let collective = xai_grok_shell::collective_host::collective_status();
+                let json = serde_json::json!({ "tasks": tasks, "collective": collective });
                 TaskResult::ContractsLoaded { json }
             });
         }

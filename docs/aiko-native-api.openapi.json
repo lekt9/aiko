@@ -127,6 +127,182 @@
         }
       }
     },
+    "/v1/collective": {
+      "get": {
+        "operationId": "getCollectiveStatus",
+        "responses": {
+          "200": {
+            "description": "Local Collective participation, peer, and store status",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CollectiveResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collective/status": {
+      "get": {
+        "operationId": "getCollectiveStatusCompatibilityAlias",
+        "deprecated": true,
+        "responses": {
+          "200": { "description": "Compatibility alias for GET /v1/collective" }
+        }
+      }
+    },
+    "/v1/collective/audit": {
+      "get": {
+        "operationId": "getCollectivePublicationAudit",
+        "responses": {
+          "200": { "description": "Privacy-safe local publication decision history" }
+        }
+      }
+    },
+    "/v1/collective/objects": {
+      "get": {
+        "operationId": "listCollectiveObjects",
+        "responses": {
+          "200": { "description": "Rebuildable local metadata projections for Contract-admitted objects" }
+        }
+      }
+    },
+    "/v1/collective/equivocations": {
+      "get": {
+        "operationId": "listCollectiveIndexEquivocations",
+        "responses": {
+          "200": { "description": "Locally witnessed conflicting signed roots grouped by publisher and generation" }
+        }
+      }
+    },
+    "/v1/collective/query-local": {
+      "post": {
+        "operationId": "queryCollectiveLocally",
+        "description": "Ranks downloaded metadata locally; task text never leaves the loopback process.",
+        "responses": { "200": { "description": "Contract-ranked local results" }, "400": { "$ref": "#/components/responses/BadRequest" } }
+      }
+    },
+    "/v1/collective/discover": {
+      "post": {
+        "operationId": "discoverCollectiveContracts",
+        "description": "Sends only bounded structured public terms, replicates returned objects through Contract admission, then reranks locally.",
+        "responses": { "200": { "description": "Contract-ranked admitted results" }, "400": { "$ref": "#/components/responses/BadRequest" } }
+      }
+    },
+    "/v1/collective/review": {
+      "get": {
+        "operationId": "listCollectiveReviewQueue",
+        "responses": { "200": { "description": "Exact sanitized Contract-publishable candidates awaiting a local decision" } }
+      }
+    },
+    "/v1/collective/evidence-sharing": {
+      "put": {
+        "operationId": "setCollectiveEvidenceSharing",
+        "description": "Separately opts into or out of hourly privacy-bucketed public outcome attestations.",
+        "responses": { "200": { "description": "Updated local Collective settings" }, "400": { "$ref": "#/components/responses/BadRequest" } }
+      }
+    },
+    "/v1/collective/review/{object_id}/approve": {
+      "post": {
+        "operationId": "approveCollectiveReview",
+        "parameters": [{ "name": "object_id", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" } }],
+        "responses": { "200": { "description": "Candidate revalidated, signed, admitted, pinned, and optionally announced" }, "400": { "$ref": "#/components/responses/BadRequest" } }
+      }
+    },
+    "/v1/collective/review/{object_id}/reject": {
+      "post": {
+        "operationId": "rejectCollectiveReview",
+        "parameters": [{ "name": "object_id", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" } }],
+        "responses": { "200": { "description": "Candidate retained as private and removed from review" }, "400": { "$ref": "#/components/responses/BadRequest" } }
+      }
+    },
+    "/v1/collective/objects/{object_id}": {
+      "delete": {
+        "operationId": "eraseCollectiveObjectLocally",
+        "parameters": [{
+          "name": "object_id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" }
+        }],
+        "responses": {
+          "200": { "description": "Local verified blob, pin, and metadata projection erased" },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/v1/collective/objects/{object_id}/revoke": {
+      "post": {
+        "operationId": "revokeCollectiveObject",
+        "parameters": [{
+          "name": "object_id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" }
+        }],
+        "requestBody": {
+          "required": false,
+          "content": { "application/json": { "schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "reason": { "enum": ["superseded", "compromised", "invalid", "privacy", "publisher_request"] } }
+          } } }
+        },
+        "responses": {
+          "200": { "description": "Signed revocation created, Contract-admitted, pinned, and announced when participating" },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/v1/collective/participation": {
+      "put": {
+        "operationId": "setCollectiveParticipation",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["enabled"],
+                "properties": { "enabled": { "type": "boolean" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Participation changed; disabling synchronously stops networking" },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/v1/collective/publication-mode": {
+      "put": {
+        "operationId": "setCollectivePublicationMode",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["mode"],
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": ["disabled", "safe_public_shapes", "review_every_object"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Local publication policy changed" },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
     "/v1/signals": {
       "post": {
         "operationId": "emitContractSignal",
@@ -421,6 +597,41 @@
           },
           "contractAvailable": {
             "type": "boolean"
+          }
+        }
+      },
+      "CollectiveResponse": {
+        "type": "object",
+        "required": ["schema", "collective"],
+        "properties": {
+          "schema": { "const": "aiko.native.v1" },
+          "collective": {
+            "type": "object",
+            "required": [
+              "available",
+              "participation_enabled",
+              "publication_mode",
+              "connected_peers",
+              "objects",
+              "quarantined",
+              "pinned",
+              "object_bytes"
+            ],
+            "properties": {
+              "available": { "type": "boolean" },
+              "participation_enabled": { "type": "boolean" },
+              "publication_mode": {
+                "type": "string",
+                "enum": ["disabled", "safe_public_shapes", "review_every_object"]
+              },
+              "connected_peers": { "type": "integer", "minimum": 0 },
+              "local_peer_id": { "type": ["string", "null"] },
+              "objects": { "type": "integer", "minimum": 0 },
+              "quarantined": { "type": "integer", "minimum": 0 },
+              "pinned": { "type": "integer", "minimum": 0 },
+              "object_bytes": { "type": "integer", "minimum": 0 },
+              "error": { "type": ["string", "null"] }
+            }
           }
         }
       },

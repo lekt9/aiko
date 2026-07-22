@@ -5,7 +5,7 @@ use crate::bot::TelegramBot;
 use crate::types::*;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 /// Configuration for the daemon.
 #[derive(Debug, Clone)]

@@ -4,6 +4,7 @@
 //! `[{id, status, prompt}, ...]`.
 
 use ratatui::layout::Rect;
+use xai_grok_shell::collective_host::CollectiveStatus;
 
 /// A single contract task entry from the ledger.
 #[derive(Debug, Clone)]
@@ -75,6 +76,11 @@ pub struct ContractsState {
     pub toast: Option<String>,
     /// Whether the inspect detail view is showing for the selected entry.
     pub inspect_detail: Option<String>,
+    /// Local Collective status. This is product state only; Contract remains
+    /// the authority for every object and publication verdict.
+    pub collective: CollectiveStatus,
+    /// Exact sanitized candidates awaiting an explicit local decision.
+    pub collective_review_ids: Vec<String>,
 }
 
 impl ContractsState {
@@ -91,12 +97,76 @@ impl ContractsState {
             error: None,
             toast: None,
             inspect_detail: None,
+            collective: xai_grok_shell::collective_host::collective_status(),
+            collective_review_ids: Vec::new(),
+        }
+    }
+
+    pub fn refresh_collective(&mut self) {
+        self.collective = xai_grok_shell::collective_host::collective_status();
+        self.collective_review_ids = xai_grok_shell::collective_host::collective_review_queue()
+            .map(|items| items.into_iter().map(|item| item.object_id).collect())
+            .unwrap_or_default();
+    }
+
+    pub fn toggle_collective_participation(&mut self) {
+        match xai_grok_shell::collective_host::set_collective_participation(
+            !self.collective.participation_enabled,
+        ) {
+            Ok(status) => self.collective = status,
+            Err(error) => self.set_toast(error),
+        }
+    }
+
+    pub fn cycle_collective_publication_mode(&mut self) {
+        match xai_grok_shell::collective_host::cycle_collective_publication_mode() {
+            Ok(status) => self.collective = status,
+            Err(error) => self.set_toast(error),
+        }
+    }
+
+    pub fn toggle_collective_evidence_sharing(&mut self) {
+        match xai_grok_shell::collective_host::set_collective_evidence_sharing(
+            !self.collective.publish_aggregate_attestations,
+        ) {
+            Ok(status) => self.collective = status,
+            Err(error) => self.set_toast(error),
+        }
+    }
+
+    pub fn approve_oldest_collective_review(&mut self) {
+        let Some(object_id) = self.collective_review_ids.first().cloned() else {
+            self.set_toast("No Collective candidates await review".into());
+            return;
+        };
+        match xai_grok_shell::collective_host::approve_collective_review(&object_id) {
+            Ok(_) => {
+                self.set_toast("Collective shape approved".into());
+                self.refresh_collective();
+            }
+            Err(error) => self.set_toast(error),
+        }
+    }
+
+    pub fn reject_oldest_collective_review(&mut self) {
+        let Some(object_id) = self.collective_review_ids.first().cloned() else {
+            self.set_toast("No Collective candidates await review".into());
+            return;
+        };
+        match xai_grok_shell::collective_host::reject_collective_review(&object_id) {
+            Ok(()) => {
+                self.set_toast("Collective shape kept private".into());
+                self.refresh_collective();
+            }
+            Err(error) => self.set_toast(error),
         }
     }
 
     /// Set entries from a JSON value, clearing loading/error.
     pub fn set_entries(&mut self, json: &serde_json::Value) {
-        self.entries = ContractEntry::from_scheduled_json(json);
+        let tasks = json.get("tasks").unwrap_or(json);
+        self.entries = ContractEntry::from_scheduled_json(tasks);
+        self.refresh_collective();
         self.loading = false;
         self.error = None;
         // Clamp selection if entries shrank.

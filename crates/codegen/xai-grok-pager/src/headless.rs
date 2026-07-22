@@ -30,6 +30,47 @@ use crate::acp::model_state::{EffortTokenError, ModelState};
 use crate::acp::spawn::spawn_grok_shell;
 use crate::client_identity::{HEADLESS_CLIENT_TYPE, PAGER_CLIENT_VERSION};
 
+fn rendered_stop_reason(stop_reason: &acp::StopReason, is_max_turns: bool) -> String {
+    if is_max_turns {
+        "MaxTurns".to_string()
+    } else {
+        format!("{stop_reason:?}")
+    }
+}
+
+/// Remove model-authored XML tool-call imitations from user-visible text.
+///
+/// Real tool calls arrive as typed ACP events and never travel inside an
+/// assistant text chunk. Some OpenAI-compatible models occasionally echo the
+/// legacy `<tool_call>...</tool_call>` syntax as prose. Leaving that in the
+/// final response is misleading, especially when the named tool was not
+/// available. Only complete, well-delimited blocks are removed; unmatched
+/// tags and ordinary code examples are preserved rather than guessed at.
+fn strip_imitation_tool_calls(text: &str) -> String {
+    const OPEN: &str = "<tool_call>";
+    const CLOSE: &str = "</tool_call>";
+
+    let mut cleaned = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(OPEN) {
+        let before = &rest[..start];
+        let after_open = &rest[start + OPEN.len()..];
+        let Some(end) = after_open.find(CLOSE) else {
+            cleaned.push_str(rest);
+            return cleaned;
+        };
+        cleaned.push_str(before);
+        rest = &after_open[end + CLOSE.len()..];
+    }
+    cleaned.push_str(rest);
+
+    // Avoid leaving the surrounding prose with a large artificial gap.
+    while cleaned.contains("\n\n\n") {
+        cleaned = cleaned.replace("\n\n\n", "\n\n");
+    }
+    cleaned
+}
+
 // ── Types ────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -426,7 +467,7 @@ impl HeadlessEmitter {
         request_id: &str,
     ) -> serde_json::Value {
         let mut result = serde_json::json!({
-            "text": self.text_buffer,
+            "text": strip_imitation_tool_calls(&self.text_buffer),
             "stopReason": stop_reason,
             "sessionId": session_id,
             "requestId": request_id
@@ -1287,7 +1328,6 @@ pub async fn run_single_turn(
     cancel.cancel();
     match prompt_result {
         Some(Ok(resp)) => {
-            let stop_reason = format!("{:?}", resp.stop_reason);
             emitter.set_structured_output_from_meta(resp.meta.as_ref());
             emitter.set_usage_from_meta(resp.meta.as_ref());
             let sid = resp
@@ -1308,6 +1348,7 @@ pub async fn run_single_turn(
                 .and_then(|m| m.get("cancellationCategory"))
                 .and_then(|v| v.as_str())
                 == Some("max_turns_reached");
+            let stop_reason = rendered_stop_reason(&resp.stop_reason, is_max_turns);
             if is_max_turns {
                 match emitter.format {
                     OutputFormat::Plain => eprintln!("Max turns reached"),
@@ -1805,6 +1846,35 @@ fn handle_ext_notification(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn max_turns_has_a_distinct_headless_stop_reason() {
+        assert_eq!(
+            super::rendered_stop_reason(&agent_client_protocol::StopReason::Cancelled, true),
+            "MaxTurns"
+        );
+        assert_eq!(
+            super::rendered_stop_reason(&agent_client_protocol::StopReason::Cancelled, false),
+            "Cancelled"
+        );
+    }
+
+    #[test]
+    fn strips_complete_imitation_tool_call_but_keeps_real_answer() {
+        let text = "Checks pass.\n<tool_call>\n<function=update_goal>done</function>\n</tool_call>\nFinal answer.";
+        assert_eq!(
+            strip_imitation_tool_calls(text),
+            "Checks pass.\n\nFinal answer."
+        );
+    }
+
+    #[test]
+    fn preserves_unmatched_or_explanatory_markup() {
+        assert_eq!(
+            strip_imitation_tool_calls("Use `<tool_call>` only as an example."),
+            "Use `<tool_call>` only as an example."
+        );
+    }
+
     #[test]
     fn lifecycle_tracking_is_independent_of_wait_flag() {
         let mut pending = std::collections::HashSet::new();

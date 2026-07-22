@@ -50,6 +50,9 @@ impl ObjectPeer for BytesPeer {
 }
 
 fn contract_library() -> PathBuf {
+    if let Some(path) = std::env::var_os("AIKO_COLLECTIVE_TEST_LIBRARY") {
+        return path.into();
+    }
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../contract/libcontract");
     #[cfg(target_os = "macos")]
     return root.join("zig-out/lib/libcontract.dylib");
@@ -284,6 +287,26 @@ fn rust_uses_contract_for_rank_checkpoint_and_merge_semantics() {
             .len(),
         2
     );
+}
+
+#[test]
+fn contract_checkpoint_exposes_targeted_inclusion_proof() {
+    let contract = CollectiveContract::load(contract_library()).expect("collective ABI must load");
+    let ids = vec![
+        format!("blake3:{}", "c".repeat(64)),
+        format!("blake3:{}", "a".repeat(64)),
+        format!("blake3:{}", "b".repeat(64)),
+    ];
+    let checkpoint = contract.checkpoint(&ids).unwrap();
+    let proof = contract.inclusion_proof(&ids, &ids[0]).unwrap();
+    assert_eq!(proof["root_hash"], checkpoint["root_hash"]);
+    assert_eq!(proof["tree_size"], 3);
+    assert_eq!(proof["leaf_index"], 2);
+    assert_eq!(proof["audit_path"].as_array().unwrap().len(), 1);
+    assert!(contract.verify_inclusion_proof(&proof).unwrap());
+    let mut tampered = proof;
+    tampered["root_hash"] = serde_json::json!("0".repeat(64));
+    assert!(!contract.verify_inclusion_proof(&tampered).unwrap());
 }
 
 fn decode_hex(value: &str) -> Vec<u8> {

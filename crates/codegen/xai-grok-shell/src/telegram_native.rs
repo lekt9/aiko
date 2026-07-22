@@ -50,6 +50,40 @@ struct TelegramConfig {
     approved_user_ids: Option<Vec<u64>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TelegramHealth {
+    pub bridge_running: bool,
+    pub api_reachable: bool,
+    pub identity_present: bool,
+    pub approved_users: usize,
+}
+
+impl TelegramHealth {
+    fn response(&self) -> String {
+        let healthy = self.bridge_running && self.api_reachable && self.identity_present;
+        format!(
+            "{} — Telegram API identity {}, bridge {}, and {} approved user{} configured.",
+            if healthy { "HEALTHY" } else { "UNHEALTHY" },
+            if self.api_reachable && self.identity_present {
+                "verified"
+            } else {
+                "not verified"
+            },
+            if self.bridge_running {
+                "running"
+            } else {
+                "stopped"
+            },
+            self.approved_users,
+            if self.approved_users == 1 {
+                " is"
+            } else {
+                "s are"
+            },
+        )
+    }
+}
+
 // ── paths ────────────────────────────────────────────────────────────────────
 
 fn home_dir() -> Option<PathBuf> {
@@ -66,6 +100,94 @@ fn pair_code_file_path() -> Option<PathBuf> {
 
 fn bridge_log_path() -> Option<PathBuf> {
     home_dir().map(|h| h.join(".aiko").join("logs").join("telegram-bridge.log"))
+}
+
+fn health_intent(goal: &str) -> bool {
+    let goal = goal.to_ascii_lowercase();
+    let telegram = goal.contains("telegram") && (goal.contains("bot") || goal.contains("bridge"));
+    let health = [
+        "health", "healthy", "status", "running", "online", "working",
+    ]
+    .iter()
+    .any(|word| goal.contains(word));
+    let requires_reasoning = [
+        "diagnose",
+        "debug",
+        "fix",
+        "repair",
+        "build",
+        "create",
+        "implement",
+        "send",
+        "message",
+        "why",
+        "how",
+    ]
+    .iter()
+    .any(|word| goal.contains(word));
+    telegram && health && !requires_reasoning
+}
+
+fn raw_health_settings() -> Result<(String, usize), String> {
+    let path = user_settings_path().ok_or("Cannot find home directory.")?;
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| format!("Cannot read settings at {}: {e}", path.display()))?;
+    let settings: UserSettings =
+        serde_json::from_str(&raw).map_err(|e| format!("Cannot parse settings: {e}"))?;
+    let telegram = settings.telegram.ok_or("Telegram is not configured.")?;
+    let token = telegram
+        .bot_token
+        .filter(|token| !token.trim().is_empty())
+        .ok_or("Telegram bot token is not configured.")?;
+    Ok((token, telegram.approved_user_ids.unwrap_or_default().len()))
+}
+
+/// Resolve a narrow Telegram health/status request without model sampling.
+/// The raw token never leaves this module and is never included in the result.
+pub(crate) async fn telegram_health_fast_path(goal: &str) -> Option<String> {
+    if !health_intent(goal) {
+        return None;
+    }
+    let running = bridge_running();
+    let Ok((token, approved_users)) = raw_health_settings() else {
+        return Some(
+            TelegramHealth {
+                bridge_running: running,
+                api_reachable: false,
+                identity_present: false,
+                approved_users: 0,
+            }
+            .response(),
+        );
+    };
+    let url = format!("https://api.telegram.org/bot{token}/getMe");
+    let payload = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?
+        .get(url)
+        .send()
+        .await
+        .ok()
+        .and_then(|response| response.error_for_status().ok());
+    let json = match payload {
+        Some(response) => response.json::<serde_json::Value>().await.ok(),
+        None => None,
+    };
+    let api_reachable = json.as_ref().is_some_and(|value| value["ok"] == true);
+    let identity_present = json
+        .as_ref()
+        .and_then(|value| value["result"]["username"].as_str())
+        .is_some_and(|username| !username.is_empty());
+    Some(
+        TelegramHealth {
+            bridge_running: running,
+            api_reachable,
+            identity_present,
+            approved_users,
+        }
+        .response(),
+    )
 }
 
 // ── bridge status ────────────────────────────────────────────────────────────
@@ -245,6 +367,36 @@ pub fn print_pair_result(result: &TelegramPairResult) {
         "{}",
         serde_json::to_string_pretty(result).unwrap_or_default()
     );
+}
+
+#[cfg(test)]
+mod telegram_health_fast_path_tests {
+    use super::*;
+
+    #[test]
+    fn matches_narrow_health_requests_only() {
+        assert!(health_intent("is my Telegram bot healthy?"));
+        assert!(health_intent("Telegram bridge status"));
+        assert!(!health_intent("send a Telegram message"));
+        assert!(!health_intent("debug why my Telegram bot is unhealthy"));
+        assert!(!health_intent("is the website healthy?"));
+    }
+
+    #[test]
+    fn response_contains_only_sanitized_sensor_summary() {
+        let response = TelegramHealth {
+            bridge_running: true,
+            api_reachable: true,
+            identity_present: true,
+            approved_users: 2,
+        }
+        .response();
+        assert_eq!(
+            response,
+            "HEALTHY — Telegram API identity verified, bridge running, and 2 approved users are configured."
+        );
+        assert!(!response.contains("token"));
+    }
 }
 
 /// Print log lines to stdout.

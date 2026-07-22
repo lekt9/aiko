@@ -93,6 +93,8 @@ pub struct CollectiveContract {
     admit: AdmitFn,
     rank: RankFn,
     checkpoint: UnaryFn,
+    inclusion_proof: Option<BinaryFn>,
+    verify_inclusion_proof: Option<UnaryFn>,
     merge: UnaryFn,
     apply_revocations: BinaryFn,
     free: FreeFn,
@@ -135,6 +137,17 @@ impl CollectiveContract {
             let checkpoint = *library
                 .get::<UnaryFn>(b"contract_collective_checkpoint\0")
                 .map_err(|_| CollectiveError::IncompatibleAbi)?;
+            // Added after collective ABI v3. It is optional so a newer Aiko
+            // can still open an older v3 Contract library for operations that
+            // do not request proof material.
+            let inclusion_proof = library
+                .get::<BinaryFn>(b"contract_collective_inclusion_proof\0")
+                .ok()
+                .map(|symbol| *symbol);
+            let verify_inclusion_proof = library
+                .get::<UnaryFn>(b"contract_collective_verify_inclusion_proof\0")
+                .ok()
+                .map(|symbol| *symbol);
             let merge = *library
                 .get::<UnaryFn>(b"contract_collective_merge\0")
                 .map_err(|_| CollectiveError::IncompatibleAbi)?;
@@ -153,6 +166,8 @@ impl CollectiveContract {
                 admit,
                 rank,
                 checkpoint,
+                inclusion_proof,
+                verify_inclusion_proof,
                 merge,
                 apply_revocations,
                 free,
@@ -271,6 +286,27 @@ impl CollectiveContract {
 
     pub fn checkpoint(&self, object_ids: &[String]) -> Result<Value, CollectiveError> {
         self.unary(self.checkpoint, &serde_json::to_vec(object_ids)?)
+    }
+
+    pub fn inclusion_proof(
+        &self,
+        object_ids: &[String],
+        target_object_id: &str,
+    ) -> Result<Value, CollectiveError> {
+        let function = self
+            .inclusion_proof
+            .ok_or(CollectiveError::IncompatibleAbi)?;
+        let object_ids = Self::cstring(&serde_json::to_vec(object_ids)?)?;
+        let target = Self::cstring(target_object_id.as_bytes())?;
+        self.take_json(unsafe { function(object_ids.as_ptr(), target.as_ptr()) })
+    }
+
+    pub fn verify_inclusion_proof(&self, proof: &Value) -> Result<bool, CollectiveError> {
+        let function = self
+            .verify_inclusion_proof
+            .ok_or(CollectiveError::IncompatibleAbi)?;
+        let result: Value = self.unary(function, &serde_json::to_vec(proof)?)?;
+        Ok(result.get("verdict").and_then(Value::as_str) == Some("verified"))
     }
 
     pub fn merge(&self, admitted_metadata: &Value) -> Result<Value, CollectiveError> {

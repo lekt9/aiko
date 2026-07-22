@@ -335,6 +335,7 @@ impl ChatAction {
 // ── API response wrappers ──────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(bound(deserialize = "T: Deserialize<'de>"))]
 pub struct ApiResponse<T> {
     pub ok: bool,
     #[serde(default)]

@@ -16,13 +16,13 @@
 //!
 //! **Special handling** (not counted against retry budget):
 //! - 413 / image processing errors → strip images and retry once
+//! - `MaxTokensTruncation` → resample once, then fail if it repeats
 //!
 //! **Not retried** (Fatal immediately):
 //! - 400, 401, 403, 404, 408, 422 (client errors)
 //! - `Auth` / `InvalidConfiguration` (credential/config issues)
 //! - `IdleTimeout` (model stuck, retry would stall again)
 //! - `Serialization` (response parsing failure)
-//! - `MaxTokensTruncation` (by design)
 //!
 //! **Server hint** (`x-should-retry` header from CCP):
 //! - `false` → Fatal immediately, regardless of status code
@@ -190,6 +190,19 @@ pub fn classify_error(
     // larger) payload always fails — so never retry it, whatever status the backend
     // used (in-stream `ResponseError`→500, HTTP 400/500, OpenAI/Anthropic variants).
     if err.is_context_length_error() {
+        return RetryDecision::Fatal(clone_error(err));
+    }
+
+    // A generated response hitting max_tokens is not a deterministic request
+    // failure: a fresh sample can finish more concisely. Give it exactly one
+    // near-immediate resample, then surface a repeated truncation rather than
+    // consuming the general retry budget in an expensive loop.
+    if matches!(err, SamplingError::MaxTokensTruncation) {
+        if retry_count == 0 && max_retries > 1 {
+            return RetryDecision::Retry {
+                backoff: Duration::ZERO,
+            };
+        }
         return RetryDecision::Fatal(clone_error(err));
     }
 
@@ -835,6 +848,23 @@ mod tests {
                 other => panic!("expected Retry, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn max_tokens_truncation_resamples_once_then_is_fatal() {
+        let err = SamplingError::MaxTokensTruncation;
+        assert!(matches!(
+            classify_error(&err, 0, 15, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::Retry { backoff } if backoff.is_zero()
+        ));
+        assert!(matches!(
+            classify_error(&err, 1, 15, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::Fatal(SamplingError::MaxTokensTruncation)
+        ));
+        assert!(matches!(
+            classify_error(&err, 0, 1, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::Fatal(SamplingError::MaxTokensTruncation)
+        ));
     }
 
     #[test]

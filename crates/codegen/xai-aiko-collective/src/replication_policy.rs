@@ -8,6 +8,7 @@ use crate::{CollectiveStore, StoreError};
 use libp2p::Multiaddr;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::path::Path;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
@@ -55,6 +56,29 @@ impl SeedSet {
 
     pub fn is_empty(&self) -> bool {
         self.addresses.is_empty()
+    }
+
+    /// Load a bounded, replaceable seed list. A missing file is an empty set,
+    /// preserving LAN/direct-invitation operation with no hosted bootstrap.
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        if bytes.len() > 256 * 1024 {
+            return Err("collective seed list exceeds 256 KiB".into());
+        }
+        let seeds = serde_json::from_slice::<Vec<SeedAddress>>(&bytes)
+            .map_err(|error| error.to_string())?;
+        if seeds.len() > 1024 {
+            return Err("collective seed list exceeds 1024 entries".into());
+        }
+        let mut result = Self::default();
+        result.extend(seeds)?;
+        Ok(result)
     }
 }
 
@@ -148,6 +172,30 @@ mod tests {
             ])
             .unwrap();
         assert_eq!(seeds.addresses().count(), 1);
+    }
+
+    #[test]
+    fn missing_seed_file_is_valid_and_seed_files_are_bounded() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(
+            SeedSet::load(&directory.path().join("missing.json"))
+                .unwrap()
+                .is_empty()
+        );
+        let path = directory.path().join("seeds.json");
+        let peer = libp2p::identity::Keypair::generate_ed25519()
+            .public()
+            .to_peer_id();
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&vec![SeedAddress {
+                origin: SeedOrigin::User,
+                address: format!("/ip4/127.0.0.1/udp/9000/quic-v1/p2p/{peer}"),
+            }])
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(SeedSet::load(&path).unwrap().addresses().count(), 1);
     }
 
     #[test]

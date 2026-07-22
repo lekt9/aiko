@@ -52,7 +52,7 @@ impl TelegramBot {
         let user_name = msg
             .from
             .as_ref()
-            .and_then(|u| u.first_name.clone())
+            .map(|u| u.first_name.clone())
             .unwrap_or_else(|| "unknown".to_string());
 
         info!("Message from {user_name} (chat {chat_id})");

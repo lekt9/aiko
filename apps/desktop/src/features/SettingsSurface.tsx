@@ -1,20 +1,61 @@
-import { Bot, Check, Eye, EyeOff, Key, Loader2, Power, PowerOff, Radio } from "lucide-react";
+import {
+  Bot,
+  Check,
+  Database,
+  Eye,
+  EyeOff,
+  Key,
+  Loader2,
+  Network,
+  Power,
+  PowerOff,
+  Radio,
+  ShieldCheck,
+  Trash2,
+  Ban,
+  TriangleAlert,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import {
+  getCollectiveStatus,
+  getCollectiveAudit,
+  getCollectiveObjects,
+  getCollectiveEquivocations,
+  getCollectiveReviewQueue,
+  approveCollectiveReview,
+  rejectCollectiveReview,
+  eraseCollectiveObject,
+  revokeCollectiveObject,
   getTelegramSettings,
   saveTelegramBotToken,
+  setCollectiveParticipation,
+  setCollectivePublicationMode,
+  setCollectiveEvidenceSharing,
+  type CollectivePublicationMode,
+  type CollectiveAuditEvent,
+  type CollectiveObject,
+  type CollectiveEquivocation,
+  type CollectiveReviewItem,
+  type CollectiveStatus,
   type TelegramSettings,
 } from "../bridge/native";
 import { PlaceholderSurface } from "./PlaceholderSurface";
 
 export function SettingsSurface() {
-  const [activeTab, setActiveTab] = useState<"account" | "telegram">("account");
+  const [activeTab, setActiveTab] = useState<"account" | "collective" | "telegram">("account");
   return (
     <div className="surface settings-surface">
       <header className="settings-surface__header">
         <h2>Settings</h2>
       </header>
       <div className="settings-surface__tabs">
+        <button
+          data-active={activeTab === "collective"}
+          onClick={() => setActiveTab("collective")}
+          type="button"
+        >
+          Collective
+        </button>
         <button
           data-active={activeTab === "account"}
           onClick={() => setActiveTab("account")}
@@ -36,9 +77,304 @@ export function SettingsSurface() {
           description="Account, providers, authority, MCP connections, runtime health, and desktop updates."
           icon={Key}
         />
+      ) : activeTab === "collective" ? (
+        <CollectiveSettingsPane />
       ) : (
         <TelegramSettingsPane />
       )}
+    </div>
+  );
+}
+
+function CollectiveSettingsPane() {
+  const [status, setStatus] = useState<CollectiveStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [audit, setAudit] = useState<CollectiveAuditEvent[]>([]);
+  const [objects, setObjects] = useState<CollectiveObject[]>([]);
+  const [review, setReview] = useState<CollectiveReviewItem[]>([]);
+  const [equivocations, setEquivocations] = useState<CollectiveEquivocation[]>([]);
+
+  const refresh = useCallback(async () => {
+    try {
+      const [nextStatus, nextAudit, nextObjects, nextReview, nextEquivocations] = await Promise.all([
+        getCollectiveStatus(),
+        getCollectiveAudit(),
+        getCollectiveObjects(),
+        getCollectiveReviewQueue(),
+        getCollectiveEquivocations(),
+      ]);
+      setStatus(nextStatus);
+      setAudit(nextAudit);
+      setObjects(nextObjects);
+      setReview(nextReview);
+      setEquivocations(nextEquivocations);
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Collective runtime unavailable.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const changeParticipation = useCallback(async (enabled: boolean) => {
+    setSaving(true);
+    setError(null);
+    try {
+      setStatus(await setCollectiveParticipation(enabled));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not change participation.");
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  const changeMode = useCallback(async (mode: CollectivePublicationMode) => {
+    setSaving(true);
+    setError(null);
+    try {
+      setStatus(await setCollectivePublicationMode(mode));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not change publication policy.");
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  const changeEvidenceSharing = useCallback(async (enabled: boolean) => {
+    setSaving(true);
+    setError(null);
+    try {
+      setStatus(await setCollectiveEvidenceSharing(enabled));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not change evidence sharing.");
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  const eraseObject = useCallback(async (objectId: string) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await eraseCollectiveObject(objectId);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not erase the local copy.");
+    } finally {
+      setSaving(false);
+    }
+  }, [refresh]);
+
+  const revokeObject = useCallback(async (objectId: string) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await revokeCollectiveObject(objectId);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not publish a revocation.");
+    } finally {
+      setSaving(false);
+    }
+  }, [refresh]);
+
+  const decideReview = useCallback(async (objectId: string, approve: boolean) => {
+    setSaving(true);
+    setError(null);
+    try {
+      if (approve) await approveCollectiveReview(objectId);
+      else await rejectCollectiveReview(objectId);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not apply the review decision.");
+    } finally {
+      setSaving(false);
+    }
+  }, [refresh]);
+
+  if (loading) {
+    return (
+      <div className="collective-settings__loading">
+        <Loader2 size={20} className="spin" />
+        <span>Loading the local Collective…</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="collective-settings">
+      <section className="collective-settings__hero">
+        <div>
+          <span className="collective-settings__eyebrow">Local-first network</span>
+          <h3>Your Aiko can become part of Unbrowse.</h3>
+          <p>
+            Peers exchange signed, sanitized capability shapes. Private tools,
+            credentials, prompts, and execution stay on this machine.
+          </p>
+        </div>
+        <div className="collective-settings__signal" data-online={status?.participation_enabled}>
+          <Network size={18} aria-hidden="true" />
+          {status?.participation_enabled ? `${status.connected_peers} peers` : "Offline"}
+        </div>
+      </section>
+
+      {error || status?.error ? (
+        <p className="collective-settings__error">{error ?? status?.error}</p>
+      ) : null}
+
+      {equivocations.length > 0 ? (
+        <section className="collective-settings__section collective-settings__section--stacked collective-settings__warning">
+          <div className="collective-settings__section-copy">
+            <h3><TriangleAlert size={15} aria-hidden="true" /> Conflicting signed indexes</h3>
+            <p>{equivocations.length} publisher generation{equivocations.length === 1 ? "" : "s"} produced different witnessed roots. Those indexes remain evidence only and cannot authorize execution.</p>
+          </div>
+          <ul className="collective-settings__audit">
+            {equivocations.slice(0, 5).map((item) => (
+              <li key={`${item.publisher}-${item.generation}`}>
+                <strong>{item.publisher.slice(0, 20)}… · generation {item.generation}</strong>
+                <small>{item.roots.length} roots · {item.witnesses.length} authenticated witnesses</small>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      <section className="collective-settings__section">
+        <div className="collective-settings__section-copy">
+          <h3><Power size={15} aria-hidden="true" /> Participate</h3>
+          <p>Starts LAN discovery and the peer runtime. Turning this off stops network activity.</p>
+        </div>
+        <button
+          className="collective-settings__toggle"
+          aria-pressed={status?.participation_enabled ?? false}
+          disabled={saving || !status?.available}
+          onClick={() => void changeParticipation(!(status?.participation_enabled ?? false))}
+          type="button"
+        >
+          <span />
+          {status?.participation_enabled ? "On" : "Off"}
+        </button>
+      </section>
+
+      <section className="collective-settings__section collective-settings__section--stacked">
+        <div className="collective-settings__section-copy">
+          <h3><ShieldCheck size={15} aria-hidden="true" /> Publication policy</h3>
+          <p>Participation and publication are separate. Nothing is published unless this policy allows it and Contract admits the exact bytes.</p>
+        </div>
+        <div className="collective-settings__modes" role="radiogroup" aria-label="Publication policy">
+          {([
+            ["disabled", "Private", "Never announce contracts."],
+            ["safe_public_shapes", "Safe shapes", "Contribute read-only public API shapes after sanitization."],
+            ["review_every_object", "Review", "Hold every candidate for explicit approval."],
+          ] as const).map(([mode, label, detail]) => (
+            <button
+              aria-checked={status?.publication_mode === mode}
+              data-active={status?.publication_mode === mode}
+              disabled={saving || !status?.available}
+              key={mode}
+              onClick={() => void changeMode(mode)}
+              role="radio"
+              type="button"
+            >
+              <strong>{label}</strong>
+              <span>{detail}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="collective-settings__section">
+        <div className="collective-settings__section-copy">
+          <h3><Radio size={15} aria-hidden="true" /> Share aggregate evidence</h3>
+          <p>Optional and off by default. Publishes at most one categorical outcome and latency bucket per capability each hour—never arguments, prompts, results, or account data.</p>
+        </div>
+        <button
+          className="collective-settings__toggle"
+          aria-pressed={status?.publish_aggregate_attestations ?? false}
+          disabled={saving || !status?.available}
+          onClick={() => void changeEvidenceSharing(!(status?.publish_aggregate_attestations ?? false))}
+          type="button"
+        >
+          <span />
+          {status?.publish_aggregate_attestations ? "On" : "Off"}
+        </button>
+      </section>
+
+      {review.length > 0 ? (
+        <section className="collective-settings__section collective-settings__section--stacked">
+          <div className="collective-settings__section-copy">
+            <h3><ShieldCheck size={15} aria-hidden="true" /> Awaiting your review</h3>
+            <p>These are the exact sanitized shapes that Contract found publishable. Approval signs and pins the selected object.</p>
+          </div>
+          <ul className="collective-settings__objects">
+            {review.map((item) => (
+              <li key={item.object_id}>
+                <div>
+                  <strong>{item.candidate.payload?.capability_id ?? item.candidate.kind ?? "Contract"}</strong>
+                  <span>{item.candidate.payload?.summary ?? item.object_id}</span>
+                </div>
+                <button disabled={saving} onClick={() => void decideReview(item.object_id, true)} type="button"><Check size={14} /> Approve</button>
+                <button disabled={saving} onClick={() => void decideReview(item.object_id, false)} type="button"><EyeOff size={14} /> Keep private</button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      <section className="collective-settings__section collective-settings__section--stacked">
+        <div className="collective-settings__section-copy">
+          <h3><Database size={15} aria-hidden="true" /> Verified local catalog</h3>
+          <p>Erasing removes this machine’s copy. Revoking publishes a signed instruction that peers can apply to future discovery.</p>
+        </div>
+        {objects.length === 0 ? <p>No verified Collective objects yet.</p> : (
+          <ul className="collective-settings__objects">
+            {objects.slice(0, 20).map((object) => (
+              <li key={object.object_id}>
+                <div>
+                  <strong>{object.capability_id || object.kind}</strong>
+                  <span>{object.summary || object.object_id}</span>
+                </div>
+                {object.kind !== "revocation" ? (
+                  <button disabled={saving} onClick={() => void revokeObject(object.object_id)} type="button" title="Publish signed revocation"><Ban size={14} /> Revoke</button>
+                ) : null}
+                <button disabled={saving} onClick={() => void eraseObject(object.object_id)} type="button" title="Erase local copy"><Trash2 size={14} /> Erase</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="collective-settings__stats" aria-label="Local Collective storage">
+        <div><Database size={14} /><strong>{status?.objects ?? 0}</strong><span>verified objects</span></div>
+        <div><ShieldCheck size={14} /><strong>{status?.pinned ?? 0}</strong><span>pinned</span></div>
+        <div><Radio size={14} /><strong>{status?.quarantined ?? 0}</strong><span>quarantined</span></div>
+      </section>
+
+      <section className="collective-settings__section collective-settings__section--stacked">
+        <div className="collective-settings__section-copy">
+          <h3><Eye size={15} aria-hidden="true" /> Local publication history</h3>
+          <p>This privacy-safe audit records decisions only; it never stores prompts, credentials, request bodies, or responses.</p>
+        </div>
+        {audit.length === 0 ? (
+          <p>No Collective publication decisions yet.</p>
+        ) : (
+          <ol className="collective-settings__audit">
+            {audit.slice(-5).reverse().map((event, index) => (
+              <li key={`${event.timestamp}-${event.action}-${index}`}>
+                <strong>{event.action.replaceAll("_", " ")}</strong>
+                <span>{new Date(event.timestamp).toLocaleString()}</span>
+                <small>{event.reason_codes.join(", ")}</small>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
     </div>
   );
 }

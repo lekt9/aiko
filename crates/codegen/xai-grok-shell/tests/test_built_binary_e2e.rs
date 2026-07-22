@@ -562,6 +562,10 @@ async fn test_headless_json_reports_usage_on_max_turns() {
 
     assert!(!result.status.success());
     let output = parse_stdout_json(&result);
+    assert_eq!(
+        output["stopReason"], "MaxTurns",
+        "max-turn exhaustion must not masquerade as user cancellation"
+    );
     assert!(output["usage"]["input_tokens"].as_u64().unwrap() >= 10);
     assert!(output["num_turns"].as_u64().unwrap() >= 1);
 }

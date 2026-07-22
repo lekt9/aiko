@@ -1,4 +1,4 @@
-import { copyFileSync, chmodSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -54,14 +54,17 @@ copyFileSync(source, destination);
 if (!triple.includes("windows")) chmodSync(destination, 0o755);
 
 function contractLibraryNames(target) {
-  if (target.includes("windows")) return ["contract.dll", "libcontract.dll"];
-  if (target.includes("apple")) return ["libcontract.dylib"];
-  return ["libcontract.so"];
+  if (target.includes("windows")) return ["contract_collective.dll", "libcontract_collective.dll", "contract.dll", "libcontract.dll"];
+  if (target.includes("apple")) return ["libcontract.dylib", "libcontract_collective.dylib"];
+  return ["libcontract.so", "libcontract_collective.so"];
 }
 
 const contractNames = contractLibraryNames(triple);
 const contractCandidates = [
   process.env.AIKO_CONTRACT_LIBRARY,
+  ...(triple.includes("windows")
+    ? [resolve(root, "..", "..", "..", "contract", "libcontract", "zig-out-windows", "bin", "contract.dll")]
+    : [resolve(root, "..", "..", "..", "contract", "libcontract", "zig-out", "lib", "libcontract.dylib")]),
   ...contractNames.map((name) =>
     resolve(root, "..", "..", "..", "contract", "libcontract", "zig-out", "lib", name),
   ),
@@ -69,12 +72,25 @@ const contractCandidates = [
 const contractSource = contractCandidates.find((candidate) => existsSync(candidate));
 if (!contractSource) {
   throw new Error(
-    `No Contract runtime was found for ${triple}. Build ../contract/libcontract for that target or set AIKO_CONTRACT_LIBRARY.`,
+    `No full Contract runtime was found for ${triple}. Build ../contract/libcontract for that target or set AIKO_CONTRACT_LIBRARY.`,
   );
 }
 const contractDirectory = resolve(root, "src-tauri", "resources", "contract");
 mkdirSync(contractDirectory, { recursive: true });
-const contractDestination = join(contractDirectory, basename(contractSource));
+for (const staleName of [
+  "contract.dll",
+  "contract_collective.dll",
+  "libcontract.dll",
+  "libcontract_collective.dll",
+  "libcontract.dylib",
+  "libcontract_collective.dylib",
+  "libcontract.so",
+  "libcontract_collective.so",
+]) {
+  rmSync(join(contractDirectory, staleName), { force: true });
+}
+const packagedContractName = triple.includes("windows") ? "contract.dll" : basename(contractSource);
+const contractDestination = join(contractDirectory, packagedContractName);
 copyFileSync(contractSource, contractDestination);
 if (!triple.includes("windows")) chmodSync(contractDestination, 0o755);
 

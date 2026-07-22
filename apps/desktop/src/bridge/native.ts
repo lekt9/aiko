@@ -27,6 +27,7 @@ export interface CollectiveStatus {
   available: boolean;
   participation_enabled: boolean;
   publication_mode: CollectivePublicationMode;
+  publish_aggregate_attestations: boolean;
   connected_peers: number;
   local_peer_id?: string;
   objects: number;
@@ -34,6 +35,43 @@ export interface CollectiveStatus {
   pinned: number;
   object_bytes: number;
   error?: string;
+}
+
+export interface CollectiveAuditEvent {
+  timestamp: string;
+  action: string;
+  object_id?: string;
+  allowed: boolean;
+  reason_codes: string[];
+}
+
+export interface CollectiveObject {
+  object_id: string;
+  kind: string;
+  publisher: string;
+  admitted_at: string;
+  capability_id: string;
+  capability_version: string;
+  summary: string;
+  operation: string;
+  origin: string;
+  effects: string[];
+}
+
+export interface CollectiveReviewItem {
+  object_id: string;
+  candidate: {
+    kind?: string;
+    payload?: { capability_id?: string; summary?: string; operation?: string; origin?: string };
+  };
+  queued_at: string;
+}
+
+export interface CollectiveEquivocation {
+  publisher: string;
+  generation: number;
+  roots: string[];
+  witnesses: string[];
 }
 
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
@@ -91,10 +129,57 @@ export async function getCollectiveStatus(): Promise<CollectiveStatus> {
   return response.collective;
 }
 
+export async function getCollectiveAudit(): Promise<CollectiveAuditEvent[]> {
+  const response = await request<{ items: CollectiveAuditEvent[] }>("/v1/collective/audit");
+  return response.items;
+}
+
+export async function getCollectiveObjects(): Promise<CollectiveObject[]> {
+  const response = await request<{ items: CollectiveObject[] }>("/v1/collective/objects");
+  return response.items;
+}
+
+export async function getCollectiveEquivocations(): Promise<CollectiveEquivocation[]> {
+  const response = await request<{ items: CollectiveEquivocation[] }>(
+    "/v1/collective/equivocations",
+  );
+  return response.items;
+}
+
+export async function getCollectiveReviewQueue(): Promise<CollectiveReviewItem[]> {
+  const response = await request<{ items: CollectiveReviewItem[] }>("/v1/collective/review");
+  return response.items;
+}
+
+export async function approveCollectiveReview(objectId: string): Promise<void> {
+  await request(`/v1/collective/review/${encodeURIComponent(objectId)}/approve`, "POST");
+}
+
+export async function rejectCollectiveReview(objectId: string): Promise<void> {
+  await request(`/v1/collective/review/${encodeURIComponent(objectId)}/reject`, "POST");
+}
+
+export async function eraseCollectiveObject(objectId: string): Promise<CollectiveStatus> {
+  const response = await request<{ collective: CollectiveStatus }>(
+    `/v1/collective/objects/${encodeURIComponent(objectId)}`,
+    "DELETE",
+  );
+  return response.collective;
+}
+
+export async function revokeCollectiveObject(objectId: string): Promise<string> {
+  const response = await request<{ revocationObjectId: string }>(
+    `/v1/collective/objects/${encodeURIComponent(objectId)}/revoke`,
+    "POST",
+    { reason: "publisher_request" },
+  );
+  return response.revocationObjectId;
+}
+
 export async function setCollectiveParticipation(enabled: boolean): Promise<CollectiveStatus> {
   const response = await request<{ collective: CollectiveStatus }>(
     "/v1/collective/participation",
-    "POST",
+    "PUT",
     { enabled },
   );
   return response.collective;
@@ -105,8 +190,17 @@ export async function setCollectivePublicationMode(
 ): Promise<CollectiveStatus> {
   const response = await request<{ collective: CollectiveStatus }>(
     "/v1/collective/publication-mode",
-    "POST",
+    "PUT",
     { mode },
+  );
+  return response.collective;
+}
+
+export async function setCollectiveEvidenceSharing(enabled: boolean): Promise<CollectiveStatus> {
+  const response = await request<{ collective: CollectiveStatus }>(
+    "/v1/collective/evidence-sharing",
+    "PUT",
+    { enabled },
   );
   return response.collective;
 }

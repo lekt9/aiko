@@ -5,7 +5,9 @@
 
 use crate::network::PeerTransport;
 use crate::wire::{MAX_CHUNK_BYTES, PeerRequest, PeerResponse, WIRE_PROTOCOL};
-use crate::{CollectiveStore, SeedSet};
+use crate::{
+    CollectiveContract, CollectiveStore, LocalSearchIndex, SeedSet, WitnessLog, WitnessProjection,
+};
 use futures::StreamExt;
 use libp2p::{
     Multiaddr, StreamProtocol, SwarmBuilder, autonat, identify, identity, kad, mdns, ping, relay,
@@ -19,12 +21,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+use std::time::Instant;
 
 #[derive(NetworkBehaviour)]
 struct LanBehaviour {
     mdns: mdns::tokio::Behaviour,
     ping: ping::Behaviour,
     limits: libp2p::memory_connection_limits::Behaviour,
+    connection_limits: libp2p::connection_limits::Behaviour,
     objects: request_response::cbor::Behaviour<PeerRequest, PeerResponse>,
     identify: identify::Behaviour,
     autonat: autonat::Behaviour,
@@ -32,8 +36,34 @@ struct LanBehaviour {
     kad: kad::Behaviour<kad::store::MemoryStore>,
 }
 
+const MAX_ESTABLISHED_CONNECTIONS: u32 = 128;
+const MAX_ESTABLISHED_INBOUND: u32 = 64;
+const MAX_CONNECTIONS_PER_PEER: u32 = 2;
+const MAX_REQUESTS_PER_MINUTE: u32 = 120;
+
+fn allow_inbound_request(
+    windows: &mut HashMap<libp2p::PeerId, (Instant, u32)>,
+    peer: libp2p::PeerId,
+    now: Instant,
+) -> bool {
+    let entry = windows.entry(peer).or_insert((now, 0));
+    if now.duration_since(entry.0) >= Duration::from_secs(60) {
+        *entry = (now, 0);
+    }
+    if entry.1 >= MAX_REQUESTS_PER_MINUTE {
+        return false;
+    }
+    entry.1 += 1;
+    true
+}
+
 pub trait PeerRequestHandler: Send + Sync + 'static {
     fn handle(&self, request: PeerRequest) -> PeerResponse;
+
+    fn handle_from(&self, source: libp2p::PeerId, request: PeerRequest) -> PeerResponse {
+        let _ = source;
+        self.handle(request)
+    }
 }
 
 #[derive(Default)]
@@ -54,11 +84,84 @@ impl PeerRequestHandler for RejectingHandler {
 
 pub struct StoreRequestHandler {
     store: Arc<CollectiveStore>,
+    search: Option<Arc<Mutex<LocalSearchIndex>>>,
+    contract: Option<Arc<CollectiveContract>>,
+    peer_store_path: Option<PathBuf>,
+    witnesses: Option<(WitnessLog, Arc<Mutex<WitnessProjection>>)>,
 }
 
 impl StoreRequestHandler {
     pub fn new(store: Arc<CollectiveStore>) -> Self {
-        Self { store }
+        Self {
+            store,
+            search: None,
+            contract: None,
+            peer_store_path: None,
+            witnesses: None,
+        }
+    }
+
+    pub fn with_search(mut self, search: LocalSearchIndex) -> Self {
+        self.search = Some(Arc::new(Mutex::new(search)));
+        self
+    }
+
+    pub fn with_shared_search(mut self, search: Arc<Mutex<LocalSearchIndex>>) -> Self {
+        self.search = Some(search);
+        self
+    }
+
+    pub fn with_contract(mut self, contract: Arc<CollectiveContract>) -> Self {
+        self.contract = Some(contract);
+        self
+    }
+
+    pub fn with_peer_store(mut self, path: impl Into<PathBuf>) -> Self {
+        self.peer_store_path = Some(path.into());
+        self
+    }
+
+    pub fn with_witness_log(mut self, log: WitnessLog) -> Result<Self, String> {
+        let projection = log.load().map_err(|error| error.to_string())?;
+        self.witnesses = Some((log, Arc::new(Mutex::new(projection))));
+        Ok(self)
+    }
+
+    pub fn with_shared_witnesses(
+        mut self,
+        log: WitnessLog,
+        projection: Arc<Mutex<WitnessProjection>>,
+    ) -> Self {
+        self.witnesses = Some((log, projection));
+        self
+    }
+
+    fn admit_pushed(&self, bytes: &[u8], expected_kind: &str) -> PeerResponse {
+        let Some(contract) = &self.contract else {
+            return PeerResponse::Rejected {
+                code: "contract_not_configured".into(),
+            };
+        };
+        let admitted = (|| {
+            let envelope: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+            let unsigned = envelope.get("unsigned")?;
+            if unsigned.get("kind")?.as_str()? != expected_kind {
+                return None;
+            }
+            let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            self.store
+                .verify_and_admit_envelope(contract, bytes, &now)
+                .ok()?;
+            Some(())
+        })()
+        .is_some();
+        if admitted {
+            PeerResponse::Accepted
+        } else {
+            PeerResponse::Rejected {
+                code: "contract_admission_rejected".into(),
+            }
+        }
     }
 }
 
@@ -72,6 +175,11 @@ impl PeerRequestHandler for StoreRequestHandler {
                 peer_ids: Vec::new(),
             },
             PeerRequest::GetObject {
+                object_id,
+                offset,
+                max_bytes,
+            }
+            | PeerRequest::GetIndexSegment {
                 object_id,
                 offset,
                 max_bytes,
@@ -99,6 +207,179 @@ impl PeerRequestHandler for StoreRequestHandler {
                     bytes: bytes[start..end].to_vec(),
                 }
             }
+            PeerRequest::FindContracts { query, limit } => {
+                let Some(search) = &self.search else {
+                    return PeerResponse::Rejected {
+                        code: "search_not_configured".into(),
+                    };
+                };
+                let Ok(mut search) = search.lock() else {
+                    return PeerResponse::Rejected {
+                        code: "search_unavailable".into(),
+                    };
+                };
+                if search.rebuild(self.store.metadata()).is_err() {
+                    return PeerResponse::Rejected {
+                        code: "search_rebuild_failed".into(),
+                    };
+                }
+                let terms = query
+                    .capability_terms
+                    .into_iter()
+                    .chain(query.operations)
+                    .chain(query.effects)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                match search.query(&terms, limit as usize) {
+                    Ok(hits) => PeerResponse::ContractIds {
+                        object_ids: hits.into_iter().map(|hit| hit.object_id).collect(),
+                    },
+                    Err(_) => PeerResponse::Rejected {
+                        code: "search_failed".into(),
+                    },
+                }
+            }
+            PeerRequest::GetIndexRoots {
+                after_generation,
+                limit,
+            } => {
+                let Ok(records) = self.store.metadata().all() else {
+                    return PeerResponse::Rejected {
+                        code: "index_root_catalog_unavailable".into(),
+                    };
+                };
+                let mut roots = records
+                    .into_iter()
+                    .filter(|record| record.kind == "index_root")
+                    .filter_map(|record| {
+                        let stored = self.store.read(&record.object_id).ok()?;
+                        let generation =
+                            stored.canonical.pointer("/payload/generation")?.as_u64()?;
+                        (generation > after_generation).then_some((generation, record.object_id))
+                    })
+                    .collect::<Vec<_>>();
+                roots.sort_unstable();
+                roots.truncate(limit as usize);
+                PeerResponse::IndexRoots {
+                    object_ids: roots.into_iter().map(|(_, object_id)| object_id).collect(),
+                }
+            }
+            PeerRequest::PushAttestation { signed_envelope } => {
+                self.admit_pushed(&signed_envelope, "attestation")
+            }
+            PeerRequest::AnnounceProvider { signed_record } => {
+                self.admit_pushed(&signed_record, "provider_record")
+            }
+            PeerRequest::GetRevocations {
+                publisher,
+                after_sequence,
+                limit,
+            } => {
+                let Ok(records) = self.store.metadata().all() else {
+                    return PeerResponse::Rejected {
+                        code: "revocation_index_unavailable".into(),
+                    };
+                };
+                let mut signed_envelopes = Vec::new();
+                for record in records {
+                    if !matches!(record.kind.as_str(), "revocation" | "checkpoint")
+                        || record.publisher != publisher
+                    {
+                        continue;
+                    }
+                    let Ok(stored) = self.store.read(&record.object_id) else {
+                        continue;
+                    };
+                    let sequence = stored
+                        .canonical
+                        .get("sequence")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or_default();
+                    if sequence <= after_sequence {
+                        continue;
+                    }
+                    let envelope = serde_json::json!({
+                        "protocol": "aiko-collective/1",
+                        "object_id": record.object_id,
+                        "unsigned": stored.canonical,
+                        "signature": format!("ed25519:{}", stored.signature_hex),
+                    });
+                    if let Ok(bytes) = serde_json::to_vec(&envelope) {
+                        signed_envelopes.push(bytes);
+                    }
+                    if signed_envelopes.len() == limit as usize {
+                        break;
+                    }
+                }
+                PeerResponse::Revocations { signed_envelopes }
+            }
+            PeerRequest::PeerExchange { limit } => {
+                let addresses = load_retained_peer_addresses(self.peer_store_path.as_deref())
+                    .into_iter()
+                    .take(limit as usize)
+                    .map(|address| address.to_string())
+                    .collect();
+                PeerResponse::Peers { addresses }
+            }
+            PeerRequest::PushWitness { witness } => {
+                if self.store.read(&witness.root_object_id).is_err() {
+                    return PeerResponse::Rejected {
+                        code: "witness_root_not_admitted".into(),
+                    };
+                }
+                let Some((log, projection)) = &self.witnesses else {
+                    return PeerResponse::Rejected {
+                        code: "witness_log_not_configured".into(),
+                    };
+                };
+                let Ok(mut projection) = projection.lock() else {
+                    return PeerResponse::Rejected {
+                        code: "witness_log_unavailable".into(),
+                    };
+                };
+                if projection.observe(witness).is_err() || log.save(&projection).is_err() {
+                    return PeerResponse::Rejected {
+                        code: "witness_rejected".into(),
+                    };
+                }
+                PeerResponse::Accepted
+            }
+            PeerRequest::GetWitnesses {
+                publisher,
+                generation,
+                limit,
+            } => {
+                let Some((_, projection)) = &self.witnesses else {
+                    return PeerResponse::Rejected {
+                        code: "witness_log_not_configured".into(),
+                    };
+                };
+                let Ok(projection) = projection.lock() else {
+                    return PeerResponse::Rejected {
+                        code: "witness_log_unavailable".into(),
+                    };
+                };
+                let observations = projection
+                    .observations()
+                    .filter(|item| item.publisher == publisher && item.generation == generation)
+                    .take(limit as usize)
+                    .cloned()
+                    .collect();
+                PeerResponse::Witnesses { observations }
+            }
+        }
+    }
+
+    fn handle_from(&self, source: libp2p::PeerId, request: PeerRequest) -> PeerResponse {
+        // The authenticated QUIC/libp2p peer identity is authoritative for a
+        // witness observation. Never accept a self-declared witness label from
+        // the payload, which would make witness counts trivially forgeable.
+        match request {
+            PeerRequest::PushWitness { mut witness } => {
+                witness.witness = format!("peer:{source}");
+                self.handle(PeerRequest::PushWitness { witness })
+            }
+            other => self.handle(other),
         }
     }
 }
@@ -106,6 +387,7 @@ impl PeerRequestHandler for StoreRequestHandler {
 pub struct Libp2pLanTransport {
     listen_address: Multiaddr,
     identity_path: Option<PathBuf>,
+    peer_store_path: Option<PathBuf>,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     worker: Option<JoinHandle<()>>,
     handler: Arc<dyn PeerRequestHandler>,
@@ -143,6 +425,7 @@ impl Default for Libp2pLanTransport {
                 .parse()
                 .expect("static collective QUIC address is valid"),
             identity_path: None,
+            peer_store_path: None,
             shutdown: None,
             worker: None,
             handler: Arc::new(RejectingHandler),
@@ -160,6 +443,7 @@ impl Libp2pLanTransport {
         Self {
             listen_address,
             identity_path: None,
+            peer_store_path: None,
             shutdown: None,
             worker: None,
             handler: Arc::new(RejectingHandler),
@@ -182,6 +466,11 @@ impl Libp2pLanTransport {
                 profile_root
                     .as_ref()
                     .join("collective/transport-identity.key"),
+            ),
+            peer_store_path: Some(
+                profile_root
+                    .as_ref()
+                    .join("collective/peer-store/addresses"),
             ),
             shutdown: None,
             worker: None,
@@ -343,6 +632,70 @@ fn load_or_create_identity(path: Option<&Path>) -> Result<identity::Keypair, Str
     }
 }
 
+const MAX_RETAINED_PEERS: usize = 1024;
+
+fn load_retained_peer_addresses(path: Option<&Path>) -> Vec<Multiaddr> {
+    let Some(path) = path else { return Vec::new() };
+    let Ok(raw) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    raw.lines()
+        .take(MAX_RETAINED_PEERS)
+        .filter(|line| line.len() <= 512)
+        .filter_map(|line| line.parse::<Multiaddr>().ok())
+        .filter(|address| {
+            address
+                .iter()
+                .any(|part| matches!(part, libp2p::multiaddr::Protocol::P2p(_)))
+        })
+        .collect()
+}
+
+fn retain_peer_address(path: Option<&Path>, peer: libp2p::PeerId, mut address: Multiaddr) {
+    let Some(path) = path else { return };
+    if !address
+        .iter()
+        .any(|part| matches!(part, libp2p::multiaddr::Protocol::P2p(_)))
+    {
+        address.push(libp2p::multiaddr::Protocol::P2p(peer));
+    }
+    let mut addresses = load_retained_peer_addresses(Some(path))
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    addresses.insert(address);
+    while addresses.len() > MAX_RETAINED_PEERS {
+        let Some(first) = addresses.first().cloned() else {
+            break;
+        };
+        addresses.remove(&first);
+    }
+    let Some(parent) = path.parent() else { return };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let temporary = parent.join(format!(".addresses.{}.tmp", std::process::id()));
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let Ok(mut file) = options.open(&temporary) else {
+        return;
+    };
+    for address in addresses {
+        if writeln!(file, "{address}").is_err() {
+            let _ = fs::remove_file(&temporary);
+            return;
+        }
+    }
+    if file.sync_all().is_ok() && fs::rename(&temporary, path).is_ok() {
+        return;
+    }
+    let _ = fs::remove_file(&temporary);
+}
+
 impl PeerTransport for Libp2pLanTransport {
     type Error = String;
 
@@ -352,6 +705,8 @@ impl PeerTransport for Libp2pLanTransport {
         }
         let listen_address = self.listen_address.clone();
         let identity = load_or_create_identity(self.identity_path.as_deref())?;
+        let retained_addresses = load_retained_peer_addresses(self.peer_store_path.as_deref());
+        let peer_store_path = self.peer_store_path.clone();
         let local_peer_id = identity.public().to_peer_id();
         let relay_server = self.relay_server;
         let handler = Arc::clone(&self.handler);
@@ -393,6 +748,12 @@ impl PeerTransport for Libp2pLanTransport {
                                 limits: libp2p::memory_connection_limits::Behaviour::with_max_percentage(
                                     0.05,
                                 ),
+                                connection_limits: libp2p::connection_limits::Behaviour::new(
+                                    libp2p::connection_limits::ConnectionLimits::default()
+                                        .with_max_established(Some(MAX_ESTABLISHED_CONNECTIONS))
+                                        .with_max_established_incoming(Some(MAX_ESTABLISHED_INBOUND))
+                                        .with_max_established_per_peer(Some(MAX_CONNECTIONS_PER_PEER)),
+                                ),
                                 objects: request_response::cbor::Behaviour::new(
                                     [(
                                         StreamProtocol::new(WIRE_PROTOCOL),
@@ -428,10 +789,21 @@ impl PeerTransport for Libp2pLanTransport {
                         let _ = ready_tx.send(Err(error.to_string()));
                         return;
                     }
+                    for address in retained_addresses {
+                        if let Some(libp2p::multiaddr::Protocol::P2p(peer)) =
+                            address.iter().last()
+                        {
+                            let mut routing_address = address.clone();
+                            let _ = routing_address.pop();
+                            swarm.behaviour_mut().kad.add_address(&peer, routing_address);
+                        }
+                        let _ = swarm.dial(address);
+                    }
                     let _ = ready_tx.send(Ok(()));
                     tokio::pin!(shutdown_rx);
                     let mut pending = HashMap::new();
                     let mut provider_queries = HashMap::new();
+                    let mut inbound_windows = HashMap::new();
                     loop {
                         tokio::select! {
                             _ = &mut shutdown_rx => break,
@@ -457,13 +829,21 @@ impl PeerTransport for Libp2pLanTransport {
                                         pending.insert(request_id, response);
                                     }
                                     Some(DriverCommand::Provide { object_id, response }) => {
-                                        let result = swarm
+                                        match swarm
                                             .behaviour_mut()
                                             .kad
                                             .start_providing(kad::RecordKey::new(&object_id))
-                                            .map(|_| ())
-                                            .map_err(|error| error.to_string());
-                                        let _ = response.send(result);
+                                        {
+                                            // The local provider record is installed when the
+                                            // query starts. Network propagation is eventual and
+                                            // must not block publication or the UI for a full DHT
+                                            // round. Query completion remains observable through
+                                            // subsequent bounded provider lookups.
+                                            Ok(_) => { let _ = response.send(Ok(())); }
+                                            Err(error) => {
+                                                let _ = response.send(Err(error.to_string()));
+                                            }
+                                        }
                                     }
                                     Some(DriverCommand::FindProviders { object_id, response }) => {
                                         let query_id = swarm
@@ -494,11 +874,13 @@ impl PeerTransport for Libp2pLanTransport {
                                                 known.insert(peer.to_string());
                                             }
                                             swarm.behaviour_mut().kad.add_address(&peer, address.clone());
+                                            retain_peer_address(peer_store_path.as_deref(), peer, address.clone());
                                             let _ = swarm.dial(address);
                                         }
                                     }
                                     SwarmEvent::Behaviour(LanBehaviourEvent::Objects(
                                         request_response::Event::Message {
+                                            peer,
                                             message: request_response::Message::Request {
                                                 request,
                                                 channel,
@@ -507,8 +889,14 @@ impl PeerTransport for Libp2pLanTransport {
                                             ..
                                         },
                                     )) => {
-                                        let response = if request.validate().is_ok() {
-                                            handler.handle(request)
+                                        let response = if !allow_inbound_request(
+                                            &mut inbound_windows,
+                                            peer,
+                                            Instant::now(),
+                                        ) {
+                                            PeerResponse::Rejected { code: "rate_limited".into() }
+                                        } else if request.validate().is_ok() {
+                                            handler.handle_from(peer, request)
                                         } else {
                                             PeerResponse::Rejected { code: "invalid_request".into() }
                                         };
@@ -555,6 +943,11 @@ impl PeerTransport for Libp2pLanTransport {
                                             &peer_id,
                                             endpoint.get_remote_address().clone(),
                                         );
+                                        retain_peer_address(
+                                            peer_store_path.as_deref(),
+                                            peer_id,
+                                            endpoint.get_remote_address().clone(),
+                                        );
                                     }
                                     SwarmEvent::NewListenAddr { address, .. } => {
                                         if let Ok(mut addresses) = listen_addresses.lock() {
@@ -571,6 +964,7 @@ impl PeerTransport for Libp2pLanTransport {
                                         if let Ok(mut known) = peers.lock() {
                                             known.remove(&peer_id.to_string());
                                         }
+                                        inbound_windows.remove(&peer_id);
                                     }
                                     SwarmEvent::Behaviour(LanBehaviourEvent::Kad(
                                         kad::Event::OutboundQueryProgressed { id, result, .. },
@@ -635,6 +1029,12 @@ impl PeerTransport for Libp2pLanTransport {
                 .join()
                 .map_err(|_| "collective LAN worker panicked".to_owned())?;
         }
+        if let Ok(mut peers) = self.peers.lock() {
+            peers.clear();
+        }
+        if let Ok(mut addresses) = self.listen_addresses.lock() {
+            addresses.clear();
+        }
         Ok(())
     }
 
@@ -654,6 +1054,7 @@ impl Drop for Libp2pLanTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{ObjectMetadata, PublicQuery};
     use libp2p::multiaddr::Protocol;
 
     #[test]
@@ -681,6 +1082,79 @@ mod tests {
         let first = load_or_create_identity(Some(&path)).unwrap();
         let second = load_or_create_identity(Some(&path)).unwrap();
         assert_eq!(first.public().to_peer_id(), second.public().to_peer_id());
+    }
+
+    #[test]
+    fn inbound_rate_limit_is_peer_neutral_and_resets_by_time() {
+        let first = identity::Keypair::generate_ed25519().public().to_peer_id();
+        let second = identity::Keypair::generate_ed25519().public().to_peer_id();
+        let start = Instant::now();
+        let mut windows = HashMap::new();
+        for _ in 0..MAX_REQUESTS_PER_MINUTE {
+            assert!(allow_inbound_request(&mut windows, first, start));
+        }
+        assert!(!allow_inbound_request(&mut windows, first, start));
+        assert!(allow_inbound_request(&mut windows, second, start));
+        assert!(allow_inbound_request(
+            &mut windows,
+            first,
+            start + Duration::from_secs(60),
+        ));
+    }
+
+    #[test]
+    fn store_handler_answers_only_structured_public_index_queries() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Arc::new(CollectiveStore::open(directory.path().join("store")).unwrap());
+        let object_id = format!("blake3:{}", "a".repeat(64));
+        store
+            .metadata()
+            .put(&ObjectMetadata {
+                object_id: object_id.clone(),
+                kind: "capability".into(),
+                publisher: format!("ed25519:{}", "b".repeat(64)),
+                admitted_at: "2026-07-21T00:00:00Z".into(),
+                capability_id: "com.example.packages.search".into(),
+                capability_version: "1".into(),
+                summary: "Search public package metadata".into(),
+                operation: "search".into(),
+                origin: "registry.example".into(),
+                effects: vec!["read_only".into()],
+            })
+            .unwrap();
+        let search = LocalSearchIndex::open(directory.path().join("search")).unwrap();
+        let handler = StoreRequestHandler::new(store).with_search(search);
+        let response = handler.handle(PeerRequest::FindContracts {
+            query: PublicQuery {
+                capability_terms: vec!["packages".into()],
+                operations: vec!["search".into()],
+                effects: vec!["read_only".into()],
+            },
+            limit: 8,
+        });
+        assert_eq!(
+            response,
+            PeerResponse::ContractIds {
+                object_ids: vec![object_id]
+            }
+        );
+    }
+
+    #[test]
+    fn store_handler_exchanges_only_bounded_parseable_peer_addresses() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Arc::new(CollectiveStore::open(directory.path().join("store")).unwrap());
+        let peer_store = directory.path().join("addresses");
+        let peer = identity::Keypair::generate_ed25519().public().to_peer_id();
+        let address = format!("/ip4/127.0.0.1/udp/4242/quic-v1/p2p/{peer}");
+        fs::write(&peer_store, format!("{address}\nnot-a-multiaddr\n")).unwrap();
+        let handler = StoreRequestHandler::new(store).with_peer_store(peer_store);
+        assert_eq!(
+            handler.handle(PeerRequest::PeerExchange { limit: 1 }),
+            PeerResponse::Peers {
+                addresses: vec![address]
+            }
+        );
     }
 
     #[test]
@@ -730,8 +1204,16 @@ mod tests {
         );
         let object_id = format!("blake3:{}", "a".repeat(64));
         first.announce_provider(&object_id).unwrap();
-        let providers = second.find_providers(&object_id).unwrap();
-        assert!(providers.contains(&first_peer));
+        let visible = (0..40).any(|_| {
+            let visible = second
+                .find_providers(&object_id)
+                .is_ok_and(|providers| providers.contains(&first_peer));
+            if !visible {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            visible
+        });
+        assert!(visible, "provider record did not converge");
         first.stop().unwrap();
         second.stop().unwrap();
     }
@@ -779,8 +1261,17 @@ mod tests {
         let object_id = format!("blake3:{}", "c".repeat(64));
         original_seed.announce_provider(&object_id).unwrap();
         community_replica.announce_provider(&object_id).unwrap();
-        std::thread::sleep(Duration::from_millis(250));
         let community_peer = community_replica.local_peer_id().unwrap();
+        let converged = (0..40).any(|_| {
+            let visible = unrelated
+                .find_providers(&object_id)
+                .is_ok_and(|providers| providers.contains(&community_peer));
+            if !visible {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            visible
+        });
+        assert!(converged, "community provider record did not converge");
         original_seed.stop().unwrap();
 
         let providers = unrelated.find_providers(&object_id).unwrap();
