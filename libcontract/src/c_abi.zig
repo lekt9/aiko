@@ -929,8 +929,12 @@ export fn contract_recommend_plan(
     limit: u32,
 ) ?[*:0]u8 {
     if (cstr(context).len == 0 or limit == 0) return null;
-    const learned = route.latestCapabilityEvidenceJson(gpa, extEnv()) catch return null;
-    defer gpa.free(learned);
+    // Episodic evidence improves ranking, but it is not the capability
+    // catalog. A corrupt, oversized, or temporarily unavailable ledger must
+    // not make every live capability disappear. Degrade to the registered
+    // cold catalog and let recommendPlan mark candidates unverified.
+    const learned = route.latestCapabilityEvidenceJson(gpa, extEnv()) catch null;
+    defer if (learned) |evidence| gpa.free(evidence);
     lockRegistry();
     defer registry_mutex.unlock();
     const json = registry().recommendPlan(gpa, cstr(context), learned, cstr(availability_json), limit) catch return null;

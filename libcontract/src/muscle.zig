@@ -269,7 +269,7 @@ pub const Bank = struct {
         var best_energy = std.math.inf(f64);
         for (0..self.count) |index| {
             const cell = &self.cells[index];
-            const value = ebm.energyText(cell.context, context);
+            const value = ebm.energyText(cell.context, context) + outcomePenalty(cell);
             if (value < best_energy) {
                 best_energy = value;
                 best = cell.binary();
@@ -285,13 +285,22 @@ pub const Bank = struct {
         var best_energy = std.math.inf(f64);
         for (0..self.count) |index| {
             const cell = &self.cells[index];
-            const value = cell.transition.energy(before, target);
+            const value = cell.transition.energy(before, target) + outcomePenalty(cell);
             if (value < best_energy) {
                 best_energy = value;
                 best = cell.binary();
             }
         }
         return best;
+    }
+
+    /// Grounding is part of the energy, not a post-hoc annotation. Repeated
+    /// failures inhibit a superficially similar reflex while successful uses
+    /// reinforce it. Keeping this shared by recall, prediction, and rank makes
+    /// the learned world model behave consistently on every host.
+    fn outcomePenalty(cell: *const Cell) f64 {
+        return @as(f64, @floatFromInt(cell.failures)) * 0.35 -
+            @as(f64, @floatFromInt(@min(cell.successes, 10))) * 0.05;
     }
 };
 
@@ -387,6 +396,15 @@ test "JEPA transition chooses the binary predicted to reach the target state" {
     try bank.observe(.{ .context = "build", .binary = "zig", .before = "source tree", .after = "built library", .reward = 1 });
     try std.testing.expectEqualStrings("zig", bank.predict("source tree", "built library").?);
     try std.testing.expectEqualStrings("rg", bank.predict("source tree", "matching source lines").?);
+}
+
+test "failed reflexes are inhibited in both semantic recall and JEPA prediction" {
+    var bank: Bank = .{};
+    try bank.observe(.{ .context = "open matching object", .binary = "failed-click", .before = "closed", .after = "open", .reward = -1 });
+    try bank.observe(.{ .context = "open matching object", .binary = "failed-click", .before = "closed", .after = "open", .reward = -1 });
+    try bank.observe(.{ .context = "open matching object", .binary = "grounded-click", .before = "closed", .after = "open", .reward = 1 });
+    try std.testing.expectEqualStrings("grounded-click", bank.recall("open matching object").?);
+    try std.testing.expectEqualStrings("grounded-click", bank.predict("closed", "open").?);
 }
 
 test "vector observations survive stateless replay without retaining raw text" {
