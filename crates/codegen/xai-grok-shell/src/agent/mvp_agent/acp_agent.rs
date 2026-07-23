@@ -2308,6 +2308,10 @@ impl acp::Agent for MvpAgent {
         )
         .await;
         let turn_contract = grounded.contract;
+        crate::contract_native::store_turn_contract_root(
+            &prompt_id,
+            turn_contract.as_ref().map(crate::contract_native::TurnContract::id),
+        );
         crate::contract_native::store_capability_route(
             &prompt_id,
             grounded.capability_route.clone(),
@@ -2333,6 +2337,7 @@ impl acp::Agent for MvpAgent {
             })
             .map_err(|e| {
                 let _ = crate::contract_native::take_capability_route(&prompt_id);
+                let _ = crate::contract_native::take_turn_contract_root(&prompt_id);
                 acp::Error::internal_error()
                     .data(format!("failed to dispatch prompt to session: {e}"))
             })?;

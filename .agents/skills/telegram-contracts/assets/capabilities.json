@@ -1,0 +1,32 @@
+[
+  {
+    "schema_version": 1,
+    "id": "telegram.updates.observe",
+    "capability_version": "1.0.0",
+    "provider": "skill",
+    "tool": "telegram-contracts",
+    "action": "observe_updates",
+    "description": "Observe Telegram updates and declare each update before authorization filtering.",
+    "input_schema": {"type":"object","properties":{"offset":{"type":"integer"}},"required":[]},
+    "output_schema": {"type":"object","properties":{"updates":{"type":"array"}},"required":["updates"]},
+    "requires": ["telegram.bot_token"],
+    "permission": "network",
+    "effects": ["network_read"],
+    "available": true
+  },
+  {
+    "schema_version": 1,
+    "id": "telegram.message.send",
+    "capability_version": "1.0.0",
+    "provider": "skill",
+    "tool": "telegram-contracts",
+    "action": "send_message",
+    "description": "Send a Telegram message after the identity authorization contract succeeds.",
+    "input_schema": {"type":"object","properties":{"chat_id":{"type":"integer"},"text":{"type":"string"}},"required":["chat_id","text"]},
+    "output_schema": {"type":"object","properties":{"message_id":{"type":"integer"}},"required":["message_id"]},
+    "requires": ["telegram.bot_token", "telegram.identity.approved"],
+    "permission": "write",
+    "effects": ["network_write", "message_send"],
+    "available": true
+  }
+]

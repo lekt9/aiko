@@ -12,6 +12,7 @@
 // a process tree. This is the fractal execution model.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as native from "./native";
 
 const parentStore = new AsyncLocalStorage<string | null>();
@@ -132,6 +133,8 @@ export function currentNeuronId(): string | null {
 // ── spawn mode — fractal process tree ──────────────────────────────────────
 
 export interface SpawnOptions {
+  /** Existing native child identity to execute without redeclaring it. */
+  contractId?: string;
   /** Parent neuron id — this spawn becomes a child in the DAG. */
   parent?: string | null;
   /** Action label (declare kind). Default "spawn". */
@@ -161,12 +164,19 @@ export interface SpawnResult {
   kill: () => void;
 }
 
-export function buildSpawnCommand(plan: string, opts: SpawnOptions, parentId: string | null): {
+export function buildSpawnCommand(
+  plan: string,
+  opts: SpawnOptions,
+  parentId: string | null,
+  contractId?: string,
+): {
   command: string;
   args: string[];
   env: NodeJS.ProcessEnv;
 } {
   const command = opts.env?.AIKO_BIN ?? process.env.AIKO_BIN ?? "aiko";
+  const parentDepth = Number(opts.env?.AIKO_CONTRACT_DEPTH ?? process.env.AIKO_CONTRACT_DEPTH ?? "0");
+  const nextDepth = Math.min(16, parentDepth + 1);
   const args = [
     "-p",
     plan,
@@ -187,7 +197,23 @@ export function buildSpawnCommand(plan: string, opts: SpawnOptions, parentId: st
     env: {
       ...process.env,
       ...opts.env,
+      AIKO_CONTRACT_ID: contractId ?? "",
       AIKO_CONTRACT_PARENT_ID: parentId ?? "",
+      AIKO_CONTRACT_ROOT_ID: opts.env?.AIKO_CONTRACT_ROOT_ID ?? process.env.AIKO_CONTRACT_ROOT_ID ?? parentId ?? contractId ?? "",
+      AIKO_CONTRACT_DEPTH: String(
+        nextDepth,
+      ),
+      AIKO_CONTRACT_MAX_DEPTH: opts.env?.AIKO_CONTRACT_MAX_DEPTH ?? process.env.AIKO_CONTRACT_MAX_DEPTH ?? "4",
+      AIKO_CONTRACT_MAX_CHILDREN: opts.env?.AIKO_CONTRACT_MAX_CHILDREN ?? process.env.AIKO_CONTRACT_MAX_CHILDREN ?? "16",
+      AIKO_CONTRACT_MAX_TOTAL_CHILDREN: opts.env?.AIKO_CONTRACT_MAX_TOTAL_CHILDREN ?? process.env.AIKO_CONTRACT_MAX_TOTAL_CHILDREN ?? "64",
+      AIKO_CONTRACT_REMAINING_CHILDREN: opts.env?.AIKO_CONTRACT_REMAINING_CHILDREN ?? process.env.AIKO_CONTRACT_REMAINING_CHILDREN ?? "64",
+      AIKO_CONTRACT_MAX_CONCURRENCY: opts.env?.AIKO_CONTRACT_MAX_CONCURRENCY ?? process.env.AIKO_CONTRACT_MAX_CONCURRENCY ?? "4",
+      // One opaque token is inherited by the complete process tree. A root
+      // creates it once; descendants never mint disconnected cancellation
+      // domains.
+      AIKO_CONTRACT_CANCEL_TOKEN: opts.env?.AIKO_CONTRACT_CANCEL_TOKEN
+        ?? process.env.AIKO_CONTRACT_CANCEL_TOKEN
+        ?? randomUUID(),
     },
   };
 }
@@ -207,17 +233,23 @@ export function spawnNeuron(
 ): SpawnResult | null {
   if (!native.isAvailable()) return null;
 
+  const depth = Number(opts.env?.AIKO_CONTRACT_DEPTH ?? process.env.AIKO_CONTRACT_DEPTH ?? "0");
+  const maxDepth = Number(opts.env?.AIKO_CONTRACT_MAX_DEPTH ?? process.env.AIKO_CONTRACT_MAX_DEPTH ?? "4");
+  const remaining = Number(opts.env?.AIKO_CONTRACT_REMAINING_CHILDREN ?? process.env.AIKO_CONTRACT_REMAINING_CHILDREN ?? "64");
+  if (!Number.isFinite(depth) || !Number.isFinite(maxDepth) || depth >= maxDepth || remaining <= 0) return null;
+
   const parentId = opts.parent ?? currentParent();
 
   // The native declaration is the identity. Never invent an unrelated process
   // id in TypeScript: lineage and execution must point at the same contract.
-  const cid = native.declare(plan, opts.action ?? "spawn", parentId, opts.agent ?? null);
+  if (opts.contractId && !/^[0-9a-f]{8}$/.test(opts.contractId)) return null;
+  const cid = opts.contractId ?? native.declare(plan, opts.action ?? "spawn", parentId, opts.agent ?? null);
   if (!cid) return null;
 
   const maxRounds = opts.maxToolRounds ?? 200;
   const timeoutMs = opts.timeoutMs ?? 300_000;
 
-  const invocation = buildSpawnCommand(plan, { ...opts, maxToolRounds: maxRounds }, parentId);
+  const invocation = buildSpawnCommand(plan, { ...opts, maxToolRounds: maxRounds }, parentId, cid);
   const child = spawn(invocation.command, invocation.args, {
     cwd: opts.cwd ?? process.cwd(),
     env: invocation.env,
@@ -268,8 +300,73 @@ export function spawnNeuron(
  * process and all siblings begin immediately; callers await the wave barrier
  * before spawning dependent children. */
 export function spawnNeuronWave(plans: readonly string[], opts: SpawnOptions = {}): SpawnResult[] {
+  const maxChildren = Math.min(16, Number(opts.env?.AIKO_CONTRACT_MAX_CHILDREN ?? process.env.AIKO_CONTRACT_MAX_CHILDREN ?? "16"));
+  const remaining = Math.max(0, Number(opts.env?.AIKO_CONTRACT_REMAINING_CHILDREN ?? process.env.AIKO_CONTRACT_REMAINING_CHILDREN ?? "64"));
   return plans
-    .slice(0, 16)
+    .slice(0, Math.min(maxChildren, remaining))
     .map((plan) => spawnNeuron(plan, opts))
     .filter((result): result is SpawnResult => result !== null);
+}
+
+export interface NativeWaveExpansion {
+  root_id: string;
+  children: Array<{ key: string; id: string; held: boolean }>;
+  waves: string[][];
+}
+
+export interface WaveChildPlan {
+  key: string;
+  plan: string;
+  action?: string;
+}
+
+/** Execute native DAG waves with one isolated Aiko per child. A wave barrier
+ * prevents dependent work from starting before all prerequisites settle. */
+export async function executeNeuronWaves(
+  expansion: NativeWaveExpansion,
+  children: readonly WaveChildPlan[],
+  opts: SpawnOptions = {},
+): Promise<boolean> {
+  const declared = new Map(expansion.children.map((child) => [child.id, child]));
+  const plans = new Map(children.map((child) => [child.key, child]));
+  const parentRemaining = Math.max(
+    0,
+    Number(opts.env?.AIKO_CONTRACT_REMAINING_CHILDREN ?? process.env.AIKO_CONTRACT_REMAINING_CHILDREN ?? "64"),
+  );
+  const runnableChildren = expansion.children.filter((child) => !child.held).length;
+  const descendantBudget = Math.max(0, parentRemaining - runnableChildren);
+  const budgetPerChild = runnableChildren > 0 ? Math.floor(descendantBudget / runnableChildren) : 0;
+  for (const wave of expansion.waves) {
+    const workers = wave.map((id) => {
+      const child = declared.get(id);
+      const plan = child ? plans.get(child.key) : undefined;
+      if (!child || child.held || !plan) return null;
+      return {
+        id,
+        worker: spawnNeuron(plan.plan, {
+          ...opts,
+          parent: expansion.root_id,
+          contractId: id,
+          action: plan.action ?? "neuron",
+          env: { ...opts.env, AIKO_CONTRACT_REMAINING_CHILDREN: String(budgetPerChild) },
+        }),
+      };
+    });
+    const results = await Promise.all(
+      workers.map(async (entry) => {
+        if (!entry?.worker?.done) return { id: entry?.id, code: 1 };
+        return { id: entry.id, code: await entry.worker.done };
+      }),
+    );
+    for (const result of results) {
+      if (!result.id || result.code !== 0) {
+        if (result.id) native.fire(result.id, result.code, "isolated Aiko worker failed");
+        return false;
+      }
+      native.markSatisfied(result.id, encode({ exit_code: result.code, worker: "aiko" }));
+    }
+  }
+  const hasHeld = expansion.children.some((child) => child.held);
+  if (!hasHeld) native.markSatisfied(expansion.root_id, encode({ waves: expansion.waves.length }));
+  return !hasHeld;
 }

@@ -2430,3 +2430,15 @@
   border-color: var(--color-accent);
   color: var(--color-ink);
 }
+.reflex-settings__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reflex-settings__actions button,
+.reflex-settings .collective-settings__section > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

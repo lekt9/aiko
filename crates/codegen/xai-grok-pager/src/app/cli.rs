@@ -76,6 +76,54 @@ pub enum NativeCommand {
         #[command(subcommand)]
         command: TelegramCommand,
     },
+    /// Inspect and control Contract's learned reflex substrate.
+    Reflex {
+        #[command(subcommand)]
+        command: ReflexCommand,
+    },
+    /// Control privacy-safe, opt-in local activity sensing.
+    Activity {
+        #[command(subcommand)]
+        command: ActivityCommand,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum ReflexCommand {
+    Status,
+    List {
+        #[arg(long, default_value = "")]
+        context: String,
+    },
+    Delete {
+        capability: String,
+    },
+    Enable,
+    Disable,
+    Allow {
+        capability: String,
+    },
+    Deny {
+        capability: String,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum ActivityCommand {
+    Status,
+    Enable,
+    Disable,
+    List {
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
+    Clear,
+    Exclude {
+        application: String,
+    },
+    Include {
+        application: String,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand)]

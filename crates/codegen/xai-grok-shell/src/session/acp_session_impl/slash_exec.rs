@@ -303,6 +303,55 @@ impl SessionActor {
                 .await;
                 ok_end_turn(0, None)
             }
+            BuiltinAction::Reflexes { args } => {
+                let mut words = args.split_whitespace();
+                let command = words.next().unwrap_or("status");
+                let value = match command {
+                    "status" => Ok(crate::contract_native::reflex_policy_status()),
+                    "on" | "enable" => crate::contract_native::set_reflexes_enabled(true),
+                    "off" | "disable" | "pause" => {
+                        crate::contract_native::set_reflexes_enabled(false)
+                    }
+                    "allow" | "deny" => {
+                        let capability = words.collect::<Vec<_>>().join(" ");
+                        crate::contract_native::set_reflex_capability_enabled(
+                            capability,
+                            command == "allow",
+                        )
+                    }
+                    "forget" | "delete" => {
+                        let capability = words.collect::<Vec<_>>().join(" ");
+                        Ok(serde_json::json!({
+                            "capability": capability,
+                            "deleted": crate::contract_native::delete_muscle_reflex(capability).await
+                        }))
+                    }
+                    "list" => {
+                        let context = words.collect::<Vec<_>>().join(" ");
+                        Ok(crate::contract_native::inspect_muscle_rankings(context).await)
+                    }
+                    "activity" => match words.next().unwrap_or("status") {
+                        "on" | "enable" => crate::contract_native::set_activity_sensors_enabled(true),
+                        "off" | "disable" => crate::contract_native::set_activity_sensors_enabled(false),
+                        "list" => Ok(crate::contract_native::inspect_activity_events(50)),
+                        "clear" => crate::contract_native::clear_activity_events()
+                            .map(|()| serde_json::json!({ "cleared": true })),
+                        _ => Ok(crate::contract_native::reflex_policy_status()),
+                    },
+                    _ => Err("Usage: /reflexes [status|list <context>|on|off|allow <capability>|deny <capability>|forget <capability>|activity on|off|list|clear]".to_string()),
+                };
+                let text = match value {
+                    Ok(value) => {
+                        serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
+                    }
+                    Err(error) => error,
+                };
+                self.send_slash_command_output(&format!(
+                    "**Contract reflexes**\n\n```json\n{text}\n```"
+                ))
+                .await;
+                ok_end_turn(0, None)
+            }
             BuiltinAction::SessionInfo => {
                 let info = self.build_session_info().await;
 

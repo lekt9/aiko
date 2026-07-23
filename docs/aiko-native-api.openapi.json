@@ -303,6 +303,28 @@
         }
       }
     },
+    "/v1/reflexes": {
+      "get": {
+        "operationId": "listContractReflexes",
+        "parameters": [{ "name": "context", "in": "query", "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Energy-ranked local reflexes and operator policy" } }
+      }
+    },
+    "/v1/reflexes/{capability}": {
+      "delete": {
+        "operationId": "deleteContractReflex",
+        "parameters": [{ "name": "capability", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Durable reflex tombstone appended" } }
+      }
+    },
+    "/v1/reflex-policy": {
+      "get": { "operationId": "getReflexPolicy", "responses": { "200": { "description": "Local reflex and sensor policy" } } },
+      "put": { "operationId": "updateReflexPolicy", "responses": { "200": { "description": "Atomically updated local policy" } } }
+    },
+    "/v1/activity": {
+      "get": { "operationId": "listActivityEvidence", "responses": { "200": { "description": "Privacy-safe retained activity events" } } },
+      "delete": { "operationId": "clearActivityEvidence", "responses": { "200": { "description": "Local activity evidence erased" } } }
+    },
     "/v1/signals": {
       "post": {
         "operationId": "emitContractSignal",

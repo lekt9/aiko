@@ -216,6 +216,18 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         resolve: |_args| BuiltinAction::PluginsReload,
     },
     BuiltinCommand {
+        name: "reflexes",
+        description: "Inspect or control contract-native reflexes and activity learning",
+        argument_hint: Some(
+            "[list <context> | on | off | allow <capability> | deny <capability> | forget <capability> | activity on|off|list|clear]",
+        ),
+        aliases: &["muscle"],
+        gate: BuiltinGate::AlwaysOn,
+        resolve: |args| BuiltinAction::Reflexes {
+            args: args.trim().to_string(),
+        },
+    },
+    BuiltinCommand {
         name: "session-info",
         description: "Show session details (model, turns, context usage)",
         argument_hint: None,
@@ -626,6 +638,9 @@ pub(super) enum BuiltinAction {
     PluginsList,
     PluginsReload,
     PluginsTrust,
+    Reflexes {
+        args: String,
+    },
     SessionInfo,
     PluginsAdd {
         path: String,
@@ -677,6 +692,7 @@ impl BuiltinAction {
             BuiltinAction::PluginsList => "plugins-list",
             BuiltinAction::PluginsReload => "plugins-reload",
             BuiltinAction::PluginsTrust => "plugins-trust",
+            BuiltinAction::Reflexes { .. } => "reflexes",
             BuiltinAction::SessionInfo => "session",
             BuiltinAction::PluginsAdd { .. } => "plugins-add",
             BuiltinAction::PluginsRemove { .. } => "plugins-remove",
@@ -709,6 +725,7 @@ impl BuiltinAction {
             BuiltinAction::PluginsList => false,
             BuiltinAction::PluginsReload => false,
             BuiltinAction::PluginsTrust => false,
+            BuiltinAction::Reflexes { args } => !args.is_empty(),
             BuiltinAction::SessionInfo => false,
             BuiltinAction::PluginsAdd { .. } => true,
             BuiltinAction::PluginsRemove { .. } => true,

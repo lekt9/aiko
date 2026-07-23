@@ -4,6 +4,8 @@ import process from "node:process";
 import { Agent } from "../agent/agent";
 import { DISPLAY_NAME } from "../brand";
 import { createDaemon } from "../contract/daemon";
+import * as contract from "../contract/native";
+import { executeNeuronWaves } from "../contract/neurons";
 import { createFractalEBM } from "../contract/fractal-ebm";
 import { setFractalEBM } from "../contract/hooks";
 import { ffiMirrorStatus } from "../contract/native";
@@ -166,15 +168,38 @@ export async function runTelegramHeadlessBridge(options: TelegramHeadlessBridgeO
     coordinator,
     getTelegramAgent,
     onInboundMessage: (event) => {
-      const authorization = event.authorized ? "authorized" : "pending-authorization";
+      const authorization = event.authorized ? "approved" : "pending_authorization";
       const plan =
         `Telegram ${event.kind} from user ${event.userId} (${authorization}): ` +
         truncate(event.content, 500);
-      const neuronId = contract.declare(plan, "channel-event", null, `telegram:${event.userId}`);
+      const children: contract.ContractGraphChild[] = [
+        { key: "identity", plan: `Resolve Telegram identity ${event.userId}` },
+        { key: "log", plan: `Record redacted evidence for ${event.turnKey}` },
+        { key: "rules", plan: `Match durable notification rules for Telegram user ${event.userId}` },
+        {
+          key: "respond",
+          plan: `Reason about and respond to Telegram event ${event.turnKey}`,
+          depends_on: ["identity", "rules", "log"],
+          requires_authorization: true,
+          authorization,
+        },
+      ];
+      const expansion = contract.expandGraph({
+        plan,
+        action: "channel-event",
+        agent: `telegram:${event.userId}`,
+        cwd: process.cwd(),
+        children,
+      });
       appendLog(
         paths.logFile,
-        `inbound_contract user=${event.userId} authorized=${event.authorized} neuron=${neuronId ?? "unavailable"}`,
+        `inbound_contract user=${event.userId} authorized=${event.authorized} neuron=${expansion?.root_id ?? "unavailable"}`,
       );
+      if (expansion) {
+        void executeNeuronWaves(expansion, children, { cwd: process.cwd(), maxToolRounds: 100 }).then((grounded) => {
+          appendLog(paths.logFile, `inbound_contract_complete root=${expansion.root_id} grounded=${grounded}`);
+        });
+      }
     },
     onUserMessage: (event) => {
       appendLog(paths.logFile, `user ${event.userId}: ${truncate(event.content)}`);

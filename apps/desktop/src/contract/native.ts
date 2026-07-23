@@ -38,6 +38,7 @@ type Sym = {
     recurring: number,
     firstDue: number,
   ) => number;
+  contract_expand_json: (requestJson: number) => number;
   contract_free: (p: number) => void;
 };
 
@@ -104,6 +105,7 @@ function tryLoadFfi(): void {
         args: [FFIType.cstring, FFIType.cstring, FFIType.u64, FFIType.i32, FFIType.i64],
         returns: FFIType.ptr,
       },
+      contract_expand_json: { args: [FFIType.cstring], returns: FFIType.ptr },
       contract_free: { args: [FFIType.ptr], returns: FFIType.void },
     });
     ffi = symbols as Sym;
@@ -221,6 +223,43 @@ export function markSatisfied(cid: string, proof: string, wave = 1): number {
 
 export function fire(cid: string, exitCode = 0, result = "", wave = 1): number {
   return isNative() ? (ffiIterate(cid, exitCode, result, wave) ?? 1) : 0;
+}
+
+export interface ContractGraphChild {
+  key: string;
+  plan: string;
+  action?: string;
+  depends_on?: string[];
+  requires_authorization?: boolean;
+  authorization?: "approved" | "pending_authorization" | "denied";
+}
+
+export interface ContractGraphRequest {
+  plan: string;
+  action?: string;
+  cwd?: string;
+  agent?: string;
+  children: ContractGraphChild[];
+}
+
+export interface ContractGraphExpansion {
+  abi_version: number;
+  root_id: string;
+  children: Array<{ key: string; id: string; held: boolean }>;
+  waves: string[][];
+}
+
+/** Declare a parent and bounded child DAG in the signed substrate. */
+export function expandGraph(request: ContractGraphRequest): ContractGraphExpansion | null {
+  if (!isNative() || !ffi || request.children.length === 0 || request.children.length > 16) return null;
+  try {
+    const encoded = cstr(JSON.stringify(request));
+    if (encoded == null) return null;
+    const response = readFree(ffi.contract_expand_json(encoded));
+    return response ? (JSON.parse(response) as ContractGraphExpansion) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

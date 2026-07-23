@@ -85,6 +85,20 @@
       ]
     },
     {
+      "id": "contract.reflexes",
+      "version": 1,
+      "kind": "read-write",
+      "description": "Inspect, pause, allow, deny, and erase durable local muscle memory plus opt-in privacy-safe activity evidence.",
+      "operations": [
+        "GET /v1/reflexes",
+        "DELETE /v1/reflexes/{capability}",
+        "GET /v1/reflex-policy",
+        "PUT /v1/reflex-policy",
+        "GET /v1/activity",
+        "DELETE /v1/activity"
+      ]
+    },
+    {
       "id": "collective.local-control",
       "version": 1,
       "kind": "read-write",

@@ -14,6 +14,8 @@ import {
   Trash2,
   Ban,
   TriangleAlert,
+  BrainCircuit,
+  PauseCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -38,17 +40,32 @@ import {
   type CollectiveReviewItem,
   type CollectiveStatus,
   type TelegramSettings,
+  getReflexes,
+  updateReflexPolicy,
+  deleteReflex,
+  getActivityEvents,
+  clearActivityEvents,
+  type ReflexCandidate,
+  type ReflexPolicy,
+  type ActivityEvent,
 } from "../bridge/native";
 import { PlaceholderSurface } from "./PlaceholderSurface";
 
 export function SettingsSurface() {
-  const [activeTab, setActiveTab] = useState<"account" | "collective" | "telegram">("account");
+  const [activeTab, setActiveTab] = useState<"account" | "collective" | "telegram" | "reflexes">("account");
   return (
     <div className="surface settings-surface">
       <header className="settings-surface__header">
         <h2>Settings</h2>
       </header>
       <div className="settings-surface__tabs">
+        <button
+          data-active={activeTab === "reflexes"}
+          onClick={() => setActiveTab("reflexes")}
+          type="button"
+        >
+          Reflexes
+        </button>
         <button
           data-active={activeTab === "collective"}
           onClick={() => setActiveTab("collective")}
@@ -79,9 +96,72 @@ export function SettingsSurface() {
         />
       ) : activeTab === "collective" ? (
         <CollectiveSettingsPane />
+      ) : activeTab === "reflexes" ? (
+        <ReflexSettingsPane />
       ) : (
         <TelegramSettingsPane />
       )}
+    </div>
+  );
+}
+
+function ReflexSettingsPane() {
+  const [policy, setPolicy] = useState<ReflexPolicy | null>(null);
+  const [candidates, setCandidates] = useState<ReflexCandidate[]>([]);
+  const [activity, setActivity] = useState<ActivityEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const [reflexes, events] = await Promise.all([getReflexes(), getActivityEvents(40)]);
+      setPolicy(reflexes.policy);
+      setCandidates(reflexes.candidates);
+      setActivity(events);
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Contract reflex runtime unavailable.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+  if (loading) return <div className="collective-settings__loading"><Loader2 size={18} className="spin" /> Reading local reflex substrate…</div>;
+
+  const update = async (body: Record<string, unknown>) => {
+    try { setPolicy(await updateReflexPolicy(body)); setError(null); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Policy update failed."); }
+  };
+
+  return (
+    <div className="collective-settings reflex-settings">
+      <section className="collective-settings__hero">
+        <div><span className="collective-settings__eyebrow">Local muscle memory</span><h3>Contract reflexes</h3><p>Inspect what Aiko learned, control automatic firing, and pause or erase local activity evidence.</p></div>
+        <BrainCircuit size={28} />
+      </section>
+      {error ? <p className="collective-settings__error">{error}</p> : null}
+      <section className="collective-settings__section">
+        <div className="collective-settings__section-copy"><strong>Automatic reflexes</strong><p>Native policy still requires grounded evidence, an enabled capability, acceptable cost, and applicable authority.</p></div>
+        <button className="collective-settings__toggle" data-enabled={policy?.reflexes_enabled} onClick={() => void update({ reflexes_enabled: !policy?.reflexes_enabled })} type="button">{policy?.reflexes_enabled ? <Power size={17} /> : <PowerOff size={17} />}{policy?.reflexes_enabled ? "Enabled" : "Paused"}</button>
+      </section>
+      <section className="collective-settings__section">
+        <div className="collective-settings__section-copy"><strong>Machine activity sensor</strong><p>Opt-in foreground application transitions only. No keystrokes, window titles, document contents, or credentials.</p></div>
+        <button className="collective-settings__toggle" data-enabled={policy?.activity_sensors_enabled} onClick={() => void update({ activity_sensors_enabled: !policy?.activity_sensors_enabled })} type="button">{policy?.activity_sensors_enabled ? <Eye size={17} /> : <EyeOff size={17} />}{policy?.activity_sensors_enabled ? "Observing" : "Off"}</button>
+      </section>
+      <section className="collective-settings__section collective-settings__section--stacked">
+        <div className="collective-settings__section-copy"><strong>Learned capabilities</strong><p>Lower energy ranks first. A capability must also be explicitly allowed before it can fire.</p></div>
+        <ul className="collective-settings__objects">
+          {candidates.length === 0 ? <li>No grounded reflexes yet.</li> : candidates.map((candidate) => (
+            <li key={candidate.binary}><div><strong>{candidate.binary}</strong><small>energy {candidate.energy.toFixed(3)} · {candidate.successes} success · {candidate.failures} failure · confidence {(candidate.confidence * 100).toFixed(0)}%</small></div><div className="reflex-settings__actions"><button type="button" onClick={() => void update({ capability: candidate.binary, enabled: !policy?.capabilities[candidate.binary] })}>{policy?.capabilities[candidate.binary] ? <PauseCircle size={15} /> : <Check size={15} />}{policy?.capabilities[candidate.binary] ? "Deny" : "Allow"}</button><button type="button" onClick={() => void deleteReflex(candidate.binary).then(refresh)}><Trash2 size={15} />Erase</button></div></li>
+          ))}
+        </ul>
+      </section>
+      <section className="collective-settings__section collective-settings__section--stacked">
+        <div className="collective-settings__section-copy"><strong>Recent activity evidence</strong><p>{activity.length} retained foreground transitions. Excluded applications never enter this list.</p></div>
+        <ul className="collective-settings__audit">{activity.slice(0, 12).map((event) => <li key={`${event.observed_unix}-${event.application}`}><span>{event.application}</span><time>{new Date(event.observed_unix * 1000).toLocaleString()}</time></li>)}</ul>
+        <button type="button" onClick={() => void clearActivityEvents().then(refresh)}><Trash2 size={15} />Clear activity evidence</button>
+      </section>
     </div>
   );
 }

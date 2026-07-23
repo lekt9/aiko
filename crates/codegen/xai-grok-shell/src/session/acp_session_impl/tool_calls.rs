@@ -443,6 +443,11 @@ impl SessionActor {
                 let lock = lock_path_for_args(&prepared.parsed_args)
                     .and_then(|fp| file_locks.get(fp).cloned());
                 async move {
+                    let tool_contract_id = crate::contract_native::begin_active_tool_contract(
+                        session_id.as_ref(),
+                        &prepared.tool_name,
+                        Some(&prepared.raw_arguments),
+                    );
                     let exec_start = std::time::Instant::now();
                     let run_tool = || {
                         let prepared = Arc::clone(&prepared);
@@ -490,7 +495,7 @@ impl SessionActor {
                             success, }
                         )),
                     );
-                    (idx, result)
+                    (idx, result, tool_contract_id)
                 }
             })
             .collect();
@@ -501,7 +506,11 @@ impl SessionActor {
         }
         let mut approved_slots: Vec<Option<PreparedToolCall>> =
             approved.into_iter().map(Some).collect();
-        let (dispatch_tx, mut dispatch_rx) = tokio::sync::mpsc::unbounded_channel::<(usize, _)>();
+        let (dispatch_tx, mut dispatch_rx) = tokio::sync::mpsc::unbounded_channel::<(
+            usize,
+            _,
+            Option<crate::contract_native::ActiveToolContract>,
+        )>();
         let drainer = tokio::spawn(async move {
             while let Some(item) = dispatch_stream.next().await {
                 if dispatch_tx.send(item).is_err() {
@@ -510,7 +519,7 @@ impl SessionActor {
             }
         });
         let _drainer_guard = crate::util::AbortOnDrop(drainer);
-        while let Some((idx, mut result)) = dispatch_rx.recv().await {
+        while let Some((idx, mut result, tool_contract_id)) = dispatch_rx.recv().await {
             let prepared = approved_slots[idx]
                 .take()
                 .expect("dispatch index should match an approved slot exactly once");
@@ -675,15 +684,20 @@ impl SessionActor {
                 }
             };
             let duration_ms = tool_start.elapsed().as_millis() as u64;
+            let tool_succeeded = fech_error.is_none();
             crate::contract_native::record_active_capability_observation(
                 self.session_info.id.0.as_ref(),
                 &prepared.tool_name,
                 Some(&prepared.raw_arguments),
-                fech_error.is_none(),
+                tool_succeeded,
                 duration_ms,
                 crate::capability_catalog::PermissionResult::Allowed,
                 fech_error,
                 crate::capability_catalog::ResultShape::Object,
+            );
+            crate::contract_native::settle_active_tool_contract(
+                tool_contract_id.as_ref(),
+                tool_succeeded,
             );
             self.signals_handle()
                 .record_tool_duration(&prepared.tool_name, duration_ms);

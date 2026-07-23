@@ -13,11 +13,13 @@ use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use xai_grok_pager::app::cli::{
-    AgentMailCommand, CaptchaCommand, NativeArgs, NativeCommand, TelegramCommand,
+    ActivityCommand, AgentMailCommand, CaptchaCommand, NativeArgs, NativeCommand, ReflexCommand,
+    TelegramCommand,
 };
 use xai_grok_shell::agentmail_native;
 use xai_grok_shell::captcha_native;
@@ -81,6 +83,75 @@ pub async fn run_command(args: NativeArgs) -> Result<()> {
                     Ok(())
                 }
             }
+        }
+        NativeCommand::Reflex { command } => {
+            let value = match command {
+                ReflexCommand::Status => xai_grok_shell::contract_native::reflex_policy_status(),
+                ReflexCommand::List { context } => {
+                    xai_grok_shell::contract_native::inspect_muscle_rankings(context).await
+                }
+                ReflexCommand::Delete { capability } => json!({
+                    "capability": capability.clone(),
+                    "deleted": xai_grok_shell::contract_native::delete_muscle_reflex(capability).await,
+                }),
+                ReflexCommand::Enable => {
+                    xai_grok_shell::contract_native::set_reflexes_enabled(true)
+                        .map_err(anyhow::Error::msg)?
+                }
+                ReflexCommand::Disable => {
+                    xai_grok_shell::contract_native::set_reflexes_enabled(false)
+                        .map_err(anyhow::Error::msg)?
+                }
+                ReflexCommand::Allow { capability } => {
+                    xai_grok_shell::contract_native::set_reflex_capability_enabled(capability, true)
+                        .map_err(anyhow::Error::msg)?
+                }
+                ReflexCommand::Deny { capability } => {
+                    xai_grok_shell::contract_native::set_reflex_capability_enabled(
+                        capability, false,
+                    )
+                    .map_err(anyhow::Error::msg)?
+                }
+            };
+            println!("{}", serde_json::to_string_pretty(&value)?);
+            Ok(())
+        }
+        NativeCommand::Activity { command } => {
+            let value = match command {
+                ActivityCommand::Status => xai_grok_shell::contract_native::reflex_policy_status(),
+                ActivityCommand::Enable => {
+                    xai_grok_shell::contract_native::set_activity_sensors_enabled(true)
+                        .map_err(anyhow::Error::msg)?
+                }
+                ActivityCommand::Disable => {
+                    xai_grok_shell::contract_native::set_activity_sensors_enabled(false)
+                        .map_err(anyhow::Error::msg)?
+                }
+                ActivityCommand::List { limit } => {
+                    xai_grok_shell::contract_native::inspect_activity_events(limit)
+                }
+                ActivityCommand::Clear => {
+                    xai_grok_shell::contract_native::clear_activity_events()
+                        .map_err(anyhow::Error::msg)?;
+                    json!({ "cleared": true })
+                }
+                ActivityCommand::Exclude { application } => {
+                    xai_grok_shell::contract_native::set_activity_application_excluded(
+                        application,
+                        true,
+                    )
+                    .map_err(anyhow::Error::msg)?
+                }
+                ActivityCommand::Include { application } => {
+                    xai_grok_shell::contract_native::set_activity_application_excluded(
+                        application,
+                        false,
+                    )
+                    .map_err(anyhow::Error::msg)?
+                }
+            };
+            println!("{}", serde_json::to_string_pretty(&value)?);
+            Ok(())
         }
         NativeCommand::AgentMail { command } => match command {
             AgentMailCommand::CreateInbox { name } => {
@@ -221,6 +292,16 @@ pub async fn serve(address: SocketAddr) -> Result<()> {
         .route("/v1/contracts/{id}", get(contract_history))
         .route("/v1/contracts/{id}/retry", post(retry_contract))
         .route("/v1/contracts/{id}/cancel", post(cancel_contract))
+        .route("/v1/reflexes", get(reflexes))
+        .route("/v1/reflexes/{capability}", delete(delete_reflex))
+        .route(
+            "/v1/reflex-policy",
+            get(reflex_policy).put(update_reflex_policy),
+        )
+        .route(
+            "/v1/activity",
+            get(activity_events).delete(clear_activity_events),
+        )
         .route("/v1/collective", get(collective_status))
         .route("/v1/signals", post(emit_signal))
         .route("/v1/leaders", get(leaders))
@@ -567,6 +648,97 @@ async fn scheduled_contracts() -> Json<Value> {
         "schema": SCHEMA,
         "items": xai_grok_shell::contract_native::list_scheduled_contracts().await,
     }))
+}
+
+async fn reflexes(Query(query): Query<BTreeMap<String, String>>) -> Json<Value> {
+    Json(json!({
+        "schema": SCHEMA,
+        "rankings": xai_grok_shell::contract_native::inspect_muscle_rankings(
+            query.get("context").cloned().unwrap_or_default()
+        ).await,
+        "policy": xai_grok_shell::contract_native::reflex_policy_status(),
+    }))
+}
+
+async fn delete_reflex(Path(capability): Path<String>) -> Response {
+    if xai_grok_shell::contract_native::delete_muscle_reflex(capability.clone()).await {
+        Json(json!({ "schema": SCHEMA, "capability": capability, "deleted": true })).into_response()
+    } else {
+        api_error(
+            StatusCode::NOT_FOUND,
+            "reflex_not_found",
+            "The learned reflex could not be deleted.",
+        )
+    }
+}
+
+async fn reflex_policy() -> Json<Value> {
+    Json(
+        json!({ "schema": SCHEMA, "policy": xai_grok_shell::contract_native::reflex_policy_status() }),
+    )
+}
+
+async fn update_reflex_policy(Json(body): Json<Value>) -> Response {
+    let result = if let Some(enabled) = body.get("reflexes_enabled").and_then(Value::as_bool) {
+        xai_grok_shell::contract_native::set_reflexes_enabled(enabled)
+    } else if let Some(enabled) = body
+        .get("activity_sensors_enabled")
+        .and_then(Value::as_bool)
+    {
+        xai_grok_shell::contract_native::set_activity_sensors_enabled(enabled)
+    } else if let (Some(capability), Some(enabled)) = (
+        body.get("capability").and_then(Value::as_str),
+        body.get("enabled").and_then(Value::as_bool),
+    ) {
+        xai_grok_shell::contract_native::set_reflex_capability_enabled(
+            capability.to_owned(),
+            enabled,
+        )
+    } else if let (Some(application), Some(excluded)) = (
+        body.get("application").and_then(Value::as_str),
+        body.get("excluded").and_then(Value::as_bool),
+    ) {
+        xai_grok_shell::contract_native::set_activity_application_excluded(
+            application.to_owned(),
+            excluded,
+        )
+    } else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_policy_update",
+            "Provide one supported reflex policy update.",
+        );
+    };
+    match result {
+        Ok(policy) => Json(json!({ "schema": SCHEMA, "policy": policy })).into_response(),
+        Err(error) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "policy_write_failed",
+            &error,
+        ),
+    }
+}
+
+async fn activity_events(Query(query): Query<BTreeMap<String, String>>) -> Json<Value> {
+    let limit = query
+        .get("limit")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(100);
+    Json(json!({
+        "schema": SCHEMA,
+        "activity": xai_grok_shell::contract_native::inspect_activity_events(limit),
+    }))
+}
+
+async fn clear_activity_events() -> Response {
+    match xai_grok_shell::contract_native::clear_activity_events() {
+        Ok(()) => Json(json!({ "schema": SCHEMA, "cleared": true })).into_response(),
+        Err(error) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "activity_clear_failed",
+            &error,
+        ),
+    }
 }
 
 async fn contract_history(Path(id): Path<String>) -> Response {

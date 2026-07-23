@@ -235,6 +235,7 @@ impl SessionActor {
         // dispatcher. Application primitives now consume the same typed route
         // that grounded the prompt; it is not merely advisory prompt text.
         let legacy_capability_route = crate::contract_native::take_capability_route(prompt_id);
+        let turn_contract_root = crate::contract_native::take_turn_contract_root(prompt_id);
         let routing_goal = prompt_blocks
             .iter()
             .filter_map(|block| match block {
@@ -278,6 +279,7 @@ impl SessionActor {
             self.session_info.id.0.as_ref(),
             routing_goal,
             dynamic_capability_route.clone(),
+            turn_contract_root,
         );
         if crate::contract_native::should_emit_capability_diagnostic(
             self.session_info.id.0.as_ref(),

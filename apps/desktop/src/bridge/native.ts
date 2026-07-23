@@ -18,6 +18,34 @@ export interface TelegramPairResult {
   error?: string;
 }
 
+export interface ReflexCandidate {
+  binary: string;
+  energy: number;
+  context_energy: number;
+  transition_energy: number | null;
+  fires: number;
+  successes: number;
+  failures: number;
+  confidence: number;
+  evidence_ready: boolean;
+}
+
+export interface ReflexPolicy {
+  reflexes_enabled: boolean;
+  activity_sensors_enabled: boolean;
+  retention_days: number;
+  max_automatic_cost: number;
+  capabilities: Record<string, boolean>;
+  excluded_applications: string[];
+}
+
+export interface ActivityEvent {
+  schema: number;
+  event: "foreground_application";
+  application: string;
+  observed_unix: number;
+}
+
 export type CollectivePublicationMode =
   | "disabled"
   | "safe_public_shapes"
@@ -117,6 +145,32 @@ export async function retryContract(id: string): Promise<void> {
 
 export async function cancelContract(id: string): Promise<void> {
   await request(`/v1/contracts/${encodeURIComponent(id)}/cancel`, "POST");
+}
+
+export async function getReflexes(context = ""): Promise<{ candidates: ReflexCandidate[]; policy: ReflexPolicy }> {
+  const response = await request<{
+    rankings: { candidates: ReflexCandidate[] };
+    policy: ReflexPolicy;
+  }>(`/v1/reflexes?context=${encodeURIComponent(context)}`);
+  return { candidates: response.rankings.candidates ?? [], policy: response.policy };
+}
+
+export async function updateReflexPolicy(body: Record<string, unknown>): Promise<ReflexPolicy> {
+  const response = await request<{ policy: ReflexPolicy }>("/v1/reflex-policy", "PUT", body);
+  return response.policy;
+}
+
+export async function deleteReflex(capability: string): Promise<void> {
+  await request(`/v1/reflexes/${encodeURIComponent(capability)}`, "DELETE");
+}
+
+export async function getActivityEvents(limit = 100): Promise<ActivityEvent[]> {
+  const response = await request<{ activity: { events: ActivityEvent[] } }>(`/v1/activity?limit=${limit}`);
+  return response.activity.events ?? [];
+}
+
+export async function clearActivityEvents(): Promise<void> {
+  await request("/v1/activity", "DELETE");
 }
 
 export async function revealDiscoveryHelp(): Promise<void> {
