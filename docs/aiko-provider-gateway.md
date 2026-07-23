@@ -13,6 +13,15 @@ they never connect to Codegraff directly and never receive an upstream API key.
 - `GET /v1/models`
 - `POST /v1/chat/completions`
 
+The Cloudflare adapter at `prod/cf/openai-proxy` transparently forwards the
+complete `/v1` API surface, including Responses, streaming SSE, Realtime
+WebSockets, multipart file/audio requests, uploads, batches, images,
+embeddings, fine-tuning, assistants/threads, vector stores, and future OpenAI
+endpoints. It accepts `/openai/v1/*` as an alias and preserves query strings,
+OpenAI feature/idempotency headers, request IDs, rate-limit headers, and
+upstream status codes. Client credentials and accounting identity headers are
+always replaced with trusted server-side values.
+
 Register `aiko-cli` as a public client. Allow loopback redirect URIs and require
 PKCE. The default scopes requested by the client are `openid`, `profile`,
 `email`, `offline_access`, `aiko:access`, `api:access`, and the Aiko
