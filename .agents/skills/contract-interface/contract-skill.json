@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "contract-interface",
+  "version": "1.0.0",
+  "description": "Grow any requested interface into a generated Contract-native pack and optional supervised user process.",
+  "platforms": ["all"],
+  "triggers": ["make this contract native", "wrap this interface", "connect an interface", "supervise this adapter", "root this process", "generate a contract adapter"],
+  "input_schema": {"type": "object", "additionalProperties": true},
+  "output_schema": {"type": "object", "additionalProperties": true},
+  "nodes": [
+    {"key":"discover","plan":"Discover the real interface, adapter, events, effects, lifecycle, and evidence for {{goal}}.","worker":"aiko","depends_on":[],"can_parallel":true,"timeout_ms":120000,"effect":"read_only","reversible":false,"read_only":true,"requires_authority":false,"evidence":["interface_inventory"]},
+    {"key":"specify","plan":"Write a provider-neutral receptor specification for {{goal}}.","worker":"aiko","depends_on":["discover"],"can_parallel":false,"timeout_ms":120000,"effect":"local_reversible","reversible":true,"read_only":false,"requires_authority":false,"evidence":["receptor_spec"]},
+    {"key":"grow","plan":"Generate and validate the Contract-native pack for {{goal}}.","worker":"script","script":"scripts/grow.py","depends_on":["specify"],"can_parallel":false,"timeout_ms":120000,"effect":"local_reversible","reversible":true,"read_only":false,"requires_authority":false,"evidence":["generated_pack","conformance"]},
+    {"key":"install","plan":"Install the validated pack and optional runtime requested by {{goal}}.","worker":"tool","depends_on":["grow"],"can_parallel":false,"timeout_ms":120000,"effect":"permission_change","reversible":true,"read_only":false,"requires_authority":true,"evidence":["installed_pack","runtime_status"]},
+    {"key":"settle","plan":"Prove the generated interface through replay, deduplication, authority, privacy, and restart witnesses.","worker":"aiko","depends_on":["grow"],"can_parallel":false,"timeout_ms":120000,"effect":"read_only","reversible":false,"read_only":true,"requires_authority":false,"evidence":["runnable_witness"]}
+  ],
+  "examples": [{"name":"generic","prompt":"Wrap this local event stream and notification command as a contract-native supervised interface.","expect":{"selected":"contract-interface","root_count":1,"held_effects":["permission_change"]}}]
+}

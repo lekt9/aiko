@@ -55,3 +55,8 @@ precedence version; no ledger or compiled runtime mutation is required.
 Consequential effects must be declared on the actual node that performs them.
 Wrapping a purchase, message, publication, deletion, permission change, or
 account mutation in a read-only parent never removes the authority hold.
+
+For an arbitrary external interface, use the bundled `contract-interface`
+skill. Its receptor compiler grows the same eight-cell Contract graph around a
+real adapter and can install the result at user scope. Provider names belong in
+receptor fixtures and generated packs, never in the compiler or Contract core.

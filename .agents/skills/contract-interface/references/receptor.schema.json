@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["id", "description", "triggers", "events", "effects"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "description": {"type": "string"},
+    "triggers": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "events": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["id", "kind"], "properties": {"id":{"type":"string"},"kind":{"type":"string"}}}},
+    "effects": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "object", "required": ["id", "effect", "variants"], "properties": {"id":{"type":"string"},"effect":{"enum":["read_only","local_reversible","local_write","external_message","purchase","job_application","credential_access","delete","publish","permission_change","account_mutation"]},"variants":{"type":"array","minItems":1,"items":{"type":"string"}},"ephemeral":{"type":"boolean"},"ttl_ms":{"type":"integer","minimum":1},"requires_authority":{"type":"boolean"},"evidence":{"type":"array","minItems":1,"items":{"type":"string"}}}}},
+    "runtime": {"type": "object", "required": ["argv"], "properties": {"argv":{"type":"array","minItems":1,"items":{"type":"string"}},"cwd":{"type":"string"},"restart":{"enum":["never","on-failure","always"]}}}
+  }
+}

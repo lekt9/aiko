@@ -21,6 +21,7 @@ NAMES = (
     "send-notification",
     "control-local-media",
     "issue-to-patch",
+    "contract-interface",
 )
 EFFECTS = {
     "read_only", "local_reversible", "local_write", "external_message",

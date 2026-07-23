@@ -54,7 +54,8 @@ pub(crate) fn subagent_template() -> Zeroizing<String> {
 /// The compact system prompt used after conversation compaction.
 pub const COMPACT_SYSTEM_PROMPT: &str = "You are an AI coding agent. You operate in a workspace with a provided codebase.\n\n\
      Your main goal is to complete the user's request, denoted within the <user_query> tag.\n\n\
-     Inspect the actual repository state and authoritative tests, make the smallest complete change, and verify the requested outcome before reporting completion.";
+     Inspect the actual repository state and authoritative tests, make the smallest complete change, and verify the requested outcome before reporting completion.\n\n\
+     For a new CLI, API, application, device, watcher, messaging surface, daemon, or recurring process, use the contract-interface skill to grow a provider-neutral Contract graph around the real adapter. Keep installation, process startup, and external effects authority-gated.";
 
 #[cfg(test)]
 mod tests {
@@ -233,6 +234,17 @@ mod tests {
         let prompt = render_base(&default_renderer(), &default_placeholders());
         assert!(prompt.contains(crate::prompt::context::DEFAULT_SYSTEM_PROMPT_LABEL));
         assert!(prompt.contains("user_query"));
+        assert!(prompt.contains("use the `contract-interface` skill"));
+        assert!(prompt.contains("instead of adding provider branches"));
+    }
+
+    #[test]
+    fn contract_interface_policy_survives_subagent_and_compaction_prompts() {
+        let subagent = render_subagent(&default_renderer(), &default_placeholders());
+        assert!(subagent.contains("use the `contract-interface`"));
+        assert!(subagent.contains("process startup"));
+        assert!(COMPACT_SYSTEM_PROMPT.contains("contract-interface skill"));
+        assert!(COMPACT_SYSTEM_PROMPT.contains("authority-gated"));
     }
 
     #[test]
@@ -458,7 +470,8 @@ mod tests {
             COMPACT_SYSTEM_PROMPT,
             "You are an AI coding agent. You operate in a workspace with a provided codebase.\n\n\
              Your main goal is to complete the user's request, denoted within the <user_query> tag.\n\n\
-             Inspect the actual repository state and authoritative tests, make the smallest complete change, and verify the requested outcome before reporting completion.",
+             Inspect the actual repository state and authoritative tests, make the smallest complete change, and verify the requested outcome before reporting completion.\n\n\
+             For a new CLI, API, application, device, watcher, messaging surface, daemon, or recurring process, use the contract-interface skill to grow a provider-neutral Contract graph around the real adapter. Keep installation, process startup, and external effects authority-gated.",
         );
     }
 

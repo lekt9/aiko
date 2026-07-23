@@ -86,17 +86,7 @@ async fn poll_and_dispatch(
             *last_update_id = Some(update.update_id);
         }
 
-        // Dispatch based on update type.
-        if let Some(ref msg) = update.message {
-            bot.handle_message(msg).await;
-        } else if let Some(ref edited) = update.edited_message {
-            info!(
-                "Edited message from chat {} (ignoring edits)",
-                edited.chat.id
-            );
-        } else if let Some(ref cb) = update.callback_query {
-            bot.handle_callback(cb).await;
-        }
+        bot.handle_update(update).await;
     }
 
     Ok(count)

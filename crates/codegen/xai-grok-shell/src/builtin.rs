@@ -28,6 +28,7 @@ contract_native_skill!(ACT_ON_WEB_API_SKILL_MD, "act-on-web-api");
 contract_native_skill!(SEND_NOTIFICATION_SKILL_MD, "send-notification");
 contract_native_skill!(CONTROL_LOCAL_MEDIA_SKILL_MD, "control-local-media");
 contract_native_skill!(ISSUE_TO_PATCH_SKILL_MD, "issue-to-patch");
+contract_native_skill!(CONTRACT_INTERFACE_SKILL_MD, "contract-interface");
 /// Compiled-in SKILL.md content for `/check-work` (available to headless mode).
 pub const CHECK_SKILL_MD: &str = include_str!("../skills/check-work/SKILL.md");
 /// Compiled-in SKILL.md content for headless `--best-of-n` (not extracted as
@@ -92,6 +93,7 @@ const BUNDLED_SKILLS: &[(&str, &str)] = &[
     ("send-notification", SEND_NOTIFICATION_SKILL_MD),
     ("control-local-media", CONTROL_LOCAL_MEDIA_SKILL_MD),
     ("issue-to-patch", ISSUE_TO_PATCH_SKILL_MD),
+    ("contract-interface", CONTRACT_INTERFACE_SKILL_MD),
 ];
 
 /// Resources belonging to compiled-in skills. Paths are relative to that
@@ -120,6 +122,29 @@ const BUNDLED_SKILL_RESOURCES: &[(&str, &str, &[u8])] = &[
     contract_native_resources!("send-notification"),
     contract_native_resources!("control-local-media"),
     contract_native_resources!("issue-to-patch"),
+    contract_native_resources!("contract-interface"),
+    (
+        "contract-interface",
+        "agents/openai.yaml",
+        include_bytes!("../../../../.agents/skills/contract-interface/agents/openai.yaml"),
+    ),
+    (
+        "contract-interface",
+        "references/receptor.schema.json",
+        include_bytes!(
+            "../../../../.agents/skills/contract-interface/references/receptor.schema.json"
+        ),
+    ),
+    (
+        "contract-interface",
+        "scripts/grow.py",
+        include_bytes!("../../../../.agents/skills/contract-interface/scripts/grow.py"),
+    ),
+    (
+        "contract-interface",
+        "scripts/conform.py",
+        include_bytes!("../../../../.agents/skills/contract-interface/scripts/conform.py"),
+    ),
     (
         "telegram-contracts",
         "agents/openai.yaml",
@@ -406,6 +431,28 @@ mod tests {
         std::fs::remove_file(root.join("assets/capabilities.json")).unwrap();
         extract_bundled_files(home);
         assert!(root.join("assets/capabilities.json").is_file());
+    }
+
+    #[test]
+    fn contract_interface_skill_and_generator_are_bundled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+
+        extract_bundled_files(home);
+
+        let root = home.join("skills/contract-interface");
+        let skill = std::fs::read_to_string(root.join("SKILL.md")).unwrap();
+        assert!(skill.contains("temporary phenotype"));
+        assert!(root.join("contract-skill.json").is_file());
+        assert!(root.join("agents/openai.yaml").is_file());
+        assert!(root.join("references/receptor.schema.json").is_file());
+        assert!(root.join("scripts/grow.py").is_file());
+        assert!(root.join("scripts/conform.py").is_file());
+
+        // Same-version repair must restore operational assets, not only prose.
+        std::fs::remove_file(root.join("scripts/grow.py")).unwrap();
+        extract_bundled_files(home);
+        assert!(root.join("scripts/grow.py").is_file());
     }
 
     #[tokio::test]

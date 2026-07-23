@@ -6,8 +6,31 @@
 
 use crate::api::TelegramApi;
 use crate::types::*;
-use std::process::Command;
+use serde::Deserialize;
+use serde_json::json;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use tokio::process::Command;
 use tracing::{info, warn};
+
+const RESPONSE_SCHEMA: &str = r#"{"type":"object","additionalProperties":false,"required":["kind"],"properties":{"kind":{"type":"string","enum":["text","voice","photo","document"]},"text":{"type":["string","null"]},"path":{"type":["string","null"]},"caption":{"type":["string","null"]}}}"#;
+const INTERFACE_RULES: &str = "This is an authorized Telegram interface occurrence governed by Contract. Fulfill the user's request with currently authorized tools. Return one typed response. Use kind=text with text for normal replies; use voice/photo/document only when you created or selected a real local file and return its absolute path. Never include secrets. The daemon, not the model, performs the Telegram effect and records provider evidence.";
+
+#[derive(Debug, Deserialize)]
+struct AgentResponse {
+    kind: String,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    caption: Option<String>,
+}
+
+struct ContractTask {
+    id: String,
+    evidence_path: PathBuf,
+}
 
 /// The main bot: owns the API client and dispatch logic.
 pub struct TelegramBot {
@@ -41,8 +64,33 @@ impl TelegramBot {
         self.authorized_chats.contains(&chat_id)
     }
 
-    /// Handle a single incoming message. Returns true if we should continue polling.
-    pub async fn handle_message(&self, msg: &Message) {
+    /// Observe every update before authorization filtering, then dispatch it.
+    pub async fn handle_update(&self, update: &Update) {
+        let kind = if update.message.is_some() {
+            "message"
+        } else if update.edited_message.is_some() {
+            "edited_message"
+        } else if update.callback_query.is_some() {
+            "callback_query"
+        } else {
+            "unknown"
+        };
+        let parent_id = self.observe_update(update.update_id, kind).await;
+        if let Some(ref msg) = update.message {
+            self.handle_message(update.update_id, msg, parent_id.as_deref())
+                .await;
+        } else if let Some(ref edited) = update.edited_message {
+            info!(
+                "Edited message from chat {} (durably observed)",
+                edited.chat.id
+            );
+        } else if let Some(ref callback) = update.callback_query {
+            self.handle_callback(callback).await;
+        }
+    }
+
+    /// Handle a single incoming message under its observed Contract lineage.
+    pub async fn handle_message(&self, update_id: i64, msg: &Message, parent_id: Option<&str>) {
         let chat_id = msg.chat.id;
         if !self.is_authorized(chat_id) {
             warn!("Unauthorized chat {} attempted interaction", chat_id);
@@ -57,19 +105,43 @@ impl TelegramBot {
 
         info!("Message from {user_name} (chat {chat_id})");
 
-        // Register as a contract task if it looks like a substantive request.
-        if let Some(ref text) = msg.text {
-            if text.len() > 3 && !text.starts_with('/') {
-                self.register_contract_task(chat_id, text).await;
-            }
-        }
+        let prompt = if let Some(text) = msg.text.as_deref().filter(|text| !text.trim().is_empty())
+        {
+            Some(text.to_string())
+        } else if let Some(document) = &msg.document {
+            self.download_document(document).await.map(|path| {
+                format!(
+                    "The user sent a document at {}. {}",
+                    path.display(),
+                    msg.caption
+                        .as_deref()
+                        .unwrap_or("Inspect it and respond appropriately.")
+                )
+            })
+        } else if let Some(voice) = &msg.voice {
+            self.download_voice(voice)
+                .await
+                .map(|path| format!("The user sent a voice message at {}. Transcribe or inspect it with available tools, fulfill the request, and respond appropriately.", path.display()))
+        } else {
+            msg.caption.clone()
+        };
 
-        // Handle file uploads: download and register.
-        if let Some(ref document) = msg.document {
-            self.handle_document(chat_id, document).await;
-        }
-        if let Some(ref voice) = msg.voice {
-            self.handle_voice(chat_id, voice).await;
+        let Some(prompt) = prompt else {
+            info!("Update {update_id} has no agent-routable content");
+            return;
+        };
+        if let Err(error) = self
+            .dispatch_agent_response(update_id, msg, parent_id, &prompt)
+            .await
+        {
+            warn!("Telegram Contract dispatch failed for update {update_id}: {error}");
+            let _ = self
+                .reply_plain(
+                    chat_id,
+                    msg.message_id,
+                    "I couldn't complete that request. The Contract occurrence remains available for retry.",
+                )
+                .await;
         }
     }
 
@@ -286,32 +358,213 @@ impl TelegramBot {
 
     // ── Contract substrate ───────────────────────────────────────
 
-    /// Register an incoming message as a contract task.
-    async fn register_contract_task(&self, chat_id: i64, text: &str) {
-        let goal = truncate_for_shell(text, 80);
-        let check = format!("echo 'chat {chat_id} task registered'");
-
-        match Command::new("contract")
-            .args(["task", "begin", &goal, "--check", &check])
-            .output()
+    async fn observe_update(&self, update_id: i64, kind: &str) -> Option<String> {
+        let task = self
+            .begin_contract_task(
+                &format!("Observe Telegram update {update_id} ({kind})"),
+                &format!("observe-{update_id}"),
+            )
+            .await?;
+        let evidence = json!({
+            "schema_version": 1,
+            "source": "telegram",
+            "update_id": update_id,
+            "kind": kind,
+            "observed": true
+        });
+        if write_evidence(&task.evidence_path, &evidence)
+            .await
+            .is_err()
         {
-            Ok(out) => {
-                if out.status.success() {
-                    info!("Contract task registered: {goal}");
-                } else {
-                    warn!(
-                        "Contract task registration failed: {}",
-                        String::from_utf8_lossy(&out.stderr)
-                    );
+            return None;
+        }
+        self.verify_contract_task(&task.id).await.then_some(task.id)
+    }
+
+    async fn dispatch_agent_response(
+        &self,
+        update_id: i64,
+        msg: &Message,
+        parent_id: Option<&str>,
+        prompt: &str,
+    ) -> Result<(), TelegramError> {
+        let task = self
+            .begin_contract_task(
+                &format!("Fulfill authorized Telegram request {update_id}"),
+                &format!("response-{update_id}"),
+            )
+            .await
+            .ok_or_else(|| TelegramError::ApiError("could not register Contract task".into()))?;
+
+        let response = self
+            .run_aiko_with_typing(msg.chat.id, prompt, parent_id.or(Some(&task.id)))
+            .await?;
+        let sent = match response.kind.as_str() {
+            "voice" => {
+                let path = response
+                    .path
+                    .as_deref()
+                    .ok_or_else(|| TelegramError::ApiError("voice response missing path".into()))?;
+                self.send_voice_with_indicator(msg.chat.id, path, response.caption.as_deref(), None)
+                    .await?
+            }
+            "photo" => {
+                let path = response
+                    .path
+                    .as_deref()
+                    .ok_or_else(|| TelegramError::ApiError("photo response missing path".into()))?;
+                self.send_photo_with_indicator(msg.chat.id, path, response.caption.as_deref())
+                    .await?
+            }
+            "document" => {
+                let path = response.path.as_deref().ok_or_else(|| {
+                    TelegramError::ApiError("document response missing path".into())
+                })?;
+                self.send_document_with_indicator(msg.chat.id, path, response.caption.as_deref())
+                    .await?
+            }
+            _ => {
+                let text = response
+                    .text
+                    .as_deref()
+                    .filter(|text| !text.trim().is_empty())
+                    .ok_or_else(|| TelegramError::ApiError("text response missing text".into()))?;
+                self.reply_plain(msg.chat.id, msg.message_id, text).await?
+            }
+        };
+
+        write_evidence(
+            &task.evidence_path,
+            &json!({
+                "schema_version": 1,
+                "source": "telegram",
+                "update_id": update_id,
+                "response_kind": response.kind,
+                "provider_message_id": sent.message_id,
+                "provider_acknowledged": true
+            }),
+        )
+        .await
+        .map_err(|error| TelegramError::ApiError(format!("cannot write evidence: {error}")))?;
+        if !self.verify_contract_task(&task.id).await {
+            return Err(TelegramError::ApiError(
+                "Telegram response sent but Contract verification failed".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn run_aiko_with_typing(
+        &self,
+        chat_id: i64,
+        prompt: &str,
+        parent_id: Option<&str>,
+    ) -> Result<AgentResponse, TelegramError> {
+        let aiko = std::env::var("AIKO_BINARY").unwrap_or_else(|_| {
+            dirs_home()
+                .join("bin")
+                .join("aiko")
+                .to_string_lossy()
+                .into_owned()
+        });
+        let cwd = std::env::var("AIKO_TELEGRAM_CWD")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| dirs_home());
+        let mut command = Command::new(aiko);
+        command
+            .args([
+                "--cwd",
+                &cwd.to_string_lossy(),
+                "--no-auto-update",
+                "--verbatim",
+                "--no-subagents",
+                "--output-format",
+                "json",
+                "--json-schema",
+                RESPONSE_SCHEMA,
+                "--rules",
+                INTERFACE_RULES,
+                "--single",
+                prompt,
+            ])
+            .env("AIKO_CONTRACT_ROOT_ID", parent_id.unwrap_or(""))
+            .env("AIKO_CONTRACT_PARENT_ID", parent_id.unwrap_or(""))
+            .env("AIKO_CONTRACT_DEPTH", "1")
+            .env("AIKO_CONTRACT_MAX_DEPTH", "4")
+            .env("AIKO_CONTRACT_MAX_CHILDREN", "16")
+            .kill_on_drop(true);
+        let child = command
+            .spawn()
+            .map_err(|error| TelegramError::ApiError(format!("cannot start Aiko: {error}")))?;
+        let output = child.wait_with_output();
+        tokio::pin!(output);
+        let mut typing = tokio::time::interval(Duration::from_secs(4));
+        let output = loop {
+            tokio::select! {
+                result = &mut output => break result,
+                _ = typing.tick() => {
+                    let _ = self.api.send_chat_action(chat_id, ChatAction::Typing).await;
                 }
             }
-            Err(e) => warn!("contract binary not available: {e}"),
         }
+        .map_err(|error| TelegramError::ApiError(format!("Aiko process failed: {error}")))?;
+        if !output.status.success() {
+            return Err(TelegramError::ApiError(format!(
+                "Aiko exited with {}",
+                output.status
+            )));
+        }
+        parse_agent_response(&output.stdout)
+            .ok_or_else(|| TelegramError::ApiError("Aiko returned no valid typed response".into()))
+    }
+
+    async fn begin_contract_task(&self, goal: &str, evidence_key: &str) -> Option<ContractTask> {
+        let evidence_path = evidence_dir().join(format!("{evidence_key}.json"));
+        let check = format!("test -s {}", evidence_path.to_string_lossy());
+        let output = Command::new("contract")
+            .args(["task", "begin", goal, "--check", &check])
+            .output()
+            .await
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        (id.len() == 8 && id.chars().all(|ch| ch.is_ascii_hexdigit()))
+            .then_some(ContractTask { id, evidence_path })
+    }
+
+    async fn verify_contract_task(&self, id: &str) -> bool {
+        Command::new("contract")
+            .args(["task", "verify", id])
+            .output()
+            .await
+            .is_ok_and(|output| output.status.success())
+    }
+
+    async fn reply_plain(
+        &self,
+        chat_id: i64,
+        reply_to: i64,
+        text: &str,
+    ) -> Result<Message, TelegramError> {
+        self.api
+            .send_message(&SendMessageRequest {
+                chat_id,
+                text: text.to_string(),
+                parse_mode: None,
+                reply_markup: None,
+                reply_to_message_id: Some(reply_to),
+                disable_web_page_preview: Some(true),
+                disable_notification: None,
+                link_preview_options: None,
+            })
+            .await
     }
 
     // ── File handling ────────────────────────────────────────────
 
-    async fn handle_document(&self, chat_id: i64, doc: &Document) {
+    async fn download_document(&self, doc: &Document) -> Option<PathBuf> {
         info!(
             "Received document: {} ({} bytes)",
             doc.file_name.as_deref().unwrap_or("unnamed"),
@@ -328,15 +581,14 @@ impl TelegramBot {
                     warn!("Failed to download document: {e}");
                 } else {
                     info!("Document saved to {dest}");
-                    let _ = self
-                        .send_quick(chat_id, &format!("📎 Received: `{dest}`"))
-                        .await;
+                    return Some(PathBuf::from(dest));
                 }
             }
         }
+        None
     }
 
-    async fn handle_voice(&self, chat_id: i64, voice: &Voice) {
+    async fn download_voice(&self, voice: &Voice) -> Option<PathBuf> {
         info!(
             "Received voice message: {}s ({} bytes)",
             voice.duration,
@@ -353,15 +605,11 @@ impl TelegramBot {
                     warn!("Failed to download voice message: {e}");
                 } else {
                     info!("Voice saved to {dest}");
-                    let _ = self
-                        .send_quick(
-                            chat_id,
-                            &format!("🎤 Received voice message ({:.0}s)", voice.duration as f64),
-                        )
-                        .await;
+                    return Some(PathBuf::from(dest));
                 }
             }
         }
+        None
     }
 
     // ── API access ───────────────────────────────────────────────
@@ -371,18 +619,54 @@ impl TelegramBot {
     }
 }
 
-/// Truncate a string for use as a shell argument (contract task goal).
-fn truncate_for_shell(text: &str, max_len: usize) -> String {
-    let cleaned: String = text
-        .chars()
-        .take(max_len)
-        .map(|c| {
-            if c == '"' || c == '\'' || c == '\\' || c == '`' {
-                ' '
-            } else {
-                c
-            }
-        })
-        .collect();
-    cleaned.trim().to_string()
+fn dirs_home() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+}
+
+fn evidence_dir() -> PathBuf {
+    dirs_home().join(".aiko").join("telegram").join("evidence")
+}
+
+async fn write_evidence(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    tokio::fs::write(path, serde_json::to_vec(value)?).await
+}
+
+fn parse_agent_response(bytes: &[u8]) -> Option<AgentResponse> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let structured = value
+        .get("structuredOutput")
+        .or_else(|| value.get("structured_output"))
+        .unwrap_or(&value);
+    serde_json::from_value(structured.clone()).ok()
+}
+
+#[cfg(test)]
+mod contract_interface_tests {
+    use super::*;
+
+    #[test]
+    fn parses_structured_text_response() {
+        let response = parse_agent_response(
+            br#"{"structuredOutput":{"kind":"text","text":"hello","path":null,"caption":null}}"#,
+        )
+        .expect("typed response");
+        assert_eq!(response.kind, "text");
+        assert_eq!(response.text.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn rejects_untyped_agent_output() {
+        assert!(parse_agent_response(br#"{"text":"not an interface envelope"}"#).is_none());
+    }
+
+    #[test]
+    fn evidence_paths_are_outside_contract_rows_and_payloads() {
+        let path = evidence_dir().join("response-42.json");
+        assert!(path.ends_with(".aiko/telegram/evidence/response-42.json"));
+    }
 }

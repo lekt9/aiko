@@ -1,0 +1,11 @@
+[
+  {
+    "name": "typed-reply",
+    "prompt": "Reply to this Telegram voice message with a voice response.",
+    "expect": {
+      "selected": "telegram-contracts",
+      "root_count": 2,
+      "held_effects": ["external_message"]
+    }
+  }
+]
