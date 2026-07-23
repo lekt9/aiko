@@ -11,6 +11,7 @@ that does not become the mind).
 | `../contract/docs/PHOTON-POSITRON-CONTRACT-EBM.md` | Structure map (chamber) |
 | `../contract/docs/PHOTON-POSITRON-GAPS.md` | Depth / wiring / scale gaps |
 | `../contract/docs/PHOTON-POSITRON-RUNTIME.md` | Runtime map (waves, daemon, preempt) — shipped with this plan |
+| `../contract/docs/PHOTON-POSITRON-FIRST-PRINCIPLES.md` | Full law set (fractal seal, duals, composition, conservation) |
 | `../contract/docs/MUSCLE-MEMORY.md` | Bounded DAG waves |
 | `../contract/libcontract/src/scheduler.zig` | Tick / lease / settle kernel |
 | `newplan.md` | Workers disposable; Contract owns durable state |

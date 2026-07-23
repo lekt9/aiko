@@ -12,6 +12,7 @@ and the right place to make each kind of change.
 | [Photon / positron → Contract → EBM](PHOTON-POSITRON-CONTRACT-EBM.md) | Faithful physics map of the substrate: ledger as field, claim×check collisions, EBM as energy of verified work (canon in `Unbrowse/contract`) |
 | [Photon / positron gaps](PHOTON-POSITRON-GAPS.md) | Gap register: built chamber vs depth/wiring/scale/containment/truth; priority 1–5 (canon in `Unbrowse/contract`) |
 | [Photon / positron runtime](PHOTON-POSITRON-RUNTIME.md) | Waves, daemon-as-clock-hand, preempt; product plan [`plan3.md`](../plan3.md) |
+| [Photon / positron first principles](PHOTON-POSITRON-FIRST-PRINCIPLES.md) | Full law set: fractal seal, duals catalog, composition, conservation (canon in `Unbrowse/contract`) |
 | [Collective architecture plan](../plan-arch.md) | Contract-first decentralized protocol decisions and delivery phases |
 | [Collective verification](collective-verification.md) | Executed acceptance tests and packaged artifact evidence |
 | [Contract agency runtime](contract-agency-runtime.md) | Turn ledger, governed agency roles, grounding, and Contract packaging |
