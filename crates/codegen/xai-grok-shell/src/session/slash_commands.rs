@@ -228,6 +228,16 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         },
     },
     BuiltinCommand {
+        name: "contract-skills",
+        description: "List contract-native skills or dry-run their graph for a goal",
+        argument_hint: Some("[goal]"),
+        aliases: &["skill-graph"],
+        gate: BuiltinGate::AlwaysOn,
+        resolve: |args| BuiltinAction::ContractSkills {
+            goal: args.trim().to_string(),
+        },
+    },
+    BuiltinCommand {
         name: "session-info",
         description: "Show session details (model, turns, context usage)",
         argument_hint: None,
@@ -641,6 +651,9 @@ pub(super) enum BuiltinAction {
     Reflexes {
         args: String,
     },
+    ContractSkills {
+        goal: String,
+    },
     SessionInfo,
     PluginsAdd {
         path: String,
@@ -693,6 +706,7 @@ impl BuiltinAction {
             BuiltinAction::PluginsReload => "plugins-reload",
             BuiltinAction::PluginsTrust => "plugins-trust",
             BuiltinAction::Reflexes { .. } => "reflexes",
+            BuiltinAction::ContractSkills { .. } => "contract-skills",
             BuiltinAction::SessionInfo => "session",
             BuiltinAction::PluginsAdd { .. } => "plugins-add",
             BuiltinAction::PluginsRemove { .. } => "plugins-remove",
@@ -726,6 +740,7 @@ impl BuiltinAction {
             BuiltinAction::PluginsReload => false,
             BuiltinAction::PluginsTrust => false,
             BuiltinAction::Reflexes { args } => !args.is_empty(),
+            BuiltinAction::ContractSkills { goal } => !goal.is_empty(),
             BuiltinAction::SessionInfo => false,
             BuiltinAction::PluginsAdd { .. } => true,
             BuiltinAction::PluginsRemove { .. } => true,

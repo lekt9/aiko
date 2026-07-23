@@ -1,0 +1,84 @@
+{
+  "description": "Inspect bounded Git and project metadata without reading secrets or mutating files.",
+  "examples": [
+    {
+      "expect": {
+        "held_effects": [],
+        "root_count": 1,
+        "selected": "inspect-project"
+      },
+      "name": "default",
+      "prompt": "Please inspect project and show the git status."
+    }
+  ],
+  "id": "inspect-project",
+  "input_schema": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "nodes": [
+    {
+      "can_parallel": true,
+      "depends_on": [],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "git-state",
+      "plan": "Inspect bounded Git branch, status, and recent history for {{goal}}.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "host"
+    },
+    {
+      "can_parallel": true,
+      "depends_on": [],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "project-shape",
+      "plan": "Inspect bounded non-hidden project structure and toolchain markers for {{goal}}.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "host"
+    },
+    {
+      "can_parallel": false,
+      "depends_on": [
+        "git-state",
+        "project-shape"
+      ],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "summarize",
+      "plan": "Merge project inspection evidence for {{goal}}.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    }
+  ],
+  "output_schema": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "platforms": [
+    "all"
+  ],
+  "schema_version": 1,
+  "triggers": [
+    "inspect project",
+    "git status",
+    "repository state",
+    "project structure"
+  ],
+  "version": "1.0.0"
+}

@@ -16,6 +16,7 @@ import {
   TriangleAlert,
   BrainCircuit,
   PauseCircle,
+  Puzzle,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -48,17 +49,28 @@ import {
   type ReflexCandidate,
   type ReflexPolicy,
   type ActivityEvent,
+  getContractSkills,
+  planContractSkills,
+  type ContractNativeSkill,
+  type ContractNativePlan,
 } from "../bridge/native";
 import { PlaceholderSurface } from "./PlaceholderSurface";
 
 export function SettingsSurface() {
-  const [activeTab, setActiveTab] = useState<"account" | "collective" | "telegram" | "reflexes">("account");
+  const [activeTab, setActiveTab] = useState<"account" | "collective" | "telegram" | "reflexes" | "skills">("account");
   return (
     <div className="surface settings-surface">
       <header className="settings-surface__header">
         <h2>Settings</h2>
       </header>
       <div className="settings-surface__tabs">
+        <button
+          data-active={activeTab === "skills"}
+          onClick={() => setActiveTab("skills")}
+          type="button"
+        >
+          Skills
+        </button>
         <button
           data-active={activeTab === "reflexes"}
           onClick={() => setActiveTab("reflexes")}
@@ -98,9 +110,56 @@ export function SettingsSurface() {
         <CollectiveSettingsPane />
       ) : activeTab === "reflexes" ? (
         <ReflexSettingsPane />
+      ) : activeTab === "skills" ? (
+        <ContractSkillsPane />
       ) : (
         <TelegramSettingsPane />
       )}
+    </div>
+  );
+}
+
+function ContractSkillsPane() {
+  const [skills, setSkills] = useState<ContractNativeSkill[]>([]);
+  const [goal, setGoal] = useState("");
+  const [plan, setPlan] = useState<ContractNativePlan | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void getContractSkills()
+      .then(setSkills)
+      .catch((cause) => setError(cause instanceof Error ? cause.message : "Skill registry unavailable."));
+  }, []);
+
+  const preview = async () => {
+    if (!goal.trim()) return;
+    try {
+      setPlan(await planContractSkills(goal.trim()));
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not build the skill graph.");
+    }
+  };
+
+  return (
+    <div className="collective-settings reflex-settings">
+      <section className="collective-settings__hero">
+        <div><span className="collective-settings__eyebrow">Versioned capability graph</span><h3>Contract-native skills</h3><p>Every surface resolves through the same registry. Preview the exact child DAG and held effects before a turn runs.</p></div>
+        <Puzzle size={28} />
+      </section>
+      {error ? <p className="collective-settings__error">{error}</p> : null}
+      <section className="collective-settings__section collective-settings__section--stacked">
+        <div className="collective-settings__section-copy"><strong>Dry-run a goal</strong><p>No effects execute from this preview.</p></div>
+        <input value={goal} onChange={(event) => setGoal(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void preview(); }} placeholder="e.g. inspect this project and run its tests" />
+        <button type="button" onClick={() => void preview()}>Build contract graph</button>
+        {plan ? <ul className="collective-settings__objects">{plan.children.map((child) => <li key={child.key}><div><strong>{child.key}</strong><small>{child.plan} · {child.effect_scope}{child.requires_authorization ? " · held for authority" : ""}</small></div></li>)}</ul> : null}
+      </section>
+      <section className="collective-settings__section collective-settings__section--stacked">
+        <div className="collective-settings__section-copy"><strong>Installed bundles</strong><p>{skills.length} validated skills, with project and user overrides taking precedence.</p></div>
+        <ul className="collective-settings__objects">
+          {skills.map((skill) => <li key={skill.id}><div><strong>{skill.id} <small>v{skill.version}</small></strong><small>{skill.description} · {skill.nodes} nodes · {skill.source}</small></div></li>)}
+        </ul>
+      </section>
     </div>
   );
 }

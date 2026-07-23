@@ -9,6 +9,25 @@ const IMAGINE_SKILL_MD: &str = include_str!("../skills/imagine/SKILL.md");
 const CONTRACT_SKILL_MD: &str = include_str!("../skills/contract/SKILL.md");
 const TELEGRAM_CONTRACTS_SKILL_MD: &str =
     include_str!("../../../../.agents/skills/telegram-contracts/SKILL.md");
+macro_rules! contract_native_skill {
+    ($constant:ident, $directory:literal) => {
+        const $constant: &str = include_str!(concat!(
+            "../../../../.agents/skills/",
+            $directory,
+            "/SKILL.md"
+        ));
+    };
+}
+contract_native_skill!(INSPECT_PROJECT_SKILL_MD, "inspect-project");
+contract_native_skill!(BUILD_TEST_SKILL_MD, "build-and-test-project");
+contract_native_skill!(TRANSFORM_FILES_SKILL_MD, "transform-local-files");
+contract_native_skill!(OBSERVE_DESKTOP_SKILL_MD, "observe-desktop");
+contract_native_skill!(SCHEDULE_FOLLOW_UP_SKILL_MD, "schedule-follow-up");
+contract_native_skill!(APPLY_STANDING_RULE_SKILL_MD, "apply-standing-rule");
+contract_native_skill!(ACT_ON_WEB_API_SKILL_MD, "act-on-web-api");
+contract_native_skill!(SEND_NOTIFICATION_SKILL_MD, "send-notification");
+contract_native_skill!(CONTROL_LOCAL_MEDIA_SKILL_MD, "control-local-media");
+contract_native_skill!(ISSUE_TO_PATCH_SKILL_MD, "issue-to-patch");
 /// Compiled-in SKILL.md content for `/check-work` (available to headless mode).
 pub const CHECK_SKILL_MD: &str = include_str!("../skills/check-work/SKILL.md");
 /// Compiled-in SKILL.md content for headless `--best-of-n` (not extracted as
@@ -63,11 +82,44 @@ const BUNDLED_SKILLS: &[(&str, &str)] = &[
     ("check-work", CHECK_SKILL_MD),
     ("contract", CONTRACT_SKILL_MD),
     ("telegram-contracts", TELEGRAM_CONTRACTS_SKILL_MD),
+    ("inspect-project", INSPECT_PROJECT_SKILL_MD),
+    ("build-and-test-project", BUILD_TEST_SKILL_MD),
+    ("transform-local-files", TRANSFORM_FILES_SKILL_MD),
+    ("observe-desktop", OBSERVE_DESKTOP_SKILL_MD),
+    ("schedule-follow-up", SCHEDULE_FOLLOW_UP_SKILL_MD),
+    ("apply-standing-rule", APPLY_STANDING_RULE_SKILL_MD),
+    ("act-on-web-api", ACT_ON_WEB_API_SKILL_MD),
+    ("send-notification", SEND_NOTIFICATION_SKILL_MD),
+    ("control-local-media", CONTROL_LOCAL_MEDIA_SKILL_MD),
+    ("issue-to-patch", ISSUE_TO_PATCH_SKILL_MD),
 ];
 
 /// Resources belonging to compiled-in skills. Paths are relative to that
 /// skill's directory under `<aiko-home>/skills/`.
+macro_rules! contract_native_resources {
+    ($directory:literal) => {
+        (
+            $directory,
+            "contract-skill.json",
+            include_bytes!(concat!(
+                "../../../../.agents/skills/",
+                $directory,
+                "/contract-skill.json"
+            )),
+        )
+    };
+}
 const BUNDLED_SKILL_RESOURCES: &[(&str, &str, &[u8])] = &[
+    contract_native_resources!("inspect-project"),
+    contract_native_resources!("build-and-test-project"),
+    contract_native_resources!("transform-local-files"),
+    contract_native_resources!("observe-desktop"),
+    contract_native_resources!("schedule-follow-up"),
+    contract_native_resources!("apply-standing-rule"),
+    contract_native_resources!("act-on-web-api"),
+    contract_native_resources!("send-notification"),
+    contract_native_resources!("control-local-media"),
+    contract_native_resources!("issue-to-patch"),
     (
         "telegram-contracts",
         "agents/openai.yaml",

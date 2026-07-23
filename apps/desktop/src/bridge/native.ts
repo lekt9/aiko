@@ -46,6 +46,34 @@ export interface ActivityEvent {
   observed_unix: number;
 }
 
+export interface ContractNativeSkill {
+  id: string;
+  version: string;
+  description: string;
+  source: "bundled" | "user" | "project";
+  platforms: string[];
+  triggers: string[];
+  nodes: number;
+}
+
+export interface ContractNativePlan {
+  schema_version: number;
+  selected: Array<{
+    id: string;
+    version: string;
+    source: string;
+    energy: number;
+    matched_triggers: string[];
+  }>;
+  children: Array<{
+    key: string;
+    plan: string;
+    effect_scope: string;
+    requires_authorization: boolean;
+    depends_on: string[];
+  }>;
+}
+
 export type CollectivePublicationMode =
   | "disabled"
   | "safe_public_shapes"
@@ -123,6 +151,22 @@ export async function getHealth(): Promise<RuntimeHealth> {
 export async function getContracts(): Promise<ContractSummary[]> {
   const response = await request<{ items: ContractSummary[] }>("/v1/contracts");
   return response.items;
+}
+
+export async function getContractSkills(): Promise<ContractNativeSkill[]> {
+  const response = await request<{ catalog: { items: ContractNativeSkill[] } }>(
+    "/v1/contract-skills",
+  );
+  return response.catalog.items;
+}
+
+export async function planContractSkills(goal: string): Promise<ContractNativePlan> {
+  const response = await request<{ plan: ContractNativePlan }>(
+    "/v1/contract-skills/plan",
+    "POST",
+    { goal },
+  );
+  return response.plan;
 }
 
 export async function getContract(id: string): Promise<{

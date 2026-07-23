@@ -18,8 +18,8 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use xai_grok_pager::app::cli::{
-    ActivityCommand, AgentMailCommand, CaptchaCommand, NativeArgs, NativeCommand, ReflexCommand,
-    TelegramCommand,
+    ActivityCommand, AgentMailCommand, CaptchaCommand, ContractSkillsCommand, NativeArgs,
+    NativeCommand, ReflexCommand, TelegramCommand,
 };
 use xai_grok_shell::agentmail_native;
 use xai_grok_shell::captcha_native;
@@ -148,6 +148,23 @@ pub async fn run_command(args: NativeArgs) -> Result<()> {
                         false,
                     )
                     .map_err(anyhow::Error::msg)?
+                }
+            };
+            println!("{}", serde_json::to_string_pretty(&value)?);
+            Ok(())
+        }
+        NativeCommand::ContractSkills { command } => {
+            let cwd = match &command {
+                ContractSkillsCommand::List { cwd } | ContractSkillsCommand::Plan { cwd, .. } => {
+                    cwd.clone().unwrap_or(std::env::current_dir()?)
+                }
+            };
+            let value = match command {
+                ContractSkillsCommand::List { .. } => {
+                    xai_grok_shell::contract_native::contract_skill_catalog(cwd)
+                }
+                ContractSkillsCommand::Plan { goal, .. } => {
+                    xai_grok_shell::contract_native::contract_skill_dry_run(goal, cwd)
                 }
             };
             println!("{}", serde_json::to_string_pretty(&value)?);
@@ -293,6 +310,8 @@ pub async fn serve(address: SocketAddr) -> Result<()> {
         .route("/v1/contracts/{id}/retry", post(retry_contract))
         .route("/v1/contracts/{id}/cancel", post(cancel_contract))
         .route("/v1/reflexes", get(reflexes))
+        .route("/v1/contract-skills", get(contract_skills))
+        .route("/v1/contract-skills/plan", post(plan_contract_skills))
         .route("/v1/reflexes/{capability}", delete(delete_reflex))
         .route(
             "/v1/reflex-policy",
@@ -648,6 +667,39 @@ async fn scheduled_contracts() -> Json<Value> {
         "schema": SCHEMA,
         "items": xai_grok_shell::contract_native::list_scheduled_contracts().await,
     }))
+}
+
+async fn contract_skills(Query(query): Query<BTreeMap<String, String>>) -> Json<Value> {
+    let cwd = query
+        .get("cwd")
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_default();
+    Json(json!({
+        "schema": SCHEMA,
+        "catalog": xai_grok_shell::contract_native::contract_skill_catalog(cwd),
+    }))
+}
+
+async fn plan_contract_skills(Json(body): Json<Value>) -> Response {
+    let Some(goal) = body.get("goal").and_then(Value::as_str) else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "missing_goal",
+            "Provide a goal string.",
+        );
+    };
+    let cwd = body
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_default();
+    Json(json!({
+        "schema": SCHEMA,
+        "plan": xai_grok_shell::contract_native::contract_skill_dry_run(goal.to_owned(), cwd),
+    }))
+    .into_response()
 }
 
 async fn reflexes(Query(query): Query<BTreeMap<String, String>>) -> Json<Value> {

@@ -47,6 +47,7 @@ rmSync(portable, { recursive: true, force: true });
 rmSync(installer, { recursive: true, force: true });
 mkdirSync(portable, { recursive: true });
 mkdirSync(resolve(portable, "contract"), { recursive: true });
+mkdirSync(resolve(portable, "skills"), { recursive: true });
 mkdirSync(payload, { recursive: true });
 
 copyFileSync(runtime, resolve(portable, "aiko.exe"));
@@ -55,6 +56,15 @@ copyFileSync(contract, resolve(portable, "contract", "contract.dll"));
 copyFileSync(runtime, resolve(payload, "aiko.exe"));
 copyFileSync(desktop, resolve(payload, "aiko-desktop.exe"));
 copyFileSync(contract, resolve(payload, "contract.dll"));
+for (const name of [
+  "inspect-project", "build-and-test-project", "transform-local-files",
+  "observe-desktop", "schedule-follow-up", "apply-standing-rule",
+  "act-on-web-api", "send-notification", "control-local-media", "issue-to-patch",
+]) {
+  const source = resolve(root, ".agents/skills", name);
+  cpSync(source, resolve(portable, "skills", name), { recursive: true });
+  cpSync(source, resolve(payload, "skills", name), { recursive: true });
+}
 cpSync(resolve(root, "apps/desktop/installer/windows"), installer, { recursive: true });
 copyFileSync(resolve(root, "apps/desktop/installer/windows/README.txt"), resolve(portable, "README.txt"));
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build and Test Project"
+  short_description: "Detect and verify project toolchains"
+  default_prompt: "Use $build-and-test-project to build and test this project."

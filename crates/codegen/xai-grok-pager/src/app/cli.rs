@@ -86,6 +86,26 @@ pub enum NativeCommand {
         #[command(subcommand)]
         command: ActivityCommand,
     },
+    /// Inspect and dry-run contract-native skill graphs.
+    ContractSkills {
+        #[command(subcommand)]
+        command: ContractSkillsCommand,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum ContractSkillsCommand {
+    /// List validated contract-native skill bundles.
+    List {
+        #[arg(long, value_hint = ValueHint::DirPath)]
+        cwd: Option<PathBuf>,
+    },
+    /// Rank applicable skills and render the bounded Contract DAG without executing it.
+    Plan {
+        goal: String,
+        #[arg(long, value_hint = ValueHint::DirPath)]
+        cwd: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand)]

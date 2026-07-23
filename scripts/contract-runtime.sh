@@ -165,27 +165,18 @@ package_runtime() {
     if [ -e "$DEST" ]; then
         mv "$DEST" "$DEST.previous.$(date +%Y%m%d%H%M%S)"
     fi
-    mkdir -p "$DEST/bin" "$DEST/lib" \
-        "$DEST/skills/telegram-contracts/agents" \
-        "$DEST/skills/telegram-contracts/assets" \
-        "$DEST/skills/telegram-contracts/references" \
-        "$DEST/skills/telegram-contracts/scripts"
+    mkdir -p "$DEST/bin" "$DEST/lib" "$DEST/skills"
     install -m 755 "$BIN" "$DEST/bin/aiko"
     install -m 755 "$CONTRACT_DYLIB" "$DEST/lib/libcontract.dylib"
     if [ "$(uname -s)" = "Darwin" ]; then
         codesign --force --sign - "$DEST/lib/libcontract.dylib"
     fi
     install -m 755 "$AIKO_ROOT/scripts/install-aiko-package.sh" "$DEST/install.sh"
-    install -m 644 "$AIKO_ROOT/.agents/skills/telegram-contracts/SKILL.md" \
-        "$DEST/skills/telegram-contracts/SKILL.md"
-    install -m 644 "$AIKO_ROOT/.agents/skills/telegram-contracts/agents/openai.yaml" \
-        "$DEST/skills/telegram-contracts/agents/openai.yaml"
-    install -m 644 "$AIKO_ROOT/.agents/skills/telegram-contracts/assets/capabilities.json" \
-        "$DEST/skills/telegram-contracts/assets/capabilities.json"
-    install -m 644 "$AIKO_ROOT/.agents/skills/telegram-contracts/references/telegram-api.md" \
-        "$DEST/skills/telegram-contracts/references/telegram-api.md"
-    install -m 755 "$AIKO_ROOT/.agents/skills/telegram-contracts/scripts/build_contract_pack.py" \
-        "$DEST/skills/telegram-contracts/scripts/build_contract_pack.py"
+    for SKILL_DIR in "$AIKO_ROOT"/.agents/skills/*; do
+        if [ -f "$SKILL_DIR/contract-skill.json" ]; then
+            cp -R "$SKILL_DIR" "$DEST/skills/"
+        fi
+    done
 
     AIKO_SHA=$(sha256_file "$DEST/bin/aiko")
     CONTRACT_SHA=$(sha256_file "$DEST/lib/libcontract.dylib")

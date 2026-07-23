@@ -21,6 +21,7 @@ use xai_grok_tools::notification::{ScheduledTaskFired, ToolNotificationHandle};
 mod activity_sensor;
 mod contract_learning;
 mod reflex_policy;
+mod skill_registry;
 
 const LOCAL_COMMAND_TIMEOUT: Duration = Duration::from_millis(800);
 const MAX_CONTEXT_BYTES: usize = 14_000;
@@ -61,13 +62,7 @@ struct TurnFeedback {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     proven_example: Option<String>,
     #[serde(default)]
-    standing_executed: Vec<String>,
-    #[serde(default)]
     open_contracts: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    visual_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    visual_note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     outcome: Option<String>,
 }
@@ -1330,36 +1325,42 @@ async fn expand_turn_root(turn: &TurnContract, cwd: &Path) -> Option<Value> {
     if depth >= max_depth {
         return None;
     }
+    let skill_plan = skill_registry::plan(&turn.goal, cwd);
+    let mut children = vec![
+        json!({
+            "key": "observe",
+            "plan": format!("Observe privacy-safe current state and relevant evidence for: {}", turn.goal),
+            "action": "contract:observe_state"
+        }),
+        json!({
+            "key": "verify",
+            "plan": format!("Verify externally grounded outcomes for: {}", turn.goal),
+            "action": "contract:verify",
+            "depends_on": ["observe"]
+        }),
+    ];
+    children.extend(skill_plan.children);
     let request = json!({
         "root_id": turn.id,
         "plan": turn.goal,
         "action": "turn",
         "cwd": cwd,
         "agent": "aiko-native",
-        "children": [
-            {
-                "key": "observe",
-                "plan": format!("Observe privacy-safe current state and relevant evidence for: {}", turn.goal),
-                "action": "observe_state"
-            },
-            {
-                "key": "prerequisites",
-                "plan": format!("Recall grounded patterns and prepare prerequisites for: {}", turn.goal),
-                "action": "prepare",
-                "depends_on": ["observe"]
-            },
-            {
-                "key": "future",
-                "plan": format!("Detect incomplete or future obligations implied by: {}", turn.goal),
-                "action": "prepare_future",
-                "depends_on": ["observe"]
-            }
-        ]
+        "children": children,
+        "selected_skills": skill_plan.selected,
     });
     tokio::task::spawn_blocking(move || native_contract()?.expand_graph(&request))
         .await
         .ok()
         .flatten()
+}
+
+pub fn contract_skill_dry_run(goal: String, cwd: PathBuf) -> Value {
+    skill_registry::dry_run(&goal, &cwd)
+}
+
+pub fn contract_skill_catalog(cwd: PathBuf) -> Value {
+    skill_registry::catalog(&cwd)
 }
 
 async fn settle_prepared_reflex_children(graph: Option<&Value>) {
@@ -1394,107 +1395,6 @@ async fn settle_prepared_reflex_children(graph: Option<&Value>) {
     .await;
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct FutureSpec {
-    interval_seconds: u64,
-    recurring: bool,
-    first_due_unix: i64,
-    authority: bool,
-}
-
-fn duration_seconds(text: &str) -> Option<u64> {
-    let words = text.split_whitespace().collect::<Vec<_>>();
-    for pair in words.windows(2) {
-        let Ok(amount) = pair[0]
-            .trim_matches(|character: char| !character.is_ascii_digit())
-            .parse::<u64>()
-        else {
-            continue;
-        };
-        let unit = pair[1].trim_matches(|character: char| !character.is_alphabetic());
-        let multiplier = if unit.starts_with("second") {
-            1
-        } else if unit.starts_with("minute") {
-            60
-        } else if unit.starts_with("hour") {
-            3_600
-        } else if unit.starts_with("day") {
-            86_400
-        } else if unit.starts_with("week") {
-            604_800
-        } else {
-            continue;
-        };
-        return amount.checked_mul(multiplier);
-    }
-    None
-}
-
-fn infer_future_spec(goal: &str, now_unix: i64) -> Option<FutureSpec> {
-    let lower = goal.to_ascii_lowercase();
-    let explicit = lower.contains("remind me")
-        || lower.contains("schedule ")
-        || lower.contains("every ")
-        || lower.contains("each day")
-        || lower.contains("each week");
-    if !explicit {
-        return None;
-    }
-    let recurring =
-        lower.contains("every ") || lower.contains("each day") || lower.contains("each week");
-    let interval = duration_seconds(&lower).or_else(|| {
-        lower
-            .contains("tomorrow")
-            .then_some(86_400)
-            .or_else(|| lower.contains("each day").then_some(86_400))
-            .or_else(|| lower.contains("each week").then_some(604_800))
-    })?;
-    Some(FutureSpec {
-        interval_seconds: interval,
-        recurring,
-        first_due_unix: now_unix.saturating_add(i64::try_from(interval).ok()?),
-        // These imperative forms are the durable user cadence/authority rule.
-        authority: true,
-    })
-}
-
-async fn materialize_future_obligation(turn: &TurnContract, cwd: &Path) -> Option<Value> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .and_then(|duration| i64::try_from(duration.as_secs()).ok())?;
-    let spec = infer_future_spec(&turn.goal, now)?;
-    let signature = format!("future:{}", sha2_short(&turn.goal.to_ascii_lowercase()));
-    let prompt = format!("[{signature}] {}", turn.goal);
-    let request = json!({
-        "prompt": prompt,
-        "cwd": cwd,
-        "parent_id": turn.id,
-        "interval_seconds": spec.interval_seconds,
-        "recurring": spec.recurring,
-        "first_due_unix": spec.first_due_unix,
-        "authority": spec.authority,
-    });
-    tokio::task::spawn_blocking(move || {
-        let native = native_contract()?;
-        let existing = native.list_scheduled().unwrap_or(Value::Null).to_string();
-        if existing.contains(&signature) {
-            return Some(
-                json!({ "signature": signature, "deduplicated": true, "scheduled": true }),
-            );
-        }
-        let mut result = native.declare_scheduled(&request)?;
-        if let Some(object) = result.as_object_mut() {
-            object.insert("signature".into(), json!(signature));
-            object.insert("deduplicated".into(), json!(false));
-        }
-        Some(result)
-    })
-    .await
-    .ok()
-    .flatten()
-}
-
 impl TurnContract {
     pub fn id(&self) -> &str {
         &self.id
@@ -1520,10 +1420,7 @@ impl TurnContract {
             proven_binary: None,
             proven_score: None,
             proven_example: None,
-            standing_executed: vec![],
             open_contracts: vec![],
-            visual_path: latest_visual_path().map(|p| p.display().to_string()),
-            visual_note: None,
             outcome: Some(if marked {
                 "satisfied".into()
             } else {
@@ -1545,17 +1442,13 @@ fn turn_feedback_path() -> Option<PathBuf> {
     Some(home.join(".aiko/context/turn-feedback.jsonl"))
 }
 
+// Legacy visual helpers remain only for migration tests. New turns reach the
+// observe-desktop bundle through the generic skill registry.
 fn visuals_dir() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let dir = home.join(".aiko/context/visuals");
     let _ = std::fs::create_dir_all(&dir);
     Some(dir)
-}
-
-fn latest_visual_path() -> Option<PathBuf> {
-    let dir = visuals_dir()?;
-    let latest = dir.join("latest.png");
-    latest.exists().then_some(latest)
 }
 
 fn append_turn_feedback(card: TurnFeedback) {
@@ -1610,22 +1503,9 @@ fn format_turn_feedback_section(cards: &[TurnFeedback]) -> Option<String> {
         if let (Some(bin), Some(score)) = (&card.proven_binary, card.proven_score) {
             out.push_str(&format!("  proven={bin} score={score:.3}\n"));
         }
-        if !card.standing_executed.is_empty() {
-            out.push_str(&format!(
-                "  standing: {}\n",
-                card.standing_executed.join("; ")
-            ));
-        }
-        if let Some(vis) = &card.visual_path {
-            out.push_str(&format!("  visual: {vis}\n"));
-        }
-        if let Some(note) = &card.visual_note {
-            out.push_str(&format!("  visual_note: {note}\n"));
-        }
     }
     out.push_str(
-        "Directive: prefer improving failed outcomes and reusing high-score proven \
-         routes; do not ignore standing_executed evidence.",
+        "Directive: prefer improving failed outcomes and reusing high-score proven routes.",
     );
     Some(out)
 }
@@ -2930,11 +2810,7 @@ async fn enforce_standing_orders(orders: &[StandingOrder]) -> Vec<StandingExecRe
     results
 }
 
-async fn enforce_ranked_reflex(
-    rankings: &Value,
-    proven: Option<&Value>,
-    standing: &[StandingOrder],
-) -> Option<Value> {
+async fn enforce_ranked_reflex(rankings: &Value, proven: Option<&Value>) -> Option<Value> {
     let proven = proven?;
     let binary = proven.get("binary")?.as_str()?;
     let command = proven.get("example")?.as_str()?;
@@ -2972,41 +2848,15 @@ async fn enforce_ranked_reflex(
             json!({ "capability": binary, "command": command, "policy": decision, "executed": false }),
         );
     }
-    if !is_safe_standing_command(command) {
-        return Some(json!({
-            "capability": binary,
-            "command": command,
-            "policy": { "decision": "hold", "reason": "command_outside_local_safe_allowlist" },
-            "executed": false,
-        }));
-    }
-    if standing
-        .iter()
-        .any(|order| order.command.as_deref() == Some(command))
-    {
-        return Some(json!({
-            "capability": binary,
-            "command": command,
-            "policy": { "decision": "prepare", "reason": "already_fired_by_standing_authority" },
-            "executed": false,
-        }));
-    }
-    let result = run_standing_command(&StandingOrder {
-        id: format!("reflex-{}", sha2_short(command)),
-        trigger: Vec::new(),
-        action: format!("Grounded learned reflex for {binary}"),
-        command: Some(command.to_owned()),
-        source_goal: None,
-        created_at: chrono_ish_now(),
-        contract_id: None,
-    })
-    .await;
+    // The substrate ranks and gates muscle memory, but concrete execution is
+    // owned by the selected contract-native skill. This avoids maintaining a
+    // second domain-specific command allowlist in core.
     Some(json!({
         "capability": binary,
         "command": command,
         "policy": decision,
-        "executed": true,
-        "outcome": result,
+        "executed": false,
+        "delegated_to_contract_skill": true,
     }))
 }
 
@@ -3933,81 +3783,26 @@ fn sanitize_proven_route(proven: Option<Value>, standing: &[StandingOrder]) -> O
 struct BuiltContext {
     text: String,
     capability_route: Option<Value>,
-    visual_path: Option<PathBuf>,
-    visual_note: Option<String>,
     feedback: TurnFeedback,
     learning_family: Option<String>,
 }
 
 async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
     let goal = clean_goal(goal);
-    ensure_default_standing_orders();
-    // Learn standing orders from this turn's goal (whenever X → always Y).
-    // Skip enforce when the goal *is* a standing-order definition (register only).
-    let lower_goal = goal.to_ascii_lowercase();
-    let is_defining_standing = lower_goal.contains("whenever")
-        || lower_goal.contains("every time")
-        || lower_goal.contains("always when")
-        || lower_goal.contains("from now on");
-    let learned = maybe_learn_standing_order(&goal);
-    let standing = if is_defining_standing {
-        Vec::new() // don't fire while registering the rule itself
-    } else {
-        matching_standing_orders(&goal)
-    };
-    // Harness enforcement: run proven commands now, don't wait for the model.
-    let standing_exec = enforce_standing_orders(&standing).await;
-    // Visual feedback loop (browser/desktop surface → model eyes).
-    let visual = capture_visual_feedback(&goal).await;
-    let branch = command_lines(cwd, "git", &["branch", "--show-current"], 1).await;
-    let changes = command_lines(cwd, "git", &["status", "--short"], 30).await;
-    let recent = command_lines(cwd, "git", &["log", "-5", "--pretty=format:%h %s"], 5).await;
-    let entries = top_level_snapshot(cwd);
-    let capabilities = available_capabilities();
-    let applications = installed_applications();
-    let (frontmost_application, running_applications) = live_application_signals();
-    let _ = activity_sensor::observe_frontmost(frontmost_application.as_deref());
-    let cdp_targets = discover_cdp_targets().await;
-    let app_data = application_data_sources(&applications);
-    let recent_binaries = recent_binary_usage();
-    let recent_actions = recent_trajectory_actions();
-    let availability = serde_json::json!({
-        "application_runtime": true,
-        "installed_applications": applications,
-        "frontmost_application": frontmost_application,
-        "running_applications": running_applications,
-        "cdp_targets": cdp_targets,
-        "available_binaries": capabilities,
-    });
-    let (mut recommendation, raw_proven, open_matches, muscle_rankings) = tokio::join!(
+    let skill_plan = skill_registry::dry_run(&goal, cwd);
+    let skill_catalog = skill_registry::catalog(cwd);
+    let availability = json!({ "contract_skills": skill_catalog });
+    let (mut recommendation, proven, open_matches, muscle_rankings) = tokio::join!(
         contract_recommendation(&goal, availability),
         contract_proven_route(&goal),
         matching_open_contracts(&goal),
         inspect_muscle_rankings(goal.clone()),
     );
-    // Drop poison `true standing-*` recommend hits; prefer standing order commands.
-    let proven = sanitize_proven_route(raw_proven, &standing);
-    let reflex_execution =
-        enforce_ranked_reflex(&muscle_rankings, proven.as_ref(), &standing).await;
-    // True recall: prior declared plans that keyword-overlap this goal.
     let recalled = recall_matching_declarations(&goal);
-
     if let Some(route) = recommendation.as_mut().and_then(Value::as_object_mut) {
-        route.insert(
-            "local_evidence".into(),
-            serde_json::json!({
-                "frontmost_application": frontmost_application,
-                "cdp_targets": cdp_targets,
-            }),
-        );
+        route.insert("contract_skill_plan".into(), skill_plan.clone());
         if let Some(proven) = &proven {
             route.insert("proven_command".into(), proven.clone());
-        }
-        if !standing.is_empty() {
-            route.insert(
-                "standing_orders".into(),
-                serde_json::to_value(&standing).unwrap_or(json!([])),
-            );
         }
         if !recalled.is_empty() {
             route.insert(
@@ -4018,21 +3813,23 @@ async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
         route.insert("muscle_rankings".into(), muscle_rankings.clone());
     }
 
-    let mut sections = Vec::new();
-    sections.push(format!(
-        "Machine: {} {}. Working directory: {}.",
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-        cwd.display()
-    ));
-
     let learning_family = proven.as_ref().and_then(|route| {
         let binary = route.get("binary")?.as_str()?;
         contract_learning::propose_route(binary, &goal, cwd)
     });
-    // ARC-style defeasible memory, generalized to project work: relevant
-    // learnings survive turns, while repeatedly refuted tactic families are
-    // withheld from the model instead of becoming sticky prompt folklore.
+    let reflex_execution = enforce_ranked_reflex(&muscle_rankings, proven.as_ref()).await;
+    let mut sections = vec![
+        format!(
+            "Contract substrate: {} {}. Working directory: {}.",
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            cwd.display()
+        ),
+        format!(
+            "CONTRACT-NATIVE SKILL PLAN (validated, ranked, bounded, and dry-run before execution):\n{}",
+            serde_json::to_string(&skill_plan).unwrap_or_default()
+        ),
+    ];
     if let Some(learning_context) = contract_learning::render_context(&goal, cwd) {
         sections.push(learning_context);
     }
@@ -4053,235 +3850,36 @@ async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
             serde_json::to_string(reflex).unwrap_or_default()
         ));
     }
-
-    // Standing orders outrank everything — durable ledger contracts, harness-enforced.
-    if let Some(learned) = &learned {
-        sections.push(format!(
-            "NEW standing order recorded on the contract ledger (id={}): when {:?} → {}\n\
-             Proven action will auto-run on every future matching turn (not chat memory).",
-            learned.id, learned.trigger, learned.action
-        ));
-    }
-    if !standing.is_empty() || !standing_exec.is_empty() {
-        let mut block = String::from(
-            "STANDING ORDERS — ENFORCED by harness this turn (ledger-native, not optional):\n",
-        );
-        for order in &standing {
-            let cid = order.contract_id.as_deref().unwrap_or("unregistered");
-            block.push_str(&format!(
-                "- standing id={} ledger={} | {}\n",
-                order.id, cid, order.action
-            ));
-            block.push_str(&format!(
-                "  Plan key: `standing: {} | when: {}`\n",
-                order.id,
-                order.trigger.join(", ")
-            ));
-            if let Some(cmd) = order.command.as_ref().map(|c| expand_home(c)) {
-                block.push_str(&format!("  Proven command: `{cmd}`\n"));
-            }
-        }
-        for exec in &standing_exec {
-            if let Some(skip) = &exec.skipped {
-                block.push_str(&format!("  ↳ [{}] SKIPPED: {skip}\n", exec.order_id));
-                continue;
-            }
-            let status = if exec.ok { "OK" } else { "FAILED" };
-            block.push_str(&format!(
-                "  ↳ [{}] EXECUTED `{cmd}` exit={exit} {status}\n",
-                exec.order_id,
-                cmd = exec.command,
-                exit = exec.exit,
-            ));
-            if !exec.stdout.trim().is_empty() {
-                block.push_str(&format!("    output: {}\n", exec.stdout.trim()));
-            }
-        }
-        block.push_str(
-            "Directive: the harness already ran matching standing commands. \
-             Complete any remaining policy text (e.g. show playlist UI) but do NOT \
-             re-skip the enforced action. Standing orders are contract ledger rows — \
-             retrieve via `contract recommend \"standing …\"`.",
-        );
-        sections.push(block);
-    }
-
-    // Auto-recalled declarations — what the user previously put on the ledger.
     if !recalled.is_empty() {
         sections.push(format!(
-            "RECALLED DECLARATIONS (prior ledger plans matching this goal — obey / continue, do not re-declare):\n{}",
+            "RECALLED CONTRACT DECLARATIONS:\n{}",
             recalled.join("\n")
         ));
     }
-
-    // Reuse directive — but standing orders already took priority above.
     if let Some(proven) = &proven {
-        let score = proven.get("score").and_then(Value::as_f64).unwrap_or(0.0);
-        let binary = proven.get("binary").and_then(Value::as_str).unwrap_or("?");
-        let example = proven.get("example").and_then(Value::as_str).unwrap_or("");
-        let standing_overrides = !standing.is_empty();
         sections.push(format!(
-            "Contract REUSE route (from ledger, poison no-ops filtered):\n\
-             binary={binary} score={score:.3}\n\
-             proven command: {example}\n\
-             {}Only begin a new task when nothing proven, open, or standing matches.",
-            if standing_overrides {
-                "Note: standing orders above OVERRIDE this route when they conflict \
-                 (e.g. playlist→play beats application.snapshot).\n"
-            } else {
-                "If score ≥ 0.45 and the command still applies, RUN it instead of \
-                 inventing parallel work.\n"
-            }
+            "CONTRACT REUSE CANDIDATE (subject to the same skill/effect gate):\n{}",
+            serde_json::to_string(proven).unwrap_or_default()
         ));
-    } else if !standing.is_empty() {
-        // Standing matched but recommend returned only poison — still surface the command.
-        if let Some(order) = standing.iter().find(|o| o.command.is_some()) {
-            let cmd = standing_action_cmd(order);
-            sections.push(format!(
-                "Contract REUSE route (from standing order, recommend was empty/poison):\n\
-                 proven command: {cmd}\n\
-                 Run or continue this — do not invent parallel work."
-            ));
-        }
     }
     if !open_matches.is_empty() {
         sections.push(format!(
-            "Open contracts matching this goal (CONTINUE / verify these — do not begin duplicates):\n{}",
+            "OPEN MATCHING CONTRACTS:\n{}",
             open_matches.join("\n")
         ));
     }
-    if !capabilities.is_empty() {
-        sections.push(format!(
-            "Available local capabilities: {}.",
-            capabilities.join(", ")
-        ));
-    }
-    if !recent_binaries.is_empty() {
-        sections.push(format!(
-            "Recently used command names, ranked by local shell-history frequency \
-             (arguments were discarded locally): {}.",
-            recent_binaries.join(", ")
-        ));
-    }
-    if !applications.is_empty() {
-        sections.push(format!(
-            "Installed macOS applications: {}.",
-            applications.join(", ")
-        ));
-    }
-    if let Some(frontmost) = &frontmost_application {
-        sections.push(format!("Frontmost macOS application: {frontmost}."));
-    }
-    if !running_applications.is_empty() {
-        sections.push(format!(
-            "Currently running macOS applications (identity only): {}.",
-            running_applications.join(", ")
-        ));
-    }
-    if !cdp_targets.is_empty() {
-        sections.push(format!(
-            "Locally discoverable browser/Electron CDP targets: {}.",
-            cdp_targets.join(", ")
-        ));
-    }
-    if !recent_actions.is_empty() {
-        sections.push(format!(
-            "Recent Aiko capability names (arguments and outputs discarded locally): {}.",
-            recent_actions.join(", ")
-        ));
-    }
-    if !app_data.is_empty() {
-        sections.push(format!(
-            "Applications with local Application Support directories (directory names \
-             only; contents were not read): {}.",
-            app_data.join(", ")
-        ));
-    }
-    if !entries.is_empty() {
-        sections.push(format!("Workspace surface: {}.", entries.join(", ")));
-    }
-    if let Some(branch) = branch.first() {
-        sections.push(format!("Git branch: {branch}."));
-    }
-    if !changes.is_empty() {
-        sections.push(format!(
-            "Current git changes (names/status only):\n{}",
-            changes.join("\n")
-        ));
-    }
-    if !recent.is_empty() {
-        sections.push(format!("Recent project history:\n{}", recent.join("\n")));
-    }
-    if let Some(profile) = load_profile() {
-        sections.push(format!("User-maintained local profile:\n{profile}"));
-    }
-
-    // Prior turn scores/outcomes — granular feedback loop.
     let recent_feedback = load_recent_turn_feedback(TURN_FEEDBACK_LIMIT);
     if let Some(fb) = format_turn_feedback_section(&recent_feedback) {
         sections.push(fb);
     }
-
-    // Live visual note for this turn.
-    if let Some((path, note)) = &visual {
-        sections.push(format!(
-            "VISUAL FEEDBACK (rendered surface → model context):\n\
-             path: {}\n\
-             note: {note}\n\
-             An image of this surface is attached when size allows. Judge UI/layout \
-             from the image, not from imagination. Fix what you see.",
-            path.display()
-        ));
-    }
-
     if let Some(recommendation) = &recommendation {
         sections.push(format!(
-            "Contract typed capability route (verified outcomes and explicitly-labeled cold priors):\n{}",
+            "CONTRACT CAPABILITY ROUTE:\n{}",
             serde_json::to_string(recommendation).unwrap_or_default()
         ));
-        let routes_application = recommendation
-            .get("cells")
-            .and_then(Value::as_array)
-            .is_some_and(|cells| {
-                cells.iter().any(|cell| {
-                    cell.get("tool").and_then(Value::as_str) == Some("application_observe")
-                        || cell.get("tool").and_then(Value::as_str) == Some("application_act")
-                })
-            });
-        // Don't force application tools when a standing order owns this turn
-        // (e.g. playlist → play song) — that was causing "forget" behavior.
-        let standing_owns = !standing.is_empty();
-        if routes_application && !standing_owns {
-            sections.push(
-                "Contract execution directive: this route selected Aiko's built-in \
-                 `application_observe` / `application_act` tools. Call those tools directly; \
-                 they consume the ranked CDP evidence and perform safe prerequisites \
-                 automatically. Do not search for or prefer Chrome DevTools MCP, curl, or \
-                 filesystem workarounds unless the Aiko-native application tool returns an \
-                 explicit failure."
-                    .to_owned(),
-            );
-        }
     }
     let mut context = sections.join("\n\n");
     context.truncate(context.floor_char_boundary(MAX_CONTEXT_BYTES));
-
-    let standing_executed: Vec<String> = standing_exec
-        .iter()
-        .map(|e| {
-            if let Some(skip) = &e.skipped {
-                format!("{}:skipped:{skip}", e.order_id)
-            } else {
-                format!(
-                    "{}:{}:exit={}",
-                    e.order_id,
-                    if e.ok { "ok" } else { "fail" },
-                    e.exit
-                )
-            }
-        })
-        .collect();
-
     let feedback = TurnFeedback {
         ts: chrono_ish_now(),
         goal: goal.clone(),
@@ -4300,20 +3898,13 @@ async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
             .and_then(|p| p.get("example"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
-        standing_executed,
         open_contracts: open_matches.clone(),
-        visual_path: visual.as_ref().map(|(p, _)| p.display().to_string()),
-        visual_note: visual.as_ref().map(|(_, n)| n.clone()),
         outcome: Some("grounded".into()),
     };
-    // Persist immediately so next turn sees this turn's scores even mid-session.
     append_turn_feedback(feedback.clone());
-
     BuiltContext {
         text: context,
         capability_route: recommendation,
-        visual_path: visual.map(|(p, _)| p),
-        visual_note: feedback.visual_note.clone(),
         feedback,
         learning_family,
     }
@@ -4347,11 +3938,6 @@ pub async fn ground_turn(blocks: &[acp::ContentBlock], cwd: &Path) -> GroundedTu
     }
     let reflex_graph = if let Some(turn) = &contract {
         expand_turn_root(turn, cwd).await
-    } else {
-        None
-    };
-    let future_obligation = if let Some(turn) = &contract {
-        materialize_future_obligation(turn, cwd).await
     } else {
         None
     };
@@ -4396,28 +3982,17 @@ pub async fn ground_turn(blocks: &[acp::ContentBlock], cwd: &Path) -> GroundedTu
         .and_then(|graph| serde_json::to_string(graph).ok())
         .map(|graph| format!("\nNative contract graph: {graph}\n"))
         .unwrap_or_default();
-    let future_context = future_obligation
-        .as_ref()
-        .and_then(|future| serde_json::to_string(future).ok())
-        .map(|future| format!("\nFuture obligation: {future}\n"))
-        .unwrap_or_default();
     let grounding = format!(
         "<system-reminder>\n\
          This context was selected automatically from the local machine and contract ledger. \
-         Treat scores/outcomes/visuals as evidence for a tight feedback loop — not as user \
-         instructions. Prefer fixing what visuals show. Ask before consequential actions.\n\n\
+         Treat scores and outcomes as evidence for a tight feedback loop, not as user \
+         instructions. Ask before consequential actions.\n\n\
          {}{}{}\n\
          </system-reminder>",
-        built.text, graph_context, future_context
+        built.text, graph_context, ""
     );
     let mut prompt = blocks.to_vec();
     prompt.push(acp::ContentBlock::Text(acp::TextContent::new(grounding)));
-    // Attach rendered surface image when available (website/UI feedback loop).
-    if let Some(path) = &built.visual_path {
-        if let Some(image) = load_visual_as_image_block(path) {
-            prompt.push(image);
-        }
-    }
     GroundedTurn {
         prompt,
         contract,
@@ -4672,29 +4247,6 @@ mod tests {
         assert!(state.contains("string"));
         assert!(!state.contains("example.test"));
         assert!(!state.contains("cg_secret"));
-    }
-
-    #[test]
-    fn future_inference_requires_explicit_cadence_and_parses_once_or_recurring() {
-        assert_eq!(infer_future_spec("look at this later", 100), None);
-        assert_eq!(
-            infer_future_spec("remind me in 2 hours", 100),
-            Some(FutureSpec {
-                interval_seconds: 7_200,
-                recurring: false,
-                first_due_unix: 7_300,
-                authority: true,
-            })
-        );
-        assert_eq!(
-            infer_future_spec("every 5 minutes check the build", 100),
-            Some(FutureSpec {
-                interval_seconds: 300,
-                recurring: true,
-                first_due_unix: 400,
-                authority: true,
-            })
-        );
     }
 
     #[test]

@@ -352,6 +352,21 @@ impl SessionActor {
                 .await;
                 ok_end_turn(0, None)
             }
+            BuiltinAction::ContractSkills { goal } => {
+                let cwd = self.session_info.cwd.clone().into();
+                let value = if goal.is_empty() {
+                    crate::contract_native::contract_skill_catalog(cwd)
+                } else {
+                    crate::contract_native::contract_skill_dry_run(goal, cwd)
+                };
+                let text =
+                    serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
+                self.send_slash_command_output(&format!(
+                    "**Contract-native skills**\n\n```json\n{text}\n```"
+                ))
+                .await;
+                ok_end_turn(0, None)
+            }
             BuiltinAction::SessionInfo => {
                 let info = self.build_session_info().await;
 

@@ -1,0 +1,105 @@
+{
+  "description": "Resolve and execute indexed Unbrowse or HTTP API capabilities with governed effects.",
+  "examples": [
+    {
+      "expect": {
+        "held_effects": [
+          "account_mutation"
+        ],
+        "root_count": 1,
+        "selected": "act-on-web-api"
+      },
+      "name": "default",
+      "prompt": "Use a web API route to update the fixture account."
+    }
+  ],
+  "id": "act-on-web-api",
+  "input_schema": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "nodes": [
+    {
+      "can_parallel": true,
+      "depends_on": [],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "resolve-route",
+      "plan": "Resolve a cached Unbrowse or API route for {{goal}}.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "tool"
+    },
+    {
+      "can_parallel": false,
+      "depends_on": [
+        "resolve-route"
+      ],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "prepare-request",
+      "plan": "Prepare sanitized structured API parameters for {{goal}}.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    },
+    {
+      "can_parallel": false,
+      "depends_on": [
+        "prepare-request"
+      ],
+      "effect": "account_mutation",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "execute-request",
+      "plan": "Execute the governed API request for {{goal}}.",
+      "read_only": false,
+      "requires_authority": true,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "tool"
+    },
+    {
+      "can_parallel": false,
+      "depends_on": [
+        "execute-request"
+      ],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "verify-response",
+      "plan": "Verify response status and declared output shape for {{goal}}.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    }
+  ],
+  "output_schema": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "platforms": [
+    "all"
+  ],
+  "schema_version": 1,
+  "triggers": [
+    "web api",
+    "unbrowse",
+    "website action",
+    "fetch website",
+    "api route"
+  ],
+  "version": "1.0.0"
+}
