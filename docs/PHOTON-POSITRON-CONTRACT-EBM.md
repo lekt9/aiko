@@ -232,6 +232,10 @@ energy-ranked resolution beating scan-order on measured graphs, pure-ledger
 routing far above chance on the route bench. Prove the atom; do not oversell
 the cathedral.
 
+**Full gap register** (mapping overclaims, EBM A–H, missing wire, containment,
+collective, privacy, world index, falsifiable priority 1–5):
+[`PHOTON-POSITRON-GAPS.md`](PHOTON-POSITRON-GAPS.md).
+
 ---
 
 ## 7. Code map (where to read the mapping in the tree)

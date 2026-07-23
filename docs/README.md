@@ -11,6 +11,7 @@ One signed binary, one append-only ledger, one truth-root. Start here.
 | [TRUST-LAYER.md](TRUST-LAYER.md) | signed evidence policy, counter-metrics, independence classes, promotion, revocation, invalidation, and compatible rollback |
 | [HOW-IT-WORKS-intelligence.md](HOW-IT-WORKS-intelligence.md) | the two embeddings (feature-hash + baked pure-Zig BERT), the energy router (`recommend`), ledger-is-the-weights, self-documenting usage, the aiko-cli closed loop, the honest benchmark ladder and limits |
 | [PHOTON-POSITRON-CONTRACT-EBM.md](PHOTON-POSITRON-CONTRACT-EBM.md) | the faithful physics translation: ledger as field, claim×check as pair production, verification as annihilation, fold as contrastive EBM, route as ground-state settle — why the harness *is* the energy-based model |
+| [PHOTON-POSITRON-GAPS.md](PHOTON-POSITRON-GAPS.md) | gap register for that map: built chamber vs depth/wiring/scale/containment/truth holes; EBM A–H; priority 1–5 with stop conditions; standing rules against marketing past the code |
 | [HOW-IT-WORKS-economics.md](HOW-IT-WORKS-economics.md) | the two coexisting economies (Vine slash-to-burn · commons reward-not-slash), the metering → weight → epoch → reward → payout loop, Sybil dampening, shape re-verification, the 402 envelope, the honest wall |
 
 These documents **explain**; they do not legislate. Every rule they mention

@@ -105,3 +105,7 @@ underwritten as a **falsifiable direction with a cheap first gate already passed
 privacy pillar is real for data and aspirational for ZK; and the moat is a race to
 own a commons before the idea is copied.* Everything compelling about Aiko is
 downstream of bets that are named, cheap to test next, and being tested in order.
+
+**Physics-map gap register** (chamber built / depth open / priority 1–5):
+[`PHOTON-POSITRON-GAPS.md`](PHOTON-POSITRON-GAPS.md), companion to
+[`PHOTON-POSITRON-CONTRACT-EBM.md`](PHOTON-POSITRON-CONTRACT-EBM.md).
