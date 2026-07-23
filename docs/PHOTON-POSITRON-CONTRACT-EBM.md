@@ -236,6 +236,10 @@ the cathedral.
 collective, privacy, world index, falsifiable priority 1–5):
 [`PHOTON-POSITRON-GAPS.md`](PHOTON-POSITRON-GAPS.md).
 
+**Runtime spine** (waves, resident clock hand, preempt, self-continuation):
+[`PHOTON-POSITRON-RUNTIME.md`](PHOTON-POSITRON-RUNTIME.md) · product plan Aiko
+`plan3.md`.
+
 ---
 
 ## 7. Code map (where to read the mapping in the tree)

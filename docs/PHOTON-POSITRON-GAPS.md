@@ -253,6 +253,21 @@ Without a strong live index, collisions train **local muscle**, not
 
 ---
 
+## 8b. Runtime spine (drive, not depth)
+
+Separate from energy *depth*: the **clock hand** that keeps the field alive.
+
+| Concern | Doctrine | Plan |
+|---------|----------|------|
+| Daemon vs statelessness | Authority in ledger; process may live forever if killable | Aiko `plan3.md` |
+| Self-call while | Illegal as graph cycle; legal as new occurrence | [`PHOTON-POSITRON-RUNTIME.md`](PHOTON-POSITRON-RUNTIME.md) |
+| Preempt | Lease / release / supersede / reflex / gate | Runtime doc §4 |
+| Existing residents | `contract tick --every`; Aiko `run_contract_worker` | Plan 3 Phase 1 |
+
+Full map: [`PHOTON-POSITRON-RUNTIME.md`](PHOTON-POSITRON-RUNTIME.md).
+
+---
+
 ## 9. Priority order (what to close first)
 
 If only five gaps close, in **falsifiable order**:
