@@ -1,9 +1,10 @@
 # Photon / positron → Contract → EBM — gap register
 
 > Companion to [`PHOTON-POSITRON-CONTRACT-EBM.md`](PHOTON-POSITRON-CONTRACT-EBM.md)
-> (the faithful map). This file is the **honest remainder**: what the chamber
-> already is, where the map overclaims, and what must close next — in
-> falsifiable order.
+> (the faithful map) and
+> [`PHOTON-POSITRON-FIRST-PRINCIPLES.md`](PHOTON-POSITRON-FIRST-PRINCIPLES.md)
+> (laws). This file is the **honest remainder**: what the chamber already is,
+> where the map overclaims, and what must close next — in falsifiable order.
 >
 > Rules live in `../DOCTRINE.md`. Risks also live in
 > [`05-RISK-honest-wall.md`](05-RISK-honest-wall.md) and

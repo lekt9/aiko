@@ -17,8 +17,11 @@ the harness rather than baked into it.
 
 **Physics translation (faithful to this architecture):** the ledger is a field;
 each task is pair production (claim × check); verification is annihilation;
-terminal energy folds the EBM; routing is ground-state settle. Full map:
-[`PHOTON-POSITRON-CONTRACT-EBM.md`](PHOTON-POSITRON-CONTRACT-EBM.md).
+terminal energy folds the EBM; routing is ground-state settle. Full set:
+[`PHOTON-POSITRON-CONTRACT-EBM.md`](PHOTON-POSITRON-CONTRACT-EBM.md) (structure) ·
+[`PHOTON-POSITRON-FIRST-PRINCIPLES.md`](PHOTON-POSITRON-FIRST-PRINCIPLES.md) (laws) ·
+[`PHOTON-POSITRON-GAPS.md`](PHOTON-POSITRON-GAPS.md) (holes) ·
+[`PHOTON-POSITRON-RUNTIME.md`](PHOTON-POSITRON-RUNTIME.md) (drive).
 
 ## 1. The atom — a contract neuron
 

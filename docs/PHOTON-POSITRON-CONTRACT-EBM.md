@@ -240,6 +240,9 @@ collective, privacy, world index, falsifiable priority 1–5):
 [`PHOTON-POSITRON-RUNTIME.md`](PHOTON-POSITRON-RUNTIME.md) · product plan Aiko
 `plan3.md`.
 
+**First principles** (fractal seal, composition, conservation, antiparticles,
+catabolism, world dual): [`PHOTON-POSITRON-FIRST-PRINCIPLES.md`](PHOTON-POSITRON-FIRST-PRINCIPLES.md).
+
 ---
 
 ## 7. Code map (where to read the mapping in the tree)

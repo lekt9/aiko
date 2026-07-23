@@ -1,8 +1,9 @@
 # Photon / positron → runtime — waves, daemon, preempt
 
 > Companion to [`PHOTON-POSITRON-CONTRACT-EBM.md`](PHOTON-POSITRON-CONTRACT-EBM.md)
-> (structure) and [`PHOTON-POSITRON-GAPS.md`](PHOTON-POSITRON-GAPS.md) (depth holes).
-> Product plan: Aiko `plan3.md` (resident clock hand).
+> (structure), [`PHOTON-POSITRON-GAPS.md`](PHOTON-POSITRON-GAPS.md) (depth holes),
+> and [`PHOTON-POSITRON-FIRST-PRINCIPLES.md`](PHOTON-POSITRON-FIRST-PRINCIPLES.md)
+> (laws § drive / fractal / preempt). Product plan: Aiko `plan3.md`.
 >
 > **Doctrine in one line:** the ledger is the field; the daemon is a killable
 > apparatus; Contract does not *become* a `while` by pointing at itself.
