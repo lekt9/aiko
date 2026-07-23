@@ -13,7 +13,7 @@ One signed binary, one append-only ledger, one truth-root. Start here.
 | [PHOTON-POSITRON-CONTRACT-EBM.md](PHOTON-POSITRON-CONTRACT-EBM.md) | the faithful physics translation: ledger as field, claim×check as pair production, verification as annihilation, fold as contrastive EBM, route as ground-state settle — why the harness *is* the energy-based model |
 | [PHOTON-POSITRON-GAPS.md](PHOTON-POSITRON-GAPS.md) | gap register for that map: built chamber vs depth/wiring/scale/containment/truth holes; EBM A–H; priority 1–5 with stop conditions; standing rules against marketing past the code |
 | [PHOTON-POSITRON-RUNTIME.md](PHOTON-POSITRON-RUNTIME.md) | runtime spine: pointer waves, legal re-entry, good vs bad daemon, preempt map, shared tick step — pairs with Aiko `plan3.md` |
-| [PHOTON-POSITRON-FIRST-PRINCIPLES.md](PHOTON-POSITRON-FIRST-PRINCIPLES.md) | Standard Model of the substrate: fractal seal, cutoffs, antiparticle catalog, composition algebra, conservation always/never, catabolism, world-index dual, identity stack |
+| [PHOTON-POSITRON-FIRST-PRINCIPLES.md](PHOTON-POSITRON-FIRST-PRINCIPLES.md) | Standard Model of the substrate: fractal seal, cutoffs, antiparticle catalog, composition algebra, conservation always/never, catabolism, world-index dual, identity stack — guarded by `scripts/witness-first-principles.sh` (wired into `build.sh` parity) |
 | [HOW-IT-WORKS-economics.md](HOW-IT-WORKS-economics.md) | the two coexisting economies (Vine slash-to-burn · commons reward-not-slash), the metering → weight → epoch → reward → payout loop, Sybil dampening, shape re-verification, the 402 envelope, the honest wall |
 
 These documents **explain**; they do not legislate. Every rule they mention

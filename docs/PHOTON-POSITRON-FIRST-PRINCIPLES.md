@@ -482,6 +482,8 @@ is catabolism with attestation, not silent amnesia.
 
 Use this to audit “is the first-principles map whole?”
 
+### 17.1 Map (documentation)
+
 - [x] Field primacy + apparatus distinction  
 - [x] Atom (pair → collide → fold)  
 - [x] Fractal seal + cutoff table  
@@ -497,7 +499,39 @@ Use this to audit “is the first-principles map whole?”
 - [x] Gauge / idempotency  
 - [x] Irreversibility  
 - [x] Collective phase honesty  
-- [ ] **Product:** every surface enforces A1–A4 and P1 (ongoing)  
+
+### 17.2 Surface inventory (where laws have code homes)
+
+| Law cluster | Primary enforcement site | Status |
+|-------------|--------------------------|--------|
+| A2 terminals | `libcontract/src/terminal.zig` `classify` | **WITNESSED** (source + tests) |
+| A4 / E3 cold refuse | `ebm.zig` energy +inf; `route.zig` null | **WITNESSED** |
+| E1–E2 fold / energy | `ebm.zig` Prototype fold/energy | **WITNESSED** |
+| B1–B2 DAG / cycles / cutoffs | `muscle.zig` schedule + cycle test | **WITNESSED** |
+| A1 / P1 task duals | `zig/src/main.zig` `task begin` requires `--check` | **WITNESSED** (CLI) |
+| P1 gate | `gate.zig` | **WITNESSED** (module) |
+| P1 reflex | `reflex.zig` fire/prepare/hold | **WITNESSED** (module) |
+| D2–D4 tick / lease | `main.zig` resolverTick / tick --every; `scheduler.zig` | **WITNESSED** |
+| K1 compact / E8 freshness | tick compact; `ebm.freshness` | **WITNESSED** |
+| B3 parent after children | `MUSCLE-MEMORY.md` + muscle reinforce | **WITNESSED** (doctrine+code) |
+| Agent duals reminder | `SKILL.md` task begin --check | **WITNESSED** (skill) |
+| Aiko claim worker | Aiko `tick_due_contracts` / `run_contract_worker` | **PARTIAL** (see plan3) |
+| Every chat/MCP/TUI path duals | All agent surfaces | **OPEN** (ongoing) |
+| Multi-host double-settle | Lease protocol + multi-process test | **OPEN** |
+| N≥2 collective compounding | Two agents, shared prior | **OPEN** |
+| Multi-hop credit / rich action | Beyond local fold | **RESEARCH** (gap A/D) |
+
+**Mechanical guard:** `scripts/witness-first-principles.sh` (exit 0 required for
+regressions of the WITNESSED rows). Run:
+
+```bash
+bash scripts/witness-first-principles.sh
+```
+
+### 17.3 Product / research remaining
+
+- [x] **Kernel homes** for A1–A4, B1–B3, terminals, cold, lease, tick, gate, reflex — *source-witnessed*  
+- [ ] **Product:** every surface enforces A1–A4 and P1 (MCP/TUI/limbs inventory still OPEN)  
 - [ ] **Product:** multi-host double-settle proof  
 - [ ] **Product:** N≥2 collective compounding  
 - [ ] **Research:** multi-hop credit / rich action (gap A/D)  

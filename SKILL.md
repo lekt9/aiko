@@ -32,6 +32,19 @@ submission is disabled unless the user explicitly enables and requests it.
 - Do not expose secrets, private keys, root seeds, Keychain values, or payment
   credentials in prompts, commands, output, or contract bodies.
 
+## First principles (physics of the substrate)
+
+Canon: `docs/PHOTON-POSITRON-FIRST-PRINCIPLES.md` (fractal seal, duals catalog,
+composition, conservation). Structure map / gaps / runtime sit beside it under
+`docs/PHOTON-POSITRON-*.md`. Mechanical guard:
+
+```bash
+bash scripts/witness-first-principles.sh
+```
+
+**Law A1 in practice:** every substantive claim needs an antiparticle (real
+`--check`, gate, sensor, or other catalog dual). No free particles.
+
 ## Record substantive work — always use task begin
 
 For substantive multi-step work, register as a contract task with a real

@@ -1236,13 +1236,25 @@ PYAUDIT
     _fail "doctrine[grounded trust honesty]: rollout checklist missing"
   fi
 
+  # Photon/positron first principles — mechanical homes for A1–A4, terminals,
+  # cold refuse, cycle reject, tick/lease, gate/reflex (see
+  # docs/PHOTON-POSITRON-FIRST-PRINCIPLES.md §17.2). Standalone:
+  #   bash scripts/witness-first-principles.sh
+  if [[ -x "$SCRIPTS_DIR/witness-first-principles.sh" ]] || [[ -f "$SCRIPTS_DIR/witness-first-principles.sh" ]]; then
+    if ! bash "$SCRIPTS_DIR/witness-first-principles.sh" >/tmp/witness-first-principles.out 2>&1; then
+      _fail "doctrine[first-principles]: scripts/witness-first-principles.sh failed — photon/positron law homes regressed:"$'\n'"$(tail -40 /tmp/witness-first-principles.out 2>/dev/null)"
+    fi
+  else
+    _fail "doctrine[first-principles]: scripts/witness-first-principles.sh missing"
+  fi
+
   if [[ $drift -gt 0 ]]; then
     echo "build:parity FAIL — $drift drift(s) between DOCTRINE.md doctrine and code:" >&2
     printf '%s' "$report" >&2
     echo "  fix: patch the code to honor the claim, OR amend DOCTRINE.md to retract the claim (with reasoning)" >&2
     return 9
   fi
-  echo "build:parity OK — all 54 doctrine claims have matching code sites"
+  echo "build:parity OK — all 54 doctrine claims have matching code sites (+ first-principles witness)"
 }
 
 # ─── build:verify — binaries self-attest ─────────────────────────────

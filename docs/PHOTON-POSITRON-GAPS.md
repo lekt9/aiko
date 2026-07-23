@@ -264,8 +264,11 @@ Separate from energy *depth*: the **clock hand** that keeps the field alive.
 | Self-call while | Illegal as graph cycle; legal as new occurrence | [`PHOTON-POSITRON-RUNTIME.md`](PHOTON-POSITRON-RUNTIME.md) |
 | Preempt | Lease / release / supersede / reflex / gate | Runtime doc §4 |
 | Existing residents | `contract tick --every`; Aiko `run_contract_worker` | Plan 3 Phase 1 |
+| First-principles law homes (kernel) | `scripts/witness-first-principles.sh` + build parity | **WITNESSED** |
+| Every agent surface duals (MCP/TUI/limbs) | Surface inventory OPEN in FIRST-PRINCIPLES §17.2 | OPEN |
 
-Full map: [`PHOTON-POSITRON-RUNTIME.md`](PHOTON-POSITRON-RUNTIME.md).
+Full map: [`PHOTON-POSITRON-RUNTIME.md`](PHOTON-POSITRON-RUNTIME.md).  
+Laws: [`PHOTON-POSITRON-FIRST-PRINCIPLES.md`](PHOTON-POSITRON-FIRST-PRINCIPLES.md).
 
 ---
 
