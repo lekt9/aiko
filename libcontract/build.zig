@@ -159,6 +159,7 @@ pub fn build(b: *std.Build) void {
         "src/embed.zig",
         "src/bge.zig",
         "src/ebm.zig",
+        "src/muscle.zig",
         "src/cas.zig",
         "src/collective_object.zig",
         "src/reward.zig",

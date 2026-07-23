@@ -18,13 +18,38 @@ const collective_checkpoint = @import("collective_checkpoint.zig");
 const collective_admission = @import("collective_admission.zig");
 const collective_state = @import("collective_state.zig");
 const agency = @import("agency.zig");
+const muscle = @import("muscle.zig");
+const ledger = @import("ledger.zig");
+const reflex = @import("reflex.zig");
 
 const gpa = std.heap.c_allocator;
-pub const ABI_VERSION: u32 = 3;
+pub const ABI_VERSION: u32 = 6;
 extern fn time(timer: ?*i64) i64;
 
 var registry_mutex: std.atomic.Mutex = .unlocked;
 var registry_state: ?capability_registry.Registry = null;
+var muscle_mutex: std.atomic.Mutex = .unlocked;
+var muscle_state: muscle.Bank = .{};
+var muscle_loaded = false;
+
+fn ensureMuscleLoaded() void {
+    if (muscle_loaded) return;
+    muscle_loaded = true;
+    const rows = ledger.readAll(gpa, extEnv()) catch return;
+    defer gpa.free(rows);
+    var lines = std.mem.splitScalar(u8, rows, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        if (std.mem.indexOf(u8, line, "\"event\":\"muscle_observed\"") != null) {
+            muscle_state.replayObservation(line) catch {};
+        } else if (std.mem.indexOf(u8, line, "\"event\":\"muscle_deleted\"") != null) {
+            var parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch continue;
+            defer parsed.deinit();
+            if (parsed.value != .object) continue;
+            if (objectString(parsed.value.object, "binary")) |binary| _ = muscle_state.delete(binary);
+        }
+    }
+}
 
 fn lockRegistry() void {
     while (!registry_mutex.tryLock()) std.atomic.spinLoopHint();
@@ -45,6 +70,309 @@ fn registry() *capability_registry.Registry {
 /// Stable compatibility handshake for independently-built Aiko runtimes.
 export fn contract_abi_version() u32 {
     return ABI_VERSION;
+}
+
+/// Train binary muscle memory from a real sanitized invocation. Reward must
+/// come from the caller's external evaluator; visual/activity change alone is
+/// not success. The in-process JEPA weights update immediately, while the
+/// existing capability-outcome ledger remains the durable context->binary memory.
+export fn contract_muscle_observe(
+    context: [*:0]const u8,
+    binary: [*:0]const u8,
+    before: [*:0]const u8,
+    after: [*:0]const u8,
+    reward: f64,
+) bool {
+    while (!muscle_mutex.tryLock()) std.atomic.spinLoopHint();
+    defer muscle_mutex.unlock();
+    ensureMuscleLoaded();
+    const invocation: muscle.Invocation = .{
+        .context = cstr(context),
+        .binary = cstr(binary),
+        .before = cstr(before),
+        .after = cstr(after),
+        .reward = reward,
+    };
+    const encoded = muscle.Bank.encodeObservation(gpa, invocation) catch return false;
+    defer gpa.free(encoded);
+    const ledger_path = ledger.appendRow(gpa, extEnv(), encoded) catch return false;
+    gpa.free(ledger_path);
+    muscle_state.observe(invocation) catch return false;
+    return true;
+}
+
+/// Recall the binary whose grounded usage contexts best match this intent.
+export fn contract_muscle_recall(context: [*:0]const u8) ?[*:0]u8 {
+    while (!muscle_mutex.tryLock()) std.atomic.spinLoopHint();
+    defer muscle_mutex.unlock();
+    ensureMuscleLoaded();
+    return returned(muscle_state.recall(cstr(context)) orelse return null);
+}
+
+/// JEPA plan toward a target machine-state descriptor using learned deltas.
+export fn contract_muscle_predict(before: [*:0]const u8, target: [*:0]const u8) ?[*:0]u8 {
+    while (!muscle_mutex.tryLock()) std.atomic.spinLoopHint();
+    defer muscle_mutex.unlock();
+    ensureMuscleLoaded();
+    return returned(muscle_state.predict(cstr(before), cstr(target)) orelse return null);
+}
+
+/// Return an inspectable, energy-ordered candidate set. `before` and `target`
+/// may be null for context-only ranking. Evidence readiness is not authority:
+/// hosts must still pass the native action gate before firing anything.
+export fn contract_muscle_rank_json(
+    context: [*:0]const u8,
+    before: ?[*:0]const u8,
+    target: ?[*:0]const u8,
+    limit_raw: u32,
+) ?[*:0]u8 {
+    while (!muscle_mutex.tryLock()) std.atomic.spinLoopHint();
+    defer muscle_mutex.unlock();
+    ensureMuscleLoaded();
+    var ranked: [muscle.MAX_BINARIES]muscle.Bank.Candidate = undefined;
+    const count = muscle_state.rank(
+        cstr(context),
+        if (before) |value| cstr(value) else null,
+        if (target) |value| cstr(value) else null,
+        &ranked,
+    );
+    const limit = @min(count, if (limit_raw == 0) @as(usize, 8) else @as(usize, @intCast(@min(limit_raw, muscle.MAX_BINARIES))));
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    out.print(gpa, "{{\"abi_version\":{d},\"count\":{d},\"candidates\":[", .{ ABI_VERSION, count }) catch return null;
+    for (ranked[0..limit], 0..) |candidate, index| {
+        if (index > 0) out.append(gpa, ',') catch return null;
+        out.appendSlice(gpa, "{\"binary\":") catch return null;
+        appendJsonString(&out, candidate.binary) catch return null;
+        out.print(
+            gpa,
+            ",\"energy\":{d},\"context_energy\":{d},\"transition_energy\":",
+            .{ candidate.energy, candidate.context_energy },
+        ) catch return null;
+        if (candidate.transition_energy) |energy| out.print(gpa, "{d}", .{energy}) catch return null else out.appendSlice(gpa, "null") catch return null;
+        out.print(
+            gpa,
+            ",\"fires\":{d},\"successes\":{d},\"failures\":{d},\"confidence\":{d},\"evidence_ready\":{s}}}",
+            .{ candidate.fires, candidate.successes, candidate.failures, candidate.confidence, if (candidate.successes >= 3 and candidate.failures == 0 and candidate.confidence >= 0.9) "true" else "false" },
+        ) catch return null;
+    }
+    out.appendSlice(gpa, "]}") catch return null;
+    return returned(out.items);
+}
+
+/// Erase one learned cell and append a durable tombstone so deterministic
+/// replay cannot resurrect observations that precede the deletion.
+export fn contract_muscle_delete(binary: [*:0]const u8) bool {
+    const name = cstr(binary);
+    if (name.len == 0 or name.len > 128) return false;
+    while (!muscle_mutex.tryLock()) std.atomic.spinLoopHint();
+    defer muscle_mutex.unlock();
+    ensureMuscleLoaded();
+    var row: std.ArrayList(u8) = .empty;
+    defer row.deinit(gpa);
+    row.appendSlice(gpa, "{\"event\":\"muscle_deleted\",\"binary\":") catch return false;
+    appendJsonString(&row, name) catch return false;
+    row.append(gpa, '}') catch return false;
+    const path = ledger.appendRow(gpa, extEnv(), row.items) catch return false;
+    gpa.free(path);
+    _ = muscle_state.delete(name);
+    return true;
+}
+
+/// Mechanical fire/prepare/hold decision for a learned reflex. The host passes
+/// persisted operator policy and grounded evidence; no model text is trusted.
+export fn contract_reflex_decide_json(request_json: [*:0]const u8) ?[*:0]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, cstr(request_json), .{}) catch return null;
+    defer parsed.deinit();
+    if (parsed.value != .object) return null;
+    const object = parsed.value.object;
+    const successes_raw = objectInt(object, "successes") orelse 0;
+    const failures_raw = objectInt(object, "failures") orelse 0;
+    if (successes_raw < 0 or failures_raw < 0) return null;
+    const verdict = reflex.decide(.{
+        .enabled = objectBool(object, "enabled") orelse true,
+        .capability_enabled = objectBool(object, "capability_enabled") orelse false,
+        .successes = @intCast(@min(successes_raw, std.math.maxInt(u32))),
+        .failures = @intCast(@min(failures_raw, std.math.maxInt(u32))),
+        .confidence = objectFloat(object, "confidence") orelse 0,
+        .effect_scope = objectString(object, "effect_scope") orelse "unknown",
+        .authority = objectBool(object, "authority") orelse false,
+        .reversible = objectBool(object, "reversible") orelse false,
+        .read_only = objectBool(object, "read_only") orelse false,
+        .estimated_cost = objectFloat(object, "estimated_cost") orelse 0,
+        .max_cost = objectFloat(object, "max_cost") orelse 0,
+    });
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    out.print(gpa, "{{\"abi_version\":{d},\"decision\":\"{s}\",\"reason\":", .{ ABI_VERSION, @tagName(verdict.decision) }) catch return null;
+    appendJsonString(&out, verdict.reason) catch return null;
+    out.append(gpa, '}') catch return null;
+    return returned(out.items);
+}
+
+/// Materialize one event/reasoning pointer as a native contract DAG and return
+/// dependency-safe waves for isolated Aiko/subagent workers. Authorization is
+/// represented as a hold on effect children; it never prevents observation,
+/// identity, logging, or rule siblings from being declared and scheduled.
+///
+/// Request: {plan, action?, cwd?, agent?, children:[
+///   {key, plan, action?, depends_on?:[key], requires_authorization?:bool,
+///    authorization?:"approved"|"pending_authorization"|"denied"}
+/// ]}
+fn expandGraphJson(request_json: [*:0]const u8) !?[*:0]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, cstr(request_json), .{}) catch return null;
+    defer parsed.deinit();
+    const root_object = switch (parsed.value) {
+        .object => |object| object,
+        else => return null,
+    };
+    const plan = objectString(root_object, "plan") orelse return null;
+    const action = objectString(root_object, "action") orelse "event";
+    const cwd = objectString(root_object, "cwd");
+    const agent = objectString(root_object, "agent") orelse "aiko-contract-worker";
+    const existing_root_id = objectString(root_object, "root_id");
+    if (existing_root_id) |id| if (!validContractId(id)) return null;
+    const child_values = switch (root_object.get("children") orelse return null) {
+        .array => |array| array.items,
+        else => return null,
+    };
+    if (child_values.len == 0 or child_values.len > muscle.MAX_PARALLEL) return null;
+
+    const owned_root_id = if (existing_root_id == null)
+        contract.declare(gpa, extEnv(), plan, action, .{
+            .agent = agent,
+            .cwd = cwd,
+            .extras = &.{.{ .key = "execution_model", .value = "parallel_contract_dag" }},
+        }) catch return null
+    else
+        null;
+    defer if (owned_root_id) |id| gpa.free(id);
+    const root_id = existing_root_id orelse owned_root_id.?;
+
+    var keys: [muscle.MAX_PARALLEL][]const u8 = undefined;
+    var plans: [muscle.MAX_PARALLEL][]const u8 = undefined;
+    var actions: [muscle.MAX_PARALLEL][]const u8 = undefined;
+    var held = [_]bool{false} ** muscle.MAX_PARALLEL;
+    var dependency_names: [muscle.MAX_PARALLEL][]const std.json.Value = undefined;
+    for (child_values, 0..) |child_value, index| {
+        const child = switch (child_value) {
+            .object => |object| object,
+            else => return null,
+        };
+        keys[index] = objectString(child, "key") orelse return null;
+        plans[index] = objectString(child, "plan") orelse return null;
+        actions[index] = objectString(child, "action") orelse "neuron";
+        dependency_names[index] = if (child.get("depends_on")) |dependency_value|
+            switch (dependency_value) {
+                .array => |array| array.items,
+                else => return null,
+            }
+        else
+            &.{};
+        const requires_authorization = if (child.get("requires_authorization")) |authorization_value|
+            switch (authorization_value) {
+                .bool => |value| value,
+                else => return null,
+            }
+        else
+            false;
+        const authorization = objectString(child, "authorization") orelse "pending_authorization";
+        held[index] = requires_authorization and !std.mem.eql(u8, authorization, "approved");
+    }
+
+    var ids: [muscle.MAX_PARALLEL]?[]u8 = [_]?[]u8{null} ** muscle.MAX_PARALLEL;
+    defer for (ids[0..child_values.len]) |maybe_id| if (maybe_id) |id| gpa.free(id);
+    var dependencies = [_][muscle.MAX_PARALLEL]usize{[_]usize{0} ** muscle.MAX_PARALLEL} ** muscle.MAX_PARALLEL;
+    var dependency_counts = [_]usize{0} ** muscle.MAX_PARALLEL;
+    var nodes: [muscle.MAX_PARALLEL + 1]muscle.Node = undefined;
+    var root_children: [muscle.MAX_PARALLEL]usize = undefined;
+    nodes[0] = .{ .id = root_id, .children = root_children[0..child_values.len] };
+
+    for (child_values, 0..) |child_value, index| {
+        const child = child_value.object;
+        for (dependency_names[index]) |dependency_value| {
+            const dependency_key = switch (dependency_value) {
+                .string => |value| value,
+                else => return null,
+            };
+            var found: ?usize = null;
+            for (keys[0..child_values.len], 0..) |key, candidate| {
+                if (std.mem.eql(u8, key, dependency_key)) {
+                    found = candidate + 1;
+                    break;
+                }
+            }
+            dependencies[index][dependency_counts[index]] = found orelse return null;
+            dependency_counts[index] += 1;
+        }
+        var dependency_json: std.ArrayList(u8) = .empty;
+        defer dependency_json.deinit(gpa);
+        try dependency_json.append(gpa, '[');
+        for (dependency_names[index], 0..) |dependency_value, dep_index| {
+            if (dep_index > 0) try dependency_json.append(gpa, ',');
+            try appendJsonString(&dependency_json, dependency_value.string);
+        }
+        try dependency_json.append(gpa, ']');
+        const authorization = objectString(child, "authorization") orelse "pending_authorization";
+        const fields = [_]contract.Field{
+            .{ .key = "graph_key", .value = keys[index] },
+            .{ .key = "depends_on", .value = dependency_json.items },
+            .{ .key = "authorization", .value = authorization },
+            .{ .key = "execution_model", .value = "isolated_aiko_worker" },
+        };
+        ids[index] = contract.declare(gpa, extEnv(), plans[index], actions[index], .{
+            .parent_id = root_id,
+            .agent = agent,
+            .cwd = cwd,
+            .extras = &fields,
+        }) catch return null;
+        root_children[index] = index + 1;
+        nodes[index + 1] = .{
+            .id = ids[index].?,
+            .depends_on = dependencies[index][0..dependency_counts[index]],
+        };
+    }
+
+    const scheduled = muscle.schedule(nodes[0 .. child_values.len + 1], 0) catch return null;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    try out.print(gpa, "{{\"abi_version\":{d},\"root_id\":", .{ABI_VERSION});
+    try appendJsonString(&out, root_id);
+    try out.appendSlice(gpa, ",\"children\":[");
+    for (0..child_values.len) |index| {
+        if (index > 0) try out.append(gpa, ',');
+        try out.appendSlice(gpa, "{\"key\":");
+        try appendJsonString(&out, keys[index]);
+        try out.appendSlice(gpa, ",\"id\":");
+        try appendJsonString(&out, ids[index].?);
+        try out.print(gpa, ",\"held\":{s}}}", .{if (held[index]) "true" else "false"});
+    }
+    try out.appendSlice(gpa, "],\"waves\":[");
+    var wrote_wave = false;
+    for (0..scheduled.wave_count) |wave_index| {
+        var runnable_count: usize = 0;
+        for (scheduled.waves[wave_index][0..scheduled.counts[wave_index]]) |node_index| {
+            if (node_index > 0 and !held[node_index - 1]) runnable_count += 1;
+        }
+        if (runnable_count == 0) continue;
+        if (wrote_wave) try out.append(gpa, ',');
+        wrote_wave = true;
+        try out.append(gpa, '[');
+        var wrote_child = false;
+        for (scheduled.waves[wave_index][0..scheduled.counts[wave_index]]) |node_index| {
+            if (node_index == 0 or held[node_index - 1]) continue;
+            if (wrote_child) try out.append(gpa, ',');
+            wrote_child = true;
+            try appendJsonString(&out, ids[node_index - 1].?);
+        }
+        try out.append(gpa, ']');
+    }
+    try out.appendSlice(gpa, "]}");
+    return returned(out.items);
+}
+
+export fn contract_expand_json(request_json: [*:0]const u8) ?[*:0]u8 {
+    return expandGraphJson(request_json) catch null;
 }
 
 // On POSIX with libc, `environ` is the global env-var array. Wrap it as a
@@ -100,6 +428,23 @@ fn objectInt(object: std.json.ObjectMap, key: []const u8) ?i64 {
     const value = object.get(key) orelse return null;
     return switch (value) {
         .integer => |integer| integer,
+        else => null,
+    };
+}
+
+fn objectBool(object: std.json.ObjectMap, key: []const u8) ?bool {
+    const value = object.get(key) orelse return null;
+    return switch (value) {
+        .bool => |boolean| boolean,
+        else => null,
+    };
+}
+
+fn objectFloat(object: std.json.ObjectMap, key: []const u8) ?f64 {
+    const value = object.get(key) orelse return null;
+    return switch (value) {
+        .float => |number| number,
+        .integer => |number| @floatFromInt(number),
         else => null,
     };
 }
@@ -238,6 +583,71 @@ export fn contract_declare_turn(
     return returned(id);
 }
 
+fn validContractId(id: []const u8) bool {
+    if (id.len != 8) return false;
+    for (id) |byte| if (!std.ascii.isHex(byte)) return false;
+    return true;
+}
+
+/// Declare the canonical contract for a root or stateless descendant worker.
+/// The context envelope is deliberately bounded and inherited by the host:
+/// {plan,cwd?,parent_id?,root_id?,depth?,max_depth?,max_children?,
+///  max_total_children?,max_concurrency?}. A descendant without a valid parent
+/// is rejected instead of silently producing a disconnected root.
+export fn contract_declare_turn_context_json(request_json: [*:0]const u8) ?[*:0]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, cstr(request_json), .{}) catch return null;
+    defer parsed.deinit();
+    if (parsed.value != .object) return null;
+    const object = parsed.value.object;
+    const plan = objectString(object, "plan") orelse return null;
+    const cwd = objectString(object, "cwd");
+    const parent_id = objectString(object, "parent_id");
+    const supplied_root = objectString(object, "root_id");
+    const depth_raw = objectInt(object, "depth") orelse 0;
+    const max_depth_raw = objectInt(object, "max_depth") orelse 4;
+    const max_children_raw = objectInt(object, "max_children") orelse 16;
+    const max_total_raw = objectInt(object, "max_total_children") orelse 64;
+    const max_concurrency_raw = objectInt(object, "max_concurrency") orelse 4;
+    if (depth_raw < 0 or max_depth_raw < 0 or depth_raw > max_depth_raw or max_depth_raw > 16) return null;
+    if (max_children_raw < 1 or max_children_raw > muscle.MAX_PARALLEL) return null;
+    if (max_total_raw < 1 or max_total_raw > muscle.MAX_NODES) return null;
+    if (max_concurrency_raw < 1 or max_concurrency_raw > muscle.MAX_PARALLEL) return null;
+    if (depth_raw > 0 and parent_id == null) return null;
+    if (parent_id) |id| if (!validContractId(id)) return null;
+    if (supplied_root) |id| if (!validContractId(id)) return null;
+    if (parent_id != null and supplied_root == null) return null;
+
+    var depth_buf: [24]u8 = undefined;
+    var max_depth_buf: [24]u8 = undefined;
+    var max_children_buf: [24]u8 = undefined;
+    var max_total_buf: [24]u8 = undefined;
+    var max_concurrency_buf: [24]u8 = undefined;
+    const fields = [_]contract.Field{
+        .{ .key = "execution_model", .value = "stateless_aiko_worker" },
+        .{ .key = "contract_depth", .value = std.fmt.bufPrint(&depth_buf, "{d}", .{depth_raw}) catch return null },
+        .{ .key = "max_depth", .value = std.fmt.bufPrint(&max_depth_buf, "{d}", .{max_depth_raw}) catch return null },
+        .{ .key = "max_children", .value = std.fmt.bufPrint(&max_children_buf, "{d}", .{max_children_raw}) catch return null },
+        .{ .key = "max_total_children", .value = std.fmt.bufPrint(&max_total_buf, "{d}", .{max_total_raw}) catch return null },
+        .{ .key = "max_concurrency", .value = std.fmt.bufPrint(&max_concurrency_buf, "{d}", .{max_concurrency_raw}) catch return null },
+    };
+    const id = contract.declare(gpa, extEnv(), plan, "neuron", .{
+        .parent_id = parent_id,
+        .agent = "aiko-native",
+        .cwd = cwd,
+        .extras = &fields,
+    }) catch return null;
+    defer gpa.free(id);
+    const root_id = supplied_root orelse id;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    out.print(gpa, "{{\"abi_version\":{d},\"id\":", .{ABI_VERSION}) catch return null;
+    appendJsonString(&out, id) catch return null;
+    out.appendSlice(gpa, ",\"root_id\":") catch return null;
+    appendJsonString(&out, root_id) catch return null;
+    out.print(gpa, ",\"depth\":{d},\"remaining_depth\":{d}}}", .{ depth_raw, max_depth_raw - depth_raw }) catch return null;
+    return returned(out.items);
+}
+
 /// Declare durable scheduled work from a native host. The user prompt remains
 /// the plan; scheduling metadata lives in the action so execution receives a
 /// clean prompt. Returns the canonical contract id.
@@ -276,6 +686,54 @@ export fn contract_declare_scheduled(
     return returned(id);
 }
 
+/// Parent-aware future obligation declaration. Without explicit durable
+/// authority this creates a held proposal child; with authority it creates a
+/// runnable one-shot or recurring schedule beneath the active root.
+export fn contract_declare_scheduled_json(request_json: [*:0]const u8) ?[*:0]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, cstr(request_json), .{}) catch return null;
+    defer parsed.deinit();
+    if (parsed.value != .object) return null;
+    const object = parsed.value.object;
+    const prompt = objectString(object, "prompt") orelse return null;
+    const cwd = objectString(object, "cwd") orelse return null;
+    const parent_id = objectString(object, "parent_id");
+    if (parent_id) |id| if (!validContractId(id)) return null;
+    const authority = objectBool(object, "authority") orelse false;
+    const recurring = objectBool(object, "recurring") orelse false;
+    const interval_raw = objectInt(object, "interval_seconds") orelse 0;
+    const due = objectInt(object, "first_due_unix") orelse time(null);
+    if (interval_raw < 0 or due < 0) return null;
+
+    var action: std.ArrayList(u8) = .empty;
+    defer action.deinit(gpa);
+    if (!authority) {
+        action.appendSlice(gpa, "future:proposed hold:authority") catch return null;
+    } else if (recurring) {
+        if (interval_raw <= 0) return null;
+        action.print(gpa, "neuron:background repeat:{d}s not_before:{d}", .{ interval_raw, due }) catch return null;
+    } else {
+        action.print(gpa, "neuron:background at:{d}", .{due}) catch return null;
+    }
+    const fields = [_]contract.Field{
+        .{ .key = "background", .value = if (authority) "true" else "false" },
+        .{ .key = "authorization", .value = if (authority) "approved" else "pending_authorization" },
+        .{ .key = "future_obligation", .value = "true" },
+    };
+    const id = contract.declare(gpa, extEnv(), prompt, action.items, .{
+        .parent_id = parent_id,
+        .agent = "aiko-native",
+        .cwd = cwd,
+        .extras = &fields,
+    }) catch return null;
+    defer gpa.free(id);
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    out.appendSlice(gpa, "{\"id\":") catch return null;
+    appendJsonString(&out, id) catch return null;
+    out.print(gpa, ",\"scheduled\":{s},\"held\":{s}}}", .{ if (authority) "true" else "false", if (authority) "false" else "true" }) catch return null;
+    return returned(out.items);
+}
+
 /// Record an `iterated` event.
 export fn contract_iterate(
     id: [*:0]const u8,
@@ -295,6 +753,66 @@ export fn contract_mark_satisfied(
 ) c_int {
     const proof_slice: ?[]const u8 = if (proof) |p| cstr(p) else null;
     contract.markSatisfied(gpa, extEnv(), cstr(id), wave, proof_slice) catch return 1;
+    return 0;
+}
+
+/// Settle a parent only when every directly declared child has a grounded
+/// satisfied event. Returns 2 when children are still open or failed.
+export fn contract_mark_grounded_satisfied(
+    id: [*:0]const u8,
+    wave: u32,
+    proof: ?[*:0]const u8,
+) c_int {
+    const parent_id = cstr(id);
+    if (!validContractId(parent_id)) return 1;
+    const rows = ledger.readAll(gpa, extEnv()) catch return 1;
+    defer gpa.free(rows);
+    var child_ids: [muscle.MAX_NODES][8]u8 = undefined;
+    var child_count: usize = 0;
+    var satisfied = [_]bool{false} ** muscle.MAX_NODES;
+    var transferred = [_]bool{false} ** muscle.MAX_NODES;
+    var lines = std.mem.splitScalar(u8, rows, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        var parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch continue;
+        defer parsed.deinit();
+        if (parsed.value != .object) continue;
+        const object = parsed.value.object;
+        const event = objectString(object, "event") orelse continue;
+        const row_id = objectString(object, "id") orelse continue;
+        if (std.mem.eql(u8, event, "declared")) {
+            const row_parent = objectString(object, "parent_id") orelse continue;
+            if (!std.mem.eql(u8, row_parent, parent_id) or !validContractId(row_id)) continue;
+            var known = false;
+            for (child_ids[0..child_count]) |child_id| if (std.mem.eql(u8, &child_id, row_id)) {
+                known = true;
+                break;
+            };
+            if (!known) {
+                if (child_count >= muscle.MAX_NODES) return 2;
+                @memcpy(&child_ids[child_count], row_id);
+                // A future obligation is grounded for the current turn once it
+                // has been durably transferred to the scheduler. Its eventual
+                // execution belongs to a later root and must not keep this
+                // conversational root open forever.
+                transferred[child_count] = if (objectString(object, "future_obligation")) |value|
+                    std.mem.eql(u8, value, "true")
+                else
+                    false;
+                child_count += 1;
+            }
+        } else if (std.mem.eql(u8, event, "satisfied")) {
+            for (child_ids[0..child_count], 0..) |child_id, index| {
+                if (std.mem.eql(u8, &child_id, row_id)) satisfied[index] = true;
+            }
+        }
+    }
+    // A satisfied event can precede discovery in the single-pass scan only if
+    // the ledger is malformed; normal append-only order is declare→satisfy.
+    for (satisfied[0..child_count], transferred[0..child_count]) |done, durable_transfer| {
+        if (!done and !durable_transfer) return 2;
+    }
+    contract.markSatisfied(gpa, extEnv(), parent_id, wave, if (proof) |p| cstr(p) else null) catch return 1;
     return 0;
 }
 
@@ -467,7 +985,7 @@ export fn contract_tick_json(request_json: [*:0]const u8) ?[*:0]u8 {
 
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(gpa);
-    out.appendSlice(gpa, "{\"abi_version\":3,\"now_unix\":") catch return null;
+    out.print(gpa, "{{\"abi_version\":{d},\"now_unix\":", .{ABI_VERSION}) catch return null;
     out.print(gpa, "{d}", .{now_unix}) catch return null;
     out.appendSlice(gpa, ",\"next_wake_unix\":") catch return null;
     if (batch.next_wake_unix) |deadline| {
@@ -1093,7 +1611,29 @@ test "outcome metadata keeps strings numbers and structured schemas" {
 }
 
 test "native ABI version is pinned for independently-built Aiko" {
-    try std.testing.expectEqual(@as(u32, 3), contract_abi_version());
+    try std.testing.expectEqual(@as(u32, 6), contract_abi_version());
+}
+
+test "turn context rejects disconnected and over-budget descendants" {
+    try std.testing.expect(validContractId("deadbeef"));
+    try std.testing.expect(!validContractId("not-an-id"));
+    try std.testing.expect(contract_declare_turn_context_json(
+        "{\"plan\":\"child\",\"depth\":1,\"root_id\":\"deadbeef\"}",
+    ) == null);
+    try std.testing.expect(contract_declare_turn_context_json(
+        "{\"plan\":\"child\",\"depth\":5,\"max_depth\":4,\"parent_id\":\"deadbeef\",\"root_id\":\"cafebabe\"}",
+    ) == null);
+}
+
+test "muscle ABI trains recall and JEPA prediction from real usage" {
+    try std.testing.expect(contract_muscle_observe("search source", "rg-muscle-test", "source tree", "matching lines", 1));
+    try std.testing.expect(contract_muscle_observe("compile library", "zig-muscle-test", "source tree", "built library", 1));
+    const recall_ptr = contract_muscle_recall("search source text") orelse return error.TestUnexpectedResult;
+    defer contract_free(recall_ptr);
+    try std.testing.expectEqualStrings("rg-muscle-test", std.mem.span(recall_ptr));
+    const predict_ptr = contract_muscle_predict("source tree", "built library") orelse return error.TestUnexpectedResult;
+    defer contract_free(predict_ptr);
+    try std.testing.expectEqualStrings("zig-muscle-test", std.mem.span(predict_ptr));
 }
 
 test "agency C ABI validation is additive and fail-closed" {

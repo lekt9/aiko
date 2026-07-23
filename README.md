@@ -115,7 +115,7 @@ An occurrence is materialized once. A new occurrence invalidates cached truth
 and sends the contract back through the same resolver. There is no separate
 cron/pod execution path. Dependency occurrences bind to the dependency's
 latest satisfied proof. Named events bind to a workspace-scoped `signal` row.
-Native hosts use ABI v3's bounded tick/lease/settle surface; expired,
+Native hosts use ABI v6's canonical worker lineage, contract-DAG expansion, bounded tick/lease/settle, and binary-muscle surfaces; expired,
 unsettled leases are delivered again.
 
 The `contract` invocation of the same binary carries these primary verbs:

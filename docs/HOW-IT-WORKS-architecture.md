@@ -165,7 +165,7 @@ lives in `libcontract/src/shape.zig` / `libcontract/src/pattern.zig` /
 | surface | where | what |
 |---|---|---|
 | CLI | `zig/src/main.zig` → installed as `scripts/contract` (signed, `scripts/contract.sig`) | declaration/resolution plus read-only `status`, `events`, `watch`, and `explain` |
-| C ABI | `libcontract/src/c_abi.zig` | ABI v3 (v2 symbols preserved) plus native durable tick/lease/settle/signal, agency validation, and trust verdicts |
+| C ABI | `libcontract/src/c_abi.zig` | ABI v6 (older symbols preserved) plus canonical stateless-worker lineage, native bounded DAG expansion, binary muscle observation/recall/prediction, durable tick/lease/settle/signal, agency validation, and trust verdicts |
 | dylib + FFI | `libcontract.dylib` (same `c_abi.zig`, dynamic) | aiko-cli calls it in-process via `bun:ffi` (µs, no subprocess) |
 | MCP | `libcontract/src/mcp_server.zig` | the same core over stdio for agent frameworks |
 
