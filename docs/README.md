@@ -10,6 +10,7 @@ and the right place to make each kind of change.
 |---|---|
 | [Visual repository guide](REPOSITORY-GUIDE.md) | Repo-wide architecture, diagrams, ownership, code map, state, builds, and debugging |
 | [Photon / positron → Contract → EBM](PHOTON-POSITRON-CONTRACT-EBM.md) | Faithful physics map of the substrate: ledger as field, claim×check collisions, EBM as energy of verified work (canon in `Unbrowse/contract`) |
+| [Photon / positron gaps](PHOTON-POSITRON-GAPS.md) | Gap register: built chamber vs depth/wiring/scale/containment/truth; priority 1–5 (canon in `Unbrowse/contract`) |
 | [Collective architecture plan](../plan-arch.md) | Contract-first decentralized protocol decisions and delivery phases |
 | [Collective verification](collective-verification.md) | Executed acceptance tests and packaged artifact evidence |
 | [Contract agency runtime](contract-agency-runtime.md) | Turn ledger, governed agency roles, grounding, and Contract packaging |
