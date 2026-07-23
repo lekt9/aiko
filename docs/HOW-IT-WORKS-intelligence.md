@@ -11,6 +11,10 @@ the training data *is* the append-only contract history. Selection is
 advisory; the safety gate (`libcontract/src/gate.zig`) is a separate, hard,
 never-learned authority.
 
+In the photon / positron reading: every `satisfied` / `died` row is an
+annihilation deposit into the energy field; `recommend` is argmin energy
+settle. See [`PHOTON-POSITRON-CONTRACT-EBM.md`](PHOTON-POSITRON-CONTRACT-EBM.md).
+
 ## 1. Two embeddings, two jobs
 
 **Feature-hash embedding** — `libcontract/src/embed.zig`. Deterministic

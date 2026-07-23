@@ -15,6 +15,11 @@ no Python or model server: the embedding is baked in, the "weights"
 are reconstructible from the ledger, and the reasoning model is grounded through
 the harness rather than baked into it.
 
+**Physics translation (faithful to this architecture):** the ledger is a field;
+each task is pair production (claim × check); verification is annihilation;
+terminal energy folds the EBM; routing is ground-state settle. Full map:
+[`PHOTON-POSITRON-CONTRACT-EBM.md`](PHOTON-POSITRON-CONTRACT-EBM.md).
+
 ## 1. The atom — a contract neuron
 
 The unit of everything is a **contract neuron**: one append-only JSONL row
