@@ -755,6 +755,214 @@ impl ExecutionEnvelope {
     }
 }
 
+// ── RM0: persistence model — declared vs live ────────────────────────
+//
+// A durable ledger declaration is the *intent* that a receptor exist. It is
+// NOT a live watcher. A live watcher requires a current leased runtime owner
+// (a reconciler) whose lease has not expired and whose health is
+// Healthy/Degraded. Killing the reconciler drops the receptor to not-live
+// while the declaration persists; restarting the reconciler rebinds the same
+// receptor from its declaration without duplicating an effect. This is the
+// RM0 gate: "a ledger row alone can never be reported as a live watcher."
+
+/// The durable ledger row declaring a receptor's intent. Persists across
+/// process death. Does NOT make the receptor live.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReceptorDeclaration {
+    pub receptor_id: String,
+    pub family: InterfaceFamily,
+    pub ingress_modes: Vec<IngressMode>,
+    pub delivery: DeliverySemantics,
+    pub durability: Durability,
+    pub lifecycle: LifecyclePolicy,
+    pub effects: Vec<EffectClass>,
+}
+
+impl ReceptorDeclaration {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.receptor_id.trim().is_empty() {
+            return Err("receptor_id is required");
+        }
+        if self.ingress_modes.is_empty() {
+            return Err("at least one ingress mode is required");
+        }
+        // Ephemeral durability cannot claim restartable durability — a
+        // transport that cannot be reconstructed must not promise it.
+        if matches!(self.durability, Durability::Restartable | Durability::HostedDurable)
+            && self.lifecycle.restart_owner.trim().is_empty()
+        {
+            return Err("restartable durability requires a reconciler (restart_owner)");
+        }
+        self.lifecycle.validate()?;
+        Ok(())
+    }
+}
+
+/// A live runtime lease held by a reconciler for one declared receptor.
+/// Absent from the registry => the receptor is not live, regardless of any
+/// durable declaration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LiveLease {
+    pub owner: String,
+    pub generation: u64,
+    pub lease_until_unix_ms: u64,
+    pub health: HealthState,
+}
+
+/// Tracks declared receptors (durable intent) separately from live leases
+/// (current reconciler ownership). This is the desired-state vs
+/// observed-runtime-state split RM0 requires.
+#[derive(Debug, Clone, Default)]
+pub struct ReceptorRegistry {
+    declarations: std::collections::BTreeMap<String, ReceptorDeclaration>,
+    live: std::collections::BTreeMap<String, LiveLease>,
+    /// Durable high-water-mark of the lease generation ever issued per
+    /// receptor. Survives `revoke` (reconciler death) so that a restart
+    /// issues a strictly higher generation than the killed lease — a stale
+    /// worker holding the old generation cannot then pass `may_receive` and
+    /// commit effects after restart.
+    last_issued_generation: std::collections::BTreeMap<String, u64>,
+}
+
+impl ReceptorRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Declare a receptor's intent. Validates and persists the declaration.
+    /// The receptor is NOT live after this — a ledger row alone is never a
+    /// live watcher.
+    pub fn declare(&mut self, decl: ReceptorDeclaration) -> Result<(), &'static str> {
+        decl.validate()?;
+        self.declarations.insert(decl.receptor_id.clone(), decl);
+        // Declaring never inserts into `live`.
+        Ok(())
+    }
+
+    /// True iff a reconciler holds a current, non-expired, healthy/degraded
+    /// lease for this receptor. A declaration alone returns false.
+    pub fn is_live(&self, id: &str, now_unix_ms: u64) -> bool {
+        match self.live.get(id) {
+            Some(lease) => {
+                lease.lease_until_unix_ms > now_unix_ms
+                    && matches!(lease.health, HealthState::Healthy | HealthState::Degraded)
+            }
+            None => false,
+        }
+    }
+
+    /// A reconciler takes ownership of a declared receptor. Requires a prior
+    /// declaration — runtime cannot be reconstructed from nothing. Returns the
+    /// new lease generation.
+    pub fn acquire_lease(
+        &mut self,
+        id: &str,
+        owner: &str,
+        now_unix_ms: u64,
+        ttl_ms: u64,
+    ) -> Result<u64, &'static str> {
+        if owner.trim().is_empty() {
+            return Err("lease owner is required");
+        }
+        if !self.declarations.contains_key(id) {
+            return Err("cannot acquire lease: no declaration to reconstruct from");
+        }
+        // Monotonic generation: the new generation must exceed both the
+        // currently-live generation (if any) and the durable high-water-mark
+        // (so a restart after revoke invalidates stale workers from the
+        // killed generation).
+        let live_gen = self.live.get(id).map(|l| l.generation).unwrap_or(0);
+        let high_water = self.last_issued_generation.get(id).copied().unwrap_or(0);
+        let generation = live_gen.max(high_water) + 1;
+        self.last_issued_generation
+            .insert(id.to_string(), generation);
+        self.live.insert(
+            id.to_string(),
+            LiveLease {
+                owner: owner.to_string(),
+                generation,
+                lease_until_unix_ms: now_unix_ms.saturating_add(ttl_ms),
+                health: HealthState::Healthy,
+            },
+        );
+        Ok(generation)
+    }
+
+    /// Kill the reconciler for a receptor: drop its live lease. The
+    /// declaration persists, so the receptor can be restarted.
+    pub fn revoke(&mut self, id: &str) {
+        self.live.remove(id);
+    }
+
+    /// True iff `owner`/`generation` identify the current live lease and it
+    /// is current. A stale worker holding a pre-restart generation is
+    /// rejected — it may append observations but cannot commit effects.
+    pub fn may_commit(
+        &self,
+        id: &str,
+        owner: &str,
+        generation: u64,
+        now_unix_ms: u64,
+    ) -> bool {
+        match self.live.get(id) {
+            Some(lease) => {
+                lease.owner == owner
+                    && lease.generation == generation
+                    && lease.lease_until_unix_ms > now_unix_ms
+                    && matches!(lease.health, HealthState::Healthy | HealthState::Degraded)
+            }
+            None => false,
+        }
+    }
+
+    /// Restart a receptor from its declaration: rebind the same receptor_id
+    /// to a fresh lease. Idempotent rebind — does not create a second
+    /// receptor. Returns the new generation.
+    pub fn restart(
+        &mut self,
+        id: &str,
+        owner: &str,
+        now_unix_ms: u64,
+        ttl_ms: u64,
+    ) -> Result<u64, &'static str> {
+        self.acquire_lease(id, owner, now_unix_ms, ttl_ms)
+    }
+
+    /// Idempotent reconciler pass for one receptor: if a current lease is
+    /// already held by `owner`, this is a no-op (returns false — no
+    /// duplicate effect); otherwise it acquires one from the declaration
+    /// (returns true). Re-running reconcile on a settled receptor changes
+    /// nothing.
+    pub fn reconcile(
+        &mut self,
+        id: &str,
+        owner: &str,
+        now_unix_ms: u64,
+        ttl_ms: u64,
+    ) -> Result<bool, &'static str> {
+        if let Some(lease) = self.live.get(id) {
+            if lease.owner == owner && lease.lease_until_unix_ms > now_unix_ms {
+                return Ok(false); // already live for this owner — no-op
+            }
+        }
+        self.acquire_lease(id, owner, now_unix_ms, ttl_ms)?;
+        Ok(true)
+    }
+
+    pub fn live_count(&self) -> usize {
+        self.live.len()
+    }
+
+    pub fn declaration_count(&self) -> usize {
+        self.declarations.len()
+    }
+
+    /// True if the durable declaration exists (independent of liveness).
+    pub fn is_declared(&self, id: &str) -> bool {
+        self.declarations.contains_key(id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1062,5 +1270,155 @@ mod tests {
         binding.durability = Durability::Leased;
         binding.endpoint_ref = "https://public.example/webhook".into();
         assert!(binding.validate().is_err());
+    }
+
+    // ── RM0: persistence model — declared vs live ───────────────────
+
+    fn test_declaration(id: &str, durability: Durability) -> ReceptorDeclaration {
+        ReceptorDeclaration {
+            receptor_id: id.into(),
+            family: InterfaceFamily::Messaging,
+            ingress_modes: vec![IngressMode::Poll, IngressMode::EphemeralTunnel],
+            delivery: DeliverySemantics::AtLeastOnce,
+            durability,
+            lifecycle: LifecyclePolicy {
+                lease_ms: 60_000,
+                health_sensor: "transport-health-v1".into(),
+                cancellation_capability: "transport.retire".into(),
+                restart_owner: "reconciler-1".into(),
+                max_restarts: 3,
+                max_children: 4,
+            },
+            effects: vec![EffectClass::ReadOnly],
+        }
+    }
+
+    #[test]
+    fn rm0_ledger_row_alone_is_never_a_live_watcher() {
+        // The RM0 gate: a durable declaration, with no reconciler holding a
+        // current lease, must NOT be reportable as live.
+        let mut reg = ReceptorRegistry::new();
+        reg.declare(test_declaration("msg-in", Durability::Leased))
+            .expect("declare");
+        assert!(reg.is_declared("msg-in"));
+        assert!(!reg.is_live("msg-in", 1_000), "a ledger row alone is not live");
+        assert_eq!(reg.live_count(), 0);
+        assert_eq!(reg.declaration_count(), 1);
+    }
+
+    #[test]
+    fn rm0_acquire_lease_makes_live_and_revoke_drops_to_not_live() {
+        let mut reg = ReceptorRegistry::new();
+        reg.declare(test_declaration("msg-in", Durability::Leased))
+            .expect("declare");
+        let lease_gen = reg
+            .acquire_lease("msg-in", "reconciler-1", 1_000, 60_000)
+            .expect("acquire");
+        assert_eq!(lease_gen, 1);
+        assert!(reg.is_live("msg-in", 1_000));
+        assert_eq!(reg.live_count(), 1);
+        // Kill the reconciler.
+        reg.revoke("msg-in");
+        assert!(!reg.is_live("msg-in", 1_000), "killed reconciler -> not live");
+        assert!(reg.is_declared("msg-in"), "declaration persists across kill");
+        assert_eq!(reg.live_count(), 0);
+    }
+
+    #[test]
+    fn rm0_restart_recovers_from_declaration_without_duplicating_effect() {
+        // Kill + restart recovers the SAME receptor from its declaration; no
+        // second receptor is created, and re-reconciling an already-live
+        // receptor is a no-op (no duplicate effect).
+        let mut reg = ReceptorRegistry::new();
+        reg.declare(test_declaration("msg-in", Durability::Restartable))
+            .expect("declare");
+        let _ = reg
+            .acquire_lease("msg-in", "reconciler-1", 1_000, 60_000)
+            .expect("acquire");
+        assert_eq!(reg.live_count(), 1);
+
+        // Kill the reconciler.
+        reg.revoke("msg-in");
+        assert!(!reg.is_live("msg-in", 1_000));
+
+        // Restart from the declaration — same receptor_id, still one live.
+        let lease_gen = reg
+            .restart("msg-in", "reconciler-1", 2_000, 60_000)
+            .expect("restart");
+        assert!(lease_gen > 1, "restart advances the generation");
+        assert!(reg.is_live("msg-in", 2_000));
+        assert_eq!(reg.live_count(), 1, "restart must not create a duplicate receptor");
+
+        // Re-running reconcile on the already-live receptor is a no-op.
+        let rebound = reg
+            .reconcile("msg-in", "reconciler-1", 2_000, 60_000)
+            .expect("reconcile");
+        assert!(!rebound, "idempotent reconcile is a no-op on a live receptor");
+        assert_eq!(reg.live_count(), 1, "re-reconcile must not duplicate an effect");
+    }
+
+    #[test]
+    fn rm0_cannot_acquire_lease_for_undeclared_receptor() {
+        // Runtime cannot be reconstructed from nothing — a reconciler cannot
+        // take ownership of a receptor with no durable declaration.
+        let mut reg = ReceptorRegistry::new();
+        let err = reg
+            .acquire_lease("never-declared", "reconciler-1", 1_000, 60_000)
+            .unwrap_err();
+        assert!(err.contains("no declaration"), "{err}");
+        assert_eq!(reg.live_count(), 0);
+    }
+
+    #[test]
+    fn rm0_expired_lease_is_not_live() {
+        let mut reg = ReceptorRegistry::new();
+        reg.declare(test_declaration("msg-in", Durability::Leased))
+            .expect("declare");
+        let _ = reg
+            .acquire_lease("msg-in", "reconciler-1", 1_000, 60_000)
+            .expect("acquire");
+        assert!(reg.is_live("msg-in", 1_000));
+        // After the lease expires, the receptor is not live even though the
+        // reconciler was never explicitly killed.
+        assert!(!reg.is_live("msg-in", 70_000), "expired lease -> not live");
+    }
+
+    #[test]
+    fn rm0_restartable_durability_requires_a_reconciler() {
+        // Reject `durable: true` when no reconciler can reconstruct the
+        // runtime: a Restartable declaration with no restart_owner is invalid.
+        let mut decl = test_declaration("msg-in", Durability::Restartable);
+        decl.lifecycle.restart_owner = String::new();
+        let err = decl.validate().unwrap_err();
+        assert!(err.contains("reconciler") || err.contains("restart_owner"), "{err}");
+    }
+
+    #[test]
+    fn rm0_stale_worker_cannot_commit_after_restart() {
+        // The reason generations are monotonic across revoke/restart: a
+        // worker holding the killed generation must not be able to commit
+        // effects after the reconciler restarts under a new generation.
+        let mut reg = ReceptorRegistry::new();
+        reg.declare(test_declaration("msg-in", Durability::Restartable))
+            .expect("declare");
+        let killed_gen = reg
+            .acquire_lease("msg-in", "reconciler-1", 1_000, 60_000)
+            .expect("acquire");
+        assert_eq!(killed_gen, 1);
+        assert!(reg.may_commit("msg-in", "reconciler-1", killed_gen, 1_000));
+
+        // Kill and restart under a strictly higher generation.
+        reg.revoke("msg-in");
+        let live_gen = reg
+            .restart("msg-in", "reconciler-1", 2_000, 60_000)
+            .expect("restart");
+        assert!(live_gen > killed_gen);
+
+        // The stale worker (killed_gen) cannot commit; the current one can.
+        assert!(
+            !reg.may_commit("msg-in", "reconciler-1", killed_gen, 2_000),
+            "stale generation must not commit after restart"
+        );
+        assert!(reg.may_commit("msg-in", "reconciler-1", live_gen, 2_000));
     }
 }
