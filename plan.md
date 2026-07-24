@@ -273,3 +273,511 @@ sources, Contract can rank and conservatively compose them from versioned local
 evidence, Aiko can execute the selected plan through existing permissions, and
 the sanitized result changes a later recommendation. All eight end-to-end
 scenarios and the performance/privacy thresholds above must pass.
+
+---
+
+# Next Active Goal — Self-Growing Contract Limbs
+
+## Outcome
+
+Extend FECH so Aiko can detect a missing internal capability, describe the gap
+as data, synthesize a temporary Contract-native subsystem, test it against
+reality, and retain only the parts that earn independent evidence.
+
+The intended loop is:
+
+```text
+unexplained observation, repeated failure, or missing proposal
+                            ↓
+                  CapabilityGap contract
+                            ↓
+             bounded temporary limb proposals
+                            ↓
+        receptor → predictor → planner → executor → sensor
+                            ↓
+               held-out and causal evaluation
+                     ┌──────┴──────┐
+                     ↓             ↓
+                  promote       inhibit/purge
+                     ↓
+          reusable Contract-native capability
+```
+
+This is self-learning and self-contract-building. It is never
+self-authorizing: a generated contract inherits the authority, effect ceiling,
+budget, privacy boundary, and lifetime of its parent and cannot expand them.
+
+## Design Boundary
+
+Contract is the universal membrane and durable evidence field, not the
+implementation language for every computation.
+
+### Contract owns
+
+- capability-gap identity, lineage, scope, lease, and lifecycle;
+- typed hypotheses, predicted outcomes, dependencies, and effect declarations;
+- experiment budgets and action authorization;
+- evidence settlement, energy ranking, promotion, inhibition, and rollback;
+- episode, archetype, and global memory boundaries;
+- durable workflow graphs and generated-limb provenance.
+
+### Aiko owns
+
+- recognizing and describing gaps from the active task;
+- proposing receptors, predictors, planners, sensors, and native executors;
+- generating ordinary implementation code behind typed Contract interfaces;
+- running bounded experiments through the existing execution chokepoint;
+- explaining promoted and rejected limbs to the user;
+- requesting authority when a proposed effect exceeds the parent envelope.
+
+### Native executors own
+
+- efficient ordinary computation;
+- interface and provider protocol details;
+- typed acknowledgements;
+- cancellation and resource cleanup;
+- no durable authority or unverified success claims.
+
+## Non-Negotiable Invariants
+
+1. **No self-authorization.** Child authority is a subset of parent authority.
+2. **No effect without a dual.** Every effect names its sensor, timeout,
+   cancellation path, and success/failure evaluator before execution.
+3. **No activity-as-success.** Executed, acknowledged, predicted correctly,
+   progressed, and completed are separate evidence states.
+4. **No coordinate leakage.** Exact coordinates, frame hashes, process IDs,
+   and provider handles remain episode-local.
+5. **No immortal experiments.** Every temporary limb has a finite lease,
+   action budget, cost budget, child limit, cancellation owner, and rollback.
+6. **No circular proof.** Generator output cannot evaluate itself; promotion
+   needs an independent sensor and a held-out witness.
+7. **No global blessing.** Verification is conditional on semantic
+   preconditions, capability version, effect profile, and evidence scope.
+8. **No universal-code graph.** Contract graphs describe decisions, effects,
+   evidence, and dependencies; implementations remain replaceable code.
+9. **No silent bypass.** A required Contract binding or capability catalog
+   failure enters HOLD or fails loudly.
+10. **No benchmark fiction.** Every attempt enters the JESPA ledger, including
+    ties, regressions, timeouts, and negative results.
+
+## Core Types
+
+### `CapabilityGap`
+
+```json
+{
+  "schema_version": 1,
+  "gap_id": "gap:<content-hash>",
+  "parent_contract": "contract:<id>",
+  "scope": "episode | archetype | global",
+  "kind": "receptor | representation | predictor | proposer | planner | executor | sensor",
+  "observation": {
+    "expected": "typed predicate or predicted delta",
+    "observed": "privacy-safe typed outcome",
+    "failure_class": "unexplained_transition | repeated_loop | no_candidate | prediction_error | missing_sensor"
+  },
+  "required_capability": {
+    "input_shape": {},
+    "output_shape": {},
+    "effects": [],
+    "evidence_required": []
+  },
+  "authority_ceiling": {},
+  "budgets": {
+    "experiments": 16,
+    "children": 8,
+    "wall_seconds": 300,
+    "lease_seconds": 600
+  },
+  "status": "open | experimenting | promotable | held | inhibited | closed"
+}
+```
+
+Gap identity is based on structural preconditions and missing behavior, not a
+game ID, application name, machine path, or provider coordinate.
+
+### `LimbProposal`
+
+```json
+{
+  "schema_version": 1,
+  "proposal_id": "limb:<content-hash>",
+  "gap_id": "gap:<content-hash>",
+  "lineage": {
+    "generator": "capability.id",
+    "generator_version": "1",
+    "parent_proposal": null,
+    "artifact_hash": "sha256:..."
+  },
+  "cells": [
+    {"role": "receptor", "capability": "observe.typed-state"},
+    {"role": "predictor", "capability": "predict.relational-delta"},
+    {"role": "planner", "capability": "plan.bounded-experiment"},
+    {"role": "executor", "capability": "execute.native-action"},
+    {"role": "sensor", "capability": "observe.independent-outcome"}
+  ],
+  "hypothesis": "An action changes a transferable relation",
+  "predicted_delta": {},
+  "effects": [],
+  "rollback": "contract:<rollback-id>",
+  "lease": {},
+  "evidence_state": "unverified"
+}
+```
+
+### `RelationalState`
+
+The first general limb should represent geometry without durable coordinates:
+
+```json
+{
+  "objects": [
+    {
+      "episode_ref": "object:7",
+      "durable_role": "selected-medium-color-family-2",
+      "attributes": ["selected", "movable"]
+    }
+  ],
+  "relations": [
+    ["object:7", "left_of", "target:2"],
+    ["object:7", "approaching", "target:2"],
+    ["object:7", "overlaps", "region:1"],
+    ["object:7", "inside", "container:3"],
+    ["object:7", "aligned_with", "target:2"]
+  ]
+}
+```
+
+`episode_ref` may resolve to coordinates in process memory. Durable Contract
+evidence stores roles, relation classes, direction signs, distance bands, and
+predicted deltas only.
+
+## Multiscale Learning
+
+| Scale | Learns | Stored evidence |
+|---|---|---|
+| Micro | action → relational delta | prediction agreement, no-op, failure |
+| Meso | sequence/workflow → progress | required cells, ordering, termination |
+| Macro | gap shape → useful limb architecture | promoted/rejected proposal lineage |
+| Global | proposer and evaluator reliability | held-out fitness and failure domains |
+
+The same transition can update several scales, but success at one scale does
+not imply success at another. A correct movement prediction is dynamics
+evidence, not task completion.
+
+## Growth Lifecycle
+
+### 1. Detect
+
+Open or reinforce a gap when one of these bounded triggers fires:
+
+- no valid candidate crosses the Contract boundary;
+- the same semantic state/action loop repeats;
+- prediction error remains above threshold;
+- an observed transition has no typed explanation;
+- execution acknowledgement exists but no consequence sensor exists;
+- a task needs an interface affordance absent from the capability catalog.
+
+Deduplicate gaps by structural signature. Repeated observations reinforce one
+gap instead of spawning unlimited parallel development.
+
+### 2. Diagnose
+
+Classify what is missing before generating anything:
+
+- cannot observe → receptor gap;
+- cannot represent → representation gap;
+- cannot predict → predictor gap;
+- cannot suggest a novel action → proposer gap;
+- cannot order candidates → planner gap;
+- cannot cause the effect → executor gap;
+- cannot determine consequence → sensor gap.
+
+The diagnosis itself is a hypothesis with a falsifier.
+
+### 3. Propose
+
+Generate two or more bounded `LimbProposal` variants when evidence supports
+meaningful alternatives. Reuse existing capabilities first. New code is
+justified only for the unresolved residual.
+
+Each proposal must declare:
+
+- typed input and output;
+- effect and permission profile;
+- prediction and falsifier;
+- experiment set and held-out set;
+- resource budget and lease;
+- independent sensor;
+- rollback and cleanup procedure.
+
+### 4. Compile
+
+Compile the proposal into the existing Contract workflow substrate:
+
+```text
+observe
+  → normalize
+  → infer hypotheses
+  → generate bounded experiments
+  → predict outcomes
+  → rank by energy
+  → authorize one experiment
+  → execute through native chokepoint
+  → independently observe
+  → settle, inhibit, refine, or promote
+```
+
+Sequential phases may contain parallel read-only workers. Mutating experiments
+remain serialized unless independence is mechanically proven.
+
+### 5. Experiment
+
+Cold candidates are explicitly unverified experiments:
+
+```text
+verified success   → exploit within matching preconditions
+unverified         → bounded experiment
+verified failure   → inhibit in that context
+unsafe or illegal  → HOLD
+```
+
+Experiment selection balances:
+
+- predicted progress energy;
+- information gain;
+- loop and no-op penalties;
+- verified-failure penalties;
+- action and resource cost;
+- a fairness floor for live hypotheses.
+
+### 6. Settle
+
+Record dense but honest evidence:
+
+- state changed or unchanged;
+- relation added, removed, or changed;
+- predicted delta agreed or disagreed;
+- new state discovered or loop revisited;
+- legal capabilities changed;
+- external acknowledgement received;
+- task progress occurred;
+- terminal failure or completion occurred;
+- actions, time, and cost consumed.
+
+Only independently grounded task progress can settle task success.
+
+### 7. Promote or reject
+
+#### Promotion gates
+
+A temporary limb becomes reusable only when all applicable gates pass:
+
+1. **Schema:** typed inputs, outputs, effects, and errors validate.
+2. **Predictive:** held-out transition prediction beats the current substrate.
+3. **Causal:** bounded interventions support the claimed action → outcome edge.
+4. **Utility:** completion improves, or actions/cost improve when completion ties.
+5. **Safety:** authority containment, cancellation, timeout, and rollback pass.
+6. **Isolation:** exact episode coordinates and secrets are absent from durable state.
+7. **Reproduction:** at least two seeds or independent occurrences reproduce.
+8. **Mutation:** disabling the new limb makes its claimed witness fail.
+
+Failure does not disappear. It adds scoped inhibitory evidence and lineage
+showing why the proposal was rejected.
+
+### 8. Retain and reuse
+
+Promotion produces:
+
+- a versioned capability descriptor;
+- a Contract workflow;
+- an implementation artifact hash;
+- signed evaluation lineage;
+- semantic preconditions;
+- evidence and expiry policy;
+- a runnable witness;
+- a rollback pointer.
+
+Recall binds the durable semantic capability to new episode-local coordinates,
+handles, processes, or interface objects at execution time.
+
+## Authority and Safety Matrix
+
+| Limb behavior | Autonomous default |
+|---|---|
+| Read-only observation and normalization | allowed within parent scope |
+| Local prediction and simulation | allowed within budget |
+| Temporary local files in scoped workspace | allowed with cleanup |
+| Bounded benchmark/environment action | allowed when parent authorizes it |
+| Long-lived process | requires lease, owner, health sensor, cancellation |
+| Message/send/publish | HOLD unless durable authority already covers it |
+| Purchase/payment | HOLD and explicit approval |
+| Delete/overwrite outside reversible workspace | HOLD |
+| Credential or permission change | HOLD |
+| Broader process spawning or machine persistence | HOLD unless explicitly governed |
+
+Generated development code never expands this matrix.
+
+## First Implementation: Relational Navigation Limb
+
+The first production slice targets the demonstrated mixed click-and-movement
+gap without naming `sp80`.
+
+### Cells
+
+1. **Object receptor:** tracks objects across frames using episode-local IDs.
+2. **Selection sensor:** identifies which object changed appearance or motion
+   after click/selection experiments.
+3. **Relation encoder:** emits `left_of`, `above`, `aligned_with`, `overlaps`,
+   `inside`, `approaching`, and coarse distance bands.
+4. **Inverse dynamics learner:** estimates which action changes which relation.
+5. **Goal-hypothesis proposer:** proposes overlap, containment, alignment,
+   matching, and commit-after-arrangement hypotheses.
+6. **Bounded planner:** searches short action sequences over predicted
+   relational deltas.
+7. **Outcome sensor:** distinguishes prediction agreement, environmental
+   acknowledgement, level progress, and completion.
+
+### ARC binding witness
+
+- Fresh isolated stores.
+- Same games, proposer set, action budgets, and two seeds for both arms.
+- Contract arm must improve completed levels first.
+- If levels tie, it must reduce actions-to-completion.
+- A targeted mixed interaction/navigation cohort is diagnostic only; the
+  all-game comparison is the promotion witness.
+- Every failed proposal and timeout remains in the JESPA ledger.
+- No game IDs, fixed routes, or durable exact coordinates.
+
+## Implementation Phases
+
+### Phase SG0 — Schemas and lifecycle
+
+- [ ] Add `CapabilityGap`, `LimbProposal`, relational state, experiment result,
+      and promotion decision schemas.
+- [ ] Add validation and privacy fixtures.
+- [ ] Add parent-authority subset validation.
+- [ ] Add gap deduplication and finite lease rules.
+
+Gate: invalid authority expansion, missing sensor, missing rollback, duplicate
+identity, and coordinate leakage fixtures all fail closed.
+
+### Phase SG1 — Gap detector
+
+- [ ] Emit typed gaps from no-candidate, repeated-loop, unexplained-transition,
+      prediction-error, and missing-sensor events.
+- [ ] Deduplicate by semantic signature and scope.
+- [ ] Expose gaps through CLI/native API without triggering generation.
+
+Gate: synthetic and real ARC traces produce the expected gap class, while
+ordinary recoverable failures do not create unbounded gaps.
+
+### Phase SG2 — Relational receptor and transition learner
+
+- [ ] Track episode objects across frames.
+- [ ] Encode transferable relations without durable coordinates.
+- [ ] Learn action → relational delta from dense transition evidence.
+- [ ] Keep prediction agreement separate from progress.
+
+Gate: held-out inverse-dynamics accuracy beats the current descriptor; restart
+witness proves learned state persists without coordinate leakage.
+
+### Phase SG3 — Temporary limb compiler
+
+- [ ] Reuse existing capability cells before proposing code.
+- [ ] Compile proposals into bounded Contract workflows.
+- [ ] Generate replaceable executor code only for unresolved cells.
+- [ ] Attach lease, health, cancellation, cleanup, and rollback contracts.
+
+Gate: kill and restart a temporary limb; ledger state reconstructs it or cleans
+it up without duplicate effects.
+
+### Phase SG4 — Bounded experiment planner
+
+- [ ] Rank verified, unverified, failed, and unsafe candidates distinctly.
+- [ ] Add information-gain and loop/no-op energy terms.
+- [ ] Execute one authorized experiment at a time.
+- [ ] Settle dense transition evidence and sparse progress evidence separately.
+
+Gate: mutation tests catch removal of cold experiments, loop inhibition,
+independent sensing, or effect authorization.
+
+### Phase SG5 — Promotion, lineage, and rollback
+
+- [ ] Run predictive, causal, utility, safety, isolation, reproduction, and
+      mutation gates.
+- [ ] Sign proposal/evaluation/artifact lineage.
+- [ ] Promote versioned descriptors and workflows.
+- [ ] Inhibit failures by context; rollback promoted regressions automatically.
+
+Gate: a deliberately overfit limb wins its training episodes but fails
+promotion on held-out episodes.
+
+### Phase SG6 — ARC evaluation
+
+- [ ] Run the relational-navigation diagnostic cohort.
+- [ ] Run all 25 games, two seeds, fresh stores, equal action budgets.
+- [ ] Record every attempt in the JESPA ledger.
+- [ ] Promote only on a reproducible completion-first win.
+
+Gate:
+
+```sh
+JESPA_WIN_TARGET=<genuine-count> \
+  bash benchmarks/arc-agi3/jespa/jespa-benchmarks-gate.sh
+```
+
+### Phase SG7 — General interface transfer
+
+- [ ] Apply the same gap lifecycle to a non-ARC interface.
+- [ ] Discover provider affordances through typed receptors.
+- [ ] Grow an adapter limb without hard-coding the provider into Contract.
+- [ ] Prove effects still cross the universal execution envelope.
+
+Gate: one previously unknown interface affordance is discovered, wrapped,
+executed, independently acknowledged, and recalled after restart.
+
+## Required End-to-End Scenarios
+
+1. An unexplained ARC transition opens one deduplicated predictor gap.
+2. A mixed click-and-movement environment grows a temporary relational limb.
+3. Duplicate semantic objects receive unique coordinate-free identities.
+4. A rejected native catalog fails loudly and cannot fall through ungoverned.
+5. A correct transition prediction earns dynamics evidence but not task success.
+6. A generated limb cannot request effects absent from the parent envelope.
+7. A killed limb releases its lease and leaves no orphan process.
+8. A training-set winner fails promotion when held-out utility does not improve.
+9. A promoted limb survives restart and binds to new episode-local objects.
+10. A later non-ARC interface reuses the same gap and promotion substrate.
+
+## Observability
+
+Expose a concise growth trace:
+
+```text
+gap detected
+→ existing cells considered
+→ proposal variants
+→ experiment authorized
+→ execution acknowledged
+→ consequence observed
+→ prediction settled
+→ progress settled
+→ promoted / inhibited / held
+```
+
+Normal chat should describe the practical result. Detailed lineage, energies,
+leases, and evidence remain inspectable through diagnostics.
+
+## Definition of Done
+
+This track is complete when Aiko can encounter a genuinely missing capability,
+open one scoped gap, assemble or generate a bounded temporary limb, execute its
+experiments through Contract, independently evaluate it, reject an overfit
+variant, promote a reproducibly useful variant, survive restart, and transfer
+the promoted structure to a second interface without gaining new authority.
+
+The first benchmark milestone is not “more Contract calls.” It is a fresh,
+two-seed ARC completion-first win attributable to the relational limb, with the
+counterfactual mutation turning the win red and every negative retained in the
+ledger.

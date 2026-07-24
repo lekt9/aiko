@@ -275,9 +275,17 @@ impl SessionActor {
                 crate::contract_native::render_capability_plan_context(plan)
             ))));
         }
+        if let Some(growth) = crate::contract_native::render_self_growing_capability_context(
+            std::path::Path::new(&self.session_info.cwd),
+        ) {
+            prompt_blocks.push(acp::ContentBlock::Text(acp::TextContent::new(format!(
+                "<system-reminder>\n{growth}\n</system-reminder>"
+            ))));
+        }
         crate::contract_native::set_active_capability_plan(
             self.session_info.id.0.as_ref(),
             routing_goal,
+            std::path::PathBuf::from(&self.session_info.cwd),
             dynamic_capability_route.clone(),
             turn_contract_root,
         );

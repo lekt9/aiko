@@ -3255,6 +3255,7 @@ fn registered_capability_descriptors()
 #[derive(Clone)]
 struct ActiveCapabilityPlan {
     context: String,
+    cwd: PathBuf,
     plan: Value,
     root_id: Option<String>,
 }
@@ -3267,6 +3268,7 @@ fn active_capability_plans() -> &'static Mutex<HashMap<String, ActiveCapabilityP
 pub fn set_active_capability_plan(
     session_id: &str,
     context: String,
+    cwd: PathBuf,
     plan: Option<Value>,
     root_id: Option<String>,
 ) {
@@ -3280,6 +3282,7 @@ pub fn set_active_capability_plan(
         session_id.to_owned(),
         ActiveCapabilityPlan {
             context,
+            cwd,
             plan: plan.unwrap_or(Value::Null),
             root_id,
         },
@@ -3603,6 +3606,7 @@ pub fn record_active_capability_observation(
         }
     });
     let context = active.context;
+    let cwd = active.cwd;
     let binary = tool_name.to_owned();
     tokio::task::spawn_blocking(move || {
         let native = native_contract();
@@ -3617,6 +3621,19 @@ pub fn record_active_capability_observation(
         });
         if !learned {
             tracing::debug!(tool = %binary, "Contract muscle observation was not recorded");
+        }
+        if !success {
+            let observed = error_class
+                .map(|class| format!("{class:?}"))
+                .unwrap_or_else(|| "provider_failure".into());
+            let _ = contract_learning::open_runtime_gap(
+                &cwd,
+                contract_learning::GapKind::Sensor,
+                "capability_failure",
+                "successful typed capability outcome",
+                &observed,
+                &binary,
+            );
         }
         let Some(observation) = observation else {
             return;
@@ -3664,7 +3681,14 @@ pub async fn refresh_capabilities_and_recommend(
     snapshots.push(crate::capability_catalog::discover_unbrowse_snapshot(
         command_tool,
     ));
-    tokio::task::spawn_blocking(move || {
+    snapshots.push(crate::capability_catalog::discover_external_registry_snapshot(&tools));
+    let composition_descriptors = snapshots
+        .iter()
+        .flat_map(|snapshot| snapshot.descriptors.iter().cloned())
+        .collect::<Vec<_>>();
+    let growth_goal = goal.clone();
+    let growth_cwd = cwd.clone();
+    let recommendation = tokio::task::spawn_blocking(move || {
         let native = native_contract()?;
         let current: BTreeSet<String> = snapshots
             .iter()
@@ -3713,7 +3737,19 @@ pub async fn refresh_capabilities_and_recommend(
     })
     .await
     .ok()
-    .flatten()
+    .flatten();
+    if !capability_plan_has_usable_candidate(recommendation.as_ref()) {
+        let _ = contract_learning::open_no_candidate_gap(
+            &growth_goal,
+            &growth_cwd,
+            &composition_descriptors,
+        );
+    }
+    recommendation
+}
+
+pub fn render_self_growing_capability_context(cwd: &Path) -> Option<String> {
+    contract_learning::render_growth_context(cwd)
 }
 
 pub fn render_capability_plan_context(plan: &Value) -> String {
@@ -3998,6 +4034,17 @@ struct BuiltContext {
     learning_family: Option<String>,
 }
 
+fn capability_plan_has_usable_candidate(recommendation: Option<&Value>) -> bool {
+    recommendation
+        .and_then(|route| route.get("candidates"))
+        .and_then(Value::as_array)
+        .is_some_and(|candidates| {
+            candidates.iter().any(|candidate| {
+                candidate.get("status").and_then(Value::as_str) != Some("unavailable")
+            })
+        })
+}
+
 async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
     let goal = clean_goal(goal);
     ensure_default_standing_orders();
@@ -4026,7 +4073,6 @@ async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
         }
         route.insert("muscle_rankings".into(), muscle_rankings.clone());
     }
-
     let learning_family = proven.as_ref().and_then(|route| {
         let binary = route.get("binary")?.as_str()?;
         contract_learning::propose_route(binary, &goal, cwd)
@@ -4047,6 +4093,9 @@ async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
     ];
     if let Some(learning_context) = contract_learning::render_context(&goal, cwd) {
         sections.push(learning_context);
+    }
+    if let Some(growth_context) = contract_learning::render_growth_context(cwd) {
+        sections.push(growth_context);
     }
     if !standing.is_empty() {
         sections.push(format!(
@@ -4554,6 +4603,21 @@ mod tests {
         let receipt = execution_receipt(&hold, false, false);
         assert_eq!(receipt.authorization, "hold");
         assert!(!receipt.executed);
+    }
+
+    #[test]
+    fn only_available_contract_candidates_suppress_gap_growth() {
+        assert!(!capability_plan_has_usable_candidate(None));
+        assert!(!capability_plan_has_usable_candidate(Some(&json!({
+            "candidates": [
+                {"capability_id": "missing", "status": "unavailable"}
+            ]
+        }))));
+        assert!(capability_plan_has_usable_candidate(Some(&json!({
+            "candidates": [
+                {"capability_id": "candidate", "status": "available_unverified"}
+            ]
+        }))));
     }
 
     #[test]

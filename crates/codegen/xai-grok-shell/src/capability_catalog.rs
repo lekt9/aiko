@@ -125,6 +125,29 @@ pub struct CatalogSnapshot {
     pub availability: Vec<CapabilityAvailability>,
 }
 
+/// Provenance attached to code or research discovered outside the machine.
+/// Discovery is not installation: remote artifacts remain quarantined until a
+/// pinned revision, compatible license, isolated build, and independent
+/// witness are recorded locally.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalArtifactCandidate {
+    pub registry: ExternalRegistry,
+    pub stable_id: String,
+    pub revision: String,
+    pub title: String,
+    pub summary: String,
+    pub license: Option<String>,
+    pub artifact_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalRegistry {
+    Github,
+    Arxiv,
+}
+
 /// Convert FECH's private local descriptor into Contract's deliberately
 /// smaller public shape. Execution strings, paths, examples, availability,
 /// arguments, and provider-specific values are never copied across this gate.
@@ -542,6 +565,162 @@ pub fn discover_unbrowse_snapshot(command_tool: Option<&str>) -> CatalogSnapshot
         );
     };
     normalize_unbrowse_cache(&home.join(".unbrowse/route-cache.json"), command_tool)
+}
+
+/// Register governed discovery receptors for public implementation and
+/// research registries. These descriptors only search and traverse metadata;
+/// they never clone, compile, install, or execute discovered code.
+pub fn discover_external_registry_snapshot(tools: &[ToolDefinition]) -> CatalogSnapshot {
+    let web_tool = tools.iter().find_map(|definition| {
+        let name = definition.function.name.as_str();
+        matches!(
+            name.to_ascii_lowercase().as_str(),
+            "web_search" | "search_web" | "search_tool" | "use_tool"
+        )
+        .then_some(name.to_owned())
+    });
+    let github_tool = tools.iter().find_map(|definition| {
+        let name = definition.function.name.as_str();
+        let lower = name.to_ascii_lowercase();
+        (lower.contains("github") || lower == "use_tool").then_some(name.to_owned())
+    });
+    let mut descriptors = Vec::new();
+    let mut add = |id: &str,
+                   provider: &str,
+                   tool: Option<&String>,
+                   action: &str,
+                   description: &str,
+                   input_schema: Value,
+                   output_schema: Value,
+                   requires: Vec<String>| {
+        let available = tool.is_some();
+        descriptors.push(CapabilityDescriptor {
+            schema_version: 1,
+            id: id.into(),
+            capability_version: semantic_version(&[
+                id.as_bytes(),
+                serde_json::to_string(&input_schema)
+                    .unwrap_or_default()
+                    .as_bytes(),
+                b"external-registry-v1",
+            ]),
+            provider: provider.into(),
+            tool: tool.cloned().unwrap_or_else(|| "unavailable".into()),
+            action: action.into(),
+            description: bounded_description(description),
+            input_schema: object_or_empty(input_schema),
+            output_schema: object_or_empty(output_schema),
+            requires,
+            permission: Permission::Network,
+            effects: vec![Effect::NetworkRead],
+            available,
+        });
+    };
+    add(
+        "registry.github.search",
+        "registry:github",
+        github_tool.as_ref().or(web_tool.as_ref()),
+        "search_repositories",
+        "Search public GitHub repositories for candidate implementations; results remain quarantined and non-executable.",
+        json!({"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}),
+        json!({"type":"object","properties":{"repositories":{"type":"array","items":{"type":"object"}}}}),
+        vec![],
+    );
+    add(
+        "registry.github.traverse_tree",
+        "registry:github",
+        github_tool.as_ref().or(web_tool.as_ref()),
+        "traverse_pinned_tree",
+        "Traverse a public GitHub repository tree at an immutable revision without executing its contents.",
+        json!({"type":"object","properties":{"repository":{"type":"string"},"revision":{"type":"string"}},"required":["repository","revision"]}),
+        json!({"type":"object","properties":{"files":{"type":"array","items":{"type":"object"}}}}),
+        vec!["registry.github.search".into()],
+    );
+    add(
+        "registry.arxiv.search",
+        "registry:arxiv",
+        web_tool.as_ref(),
+        "search_papers",
+        "Search arXiv metadata for research that can inform a capability design; papers are evidence, never executable cells.",
+        json!({"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}),
+        json!({"type":"object","properties":{"papers":{"type":"array","items":{"type":"object"}}}}),
+        vec![],
+    );
+    add(
+        "registry.arxiv.read",
+        "registry:arxiv",
+        web_tool.as_ref(),
+        "read_pinned_paper",
+        "Read a specific arXiv revision as design evidence without treating claims as verified implementation.",
+        json!({"type":"object","properties":{"paper_id":{"type":"string"},"revision":{"type":"string"}},"required":["paper_id","revision"]}),
+        json!({"type":"object","properties":{"evidence":{"type":"object"}}}),
+        vec!["registry.arxiv.search".into()],
+    );
+    snapshot(
+        "external-registries".into(),
+        descriptors,
+        if web_tool.is_some() || github_tool.is_some() {
+            AvailabilityReason::Ready
+        } else {
+            AvailabilityReason::ProviderDisconnected
+        },
+    )
+}
+
+/// Convert discovered artifacts into quarantined catalog entries. Even with a
+/// hash and license, these are intentionally unavailable until the local
+/// promotion loop produces an isolated build and independent witness.
+pub fn normalize_external_candidates(candidates: &[ExternalArtifactCandidate]) -> CatalogSnapshot {
+    let descriptors = candidates
+        .iter()
+        .take(256)
+        .filter(|candidate| {
+            !candidate.stable_id.trim().is_empty() && !candidate.revision.trim().is_empty()
+        })
+        .map(|candidate| {
+            let provider = match candidate.registry {
+                ExternalRegistry::Github => "artifact:github",
+                ExternalRegistry::Arxiv => "evidence:arxiv",
+            };
+            let id = format!("{}.{}.inspect", provider, segment(&candidate.stable_id));
+            CapabilityDescriptor {
+                schema_version: 1,
+                capability_version: semantic_version(&[
+                    candidate.stable_id.as_bytes(),
+                    candidate.revision.as_bytes(),
+                    candidate
+                        .artifact_hash
+                        .as_deref()
+                        .unwrap_or("unhashed")
+                        .as_bytes(),
+                ]),
+                id,
+                provider: provider.into(),
+                tool: "quarantine".into(),
+                action: "inspect_only".into(),
+                description: bounded_description(&format!(
+                    "{} — {}",
+                    candidate.title, candidate.summary
+                )),
+                input_schema: object_or_empty(json!({"type":"object"})),
+                output_schema: object_or_empty(json!({"type":"object"})),
+                requires: vec![
+                    "pinned_revision".into(),
+                    "license_compatible".into(),
+                    "isolated_build".into(),
+                    "independent_witness".into(),
+                ],
+                permission: Permission::Read,
+                effects: vec![Effect::ReadOnly],
+                available: false,
+            }
+        })
+        .collect();
+    snapshot(
+        "external-artifacts".into(),
+        descriptors,
+        AvailabilityReason::RouteUnavailable,
+    )
 }
 
 pub fn normalize_unbrowse_cache(cache_path: &Path, command_tool: Option<&str>) -> CatalogSnapshot {
@@ -973,6 +1152,74 @@ mod tests {
         assert!(!encoded.contains("secret.example"));
         assert!(!encoded.contains(temp.path().to_string_lossy().as_ref()));
         assert!(!encoded.contains("token"));
+    }
+
+    #[test]
+    fn github_and_arxiv_are_read_only_discovery_registries() {
+        let tools = vec![ToolDefinition::function(
+            "web_search",
+            Some("Search the web"),
+            json!({"type":"object"}),
+        )];
+        let snapshot = discover_external_registry_snapshot(&tools);
+        assert_eq!(snapshot.source, "external-registries");
+        assert_eq!(snapshot.descriptors.len(), 4);
+        assert!(snapshot.descriptors.iter().all(|descriptor| {
+            descriptor.available
+                && descriptor.permission == Permission::Network
+                && descriptor.effects == vec![Effect::NetworkRead]
+        }));
+        let tree = snapshot
+            .descriptors
+            .iter()
+            .find(|descriptor| descriptor.id == "registry.github.traverse_tree")
+            .expect("GitHub traversal receptor");
+        assert_eq!(tree.requires, vec!["registry.github.search"]);
+        let paper = snapshot
+            .descriptors
+            .iter()
+            .find(|descriptor| descriptor.id == "registry.arxiv.read")
+            .expect("arXiv evidence receptor");
+        assert!(paper.description.contains("evidence"));
+    }
+
+    #[test]
+    fn remote_artifacts_stay_quarantined_until_local_promotion() {
+        let snapshot = normalize_external_candidates(&[
+            ExternalArtifactCandidate {
+                registry: ExternalRegistry::Github,
+                stable_id: "owner/repository".into(),
+                revision: "0123456789abcdef".into(),
+                title: "Reusable adapter".into(),
+                summary: "Candidate implementation".into(),
+                license: Some("Apache-2.0".into()),
+                artifact_hash: Some("sha256:abc".into()),
+            },
+            ExternalArtifactCandidate {
+                registry: ExternalRegistry::Arxiv,
+                stable_id: "2601.00001".into(),
+                revision: "v2".into(),
+                title: "Typed composition".into(),
+                summary: "Research evidence".into(),
+                license: None,
+                artifact_hash: None,
+            },
+        ]);
+        assert_eq!(snapshot.descriptors.len(), 2);
+        assert!(
+            snapshot
+                .descriptors
+                .iter()
+                .all(|descriptor| !descriptor.available)
+        );
+        let github = snapshot
+            .descriptors
+            .iter()
+            .find(|descriptor| descriptor.provider == "artifact:github")
+            .expect("GitHub artifact");
+        assert!(github.requires.contains(&"pinned_revision".into()));
+        assert!(github.requires.contains(&"isolated_build".into()));
+        assert!(github.requires.contains(&"independent_witness".into()));
     }
 
     #[test]
