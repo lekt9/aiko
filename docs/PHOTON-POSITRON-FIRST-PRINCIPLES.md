@@ -314,6 +314,57 @@ path (local bound, frecency cache, or on-chain offload plan).
 | **D7** | Good daemon holds no skill memory; bad daemon is the antipattern |
 | **D8** | Product default should run a resident without a chat session (plan3 Phase 2) |
 
+### 8.1 Multiscale system flywheel
+
+Persistent internal tools should expose the collision atom at every scale that
+can materially change the system:
+
+| Scale | Scope | Closed loop |
+|-------|-------|-------------|
+| Micro | One tool fire or action | action → sensor → evaluator |
+| Meso | Workflow, session, or episode | action → sensor → evaluator |
+| Macro | Durable capability, product, or team | action → sensor → evaluator |
+| Global | Purpose, governance, system development | action → sensor → evaluator |
+
+Evidence funnels upward from the faster evaluator into the next slower action.
+Authority and policy flow downward. No layer may infer success from activity in
+the layer below.
+
+**Law D9 — Flywheel time, DAG space.** A flywheel closes by materializing a
+new bounded occurrence after evaluation. It never closes with a dependency
+cycle inside one occurrence.
+
+**Law D10 — Funnel before fold.** Cross-scale positive credit requires the
+named lower-scale evaluator evidence. Raw action receipts do not climb the
+funnel.
+
+The executable compiler for this shape lives natively in
+`libcontract/src/workflow.zig` as `compileInternalSystem` and is exported as
+`contract_compile_internal_system_json`. Product-side callers supply data and
+consume the strict manifest ABI; they do not reimplement the substrate rules.
+
+**Law D11 — Development proposes versions.** A global development loop may
+propose a superseding system version. It cannot mutate the executing graph or
+serve as its own consequence sensor.
+
+**Law D12 — Effect determines antiparticle class.** The native workflow
+compiler rejects unknown effects and derives typed sensor evidence, evaluator
+evidence, and approval class from every known effect. A provider receipt proves
+only acknowledgement: message delivery is not goal progress, submission is not
+acceptance, and payment execution is not the purchased outcome. Process
+spawning additionally derives identity, health, lease, cancellation, restart
+ownership, and bounded-child-tree requirements.
+
+`contract_validate_effect_evidence_json` is the native collision gate for
+these profiles. Effect executors must pass their observed sensor and evaluator
+classes through it before claiming settlement; one missing class or a mismatched
+approval class fails closed.
+
+Aiko's `scripts/contract_workflow.py` is a thin caller for this
+`contract_internal_system` ABI. The Contract substrate remains the sole
+compiler and runtime: compiled nodes use existing DAG dependencies, evidence
+bindings, agency roles, occurrences, leases, and terminal folds.
+
 ---
 
 ## 9. Observation and back-action

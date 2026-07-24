@@ -18,6 +18,8 @@ pub const MAX_BINARIES = 64;
 pub const MAX_NODES = 128;
 pub const MAX_WAVES = 32;
 pub const MAX_PARALLEL = 16;
+const GROUNDED_SUCCESS_REWARD: f64 = 1.0;
+const GROUNDED_FAILURE_REWARD: f64 = -1.0;
 
 pub const Invocation = struct {
     context: []const u8,
@@ -114,13 +116,22 @@ pub const Bank = struct {
     pub fn observe(self: *Bank, invocation: Invocation) !void {
         if (invocation.binary.len == 0 or invocation.context.len == 0) return error.InvalidInvocation;
         const cell = try self.ensure(invocation.binary);
-        // Context affinity answers "when is this capability considered?" and
-        // therefore learns from both success and failure. Outcome polarity is
-        // represented by confidence/penalty and the transition contrast.
-        cell.context.foldText(invocation.context, @abs(invocation.reward));
+        // Recall context is authorization evidence, so only grounded outcomes
+        // may train it. Fractional observations belong exclusively to the
+        // transition model and must not broaden a later successful reflex.
+        if (invocation.reward >= GROUNDED_SUCCESS_REWARD or invocation.reward <= GROUNDED_FAILURE_REWARD) {
+            cell.context.foldText(invocation.context, @abs(invocation.reward));
+        }
         cell.transition.train(invocation.before, invocation.after, invocation.reward);
         cell.fires += 1;
-        if (invocation.reward > 0) cell.successes += 1 else if (invocation.reward < 0) cell.failures += 1;
+        // Fractional rewards are transition evidence, not authorization
+        // evidence. A changed frame may train the world model without proving
+        // that the action advanced the task.
+        if (invocation.reward >= GROUNDED_SUCCESS_REWARD) {
+            cell.successes += 1;
+        } else if (invocation.reward <= GROUNDED_FAILURE_REWARD) {
+            cell.failures += 1;
+        }
     }
 
     /// Encode privacy-safe training evidence. Text is embedded before it
@@ -190,10 +201,16 @@ pub const Bank = struct {
             else => return error.InvalidInvocation,
         };
         const cell = try self.ensure(binary_value.string);
-        cell.context.fold(&context_vec, @abs(reward));
+        if (reward >= GROUNDED_SUCCESS_REWARD or reward <= GROUNDED_FAILURE_REWARD) {
+            cell.context.fold(&context_vec, @abs(reward));
+        }
         cell.transition.trainDelta(&delta_vec, reward);
         cell.fires += 1;
-        if (reward > 0) cell.successes += 1 else if (reward < 0) cell.failures += 1;
+        if (reward >= GROUNDED_SUCCESS_REWARD) {
+            cell.successes += 1;
+        } else if (reward <= GROUNDED_FAILURE_REWARD) {
+            cell.failures += 1;
+        }
     }
 
     pub fn delete(self: *Bank, binary: []const u8) bool {
@@ -263,12 +280,15 @@ pub const Bank = struct {
         return count;
     }
 
-    /// Recall by semantic use-context. Cold banks refuse with null.
+    /// Recall a grounded successful capability by semantic use-context. Dense
+    /// transition evidence remains available to rank/predict, but cannot turn
+    /// an experiment into an authorized reflex.
     pub fn recall(self: *const Bank, context: []const u8) ?[]const u8 {
         var best: ?[]const u8 = null;
         var best_energy = std.math.inf(f64);
         for (0..self.count) |index| {
             const cell = &self.cells[index];
+            if (cell.successes == 0) continue;
             const value = ebm.energyText(cell.context, context) + outcomePenalty(cell);
             if (value < best_energy) {
                 best_energy = value;
@@ -396,6 +416,37 @@ test "JEPA transition chooses the binary predicted to reach the target state" {
     try bank.observe(.{ .context = "build", .binary = "zig", .before = "source tree", .after = "built library", .reward = 1 });
     try std.testing.expectEqualStrings("zig", bank.predict("source tree", "built library").?);
     try std.testing.expectEqualStrings("rg", bank.predict("source tree", "matching source lines").?);
+}
+
+test "fractional transition evidence does not become grounded recall" {
+    var bank: Bank = .{};
+    try bank.observe(.{
+        .context = "novel visual state",
+        .binary = "experimental-click",
+        .before = "object present",
+        .after = "object recolored",
+        .reward = 0.15,
+    });
+    try std.testing.expect(bank.recall("novel visual state") == null);
+    try std.testing.expectEqualStrings(
+        "experimental-click",
+        bank.predict("object present", "object recolored").?,
+    );
+    var ranked: [MAX_BINARIES]Bank.Candidate = undefined;
+    // Transition-only cells have no authorization context and are therefore
+    // absent from context ranking even though JEPA prediction can use them.
+    try std.testing.expectEqual(@as(usize, 0), bank.rank("novel visual state", null, null, &ranked));
+    try bank.observe(.{
+        .context = "novel visual state",
+        .binary = "experimental-click",
+        .before = "object recolored",
+        .after = "level progressed",
+        .reward = 1,
+    });
+    try std.testing.expectEqual(@as(usize, 1), bank.rank("novel visual state", null, null, &ranked));
+    try std.testing.expectEqual(@as(usize, 1), ranked[0].successes);
+    try std.testing.expectEqual(@as(usize, 0), ranked[0].failures);
+    try std.testing.expectEqual(@as(f64, 1), ranked[0].confidence);
 }
 
 test "failed reflexes are inhibited in both semantic recall and JEPA prediction" {

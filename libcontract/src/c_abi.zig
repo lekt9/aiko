@@ -21,6 +21,7 @@ const agency = @import("agency.zig");
 const muscle = @import("muscle.zig");
 const ledger = @import("ledger.zig");
 const reflex = @import("reflex.zig");
+const workflow = @import("workflow.zig");
 
 const gpa = std.heap.c_allocator;
 pub const ABI_VERSION: u32 = 6;
@@ -565,6 +566,21 @@ export fn contract_agency_validate(agency_json: [*:0]const u8) u8 {
     var parsed = agency.decodeEnvelope(gpa, cstr(agency_json)) catch return 0;
     defer parsed.deinit();
     return 1;
+}
+
+/// Compile a multiscale action → sensor → evaluator system into the strict
+/// Contract skill manifest ABI. Null means the specification failed closed.
+export fn contract_compile_internal_system_json(spec_json: [*:0]const u8) ?[*:0]u8 {
+    const compiled = workflow.compileInternalSystem(gpa, cstr(spec_json)) catch return null;
+    defer gpa.free(compiled);
+    return returned(compiled);
+}
+
+/// Validate that observed settlement evidence contains every antiparticle
+/// derived from its effect class. Returns zero only for a complete collision.
+export fn contract_validate_effect_evidence_json(evidence_json: [*:0]const u8) u8 {
+    workflow.validateEffectEvidenceJson(gpa, cstr(evidence_json)) catch return 1;
+    return 0;
 }
 
 /// Aiko turn declaration with an explicit workspace context, entirely
@@ -1612,6 +1628,30 @@ test "outcome metadata keeps strings numbers and structured schemas" {
         "{\"type\":\"object\",\"fields\":[\"success\"]}",
         jsonValueField(metadata, "result_schema").?,
     );
+}
+
+test "C ABI compiles internal systems and rejects invalid specifications" {
+    const valid =
+        \\{"purpose":"learn","authority":"operator","evidence_policy":"independent","recurrence":{"trigger":"verdict","max_occurrences":2},"loops":[{"scale":"micro","action":{"prompt":"act"},"sensor":{"prompt":"observe"},"evaluator":{"prompt":"judge"}}]}
+    ;
+    const result = contract_compile_internal_system_json(valid) orelse return error.UnexpectedNull;
+    defer contract_free(result);
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, std.mem.span(result), .{});
+    defer parsed.deinit();
+    try std.testing.expectEqual(
+        @as(usize, 3),
+        parsed.value.object.get("nodes").?.array.items.len,
+    );
+    try std.testing.expect(contract_compile_internal_system_json("{}") == null);
+
+    const complete =
+        \\{"effect":"process_spawn","approval_class":"process","sensor_evidence":["positron:sensor=process_identity","positron:sensor=health_state","positron:sensor=lease_state"],"evaluator_evidence":["positron:evaluator=cancellation_path","positron:evaluator=restart_owner","positron:evaluator=bounded_child_tree"]}
+    ;
+    try std.testing.expectEqual(@as(u8, 0), contract_validate_effect_evidence_json(complete));
+    const incomplete =
+        \\{"effect":"process_spawn","approval_class":"process","sensor_evidence":["positron:sensor=process_identity"],"evaluator_evidence":[]}
+    ;
+    try std.testing.expectEqual(@as(u8, 1), contract_validate_effect_evidence_json(incomplete));
 }
 
 test "native ABI version is pinned for independently-built Aiko" {
