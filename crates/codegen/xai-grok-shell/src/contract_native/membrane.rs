@@ -963,6 +963,187 @@ impl ReceptorRegistry {
     }
 }
 
+// ── RM2: durable occurrence store + compare-and-set cursor store ──────
+//
+// At-least-once input + idempotent processing. The occurrence store dedups
+// by the event's idempotency key (receptor/source/event_id/schema_gen); a
+// replayed event is a no-op. A reused event_id with a *changed* fingerprint
+// is a contradiction — retained for adapter evaluation, never silently
+// processed. The cursor store advances only via compare-and-set, only after
+// a durable append, and never moves backwards for out-of-order delivery.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppendOutcome {
+    /// First time this event identity was seen — process it.
+    New,
+    /// Same identity AND same fingerprint — idempotent replay, no effect.
+    Duplicate,
+    /// Same identity, DIFFERENT fingerprint — reused ID with changed content.
+    /// Held for adapter evaluation; the cursor is NOT advanced.
+    Contradiction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContradictionRecord {
+    pub receptor_id: String,
+    pub source_instance: String,
+    pub event_id: String,
+    pub prior_fingerprint: String,
+    pub new_fingerprint: String,
+    pub observed_at_unix_ms: u64,
+}
+
+/// Append-only, deduplicating occurrence store. The single convergence point
+/// for concurrent poller + webhook delivery of the same event.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OccurrenceStore {
+    schema_generation: u32,
+    /// idempotency_key -> stored content_fingerprint (the first-seen truth).
+    seen: std::collections::BTreeMap<String, String>,
+    contradictions: Vec<ContradictionRecord>,
+    appended: u64,
+}
+
+impl OccurrenceStore {
+    pub fn new(schema_generation: u32) -> Self {
+        Self {
+            schema_generation,
+            ..Default::default()
+        }
+    }
+
+    /// Append an event. Dedup is by idempotency key; a reused ID with a
+    /// changed fingerprint is a contradiction (retained, not processed).
+    /// Returns whether the event is new, a duplicate, or a contradiction.
+    pub fn append(&mut self, event: &EventEnvelope) -> Result<AppendOutcome, &'static str> {
+        let key = event.idempotency_key(self.schema_generation)?;
+        match self.seen.get(&key) {
+            None => {
+                self.seen
+                    .insert(key, event.content_fingerprint.clone());
+                self.appended += 1;
+                Ok(AppendOutcome::New)
+            }
+            Some(prior) => {
+                if *prior == event.content_fingerprint {
+                    Ok(AppendOutcome::Duplicate)
+                } else {
+                    // Reused event_id with changed content — retain as a
+                    // contradiction. Do NOT overwrite the stored truth and
+                    // do NOT advance any cursor.
+                    self.contradictions.push(ContradictionRecord {
+                        receptor_id: event.receptor_id.clone(),
+                        source_instance: event.source_instance.clone(),
+                        event_id: event.event_id.clone(),
+                        prior_fingerprint: prior.clone(),
+                        new_fingerprint: event.content_fingerprint.clone(),
+                        observed_at_unix_ms: event.observed_at_unix_ms,
+                    });
+                    Ok(AppendOutcome::Contradiction)
+                }
+            }
+        }
+    }
+
+    pub fn distinct_count(&self) -> u64 {
+        self.appended
+    }
+
+    pub fn contradictions(&self) -> &[ContradictionRecord] {
+        &self.contradictions
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdvanceOutcome {
+    /// The cursor moved forward (content changed).
+    Advanced,
+    /// Same content — no move.
+    Unchanged,
+    /// An older/out-of-order observation. The occurrence was appended (no
+    /// event loss) but the cursor was NOT moved backward.
+    StaleObservation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CursorError {
+    /// No cursor installed for this receptor/resource — resync required.
+    MissingCursor,
+    /// The lease is expired or held by another owner/generation.
+    StaleLease,
+}
+
+/// Compare-and-set cursor store. Cursors advance only after a durable
+/// occurrence append and never move backwards.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CursorStore {
+    cursors: std::collections::BTreeMap<(String, String), ChangeCursor>,
+}
+
+impl CursorStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn get(&self, receptor_id: &str, resource_key: &str) -> Option<&ChangeCursor> {
+        self.cursors
+            .get(&(receptor_id.to_string(), resource_key.to_string()))
+    }
+
+    /// Install the initial cursor for a receptor/resource.
+    pub fn install(&mut self, cursor: ChangeCursor) {
+        self.cursors
+            .insert((cursor.receptor_id.clone(), cursor.resource_key.clone()), cursor);
+    }
+
+    /// Advance the cursor for `event`'s (receptor, source) under the given
+    /// lease. Compare-and-set: the cursor only moves if its generation has
+    /// not changed since the read. Out-of-order (older observed_at) events
+    /// are observed but do not move the cursor backward.
+    pub fn advance(
+        &mut self,
+        event: &EventEnvelope,
+        owner: &str,
+        lease_generation: u64,
+        now_unix_ms: u64,
+    ) -> Result<AdvanceOutcome, CursorError> {
+        let key = (event.receptor_id.clone(), event.source_instance.clone());
+        let current = self.cursors.get(&key).ok_or(CursorError::MissingCursor)?;
+        // Lease must be current and held by `owner`.
+        if current.lease_owner != owner
+            || current.lease_generation != lease_generation
+            || current.lease_until_unix_ms <= now_unix_ms
+        {
+            return Err(CursorError::StaleLease);
+        }
+        // Out-of-order: an older observation never moves the cursor back.
+        if event.observed_at_unix_ms < current.last_observed_at_unix_ms {
+            return Ok(AdvanceOutcome::StaleObservation);
+        }
+        match current.compare(event) {
+            ChangeKind::Unchanged => Ok(AdvanceOutcome::Unchanged),
+            _ => {
+                let advanced = current
+                    .advance(event, owner, lease_generation)
+                    .map_err(|_| CursorError::StaleLease)?;
+                // Compare-and-set: only commit if the stored cursor is still
+                // the one we read (no concurrent advance won).
+                match self.cursors.get(&key) {
+                    Some(still) if still.generation == current.generation => {
+                        self.cursors.insert(key, advanced);
+                        Ok(AdvanceOutcome::Advanced)
+                    }
+                    _ => Err(CursorError::StaleLease),
+                }
+            }
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.cursors.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1420,5 +1601,206 @@ mod tests {
             "stale generation must not commit after restart"
         );
         assert!(reg.may_commit("msg-in", "reconciler-1", live_gen, 2_000));
+    }
+
+    // ── RM2: occurrence dedup + compare-and-set cursor ───────────────
+
+    fn evt(receptor: &str, source: &str, id: &str, fp: &str, at: u64) -> EventEnvelope {
+        EventEnvelope {
+            receptor_id: receptor.into(),
+            source_instance: source.into(),
+            event_id: id.into(),
+            event_kind: "message".into(),
+            observed_at_unix_ms: at,
+            provider_version: Some(format!("v{at}")),
+            content_fingerprint: fp.into(),
+            summary: "redacted".into(),
+            reply_context: serde_json::Map::new(),
+            privacy: PrivacyClass::Redacted,
+            provenance: Provenance::LiveProvider,
+        }
+    }
+
+    fn cursor_for(receptor: &str, source: &str, owner: &str, lease_gen: u64, until: u64) -> ChangeCursor {
+        ChangeCursor {
+            receptor_id: receptor.into(),
+            resource_key: source.into(),
+            generation: 1,
+            provider_token: Some("v1".into()),
+            content_fingerprint: "fp-1".into(),
+            last_observed_at_unix_ms: 1_000,
+            last_changed_at_unix_ms: 1_000,
+            lease_owner: owner.into(),
+            lease_generation: lease_gen,
+            lease_until_unix_ms: until,
+        }
+    }
+
+    /// Build a cursor that represents "we last observed this event" — its
+    /// fingerprint, token, and observed_at match the event, so compare()
+    /// against the same event returns Unchanged.
+    fn cursor_from(e: &EventEnvelope, owner: &str, lease_gen: u64, until: u64) -> ChangeCursor {
+        ChangeCursor {
+            receptor_id: e.receptor_id.clone(),
+            resource_key: e.source_instance.clone(),
+            generation: 1,
+            provider_token: e.provider_version.clone(),
+            content_fingerprint: e.content_fingerprint.clone(),
+            last_observed_at_unix_ms: e.observed_at_unix_ms,
+            last_changed_at_unix_ms: e.observed_at_unix_ms,
+            lease_owner: owner.into(),
+            lease_generation: lease_gen,
+            lease_until_unix_ms: until,
+        }
+    }
+
+    #[test]
+    fn rm2_replay_is_idempotent_no_duplicate_effect() {
+        // Replay: the same event delivered twice produces one occurrence and
+        // no duplicate effect.
+        let mut store = OccurrenceStore::new(1);
+        let e = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
+        assert_eq!(store.append(&e).unwrap(), AppendOutcome::New);
+        assert_eq!(store.append(&e).unwrap(), AppendOutcome::Duplicate);
+        assert_eq!(store.distinct_count(), 1, "replay must not add an occurrence");
+        assert!(store.contradictions().is_empty());
+    }
+
+    #[test]
+    fn rm2_race_poller_and_webhook_converge_on_one_occurrence() {
+        // Concurrent poller + webhook delivery of the same event converges.
+        let mut store = OccurrenceStore::new(1);
+        let e = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
+        // Simultaneous delivery from two transports.
+        let a = store.append(&e).unwrap();
+        let b = store.append(&e).unwrap();
+        assert_eq!(a, AppendOutcome::New);
+        assert_eq!(b, AppendOutcome::Duplicate);
+        assert_eq!(store.distinct_count(), 1);
+    }
+
+    #[test]
+    fn rm2_reused_event_id_with_changed_content_is_a_contradiction() {
+        // A reused event_id with a changed fingerprint is retained as a
+        // contradiction and NOT processed as new.
+        let mut store = OccurrenceStore::new(1);
+        let first = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
+        let changed = evt("msg-in", "tg-1", "evt-1", "fp-B", 2_000);
+        assert_eq!(store.append(&first).unwrap(), AppendOutcome::New);
+        assert_eq!(store.append(&changed).unwrap(), AppendOutcome::Contradiction);
+        assert_eq!(store.distinct_count(), 1, "contradiction must not add an occurrence");
+        assert_eq!(store.contradictions().len(), 1);
+        assert_eq!(store.contradictions()[0].prior_fingerprint, "fp-a");
+        assert_eq!(store.contradictions()[0].new_fingerprint, "fp-B");
+    }
+
+    #[test]
+    fn rm2_cursor_advances_only_on_changed_content() {
+        let mut cursors = CursorStore::new();
+        let mut store = OccurrenceStore::new(1);
+
+        // Unchanged content — cursor does not move. Install a cursor that
+        // matches the event we last observed (same fingerprint/token).
+        let same = evt("msg-in", "tg-1", "evt-1", "fp-1", 2_000);
+        cursors.install(cursor_from(&same, "r-1", 7, 60_000));
+        assert_eq!(store.append(&same).unwrap(), AppendOutcome::New);
+        assert_eq!(
+            cursors.advance(&same, "r-1", 7, 2_000).unwrap(),
+            AdvanceOutcome::Unchanged
+        );
+        assert_eq!(cursors.get("msg-in", "tg-1").unwrap().generation, 1);
+
+        // Changed content — cursor advances, generation bumps.
+        let changed = evt("msg-in", "tg-1", "evt-2", "fp-2", 3_000);
+        assert_eq!(store.append(&changed).unwrap(), AppendOutcome::New);
+        assert_eq!(
+            cursors.advance(&changed, "r-1", 7, 3_000).unwrap(),
+            AdvanceOutcome::Advanced
+        );
+        assert_eq!(cursors.get("msg-in", "tg-1").unwrap().generation, 2);
+    }
+
+    #[test]
+    fn rm2_out_of_order_event_does_not_move_cursor_backward() {
+        // An older observation is appended (no event loss) but the cursor
+        // is not moved backward.
+        let mut cursors = CursorStore::new();
+        let mut store = OccurrenceStore::new(1);
+        cursors.install(cursor_for("msg-in", "tg-1", "r-1", 7, 60_000));
+
+        // A newer event advances the cursor first.
+        let newer = evt("msg-in", "tg-1", "evt-2", "fp-2", 5_000);
+        assert_eq!(store.append(&newer).unwrap(), AppendOutcome::New);
+        assert_eq!(
+            cursors.advance(&newer, "r-1", 7, 5_000).unwrap(),
+            AdvanceOutcome::Advanced
+        );
+        assert_eq!(cursors.get("msg-in", "tg-1").unwrap().last_observed_at_unix_ms, 5_000);
+
+        // An older, different event arrives out of order — observed, no
+        // backward move.
+        let older = evt("msg-in", "tg-1", "evt-1", "fp-old", 2_000);
+        assert_eq!(store.append(&older).unwrap(), AppendOutcome::New);
+        assert_eq!(
+            cursors.advance(&older, "r-1", 7, 6_000).unwrap(),
+            AdvanceOutcome::StaleObservation
+        );
+        assert_eq!(
+            cursors.get("msg-in", "tg-1").unwrap().last_observed_at_unix_ms,
+            5_000,
+            "cursor must not move backward"
+        );
+    }
+
+    #[test]
+    fn rm2_stale_lease_cannot_advance_cursor() {
+        // An expired lease or wrong owner/generation cannot advance the cursor.
+        let mut cursors = CursorStore::new();
+        cursors.install(cursor_for("msg-in", "tg-1", "r-1", 7, 60_000));
+        let changed = evt("msg-in", "tg-1", "evt-2", "fp-2", 3_000);
+        // Wrong owner.
+        assert_eq!(
+            cursors.advance(&changed, "r-other", 7, 3_000),
+            Err(CursorError::StaleLease)
+        );
+        // Wrong generation.
+        assert_eq!(
+            cursors.advance(&changed, "r-1", 6, 3_000),
+            Err(CursorError::StaleLease)
+        );
+        // Expired lease.
+        assert_eq!(
+            cursors.advance(&changed, "r-1", 7, 70_000),
+            Err(CursorError::StaleLease)
+        );
+    }
+
+    #[test]
+    fn rm2_advance_requires_a_cursor_resync_if_missing() {
+        // No cursor installed — a bounded resync is required, not an
+        // unbounded replay.
+        let mut cursors = CursorStore::new();
+        let e = evt("msg-in", "tg-1", "evt-1", "fp-1", 1_000);
+        assert_eq!(
+            cursors.advance(&e, "r-1", 7, 1_000),
+            Err(CursorError::MissingCursor)
+        );
+    }
+
+    #[test]
+    fn rm2_restart_replay_still_dedups_after_serialization() {
+        // The occurrence store is reconstructable: after a "restart" (round-
+        // trip through serialization), a replayed event is still a duplicate.
+        let mut store = OccurrenceStore::new(1);
+        let e = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
+        assert_eq!(store.append(&e).unwrap(), AppendOutcome::New);
+        let serialized = serde_json::to_string(&store).unwrap();
+        let mut restored: OccurrenceStore = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(
+            restored.append(&e).unwrap(),
+            AppendOutcome::Duplicate,
+            "replay after restart must still dedup"
+        );
+        assert_eq!(restored.distinct_count(), 1);
     }
 }
