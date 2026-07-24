@@ -2565,8 +2565,13 @@ impl AppView {
                             } else if !c.entries.is_empty() {
                                 let entry = &c.entries[c.selected];
                                 c.inspect_detail = Some(format!(
-                                    "ID: {}\nStatus: {}\nPrompt: {}",
-                                    entry.id, entry.status, entry.prompt
+                                    "ID: {}\nStatus: {}\nKind: {}\nVerify: {}\nCheck: {}\nPrompt: {}",
+                                    entry.id,
+                                    entry.status,
+                                    entry.kind,
+                                    entry.verify_count,
+                                    entry.check_display(),
+                                    entry.prompt
                                 ));
                             }
                         }

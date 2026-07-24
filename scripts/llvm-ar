@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /Users/lewis/bin/zig ar "$@"

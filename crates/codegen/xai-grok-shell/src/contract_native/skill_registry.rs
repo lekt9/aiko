@@ -42,6 +42,10 @@ pub struct SkillNode {
     pub script: Option<String>,
     #[serde(default)]
     pub depends_on: Vec<String>,
+    /// Named inputs resolved from dependency evidence (`node-key.output-name`).
+    /// This is the Contract-native replacement for ambient `{{prev}}` text.
+    #[serde(default)]
+    pub input_bindings: BTreeMap<String, String>,
     #[serde(default)]
     pub can_parallel: bool,
     #[serde(default = "default_timeout")]
@@ -152,6 +156,7 @@ fn known_effect(effect: &str) -> bool {
             | "publish"
             | "permission_change"
             | "account_mutation"
+            | "process_spawn"
     )
 }
 
@@ -228,6 +233,17 @@ pub fn validate_manifest(manifest: &ContractSkillManifest, directory: &Path) -> 
                 ));
             }
             _ => {}
+        }
+        for source in node.input_bindings.values() {
+            let Some((dependency, output)) = source.split_once('.') else {
+                return Err(format!("node {} has invalid input binding", node.key));
+            };
+            if output.is_empty() || !node.depends_on.iter().any(|item| item == dependency) {
+                return Err(format!(
+                    "node {} input binding must reference a direct dependency",
+                    node.key
+                ));
+            }
         }
     }
     for node in &manifest.nodes {
@@ -406,8 +422,8 @@ pub fn rank(goal: &str, skills: Vec<LoadedContractSkill>) -> Vec<RankedContractS
 }
 
 pub fn plan(goal: &str, cwd: &Path) -> ContractSkillPlan {
-    // Reserve two children for the substrate's generic observe/verify spine.
-    let mut remaining_nodes = 14_usize;
+    // Reserve CELL_SPINE_LEN (4) for observe → agent:aiko → verify → posthook:feedback.
+    let mut remaining_nodes = 12_usize;
     let selected = rank(goal, discover(cwd))
         .into_iter()
         .filter(|ranked| {
@@ -433,6 +449,10 @@ pub fn plan(goal: &str, cwd: &Path) -> ContractSkillPlan {
                 "plan": node.plan.replace("{{goal}}", goal),
                 "action": format!("skill:{}@{}:{}", ranked.id, ranked.version, node.worker),
                 "depends_on": dependencies,
+                "input_bindings": node.input_bindings.iter().map(|(name, source)| {
+                    let (dependency, output) = source.split_once('.').unwrap_or((source, ""));
+                    (name.clone(), format!("{}--{}.{}", ranked.id, dependency, output))
+                }).collect::<BTreeMap<_, _>>(),
                 "requires_authorization": node.requires_authority,
                 "authorization": if node.requires_authority { "pending_authorization" } else { "approved" },
                 "effect_scope": node.effect,
@@ -462,6 +482,34 @@ pub fn dry_run(goal: &str, cwd: &Path) -> Value {
             "children": [],
         })
     })
+}
+
+/// Resolve a node's named inputs from already-settled dependency evidence.
+///
+/// Missing evidence is a hard readiness failure; workers never receive an
+/// ambient concatenation of whichever prior text happens to exist.
+pub fn resolve_input_bindings(
+    node: &SkillNode,
+    settled_evidence: &BTreeMap<String, Value>,
+) -> Result<BTreeMap<String, Value>, String> {
+    let mut resolved = BTreeMap::new();
+    for (input, source) in &node.input_bindings {
+        let (dependency, output) = source
+            .split_once('.')
+            .ok_or_else(|| format!("invalid binding source: {source}"))?;
+        if !node.depends_on.iter().any(|item| item == dependency) {
+            return Err(format!("{dependency} is not a direct dependency"));
+        }
+        let evidence = settled_evidence
+            .get(dependency)
+            .ok_or_else(|| format!("dependency {dependency} has not settled"))?;
+        let value = evidence
+            .get(output)
+            .cloned()
+            .ok_or_else(|| format!("dependency {dependency} has no evidence output {output}"))?;
+        resolved.insert(input.clone(), value);
+    }
+    Ok(resolved)
 }
 
 pub fn catalog(cwd: &Path) -> Value {
@@ -503,6 +551,7 @@ mod tests {
                     worker: "host".into(),
                     script: None,
                     depends_on: Vec::new(),
+                    input_bindings: BTreeMap::new(),
                     can_parallel: true,
                     timeout_ms: 1_000,
                     effect: "read_only".into(),
@@ -517,6 +566,10 @@ mod tests {
                     worker: "aiko".into(),
                     script: None,
                     depends_on: vec!["git-state".into()],
+                    input_bindings: BTreeMap::from([(
+                        "inspection".into(),
+                        "git-state.result".into(),
+                    )]),
                     can_parallel: false,
                     timeout_ms: 10_000,
                     effect: "read_only".into(),
@@ -533,6 +586,8 @@ mod tests {
     #[test]
     fn accepts_bounded_acyclic_manifest() {
         assert_eq!(validate_manifest(&manifest(), Path::new(".")), Ok(()));
+        assert!(known_effect("process_spawn"));
+        assert!(!known_effect("untyped_effect"));
     }
 
     #[test]
@@ -553,6 +608,20 @@ mod tests {
                 .unwrap_err()
                 .contains("ungoverned")
         );
+    }
+
+    #[test]
+    fn resolves_only_named_dependency_evidence() {
+        let manifest = manifest();
+        let node = &manifest.nodes[1];
+        let evidence = BTreeMap::from([(
+            "git-state".into(),
+            json!({"result": {"branch": "main"}, "ambient": "must not leak"}),
+        )]);
+        let resolved = resolve_input_bindings(node, &evidence).unwrap();
+        assert_eq!(resolved["inspection"]["branch"], "main");
+        assert!(!resolved.contains_key("ambient"));
+        assert!(resolve_input_bindings(node, &BTreeMap::new()).is_err());
     }
 
     #[test]
@@ -577,6 +646,10 @@ mod tests {
         assert_eq!(
             planned.children[1]["depends_on"][0],
             "inspect-project--git-state"
+        );
+        assert_eq!(
+            planned.children[1]["input_bindings"]["inspection"],
+            "inspect-project--git-state.result"
         );
     }
 }

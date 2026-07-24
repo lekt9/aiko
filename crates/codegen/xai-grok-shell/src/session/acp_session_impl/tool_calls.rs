@@ -443,10 +443,11 @@ impl SessionActor {
                 let lock = lock_path_for_args(&prepared.parsed_args)
                     .and_then(|fp| file_locks.get(fp).cloned());
                 async move {
-                    let tool_contract_id = crate::contract_native::begin_active_tool_contract(
+                    let tool_contract = crate::contract_native::bind_active_tool_contract(
                         session_id.as_ref(),
                         &prepared.tool_name,
                         Some(&prepared.raw_arguments),
+                        prepared.is_read_only,
                     );
                     let exec_start = std::time::Instant::now();
                     let run_tool = || {
@@ -463,7 +464,12 @@ impl SessionActor {
                             dispatch_tool(&workspace_ops, &prepared, &session_id).await
                         }
                     };
-                    let result = if interruptible {
+                    let result = if let Some(reason) = tool_contract.hold_reason() {
+                        Err(xai_tool_runtime::ToolError::permission_denied(format!(
+                            "Contract HOLD: consequential tool `{}` was not bound: {reason}",
+                            prepared.tool_name
+                        )))
+                    } else if interruptible {
                         let _wait_guard = BlockingWaitGuard::enter(blocking_wait_depth.clone());
                         tokio::select! {
                             biased; result = call_with_auth_retry(am.as_ref(), Some(&
@@ -495,7 +501,7 @@ impl SessionActor {
                             success, }
                         )),
                     );
-                    (idx, result, tool_contract_id)
+                    (idx, result, tool_contract)
                 }
             })
             .collect();
@@ -509,7 +515,7 @@ impl SessionActor {
         let (dispatch_tx, mut dispatch_rx) = tokio::sync::mpsc::unbounded_channel::<(
             usize,
             _,
-            Option<crate::contract_native::ActiveToolContract>,
+            crate::contract_native::ToolContractBinding,
         )>();
         let drainer = tokio::spawn(async move {
             while let Some(item) = dispatch_stream.next().await {
@@ -519,7 +525,7 @@ impl SessionActor {
             }
         });
         let _drainer_guard = crate::util::AbortOnDrop(drainer);
-        while let Some((idx, mut result, tool_contract_id)) = dispatch_rx.recv().await {
+        while let Some((idx, mut result, tool_contract)) = dispatch_rx.recv().await {
             let prepared = approved_slots[idx]
                 .take()
                 .expect("dispatch index should match an approved slot exactly once");
@@ -695,10 +701,7 @@ impl SessionActor {
                 fech_error,
                 crate::capability_catalog::ResultShape::Object,
             );
-            crate::contract_native::settle_active_tool_contract(
-                tool_contract_id.as_ref(),
-                tool_succeeded,
-            );
+            crate::contract_native::settle_active_tool_contract(&tool_contract, tool_succeeded);
             self.signals_handle()
                 .record_tool_duration(&prepared.tool_name, duration_ms);
             self.emit_event(crate::session::events::Event::ToolCompleted {

@@ -1,5 +1,34 @@
 # Changelog
 
+# 0.2.103 — 2026-07-24
+
+## Features
+
+- Contract-native internal systems compile micro, meso, macro, and global
+  action → sensor → evaluator loops through the native Contract ABI.
+- Effect classes derive mandatory photon/positron evidence and approval
+  profiles, including process lifecycle requirements.
+- Contract-native skills support explicit dependency evidence bindings,
+  signed evaluation lineage, and provider-neutral interface membranes.
+- The Contracts TUI exposes causal state, held effects, and grounded outcomes.
+
+## Safety and correctness
+
+- Consequential tool dispatch fails closed when Contract cannot bind it;
+  classified read-only observation can degrade with an explicit receipt.
+- The native settlement gate rejects missing effect antiparticles and unknown
+  effect classes.
+- Runtime chokepoint, predictor persistence, workflow, interface, and
+  first-principles falsifier witnesses cover the release.
+
+## Performance evidence
+
+- The full Contract kernel passes 810 tests.
+- The stored ARC-AGI-3 result is 14 levels for both arms, with Contract using
+  354 versus 358 completion actions. The 600-second replay gate did not
+  reproduce during release evaluation, so this is retained as historical
+  evidence rather than claimed as a current reproduced benchmark win.
+
 # 0.2.102 — 2026-07-16
 
 ## Breaking Changes
@@ -1581,5 +1610,4 @@
 ## Performance
 
 - **Large chat sessions** now use substantially less memory and run faster during forks, rewinds, and compaction.
-
 

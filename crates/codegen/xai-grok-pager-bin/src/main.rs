@@ -342,11 +342,46 @@ async fn run_tasks_command(args: xai_grok_pager::app::cli::TasksArgs) -> Result<
                     println!("No durable Contract tasks.");
                 }
                 for task in items {
+                    let check = task
+                        .get("check")
+                        .or_else(|| task.get("check_command"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| {
+                            task.get("action")
+                                .and_then(|v| v.as_str())
+                                .and_then(|a| a.strip_prefix("shell:"))
+                                .filter(|s| !s.is_empty())
+                        })
+                        .unwrap_or("-");
+                    let verify = task
+                        .get("verify_count")
+                        .or_else(|| task.get("wave"))
+                        .and_then(|v| v.as_u64().or_else(|| v.as_i64().map(|n| n.max(0) as u64)))
+                        .unwrap_or(0);
+                    let prompt = task.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
+                    let prompt_disp = if prompt.chars().count() > 72 {
+                        let mut s: String = prompt.chars().take(71).collect();
+                        s.push('…');
+                        s
+                    } else {
+                        prompt.to_string()
+                    };
+                    let check_disp = if check.chars().count() > 40 {
+                        let mut s: String = check.chars().take(39).collect();
+                        s.push('…');
+                        s
+                    } else {
+                        check.to_string()
+                    };
+                    // id  status  verify_count  check  prompt
                     println!(
-                        "{}  {:<10}  {}",
+                        "{}  {:<10}  v{:<3}  {:<40}  {}",
                         task.get("id").and_then(|v| v.as_str()).unwrap_or("?"),
                         task.get("status").and_then(|v| v.as_str()).unwrap_or("?"),
-                        task.get("prompt").and_then(|v| v.as_str()).unwrap_or("")
+                        verify,
+                        check_disp,
+                        prompt_disp
                     );
                 }
             }

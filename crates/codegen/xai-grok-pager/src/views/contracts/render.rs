@@ -145,7 +145,7 @@ fn render_list(buf: &mut Buffer, area: Rect, state: &ContractsState, theme: &The
 
     if state.entries.is_empty() {
         let empty = Span::styled(
-            "No contract tasks. Use `contract task begin --check \"<goal>\"` to create one.",
+            "No contract tasks. Use `contract task begin --check \"…\"`.  Columns: id · vN · check · prompt",
             Style::default().fg(theme.gray_dim),
         );
         buf.set_span(area.x, area.y, &empty, area.width);
@@ -194,7 +194,7 @@ fn render_list(buf: &mut Buffer, area: Rect, state: &ContractsState, theme: &The
             );
         }
 
-        // Build the row spans.
+        // Build the row spans: icon · id · vN · [check] · prompt
         let icon_span = Span::styled(
             format!(" {} ", status_icon),
             Style::default()
@@ -206,18 +206,39 @@ fn render_list(buf: &mut Buffer, area: Rect, state: &ContractsState, theme: &The
             format!("{:>8} ", entry.id),
             Style::default().fg(theme.gray_dim).bg(row_bg),
         );
-        // Truncate prompt to fit remaining width.
-        let prompt_available = area
-            .width
-            .saturating_sub(3 + 9) // icon(3) + id(8) + spacer
-            .max(10);
-        let prompt_text = truncate_str(&entry.prompt, prompt_available as usize);
-        let prompt_span = Span::styled(
+        // Always show verify count after id ("v3", "v0", …).
+        let verify_label = format!("v{} ", entry.verify_count);
+        let verify_w = verify_label.len();
+        let verify_span =
+            Span::styled(verify_label, Style::default().fg(theme.gray_dim).bg(row_bg));
+        // Fixed prefix: icon(3) + id(9) + verify
+        let prefix_w = 3 + 9 + verify_w;
+        // Show truncated check (or "—") when there is room for check + some prompt.
+        let show_check = area.width as usize >= prefix_w + 12 + 8;
+        let check_w = if show_check {
+            ((area.width as usize).saturating_sub(prefix_w + 8))
+                .min(24)
+                .max(4)
+        } else {
+            0
+        };
+        let mut spans = vec![icon_span, id_span, verify_span];
+        if show_check {
+            let check_short = truncate_str(entry.check_display(), check_w);
+            spans.push(Span::styled(
+                format!("{check_short:<check_w$} "),
+                Style::default().fg(theme.accent_user).bg(row_bg),
+            ));
+        }
+        let used = prefix_w + if show_check { check_w + 1 } else { 0 };
+        let prompt_available = (area.width as usize).saturating_sub(used).max(4);
+        let prompt_text = truncate_str(&entry.prompt, prompt_available);
+        spans.push(Span::styled(
             prompt_text,
             Style::default().fg(theme.text_primary).bg(row_bg),
-        );
+        ));
 
-        let line = Line::from(vec![icon_span, id_span, prompt_span]);
+        let line = Line::from(spans);
         buf.set_line(row_rect.x, row_rect.y, &line, row_rect.width);
         // Ensure full row background.
         buf.set_style(row_rect, Style::default().bg(row_bg));
@@ -228,9 +249,9 @@ fn render_list(buf: &mut Buffer, area: Rect, state: &ContractsState, theme: &The
 
 fn status_icon_and_color(status: &str, theme: &Theme) -> (&'static str, Color) {
     match status {
-        "active" => ("◉", theme.accent_running),
-        "pending" => ("○", theme.gray_dim),
-        "satisfied" => ("✓", theme.accent_success),
+        "active" | "runnable" | "leased" => ("◉", theme.accent_running),
+        "pending" | "waiting" | "retry_wait" => ("○", theme.gray_dim),
+        "satisfied" | "settled" => ("✓", theme.accent_success),
         "failed" => ("✗", theme.accent_error),
         "cancelled" => ("✗", theme.gray_dim),
         _ => ("?", theme.gray_dim),

@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "id": "signed-evaluation-lineage",
+  "version": "1.0.0",
+  "description": "Measure prompt and agent variants with signed evaluation ancestry.",
+  "platforms": ["all"],
+  "triggers": ["evaluate prompt variant", "score agent", "fitness archive", "signed evaluation", "prompt lineage"],
+  "input_schema": {"type": "object"},
+  "output_schema": {"type": "object"},
+  "nodes": [
+    {
+      "key": "capture",
+      "plan": "Hash the exact prompt, parent prompt, artifact, evaluation set, provider class, run, and judge for {{goal}}.",
+      "worker": "aiko",
+      "depends_on": [],
+      "input_bindings": {},
+      "can_parallel": true,
+      "timeout_ms": 120000,
+      "effect": "read_only",
+      "reversible": false,
+      "read_only": true,
+      "requires_authority": false,
+      "evidence": ["prompt_sha256", "parent_sha256", "artifact_sha256", "eval_set_sha256"]
+    },
+    {
+      "key": "evaluate",
+      "plan": "Run the pinned evaluation for {{goal}} and preserve its raw artifact.",
+      "worker": "tool",
+      "depends_on": ["capture"],
+      "input_bindings": {"inputs": "capture.result"},
+      "can_parallel": false,
+      "timeout_ms": 3600000,
+      "effect": "local_reversible",
+      "reversible": true,
+      "read_only": false,
+      "requires_authority": false,
+      "evidence": ["score", "raw_evaluation"]
+    },
+    {
+      "key": "sign",
+      "plan": "Append the measured score to the signed hash-chained archive with scripts/contract_lineage.py.",
+      "worker": "tool",
+      "depends_on": ["capture", "evaluate"],
+      "input_bindings": {"identity": "capture.result", "measurement": "evaluate.result"},
+      "can_parallel": false,
+      "timeout_ms": 120000,
+      "effect": "local_reversible",
+      "reversible": true,
+      "read_only": false,
+      "requires_authority": false,
+      "evidence": ["signed_record"]
+    },
+    {
+      "key": "verify",
+      "plan": "Verify every signature, parent edge, and append-only hash link before selection.",
+      "worker": "aiko",
+      "depends_on": ["sign"],
+      "input_bindings": {"archive": "sign.result"},
+      "can_parallel": false,
+      "timeout_ms": 120000,
+      "effect": "read_only",
+      "reversible": false,
+      "read_only": true,
+      "requires_authority": false,
+      "evidence": ["lineage_verification"]
+    }
+  ],
+  "examples": [
+    {"name": "prompt-variant", "prompt": "Evaluate this prompt variant and preserve signed lineage.", "expect": {"selected": "signed-evaluation-lineage"}}
+  ]
+}

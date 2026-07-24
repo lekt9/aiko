@@ -1,7 +1,8 @@
 //! Contracts view state — `ContractsState` and `ContractEntry`.
 //!
-//! Mirrors the shape of `list_scheduled_contracts()` JSON output:
-//! `[{id, status, prompt}, ...]`.
+//! Mirrors the shape of `list_scheduled_contracts()` JSON output, with optional
+//! fields for checked tasks (backward compatible):
+//! `[{id, status, prompt, check?, verify_count?, kind?}, ...]`.
 
 use ratatui::layout::Rect;
 use xai_grok_shell::collective_host::CollectiveStatus;
@@ -15,10 +16,18 @@ pub struct ContractEntry {
     pub status: String,
     /// The task prompt / goal text.
     pub prompt: String,
+    /// Executable check command (`shell:` strip or explicit `check` field).
+    pub check: Option<String>,
+    /// How many verify / iteration waves have run for this id.
+    pub verify_count: u32,
+    /// `"task"` (checked) or `"scheduled"` (durable) — default scheduled.
+    pub kind: String,
 }
 
 impl ContractEntry {
     /// Parse a `list_scheduled_contracts()` JSON value into a flat vec.
+    /// Optional keys: `check` / `check_command`, `verify_count` / `wave`,
+    /// `kind`, `action` (`shell:…` derives check + kind=task).
     pub fn from_scheduled_json(json: &serde_json::Value) -> Vec<Self> {
         let Some(items) = json.as_array() else {
             return Vec::new();
@@ -37,19 +46,160 @@ impl ContractEntry {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                Some(ContractEntry { id, status, prompt })
+                let mut check = item
+                    .get("check")
+                    .or_else(|| item.get("check_command"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
+                let verify_count = item
+                    .get("verify_count")
+                    .or_else(|| item.get("wave"))
+                    .and_then(|v| {
+                        v.as_u64()
+                            .or_else(|| v.as_i64().map(|n| n.max(0) as u64))
+                            .or_else(|| v.as_str()?.parse().ok())
+                    })
+                    .unwrap_or(0) as u32;
+                let mut kind = item
+                    .get("kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("scheduled")
+                    .to_string();
+                if let Some(action) = item
+                    .get("action")
+                    .or_else(|| item.get("trigger"))
+                    .and_then(|v| v.as_str())
+                {
+                    if let Some(shell) = action.strip_prefix("shell:") {
+                        if !shell.is_empty() {
+                            if check.is_none() {
+                                check = Some(shell.to_string());
+                            }
+                            if kind == "scheduled" {
+                                kind = "task".into();
+                            }
+                        }
+                    }
+                }
+                Some(ContractEntry {
+                    id,
+                    status,
+                    prompt,
+                    check,
+                    verify_count,
+                    kind,
+                })
             })
             .collect()
     }
 
     /// Whether the status is a terminal "done" state.
     pub fn is_terminal(&self) -> bool {
-        matches!(self.status.as_str(), "satisfied" | "failed" | "cancelled")
+        matches!(
+            self.status.as_str(),
+            "satisfied" | "failed" | "cancelled" | "settled"
+        )
     }
 
     /// Whether the task is actively running.
     pub fn is_active(&self) -> bool {
-        matches!(self.status.as_str(), "active" | "pending")
+        matches!(
+            self.status.as_str(),
+            "active" | "pending" | "runnable" | "leased" | "waiting"
+        )
+    }
+
+    /// Display form of the check column.
+    pub fn check_display(&self) -> &str {
+        self.check.as_deref().unwrap_or("—")
+    }
+}
+
+#[cfg(test)]
+mod contract_entry_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parses_check_and_verify_count_when_present() {
+        let rows = ContractEntry::from_scheduled_json(&json!([{
+            "id": "deadbeef",
+            "status": "active",
+            "prompt": "ship it",
+            "check": "cargo test -q",
+            "verify_count": 3,
+            "kind": "task"
+        }]));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].check.as_deref(), Some("cargo test -q"));
+        assert_eq!(rows[0].verify_count, 3);
+        assert_eq!(rows[0].kind, "task");
+    }
+
+    #[test]
+    fn missing_fields_default_gracefully() {
+        let rows = ContractEntry::from_scheduled_json(&json!([{
+            "id": "cafebabe",
+            "status": "waiting",
+            "prompt": "old bottle"
+        }]));
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].check.is_none());
+        assert_eq!(rows[0].verify_count, 0);
+        assert_eq!(rows[0].kind, "scheduled");
+        assert_eq!(rows[0].check_display(), "—");
+    }
+
+    #[test]
+    fn shell_action_derives_check_and_kind_task() {
+        let rows = ContractEntry::from_scheduled_json(&json!([{
+            "id": "feedface",
+            "status": "pending",
+            "prompt": "checked task",
+            "action": "shell:bash scripts/witness.sh"
+        }]));
+        assert_eq!(rows[0].check.as_deref(), Some("bash scripts/witness.sh"));
+        assert_eq!(rows[0].kind, "task");
+    }
+
+    #[test]
+    fn wave_string_parses_verify_count() {
+        let rows = ContractEntry::from_scheduled_json(&json!([{
+            "id": "ab12cd34",
+            "status": "active",
+            "prompt": "wave as string",
+            "wave": "2"
+        }]));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].verify_count, 2);
+    }
+
+    #[test]
+    fn empty_check_treated_as_missing_and_kind_task_with_shell_preserved() {
+        // Empty check string → None (missing). Existing explicit check wins over shell:.
+        // kind already "task" must not be clobbered when action is shell:….
+        let rows = ContractEntry::from_scheduled_json(&json!([
+            {
+                "id": "emptychk1",
+                "status": "pending",
+                "prompt": "blank check",
+                "check": ""
+            },
+            {
+                "id": "taskshell",
+                "status": "active",
+                "prompt": "already task",
+                "kind": "task",
+                "check": "cargo test -q",
+                "action": "shell:echo should-not-replace"
+            }
+        ]));
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].check.is_none());
+        assert_eq!(rows[0].check_display(), "—");
+        assert_eq!(rows[1].kind, "task");
+        assert_eq!(rows[1].check.as_deref(), Some("cargo test -q"));
     }
 }
 

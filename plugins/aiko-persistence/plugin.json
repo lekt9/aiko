@@ -1,0 +1,9 @@
+{
+  "name": "aiko-persistence",
+  "version": "0.1.0",
+  "description": "Witness-gated persistence for long, multi-step Aiko tasks.",
+  "author": {
+    "name": "Lewis"
+  },
+  "skills": "./skills/"
+}

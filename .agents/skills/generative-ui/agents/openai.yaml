@@ -1,0 +1,4 @@
+interface:
+  display_name: "Generative UI"
+  short_description: "Render native Aiko interfaces from structured JSON"
+  default_prompt: "Use $generative-ui to present this information as a native Aiko interface."

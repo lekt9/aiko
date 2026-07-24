@@ -22,11 +22,12 @@ NAMES = (
     "control-local-media",
     "issue-to-patch",
     "contract-interface",
+    "signed-evaluation-lineage",
 )
 EFFECTS = {
     "read_only", "local_reversible", "local_write", "external_message",
     "purchase", "job_application", "credential_access", "delete", "publish",
-    "permission_change", "account_mutation",
+    "permission_change", "account_mutation", "process_spawn",
 }
 
 
@@ -64,6 +65,15 @@ def reject(manifest: dict, directory: Path) -> str | None:
         graph[key] = node.get("depends_on", [])
         if any(dependency not in keys or dependency == key for dependency in graph[key]):
             return "dependency"
+        bindings = node.get("input_bindings", {})
+        if not isinstance(bindings, dict):
+            return "input-bindings"
+        for source in bindings.values():
+            if not isinstance(source, str) or "." not in source:
+                return "input-binding"
+            dependency, output = source.split(".", 1)
+            if dependency not in graph[key] or not output:
+                return "input-binding-dependency"
     visiting, visited = set(), set()
     def walk(key: str) -> bool:
         if key in visited:
@@ -109,6 +119,7 @@ def main() -> int:
     bad = copy.deepcopy(base); bad["nodes"][0]["effect"] = "purchase"; bad["nodes"][0]["read_only"] = False; attacks.append(bad)
     bad = copy.deepcopy(base); bad["nodes"][0].update(worker="script", script="../../steal"); attacks.append(bad)
     bad = copy.deepcopy(base); bad["nodes"][0]["effect"] = "unknown"; attacks.append(bad)
+    bad = copy.deepcopy(base); bad["nodes"][0]["input_bindings"] = {"stolen": "missing.result"}; attacks.append(bad)
     assert all(reject(attack, directory) is not None for attack in attacks)
 
     print(f"validated {len(manifests)} contract-native skills and {len(attacks)} adversarial cases")

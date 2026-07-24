@@ -5,11 +5,11 @@ PACKAGE_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 AIKO_BINARY="$PACKAGE_ROOT/bin/aiko"
 CONTRACT_LIBRARY="$PACKAGE_ROOT/lib/libcontract.dylib"
 MANIFEST="$PACKAGE_ROOT/manifest.json"
-TELEGRAM_SKILL="$PACKAGE_ROOT/skills/telegram-contracts"
+PACKAGED_SKILLS="$PACKAGE_ROOT/skills"
 
 if [ ! -x "$AIKO_BINARY" ] || [ ! -f "$CONTRACT_LIBRARY" ] || [ ! -f "$MANIFEST" ] || \
-   [ ! -f "$TELEGRAM_SKILL/SKILL.md" ]; then
-    echo "Invalid Aiko package: expected bin/aiko, lib/libcontract.dylib, and manifest.json" >&2
+   [ ! -d "$PACKAGED_SKILLS" ]; then
+    echo "Invalid Aiko package: expected bin/aiko, lib/libcontract.dylib, manifest.json, and skills/" >&2
     exit 1
 fi
 
@@ -53,7 +53,7 @@ AIKO_HOME=${AIKO_HOME:-"$HOME/.aiko"}
 AIKO_BIN_DIR=${AIKO_BIN_DIR:-"$HOME/bin"}
 AIKO_LIB_DIR="$AIKO_HOME/lib"
 mkdir -p "$AIKO_BIN_DIR" "$AIKO_LIB_DIR"
-mkdir -p "$AIKO_HOME/skills/telegram-contracts"
+mkdir -p "$AIKO_HOME/skills"
 
 BIN_TMP="$AIKO_BIN_DIR/.aiko.install.$$"
 LIB_TMP="$AIKO_LIB_DIR/.libcontract.dylib.install.$$"
@@ -65,7 +65,13 @@ install -m 755 "$CONTRACT_LIBRARY" "$LIB_TMP"
 
 mv -f "$LIB_TMP" "$AIKO_LIB_DIR/libcontract.dylib"
 mv -f "$BIN_TMP" "$AIKO_BIN_DIR/aiko"
-cp -R "$TELEGRAM_SKILL/." "$AIKO_HOME/skills/telegram-contracts/"
+for SKILL_DIR in "$PACKAGED_SKILLS"/*; do
+    if [ -f "$SKILL_DIR/SKILL.md" ] && [ -f "$SKILL_DIR/contract-skill.json" ]; then
+        SKILL_NAME=$(basename "$SKILL_DIR")
+        mkdir -p "$AIKO_HOME/skills/$SKILL_NAME"
+        cp -R "$SKILL_DIR/." "$AIKO_HOME/skills/$SKILL_NAME/"
+    fi
+done
 trap - EXIT HUP INT TERM
 
 echo "Installed Aiko to $AIKO_BIN_DIR/aiko"

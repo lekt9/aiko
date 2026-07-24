@@ -28,9 +28,17 @@
           "worker": { "enum": ["aiko", "script", "host", "tool"] },
           "script": { "type": "string" },
           "depends_on": { "type": "array", "items": { "type": "string" } },
+          "input_bindings": {
+            "type": "object",
+            "description": "Typed inputs sourced from dependency evidence. Values use node-key.output-name form.",
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*\\.[a-zA-Z0-9_-]+$"
+            }
+          },
           "can_parallel": { "type": "boolean" },
           "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 3600000 },
-          "effect": { "enum": ["read_only", "local_reversible", "local_write", "external_message", "purchase", "job_application", "credential_access", "delete", "publish", "permission_change", "account_mutation"] },
+          "effect": { "enum": ["read_only", "local_reversible", "local_write", "external_message", "purchase", "job_application", "credential_access", "delete", "publish", "permission_change", "account_mutation", "process_spawn"] },
           "reversible": { "type": "boolean" },
           "read_only": { "type": "boolean" },
           "requires_authority": { "type": "boolean" },
