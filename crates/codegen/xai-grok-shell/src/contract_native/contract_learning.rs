@@ -999,6 +999,13 @@ pub(super) fn open_runtime_gap(
 }
 
 fn render_growth_context_at(path: &Path, cwd: &Path) -> Option<String> {
+    // Per-turn sweep: expire stale leases before rendering so the agent never
+    // sees an immortal active gap that has exhausted its experiment budget
+    // (SG invariant #5: no immortal experiments). This is the production
+    // caller of expire_stale_leases — without it the function was dead code
+    // reached only by its unit test. Best-effort: a transient store error
+    // during the sweep must not suppress the growth context.
+    let _ = expire_stale_leases(path, "");
     let project = project_id(cwd);
     let state = load_growth(path);
     let mut gaps = state
@@ -2121,6 +2128,61 @@ mod contract_learning_tests {
         let state = load_growth(&path);
         let held = state.gaps.get(&gap.gap_id).expect("gap exists");
         assert_eq!(held.status, GapStatus::Held);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn render_growth_context_sweep_holds_exhausted_active_gap() {
+        // Integration witness that the per-turn render sweep actually fires
+        // expire_stale_leases in production: an *active* gap (Open) reinforced
+        // past its experiment budget through a path that does NOT auto-hold
+        // (open_gap_at, unlike open_runtime_gap) must be Held before the agent
+        // ever sees the growth context. Without the sweep wiring this gap would
+        // live forever — SG invariant #5 (no immortal experiments).
+        let path = growth_test_path("sweep-hold");
+        let cwd = Path::new("/tmp/sweep-hold");
+        let budgets = GrowthBudgets {
+            experiments: 2,
+            ..GrowthBudgets::default()
+        };
+        let gap = open_gap_at(
+            &path,
+            cwd,
+            "turn:test",
+            "episode",
+            GapKind::Executor,
+            "provider_failure",
+            "action",
+            "error",
+            "cli",
+            AuthorityEnvelope {
+                effects: BTreeSet::from(["read_only".into()]),
+                budgets,
+            },
+        )
+        .expect("gap");
+        // open_gap_at does not auto-hold. Reinforce past the experiment budget
+        // without going through open_runtime_gap's maintain_runtime_gap_at.
+        for _ in 0..2 {
+            let mut g = load_growth(&path).gaps.remove(&gap.gap_id).unwrap();
+            g.occurrences = g.occurrences.saturating_add(1);
+            let _ = append_growth(&path, &GrowthRecord::Gap { value: g });
+        }
+        let pre = load_growth(&path)
+            .gaps
+            .get(&gap.gap_id)
+            .expect("gap exists")
+            .clone();
+        assert_eq!(pre.status, GapStatus::Open, "gap must still be Open before sweep");
+        assert_eq!(pre.occurrences, 3, "occurrences must exceed the budget of 2");
+        // The render sweep must hold the exhausted active gap.
+        let _ = render_growth_context_at(&path, cwd);
+        let post = load_growth(&path)
+            .gaps
+            .get(&gap.gap_id)
+            .expect("gap exists")
+            .clone();
+        assert_eq!(post.status, GapStatus::Held, "render sweep must hold exhausted gap");
         let _ = std::fs::remove_file(path);
     }
 
