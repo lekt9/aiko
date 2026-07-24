@@ -184,7 +184,20 @@ def classify(avail, rows=None):
             # action alongside click. Require both candidate controls and a
             # region large enough to be controlled, so empty click canvases
             # still refuse this solver.
-            if len(controls) >= 3 and big / area >= 0.02:
+            # A complete directional action set is direct evidence of an
+            # interaction/navigation environment. Do not let the much weaker
+            # "large region plus three click targets" visual prior suppress
+            # every movement experiment. Genuine region controllers observed
+            # by this planner expose click alone or click plus a secondary
+            # commit/reset action, not all four directions.
+            exposes_directional_control = {1, 2, 3, 4}.issubset(
+                {int(action) for action in a}
+            )
+            if (
+                not exposes_directional_control
+                and len(controls) >= 3
+                and big / area >= 0.02
+            ):
                 return "region-control"
         except Exception:
             pass
@@ -352,7 +365,7 @@ def click_points(rows):
 def semantic_click_candidates(rows):
     """Stable object-level click actions. Coordinates remain episode-local; the capability
     identity contains only structural features that can transfer safely across layouts."""
-    out, seen = [], set()
+    out, seen, role_counts = [], set(), {}
     try:
         p = _perceive(rows) if _perceive is not None and rows is not None else None
         objects = sorted((p or {}).get("objects", []), key=lambda o: (-o.get("size", 0), o["centroid"][1], o["centroid"][0]))
@@ -362,7 +375,12 @@ def semantic_click_candidates(rows):
             band = "top" if y < h * .25 else "bottom" if y > h * .75 else "middle"
             size = int(obj.get("size", 0))
             tier = "small" if size <= 12 else "medium" if size <= 120 else "large"
-            label = f"{band}-{tier}-color-{int(obj.get('color', 0))}"
+            role = f"{band}-{tier}-color-{int(obj.get('color', 0))}"
+            role_counts[role] = role_counts.get(role, 0) + 1
+            # Multiple objects may share a transferable semantic role. Their
+            # reading-order ordinal keeps catalog IDs unique without leaking
+            # episode coordinates into durable Contract memory.
+            label = f"{role}-instance-{role_counts[role]}"
             key = (label, x, y)
             if key in seen:
                 continue

@@ -41,6 +41,20 @@ def load(path: Path) -> dict:
     if runtime:
         if not runtime.get("argv") or not all(isinstance(v, str) and v for v in runtime["argv"]):
             raise ValueError("runtime.argv must contain non-empty strings")
+    schema_version = value.get("schema_version", 1)
+    if schema_version not in {1, 2}:
+        raise ValueError(f"unsupported receptor schema_version: {schema_version}")
+    if schema_version == 2:
+        ingress = value.get("ingress")
+        cursor = value.get("cursor")
+        if not ingress or not cursor:
+            raise ValueError("v2 receptors require ingress and cursor policies")
+        if not ingress.get("modes") or ingress.get("privacy") not in {"redacted", "public"}:
+            raise ValueError("v2 ingress requires modes and prompt-safe privacy")
+        if ingress.get("delivery") == "effectively_once" and not cursor.get("identity_fields"):
+            raise ValueError("effectively_once delivery requires durable identity fields")
+        if not cursor.get("identity_fields") or not cursor.get("change_token_fields") or cursor.get("ttl_ms", 0) < 1:
+            raise ValueError("v2 cursor requires identity, change tokens, and finite retention")
     return value
 
 def node(node_key, deps, effect="read_only", authority=False, evidence=None, plan=None):
@@ -71,7 +85,15 @@ def compile_pack(spec: dict, out: Path) -> None:
         node("settle", ["evaluate"]),
     ])
     manifest = {"schema_version":1,"id":spec["id"],"version":"1.0.0","description":spec["description"],"platforms":["all"],"triggers":spec["triggers"],"input_schema":{"type":"object","additionalProperties":True},"output_schema":{"type":"object","additionalProperties":True},"nodes":nodes}
-    capabilities = {"schema_version":1,"interface":spec["id"],"events":spec["events"],"effects":effects}
+    capabilities = {
+        "schema_version": spec.get("schema_version", 1),
+        "interface":spec["id"],
+        "events":spec["events"],
+        "effects":effects,
+    }
+    if spec.get("schema_version") == 2:
+        capabilities["ingress"] = spec["ingress"]
+        capabilities["cursor"] = spec["cursor"]
     (out/"assets").mkdir(exist_ok=True)
     (out/"SKILL.md").write_text(f"---\nname: {spec['id']}\ndescription: {spec['description']}\n---\n\n# Generated Contract interface\n\nUse `contract-skill.json`; never bypass its authority and evidence cells.\n")
     (out/"contract-skill.json").write_text(json.dumps(manifest, indent=2, sort_keys=True)+"\n")

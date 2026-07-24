@@ -470,6 +470,8 @@ impl TelegramBot {
         let cwd = std::env::var("AIKO_TELEGRAM_CWD")
             .map(PathBuf::from)
             .unwrap_or_else(|_| dirs_home());
+        let session_id = conversation_session_id("telegram", chat_id);
+        let resume = session_exists(&session_id);
         let mut command = Command::new(aiko);
         command
             .args([
@@ -484,14 +486,24 @@ impl TelegramBot {
                 RESPONSE_SCHEMA,
                 "--rules",
                 INTERFACE_RULES,
-                "--single",
-                prompt,
-            ])
+            ]);
+        if resume {
+            command.args(["--resume", &session_id]);
+        } else {
+            command.args(["--session-id", &session_id]);
+        }
+        command
+            .args(["--single", prompt])
             .env("AIKO_CONTRACT_ROOT_ID", parent_id.unwrap_or(""))
             .env("AIKO_CONTRACT_PARENT_ID", parent_id.unwrap_or(""))
             .env("AIKO_CONTRACT_DEPTH", "1")
             .env("AIKO_CONTRACT_MAX_DEPTH", "4")
             .env("AIKO_CONTRACT_MAX_CHILDREN", "16")
+            .env("AIKO_INTERFACE_FAMILY", "messaging")
+            .env(
+                "AIKO_CONVERSATION_ID",
+                format!("messaging:telegram:{chat_id}"),
+            )
             .kill_on_drop(true);
         let child = command
             .spawn()
@@ -625,6 +637,40 @@ fn dirs_home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/tmp"))
 }
 
+fn conversation_session_id(interface: &str, conversation: i64) -> String {
+    fn fnv64(bytes: &[u8], seed: u64) -> u64 {
+        bytes.iter().fold(seed, |hash, byte| {
+            hash.wrapping_mul(0x100000001b3) ^ u64::from(*byte)
+        })
+    }
+    let material = format!("{interface}:{conversation}");
+    let high = fnv64(material.as_bytes(), 0xcbf29ce484222325);
+    let low = fnv64(material.as_bytes(), 0x84222325cbf29ce4);
+    let mut bytes = ((u128::from(high) << 64) | u128::from(low)).to_be_bytes();
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let value = u128::from_be_bytes(bytes);
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+        (value >> 96) as u32,
+        ((value >> 80) & 0xffff) as u16,
+        ((value >> 64) & 0xffff) as u16,
+        ((value >> 48) & 0xffff) as u16,
+        value & 0xffffffffffff
+    )
+}
+
+fn session_exists(session_id: &str) -> bool {
+    let sessions = xai_grok_config::grok_home().join("sessions");
+    std::fs::read_dir(sessions)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path().join(session_id))
+        .any(|candidate| candidate.is_dir())
+}
+
 fn evidence_dir() -> PathBuf {
     dirs_home().join(".aiko").join("telegram").join("evidence")
 }
@@ -668,5 +714,15 @@ mod contract_interface_tests {
     fn evidence_paths_are_outside_contract_rows_and_payloads() {
         let path = evidence_dir().join("response-42.json");
         assert!(path.ends_with(".aiko/telegram/evidence/response-42.json"));
+    }
+
+    #[test]
+    fn conversation_session_identity_is_stable_and_scoped() {
+        let first = conversation_session_id("telegram", 108611440);
+        assert_eq!(first, conversation_session_id("telegram", 108611440));
+        assert_ne!(first, conversation_session_id("telegram", 108611441));
+        assert_ne!(first, conversation_session_id("email", 108611440));
+        assert_eq!(first.len(), 36);
+        assert_eq!(&first[14..15], "4");
     }
 }

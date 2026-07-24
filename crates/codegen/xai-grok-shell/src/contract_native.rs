@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tokio::process::Command;
+use xai_grok_sampling_types::{ContentPart, ConversationItem};
 use xai_grok_tools::notification::{ScheduledTaskFired, ToolNotificationHandle};
 
 mod activity_sensor;
@@ -49,6 +50,7 @@ pub struct GroundedTurn {
     pub prompt: Vec<acp::ContentBlock>,
     pub contract: Option<TurnContract>,
     pub capability_route: Option<serde_json::Value>,
+    pub continuation: Option<membrane::ContractContinuation>,
 }
 
 /// Compact per-turn feedback card written to the ledger feedback log and
@@ -1161,6 +1163,66 @@ fn pending_capability_routes() -> &'static Mutex<HashMap<String, serde_json::Val
 fn pending_contract_roots() -> &'static Mutex<HashMap<String, String>> {
     static ROOTS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
     ROOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn pending_turn_continuations() -> &'static Mutex<HashMap<String, membrane::ContractContinuation>> {
+    static CONTINUATIONS: OnceLock<
+        Mutex<HashMap<String, membrane::ContractContinuation>>,
+    > = OnceLock::new();
+    CONTINUATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Bind the exact pre-model continuation to the prompt lifecycle. This prevents
+/// a worker from receiving Contract context without the terminal chokepoint
+/// knowing which authority and memory projection it must settle against.
+pub fn store_turn_continuation(
+    prompt_id: &str,
+    continuation: Option<membrane::ContractContinuation>,
+) {
+    let Ok(mut pending) = pending_turn_continuations().lock() else {
+        return;
+    };
+    if let Some(continuation) = continuation {
+        pending.insert(prompt_id.to_owned(), continuation);
+    } else {
+        pending.remove(prompt_id);
+    }
+}
+
+/// Settle reasoning-worker execution without claiming that the user's goal
+/// progressed or completed. Goal settlement requires independent evaluator
+/// evidence elsewhere in the Contract graph.
+pub fn settle_turn_continuation(prompt_id: &str, succeeded: bool) -> bool {
+    let continuation = pending_turn_continuations()
+        .lock()
+        .ok()
+        .and_then(|mut pending| pending.remove(prompt_id));
+    let Some(continuation) = continuation else {
+        return false;
+    };
+    let observation = membrane::EvidenceReference {
+        occurrence_id: prompt_id.to_owned(),
+        kind: membrane::EvidenceKind::ProviderReceipt,
+        provenance: membrane::Provenance::Derived,
+        freshness: membrane::Freshness::Live,
+    };
+    let result = membrane::ContractResult {
+        continuation_token: continuation.continuation_token.clone(),
+        output: json!({
+            "reasoning_worker_executed": true,
+            "reasoning_worker_completed": succeeded
+        }),
+        proposed_effects: vec![],
+        observations: vec![observation.clone()],
+        unresolved_obligations: continuation.open_obligations.clone(),
+        claimed_outcome: membrane::Outcome::Observed,
+        evidence_references: vec![observation],
+        errors: (!succeeded)
+            .then(|| "reasoning worker did not complete".to_owned())
+            .into_iter()
+            .collect(),
+    };
+    continuation.validate_result(&result).is_ok()
 }
 
 pub fn store_turn_contract_root(prompt_id: &str, root_id: Option<&str>) {
@@ -4032,6 +4094,8 @@ struct BuiltContext {
     capability_route: Option<Value>,
     feedback: TurnFeedback,
     learning_family: Option<String>,
+    open_obligations: Vec<String>,
+    recalled_declarations: Vec<String>,
 }
 
 fn capability_plan_has_usable_candidate(recommendation: Option<&Value>) -> bool {
@@ -4193,6 +4257,8 @@ async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
         capability_route: recommendation,
         feedback,
         learning_family,
+        open_obligations: open_matches,
+        recalled_declarations: recalled,
     }
 }
 
@@ -4206,11 +4272,213 @@ fn persist_last_context(context: &str) {
     }
 }
 
+fn contract_id_from_summary(summary: &str) -> Option<String> {
+    let start = summary.find('[')? + 1;
+    let end = summary[start..].find(']')? + start;
+    let id = &summary[start..end];
+    valid_contract_id(id).then(|| id.to_owned())
+}
+
+fn continuation_capability_bindings(route: Option<&Value>) -> Vec<membrane::CapabilityBinding> {
+    route
+        .and_then(|route| route.get("candidates"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|candidate| {
+            candidate.get("status").and_then(Value::as_str) != Some("unavailable")
+        })
+        .filter_map(|candidate| {
+            let capability = candidate
+                .get("id")
+                .or_else(|| candidate.get("capability_id"))
+                .and_then(Value::as_str)?
+                .trim();
+            if capability.is_empty() {
+                return None;
+            }
+            let implementation = candidate
+                .get("provider")
+                .or_else(|| candidate.get("tool"))
+                .and_then(Value::as_str)
+                .unwrap_or("aiko-native")
+                .trim();
+            if implementation.is_empty() {
+                return None;
+            }
+            Some(membrane::CapabilityBinding {
+                capability: capability.to_owned(),
+                implementation: implementation.to_owned(),
+                schema_version: 1,
+                health: membrane::HealthState::Healthy,
+            })
+        })
+        .take(16)
+        .collect()
+}
+
+const MAX_CONTINUATION_INTERACTIONS: usize = 12;
+const MAX_CONTINUATION_INTERACTION_BYTES: usize = 4_000;
+
+fn bounded_interaction_content(content: &str, remaining: usize) -> Option<String> {
+    if remaining == 0 || sensitive(content) {
+        return None;
+    }
+    let mut bounded = content
+        .chars()
+        .take(remaining.min(800))
+        .collect::<String>();
+    while bounded.len() > remaining {
+        bounded.pop();
+    }
+    let bounded = bounded.trim();
+    (!bounded.is_empty()).then(|| bounded.to_owned())
+}
+
+/// Project provider-neutral conversational memory into the Contract membrane.
+///
+/// The authoritative session store remains `xai-chat-state`. This view excludes
+/// system instructions, reasoning, tool calls/results, synthetic runtime
+/// messages, images, and secret-shaped content.
+fn project_recent_interactions(
+    conversation: &[ConversationItem],
+) -> Vec<membrane::InteractionOccurrence> {
+    let mut newest_first = Vec::new();
+    let mut remaining = MAX_CONTINUATION_INTERACTION_BYTES;
+    for (index, item) in conversation.iter().enumerate().rev() {
+        if newest_first.len() >= MAX_CONTINUATION_INTERACTIONS || remaining == 0 {
+            break;
+        }
+        let (role, raw) = match item {
+            ConversationItem::User(user) if user.synthetic_reason.is_none() => {
+                let text = user
+                    .content
+                    .iter()
+                    .filter_map(|part| match part {
+                        ContentPart::Text { text } => Some(text.as_ref()),
+                        ContentPart::Image { .. } => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                (membrane::InteractionRole::User, text)
+            }
+            ConversationItem::Assistant(assistant) if !assistant.content.trim().is_empty() => (
+                membrane::InteractionRole::Assistant,
+                assistant.content.to_string(),
+            ),
+            _ => continue,
+        };
+        let Some(content) = bounded_interaction_content(&raw, remaining) else {
+            continue;
+        };
+        remaining = remaining.saturating_sub(content.len());
+        newest_first.push(membrane::InteractionOccurrence {
+            occurrence_id: format!("interaction:{}", sha2_short(&format!("{index}:{role:?}:{content}"))),
+            role,
+            content,
+            provenance: membrane::Provenance::DurableLedger,
+            freshness: membrane::Freshness::Fresh,
+        });
+    }
+    newest_first.reverse();
+    newest_first
+}
+
+fn build_turn_continuation(
+    goal: &str,
+    identity_scope: &str,
+    contract: Option<&TurnContract>,
+    built: &BuiltContext,
+    recent_interactions: Vec<membrane::InteractionOccurrence>,
+) -> Result<membrane::ContractContinuation, membrane::ContinuationError> {
+    let occurrence = contract.map(|turn| turn.id.clone());
+    let authority = if occurrence.is_some() {
+        membrane::Authorization::ContractAuthorized
+    } else {
+        membrane::Authorization::ReadOnlyDegraded
+    };
+    let mut evidence_ids = BTreeSet::new();
+    let relevant_evidence = built
+        .open_obligations
+        .iter()
+        .chain(built.recalled_declarations.iter())
+        .filter_map(|summary| contract_id_from_summary(summary))
+        .filter(|id| evidence_ids.insert(id.clone()))
+        .map(|occurrence_id| membrane::EvidenceReference {
+            occurrence_id,
+            kind: membrane::EvidenceKind::StateTransition,
+            provenance: membrane::Provenance::DurableLedger,
+            freshness: membrane::Freshness::Fresh,
+        })
+        .take(16)
+        .collect();
+    let parent_lineage = [
+        std::env::var("AIKO_CONTRACT_ROOT_ID").ok(),
+        std::env::var("AIKO_CONTRACT_PARENT_ID").ok(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|id| valid_contract_id(id))
+    .collect();
+    let normalized_input = if sensitive(goal) {
+        "[sensitive input omitted from Contract continuation projection]".to_owned()
+    } else {
+        clean_goal(goal)
+            .chars()
+            .take(500)
+            .collect::<String>()
+            .trim()
+            .to_owned()
+    };
+    let identity_scope = if identity_scope.trim().is_empty() {
+        format!("turn:{}", sha2_short(goal))
+    } else {
+        identity_scope.trim().chars().take(160).collect()
+    };
+    let deadline_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(1)
+        .saturating_add(300_000);
+    membrane::ContractContinuation::resolve(membrane::ContinuationRequest {
+        triggering_occurrence: occurrence,
+        parent_lineage,
+        normalized_input,
+        identity_scope: membrane::IdentityScope {
+            kind: membrane::IdentityKind::Conversation,
+            value: identity_scope,
+        },
+        effect: membrane::EffectClass::ReadOnly,
+        authority,
+        open_obligations: built.open_obligations.iter().take(16).cloned().collect(),
+        relevant_evidence,
+        contradictions: vec![],
+        capability_bindings: continuation_capability_bindings(
+            built.capability_route.as_ref(),
+        ),
+        recent_interactions,
+        privacy: membrane::PrivacyClass::Redacted,
+        budget: membrane::ContextBudget {
+            max_bytes: MAX_CONTEXT_BYTES as u32,
+            deadline_unix_ms,
+            max_effects: 16,
+        },
+        family: membrane::InterfaceFamily::from_binding(
+            std::env::var("AIKO_INTERFACE_FAMILY").ok().as_deref(),
+        ),
+    })
+}
+
 /// Register the original user request, retrieve a local Contract recommendation,
 /// and append a bounded machine-context block before the prompt reaches the model.
 /// Raw file contents, hidden files, credentials, and secret-shaped values are
 /// excluded. Set `AIKO_MACHINE_CONTEXT=off` for a fully ungrounded turn.
-pub async fn ground_turn(blocks: &[acp::ContentBlock], cwd: &Path) -> GroundedTurn {
+pub async fn ground_turn(
+    blocks: &[acp::ContentBlock],
+    cwd: &Path,
+    identity_scope: &str,
+    conversation: &[ConversationItem],
+) -> GroundedTurn {
     warm_router_background(4);
     let mut contract = declare_turn(blocks, cwd).await;
     if contract.is_none() && goal_from_blocks(blocks).is_some() {
@@ -4227,21 +4495,51 @@ pub async fn ground_turn(blocks: &[acp::ContentBlock], cwd: &Path) -> GroundedTu
     } else {
         None
     };
-    if !context_enabled() {
+    if blocks.is_empty() {
         return GroundedTurn {
             prompt: blocks.to_vec(),
             contract,
             capability_route: None,
+            continuation: None,
         };
     }
-    let Some(goal) = goal_from_blocks(blocks) else {
-        return GroundedTurn {
-            prompt: blocks.to_vec(),
-            contract,
+    let goal =
+        goal_from_blocks(blocks).unwrap_or_else(|| "[non-text interaction occurrence]".into());
+    let machine_context_enabled = context_enabled();
+    let built = if machine_context_enabled {
+        build_context(&goal, cwd).await
+    } else {
+        BuiltContext {
+            text: String::new(),
             capability_route: None,
-        };
+            feedback: TurnFeedback {
+                ts: chrono_ish_now(),
+                goal: clean_goal(&goal),
+                contract_id: contract.as_ref().map(|turn| turn.id.clone()),
+                proven_binary: None,
+                proven_score: None,
+                proven_example: None,
+                open_contracts: vec![],
+                outcome: Some("continuation_only".into()),
+            },
+            learning_family: None,
+            open_obligations: vec![],
+            recalled_declarations: vec![],
+        }
     };
-    let built = build_context(&goal, cwd).await;
+    let recent_interactions = project_recent_interactions(conversation);
+    let continuation = build_turn_continuation(
+        &goal,
+        identity_scope,
+        contract.as_ref(),
+        &built,
+        recent_interactions,
+    )
+        .map_err(|error| {
+            tracing::warn!(?error, "Contract continuation resolution failed");
+            error
+        })
+        .ok();
     // Observation, recall/prerequisite preparation, and future-obligation
     // detection were performed by the deterministic pre-turn context build.
     // Settle those leaf contracts from that host evidence before model work.
@@ -4249,14 +4547,9 @@ pub async fn ground_turn(blocks: &[acp::ContentBlock], cwd: &Path) -> GroundedTu
     if let Some(turn) = contract.as_mut() {
         turn.learning_family = built.learning_family.clone();
     }
-    if built.text.is_empty() {
-        return GroundedTurn {
-            prompt: blocks.to_vec(),
-            contract,
-            capability_route: built.capability_route,
-        };
+    if machine_context_enabled && !built.text.is_empty() {
+        persist_last_context(&built.text);
     }
-    persist_last_context(&built.text);
     // Stamp the open turn contract id onto the latest feedback card when known.
     if let Some(tc) = &contract {
         let mut card = built.feedback.clone();
@@ -4267,6 +4560,11 @@ pub async fn ground_turn(blocks: &[acp::ContentBlock], cwd: &Path) -> GroundedTu
         .as_ref()
         .and_then(|graph| serde_json::to_string(graph).ok())
         .map(|graph| format!("\nNative contract graph: {graph}\n"))
+        .unwrap_or_default();
+    let continuation_context = continuation
+        .as_ref()
+        .and_then(|continuation| serde_json::to_string(continuation).ok())
+        .map(|continuation| format!("\nCONTRACT CONTINUATION:\n{continuation}\n"))
         .unwrap_or_default();
     let grounding = format!(
         "<system-reminder>\n\
@@ -4286,7 +4584,7 @@ pub async fn ground_turn(blocks: &[acp::ContentBlock], cwd: &Path) -> GroundedTu
          code and expose interfaces as receptors and effectors around the same compiled system.\n\n\
          {}{}{}\n\
          </system-reminder>",
-        built.text, graph_context, ""
+        built.text, graph_context, continuation_context
     );
     let mut prompt = blocks.to_vec();
     prompt.push(acp::ContentBlock::Text(acp::TextContent::new(grounding)));
@@ -4294,6 +4592,7 @@ pub async fn ground_turn(blocks: &[acp::ContentBlock], cwd: &Path) -> GroundedTu
         prompt,
         contract,
         capability_route: built.capability_route,
+        continuation,
     }
 }
 
@@ -4603,6 +4902,134 @@ mod tests {
         let receipt = execution_receipt(&hold, false, false);
         assert_eq!(receipt.authorization, "hold");
         assert!(!receipt.executed);
+    }
+
+    #[test]
+    fn turn_continuation_is_bound_to_conversation_and_contract() {
+        let built = BuiltContext {
+            text: "bounded context".into(),
+            capability_route: Some(json!({
+                "candidates": [{
+                    "id": "conversation.respond",
+                    "provider": "fixture-worker",
+                    "status": "available"
+                }]
+            })),
+            feedback: TurnFeedback {
+                ts: "1".into(),
+                goal: "reply".into(),
+                contract_id: Some("deadbeef".into()),
+                proven_binary: None,
+                proven_score: None,
+                proven_example: None,
+                open_contracts: vec![],
+                outcome: Some("grounded".into()),
+            },
+            learning_family: None,
+            open_obligations: vec!["[cafebabe] reply remains open".into()],
+            recalled_declarations: vec!["[feedface] prior reply settled".into()],
+        };
+        let turn = TurnContract {
+            id: "deadbeef".into(),
+            goal: "reply".into(),
+            learning_family: None,
+        };
+        let prior = vec![membrane::InteractionOccurrence {
+            occurrence_id: "interaction-1".into(),
+            role: membrane::InteractionRole::User,
+            content: "remember this".into(),
+            provenance: membrane::Provenance::DurableLedger,
+            freshness: membrane::Freshness::Fresh,
+        }];
+        let first = build_turn_continuation(
+            "reply",
+            "conversation-1",
+            Some(&turn),
+            &built,
+            prior.clone(),
+        )
+        .unwrap();
+        let second = build_turn_continuation(
+            "reply",
+            "conversation-2",
+            Some(&turn),
+            &built,
+            prior,
+        )
+        .unwrap();
+        assert_eq!(
+            first.readiness,
+            membrane::ContinuationReadiness::Ready
+        );
+        assert_eq!(first.triggering_occurrence.as_deref(), Some("deadbeef"));
+        assert_eq!(first.identity_scope.value, "conversation-1");
+        assert_ne!(first.continuation_token, second.continuation_token);
+        assert_eq!(first.relevant_evidence.len(), 2);
+        assert_eq!(first.capability_bindings.len(), 1);
+        assert_eq!(first.recent_interactions.len(), 1);
+    }
+
+    #[test]
+    fn conversation_projection_is_bounded_private_and_ordered() {
+        let conversation = vec![
+            ConversationItem::system("hidden system prompt"),
+            ConversationItem::user("first user turn"),
+            ConversationItem::assistant("first assistant turn"),
+            ConversationItem::system_reminder("synthetic reminder"),
+            ConversationItem::user("x-api-key: secret-value"),
+            ConversationItem::user("latest user turn"),
+        ];
+        let projected = project_recent_interactions(&conversation);
+        assert_eq!(projected.len(), 3);
+        assert_eq!(projected[0].role, membrane::InteractionRole::User);
+        assert_eq!(projected[0].content, "first user turn");
+        assert_eq!(projected[1].role, membrane::InteractionRole::Assistant);
+        assert_eq!(projected[1].content, "first assistant turn");
+        assert_eq!(projected[2].content, "latest user turn");
+        assert!(
+            projected
+                .iter()
+                .all(|interaction| interaction.content.len() <= 800)
+        );
+        assert!(
+            projected
+                .iter()
+                .map(|interaction| interaction.content.len())
+                .sum::<usize>()
+                <= MAX_CONTINUATION_INTERACTION_BYTES
+        );
+    }
+
+    #[test]
+    fn terminal_chokepoint_consumes_the_bound_continuation_once() {
+        let request = membrane::ContinuationRequest {
+            triggering_occurrence: Some("deadbeef".into()),
+            parent_lineage: vec![],
+            normalized_input: "bounded turn".into(),
+            identity_scope: membrane::IdentityScope {
+                kind: membrane::IdentityKind::Conversation,
+                value: "conversation-terminal-test".into(),
+            },
+            effect: membrane::EffectClass::ReadOnly,
+            authority: membrane::Authorization::ContractAuthorized,
+            open_obligations: vec!["goal still needs independent evaluation".into()],
+            relevant_evidence: vec![],
+            contradictions: vec![],
+            capability_bindings: vec![],
+            recent_interactions: vec![],
+            privacy: membrane::PrivacyClass::Redacted,
+            budget: membrane::ContextBudget {
+                max_bytes: 1024,
+                deadline_unix_ms: 4_000_000_000_000,
+                max_effects: 1,
+            },
+            family: membrane::InterfaceFamily::Cli,
+        };
+        let continuation = membrane::ContractContinuation::resolve(request).unwrap();
+        let prompt_id = "contract-continuation-terminal-test";
+        store_turn_continuation(prompt_id, Some(continuation));
+        assert!(settle_turn_continuation(prompt_id, true));
+        assert!(!settle_turn_continuation(prompt_id, true));
     }
 
     #[test]

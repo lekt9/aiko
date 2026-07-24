@@ -114,11 +114,17 @@ class NativeContract:
                     "available": True,
                 }
             )
-        return self._take(
+        result = self._take(
             self.lib.contract_register_capabilities(
                 b"aiko-arc", json.dumps(descriptors, separators=(",", ":")).encode()
             )
         )
+        if result is None:
+            raise RuntimeError(
+                "Contract rejected the ARC capability catalog; "
+                "candidate IDs must be unique and descriptors valid"
+            )
+        return result
 
     def plan_candidates(self, context: str, candidates: list[dict]):
         availability = [

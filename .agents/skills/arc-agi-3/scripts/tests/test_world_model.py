@@ -77,6 +77,26 @@ def test_click_candidates_are_structural_and_coordinate_bound():
     assert {(item["x"], item["y"]) for item in candidates} == {(1, 1), (5, 6)}
     assert all(item["capability_id"].startswith("aiko-arc.click.") for item in candidates)
     assert all("1-1" not in item["capability_id"] and "5-6" not in item["capability_id"] for item in candidates)
+    assert len({item["capability_id"] for item in candidates}) == len(candidates)
+
+
+def test_repeated_semantic_roles_get_coordinate_free_unique_ids():
+    grid = [[0 for _ in range(12)] for _ in range(12)]
+    for y in (10, 11):
+        for x in (1, 2, 8, 9):
+            grid[y][x] = 3
+    candidates = arc_skill.semantic_click_candidates(grid)
+    repeated = [
+        item for item in candidates
+        if "bottom-small-color-3" in item["capability_id"]
+    ]
+    assert len(repeated) == 2
+    assert repeated[0]["capability_id"] != repeated[1]["capability_id"]
+    assert {item["capability_id"].rsplit("-", 1)[-1] for item in repeated} == {"1", "2"}
+    assert all(
+        f"{item['x']}-{item['y']}" not in item["capability_id"]
+        for item in repeated
+    )
 
 
 def test_durable_state_descriptor_omits_coordinates():
@@ -114,6 +134,22 @@ def test_region_control_is_structural_not_click_only(monkeypatch):
     assert arc_skill.classify([6, 7], grid) == "region-control"
     monkeypatch.setattr(arc_skill._MO, "candidate_controls", lambda rows: [])
     assert arc_skill.classify([6], grid) == "explore"
+
+
+def test_directional_controls_prevent_region_router_preemption(monkeypatch):
+    grid = [[0 for _ in range(10)] for _ in range(10)]
+    monkeypatch.setattr(
+        arc_skill,
+        "_perceive",
+        lambda rows: {"big_regions": [{"size": 20}]},
+    )
+    monkeypatch.setattr(
+        arc_skill._MO,
+        "candidate_controls",
+        lambda rows: [(8, 1, 2, 4), (8, 3, 2, 4), (8, 5, 2, 4)],
+    )
+    assert arc_skill.classify([1, 2, 3, 4, 5, 6], grid) == "explore"
+    assert arc_skill.classify([6, 7], grid) == "region-control"
 
 
 def test_hypothesis_agreement_is_dynamics_evidence_not_success():

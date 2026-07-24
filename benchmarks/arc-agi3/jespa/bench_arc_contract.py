@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import shutil
@@ -77,16 +78,54 @@ def main() -> int:
     parser.add_argument("--max-actions", type=int, default=150)
     parser.add_argument("--seeds", default="11,29")
     parser.add_argument("--rounds", type=int, default=1)
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=4,
+        help=(
+            "Run independent arm/seed jobs concurrently. Rounds within one job "
+            "remain sequential so persistent learning evidence is preserved."
+        ),
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--assert-win", action="store_true")
     args = parser.parse_args()
     seeds = [int(value) for value in args.seeds.split(",") if value]
+    if args.jobs < 1:
+        parser.error("--jobs must be at least 1")
     work = Path(tempfile.mkdtemp(prefix="aiko-arc-jespa-"))
     try:
-        trials = []
-        for seed in seeds:
-            trials.extend(run_variant("jespa", args.games, args.max_actions, seed, args.rounds, work))
-            trials.extend(run_variant("baseline", args.games, args.max_actions, seed, args.rounds, work))
+        jobs = [
+            (kind, seed)
+            for seed in seeds
+            for kind in ("jespa", "baseline")
+        ]
+        completed = {}
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(args.jobs, len(jobs))
+        ) as executor:
+            futures = {
+                executor.submit(
+                    run_variant,
+                    kind,
+                    args.games,
+                    args.max_actions,
+                    seed,
+                    args.rounds,
+                    work,
+                ): (kind, seed)
+                for kind, seed in jobs
+            }
+            for future in concurrent.futures.as_completed(futures):
+                completed[futures[future]] = future.result()
+        # Preserve the historical deterministic report order even though the
+        # independent subprocesses complete in an arbitrary order.
+        trials = [
+            report
+            for seed in seeds
+            for kind in ("jespa", "baseline")
+            for report in completed[(kind, seed)]
+        ]
         # Earlier rounds are training evidence. Score only the final replay.
         jespa = [trial for trial in trials if trial["variant"] == "jespa" and trial["round"] == args.rounds]
         baseline = [trial for trial in trials if trial["variant"] == "baseline" and trial["round"] == args.rounds]

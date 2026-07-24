@@ -2302,11 +2302,29 @@ impl acp::Agent for MvpAgent {
         // Aiko is Contract-native: register the original request, then attach a
         // privacy-bounded local machine snapshot and learned EBM route without
         // requiring the user to call Contract or configure context manually.
+        let conversation = handle.chat_state_handle.get_conversation().await;
+        let continuation_identity = std::env::var("AIKO_CONVERSATION_ID")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| handle.info.id.0.to_string());
         let grounded = crate::contract_native::ground_turn(
             &arguments.prompt,
             std::path::Path::new(&handle.info.cwd),
+            &continuation_identity,
+            &conversation,
         )
         .await;
+        let continuation = grounded.continuation.as_ref().ok_or_else(|| {
+            acp::Error::internal_error().data(
+                "Contract continuation was not ready; refusing to start the reasoning worker",
+            )
+        })?;
+        if !continuation.may_invoke_worker() {
+            return Err(acp::Error::internal_error().data(format!(
+                "Contract continuation is held: {:?}",
+                continuation.readiness
+            )));
+        }
         let turn_contract = grounded.contract;
         crate::contract_native::store_turn_contract_root(
             &prompt_id,
@@ -2315,6 +2333,10 @@ impl acp::Agent for MvpAgent {
         crate::contract_native::store_capability_route(
             &prompt_id,
             grounded.capability_route.clone(),
+        );
+        crate::contract_native::store_turn_continuation(
+            &prompt_id,
+            grounded.continuation.clone(),
         );
         handle
             .cmd_tx
@@ -2338,6 +2360,7 @@ impl acp::Agent for MvpAgent {
             .map_err(|e| {
                 let _ = crate::contract_native::take_capability_route(&prompt_id);
                 let _ = crate::contract_native::take_turn_contract_root(&prompt_id);
+                crate::contract_native::store_turn_continuation(&prompt_id, None);
                 acp::Error::internal_error()
                     .data(format!("failed to dispatch prompt to session: {e}"))
             })?;

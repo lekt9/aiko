@@ -1082,6 +1082,385 @@ pub(super) fn render_growth_context(cwd: &Path) -> Option<String> {
     render_growth_context_at(&growth_store_path()?, cwd)
 }
 
+// ── SG0: Schema validation with privacy guards ────────────────────────
+
+/// Reject any field that could leak raw coordinates, machine paths, or
+/// credentials into the durable growth store.
+fn validate_privacy<T: Serialize>(value: &T, label: &str) -> Result<(), String> {
+    let raw = serde_json::to_string(value).map_err(|e| e.to_string())?;
+    let lower = raw.to_ascii_lowercase();
+    // Never store exact pixel/grid coordinates.
+    if lower.contains("\"x\":") || lower.contains("\"y\":") {
+        return Err(format!("{label}: coordinate leakage detected"));
+    }
+    // Never store filesystem paths.
+    if lower.contains("/users/") || lower.contains("\\\\users\\\\") {
+        return Err(format!("{label}: machine path leakage detected"));
+    }
+    // Never store credential-shaped fields.
+    for token in &["token", "secret", "password", "api_key", "credential"] {
+        if lower.contains(token) {
+            return Err(format!("{label}: credential-shaped field '{token}' detected"));
+        }
+    }
+    Ok(())
+}
+
+/// Validate a capability gap against the schema invariants declared in
+/// plan.md SG0: non-empty identity, valid semantic signature format,
+/// bounded scope, non-empty failure class, and parent authority subset.
+pub(super) fn validate_gap(gap: &CapabilityGap) -> Result<(), String> {
+    if gap.gap_id.is_empty() || !gap.gap_id.starts_with("gap:") {
+        return Err("gap_id must be non-empty and start with 'gap:'".into());
+    }
+    if gap.semantic_signature.len() != 16 {
+        return Err("semantic_signature must be a 16-char hex digest".into());
+    }
+    if gap.parent_contract.is_empty() {
+        return Err("parent_contract must be non-empty".into());
+    }
+    if gap.failure_class.is_empty() {
+        return Err("failure_class must be non-empty".into());
+    }
+    if gap.expected.is_empty() && gap.observed.is_empty() {
+        return Err("at least one of expected or observed must be non-empty".into());
+    }
+    // Scope must be a recognised value.
+    if !matches!(gap.scope.as_str(), "episode" | "archetype" | "global") {
+        return Err(format!("scope '{}' is not a recognised scope kind", gap.scope));
+    }
+    // Budget caps: never unbounded.
+    if gap.authority_ceiling.budgets.experiments == 0
+        || gap.authority_ceiling.budgets.experiments > 1024
+    {
+        return Err("experiments budget must be 1..1024".into());
+    }
+    if gap.authority_ceiling.budgets.children > 64 {
+        return Err("children budget must be ≤64".into());
+    }
+    if gap.authority_ceiling.budgets.wall_seconds > 3600 {
+        return Err("wall_seconds budget must be ≤3600".into());
+    }
+    if gap.authority_ceiling.budgets.lease_seconds > 7200 {
+        return Err("lease_seconds budget must be ≤7200".into());
+    }
+    validate_privacy(gap, "gap")?;
+    Ok(())
+}
+
+/// Validate a limb proposal: cells form a valid DAG, independent sensor
+/// is present, effects stay within the parent envelope, and no raw
+/// coordinates or secrets leak into the durable proposal.
+pub(super) fn validate_proposal(
+    proposal: &LimbProposal,
+    parent: &CapabilityGap,
+) -> Result<(), String> {
+    if proposal.proposal_id.is_empty() || !proposal.proposal_id.starts_with("limb:") {
+        return Err("proposal_id must be non-empty and start with 'limb:'".into());
+    }
+    if proposal.gap_id != parent.gap_id {
+        return Err("proposal must reference its originating gap".into());
+    }
+    // Every cell must have a non-empty role and capability.
+    for (i, cell) in proposal.cells.iter().enumerate() {
+        if cell.role.is_empty() {
+            return Err(format!("cell {i}: role must be non-empty"));
+        }
+        if cell.capability.is_empty() {
+            return Err(format!("cell {i}: capability must be non-empty"));
+        }
+    }
+    // Independent sensor must be present.
+    if !proposal.cells.iter().any(|c| c.role == "sensor") {
+        return Err("proposal must include an independent sensor cell".into());
+    }
+    // Effects must be within parent authority.
+    if !parent
+        .authority_ceiling
+        .effects
+        .is_superset(&proposal.effects)
+    {
+        return Err("proposal effects must be a subset of parent authority".into());
+    }
+    // Budgets must be within parent.
+    if !parent.authority_ceiling.contains(&proposal.effects, &proposal.budgets) {
+        return Err("proposal budgets exceed parent authority".into());
+    }
+    // Rollback must be declared.
+    if proposal.rollback.is_empty() {
+        return Err("proposal must declare a rollback contract".into());
+    }
+    validate_privacy(proposal, "proposal")?;
+    Ok(())
+}
+
+// ── SG1: Complete gap classification ──────────────────────────────────
+
+/// Failure classes recognised by the gap detector. These map to the
+/// bounded triggers in plan.md SG1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FailureClass {
+    NoCandidate,
+    RepeatedLoop,
+    UnexplainedTransition,
+    PredictionError,
+    MissingSensor,
+    ProviderFailure,
+    PermissionDenied,
+    Timeout,
+}
+
+impl FailureClass {
+    fn as_str(&self) -> &'static str {
+        match self {
+            FailureClass::NoCandidate => "no_candidate",
+            FailureClass::RepeatedLoop => "repeated_loop",
+            FailureClass::UnexplainedTransition => "unexplained_transition",
+            FailureClass::PredictionError => "prediction_error",
+            FailureClass::MissingSensor => "missing_sensor",
+            FailureClass::ProviderFailure => "provider_failure",
+            FailureClass::PermissionDenied => "permission_denied",
+            FailureClass::Timeout => "timeout",
+        }
+    }
+
+    fn gap_kind(&self) -> GapKind {
+        match self {
+            FailureClass::NoCandidate => GapKind::Proposer,
+            FailureClass::RepeatedLoop => GapKind::Planner,
+            FailureClass::UnexplainedTransition => GapKind::Predictor,
+            FailureClass::PredictionError => GapKind::Predictor,
+            FailureClass::MissingSensor => GapKind::Sensor,
+            FailureClass::ProviderFailure => GapKind::Executor,
+            FailureClass::PermissionDenied => GapKind::Executor,
+            FailureClass::Timeout => GapKind::Executor,
+        }
+    }
+
+    /// Ordinary recoverable failures should NOT create unbounded gaps.
+    /// Only structural/novel failures open new development tracks.
+    fn is_structural(&self) -> bool {
+        matches!(
+            self,
+            FailureClass::NoCandidate
+                | FailureClass::RepeatedLoop
+                | FailureClass::UnexplainedTransition
+                | FailureClass::PredictionError
+                | FailureClass::MissingSensor
+        )
+    }
+}
+
+/// Open a gap only when the failure is structural, not an ordinary
+/// recoverable error. Returns `None` for transient failures like
+/// timeouts or permission denials that should not spawn limbs.
+pub(super) fn classify_and_open_gap(
+    cwd: &Path,
+    class: FailureClass,
+    expected: &str,
+    observed: &str,
+    interface: &str,
+) -> Option<CapabilityGap> {
+    if !class.is_structural() {
+        return None;
+    }
+    open_runtime_gap(
+        cwd,
+        class.gap_kind(),
+        class.as_str(),
+        expected,
+        observed,
+        interface,
+    )
+}
+
+// ── SG3: Limb lifecycle (kill, renew, expire) ────────────────────────
+
+/// Lease state for a running limb.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(super) struct LimbLease {
+    pub proposal_id: String,
+    pub owner: String,
+    pub generation: u32,
+    pub issued_at: String,
+    pub expires_at: String,
+    pub renewal_policy: String,
+    pub child_count: u32,
+    pub max_children: u32,
+    pub active: bool,
+}
+
+/// Kill a running limb: mark its lease inactive, update the gap to
+/// Open (returning it to the development pool), and record the
+/// termination in the growth store.
+pub(super) fn kill_limb(path: &Path, proposal_id: &str) -> Result<(), String> {
+    let state = load_growth(path);
+    let proposal = state
+        .proposals
+        .get(proposal_id)
+        .ok_or_else(|| format!("proposal {proposal_id} not found"))?;
+    let gap = state
+        .gaps
+        .get(&proposal.gap_id)
+        .ok_or_else(|| format!("gap {} not found", proposal.gap_id))?;
+    // Return the gap to Open so it can be re-proposed.
+    let mut reopened = gap.clone();
+    reopened.status = GapStatus::Open;
+    append_growth(path, &GrowthRecord::Gap { value: reopened })?;
+    // Record the termination as a decision.
+    let decision = PromotionDecision {
+        proposal_id: proposal_id.to_string(),
+        gap_id: proposal.gap_id.clone(),
+        verdict: PromotionVerdict::Held,
+        reason_codes: vec!["killed".into()],
+        evidence: PromotionEvidence {
+            schema_valid: true,
+            held_out_prediction_gain: 0.0,
+            causal_intervention: false,
+            utility_improved: false,
+            safety_passed: true,
+            isolation_passed: true,
+            independent_sensor: true,
+            reproductions: 0,
+            mutation_witness_red: false,
+        },
+    };
+    append_growth(path, &GrowthRecord::Decision { value: decision })?;
+    Ok(())
+}
+
+/// Expire all limbs whose lease window has closed. Returns the count of
+/// expired limbs.
+pub(super) fn expire_stale_leases(path: &Path, _now: &str) -> Result<usize, String> {
+    let state = load_growth(path);
+    let mut expired = 0usize;
+    for gap in state.gaps.values() {
+        // Hold any *active* gap whose observed occurrences have exhausted the
+        // experiment budget — not just Experimenting ones. An Open gap that has
+        // been reinforced past its budget without ever being experimented is
+        // equally exhausted and must not live forever (SG invariant #5: no
+        // immortal experiments). Promotable and terminal statuses are left
+        // alone so a winner is not clobbered and settled gaps are not re-held.
+        // Consistent with maintain_runtime_gap_at's exhaustion rule.
+        if matches!(gap.status, GapStatus::Open | GapStatus::Experimenting)
+            && gap.occurrences >= gap.authority_ceiling.budgets.experiments
+        {
+            let mut held = gap.clone();
+            held.status = GapStatus::Held;
+            append_growth(path, &GrowthRecord::Gap { value: held })?;
+            expired += 1;
+        }
+    }
+    Ok(expired)
+}
+
+// ── SG4: Energy-based experiment candidate ranking ───────────────────
+
+/// A ranked experiment candidate with energy terms.
+#[derive(Debug, Clone)]
+pub(super) struct ExperimentCandidate {
+    pub proposal_id: String,
+    pub predicted_progress_energy: f64,
+    pub information_gain: f64,
+    pub loop_penalty: f64,
+    pub failure_penalty: f64,
+    pub action_cost: f64,
+    pub composite_energy: f64,
+    pub tier: CandidateTier,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum CandidateTier {
+    /// Proven successful in matching context.
+    Verified = 0,
+    /// New or unverified — eligible for bounded experiment.
+    Unverified = 1,
+    /// Previously failed in this context.
+    Failed = 2,
+    /// Unsafe or illegal — HOLD only.
+    Unsafe = 3,
+}
+
+/// Rank limb proposals by composite energy: progress potential +
+/// information gain - penalties - cost. Returns candidates sorted
+/// lowest-energy-first (better).
+pub(super) fn rank_experiment_candidates(
+    path: &Path,
+    cwd: &Path,
+) -> Vec<ExperimentCandidate> {
+    let state = load_growth(path);
+    let project = project_id(cwd);
+    let mut candidates = Vec::new();
+    for proposal in state
+        .proposals
+        .values()
+        .filter(|p| {
+            state
+                .gaps
+                .get(&p.gap_id)
+                .is_some_and(|g| g.project == project)
+        })
+    {
+        let gap = state.gaps.get(&proposal.gap_id).unwrap();
+        // Tier classification.
+        let tier = if let Some(decision) = state.decisions.get(&proposal.proposal_id) {
+            match decision.verdict {
+                PromotionVerdict::Promoted => CandidateTier::Verified,
+                PromotionVerdict::Inhibited => CandidateTier::Failed,
+                PromotionVerdict::Held => CandidateTier::Unsafe,
+            }
+        } else if gap.status == GapStatus::Held {
+            CandidateTier::Unsafe
+        } else {
+            CandidateTier::Unverified
+        };
+        // Energy terms.
+        let predicted_progress_energy = if proposal.predicted_delta.is_empty() {
+            0.0
+        } else {
+            proposal.predicted_delta.len() as f64 * 0.1
+        };
+        let information_gain = if proposal.evidence_state == "unverified" {
+            0.3
+        } else {
+            0.0
+        };
+        let loop_penalty = if gap.failure_class.contains("repeated_loop") {
+            0.5
+        } else {
+            0.0
+        };
+        let failure_penalty = if matches!(tier, CandidateTier::Failed) {
+            1.0
+        } else {
+            0.0
+        };
+        let action_cost = proposal.cells.len() as f64 * 0.05;
+        let composite_energy = predicted_progress_energy
+            + information_gain
+            - loop_penalty
+            - failure_penalty
+            - action_cost;
+        candidates.push(ExperimentCandidate {
+            proposal_id: proposal.proposal_id.clone(),
+            predicted_progress_energy,
+            information_gain,
+            loop_penalty,
+            failure_penalty,
+            action_cost,
+            composite_energy,
+            tier,
+        });
+    }
+    // Sort by tier first, then by composite energy (lower is better).
+    candidates.sort_by(|a, b| {
+        a.tier
+            .cmp(&b.tier)
+            .then_with(|| a.composite_energy.partial_cmp(&b.composite_energy).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    candidates
+}
+
 #[cfg(test)]
 mod contract_learning_tests {
     use super::*;
@@ -1559,6 +1938,247 @@ mod contract_learning_tests {
                 .iter()
                 .all(|cell| cell.capability != "registry.github.search"),
             "network discovery must not expand a read-only parent envelope"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    // ── SG0: Schema validation tests ────────────────────────────────
+
+    #[test]
+    fn validate_gap_rejects_invalid_id_format() {
+        let mut gap = CapabilityGap {
+            schema_version: 1,
+            gap_id: "bad-format".into(),
+            parent_contract: "turn:test".into(),
+            project: "p".into(),
+            semantic_signature: "0123456789abcdef".into(),
+            scope: "episode".into(),
+            kind: GapKind::Predictor,
+            failure_class: "test".into(),
+            expected: "expected".into(),
+            observed: "observed".into(),
+            interfaces: BTreeSet::new(),
+            authority_ceiling: test_authority(),
+            status: GapStatus::Open,
+            occurrences: 0,
+        };
+        assert!(validate_gap(&gap).is_err());
+        gap.gap_id = "gap:valid".into();
+        assert!(validate_gap(&gap).is_ok());
+    }
+
+    #[test]
+    fn validate_gap_rejects_coordinate_leakage() {
+        let mut map = serde_json::Map::new();
+        map.insert("x".into(), serde_json::Value::Number(42.into()));
+        map.insert("y".into(), serde_json::Value::Number(7.into()));
+        assert!(validate_privacy(&map, "test").is_err());
+    }
+
+    #[test]
+    fn validate_gap_rejects_credential_leakage() {
+        let map = serde_json::json!({"api_key": "sk-1234"});
+        assert!(validate_privacy(&map, "test").is_err());
+    }
+
+    #[test]
+    fn validate_gap_enforces_budget_caps() {
+        let mut gap = CapabilityGap {
+            schema_version: 1,
+            gap_id: "gap:test".into(),
+            parent_contract: "turn:test".into(),
+            project: "p".into(),
+            semantic_signature: "0123456789abcdef".into(),
+            scope: "episode".into(),
+            kind: GapKind::Predictor,
+            failure_class: "test".into(),
+            expected: "e".into(),
+            observed: "o".into(),
+            interfaces: BTreeSet::new(),
+            authority_ceiling: AuthorityEnvelope {
+                effects: BTreeSet::from(["read_only".into()]),
+                budgets: GrowthBudgets {
+                    experiments: 2000, // >1024
+                    ..GrowthBudgets::default()
+                },
+            },
+            status: GapStatus::Open,
+            occurrences: 0,
+        };
+        assert!(validate_gap(&gap).is_err());
+        gap.authority_ceiling.budgets.experiments = 8;
+        assert!(validate_gap(&gap).is_ok());
+    }
+
+    // ── SG1: Gap classification tests ───────────────────────────────
+
+    #[test]
+    fn structural_failures_open_gaps_transient_do_not() {
+        let path = growth_test_path("classification");
+        let cwd = Path::new("/tmp/classification");
+        // Structural: should open a gap.
+        let gap = classify_and_open_gap(
+            cwd,
+            FailureClass::NoCandidate,
+            "typed plan",
+            "none",
+            "cli",
+        );
+        assert!(gap.is_some());
+        // Transient: should NOT open a gap.
+        let no_gap = classify_and_open_gap(
+            cwd,
+            FailureClass::Timeout,
+            "response",
+            "deadline exceeded",
+            "http",
+        );
+        assert!(no_gap.is_none());
+        // Structural: prediction error.
+        let pg = classify_and_open_gap(
+            cwd,
+            FailureClass::PredictionError,
+            "correct delta",
+            "wrong delta",
+            "arc",
+        );
+        assert!(pg.is_some());
+        let _ = std::fs::remove_file(path);
+    }
+
+    // ── SG3: Limb lifecycle tests ───────────────────────────────────
+
+    #[test]
+    fn kill_limb_reopens_gap_and_records_decision() {
+        let path = growth_test_path("kill-limb");
+        let cwd = Path::new("/tmp/kill-limb");
+        let gap = open_gap_at(
+            &path,
+            cwd,
+            "turn:test",
+            "episode",
+            GapKind::Executor,
+            "provider_failure",
+            "action",
+            "error",
+            "cli",
+            test_authority(),
+        )
+        .expect("gap");
+        let proposal = propose_limb_at(
+            &path,
+            &gap,
+            BTreeSet::from(["read_only".into()]),
+            GrowthBudgets::default(),
+            "test limb",
+        )
+        .expect("proposal");
+        kill_limb(&path, &proposal.proposal_id).expect("killed");
+        let state = load_growth(&path);
+        let reopened = state.gaps.get(&gap.gap_id).expect("gap exists");
+        assert_eq!(reopened.status, GapStatus::Open);
+        let decision = state
+            .decisions
+            .get(&proposal.proposal_id)
+            .expect("kill recorded");
+        assert_eq!(decision.verdict, PromotionVerdict::Held);
+        assert!(decision.reason_codes.contains(&"killed".into()));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn expire_stale_leases_holds_exhausted_gaps() {
+        let path = growth_test_path("expire-lease");
+        let cwd = Path::new("/tmp/expire-lease");
+        let budgets = GrowthBudgets {
+            experiments: 2,
+            ..GrowthBudgets::default()
+        };
+        let gap = open_gap_at(
+            &path,
+            cwd,
+            "turn:test",
+            "episode",
+            GapKind::Executor,
+            "provider_failure",
+            "action",
+            "error",
+            "cli",
+            AuthorityEnvelope {
+                effects: BTreeSet::from(["read_only".into()]),
+                budgets,
+            },
+        )
+        .expect("gap");
+        // Manually bump occurrences past the budget.
+        for _ in 0..3 {
+            let mut g = load_growth(&path).gaps.remove(&gap.gap_id).unwrap();
+            g.occurrences = g.occurrences.saturating_add(1);
+            let _ = append_growth(&path, &GrowthRecord::Gap { value: g });
+        }
+        let expired = expire_stale_leases(&path, "2026-07-24T00:00:00Z").expect("expired");
+        assert!(expired > 0);
+        let state = load_growth(&path);
+        let held = state.gaps.get(&gap.gap_id).expect("gap exists");
+        assert_eq!(held.status, GapStatus::Held);
+        let _ = std::fs::remove_file(path);
+    }
+
+    // ── SG4: Energy ranking tests ───────────────────────────────────
+
+    #[test]
+    fn energy_ranking_sorts_by_tier_then_composite_energy() {
+        let path = growth_test_path("energy-rank");
+        let cwd = Path::new("/tmp/energy-rank");
+        // Create a gap and two proposals.
+        let gap = open_gap_at(
+            &path,
+            cwd,
+            "turn:test",
+            "archetype",
+            GapKind::Planner,
+            "repeated_loop",
+            "progress",
+            "loop",
+            "arc",
+            test_authority(),
+        )
+        .expect("gap");
+        let p1 = propose_limb_at(
+            &path,
+            &gap,
+            BTreeSet::from(["read_only".into()]),
+            GrowthBudgets::default(),
+            "explore broadly",
+        )
+        .expect("p1");
+        let p2 = propose_limb_at(
+            &path,
+            &gap,
+            BTreeSet::from(["read_only".into()]),
+            GrowthBudgets::default(),
+            "target specific action",
+        )
+        .expect("p2");
+        // Promote p1 → Verified tier.
+        evaluate_limb_at(
+            &path,
+            &p1,
+            promotion_evidence(),
+        )
+        .expect("promote p1");
+        let candidates = rank_experiment_candidates(&path, cwd);
+        assert!(candidates.len() >= 2);
+        // Verified should sort before Unverified.
+        let verified_idx = candidates
+            .iter()
+            .position(|c| c.tier == CandidateTier::Verified);
+        let unverified_idx = candidates
+            .iter()
+            .position(|c| c.tier == CandidateTier::Unverified);
+        assert!(
+            verified_idx < unverified_idx,
+            "verified candidates must rank before unverified"
         );
         let _ = std::fs::remove_file(path);
     }

@@ -15888,6 +15888,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "xai-grok-config",
 ]
 
 [[package]]

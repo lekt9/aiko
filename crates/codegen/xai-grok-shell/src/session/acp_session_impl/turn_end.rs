@@ -271,6 +271,14 @@ impl SessionActor {
             };
             let _ =
                 crate::contract_native::settle_contract_prompt(&prompt_id, succeeded, detail).await;
+            let settled =
+                crate::contract_native::settle_turn_continuation(&prompt_id, succeeded);
+            if !settled {
+                tracing::warn!(
+                    prompt_id,
+                    "Contract continuation was absent or failed terminal validation"
+                );
+            }
         }
 
         // Durable twin of the fire-and-forget `prompt_complete` (emitted from

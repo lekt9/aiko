@@ -653,62 +653,62 @@ gap without naming `sp80`.
 
 ### Phase SG0 — Schemas and lifecycle
 
-- [ ] Add `CapabilityGap`, `LimbProposal`, relational state, experiment result,
+- [x] Add `CapabilityGap`, `LimbProposal`, relational state, experiment result,
       and promotion decision schemas.
-- [ ] Add validation and privacy fixtures.
-- [ ] Add parent-authority subset validation.
-- [ ] Add gap deduplication and finite lease rules.
+- [x] Add validation and privacy fixtures.
+- [x] Add parent-authority subset validation.
+- [x] Add gap deduplication and finite lease rules.
 
 Gate: invalid authority expansion, missing sensor, missing rollback, duplicate
 identity, and coordinate leakage fixtures all fail closed.
 
 ### Phase SG1 — Gap detector
 
-- [ ] Emit typed gaps from no-candidate, repeated-loop, unexplained-transition,
+- [x] Emit typed gaps from no-candidate, repeated-loop, unexplained-transition,
       prediction-error, and missing-sensor events.
-- [ ] Deduplicate by semantic signature and scope.
-- [ ] Expose gaps through CLI/native API without triggering generation.
+- [x] Deduplicate by semantic signature and scope.
+- [x] Expose gaps through CLI/native API without triggering generation.
 
 Gate: synthetic and real ARC traces produce the expected gap class, while
 ordinary recoverable failures do not create unbounded gaps.
 
 ### Phase SG2 — Relational receptor and transition learner
 
-- [ ] Track episode objects across frames.
-- [ ] Encode transferable relations without durable coordinates.
-- [ ] Learn action → relational delta from dense transition evidence.
-- [ ] Keep prediction agreement separate from progress.
+- [x] Track episode objects across frames.
+- [x] Encode transferable relations without durable coordinates.
+- [x] Learn action → relational delta from dense transition evidence.
+- [x] Keep prediction agreement separate from progress.
 
 Gate: held-out inverse-dynamics accuracy beats the current descriptor; restart
 witness proves learned state persists without coordinate leakage.
 
 ### Phase SG3 — Temporary limb compiler
 
-- [ ] Reuse existing capability cells before proposing code.
-- [ ] Compile proposals into bounded Contract workflows.
-- [ ] Generate replaceable executor code only for unresolved cells.
-- [ ] Attach lease, health, cancellation, cleanup, and rollback contracts.
+- [x] Reuse existing capability cells before proposing code.
+- [x] Compile proposals into bounded Contract workflows.
+- [x] Generate replaceable executor code only for unresolved cells.
+- [x] Attach lease, health, cancellation, cleanup, and rollback contracts.
 
 Gate: kill and restart a temporary limb; ledger state reconstructs it or cleans
 it up without duplicate effects.
 
 ### Phase SG4 — Bounded experiment planner
 
-- [ ] Rank verified, unverified, failed, and unsafe candidates distinctly.
-- [ ] Add information-gain and loop/no-op energy terms.
-- [ ] Execute one authorized experiment at a time.
-- [ ] Settle dense transition evidence and sparse progress evidence separately.
+- [x] Rank verified, unverified, failed, and unsafe candidates distinctly.
+- [x] Add information-gain and loop/no-op energy terms.
+- [x] Execute one authorized experiment at a time.
+- [x] Settle dense transition evidence and sparse progress evidence separately.
 
 Gate: mutation tests catch removal of cold experiments, loop inhibition,
 independent sensing, or effect authorization.
 
 ### Phase SG5 — Promotion, lineage, and rollback
 
-- [ ] Run predictive, causal, utility, safety, isolation, reproduction, and
+- [x] Run predictive, causal, utility, safety, isolation, reproduction, and
       mutation gates.
-- [ ] Sign proposal/evaluation/artifact lineage.
-- [ ] Promote versioned descriptors and workflows.
-- [ ] Inhibit failures by context; rollback promoted regressions automatically.
+- [x] Sign proposal/evaluation/artifact lineage.
+- [x] Promote versioned descriptors and workflows.
+- [x] Inhibit failures by context; rollback promoted regressions automatically.
 
 Gate: a deliberately overfit limb wins its training episodes but fails
 promotion on held-out episodes.
@@ -781,3 +781,990 @@ The first benchmark milestone is not “more Contract calls.” It is a fresh,
 two-seed ARC completion-first win attributable to the relational limb, with the
 counterfactual mutation turning the win red and every negative retained in the
 ledger.
+
+---
+
+# Contract-Native Receptor Mesh
+
+## Outcome
+
+Make inbound and outbound interfaces behave like durable Contract neurons:
+declare a provider-neutral receptor or effector, bind it to the cheapest viable
+transport, observe its health and use, and upgrade or degrade that transport
+without changing the semantic Contract graph.
+
+The immediate witness is a messaging receptor that can begin with polling or an
+ephemeral development tunnel, graduate to a durable webhook after sustained
+use, survive Aiko process restarts, deduplicate replayed events, detect changed
+remote state, and route authorized replies through typed effectors. Telegram and
+Cloudflare are fixtures, not branches in Contract.
+
+```text
+outside event
+  → transport adapter
+  → receptor envelope
+  → durable occurrence + dedup cursor
+  → normalize / authorize / route
+  → typed effector
+  → provider acknowledgement sensor
+  → consequence sensor
+  → settle + update transport evidence
+```
+
+The ledger is durable truth. Tunnels, pollers, webhooks, workers, and daemons
+are leased apparatus that can be reconstructed from ledger declarations.
+
+## Polymorphic Cell Law
+
+Everything that plays the same role must implement the same stable shape.
+Variation belongs behind the interface, never in the Contract graph:
+
+```text
+Receptor<I, E>
+  observe(input: I) → EventEnvelope<E>
+  checkpoint() → Cursor
+  health() → HealthEvidence
+  acknowledge(receipt) → AcknowledgementEvidence
+
+Effector<C, O>
+  prepare(command: C) → PreparedEffect
+  execute(prepared) → ExecutionReceipt<O>
+  sense(receipt) → ConsequenceEvidence
+
+Transport
+  bind(receptor, lease) → TransportBinding
+  renew(binding) → TransportBinding
+  health(binding) → HealthEvidence
+  retire(binding) → RetirementEvidence
+```
+
+The common shape is semantic, not a lowest-common-denominator payload. Typed
+extension fields preserve richer affordances without making the core branch on
+providers:
+
+```json
+{
+  "kind": "message.received",
+  "identity": {},
+  "content": {},
+  "context": {},
+  "capabilities": ["reply.text", "presence.typing", "reply.voice"],
+  "extensions": {
+    "adapter-owned-schema-id": {}
+  }
+}
+```
+
+Contract reasons over the stable fields and declared capabilities. The selected
+adapter validates and consumes its own extension. Unknown extensions remain
+opaque; missing required capabilities HOLD. No adapter may reinterpret a core
+field or weaken its authority, privacy, idempotency, or evidence semantics.
+
+### Substitutability rules
+
+- A poller, ephemeral tunnel, durable tunnel, hosted worker, and native webhook
+  all implement `Transport`.
+- Telegram, email, iOS, filesystem, and remote APIs all emit `EventEnvelope`.
+- Text, voice, reaction, file, process, and publication actions all implement
+  `Effector`, with different declared effects and authority.
+- Cached and live observations share the same result shape but carry distinct
+  freshness and provenance evidence.
+- Provider errors normalize to one typed error algebra:
+  `retryable | terminal | unauthorized | rate_limited | invalid |
+  unavailable | contradictory`.
+- Capability discovery selects implementations; it never changes the parent
+  workflow topology.
+
+Polymorphism must not erase meaning. A voice response cannot silently degrade
+to text, an execution receipt cannot masquerade as goal progress, and an
+ephemeral tunnel cannot claim durable availability.
+
+## Canonical Hard-Type Algebra
+
+Contract must hard-type facts whose ambiguity can widen authority, duplicate an
+effect, corrupt lifecycle state, or fabricate success. These are versioned
+closed sums or opaque validated values at the Contract boundary; adapters may
+map provider values into them but may not invent alternatives.
+
+### Authority and effects
+
+```text
+Authority =
+  Observe
+  | LocalWrite
+  | ExternalMessage
+  | Publish
+  | Purchase
+  | Delete
+  | CredentialAccess
+  | ProcessSpawn
+  | ProcessPersist
+  | PermissionChange
+
+Effect =
+  Read
+  | Transform
+  | LocalMutation
+  | ExternalMutation
+  | Message
+  | Publication
+  | Financial
+  | Destructive
+
+Reversibility =
+  Pure
+  | Idempotent
+  | Compensatable(CompensationCapability)
+  | Irreversible
+```
+
+An authorization grant is an opaque, scoped value containing authority class,
+subject, resource/effect scope, issuer, lineage, issuance time, expiry, and
+revocation generation. Child authority must mechanically be a subset of its
+parent. `Compensatable` is invalid without a typed compensation capability;
+compensation is a new governed effect, not history deletion.
+
+### Outcome and evidence
+
+```text
+Outcome =
+  Observed
+  | Authorized
+  | Prepared
+  | Executed
+  | Acknowledged
+  | Consumed
+  | Progressed
+  | Completed
+
+Evidence =
+  ProviderReceipt
+  | IndependentSensor
+  | UserConfirmation
+  | PredictionAgreement
+  | StateTransition
+  | ProgressSignal
+  | CompletionSignal
+  | Contradiction
+```
+
+Each outcome declares the evidence variants allowed to support it. Promotion is
+monotonic only when new evidence satisfies the next state; contradiction may
+invalidate a prior projection without rewriting its historical occurrence.
+
+In particular:
+
+- an HTTP success may support `Executed` or `Acknowledged`;
+- delivery acknowledgement does not support `Consumed`;
+- state change does not automatically support `Progressed`;
+- prediction agreement trains a predictor but does not support task success;
+- only declared independent completion evidence supports `Completed`.
+
+### Lifecycle and runtime
+
+```text
+Lifecycle =
+  Declared
+  | Held(HoldReason)
+  | Leased(Lease)
+  | Running(RuntimeIdentity)
+  | Settling
+  | Grounded
+  | Released(ReleaseReason)
+  | Failed(TypedError)
+  | Superseded(OccurrenceIdentity)
+
+Durability =
+  Ephemeral
+  | Session
+  | Leased
+  | Restartable
+  | HostedDurable
+
+Health =
+  Starting
+  | Healthy
+  | Degraded
+  | Unreachable
+  | Expired
+  | Retired
+```
+
+Lifecycle transitions are a validated transition table, not arbitrary status
+writes. Durability is a claim requiring matching runtime evidence. Health
+contains observation time, freshness, sensor identity, and bounded diagnostic
+codes. A ledger declaration with no live reconciler cannot become
+`Restartable` or `HostedDurable`.
+
+`Lease` is an opaque value containing owner, generation, issued time, expiry,
+renewal policy, cancellation handle, and bounded child count. Only the current
+generation may execute or settle; stale workers may append observations but
+cannot commit effects or terminal outcomes.
+
+### Delivery, identity, and idempotency
+
+```text
+DeliverySemantics =
+  AtMostOnce
+  | AtLeastOnce
+  | EffectivelyOnce
+
+Identity =
+  ActorId
+  | ConversationId
+  | ResourceId
+  | OccurrenceId
+  | RuntimeId
+  | ProviderHandle
+
+IdempotencyKey = opaque(
+  receptor identity,
+  source instance,
+  event identity,
+  semantic effect identity,
+  schema generation
+)
+```
+
+Identity variants are not mutually substitutable even if providers represent
+all of them as strings or integers. `EffectivelyOnce` means at-least-once input
+plus durable deduplication and idempotent/compensatable effects; it is never a
+claim of exactly-once transport.
+
+### Freshness, cache, cursors, and change
+
+```text
+Freshness =
+  Live(observed_at)
+  | FreshUntil(deadline)
+  | Stale(last_observed_at)
+  | Expired(last_observed_at)
+  | Unknown
+
+Cursor =
+  SequenceCursor
+  | VersionCursor
+  | ConditionalHttpCursor
+  | FingerprintCursor
+
+Change =
+  Created
+  | Updated
+  | Deleted
+  | Moved
+  | Reordered
+  | Unchanged
+  | Unknown
+
+Progress =
+  NoChange
+  | StateChange
+  | NovelState
+  | LocalProgress
+  | GoalProgress
+  | TerminalSuccess
+```
+
+Every observation includes freshness and provenance. Cached and live values may
+share a payload schema but never the same evidence state. Each cursor
+implementation supplies typed `compare`, `advance`, and `resynchronize`
+operations; cursors advance only after durable occurrence creation. `Change`
+and `Progress` remain separate so a changed webhook or visual frame cannot
+fabricate useful progress.
+
+### Payload privacy and provenance
+
+```text
+Payload<T> =
+  RawSecret<T>
+  | Sensitive<T>
+  | Redacted<T>
+  | Public<T>
+
+Provenance =
+  LiveProvider
+  | DurableLedger
+  | LocalCache
+  | ModelPrediction
+  | UserAssertion
+  | Derived(EvidenceReferences)
+```
+
+Only `Redacted` and `Public` projections may enter prompts, ordinary logs,
+diagnostics, shared descriptors, or durable content fingerprints.
+`RawSecret` may be consumed only by an explicitly authorized adapter and cannot
+implement serialization into Contract rows. Every derived value retains
+bounded evidence references and transformation identity.
+
+### Errors, retries, and HOLD
+
+```text
+TypedError =
+  Invalid
+  | Unauthorized
+  | RateLimited(RetryAfter)
+  | Retryable
+  | Unavailable
+  | Contradictory
+  | Terminal
+
+HoldReason =
+  MissingAuthority
+  | UnsupportedCapability
+  | IncompatibleVersion
+  | MissingEvidence
+  | UnsafeFallback
+  | BudgetExhausted
+  | LeaseUnavailable
+```
+
+`RetryPolicy` is a bounded value containing maximum attempts, deadline,
+backoff, jitter, total cost, and allowed retryable error variants. No error text
+parsing may decide retries after normalization. HOLD is non-terminal and
+inspectable; it cannot silently fall through to a weaker effect.
+
+### Capability and binding
+
+```text
+Capability<I, O, X> = {
+  identity,
+  schema_version,
+  input: I,
+  output: O,
+  effect: X,
+  authority,
+  reversibility,
+  evidence_requirements,
+  supported_variants,
+  availability
+}
+
+Binding<C, R> = {
+  semantic_capability: C,
+  runtime_implementation: R,
+  compatibility_version,
+  provenance,
+  lease,
+  health
+}
+```
+
+Capabilities describe meaning; bindings select implementations. Discovery may
+replace a binding without changing the semantic workflow. Availability and
+health are observations, not permanent descriptor facts.
+
+### Universal cell
+
+The shared compilation target is:
+
+```text
+Cell<Input, State, Command, Receipt, Evidence, Output, Error>
+
+observe(Input)
+  → normalize(State)
+  → decide(Command)
+  → authorize(Authority)
+  → prepare(PreparedEffect)
+  → execute(Receipt)
+  → sense(Evidence)
+  → evaluate(Outcome)
+  → settle(Output | Error)
+```
+
+Receptors, effectors, predictors, tunnels, agents, workflows, monitors, and
+generated limbs specialize this cell. Cells may omit an inapplicable effect
+stage only by selecting a typed pure/read-only specialization; they may not
+bypass the lifecycle.
+
+### Contract continuation envelope
+
+Contract is the consistent semantic primitive passed between every meaningful
+cell. Any reasoning worker, model call, subagent, scheduled job, webhook
+handler, CLI/TUI turn, MCP invocation, generated limb, or hosted worker that
+continues consequential work must receive one typed `ContractContinuation`.
+
+```text
+ContractContinuation<Input> = {
+  schema_version,
+  triggering_occurrence,
+  parent_and_dependency_lineage,
+  normalized_input: Input,
+  identity_scope,
+  resource_or_conversation_cursor,
+  authority_envelope,
+  open_obligations,
+  relevant_settled_evidence,
+  relevant_contradictions,
+  capability_bindings,
+  freshness_and_provenance,
+  privacy_projection,
+  budgets_and_deadlines,
+  continuation_token
+}
+```
+
+The continuation is the input membrane around native computation. It does not
+force implementation code, tokens, parser internals, or pure arithmetic into
+ledger rows. It ensures that the goal, authority, dependencies, memory,
+evidence, and expected settlement of that computation retain one consistent
+shape.
+
+The universal invocation law is:
+
+```text
+external or internal event
+  → append triggering occurrence
+  → resolve dependencies and cursors
+  → rank relevant Contract evidence
+  → project bounded ContractContinuation
+  → invoke native worker / model / adapter
+  → validate typed worker result
+  → append receipts and independent evidence
+  → settle or release occurrence
+  → advance cursor after durable settlement
+```
+
+Invocation and context projection form one readiness barrier. A worker cannot
+race ahead while its Contract graph is being created asynchronously. Missing,
+invalid, stale, over-authorized, or incompatible continuations HOLD
+consequential work. Pure local computation may use a typed read-only
+continuation or remain inside an already-authorized cell.
+
+### Context projection, not ledger dumping
+
+Passing Contract through the system does not mean copying the entire ledger
+into every prompt. Contract resolves a deterministic, bounded projection:
+
+1. The triggering occurrence and direct dependency outputs.
+2. Current authority, budgets, deadline, lease, and supported effects.
+3. Open obligations and pending effects in the same identity/resource scope.
+4. Recent scoped interaction occurrences needed for conversational continuity.
+5. Semantically ranked settled evidence and contradictions.
+6. Current cursor, freshness, provenance, and capability availability.
+7. The output schema and evidence required to settle this occurrence.
+
+Every included item carries an occurrence ID, type, provenance, freshness, and
+privacy class. Token/byte budgets are hard bounds. Retrieval scores are soft
+priors; they cannot grant authority or upgrade evidence. Secret, stale,
+unrelated, cross-identity, and superseded values are excluded mechanically.
+
+Conversation memory is therefore not a mutable model session. A user message,
+assistant response, tool decision, tool receipt, and observed consequence are
+typed occurrences associated with a `ConversationId` cursor. A new worker
+receives the bounded relevant projection and may be stateless without becoming
+amnesiac.
+
+### Universal worker result
+
+Every worker returns the same outer shape:
+
+```text
+ContractResult<Output> = {
+  continuation_token,
+  output: Output,
+  proposed_effects,
+  observations,
+  unresolved_obligations,
+  claimed_outcome,
+  evidence_references,
+  usage,
+  errors
+}
+```
+
+The worker may propose but cannot self-authorize effects. Contract validates the
+result against the continuation, executes approved effects through native
+effectors, and independently settles the claimed outcome. An unrecognized
+continuation token, stale lease generation, undeclared output, authority
+expansion, or unsupported effect is rejected or held.
+
+### Surface polymorphism
+
+All surfaces bind to the same continuation ABI:
+
+- CLI, TUI, desktop, iOS, and chat turns emit interaction occurrences;
+- Telegram, email, webhooks, filesystems, devices, and monitored APIs emit
+  receptor occurrences;
+- MCP tools, shell commands, HTTP calls, messages, publications, and process
+  spawns return typed effect receipts;
+- local models, hosted models, ThinkFeel, subagents, and generated workers
+  consume `ContractContinuation` and return `ContractResult`;
+- polling, tunnels, workers, and native webhooks change transport only; they do
+  not change semantic context or memory.
+
+Provider adapters may translate the continuation into their supported input
+format. For a messages-array API, the adapter renders bounded recent
+conversation occurrences plus one system/developer Contract context block. For
+a structured worker, it passes the envelope directly. Translation must preserve
+authority, provenance, ordering, role, reply/thread context, and evidence
+requirements.
+
+### Deliberately soft layer
+
+The following remain extensible data or model reasoning rather than closed
+Contract enums:
+
+- natural-language goals and user-facing response style;
+- provider-specific payload extensions;
+- energy weights, ranking strategies, and learned priors;
+- domain hypotheses and predicted latent state;
+- generated implementation strategies;
+- presentation and interface styling.
+
+The rule is: hard-type truth, identity, safety, lifecycle, privacy, effects, and
+substitution boundaries; leave interpretation and strategy adaptable.
+
+## Product Boundary
+
+### Contract owns
+
+- semantic receptor, effector, transport, lease, cursor, and observation types;
+- durable occurrence identity, lineage, authority, evidence, and settlement;
+- idempotency and compare-and-set rules for event cursors;
+- transport requirements and energy ranking from observed cost, latency,
+  reliability, demand, privacy, and freshness;
+- upgrade, downgrade, renewal, supersession, and HOLD decisions;
+- the distinction between receipt, execution acknowledgement, consequence, and
+  goal progress.
+
+### Aiko owns
+
+- discovering installed transport and interface capabilities;
+- compiling receptor specifications into Contract graphs and runtime
+  descriptors;
+- starting bounded local workers and connecting hosted adapters;
+- executing approved effects through the universal tool chokepoint;
+- rendering health, lag, authority, and degraded-state diagnostics;
+- reconciling desired ledger state with disposable runtime state after restart.
+
+### Transport adapters own
+
+- obtaining and renewing ephemeral or durable ingress endpoints;
+- translating provider callbacks or polling results into the common envelope;
+- validating provider signatures before content normalization;
+- reporting health, expiry, delivery attempts, latency, and provider errors;
+- deleting or disabling superseded endpoints when authority permits.
+
+They do not own conversation policy, agent reasoning, authorization, durable
+truth, or task completion.
+
+## Core Types
+
+### Receptor specification
+
+Extend the generated receptor pack rather than introducing a second workflow
+engine:
+
+```json
+{
+  "schema_version": 2,
+  "id": "messaging-inbound",
+  "events": [{"id": "message", "kind": "external_event"}],
+  "ingress": {
+    "modes": ["poll", "ephemeral_tunnel", "durable_tunnel", "provider_webhook"],
+    "delivery": "at_least_once",
+    "signature": "adapter_declared",
+    "max_body_bytes": 262144,
+    "privacy": "redacted"
+  },
+  "cursor": {
+    "identity_fields": ["source_instance", "event_id"],
+    "change_token_fields": ["version", "etag", "updated_at", "content_hash"],
+    "ttl_ms": 2592000000
+  },
+  "effects": []
+}
+```
+
+Descriptors contain no tokens, tunnel credentials, API keys, raw payloads, or
+account secrets. Secret references resolve only inside the adapter at runtime.
+
+### Event envelope
+
+```json
+{
+  "receptor_id": "messaging-inbound",
+  "source_instance": "secret-independent-stable-id",
+  "event_id": "provider-event-id",
+  "event_kind": "message",
+  "observed_at": "ISO-8601",
+  "provider_version": "optional-version",
+  "content_fingerprint": "keyed-redacted-digest",
+  "summary": "bounded redacted summary",
+  "reply_context": {},
+  "transport_receipt": {}
+}
+```
+
+`reply_context` contains only typed, bounded handles needed by a later effector.
+It must not smuggle credentials or arbitrary provider responses into Contract.
+
+### Change cursor
+
+Each monitored resource has one compare-and-set cursor:
+
+```json
+{
+  "receptor_id": "remote-resource",
+  "resource_key": "privacy-safe-stable-key",
+  "generation": 7,
+  "provider_token": "etag-or-version",
+  "content_fingerprint": "keyed-redacted-digest",
+  "last_observed_at": "ISO-8601",
+  "last_changed_at": "ISO-8601",
+  "lease_owner": "runtime-instance-id",
+  "lease_until": "ISO-8601"
+}
+```
+
+The cache is evidence, not authority. A cache hit can suppress duplicate
+normalization; it cannot authorize an effect or prove that the external world
+still has the cached state.
+
+### Transport binding
+
+```json
+{
+  "receptor_id": "messaging-inbound",
+  "mode": "ephemeral_tunnel",
+  "adapter_capability": "transport.tunnel.ephemeral",
+  "endpoint_ref": "secret-store-reference",
+  "lease_until": "ISO-8601",
+  "health_check": "transport-health-v1",
+  "restart_policy": "on-failure",
+  "supersedes": null
+}
+```
+
+Endpoint URLs may be sensitive and stay in the runtime/secret store. Contract
+retains a redacted binding identity and evidence about its behavior.
+
+## Transport State Machine
+
+```text
+declared
+  → polling
+  → ephemeral tunnel
+  → durable tunnel
+  → provider-native webhook
+
+any live state
+  → degraded
+  → renew / replace / fall back
+  → retired
+```
+
+Transitions are ranked, not hard-coded:
+
+- prefer polling for low-frequency, private, or development-only receptors;
+- prefer an ephemeral tunnel for interactive development and bounded tests;
+- promote to durable ingress when demand, latency, restart, or availability
+  evidence exceeds declared thresholds;
+- prefer a provider-native webhook when it has lower cost and stronger delivery
+  evidence than a third-party tunnel;
+- fall back to polling when tunnel health or authority disappears;
+- never silently expose a local endpoint, publish a durable URL, deploy a
+  worker, or mutate a provider webhook without matching authority.
+
+Promotion requires a minimum observation window, hysteresis, and cooldown so
+bursty traffic cannot oscillate the binding. Demotion preserves the semantic
+receptor and cursor, preventing missed or duplicated events during migration.
+
+## Change Detection and Caching
+
+Every receptor normalizes remote change through the same ordered strategy:
+
+1. Provider event/version identifier.
+2. Conditional request token such as `ETag` or `Last-Modified`.
+3. Typed semantic version or monotonic sequence.
+4. Keyed digest of a canonical, redacted projection.
+5. Bounded structural diff when no stable token exists.
+
+The runtime writes the event occurrence before advancing its cursor. This gives
+at-least-once delivery with idempotent processing:
+
+```text
+receive
+→ validate signature and bounds
+→ derive dedup key
+→ append occurrence if absent
+→ process and settle children
+→ compare-and-set cursor
+→ acknowledge source
+```
+
+Required behaviors:
+
+- replaying the same event creates no duplicate effect;
+- a changed payload with a reused provider identifier is retained as a
+  contradiction and held for adapter evaluation;
+- out-of-order versions are observed but cannot move the cursor backwards;
+- concurrent poller and webhook delivery converge on one occurrence;
+- cursor expiry causes a bounded resynchronization, not an unbounded replay;
+- cache invalidation propagates to dependent observations in the same resolver
+  tick;
+- raw bodies and secrets never enter durable fingerprints or diagnostics.
+
+## Neuron and Hook Composition
+
+One logical neuron is a closed receptor-to-effector loop:
+
+```text
+receptor
+  → normalize
+  → identity / pairing
+  → rule and goal matching
+  → reason or transform
+  → authorize
+  → prepare effect variant
+  → execute effector
+  → acknowledge
+  → independently sense consequence
+  → settle
+```
+
+Hooks remain composable middleware around typed cells. They must not become a
+parallel source of truth. Every hook declares:
+
+- input/output schemas;
+- read/write effects;
+- authority and privacy requirements;
+- idempotency key derivation;
+- timeout and cancellation;
+- evidence needed for satisfaction;
+- whether failure blocks, holds, or safely passes through.
+
+Unsupported variants HOLD rather than collapsing to text. Presence, typing,
+voice, replies, edits, reactions, files, callbacks, and future affordances are
+capability variants discovered from an adapter catalog.
+
+## Implementation Phases
+
+### Phase RM0 — Correct the persistence model
+
+- [ ] Document and test that ledger declarations persist while scheduler
+      processes, tunnels, and workers require leased runtime ownership.
+- [ ] Reject `durable: true` when no reconciler can reconstruct the runtime.
+- [ ] Add desired-state versus observed-runtime-state diagnostics.
+- [ ] Add a restart witness: kill Aiko, restart the reconciler, recover the
+      receptor without duplicating an effect.
+
+Gate: a ledger row alone can never be reported as a live watcher.
+
+### Phase RM1 — Receptor schema v2
+
+- [ ] Extend `receptor.schema.json` with ingress modes, delivery semantics,
+      signature policy, bounds, cursor strategy, and privacy projection.
+- [ ] Define versioned `Receptor`, `EventEnvelope`, `Effector`, `Transport`,
+      `Cursor`, `HealthEvidence`, and typed error schemas.
+- [ ] Add capability-negotiated extension fields without provider-owned core
+      fields.
+- [ ] Preserve v1 compilation compatibility.
+- [ ] Generate typed event, cursor, transport, and effector capabilities.
+- [ ] Add fixtures for a messaging surface and a non-messaging resource API.
+
+Gate: provider names and credentials are unnecessary for Contract compilation,
+and every fixture passes the same shape conformance suite.
+
+### Phase RM1b — Hard-type kernel
+
+- [ ] Implement closed/versioned sums for authority, effects, reversibility,
+      outcomes, evidence, lifecycle, durability, health, delivery, freshness,
+      change, progress, typed errors, HOLD reasons, and provenance.
+- [ ] Implement opaque validated types for identities, authorization grants,
+      idempotency keys, leases, retry policies, compensation capabilities,
+      cursors, capabilities, and runtime bindings.
+- [ ] Encode the legal lifecycle transition table and outcome-to-evidence
+      compatibility matrix in Contract.
+- [ ] Enforce parent-authority subset, current lease generation, payload
+      privacy, bounded retry, and compensation requirements at construction.
+- [ ] Generate Rust, TypeScript, JSON Schema, and native ABI representations
+      from one canonical definition or prove them against shared golden vectors.
+- [ ] Add explicit version negotiation, migration, and incompatible-version
+      HOLD behavior.
+
+Gate: invalid states cannot be constructed through any public boundary, all
+language bindings accept and reject the same golden vectors, and replacing a
+typed decision with string parsing turns a mutation witness red.
+
+### Phase RM1c — Continuation ABI and resolver
+
+- [ ] Define versioned schemas for `ContractContinuation<Input>` and
+      `ContractResult<Output>`.
+- [ ] Implement one native resolver for trigger, dependency, lineage,
+      conversation/resource cursor, authority, obligation, evidence,
+      contradiction, capability, freshness, privacy, budget, and settlement
+      projections.
+- [ ] Make projection deterministic under a fixed ledger snapshot and context
+      budget.
+- [ ] Bind each continuation to occurrence, lease generation, identity scope,
+      schema version, and single-use or explicitly replayable token semantics.
+- [ ] Add provider-neutral renderers for structured workers and messages-array
+      model APIs.
+- [ ] Validate worker results before any proposed effect can enter execution.
+
+Gate: identical scoped ledger state produces identical projections; unrelated,
+secret, stale, cross-identity, and over-budget evidence cannot enter the
+continuation; a forged or stale result cannot settle or execute.
+
+### Phase RM2 — Durable occurrence and cursor store
+
+- [ ] Add atomic deduplication by receptor/source/event identity.
+- [ ] Add compare-and-set generation cursors and leased cursor ownership.
+- [ ] Add conditional-fetch metadata and canonical redacted fingerprints.
+- [ ] Add retention, compaction, resync, and contradiction policies.
+
+Gate: replay, race, out-of-order, changed-ID, expiry, and restart tests all
+converge without event loss or duplicate effects.
+
+### Phase RM3 — Generic transport registry
+
+- [ ] Normalize poller, local listener, ephemeral tunnel, durable tunnel,
+      hosted worker, and provider-native webhook as capabilities.
+- [ ] Discover Cloudflare Tunnel/Worker adapters when installed, without naming
+      Cloudflare in Contract core.
+- [ ] Require lease, owner, health sensor, cancellation, restart policy, and
+      bounded children for every live binding.
+- [ ] Store endpoint and credentials only through secret references.
+
+Gate: replacing the Cloudflare fixture with a second tunnel provider requires
+only a new adapter descriptor and executor.
+
+### Phase RM3b — Polymorphic substitution gate
+
+- [ ] Build one provider-blind contract test kit for every interface role.
+- [ ] Run identical lifecycle tests against at least two implementations per
+      role.
+- [ ] Mutation-test providers that omit fields, lie about durability, weaken
+      authority, advance cursors early, or collapse unsupported variants.
+- [ ] Require version negotiation and explicit incompatibility HOLD for future
+      schema revisions.
+
+Gate: any conforming implementation can replace another of the same role
+without recompiling or branching the semantic Contract graph.
+
+### Phase RM4 — Adaptive binding controller
+
+- [ ] Rank bindings using event frequency, required latency, uptime, lease
+      horizon, cost, privacy, setup authority, failure rate, and restart need.
+- [ ] Add promotion thresholds, hysteresis, cooldown, and maximum spend.
+- [ ] Implement zero-loss handoff: overlap receipts, converge by dedup key,
+      switch acknowledgement ownership, then retire the old binding.
+- [ ] Fall back safely when a durable binding loses health.
+
+Gate: a synthetic load trace promotes polling → ephemeral → durable, then
+degrades back without duplicate replies or missed occurrences.
+
+### Phase RM5 — Universal receptor runtime
+
+- [ ] Reconcile desired ledger bindings into bounded local or hosted workers.
+- [ ] Compile every role through the generic
+      `Cell<Input, State, Command, Receipt, Evidence, Output, Error>` lifecycle.
+- [ ] Route every inbound event through the native Contract occurrence graph.
+- [ ] Persist the triggering occurrence and resolve its
+      `ContractContinuation` before starting any reasoning worker.
+- [ ] Replace optional prompt-only context hints with the mandatory
+      continuation readiness barrier for consequential work.
+- [ ] Persist conversation turns, tool decisions, receipts, consequences, and
+      open commitments as typed scoped occurrences.
+- [ ] Ensure stateless workers recover bounded continuity from Contract rather
+      than mutable in-process sessions.
+- [ ] Route every outbound variant through the typed execution envelope.
+- [ ] Separate provider receipt, effect acknowledgement, human consumption,
+      and goal progress.
+- [ ] Prevent cached, predicted, or provider-acknowledged evidence from being
+      promoted beyond its compatible outcome state.
+- [ ] Expose lag, last event, cursor generation, binding health, and HOLD reason.
+
+Gate: process death, host restart, network partition, expired lease, and revoked
+authority are independently witnessed.
+
+### Phase RM6 — Telegram and remote-API witnesses
+
+- [ ] Telegram fixture: accept webhook and polling delivery concurrently,
+      deduplicate updates, preserve reply context, and exercise text, typing,
+      reply, and voice variants.
+- [ ] Telegram fixture: resolve the conversation continuation before calling
+      either native Aiko or a messages-array persona/model provider.
+- [ ] Prove a fresh worker recalls bounded prior turns, relevant settled
+      contracts, open commitments, and current authority without a mutable
+      process session.
+- [ ] Tunnel fixture: run ephemeral ingress in development and durable ingress
+      in a hosted environment.
+- [ ] API-monitor fixture: use conditional requests and content fingerprints to
+      emit an event only when a selected resource projection changes.
+- [ ] CLI/TUI fixture: consume the same continuation ABI as Telegram and settle
+      equivalent semantic work into the same lineage.
+- [ ] Prove neither fixture adds a provider branch to Contract core.
+
+Gate: both unlike interfaces compile from receptor specs and pass the same
+conformance suite.
+
+### Phase RM7 — Security and mutation gates
+
+- [ ] Verify webhook signatures and reject oversized, stale, malformed, and
+      replayed payloads.
+- [ ] Redact credentials, endpoint secrets, user content, and raw API bodies
+      from ledger, logs, prompts, and fingerprints.
+- [ ] Fail closed for message sends, publication, tunnel deployment, webhook
+      mutation, credential access, process persistence, and permission changes.
+- [ ] Rotate any credential exposed in conversation or command history before
+      production use.
+- [ ] Mutation-test dedup, authority, signature, lease, cursor, and independent
+      consequence sensors.
+
+Gate: removing any one boundary turns its corresponding witness red.
+
+## Required End-to-End Scenarios
+
+1. A new receptor starts in polling mode and truthfully reports its live state.
+2. An authorized development session acquires an ephemeral public endpoint.
+3. Sustained demand promotes the same receptor to durable ingress.
+4. Promotion overlaps transports without duplicate message effects.
+5. A dead tunnel falls back to polling while retaining cursor continuity.
+6. A restart reconstructs the runtime from ledger declarations and leases.
+7. The same Telegram update arriving by polling and webhook becomes one
+   occurrence.
+8. A changed monitored API resource emits one semantic change event.
+9. An unchanged resource returns a cache observation without firing children.
+10. A reused event ID with changed content records a contradiction.
+11. A reply acknowledgement does not falsely prove that the user consumed it.
+12. A second, unlike provider uses the same receptor and transport substrate.
+13. A fresh Telegram worker receives prior conversation and relevant Contract
+    evidence before generating its response.
+14. A CLI worker and Telegram worker receive equivalent continuations for the
+    same semantic occurrence.
+15. Cross-user conversation evidence cannot enter another identity scope.
+16. A worker launched before continuation readiness is mechanically blocked.
+17. A forged, replayed, or stale `ContractResult` cannot execute an effect or
+    settle its parent.
+
+## Verification Commands
+
+Planned bounded witnesses:
+
+```sh
+python3 .agents/skills/contract-interface/scripts/conform.py <generated-pack>
+bash scripts/witness-contract-receptor-restart.sh
+bash scripts/witness-contract-transport-handoff.sh
+bash scripts/witness-contract-event-dedup.sh
+bash scripts/witness-contract-change-cursor.sh
+bash scripts/witness-contract-interface-matrix.sh
+```
+
+The first four scripts are deliverables of this track, not claims that they
+already exist.
+
+## Definition of Done
+
+This track is complete when an interface can be declared once, receive events
+through polling or any registered tunnel/webhook transport, adapt its binding
+from ephemeral to durable using grounded evidence, survive process restart,
+detect semantic changes with bounded durable cursors, and invoke typed
+effectors exactly once under authority. Every meaningful worker must receive a
+valid bounded `ContractContinuation` before starting and return a validated
+`ContractResult`; continuity must survive stateless workers and move unchanged
+across interface and model providers. Contract must remain provider-neutral,
+and disabling continuation readiness, identity isolation, result binding,
+deduplication, lease recovery, authority, signature validation, or independent
+sensing must fail a runnable witness.
