@@ -1656,6 +1656,80 @@ impl ReceptorCell {
     }
 }
 
+// ── RM7: security and mutation gates ─────────────────────────────────
+//
+// Fail closed at every consequential boundary: webhook ingress must verify
+// signature, bounds, freshness, and replay before an event is even
+// appended; and every consequential effect without contract authority is
+// Held. Removing any one boundary turns its corresponding witness red.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebhookError {
+    /// No signature attached.
+    MissingSignature,
+    /// Signature present but failed verification.
+    InvalidSignature,
+    /// Body exceeded the declared bound.
+    Oversized,
+    /// Observed timestamp is outside the freshness window (stale).
+    Stale,
+    /// Event id was already accepted within the replay window.
+    Replayed,
+    /// Required identity fields missing.
+    Malformed,
+}
+
+/// A bounded webhook ingress receipt awaiting validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebhookReceipt {
+    pub receptor_id: String,
+    pub event_id: String,
+    pub signature_present: bool,
+    pub signature_valid: bool,
+    pub body_bytes: u64,
+    pub observed_at_unix_ms: u64,
+}
+
+impl WebhookReceipt {
+    /// Validate this receipt against the security gates. `received_at` is
+    /// the server's clock; `max_body_bytes` and `max_staleness_ms` are the
+    /// declared bounds; `seen` is the replay set (event ids already
+    /// accepted in this window). On success the event_id is inserted into
+    /// `seen` so a replay is caught on the next call.
+    pub fn validate(
+        &self,
+        received_at_unix_ms: u64,
+        max_body_bytes: u64,
+        max_staleness_ms: u64,
+        seen: &mut std::collections::BTreeSet<String>,
+    ) -> Result<(), WebhookError> {
+        if self.receptor_id.trim().is_empty() || self.event_id.trim().is_empty() {
+            return Err(WebhookError::Malformed);
+        }
+        if !self.signature_present {
+            return Err(WebhookError::MissingSignature);
+        }
+        if !self.signature_valid {
+            return Err(WebhookError::InvalidSignature);
+        }
+        if self.body_bytes > max_body_bytes {
+            return Err(WebhookError::Oversized);
+        }
+        // Staleness: the observed time must be within the window of receipt.
+        // A future-dated or too-old timestamp is stale (reject clock games).
+        if self.observed_at_unix_ms > received_at_unix_ms
+            || received_at_unix_ms.saturating_sub(self.observed_at_unix_ms) > max_staleness_ms
+        {
+            return Err(WebhookError::Stale);
+        }
+        if seen.contains(&self.event_id) {
+            return Err(WebhookError::Replayed);
+        }
+        seen.insert(self.event_id.clone());
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2689,5 +2763,148 @@ mod tests {
         cell.cursors.install(cursor_for("msg-in", "tg-1", "r-1", 7, 60_000));
         let e = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
         assert_eq!(cell.ingest(&e, "r-1", 7, 1_000), Err(CellError::EffectHeld));
+    }
+
+    // ── RM7: security and mutation gates ─────────────────────────────
+
+    fn receipt(event_id: &str, body: u64, observed: u64) -> WebhookReceipt {
+        WebhookReceipt {
+            receptor_id: "msg-in".into(),
+            event_id: event_id.into(),
+            signature_present: true,
+            signature_valid: true,
+            body_bytes: body,
+            observed_at_unix_ms: observed,
+        }
+    }
+
+    #[test]
+    fn rm7_webhook_valid_receipt_is_accepted_and_recorded() {
+        let mut seen = std::collections::BTreeSet::new();
+        let r = receipt("evt-1", 512, 10_000);
+        assert!(r.validate(10_500, 262_144, 60_000, &mut seen).is_ok());
+        assert!(seen.contains("evt-1"));
+    }
+
+    #[test]
+    fn rm7_webhook_rejects_missing_and_invalid_signature() {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut r = receipt("evt-1", 512, 10_000);
+        r.signature_present = false;
+        assert_eq!(r.validate(10_500, 262_144, 60_000, &mut seen), Err(WebhookError::MissingSignature));
+        r.signature_present = true;
+        r.signature_valid = false;
+        assert_eq!(r.validate(10_500, 262_144, 60_000, &mut seen), Err(WebhookError::InvalidSignature));
+    }
+
+    #[test]
+    fn rm7_webhook_rejects_oversized_body() {
+        let mut seen = std::collections::BTreeSet::new();
+        let r = receipt("evt-1", 300_000, 10_000);
+        assert_eq!(r.validate(10_500, 262_144, 60_000, &mut seen), Err(WebhookError::Oversized));
+    }
+
+    #[test]
+    fn rm7_webhook_rejects_stale_and_future_dated() {
+        let mut seen = std::collections::BTreeSet::new();
+        // Too old (outside the 60s window).
+        let old = receipt("evt-1", 512, 10_000);
+        assert_eq!(old.validate(80_000, 262_144, 60_000, &mut seen), Err(WebhookError::Stale));
+        // Future-dated (clock game).
+        let future = receipt("evt-2", 512, 100_000);
+        assert_eq!(future.validate(10_500, 262_144, 60_000, &mut seen), Err(WebhookError::Stale));
+    }
+
+    #[test]
+    fn rm7_webhook_rejects_replay_within_the_window() {
+        let mut seen = std::collections::BTreeSet::new();
+        let r = receipt("evt-1", 512, 10_000);
+        assert!(r.validate(10_500, 262_144, 60_000, &mut seen).is_ok());
+        // Same event id again -> replay.
+        assert_eq!(r.validate(10_600, 262_144, 60_000, &mut seen), Err(WebhookError::Replayed));
+    }
+
+    #[test]
+    fn rm7_webhook_rejects_malformed_identity() {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut r = receipt("evt-1", 512, 10_000);
+        r.event_id = "  ".into();
+        assert_eq!(r.validate(10_500, 262_144, 60_000, &mut seen), Err(WebhookError::Malformed));
+    }
+
+    #[test]
+    fn rm7_every_consequential_effect_is_held_without_contract_authority() {
+        // The fail-closed matrix: every consequential effect class without a
+        // contract authorization is Held and cannot execute. ProcessSpawn is
+        // even stricter — it cannot be CONSTRUCTED without a lifecycle policy,
+        // a stronger fail-closed; here we give it one and still assert Held.
+        let lifecycle = Some(LifecyclePolicy {
+            lease_ms: 60_000,
+            health_sensor: "health".into(),
+            cancellation_capability: "cancel".into(),
+            restart_owner: "owner".into(),
+            max_restarts: 3,
+            max_children: 4,
+        });
+        let consequential: Vec<(EffectClass, Option<LifecyclePolicy>)> = vec![
+            (EffectClass::LocalWrite, None),
+            (EffectClass::ExternalMessage, None),
+            (EffectClass::Purchase, None),
+            (EffectClass::Delete, None),
+            (EffectClass::Publish, None),
+            (EffectClass::CredentialAccess, None),
+            (EffectClass::PermissionChange, None),
+            (EffectClass::ProcessSpawn, lifecycle),
+        ];
+        for (effect, lc) in consequential {
+            let envelope = ExecutionEnvelope::new(
+                Receptor {
+                    family: InterfaceFamily::Messaging,
+                    capability: "action".into(),
+                    occurrence_id: "occ-1".into(),
+                },
+                effect,
+                None, // no contract authority
+                lc,
+            )
+            .unwrap();
+            assert!(
+                !envelope.may_execute(),
+                "{effect:?} must be Held without contract authority"
+            );
+        }
+        // Read-only is the one non-held class (degraded read path).
+        let ro = ExecutionEnvelope::new(
+            Receptor { family: InterfaceFamily::Cli, capability: "read".into(), occurrence_id: "o".into() },
+            EffectClass::ReadOnly,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(ro.may_execute(), "read-only may execute on the degraded path");
+    }
+
+    #[test]
+    fn rm7_private_payload_cannot_cross_the_contract_boundary() {
+        // A RawSecret event cannot even be validated, so it can never be
+        // appended to the durable occurrence store.
+        let mut store = OccurrenceStore::new(1);
+        let mut e = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
+        e.privacy = PrivacyClass::RawSecret;
+        assert!(store.append(&e).is_err(), "raw-secret payload cannot cross the boundary");
+        e.privacy = PrivacyClass::Sensitive;
+        assert!(store.append(&e).is_err(), "sensitive payload cannot cross the boundary");
+        e.privacy = PrivacyClass::Redacted;
+        assert!(store.append(&e).is_ok(), "redacted projection may cross");
+    }
+
+    #[test]
+    fn rm7_transport_endpoint_must_be_a_secret_reference() {
+        // A binding that smuggles a real endpoint URL is rejected — endpoints
+        // and credentials stay in the runtime/secret store only.
+        let mut reg = TransportRegistry::new();
+        let mut b = transport("msg-in", "poller-1", IngressMode::Poll, Durability::Leased, "r-1", 1, 60_000);
+        b.endpoint_ref = "https://public.example/webhook".into();
+        assert!(reg.register(b, 4, 0).is_err());
     }
 }
