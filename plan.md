@@ -748,6 +748,17 @@ Settled (witnessed, no fabricated green):
   A full online 25x2 run would not change that without a real solver/LLM budget, so
   it is held rather than blindly expanded (the amen reflect flagged a regression on
   blind expansion).
+- **Correction to the "0 wins" reading** — the LLM proposer wire
+  (`_ask_aiko` → `aiko --single`) was a silently-dead wire: `-p`/`--single` takes the
+  prompt as its value, but the argv led with `-p --model …`, so clap errored every
+  call and `_ask_aiko` always returned `""`. The LLM never proposed an ARC action in
+  any run; "0 wins" is the mechanical-organs-only score with the proposer dead, not
+  "the LLM tried and failed." Fixed (argv reordered) and witnessed live: with
+  `AIKO_MODEL=glm-5.2` `_ask_aiko` returns a clean `{"a": 1}` (rc=0). The default
+  model id (`qwen3.5:4b`) is backend-specific (Ollama); set `AIKO_MODEL` to a real id
+  for the clarityproject endpoint. Whether the live proposer actually clears more
+  levels / wins a game is an untested, paid (per-action LLM) cohort — held for
+  authorization.
 
 ### Phase SG7 — General interface transfer
 

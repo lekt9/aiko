@@ -276,7 +276,14 @@ def _ask_aiko(ft):
     # Choose the proposer wire: the Kaggle Linux ELF if present, else the LOCAL v6 GGUF via
     # llama-completion (the LLM rounding against itself on the dev mac / live online).
     if os.path.exists(AIKO_BIN):
-        argv = [AIKO_BIN, "-p", "--model", AIKO_MODEL, "--system-prompt", SYSTEM_PROMPT, ft]
+        # --single/-p takes the prompt as its VALUE. Leading with `-p --model ...` made clap
+        # error "a value is required for '--single <PROMPT>'" on every call, so _ask_aiko
+        # always returned "" and the proposer was a silently-dead wire (the organs ran alone).
+        # Put the prompt as the value of --single; model/system-prompt are plain options.
+        # NOTE: the default AIKO_MODEL ("qwen3.5:4b") is an Ollama-style tag. For the
+        # aiko.theclarityproject.net endpoint set AIKO_MODEL to a real id (e.g. glm-5.2,
+        # kimi-k3); "qwen3.5:4b" is "unknown model id" there and deadens the wire the same way.
+        argv = [AIKO_BIN, "--model", AIKO_MODEL, "--system-prompt", SYSTEM_PROMPT, "--single", ft]
     elif LLAMA_COMPLETION and os.path.exists(AIKO_GGUF):
         argv = [LLAMA_COMPLETION, "-m", AIKO_GGUF, "-sys", SYSTEM_PROMPT, "-p", ft,
                 "-n", "256", "--no-display-prompt", "--simple-io"]
