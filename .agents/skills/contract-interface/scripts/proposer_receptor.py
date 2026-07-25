@@ -149,6 +149,50 @@ class SubstrateABI:
         ))
         return ranked
 
+    def settle(self, request: dict) -> dict:
+        """The native fixed-cell primitive: authorize -> sense -> settle.
+
+        Prefers the Zig `contract_propose_settle` export (substrate-native,
+        tamper-resistant policy + parsing). Falls back to a Python mirror only
+        when libcontract is absent (fail-open). The envelope records which path
+        ran under `settled_by` so a witness can prove the Zig path was taken.
+        """
+        if self.lib is not None and hasattr(self.lib, "contract_propose_settle"):
+            self.lib.contract_propose_settle.argtypes = [ctypes.c_char_p]
+            self.lib.contract_propose_settle.restype = ctypes.c_void_p
+            ptr = self.lib.contract_propose_settle(
+                json.dumps(request, separators=(",", ":")).encode()
+            )
+            env = self._take(ptr)
+            if env is not None:
+                env["settled_by"] = "zig"
+                return env
+        # fail-open Python mirror (no libcontract): same policy, not tamper-resistant
+        env = self._py_settle(request)
+        env["settled_by"] = "python-fallback"
+        return env
+
+    @staticmethod
+    def _py_settle(req: dict) -> dict:
+        """Python mirror of the Zig settle, used only when libcontract is absent."""
+        base = {
+            "domain": req.get("domain", ""), "context": req.get("context", ""),
+            "model": req.get("model", ""), "capability": req.get("capability_id", SubstrateABI.CAPABILITY),
+            "provider": req.get("provider", SubstrateABI.PROVIDER),
+            "transport": req.get("transport", ""),
+        }
+        if not req.get("authority"):
+            return {**base, "settled": False, "held": True, "valid": False,
+                    "parsed": None, "raw": req.get("raw", ""),
+                    "reason": "authority required for paid LLM effect"}
+        raw = req.get("raw", "") or ""
+        if not raw:
+            return {**base, "settled": False, "held": False, "valid": False,
+                    "parsed": None, "raw": "", "reason": "awaiting transport"}
+        parsed, valid = ProposerReceptor._sense(raw, req.get("candidate_schema"))
+        return {**base, "settled": valid, "held": not valid, "valid": valid,
+                "parsed": parsed, "raw": raw}
+
 
 # --------------------------------------------------------------------------- #
 # Transports -- provider-neutral adapters (RM3). The receptor never names a
@@ -246,45 +290,49 @@ class ProposerReceptor:
     def propose(self, *, domain: str, system_prompt: str, user_prompt: str,
                 candidate_schema: dict | None = None, context: str = "",
                 authority: bool = False, model: str = "glm-5.2") -> dict[str, Any]:
-        """Fixed cell: observe -> normalize -> authorize -> prepare -> execute
-        -> sense -> evaluate -> settle. Returns a settlement envelope.
+        """Thin orchestrator over the native Zig fixed cell. The policy
+        (authorize/sense/settle) lives in the substrate; the only part that
+        stays in Python is the external LLM I/O (the transport).
 
-        authority=False HOLDs (paid external effect, fail-closed). The caller
-        inside an authorized loop passes authority=True.
+            authorize (Zig) -> transport (Python I/O) -> settle (Zig)
+
+        authority=False HOLDs at the Zig gate (fail-closed). The envelope's
+        `settled_by` records whether the Zig primitive handled it.
         """
         t0 = time.time()
-        # observe + normalize
-        envelope: dict[str, Any] = {
-            "domain": domain, "context": context, "model": model,
-            "capability": self.substrate.CAPABILITY, "provider": self.substrate.PROVIDER,
-        }
-        # authorize (paid external effect)
-        if not authority:
-            envelope.update(settled=False, held=True, reason="authority required for paid LLM effect")
-            return envelope
-        # prepare
         transport = self.registry.effective()
+        base_request = {
+            "domain": domain, "context": context, "model": model,
+            "capability_id": self.substrate.CAPABILITY, "provider": self.substrate.PROVIDER,
+            "transport": transport.name if transport else "",
+            "authority": authority,
+            "candidate_schema": candidate_schema or {},
+        }
+
+        # authorize (Zig gate): no raw yet. Held here == unauthorized.
+        auth = self.substrate.settle({**base_request, "raw": ""})
+        if auth.get("held"):
+            auth["duration_ms"] = int((time.time() - t0) * 1000)
+            return auth
+
+        # execute (the one Python-owned step): run the external LLM transport.
         if transport is None:
-            envelope.update(settled=False, held=True, reason="no transport registered")
-            return envelope
-        envelope["transport"] = transport.name
-        # execute
+            env = {**base_request, "settled": False, "held": True,
+                   "reason": "no transport registered", "settled_by": "python"}
+            env["duration_ms"] = int((time.time() - t0) * 1000)
+            return env
         raw = transport.propose(system_prompt, user_prompt, model)
-        # sense: parse + validate against the caller's candidate schema
-        parsed, valid = self._sense(raw, candidate_schema)
-        # evaluate: generic muscle vetting (fail-open)
-        vetted = None
-        if valid and parsed is not None and self.substrate.available:
-            vetted = self.substrate.rank_candidates(context or domain, [raw])
-        # settle
-        ok = valid and parsed is not None
+
+        # settle (Zig): sense + validate + settle the raw reply.
+        env = self.substrate.settle({**base_request, "raw": raw})
+        # record observation + advisory muscle vetting (existing Zig primitives)
         if self.substrate.available:
+            ok = env.get("settled") is True
             self.substrate.record_observation(context or domain, ok, "object" if ok else "invalid")
-        envelope.update(
-            settled=ok, held=not ok, raw=raw, parsed=parsed, valid=valid,
-            vetted=vetted, duration_ms=int((time.time() - t0) * 1000),
-        )
-        return envelope
+            if ok:
+                env["vetted"] = self.substrate.rank_candidates(context or domain, [raw])
+        env["duration_ms"] = int((time.time() - t0) * 1000)
+        return env
 
     @staticmethod
     def _sense(raw: str, schema: dict | None) -> tuple[dict | None, bool]:

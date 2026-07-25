@@ -43,10 +43,11 @@ def claim1_provider_neutral() -> None:
     assert out["transport"] == "echo", out
     assert out["valid"] is True, out
     assert out["parsed"] == {"commit": "fix: typo in readme"}, out
+    assert out.get("settled_by") == "zig", f"policy not substrate-native (Zig): {out.get('settled_by')}"
     # swapping transports does not touch the receptor or its call shape
     reg.register(pr.EchoTransport('{"commit": "feat: add x"}'), make_effective=True)
     assert reg.effective().name == "echo"
-    print("[claim1] provider-neutral: echo transport settled a non-ARC proposal with no LLM call")
+    print("[claim1] provider-neutral: echo transport settled a non-ARC proposal via the Zig fixed cell")
 
 
 def claim2_substrate_native_not_arc() -> None:
@@ -80,10 +81,11 @@ def claim2_substrate_native_not_arc() -> None:
                       user_prompt="change: docs", candidate_schema={"type": "object", "required": ["commit"]},
                       context="witness-claim2", authority=True)
     assert out["settled"] is True and out["parsed"]["commit"].startswith("docs"), out
-    # authority gating (paid effect fail-closed)
+    # authority gating (paid effect fail-closed) -- enforced by the Zig gate
     held = rec.propose(domain="git-commit", system_prompt="x", user_prompt="y", authority=False)
     assert held["settled"] is False and held["held"] is True, held
-    print("[claim2] not-ARC: solved a git-commit task; paid-effect authority gate HOLDs when unauthorized")
+    assert held.get("settled_by") == "zig", f"authority gate not Zig-enforced: {held.get('settled_by')}"
+    print("[claim2] not-ARC: solved a git-commit task; Zig authority gate HOLDs when unauthorized")
 
 
 def claim3_live() -> None:
@@ -105,8 +107,9 @@ def claim3_live() -> None:
     )
     assert out["settled"] is True, f"live LLM did not settle: {out}"
     assert out["transport"] == "aiko-cli", out
+    assert out.get("settled_by") == "zig", f"live settlement not Zig-native: {out.get('settled_by')}"
     assert isinstance(out["parsed"], dict) and "commit" in out["parsed"], out
-    print(f"[claim3] live: aiko-cli transport + {model} -> {json.dumps(out['parsed'])} ({out['duration_ms']}ms)")
+    print(f"[claim3] live: aiko-cli + {model} -> {json.dumps(out['parsed'])} via Zig settle ({out['duration_ms']}ms)")
 
 
 def main() -> int:
