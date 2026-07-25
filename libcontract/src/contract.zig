@@ -368,26 +368,31 @@ fn writeJsonString(out: *std.ArrayList(u8), allocator: std.mem.Allocator, s: []c
 /// matches the given hex digest. Returns the matched contract id (caller-
 /// owned) on cache hit; null on miss. Used by declare() to make every
 /// invocation idempotent: same plan text → same contract id, no row growth.
-fn findCachedDeclared(
+///
+/// Streams the ledger line-by-line (ledger.forEachLine) instead of slurping it
+/// via readAll: readAll caps at 16 MiB and used to swallow LedgerTooLarge here
+/// (`catch return null`), which silently broke dedup on large stores — every
+/// declare appended a new row with a new id, bloating the store in a death
+/// spiral. forEachLine never slurps, so dedup holds at any size. It is safe
+/// under declare()'s sidecar lock because forEachLine does not take that lock.
+const FindCachedCtx = struct {
     allocator: std.mem.Allocator,
-    env: std.process.Environ,
     plan_hex: []const u8,
-) !?[]u8 {
-    const body = ledger.readAll(allocator, env) catch return null;
-    defer allocator.free(body);
-    var iter = std.mem.tokenizeAny(u8, body, "\n");
-    while (iter.next()) |line| {
-        if (line.len < 2) continue;
+    found: ?[]u8 = null,
+
+    fn check(self: *FindCachedCtx, line: []const u8) void {
+        if (self.found != null) return;
+        if (line.len < 2) return;
         // Fast filter: skip lines that can't contain a declared event.
         if (std.mem.indexOf(u8, line, "\"event\": \"declared\"") == null and
-            std.mem.indexOf(u8, line, "\"event\":\"declared\"") == null) continue;
+            std.mem.indexOf(u8, line, "\"event\":\"declared\"") == null) return;
         // Match the target inputs_hash literal. The substrate writes the
         // field with one space after the colon; tolerate both.
         var needle_buf: [128]u8 = undefined;
-        const needle = std.fmt.bufPrint(&needle_buf, "\"inputs_hash\": \"{s}\"", .{plan_hex}) catch continue;
+        const needle = std.fmt.bufPrint(&needle_buf, "\"inputs_hash\": \"{s}\"", .{self.plan_hex}) catch return;
         if (std.mem.indexOf(u8, line, needle) == null) {
-            const needle2 = std.fmt.bufPrint(&needle_buf, "\"inputs_hash\":\"{s}\"", .{plan_hex}) catch continue;
-            if (std.mem.indexOf(u8, line, needle2) == null) continue;
+            const needle2 = std.fmt.bufPrint(&needle_buf, "\"inputs_hash\":\"{s}\"", .{self.plan_hex}) catch return;
+            if (std.mem.indexOf(u8, line, needle2) == null) return;
         }
         // Extract id field — substrate always emits `"id": "<8hex>"`.
         const id_marker = "\"id\": \"";
@@ -395,13 +400,26 @@ fn findCachedDeclared(
         const id_start = blk: {
             if (std.mem.indexOf(u8, line, id_marker)) |p| break :blk p + id_marker.len;
             if (std.mem.indexOf(u8, line, id_marker2)) |p| break :blk p + id_marker2.len;
-            continue;
+            return;
         };
-        const id_end = std.mem.indexOfScalarPos(u8, line, id_start, '"') orelse continue;
-        const id_slice = line[id_start..id_end];
-        return try allocator.dupe(u8, id_slice);
+        const id_end = std.mem.indexOfScalarPos(u8, line, id_start, '"') orelse return;
+        self.found = self.allocator.dupe(u8, line[id_start..id_end]) catch null;
     }
-    return null;
+};
+
+fn findCachedDeclaredCallback(opaque_ctx: *anyopaque, line: []const u8) void {
+    const ctx: *FindCachedCtx = @ptrCast(@alignCast(opaque_ctx));
+    ctx.check(line);
+}
+
+fn findCachedDeclared(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    plan_hex: []const u8,
+) !?[]u8 {
+    var ctx = FindCachedCtx{ .allocator = allocator, .plan_hex = plan_hex };
+    ledger.forEachLine(allocator, env, @ptrCast(&ctx), findCachedDeclaredCallback) catch {};
+    return ctx.found;
 }
 
 pub fn declare(
