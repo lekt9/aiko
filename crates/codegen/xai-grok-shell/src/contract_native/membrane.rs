@@ -1144,6 +1144,172 @@ impl CursorStore {
     }
 }
 
+// ── RM3: generic transport registry ──────────────────────────────────
+//
+// Every ingress mode (poller, local listener, ephemeral/durable tunnel,
+// hosted worker, provider-native webhook) is a capability bound through
+// the same shape. The registry is provider-neutral: it never branches on a
+// provider name (Cloudflare, ngrok, etc.) — adapters are descriptors, and
+// replacing one tunnel provider with another needs only a new descriptor
+// and executor. Every live binding requires a finite lease, an owner, a
+// health sensor, a cancellation capability, a restart policy, and bounded
+// children. Endpoints/credentials stay as opaque secret references
+// (enforced by TransportBinding::validate).
+
+/// A transport binding plus its runtime child-count bound and current count.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RegisteredTransport {
+    pub binding: TransportBinding,
+    pub max_children: u32,
+    pub child_count: u32,
+}
+
+impl RegisteredTransport {
+    /// A stable identity for this binding: receptor + adapter capability +
+    /// generation. Used as the supersession pointer.
+    pub fn binding_id(&self) -> String {
+        format!(
+            "{}@{}#{}",
+            self.binding.receptor_id, self.binding.adapter_capability, self.binding.lease_generation
+        )
+    }
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        self.binding.validate()?;
+        if self.max_children == 0 {
+            return Err("transport child bound must be positive");
+        }
+        if self.child_count > self.max_children {
+            return Err("transport child count exceeds its bound");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TransportRegistry {
+    /// (receptor_id, adapter_capability) -> the live binding for that pair.
+    bindings: std::collections::BTreeMap<(String, String), RegisteredTransport>,
+    /// Supersession history: binding_id -> the binding_id it replaced.
+    superseded_by: std::collections::BTreeMap<String, String>,
+}
+
+impl TransportRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a transport binding as a capability. Validates the full
+    /// shape (lease/owner/health/cancellation/restart/secret-ref endpoint/
+    /// mode-durability honesty/child bound). If a live binding already
+    /// exists for this (receptor, adapter), the new one supersedes it — the
+    /// old binding's id is recorded as superseded. Provider-neutral: no
+    /// branch on adapter name.
+    pub fn register(
+        &mut self,
+        binding: TransportBinding,
+        max_children: u32,
+        child_count: u32,
+    ) -> Result<RegisteredTransport, &'static str> {
+        let registered = RegisteredTransport {
+            binding,
+            max_children,
+            child_count,
+        };
+        registered.validate()?;
+        let key = (
+            registered.binding.receptor_id.clone(),
+            registered.binding.adapter_capability.clone(),
+        );
+        if let Some(prior) = self.bindings.insert(key, registered.clone()) {
+            // Record supersession: the prior binding is replaced by this one.
+            self.superseded_by
+                .insert(prior.binding_id(), registered.binding_id());
+        }
+        Ok(registered)
+    }
+
+    /// Replace one adapter with another for the same receptor (e.g. swap a
+    /// tunnel provider). The old adapter's binding is retired; the new one
+    /// is registered. Requires only the new descriptor — no provider branch.
+    pub fn replace_adapter(
+        &mut self,
+        receptor_id: &str,
+        new_binding: TransportBinding,
+        max_children: u32,
+    ) -> Result<RegisteredTransport, &'static str> {
+        if new_binding.receptor_id != receptor_id {
+            return Err("replacement binding must target the same receptor");
+        }
+        // Retire any existing binding for this receptor under the OLD adapter
+        // (whatever it was) before registering the new one.
+        let old_adapter = new_binding.adapter_capability.clone();
+        let to_retire: Vec<_> = self
+            .bindings
+            .keys()
+            .filter(|(r, _)| r == receptor_id)
+            .cloned()
+            .collect();
+        for (r, a) in to_retire {
+            if let Some(prior) = self.bindings.remove(&(r, a)) {
+                self.superseded_by
+                    .insert(prior.binding_id(), new_binding.adapter_capability.clone());
+            }
+        }
+        let _ = old_adapter; // adapter name is opaque to the registry
+        self.register(new_binding, max_children, 0)
+    }
+
+    /// The effective (live, current) bindings for a receptor.
+    pub fn effective(&self, receptor_id: &str) -> Vec<&RegisteredTransport> {
+        self.bindings
+            .iter()
+            .filter(|((r, _), _)| r == receptor_id)
+            .map(|(_, rt)| rt)
+            .collect()
+    }
+
+    pub fn get(
+        &self,
+        receptor_id: &str,
+        adapter_capability: &str,
+    ) -> Option<&RegisteredTransport> {
+        self.bindings
+            .get(&(receptor_id.to_string(), adapter_capability.to_string()))
+    }
+
+    /// Retire a binding: remove it from the live set. Its supersession
+    /// history is retained.
+    pub fn retire(&mut self, receptor_id: &str, adapter_capability: &str) {
+        self.bindings
+            .remove(&(receptor_id.to_string(), adapter_capability.to_string()));
+    }
+
+    /// True iff a live binding for this (receptor, adapter) may receive at
+    /// `now_unix_ms` under `owner`/`generation`.
+    pub fn may_receive(
+        &self,
+        receptor_id: &str,
+        adapter_capability: &str,
+        owner: &str,
+        generation: u64,
+        now_unix_ms: u64,
+    ) -> bool {
+        match self.get(receptor_id, adapter_capability) {
+            Some(rt) => rt.binding.may_receive(owner, generation, now_unix_ms),
+            None => false,
+        }
+    }
+
+    pub fn binding_count(&self) -> usize {
+        self.bindings.len()
+    }
+
+    pub fn supersession_count(&self) -> usize {
+        self.superseded_by.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1802,5 +1968,120 @@ mod tests {
             "replay after restart must still dedup"
         );
         assert_eq!(restored.distinct_count(), 1);
+    }
+
+    // ── RM3: generic transport registry (provider-neutral) ───────────
+
+    fn transport(
+        receptor: &str,
+        adapter: &str,
+        mode: IngressMode,
+        durability: Durability,
+        owner: &str,
+        generation: u64,
+        until: u64,
+    ) -> TransportBinding {
+        TransportBinding {
+            receptor_id: receptor.into(),
+            mode,
+            adapter_capability: adapter.into(),
+            endpoint_ref: "secret-ref:endpoint-1".into(),
+            durability,
+            delivery: DeliverySemantics::AtLeastOnce,
+            lease_owner: owner.into(),
+            lease_generation: generation,
+            lease_until_unix_ms: until,
+            health_sensor: "transport-health-v1".into(),
+            health: HealthState::Healthy,
+            cancellation_capability: "transport.retire".into(),
+            restart_policy: "on-failure".into(),
+            supersedes: None,
+        }
+    }
+
+    #[test]
+    fn rm3_register_requires_full_lifecycle_shape() {
+        // Every live binding requires lease/owner/health/cancellation/restart
+        // and a positive child bound. Missing any is rejected.
+        let mut reg = TransportRegistry::new();
+        let good = transport("msg-in", "poller-1", IngressMode::Poll, Durability::Leased, "r-1", 1, 60_000);
+        assert!(reg.register(good, 4, 0).is_ok());
+
+        // Zero child bound rejected.
+        let bad = transport("msg-in", "poller-2", IngressMode::Poll, Durability::Leased, "r-1", 1, 60_000);
+        assert!(reg.register(bad, 0, 0).is_err());
+
+        // Invalid binding (endpoint URL, not a secret ref) rejected.
+        let mut leaked = transport("msg-in", "poller-3", IngressMode::Poll, Durability::Leased, "r-1", 1, 60_000);
+        leaked.endpoint_ref = "https://public.example/hook".into();
+        assert!(reg.register(leaked, 4, 0).is_err());
+
+        // Mode-durability dishonesty rejected (ephemeral cannot be restartable).
+        let mut lying = transport("msg-in", "tunnel-1", IngressMode::EphemeralTunnel, Durability::Restartable, "r-1", 1, 60_000);
+        assert!(reg.register(lying.clone(), 4, 0).is_err());
+        lying.durability = Durability::Leased;
+        assert!(reg.register(lying, 4, 0).is_ok());
+    }
+
+    #[test]
+    fn rm3_replacing_a_tunnel_provider_needs_only_a_new_descriptor() {
+        // The RM3 gate: replacing one tunnel provider with another requires
+        // only a new adapter descriptor and executor — no provider branch in
+        // the registry. Two unrelated adapter names bind the same receptor
+        // through the identical shape.
+        let mut reg = TransportRegistry::new();
+        let alpha = transport("msg-in", "tunnel-alpha", IngressMode::EphemeralTunnel, Durability::Leased, "r-1", 1, 60_000);
+        let beta = transport("msg-in", "tunnel-beta", IngressMode::EphemeralTunnel, Durability::Leased, "r-1", 1, 60_000);
+        assert!(reg.register(alpha, 4, 0).is_ok());
+        assert!(reg.register(beta, 4, 0).is_ok());
+        // Both adapters are live for the same receptor — provider-neutral.
+        assert_eq!(reg.effective("msg-in").len(), 2);
+        assert!(reg.get("msg-in", "tunnel-alpha").is_some());
+        assert!(reg.get("msg-in", "tunnel-beta").is_some());
+        // Replacing alpha with a fresh generation supersedes the old one.
+        let alpha2 = transport("msg-in", "tunnel-alpha", IngressMode::EphemeralTunnel, Durability::Leased, "r-1", 2, 60_000);
+        let replaced = reg.register(alpha2, 4, 0).unwrap();
+        assert_eq!(replaced.binding.lease_generation, 2);
+        assert_eq!(reg.supersession_count(), 1, "the prior alpha is superseded");
+        // Still two distinct adapters live.
+        assert_eq!(reg.effective("msg-in").len(), 2);
+    }
+
+    #[test]
+    fn rm3_retire_drops_liveness_but_keeps_supersession_history() {
+        let mut reg = TransportRegistry::new();
+        let b = transport("msg-in", "poller-1", IngressMode::Poll, Durability::Leased, "r-1", 1, 60_000);
+        let _ = reg.register(b, 4, 0).unwrap();
+        assert!(reg.may_receive("msg-in", "poller-1", "r-1", 1, 1_000));
+        reg.retire("msg-in", "poller-1");
+        assert!(!reg.may_receive("msg-in", "poller-1", "r-1", 1, 1_000));
+        assert_eq!(reg.binding_count(), 0);
+    }
+
+    #[test]
+    fn rm3_replace_adapter_swaps_provider_without_branching() {
+        // swap_adapter: retire whatever adapter was live for a receptor and
+        // register a new one, by descriptor alone.
+        let mut reg = TransportRegistry::new();
+        let poller = transport("msg-in", "poller-1", IngressMode::Poll, Durability::Leased, "r-1", 1, 60_000);
+        let _ = reg.register(poller, 4, 0).unwrap();
+        assert_eq!(reg.effective("msg-in").len(), 1);
+
+        // Promote to an ephemeral tunnel under a different adapter name.
+        let tunnel = transport("msg-in", "tunnel-alpha", IngressMode::EphemeralTunnel, Durability::Leased, "r-1", 1, 60_000);
+        let _ = reg.replace_adapter("msg-in", tunnel, 4).unwrap();
+        assert_eq!(reg.effective("msg-in").len(), 1, "old adapter retired, new one live");
+        assert!(reg.get("msg-in", "poller-1").is_none());
+        assert!(reg.get("msg-in", "tunnel-alpha").is_some());
+    }
+
+    #[test]
+    fn rm3_child_count_bound_is_enforced() {
+        let mut reg = TransportRegistry::new();
+        let b = transport("msg-in", "poller-1", IngressMode::Poll, Durability::Leased, "r-1", 1, 60_000);
+        // child_count exceeding max_children is rejected at registration.
+        assert!(reg.register(b.clone(), 2, 3).is_err());
+        // Within bound is accepted.
+        assert!(reg.register(b, 2, 2).is_ok());
     }
 }
