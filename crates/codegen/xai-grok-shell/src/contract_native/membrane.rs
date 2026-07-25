@@ -894,6 +894,15 @@ impl ReceptorRegistry {
         self.live.remove(id);
     }
 
+    /// Remove a declaration (intent) as if it disappeared from a refreshed
+    /// source snapshot. The live lease and historical evidence are NOT
+    /// deleted — RM0: "remove descriptors that disappear without deleting
+    /// their historical evidence." A live lease left without a declaration
+    /// is an orphan the reconciler must stop.
+    pub fn remove_declaration(&mut self, id: &str) -> Option<ReceptorDeclaration> {
+        self.declarations.remove(id)
+    }
+
     /// True iff `owner`/`generation` identify the current live lease and it
     /// is current. A stale worker holding a pre-restart generation is
     /// rejected — it may append observations but cannot commit effects.
@@ -960,6 +969,16 @@ impl ReceptorRegistry {
     /// True if the durable declaration exists (independent of liveness).
     pub fn is_declared(&self, id: &str) -> bool {
         self.declarations.contains_key(id)
+    }
+
+    /// All declared receptor ids (desired state).
+    pub fn declaration_ids(&self) -> impl Iterator<Item = &String> {
+        self.declarations.keys()
+    }
+
+    /// All receptor ids with a current live lease (observed runtime).
+    pub fn live_ids(&self) -> impl Iterator<Item = &String> {
+        self.live.keys()
     }
 }
 
@@ -1509,6 +1528,131 @@ impl AdaptiveBindingController {
         registry.register(new_binding, 4, 0)?;
         self.current_tier = target;
         Ok(target.adapter_name().into())
+    }
+}
+
+// ── RM5: universal receptor runtime — reconciler + cell driver ───────
+//
+// Reconcile desired ledger state (RM0 declarations) into a bounded runtime
+// plan: declared-but-not-live -> start a worker; live-but-not-declared ->
+// stop an orphan; both -> keep. Then drive one receptor through the unified
+// cell lifecycle: append the occurrence (RM2) -> resolve the continuation
+// (RM1c) -> enforce the readiness barrier (no worker before Ready) ->
+// execute -> acknowledge -> advance the cursor (RM2). Each step is gated;
+// outcome states cannot be skipped, and a held/expired continuation blocks
+// the worker mechanically.
+
+/// Desired-state vs observed-runtime reconciliation plan for one tick.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReconcilePlan {
+    /// Declared but not live — start a bounded worker.
+    pub to_start: Vec<String>,
+    /// Live but no longer declared — stop the orphan.
+    pub to_stop: Vec<String>,
+    /// Declared and live — keep.
+    pub to_keep: Vec<String>,
+}
+
+/// Reconcile a ReceptorRegistry's desired declarations against its live
+/// leases at `now_unix_ms`. This is the desired-state-vs-observed-runtime
+/// split RM0/RM5 require: a ledger row alone never starts a worker, and a
+/// live worker with no declaration is an orphan to stop.
+pub fn reconcile(registry: &ReceptorRegistry, now_unix_ms: u64) -> ReconcilePlan {
+    let mut plan = ReconcilePlan::default();
+    // to_start / to_keep: iterate declarations (desired state).
+    for id in registry.declaration_ids() {
+        if registry.is_live(id, now_unix_ms) {
+            plan.to_keep.push(id.clone());
+        } else {
+            plan.to_start.push(id.clone());
+        }
+    }
+    // to_stop: live leases whose declaration vanished (orphans). Any live id
+    // not in declarations is an orphan to stop.
+    for id in registry.live_ids() {
+        if !registry.is_declared(id) {
+            plan.to_stop.push(id.clone());
+        }
+    }
+    plan
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CellOutcome {
+    /// New occurrence: appended, executed, acknowledged, cursor advanced.
+    Processed,
+    /// Idempotent replay — appended as Duplicate, no re-execution.
+    Replayed,
+    /// Continuation is Held — the worker cannot start (readiness barrier).
+    Held,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CellError {
+    /// The occurrence was a contradiction (reused ID, changed content).
+    Contradiction,
+    /// The effect is held (authority denied) and cannot execute.
+    EffectHeld,
+    /// The cursor lease is stale/expired — cannot advance.
+    StaleCursorLease,
+    /// No cursor installed — a bounded resync is required first.
+    MissingCursor,
+}
+
+/// One unified receptor cell: occurrence store + cursor + the continuation
+/// readiness barrier + the execution envelope's outcome ordering. This is
+/// the compile target every receptor role specializes.
+pub struct ReceptorCell {
+    pub occurrences: OccurrenceStore,
+    pub cursors: CursorStore,
+    pub continuation_ready: bool,
+    pub envelope: ExecutionEnvelope,
+}
+
+impl ReceptorCell {
+    /// Ingest one event end-to-end. The ordering is load-bearing:
+    /// 1. append the occurrence (dedup) — the durable truth first;
+    /// 2. only a New occurrence proceeds to execution;
+    /// 3. the continuation readiness barrier blocks the worker if not ready;
+    /// 4. execute -> acknowledge (outcome separation);
+    /// 5. advance the cursor only after a durable append.
+    pub fn ingest(
+        &mut self,
+        event: &EventEnvelope,
+        owner: &str,
+        lease_generation: u64,
+        now_unix_ms: u64,
+    ) -> Result<CellOutcome, CellError> {
+        match self.occurrences.append(event) {
+            Ok(AppendOutcome::Contradiction) => return Err(CellError::Contradiction),
+            Ok(AppendOutcome::Duplicate) => return Ok(CellOutcome::Replayed),
+            Ok(AppendOutcome::New) => {}
+            Err(_) => return Err(CellError::Contradiction),
+        }
+        // Readiness barrier: no reasoning worker before the continuation is
+        // resolved and Ready. A held continuation blocks execution.
+        if !self.continuation_ready {
+            return Ok(CellOutcome::Held);
+        }
+        if !self.envelope.may_execute() {
+            return Err(CellError::EffectHeld);
+        }
+        self.envelope
+            .mark_executed()
+            .map_err(|_| CellError::EffectHeld)?;
+        self.envelope
+            .acknowledge()
+            .map_err(|_| CellError::EffectHeld)?;
+        // Cursor advances only after the durable append (already done above)
+        // and only under a current lease.
+        match self
+            .cursors
+            .advance(event, owner, lease_generation, now_unix_ms)
+        {
+            Ok(_) => Ok(CellOutcome::Processed),
+            Err(CursorError::MissingCursor) => Err(CellError::MissingCursor),
+            Err(CursorError::StaleLease) => Err(CellError::StaleCursorLease),
+        }
     }
 }
 
@@ -2422,5 +2566,128 @@ mod tests {
         // The final live binding is the ephemeral tunnel (demoted from durable).
         assert!(reg.get(receptor, "tunnel.durable").is_none());
         assert!(reg.get(receptor, "tunnel.ephemeral").is_some());
+    }
+
+    // ── RM5: reconciler + unified cell driver ────────────────────────
+
+    #[test]
+    fn rm5_reconcile_starts_declared_not_live_stops_orphans_keeps_both() {
+        let mut reg = ReceptorRegistry::new();
+        reg.declare(test_declaration("a", Durability::Leased)).unwrap();
+        reg.declare(test_declaration("b", Durability::Leased)).unwrap();
+        reg.declare(test_declaration("c", Durability::Leased)).unwrap();
+        // "b" is declared + live -> keep. "c" is live, then its declaration
+        // is removed (source snapshot refresh) -> orphan to stop.
+        let _ = reg.acquire_lease("b", "r-1", 1_000, 60_000).unwrap();
+        let _ = reg.acquire_lease("c", "r-1", 1_000, 60_000).unwrap();
+        reg.remove_declaration("c");
+
+        let plan = reconcile(&reg, 1_000);
+        assert!(plan.to_start.contains(&"a".to_string()), "declared-not-live -> start");
+        assert!(plan.to_keep.contains(&"b".to_string()), "declared-and-live -> keep");
+        assert!(plan.to_stop.contains(&"c".to_string()), "live-not-declared -> stop orphan");
+        assert!(!plan.to_start.contains(&"b".to_string()));
+        assert!(!plan.to_keep.contains(&"c".to_string()));
+    }
+
+    fn ready_cell() -> ReceptorCell {
+        ReceptorCell {
+            occurrences: OccurrenceStore::new(1),
+            cursors: CursorStore::new(),
+            continuation_ready: true,
+            envelope: ExecutionEnvelope::new(
+                Receptor {
+                    family: InterfaceFamily::Messaging,
+                    capability: "reply.text".into(),
+                    occurrence_id: "occ-1".into(),
+                },
+                EffectClass::ReadOnly,
+                Some("contract:1".into()),
+                None,
+            )
+            .unwrap(),
+        }
+    }
+
+    #[test]
+    fn rm5_cell_readiness_barrier_blocks_worker_before_ready() {
+        // A worker launched before the continuation is resolved is blocked:
+        // the occurrence is appended (durable truth first) but not executed.
+        let mut cell = ready_cell();
+        cell.continuation_ready = false;
+        cell.cursors.install(cursor_for("msg-in", "tg-1", "r-1", 7, 60_000));
+        let e = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
+        assert_eq!(cell.ingest(&e, "r-1", 7, 1_000).unwrap(), CellOutcome::Held);
+        assert_eq!(cell.occurrences.distinct_count(), 1, "occurrence is still durable");
+        assert!(!cell.envelope.executed, "held worker did not execute");
+    }
+
+    #[test]
+    fn rm5_cell_processes_new_and_replays_duplicate_without_reexecuting() {
+        let mut cell = ready_cell();
+        cell.cursors.install(cursor_from(
+            &evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000),
+            "r-1", 7, 60_000,
+        ));
+        let e = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
+        // First delivery: New -> Processed (executed + acknowledged + cursor advanced).
+        assert_eq!(cell.ingest(&e, "r-1", 7, 1_000).unwrap(), CellOutcome::Processed);
+        assert!(cell.envelope.executed);
+        // Replay: Duplicate -> Replayed, no re-execution side effect on the cursor.
+        assert_eq!(cell.ingest(&e, "r-1", 7, 2_000).unwrap(), CellOutcome::Replayed);
+        assert_eq!(cell.occurrences.distinct_count(), 1, "replay adds no occurrence");
+    }
+
+    #[test]
+    fn rm5_cell_contradiction_is_held_not_processed() {
+        let mut cell = ready_cell();
+        cell.cursors.install(cursor_for("msg-in", "tg-1", "r-1", 7, 60_000));
+        let first = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
+        let changed = evt("msg-in", "tg-1", "evt-1", "fp-B", 2_000);
+        assert_eq!(cell.ingest(&first, "r-1", 7, 1_000).unwrap(), CellOutcome::Processed);
+        // Reused ID, changed content -> contradiction, not processed.
+        assert_eq!(
+            cell.ingest(&changed, "r-1", 7, 2_000),
+            Err(CellError::Contradiction)
+        );
+    }
+
+    #[test]
+    fn rm5_cell_expired_lease_blocks_cursor_advance() {
+        let mut cell = ready_cell();
+        cell.cursors.install(cursor_for("msg-in", "tg-1", "r-1", 7, 60_000));
+        let e = evt("msg-in", "tg-1", "evt-2", "fp-b", 70_000);
+        // Lease expired at 60_000; the occurrence is appended but the cursor
+        // cannot advance -> StaleCursorLease. The worker does not silently
+        // commit under an expired lease.
+        assert_eq!(
+            cell.ingest(&e, "r-1", 7, 70_000),
+            Err(CellError::StaleCursorLease)
+        );
+    }
+
+    #[test]
+    fn rm5_cell_held_effect_cannot_execute() {
+        // A consequential effect with no contract authority is Held and
+        // cannot execute even when the continuation is ready.
+        let mut cell = ReceptorCell {
+            occurrences: OccurrenceStore::new(1),
+            cursors: CursorStore::new(),
+            continuation_ready: true,
+            envelope: ExecutionEnvelope::new(
+                Receptor {
+                    family: InterfaceFamily::Messaging,
+                    capability: "reply.text".into(),
+                    occurrence_id: "occ-1".into(),
+                },
+                EffectClass::ExternalMessage, // consequential, no contract -> Hold
+                None,
+                None,
+            )
+            .unwrap(),
+        };
+        cell.cursors.install(cursor_for("msg-in", "tg-1", "r-1", 7, 60_000));
+        let e = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
+        assert_eq!(cell.ingest(&e, "r-1", 7, 1_000), Err(CellError::EffectHeld));
     }
 }
