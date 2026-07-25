@@ -85,6 +85,7 @@ const Cell = struct {
     fires: usize = 0,
     successes: usize = 0,
     failures: usize = 0,
+    last_used: u64 = 0,
 
     fn binary(self: *const Cell) []const u8 {
         return self.binary_bytes[0..self.binary_len];
@@ -94,6 +95,7 @@ const Cell = struct {
 pub const Bank = struct {
     cells: [MAX_BINARIES]Cell = undefined,
     count: usize = 0,
+    clock: u64 = 0,
 
     fn find(self: *Bank, binary: []const u8) ?*Cell {
         for (self.cells[0..self.count]) |*cell| {
@@ -102,15 +104,35 @@ pub const Bank = struct {
         return null;
     }
 
+    /// Resolve the cell for `binary`, creating or evicting as needed. The bank
+    /// is bounded (MAX_BINARIES) but NEVER rejects a new grounded binary: when
+    /// full it evicts the least-recently-used cell and reuses the slot, so a
+    /// large replay or a long-running process cannot starve new observations.
     fn ensure(self: *Bank, binary: []const u8) !*Cell {
-        if (self.find(binary)) |cell| return cell;
-        if (self.count >= MAX_BINARIES) return error.TooManyBinaries;
+        if (self.find(binary)) |cell| {
+            cell.last_used = self.clock;
+            self.clock += 1;
+            return cell;
+        }
         if (binary.len > 128) return error.BinaryNameTooLong;
-        self.cells[self.count] = .{};
-        @memcpy(self.cells[self.count].binary_bytes[0..binary.len], binary);
-        self.cells[self.count].binary_len = binary.len;
-        self.count += 1;
-        return &self.cells[self.count - 1];
+        const slot: *Cell = if (self.count < MAX_BINARIES) blk: {
+            const s = &self.cells[self.count];
+            self.count += 1;
+            break :blk s;
+        } else blk: {
+            var min_idx: usize = 0;
+            for (self.cells[0..self.count], 0..) |*c, i| {
+                if (c.last_used < self.cells[min_idx].last_used) min_idx = i;
+            }
+            const s = &self.cells[min_idx];
+            s.* = .{};
+            break :blk s;
+        };
+        @memcpy(slot.binary_bytes[0..binary.len], binary);
+        slot.binary_len = binary.len;
+        slot.last_used = self.clock;
+        self.clock += 1;
+        return slot;
     }
 
     pub fn observe(self: *Bank, invocation: Invocation) !void {

@@ -33,23 +33,28 @@ var muscle_mutex: std.atomic.Mutex = .unlocked;
 var muscle_state: muscle.Bank = .{};
 var muscle_loaded = false;
 
+const ReplayCtx = struct { bank: *muscle.Bank };
+
+fn replayLineCallback(opaque_ctx: *anyopaque, line: []const u8) void {
+    const ctx: *ReplayCtx = @ptrCast(@alignCast(opaque_ctx));
+    if (std.mem.indexOf(u8, line, "\"event\":\"muscle_observed\"") != null) {
+        ctx.bank.replayObservation(line) catch {};
+    } else if (std.mem.indexOf(u8, line, "\"event\":\"muscle_deleted\"") != null) {
+        var parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch return;
+        defer parsed.deinit();
+        if (parsed.value != .object) return;
+        if (objectString(parsed.value.object, "binary")) |binary| _ = ctx.bank.delete(binary);
+    }
+}
+
 fn ensureMuscleLoaded() void {
     if (muscle_loaded) return;
     muscle_loaded = true;
-    const rows = ledger.readAll(gpa, extEnv()) catch return;
-    defer gpa.free(rows);
-    var lines = std.mem.splitScalar(u8, rows, '\n');
-    while (lines.next()) |line| {
-        if (line.len == 0) continue;
-        if (std.mem.indexOf(u8, line, "\"event\":\"muscle_observed\"") != null) {
-            muscle_state.replayObservation(line) catch {};
-        } else if (std.mem.indexOf(u8, line, "\"event\":\"muscle_deleted\"") != null) {
-            var parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch continue;
-            defer parsed.deinit();
-            if (parsed.value != .object) continue;
-            if (objectString(parsed.value.object, "binary")) |binary| _ = muscle_state.delete(binary);
-        }
-    }
+    // Stream the ledger line-by-line instead of slurping it via readAll: readAll
+    // caps at 16 MiB and used to swallow LedgerTooLarge here, which silently left
+    // the bank empty on large stores (muscle persistence broke with no signal).
+    var ctx = ReplayCtx{ .bank = &muscle_state };
+    ledger.forEachLine(gpa, extEnv(), @ptrCast(&ctx), replayLineCallback) catch {};
 }
 
 fn lockRegistry() void {

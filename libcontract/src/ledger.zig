@@ -400,6 +400,58 @@ pub fn readAll(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
     return try out.toOwnedSlice(allocator);
 }
 
+/// Stream the resolved ledger line-by-line, invoking `callback` for each
+/// non-empty line. Does NOT slurp the whole file, so replay works on stores
+/// larger than readAll's 16 MiB cap (the cap stays as a guard for callers that
+/// need the whole buffer; replay only needs one line at a time). A single line
+/// larger than 4 MiB is rejected as pathologically malformed. Missing ledger
+/// is a normal bootstrap state and returns silently.
+pub fn forEachLine(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    ctx: *anyopaque,
+    callback: *const fn (ctx: *anyopaque, line: []const u8) void,
+) !void {
+    const path = try resolvePath(allocator, env);
+    defer allocator.free(path);
+    const path_z = try allocator.dupeZ(u8, path);
+    defer allocator.free(path_z);
+
+    const fd: c_int = if (is_windows) _open(path_z.ptr, O_RDONLY | O_BINARY) else blk: {
+        var flags: c.O = .{};
+        flags.ACCMODE = .RDONLY;
+        break :blk c.open(path_z.ptr, flags, @as(c_uint, 0));
+    };
+    if (fd < 0) return;
+    defer closeFd(fd);
+
+    var carry: std.ArrayList(u8) = .empty;
+    defer carry.deinit(allocator);
+    var chunk: [16384]u8 = undefined;
+    while (true) {
+        const n = readFd(fd, &chunk);
+        if (n <= 0) break;
+        const data = chunk[0..@intCast(n)];
+        var start: usize = 0;
+        while (std.mem.indexOfScalarPos(u8, data, start, '\n')) |nl| {
+            if (carry.items.len > 0) {
+                try carry.appendSlice(allocator, data[start..nl]);
+                callback(ctx, carry.items);
+                carry.clearRetainingCapacity();
+            } else {
+                const line = data[start..nl];
+                if (line.len > 0) callback(ctx, line);
+            }
+            start = nl + 1;
+        }
+        if (start < data.len) {
+            try carry.appendSlice(allocator, data[start..]);
+            if (carry.items.len > 4 * 1024 * 1024) return error.LineTooLong;
+        }
+    }
+    if (carry.items.len > 0) callback(ctx, carry.items);
+}
+
 // ────────── compaction — homeostasis for the append-only store ──────────
 //
 // The resolver exhales exhaust rows (`iterated`, cache probes, guards) at
