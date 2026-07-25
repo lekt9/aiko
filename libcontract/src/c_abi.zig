@@ -161,6 +161,134 @@ export fn contract_muscle_rank_json(
     return returned(out.items);
 }
 
+/// Native fixed-cell proposer receptor — the substrate-native policy + settlement.
+/// The LLM I/O (the "execute" step) stays in the host transport; this primitive
+/// owns the tamper-resistant half: authorize -> sense -> settle. It is GENERIC
+/// (provider aiko-proposer, never aiko-arc); ARC and any task consume it, and
+/// the core stays provider-neutral. Composes no new state — pure policy + parse.
+///
+/// Request JSON: {domain, context, authority:bool, transport, model, raw,
+///   capability_id, provider, candidate_schema:{required:[...]}}
+/// Settlement envelope (NUL-terminated; free with contract_free):
+///   {domain,context,model,capability,provider,transport, settled, held, valid,
+///    parsed:object|null, raw, reason?}
+///   - authority false            -> settled=false, held=true (paid-effect gate)
+///   - authority true, raw empty  -> settled=false, held=false (prepared/awaiting transport)
+///   - authority true, raw set    -> sense (last JSON object + schema.required) -> settle
+export fn contract_propose_settle(request_json: [*:0]const u8) ?[*:0]u8 {
+    const req = cstr(request_json);
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, req, .{}) catch return null;
+    defer parsed.deinit();
+    const obj = switch (parsed.value) {
+        .object => |o| o,
+        else => return null,
+    };
+
+    const domain = objectString(obj, "domain") orelse "";
+    const context = objectString(obj, "context") orelse "";
+    const transport = objectString(obj, "transport") orelse "";
+    const model = objectString(obj, "model") orelse "";
+    const raw = objectString(obj, "raw") orelse "";
+    const cap_id = objectString(obj, "capability_id") orelse "aiko-proposer.propose";
+    const provider = objectString(obj, "provider") orelse "aiko-proposer";
+    const authority = switch (obj.get("authority") orelse .null) {
+        .bool => |b| b,
+        else => false,
+    };
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    out.print(gpa, "{{\"domain\":", .{}) catch return null;
+    appendJsonString(&out, domain) catch return null;
+    out.appendSlice(gpa, ",\"context\":") catch return null;
+    appendJsonString(&out, context) catch return null;
+    out.appendSlice(gpa, ",\"model\":") catch return null;
+    appendJsonString(&out, model) catch return null;
+    out.appendSlice(gpa, ",\"capability\":") catch return null;
+    appendJsonString(&out, cap_id) catch return null;
+    out.appendSlice(gpa, ",\"provider\":") catch return null;
+    appendJsonString(&out, provider) catch return null;
+    out.appendSlice(gpa, ",\"transport\":") catch return null;
+    appendJsonString(&out, transport) catch return null;
+
+    // authorize (substrate-native, fail-closed): a paid LLM effect needs authority.
+    if (!authority) {
+        out.appendSlice(gpa, ",\"settled\":false,\"held\":true,\"valid\":false,\"parsed\":null,\"raw\":") catch return null;
+        appendJsonString(&out, raw) catch return null;
+        out.appendSlice(gpa, ",\"reason\":\"authority required for paid LLM effect\"}") catch return null;
+        return returned(out.items);
+    }
+
+    // authorized but transport not yet run: prepared, not held, not settled.
+    if (raw.len == 0) {
+        out.appendSlice(gpa, ",\"settled\":false,\"held\":false,\"valid\":false,\"parsed\":null,\"raw\":\"\",\"reason\":\"awaiting transport\"}") catch return null;
+        return returned(out.items);
+    }
+
+    // sense: parse the last {...} in raw; validate candidate_schema.required keys.
+    var valid = false;
+    var parsed_obj_json: ?[]const u8 = null;
+    defer if (parsed_obj_json) |p| gpa.free(p);
+    if (std.mem.lastIndexOfScalar(u8, raw, '{')) |start| {
+        if (std.mem.lastIndexOfScalar(u8, raw, '}')) |end| {
+            if (end >= start) {
+                const slice = raw[start .. end + 1];
+                if (std.json.parseFromSlice(std.json.Value, gpa, slice, .{})) |inner| {
+                    defer inner.deinit();
+                    switch (inner.value) {
+                        .object => |inner_obj| {
+                            var ok = true;
+                            if (obj.get("candidate_schema")) |schema_v| switch (schema_v) {
+                                .object => |schema_obj| if (schema_obj.get("required")) |req_v| switch (req_v) {
+                                    .array => |arr| for (arr.items) |key_v| {
+                                        const key_name: ?[]const u8 = switch (key_v) {
+                                            .string => |s| s,
+                                            else => null,
+                                        };
+                                        if (key_name) |kn| {
+                                            if (inner_obj.get(kn) == null) {
+                                                ok = false;
+                                                break;
+                                            }
+                                        }
+                                    },
+                                    else => {},
+                                },
+                                else => {},
+                            };
+                            if (ok) {
+                                valid = true;
+                                var aw: std.Io.Writer.Allocating = .init(gpa);
+                                defer aw.deinit();
+                                var st = std.json.Stringify{ .writer = &aw.writer };
+                                st.write(inner.value) catch return null;
+                                parsed_obj_json = gpa.dupe(u8, aw.writer.buffered()) catch return null;
+                            }
+                        },
+                        else => {},
+                    }
+                } else |_| {}
+            }
+        }
+    }
+
+    // settle
+    out.print(gpa, ",\"settled\":{s},\"held\":{s},\"valid\":{s},\"parsed\":", .{
+        if (valid) "true" else "false",
+        if (valid) "false" else "true",
+        if (valid) "true" else "false",
+    }) catch return null;
+    if (parsed_obj_json) |p| {
+        out.appendSlice(gpa, p) catch return null;
+    } else {
+        out.appendSlice(gpa, "null") catch return null;
+    }
+    out.appendSlice(gpa, ",\"raw\":") catch return null;
+    appendJsonString(&out, raw) catch return null;
+    out.appendSlice(gpa, "}") catch return null;
+    return returned(out.items);
+}
+
 /// Erase one learned cell and append a durable tombstone so deterministic
 /// replay cannot resurrect observations that precede the deletion.
 export fn contract_muscle_delete(binary: [*:0]const u8) bool {
