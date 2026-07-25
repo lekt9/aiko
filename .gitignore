@@ -3,3 +3,7 @@
 .DS_Store
 .env
 .env.*
+
+# Local agent / contract-session state — never commit (may carry user secrets,
+# e.g. pasted API keys recorded verbatim by the contract substrate).
+.claude/
