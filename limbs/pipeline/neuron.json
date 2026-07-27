@@ -1,0 +1,34 @@
+{
+  "schema": "typed-neuron.limb-manifest/v1",
+  "package": "typed-neuron/pipeline",
+  "version": "0.1.0",
+  "description": "Reusable pipeline limb: stage neuron moves independently-keyed items forward with a declared in-flight budget. Items at earlier stages proceed independently of items at later stages.",
+  "neurons": [
+    {
+      "id": "stage",
+      "argv": ["python3", "neurons/stage.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "artifact/pipeline/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 16,
+          "max_writes": 8,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 131072,
+          "max_depth": 1
+        }
+      }
+    }
+  ],
+  "budgets": {
+    "deadline_ms_per_firing": 30000
+  },
+  "schemas": {
+    "request": "pipeline.stage-request/v1",
+    "item": "pipeline.item/v1",
+    "progress": "pipeline.progress/v1"
+  }
+}
