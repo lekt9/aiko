@@ -129,6 +129,10 @@ not completion.
 | `tests/roadmap-wave3-gate.sh` | Wave 3 jesus-ralph gate |
 | `typed-neuron.lock.json` | Immutable source dependency pin |
 | `reference/ROADMAP_WAVE1.md` | Wave 1 witness-gated plan |
+| `limbs/introspection/` | Self-aware inspection: capability map, gap analysis, promotion, limb generation |
+| `limbs/pipeline/` | Pipeline stage neuron with in-flight budget + conformance |
+| `limbs/introspection/tests/conformance.py` | Introspection limb lifecycle witness |
+| `limbs/pipeline/tests/conformance.py` | Pipeline limb lifecycle witness |
 
 ### Standing gates
 
