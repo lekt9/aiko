@@ -351,13 +351,13 @@ test "message delivery acknowledges success and dead letters bounded retries" {
         .effects = &effects,
         .evidence = &evidence,
     });
-    _ = delivery_mod.deliverNext(&fixture.substrate, retryAdapter);
-    _ = delivery_mod.deliverNext(&fixture.substrate, retryAdapter);
-    const dead = delivery_mod.deliverNext(&fixture.substrate, retryAdapter).?;
+    _ = try delivery_mod.deliverNext(&fixture.substrate, retryAdapter);
+    _ = try delivery_mod.deliverNext(&fixture.substrate, retryAdapter);
+    const dead = (try delivery_mod.deliverNext(&fixture.substrate, retryAdapter)).?;
     try std.testing.expectEqual(substrate_mod.DeliveryStatus.dead_letter, dead.status);
-    const ack = delivery_mod.deliverNext(&fixture.substrate, acknowledgeAdapter).?;
+    const ack = (try delivery_mod.deliverNext(&fixture.substrate, acknowledgeAdapter)).?;
     try std.testing.expectEqual(substrate_mod.DeliveryStatus.acknowledged, ack.status);
-    try std.testing.expect(delivery_mod.deliverNext(&fixture.substrate, acknowledgeAdapter) == null);
+    try std.testing.expect((try delivery_mod.deliverNext(&fixture.substrate, acknowledgeAdapter)) == null);
 }
 
 test "deadline and cancellation settle without effects" {
@@ -628,11 +628,11 @@ test "uncertain external effects reconcile without losing the audit trail" {
         .effects = &send_fx,
         .evidence = &evidence,
     });
-    const parked = delivery_mod.deliverNext(&fixture.substrate, uncertainAdapter).?;
+    const parked = (try delivery_mod.deliverNext(&fixture.substrate, uncertainAdapter)).?;
     try std.testing.expectEqual(substrate_mod.DeliveryStatus.reconciliation_required, parked.status);
     try std.testing.expectEqual(@as(u8, 1), parked.attempts);
     // Parked messages are not silently retried.
-    try std.testing.expect(delivery_mod.deliverNext(&fixture.substrate, uncertainAdapter) == null);
+    try std.testing.expect((try delivery_mod.deliverNext(&fixture.substrate, uncertainAdapter)) == null);
     try std.testing.expectError(error.UnknownMessage, delivery_mod.reconcile(&fixture.substrate, 7, .acknowledged));
     try delivery_mod.reconcile(&fixture.substrate, parked.index, .acknowledged);
     const settled = fixture.substrate.messages.items[parked.index];
@@ -1984,8 +1984,9 @@ test "mesh nodes are symmetric over a real TCP loopback" {
         err: ?anyerror = null,
 
         fn serve(ctx: *@This()) void {
-            var buffer: [8192]u8 = undefined;
-            ctx.accepted = mesh_mod.acceptOnce(ctx.node, ctx.server, std.testing.io, 5_000, &buffer) catch |err| blk: {
+            var read_buffer: [8192]u8 = undefined;
+            var write_buffer: [8192]u8 = undefined;
+            ctx.accepted = mesh_mod.acceptOnce(ctx.node, ctx.server, std.testing.io, 5_000, &read_buffer, &write_buffer) catch |err| blk: {
                 ctx.err = err;
                 break :blk 0;
             };
@@ -2010,7 +2011,11 @@ test "mesh nodes are symmetric over a real TCP loopback" {
     );
     defer allocator.free(envelope_ab);
     var dial_buffer: [8192]u8 = undefined;
-    try mesh_mod.dialSend(&server_b.socket.address, io, envelope_ab, &dial_buffer);
+    const response_ab = try mesh_mod.dialExchange(allocator, &server_b.socket.address, io, envelope_ab, &dial_buffer, 5_000);
+    defer allocator.free(response_ab);
+    try std.testing.expectEqualStrings(
+        \\{"status":"committed","effects_committed":1,"duplicates_skipped":0}
+    , response_ab);
     thread_b.join();
     try std.testing.expectEqual(@as(?anyerror, null), ctx_b.err);
     try std.testing.expectEqual(@as(usize, 1), ctx_b.accepted);
@@ -2037,7 +2042,11 @@ test "mesh nodes are symmetric over a real TCP loopback" {
         12,
     );
     defer allocator.free(envelope_ba);
-    try mesh_mod.dialSend(&server_a.socket.address, io, envelope_ba, &dial_buffer);
+    const response_ba = try mesh_mod.dialExchange(allocator, &server_a.socket.address, io, envelope_ba, &dial_buffer, 5_000);
+    defer allocator.free(response_ba);
+    try std.testing.expectEqualStrings(
+        \\{"status":"committed","effects_committed":1,"duplicates_skipped":0}
+    , response_ba);
     thread_a.join();
     try std.testing.expectEqual(@as(?anyerror, null), ctx_a.err);
     try std.testing.expectEqual(@as(usize, 1), ctx_a.accepted);
@@ -2066,8 +2075,162 @@ test "tailnet classification admits CGNAT peers and denies everything else" {
     try std.testing.expect(!tailnet_mod.isTailnetAddress(ip4(127, 0, 0, 1)));
     const ceiling: caps_mod.Caps = .{ .allow_write = true, .write_prefix = "artifact/mesh/" };
     const classify = tailnet_mod.tailnetClassifier(&ceiling);
-    try std.testing.expect(classify.call(ip4(100, 100, 1, 1)) != null);
-    try std.testing.expect(classify.call(ip4(1, 2, 3, 4)) == null);
+    try std.testing.expect(classify.call(ip4(100, 100, 1, 1), 0) != null);
+    try std.testing.expect(classify.call(ip4(1, 2, 3, 4), 0) == null);
+}
+
+/// Scripted whois adapter: peers are identified by their last address
+/// octet; `.fail_on` forces a lookup error. Tests never shell out.
+const FakeWhois = struct {
+    calls: usize = 0,
+    fail_on: ?u8 = null,
+
+    fn adapter(self: *FakeWhois) tailnet_mod.WhoisAdapter {
+        return .{
+            .context = self,
+            .lookup = struct {
+                fn lookup(context: *anyopaque, allocator: std.mem.Allocator, _: std.Io, peer: mesh_mod.net.IpAddress) tailnet_mod.WhoisError![]const u8 {
+                    const fake: *FakeWhois = @ptrCast(@alignCast(context));
+                    fake.calls += 1;
+                    const d: u8 = switch (peer) {
+                        .ip4 => |a| a.bytes[3],
+                        .ip6 => |a| a.bytes[15],
+                    };
+                    if (fake.fail_on) |f| {
+                        if (d == f) return error.WhoisFailed;
+                    }
+                    const name: []const u8 = switch (d) {
+                        1 => "alice.tailnet.test",
+                        2 => "bob.tailnet.test",
+                        9 => "mallory.tailnet.test",
+                        else => return error.WhoisFailed,
+                    };
+                    return allocator.dupe(u8, name) catch return error.WhoisFailed;
+                }
+            }.lookup,
+        };
+    }
+};
+
+const two_peer_table_json =
+    \\{"schema":"neuron.tailnet-ceilings/v1","peers":[
+    \\  {"identity":"alice.tailnet.test","ceiling":{"allow_write":true,"write_prefix":"artifact/alice/","budget":{"max_writes":4}}},
+    \\  {"identity":"bob.tailnet.test","ceiling":{"allow_write":true,"write_prefix":"artifact/bob/"}}
+    \\]}
+;
+
+test "ceiling table parses strictly and denies by default" {
+    const allocator = std.testing.allocator;
+    var table = try tailnet_mod.CeilingTable.parse(allocator,
+        \\{"schema":"neuron.tailnet-ceilings/v1","peers":[{"identity":"a.tailnet.test","ceiling":{"allow_send":true,"send_prefix":"channel/a/"}}]}
+    );
+    defer table.deinit();
+    const ceiling = table.lookup("a.tailnet.test").?;
+    try std.testing.expect(ceiling.allow_send);
+    try std.testing.expect(!ceiling.allow_write);
+    try std.testing.expect(!ceiling.allow_spawn);
+    try std.testing.expectEqualStrings("channel/a/", ceiling.send_prefix);
+    try std.testing.expect(table.lookup("nobody.tailnet.test") == null);
+    // Wrong schema tag, duplicate identity, unknown field (typo), empty
+    // identity, and malformed JSON all fail closed as InvalidTable.
+    try std.testing.expectError(error.InvalidTable, tailnet_mod.CeilingTable.parse(allocator,
+        \\{"schema":"neuron.other/v1","peers":[]}
+    ));
+    try std.testing.expectError(error.InvalidTable, tailnet_mod.CeilingTable.parse(allocator,
+        \\{"schema":"neuron.tailnet-ceilings/v1","peers":[{"identity":"a"},{"identity":"a"}]}
+    ));
+    try std.testing.expectError(error.InvalidTable, tailnet_mod.CeilingTable.parse(allocator,
+        \\{"schema":"neuron.tailnet-ceilings/v1","peers":[{"identity":"a","ceiling":{"allow_wriet":true}}]}
+    ));
+    try std.testing.expectError(error.InvalidTable, tailnet_mod.CeilingTable.parse(allocator,
+        \\{"schema":"neuron.tailnet-ceilings/v1","peers":[{"identity":"","ceiling":{}}]}
+    ));
+    try std.testing.expectError(error.InvalidTable, tailnet_mod.CeilingTable.parse(allocator, "{not json"));
+}
+
+test "per-peer ceilings pin each tailnet peer to its own authority" {
+    const allocator = std.testing.allocator;
+    var fake: FakeWhois = .{};
+    const table = try tailnet_mod.CeilingTable.parse(allocator, two_peer_table_json);
+    var tc = tailnet_mod.TableClassifier.init(allocator, std.testing.io, table, fake.adapter(), 60_000);
+    defer tc.deinit();
+    const classify = tc.classifier();
+
+    // Each listed peer resolves to its own pinned ceiling.
+    const alice = classify.call(ip4(100, 64, 0, 1), 1_000).?;
+    try std.testing.expect(alice.allow_write);
+    try std.testing.expectEqualStrings("artifact/alice/", alice.write_prefix);
+    try std.testing.expectEqual(@as(usize, 4), alice.budget.max_writes);
+    const bob = classify.call(ip4(100, 64, 0, 2), 1_000).?;
+    try std.testing.expectEqualStrings("artifact/bob/", bob.write_prefix);
+
+    // Firing under each ceiling: alice commits to her own prefix, and a
+    // cross-prefix reach into bob's space dies at the commit boundary.
+    const rig = try MeshRig.init();
+    var fixture = Fixture.init();
+    defer fixture.deinit();
+    var node = mesh_mod.Node.init(allocator, rig.device_b, &fixture.substrate);
+    defer node.deinit();
+    var proxy_arena = std.heap.ArenaAllocator.init(allocator);
+    defer proxy_arena.deinit();
+    var proxy_fx: [1]types.Effect = undefined;
+    var proxy_ev: [1]types.Evidence = undefined;
+    var proxy_src: [1][]const u8 = undefined;
+    const proxy_impl: mesh_mod.ProxyNeuron = .{
+        .arena = &proxy_arena,
+        .fx = &proxy_fx,
+        .ev = &proxy_ev,
+        .src = &proxy_src,
+    };
+    try node.register(neuron_mod.bind(mesh_mod.ProxyNeuron, &proxy_impl, "mesh/proxy", "1"));
+    const own_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/alice/x", "from alice");
+    defer allocator.free(own_payload);
+    const own = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", own_payload, true, "firing-pp-1", 1);
+    defer allocator.free(own);
+    const committed = try node.receiveTrusted(own, 5_000, alice);
+    try std.testing.expectEqual(@as(usize, 1), committed.commit.effects_committed);
+    try std.testing.expectEqualStrings("from alice", fixture.substrate.artifacts.get("artifact/alice/x").?.bytes);
+    const cross_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/bob/x", "alice reaching bob");
+    defer allocator.free(cross_payload);
+    const cross = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", cross_payload, true, "firing-pp-2", 2);
+    defer allocator.free(cross);
+    try std.testing.expectError(error.CapabilityDenied, node.receiveTrusted(cross, 5_000, alice));
+    try std.testing.expect(fixture.substrate.artifacts.get("artifact/bob/x") == null);
+    // Bob's ceiling mirrors: his own prefix commits.
+    const bobs_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/bob/y", "from bob");
+    defer allocator.free(bobs_payload);
+    const bobs_own = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", bobs_payload, true, "firing-pp-3", 3);
+    defer allocator.free(bobs_own);
+    const bob_committed = try node.receiveTrusted(bobs_own, 5_000, bob);
+    try std.testing.expectEqual(@as(usize, 1), bob_committed.commit.effects_committed);
+
+    // Whois-resolved but unlisted identity: dropped at the table.
+    try std.testing.expect(classify.call(ip4(100, 64, 0, 9), 1_000) == null);
+    // Adapter failure: denied before a single byte would be read.
+    try std.testing.expect(classify.call(ip4(100, 64, 0, 8), 1_000) == null);
+    // Off-tailnet peers never even consult the adapter.
+    const calls_before = fake.calls;
+    try std.testing.expect(classify.call(ip4(192, 168, 1, 1), 1_000) == null);
+    try std.testing.expectEqual(calls_before, fake.calls);
+}
+
+test "whois cache honors its TTL and re-resolves after expiry" {
+    const allocator = std.testing.allocator;
+    var fake: FakeWhois = .{};
+    const table = try tailnet_mod.CeilingTable.parse(allocator, two_peer_table_json);
+    var tc = tailnet_mod.TableClassifier.init(allocator, std.testing.io, table, fake.adapter(), 60_000);
+    defer tc.deinit();
+    const classify = tc.classifier();
+    try std.testing.expect(classify.call(ip4(100, 64, 0, 1), 1_000) != null);
+    try std.testing.expect(classify.call(ip4(100, 64, 0, 1), 1_000 + 59_999) != null);
+    try std.testing.expectEqual(@as(usize, 1), fake.calls);
+    // TTL expired: a fresh whois lookup replaces the stale entry.
+    try std.testing.expect(classify.call(ip4(100, 64, 0, 1), 1_000 + 60_000) != null);
+    try std.testing.expectEqual(@as(usize, 2), fake.calls);
+    // A failed lookup is never cached: the next attempt retries.
+    try std.testing.expect(classify.call(ip4(100, 64, 0, 8), 2_000) == null);
+    try std.testing.expect(classify.call(ip4(100, 64, 0, 8), 2_000) == null);
+    try std.testing.expectEqual(@as(usize, 4), fake.calls);
 }
 
 test "tailnet admission fires under the pinned ceiling and proofs carry no authority" {
@@ -2077,12 +2240,13 @@ test "tailnet admission fires under the pinned ceiling and proofs carry no autho
     defer fixture_b.deinit();
     var node_b = mesh_mod.Node.init(allocator, rig.device_b, &fixture_b.substrate);
     defer node_b.deinit();
-    var proxy_scratch: [1024]u8 = undefined;
+    var proxy_arena = std.heap.ArenaAllocator.init(allocator);
+    defer proxy_arena.deinit();
     var proxy_fx: [1]types.Effect = undefined;
     var proxy_ev: [1]types.Evidence = undefined;
     var proxy_src: [1][]const u8 = undefined;
     const proxy_impl: mesh_mod.ProxyNeuron = .{
-        .scratch = &proxy_scratch,
+        .arena = &proxy_arena,
         .fx = &proxy_fx,
         .ev = &proxy_ev,
         .src = &proxy_src,
@@ -2091,12 +2255,14 @@ test "tailnet admission fires under the pinned ceiling and proofs carry no autho
 
     // An unsigned envelope: no proof material at all. The pinned ceiling is
     // the only authority in the room.
+    const payload_a = try mesh_mod.proxyPayloadV2(allocator, "artifact/mesh/a", "over the tailnet");
+    defer allocator.free(payload_a);
     const unsigned = try mesh_mod.unsignedEnvelopeJson(
         allocator,
         node_b.id(),
         "mesh/proxy",
-        "mesh.proxy/v1",
-        "artifact/mesh/a\nover the tailnet",
+        "mesh.proxy/v2",
+        payload_a,
         true,
         "firing-tailnet-1",
         1,
@@ -2122,7 +2288,9 @@ test "tailnet admission fires under the pinned ceiling and proofs carry no autho
         .expires_ms = 0,
         .signature = @splat(0xEE),
     };
-    const with_bogus = try node_a.send(node_b.id(), "mesh/proxy", "mesh.proxy/v1", "artifact/mesh/b\nbogus proof", true, bogus_proof, "firing-tailnet-2", 2);
+    const payload_b = try mesh_mod.proxyPayloadV2(allocator, "artifact/mesh/b", "bogus proof");
+    defer allocator.free(payload_b);
+    const with_bogus = try node_a.send(node_b.id(), "mesh/proxy", "mesh.proxy/v2", payload_b, true, bogus_proof, "firing-tailnet-2", 2);
     defer allocator.free(with_bogus);
     const bogus_result = try node_b.receiveTrusted(with_bogus, 5_000, mesh_ceiling);
     try std.testing.expectEqual(@as(usize, 1), bogus_result.commit.effects_committed);
@@ -2132,12 +2300,14 @@ test "tailnet admission fires under the pinned ceiling and proofs carry no autho
     );
 
     // An injected attempt beyond the ceiling dies at the commit boundary.
+    const payload_evil = try mesh_mod.proxyPayloadV2(allocator, "artifact/evil/x", "pwned");
+    defer allocator.free(payload_evil);
     const injected = try mesh_mod.unsignedEnvelopeJson(
         allocator,
         node_b.id(),
         "mesh/proxy",
-        "mesh.proxy/v1",
-        "artifact/evil/x\npwned",
+        "mesh.proxy/v2",
+        payload_evil,
         true,
         "firing-tailnet-3",
         3,
@@ -2158,7 +2328,7 @@ fn loopbackClassifier() tailnet_mod.PeerClassifier {
     return .{
         .context = undefined,
         .classify = struct {
-            fn classify(_: *const anyopaque, peer: mesh_mod.net.IpAddress) ?caps_mod.Caps {
+            fn classify(_: *anyopaque, peer: mesh_mod.net.IpAddress, _: u64) ?caps_mod.Caps {
                 return switch (peer) {
                     .ip4 => |addr| if (addr.bytes[0] == 127) mesh_ceiling else null,
                     else => null,
@@ -2172,7 +2342,7 @@ fn denyAllClassifier() tailnet_mod.PeerClassifier {
     return .{
         .context = undefined,
         .classify = struct {
-            fn classify(_: *const anyopaque, _: mesh_mod.net.IpAddress) ?caps_mod.Caps {
+            fn classify(_: *anyopaque, _: mesh_mod.net.IpAddress, _: u64) ?caps_mod.Caps {
                 return null;
             }
         }.classify,
@@ -2215,7 +2385,11 @@ test "tailnet daemon accepts classified peers and drops strangers before reading
     const envelope = try mesh_mod.unsignedEnvelopeJson(allocator, node_b.id(), "mesh/echo", "mesh.echo/v1", "daemon hello", true, "firing-daemon-1", 1);
     defer allocator.free(envelope);
     var dial_buffer: [8192]u8 = undefined;
-    try mesh_mod.dialSend(&server.socket.address, io, envelope, &dial_buffer);
+    const daemon_response = try mesh_mod.dialExchange(allocator, &server.socket.address, io, envelope, &dial_buffer, 5_000);
+    defer allocator.free(daemon_response);
+    try std.testing.expectEqualStrings(
+        \\{"status":"committed","effects_committed":1,"duplicates_skipped":0}
+    , daemon_response);
     thread.join();
     server.deinit(io);
     try std.testing.expectEqual(@as(?anyerror, null), ctx.err);
@@ -2239,6 +2413,229 @@ test "tailnet daemon accepts classified peers and drops strangers before reading
     try std.testing.expectEqual(@as(u32, 1), fixture_b.substrate.artifacts.count());
 }
 
+test "signed mesh path answers framed results like the tailnet path" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const rig = try MeshRig.init();
+    const root_id = identity_mod.publicKeyId(&rig.account);
+    var fixture_a = Fixture.init();
+    defer fixture_a.deinit();
+    var fixture_b = Fixture.init();
+    defer fixture_b.deinit();
+    var echo_buffers: MeshEchoBuffers = undefined;
+    const echo_impl: MeshEcho = .{ .buffers = &echo_buffers };
+    var node_a = try meshNode(allocator, rig.device_a, &fixture_a.substrate, root_id, &echo_impl);
+    defer node_a.deinit();
+    var node_b = try meshNode(allocator, rig.device_b, &fixture_b.substrate, root_id, &echo_impl);
+    defer node_b.deinit();
+    const delegation_a = try identity_mod.issueDelegation(&rig.account, identity_mod.publicKeyId(&rig.device_a), mesh_ceiling, 10_000);
+    // node_b also serves the payload-directed proxy so each connection in
+    // this test commits a distinct artifact (echo's id is create-only).
+    var proxy_arena = std.heap.ArenaAllocator.init(allocator);
+    defer proxy_arena.deinit();
+    var proxy_fx: [1]types.Effect = undefined;
+    var proxy_ev: [1]types.Evidence = undefined;
+    var proxy_src: [1][]const u8 = undefined;
+    const proxy_impl: mesh_mod.ProxyNeuron = .{
+        .arena = &proxy_arena,
+        .fx = &proxy_fx,
+        .ev = &proxy_ev,
+        .src = &proxy_src,
+    };
+    try node_b.register(neuron_mod.bind(mesh_mod.ProxyNeuron, &proxy_impl, "mesh/proxy", "1"));
+
+    const ServerCtx = struct {
+        node: *mesh_mod.Node,
+        server: *mesh_mod.net.Server,
+        answered: usize = 0,
+        err: ?anyerror = null,
+
+        fn serve(ctx: *@This()) void {
+            var read_buffer: [8192]u8 = undefined;
+            var write_buffer: [8192]u8 = undefined;
+            // Two connections: the two-frame exchange, then the
+            // close-before-read client.
+            for (0..2) |_| {
+                ctx.answered += mesh_mod.acceptOnce(ctx.node, ctx.server, std.testing.io, 5_000, &read_buffer, &write_buffer) catch |err| blk: {
+                    ctx.err = err;
+                    break :blk 0;
+                };
+            }
+        }
+    };
+    var server = try (try mesh_mod.net.IpAddress.parseIp4("127.0.0.1", 0)).listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    var ctx: ServerCtx = .{ .node = &node_b, .server = &server };
+    const thread = try std.Thread.spawn(.{}, ServerCtx.serve, .{&ctx});
+
+    // An over-ceiling signed envelope: the delegation carries more than the
+    // account's pinned ceiling, so receive() denies the attenuation — and
+    // the answer is a framed typed error, not a dropped connection.
+    const wide: caps_mod.Caps = .{ .allow_write = true, .allow_send = true, .allow_spawn = true };
+    const evil_delegation = try identity_mod.issueDelegation(&rig.account, identity_mod.publicKeyId(&rig.device_a), wide, 10_000);
+    const evil = try node_a.send(node_b.id(), "mesh/echo", "mesh.echo/v1", "over the ceiling", true, evil_delegation, "firing-sym-evil", 21);
+    defer allocator.free(evil);
+    const good_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/mesh/sym-good", "within the ceiling");
+    defer allocator.free(good_payload);
+    const good = try node_a.send(node_b.id(), "mesh/proxy", "mesh.proxy/v2", good_payload, true, delegation_a, "firing-sym-good", 22);
+    defer allocator.free(good);
+    const exchange = try server.socket.address.connect(io, .{ .mode = .stream });
+    var exchange_read: [8192]u8 = undefined;
+    var exchange_write: [8192]u8 = undefined;
+    var writer = exchange.writer(io, &exchange_write);
+    var reader = exchange.reader(io, &exchange_read);
+    try mesh_mod.writeFrame(&writer.interface, evil);
+    const evil_response = (try mesh_mod.readFrame(allocator, &reader.interface)).?;
+    defer allocator.free(evil_response);
+    try std.testing.expectEqualStrings(
+        \\{"status":"error","error":"AttenuationDenied"}
+    , evil_response);
+    // The rejection committed nothing (fail closed, §27).
+    try std.testing.expectEqual(@as(u32, 0), fixture_b.substrate.artifacts.count());
+    // The connection keeps serving after a rejection: a good envelope on
+    // the same pipe commits.
+    try mesh_mod.writeFrame(&writer.interface, good);
+    const good_response = (try mesh_mod.readFrame(allocator, &reader.interface)).?;
+    defer allocator.free(good_response);
+    try std.testing.expectEqualStrings(
+        \\{"status":"committed","effects_committed":1,"duplicates_skipped":0}
+    , good_response);
+    try std.testing.expectEqualStrings(
+        "within the ceiling",
+        fixture_b.substrate.artifacts.get("artifact/mesh/sym-good").?.bytes,
+    );
+    exchange.close(io);
+
+    // A fire-and-forget client from before the symmetry: writes one frame
+    // and closes without reading. The commit stands; the broken response
+    // pipe just ends the connection.
+    const late = try node_a.send(node_b.id(), "mesh/echo", "mesh.echo/v1", "close before read", true, delegation_a, "firing-sym-late", 23);
+    defer allocator.free(late);
+    const bare = try server.socket.address.connect(io, .{ .mode = .stream });
+    var bare_buffer: [8192]u8 = undefined;
+    var bare_writer = bare.writer(io, &bare_buffer);
+    try mesh_mod.writeFrame(&bare_writer.interface, late);
+    bare.close(io);
+
+    thread.join();
+    try std.testing.expectEqual(@as(?anyerror, null), ctx.err);
+    try std.testing.expectEqual(@as(usize, 3), ctx.answered);
+    try std.testing.expectEqualStrings(
+        "close before read",
+        fixture_b.substrate.artifacts.get("artifact/mesh/received").?.bytes,
+    );
+}
+
+test "daemon and edge read the wall clock so delegation expiry is real" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const rig = try MeshRig.init();
+    const root_id = identity_mod.publicKeyId(&rig.account);
+    var fixture_a = Fixture.init();
+    defer fixture_a.deinit();
+    var fixture_b = Fixture.init();
+    defer fixture_b.deinit();
+    var echo_buffers: MeshEchoBuffers = undefined;
+    const echo_impl: MeshEcho = .{ .buffers = &echo_buffers };
+    var node_a = try meshNode(allocator, rig.device_a, &fixture_a.substrate, root_id, &echo_impl);
+    defer node_a.deinit();
+    var node_b = try meshNode(allocator, rig.device_b, &fixture_b.substrate, root_id, &echo_impl);
+    defer node_b.deinit();
+
+    // The clock the daemons now read is genuinely the wall clock.
+    const wall = mesh_mod.wallNowMs(io);
+    try std.testing.expect(wall > 1_700_000_000_000);
+
+    const ServerCtx = struct {
+        node: *mesh_mod.Node,
+        server: *mesh_mod.net.Server,
+        answered: usize = 0,
+        err: ?anyerror = null,
+
+        fn serve(ctx: *@This()) void {
+            var read_buffer: [8192]u8 = undefined;
+            var write_buffer: [8192]u8 = undefined;
+            // Each accept reads the wall clock, exactly like tailnet.serve
+            // with a null clock does in production.
+            for (0..2) |_| {
+                ctx.answered += mesh_mod.acceptOnce(ctx.node, ctx.server, std.testing.io, mesh_mod.wallNowMs(std.testing.io), &read_buffer, &write_buffer) catch |err| blk: {
+                    ctx.err = err;
+                    break :blk 0;
+                };
+            }
+        }
+    };
+    var server = try (try mesh_mod.net.IpAddress.parseIp4("127.0.0.1", 0)).listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    var ctx: ServerCtx = .{ .node = &node_b, .server = &server };
+    const thread = try std.Thread.spawn(.{}, ServerCtx.serve, .{&ctx});
+
+    // A delegation that died in 1970: validly signed, honestly expired.
+    // Under the old fixed clock (now_ms = 0) this fired; under the wall
+    // clock it is a framed typed error and commits nothing.
+    const dead = try identity_mod.issueDelegation(&rig.account, identity_mod.publicKeyId(&rig.device_a), mesh_ceiling, 1);
+    const dead_env = try node_a.send(node_b.id(), "mesh/echo", "mesh.echo/v1", "too late", true, dead, "firing-clock-dead", 31);
+    defer allocator.free(dead_env);
+    var dial_buffer: [8192]u8 = undefined;
+    const dead_response = try mesh_mod.dialExchange(allocator, &server.socket.address, io, dead_env, &dial_buffer, 5_000);
+    defer allocator.free(dead_response);
+    try std.testing.expectEqualStrings(
+        \\{"status":"error","error":"ExpiredDelegation"}
+    , dead_response);
+    try std.testing.expect(fixture_b.substrate.artifacts.get("artifact/mesh/received") == null);
+
+    // A live delegation under the same clock: verifies and commits.
+    const live = try identity_mod.issueDelegation(&rig.account, identity_mod.publicKeyId(&rig.device_a), mesh_ceiling, wall + 60_000);
+    const live_env = try node_a.send(node_b.id(), "mesh/echo", "mesh.echo/v1", "right on time", true, live, "firing-clock-live", 32);
+    defer allocator.free(live_env);
+    const live_response = try mesh_mod.dialExchange(allocator, &server.socket.address, io, live_env, &dial_buffer, 5_000);
+    defer allocator.free(live_response);
+    try std.testing.expectEqualStrings(
+        \\{"status":"committed","effects_committed":1,"duplicates_skipped":0}
+    , live_response);
+    thread.join();
+    try std.testing.expectEqual(@as(?anyerror, null), ctx.err);
+    try std.testing.expectEqualStrings(
+        "right on time",
+        fixture_b.substrate.artifacts.get("artifact/mesh/received").?.bytes,
+    );
+
+    // The MCP edge with a null clock reads the wall clock at fire time:
+    // a null-clock edge fires fine, and the firing lands.
+    var proxy_arena = std.heap.ArenaAllocator.init(allocator);
+    defer proxy_arena.deinit();
+    var proxy_fx: [1]types.Effect = undefined;
+    var proxy_ev: [1]types.Evidence = undefined;
+    var proxy_src: [1][]const u8 = undefined;
+    const proxy_impl: mesh_mod.ProxyNeuron = .{
+        .arena = &proxy_arena,
+        .fx = &proxy_fx,
+        .ev = &proxy_ev,
+        .src = &proxy_src,
+    };
+    try node_b.register(neuron_mod.bind(mesh_mod.ProxyNeuron, &proxy_impl, "mesh/proxy", "1"));
+    var edge: mcp_mod.Server = .{
+        .allocator = allocator,
+        .node = &node_b,
+        .ceiling = .{ .allow_write = true, .write_prefix = "artifact/mcp/" },
+        .now_ms = null,
+        .io = io,
+    };
+    const script =
+        \\{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"neuron.fire","arguments":{"ref":"mesh/proxy","payload":"{\"schema\":\"mesh.proxy/v2\",\"artifact_id\":\"artifact/mcp/live-clock\",\"bytes\":\"edge fired live\"}","firing_id":"f-clock-1"}}}
+        \\
+    ;
+    var reader = std.Io.Reader.fixed(script);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    try edge.serve(&reader, &out.writer);
+    try std.testing.expect(std.mem.indexOf(u8, out.writer.buffered(), "\\\"effects_committed\\\":1") != null);
+    try std.testing.expectEqualStrings(
+        "edge fired live",
+        fixture_b.substrate.artifacts.get("artifact/mcp/live-clock").?.bytes,
+    );
+}
+
 test "mcp edge serves info and fire under its pinned ceiling" {
     const allocator = std.testing.allocator;
     const rig = try MeshRig.init();
@@ -2246,12 +2643,13 @@ test "mcp edge serves info and fire under its pinned ceiling" {
     defer fixture.deinit();
     var node = mesh_mod.Node.init(allocator, rig.device_b, &fixture.substrate);
     defer node.deinit();
-    var proxy_scratch: [1024]u8 = undefined;
+    var proxy_arena = std.heap.ArenaAllocator.init(allocator);
+    defer proxy_arena.deinit();
     var proxy_fx: [1]types.Effect = undefined;
     var proxy_ev: [1]types.Evidence = undefined;
     var proxy_src: [1][]const u8 = undefined;
     const proxy_impl: mesh_mod.ProxyNeuron = .{
-        .scratch = &proxy_scratch,
+        .arena = &proxy_arena,
         .fx = &proxy_fx,
         .ev = &proxy_ev,
         .src = &proxy_src,
@@ -2272,9 +2670,9 @@ test "mcp edge serves info and fire under its pinned ceiling" {
         \\{"jsonrpc":"2.0","method":"notifications/initialized"}
         \\{"jsonrpc":"2.0","id":2,"method":"tools/list"}
         \\{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"neuron.info","arguments":{}}}
-        \\{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"neuron.fire","arguments":{"ref":"mesh/proxy","payload":"artifact/mcp/ok\nhello mcp","firing_id":"f-mcp-1"}}}
-        \\{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"neuron.fire","arguments":{"ref":"mesh/proxy","payload":"artifact/evil/x\nboo","firing_id":"f-mcp-2"}}}
-        \\{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"neuron.fire","arguments":{"ref":"mesh/proxy","payload":"artifact/mcp/ok\nhello mcp","firing_id":"f-mcp-1"}}}
+        \\{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"neuron.fire","arguments":{"ref":"mesh/proxy","payload":"{\"schema\":\"mesh.proxy/v2\",\"artifact_id\":\"artifact/mcp/ok\",\"bytes\":\"hello mcp\"}","firing_id":"f-mcp-1"}}}
+        \\{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"neuron.fire","arguments":{"ref":"mesh/proxy","payload":"{\"schema\":\"mesh.proxy/v2\",\"artifact_id\":\"artifact/evil/x\",\"bytes\":\"boo\"}","firing_id":"f-mcp-2"}}}
+        \\{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"neuron.fire","arguments":{"ref":"mesh/proxy","payload":"{\"schema\":\"mesh.proxy/v2\",\"artifact_id\":\"artifact/mcp/ok\",\"bytes\":\"hello mcp\"}","firing_id":"f-mcp-1"}}}
         \\
     ;
     var reader = std.Io.Reader.fixed(script);
@@ -2301,12 +2699,12 @@ test "mcp edge serves info and fire under its pinned ceiling" {
 }
 
 fn proxyNeuron(
-    scratch: *[1024]u8,
+    arena: *std.heap.ArenaAllocator,
     fx: *[1]types.Effect,
     ev: *[1]types.Evidence,
     src: *[1][]const u8,
 ) mesh_mod.ProxyNeuron {
-    return .{ .scratch = scratch, .fx = fx, .ev = ev, .src = src };
+    return .{ .arena = arena, .fx = fx, .ev = ev, .src = src };
 }
 
 test "mesh gateway dials tailnet peers and reports framed results" {
@@ -2317,11 +2715,12 @@ test "mesh gateway dials tailnet peers and reports framed results" {
     defer fixture_b.deinit();
     var node_b = mesh_mod.Node.init(allocator, rig.device_b, &fixture_b.substrate);
     defer node_b.deinit();
-    var scratch: [1024]u8 = undefined;
+    var proxy_arena = std.heap.ArenaAllocator.init(allocator);
+    defer proxy_arena.deinit();
     var fx: [1]types.Effect = undefined;
     var ev: [1]types.Evidence = undefined;
     var src: [1][]const u8 = undefined;
-    const proxy_impl = proxyNeuron(&scratch, &fx, &ev, &src);
+    const proxy_impl = proxyNeuron(&proxy_arena, &fx, &ev, &src);
     try node_b.register(neuron_mod.bind(mesh_mod.ProxyNeuron, &proxy_impl, "mesh/proxy", "1"));
 
     // Two sequential connections: one good fire, one over-ceiling attempt.
@@ -2350,7 +2749,9 @@ test "mesh gateway dials tailnet peers and reports framed results" {
     // The wildcard recipient is honored on the transport-authenticated
     // pipe: the client never learns B's node id — the transport chose it.
     const wildcard: mesh_mod.NodeId = @splat(0);
-    const good = try mesh_mod.unsignedEnvelopeJson(allocator, wildcard, "mesh/proxy", "mesh.proxy/v1", "artifact/mesh/gw\nhello gateway", true, "firing-gw-1", 1);
+    const good_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/mesh/gw", "hello gateway");
+    defer allocator.free(good_payload);
+    const good = try mesh_mod.unsignedEnvelopeJson(allocator, wildcard, "mesh/proxy", "mesh.proxy/v2", good_payload, true, "firing-gw-1", 1);
     defer allocator.free(good);
     var dial_buffer: [8192]u8 = undefined;
     const committed = try mesh_mod.dialExchange(allocator, &server.socket.address, io, good, &dial_buffer, 5_000);
@@ -2364,7 +2765,9 @@ test "mesh gateway dials tailnet peers and reports framed results" {
 
     // The governing ceiling is B's own: an over-ceiling attempt comes back
     // as a framed typed error and commits nothing.
-    const evil = try mesh_mod.unsignedEnvelopeJson(allocator, wildcard, "mesh/proxy", "mesh.proxy/v1", "artifact/evil/x\npwned", true, "firing-gw-2", 2);
+    const evil_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/evil/x", "pwned");
+    defer allocator.free(evil_payload);
+    const evil = try mesh_mod.unsignedEnvelopeJson(allocator, wildcard, "mesh/proxy", "mesh.proxy/v2", evil_payload, true, "firing-gw-2", 2);
     defer allocator.free(evil);
     const rejected = try mesh_mod.dialExchange(allocator, &server.socket.address, io, evil, &dial_buffer, 5_000);
     defer allocator.free(rejected);
@@ -2395,11 +2798,12 @@ test "mcp edge gates remote fire through CGNAT-only egress" {
     defer fixture_b.deinit();
     var node_b = mesh_mod.Node.init(allocator, rig.device_b, &fixture_b.substrate);
     defer node_b.deinit();
-    var scratch_b: [1024]u8 = undefined;
+    var arena_b = std.heap.ArenaAllocator.init(allocator);
+    defer arena_b.deinit();
     var fx_b: [1]types.Effect = undefined;
     var ev_b: [1]types.Evidence = undefined;
     var src_b: [1][]const u8 = undefined;
-    const proxy_impl_b = proxyNeuron(&scratch_b, &fx_b, &ev_b, &src_b);
+    const proxy_impl_b = proxyNeuron(&arena_b, &fx_b, &ev_b, &src_b);
     try node_b.register(neuron_mod.bind(mesh_mod.ProxyNeuron, &proxy_impl_b, "mesh/proxy", "1"));
 
     const ServerCtx = struct {
@@ -2425,11 +2829,12 @@ test "mcp edge gates remote fire through CGNAT-only egress" {
     defer fixture_edge.deinit();
     var node_edge = mesh_mod.Node.init(allocator, rig.device_a, &fixture_edge.substrate);
     defer node_edge.deinit();
-    var scratch_e: [1024]u8 = undefined;
+    var arena_e = std.heap.ArenaAllocator.init(allocator);
+    defer arena_e.deinit();
     var fx_e: [1]types.Effect = undefined;
     var ev_e: [1]types.Evidence = undefined;
     var src_e: [1][]const u8 = undefined;
-    const proxy_impl_e = proxyNeuron(&scratch_e, &fx_e, &ev_e, &src_e);
+    const proxy_impl_e = proxyNeuron(&arena_e, &fx_e, &ev_e, &src_e);
     try node_edge.register(neuron_mod.bind(mesh_mod.ProxyNeuron, &proxy_impl_e, "mesh/proxy", "1"));
     var edge: mcp_mod.Server = .{
         .allocator = allocator,
@@ -2443,9 +2848,9 @@ test "mcp edge gates remote fire through CGNAT-only egress" {
     const address_text = try std.fmt.allocPrint(allocator, "{f}", .{listener.socket.address});
     defer allocator.free(address_text);
     const script = try std.fmt.allocPrint(allocator,
-        \\{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"neuron.fire","arguments":{{"ref":"mesh/proxy","payload":"artifact/mesh/remote\nvia gateway","firing_id":"f-gw-1","address":"{s}"}}}}}}
-        \\{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"neuron.fire","arguments":{{"ref":"mesh/proxy","payload":"artifact/mesh/ssrf\nnope","firing_id":"f-gw-2","address":"8.8.8.8:53"}}}}}}
-        \\{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"neuron.fire","arguments":{{"ref":"mesh/proxy","payload":"artifact/mesh/local\nnope","firing_id":"f-gw-3"}}}}}}
+        \\{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"neuron.fire","arguments":{{"ref":"mesh/proxy","payload":"{{\"schema\":\"mesh.proxy/v2\",\"artifact_id\":\"artifact/mesh/remote\",\"bytes\":\"via gateway\"}}","firing_id":"f-gw-1","address":"{s}"}}}}}}
+        \\{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"neuron.fire","arguments":{{"ref":"mesh/proxy","payload":"{{\"schema\":\"mesh.proxy/v2\",\"artifact_id\":\"artifact/mesh/ssrf\",\"bytes\":\"nope\"}}","firing_id":"f-gw-2","address":"8.8.8.8:53"}}}}}}
+        \\{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"neuron.fire","arguments":{{"ref":"mesh/proxy","payload":"{{\"schema\":\"mesh.proxy/v2\",\"artifact_id\":\"artifact/mesh/local\",\"bytes\":\"nope\"}}","firing_id":"f-gw-3"}}}}}}
         \\
     , .{address_text});
     defer allocator.free(script);
@@ -2485,7 +2890,9 @@ test "bounded dial converts dead and absent peers into typed errors" {
     const posix = std.posix;
     var dial_buffer: [8192]u8 = undefined;
     const wildcard: mesh_mod.NodeId = @splat(0);
-    const envelope = try mesh_mod.unsignedEnvelopeJson(allocator, wildcard, "mesh/proxy", "mesh.proxy/v1", "artifact/mesh/nope\nnope", true, "firing-dead-1", 1);
+    const nope_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/mesh/nope", "nope");
+    defer allocator.free(nope_payload);
+    const envelope = try mesh_mod.unsignedEnvelopeJson(allocator, wildcard, "mesh/proxy", "mesh.proxy/v2", nope_payload, true, "firing-dead-1", 1);
     defer allocator.free(envelope);
 
     // A port with nobody home: the refusal arrives inside the deadline as
@@ -2531,5 +2938,155 @@ test "bounded dial converts dead and absent peers into typed errors" {
     try std.testing.expectError(
         error.Timeout,
         mesh_mod.dialExchange(allocator, &jammed, io, envelope, &dial_buffer, 200),
+    );
+}
+
+test "bounded exchange read shares the dial deadline" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var dial_buffer: [8192]u8 = undefined;
+
+    // A server that accepts and never writes: the response read must die
+    // inside the same budget the dial used — before this, the read was
+    // unbounded and wedged the exchange exactly like this.
+    const HoldCtx = struct {
+        server: *mesh_mod.net.Server,
+        err: ?anyerror = null,
+
+        fn serve(ctx: *@This()) void {
+            const stream = ctx.server.accept(std.testing.io) catch |err| {
+                ctx.err = err;
+                return;
+            };
+            defer stream.close(std.testing.io);
+            // Hold the connection open well past the client's budget.
+            var pause: std.c.timespec = .{ .sec = 1, .nsec = 0 };
+            _ = std.c.nanosleep(&pause, null);
+        }
+    };
+    var hold_listener = try (try mesh_mod.net.IpAddress.parseIp4("127.0.0.1", 0)).listen(io, .{ .reuse_address = true });
+    defer hold_listener.deinit(io);
+    var hold_ctx: HoldCtx = .{ .server = &hold_listener };
+    const hold_thread = try std.Thread.spawn(.{}, HoldCtx.serve, .{&hold_ctx});
+    const started = std.Io.Clock.awake.now(io).toMilliseconds();
+    try std.testing.expectError(
+        error.Timeout,
+        mesh_mod.dialExchange(allocator, &hold_listener.socket.address, io, "ping", &dial_buffer, 300),
+    );
+    const elapsed = std.Io.Clock.awake.now(io).toMilliseconds() - started;
+    // Timed out inside the budget — not at the server's one-second hold.
+    try std.testing.expect(elapsed < 900);
+    hold_thread.join();
+    try std.testing.expectEqual(@as(?anyerror, null), hold_ctx.err);
+
+    // A server that answers just under budget: the same shared deadline
+    // lets the exchange complete.
+    const DelayCtx = struct {
+        server: *mesh_mod.net.Server,
+        err: ?anyerror = null,
+
+        fn serve(ctx: *@This()) void {
+            const stream = ctx.server.accept(std.testing.io) catch |err| {
+                ctx.err = err;
+                return;
+            };
+            defer stream.close(std.testing.io);
+            var read_buffer: [8192]u8 = undefined;
+            var reader = stream.reader(std.testing.io, &read_buffer);
+            const request = (mesh_mod.readFrame(std.testing.allocator, &reader.interface) catch |err| {
+                ctx.err = err;
+                return;
+            }) orelse return;
+            std.testing.allocator.free(request);
+            var pause: std.c.timespec = .{ .sec = 0, .nsec = 200 * std.time.ns_per_ms };
+            _ = std.c.nanosleep(&pause, null);
+            var write_buffer: [8192]u8 = undefined;
+            var writer = stream.writer(std.testing.io, &write_buffer);
+            mesh_mod.writeFrame(&writer.interface, "{\"status\":\"committed\",\"effects_committed\":1,\"duplicates_skipped\":0}") catch |err| {
+                ctx.err = err;
+            };
+        }
+    };
+    var delay_listener = try (try mesh_mod.net.IpAddress.parseIp4("127.0.0.1", 0)).listen(io, .{ .reuse_address = true });
+    defer delay_listener.deinit(io);
+    var delay_ctx: DelayCtx = .{ .server = &delay_listener };
+    const delay_thread = try std.Thread.spawn(.{}, DelayCtx.serve, .{&delay_ctx});
+    const response = try mesh_mod.dialExchange(allocator, &delay_listener.socket.address, io, "ping", &dial_buffer, 2_000);
+    defer allocator.free(response);
+    try std.testing.expectEqualStrings(
+        \\{"status":"committed","effects_committed":1,"duplicates_skipped":0}
+    , response);
+    delay_thread.join();
+    try std.testing.expectEqual(@as(?anyerror, null), delay_ctx.err);
+}
+
+test "durable substrate survives restart with dedupe and delivery state intact" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const effects = [_]types.Effect{
+        .{ .write = .{ .id = "artifact/durable/a", .schema = "data/v1", .bytes = "persisted" } },
+        .{ .send = .{ .to = "channel/review", .schema = "msg/v1", .payload = "durable hello" } },
+    };
+
+    // First life: commit a firing, then acknowledge its message.
+    {
+        var substrate = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state");
+        defer substrate.deinit();
+        const runtime: runtime_mod.Runtime = .{ .substrate = &substrate };
+        const committed = try runtime.execute(stimulus("durable-1"), allCaps(), .{
+            .control = .{ .terminate = "done" },
+            .effects = &effects,
+            .evidence = &evidence,
+        });
+        try std.testing.expectEqual(@as(usize, 2), committed.effects_committed);
+        const ack = (try delivery_mod.deliverNext(&substrate, acknowledgeAdapter)).?;
+        try std.testing.expectEqual(substrate_mod.DeliveryStatus.acknowledged, ack.status);
+
+        // A second live opener is refused: the log is strictly single-writer.
+        try std.testing.expectError(
+            error.SubstrateLocked,
+            substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state"),
+        );
+    }
+
+    // Second life: the exact committed state is back — artifacts, delivery
+    // status, and the firing-id dedupe record (§21 survives restart).
+    {
+        var substrate = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state");
+        defer substrate.deinit();
+        try std.testing.expectEqualStrings(
+            "persisted",
+            substrate.artifacts.get("artifact/durable/a").?.bytes,
+        );
+        try std.testing.expectEqual(@as(usize, 1), substrate.messages.items.len);
+        try std.testing.expectEqual(
+            substrate_mod.DeliveryStatus.acknowledged,
+            substrate.messages.items[0].status,
+        );
+        const runtime: runtime_mod.Runtime = .{ .substrate = &substrate };
+        const duplicate = try runtime.execute(stimulus("durable-1"), allCaps(), .{
+            .control = .{ .terminate = "done" },
+            .effects = &effects,
+            .evidence = &evidence,
+        });
+        try std.testing.expectEqual(@as(usize, 0), duplicate.effects_committed);
+        try std.testing.expectEqual(@as(usize, 2), duplicate.duplicates_skipped);
+    }
+
+    // A torn final record — a crashed append — fails closed as a typed
+    // error, never silently partial state (§27).
+    {
+        const log = try tmp.dir.openFile(io, "state/substrate.log", .{ .mode = .read_write });
+        defer log.close(io);
+        const size = (try log.stat(io)).size;
+        try log.writePositionalAll(io, "{\"schema\":\"neuron.substrate/v1\",\"op\":\"com", size);
+    }
+    try std.testing.expectError(
+        error.CorruptLog,
+        substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state"),
     );
 }

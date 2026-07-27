@@ -38,7 +38,9 @@ pub const Server = struct {
     allocator: Allocator,
     node: *mesh_mod.Node,
     ceiling: caps_mod.Caps,
-    now_ms: u64,
+    /// Fixed clock for deterministic tests; null reads the wall clock at
+    /// fire time, which is what production edges do.
+    now_ms: ?u64,
     io: std.Io,
     /// Egress guard for remote fires: the edge may only dial addresses
     /// this predicate honors. Production pins it to the tailnet CGNAT
@@ -162,7 +164,8 @@ pub const Server = struct {
             firing_id,
             self.nonce,
         );
-        const result = try self.node.receiveTrusted(bytes, self.now_ms, self.ceiling);
+        const now = self.now_ms orelse mesh_mod.wallNowMs(self.io);
+        const result = try self.node.receiveTrusted(bytes, now, self.ceiling);
         var inner: std.Io.Writer.Allocating = .init(allocator);
         const iw = &inner.writer;
         try iw.writeAll("{\"status\":\"committed\",\"firing_id\":");
@@ -265,5 +268,5 @@ const initialize_result_json =
 ;
 
 const tools_list_json =
-    \\{"tools":[{"name":"neuron.info","description":"Who is this neuron node and what may I ask of it: node id, registered neuron refs, and the capability ceiling this edge enforces.","inputSchema":{"type":"object","properties":{}}},{"name":"neuron.fire","description":"Stimulate a neuron on this node, or on a tailnet mesh peer when address is given. The firing is admitted under the governing node's pinned capability ceiling and committed atomically, or not at all; pass a stable firing_id to make retries idempotent. Remote fires dial only tailnet (100.64.0.0/10) peers and return the peer's framed commit result.","inputSchema":{"type":"object","required":["ref","payload"],"properties":{"ref":{"type":"string","description":"Registered neuron id to stimulate, e.g. mesh/proxy"},"payload":{"type":"string","description":"Typed message payload; for mesh/proxy: '<artifact-id>\\n<bytes>'"},"schema":{"type":"string","description":"Message schema, default mcp.fire/v1"},"firing_id":{"type":"string","description":"Stable id for idempotent retries"},"address":{"type":"string","description":"Optional tailnet mesh peer as ip:port (100.64.0.0/10 only); the fire is relayed there and the peer's framed result returned"}}}}]}
+    \\{"tools":[{"name":"neuron.info","description":"Who is this neuron node and what may I ask of it: node id, registered neuron refs, and the capability ceiling this edge enforces.","inputSchema":{"type":"object","properties":{}}},{"name":"neuron.fire","description":"Stimulate a neuron on this node, or on a tailnet mesh peer when address is given. The firing is admitted under the governing node's pinned capability ceiling and committed atomically, or not at all; pass a stable firing_id to make retries idempotent. Remote fires dial only tailnet (100.64.0.0/10) peers and return the peer's framed commit result.","inputSchema":{"type":"object","required":["ref","payload"],"properties":{"ref":{"type":"string","description":"Registered neuron id to stimulate, e.g. mesh/proxy"},"payload":{"type":"string","description":"Typed message payload; for mesh/proxy: a mesh.proxy/v2 JSON object — {\"schema\":\"mesh.proxy/v2\",\"artifact_id\":\"...\",\"bytes\":\"...\"}"},"schema":{"type":"string","description":"Message schema, default mcp.fire/v1"},"firing_id":{"type":"string","description":"Stable id for idempotent retries"},"address":{"type":"string","description":"Optional tailnet mesh peer as ip:port (100.64.0.0/10 only); the fire is relayed there and the peer's framed result returned"}}}}]}
 ;

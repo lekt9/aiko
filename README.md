@@ -59,16 +59,26 @@ effects to Contract's canonical outbox before dispatch, and then acknowledges
 the exact effect. Contract ABI 12 records the firing and node settlement in
 one append-only transaction.
 
-The expected source layout is:
+## Source layout and building Contract
 
-```text
-Unbrowse/
-├── neuron/
-├── contract/
-└── aiko/
+Neuron is published as its own repo (`Unbrowse/neuron`).
+
+Contract (the production substrate and `contract` CLI) is in `Unbrowse/contract`.
+
+Contract now depends on the published neuron package via git (not a manual sibling checkout). See the "Building from source (single clone)" section in the Contract README for the exact commands:
+
+https://gitea/.../Unbrowse/contract (or your local clone) → README.md
+
+For the standalone neuron reference runtime only (this repo):
+
+```sh
+zig build test
+zig build run -- demo
+zig build
+./zig-out/bin/neuron run --def <manifest> --neuron <id> --stimulus <file> --json
 ```
 
-Check the complete boundary with:
+Check production boundary invariants with:
 
 ```sh
 bash tests/check-production-neuron.sh

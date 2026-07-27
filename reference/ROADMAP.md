@@ -3,7 +3,10 @@
 Status: unsettled work as of 2026-07-27
 
 `AGENTS.md` defines the target. `IMPLEMENTATION.md` records what exists. This
-file contains only gaps that still need a runnable witness.
+file contains only gaps that still need a runnable witness. Implementation
+antipatterns found in review on 2026-07-27 are planned in
+`reference/ANTIPATTERN_REMEDIATION.md` (durable substrate, per-peer ceilings,
+wire symmetry, clock honesty, bounded reads, typed proxy payload, hygiene).
 
 ## Settled since the previous roadmap
 

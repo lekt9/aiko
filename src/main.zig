@@ -22,13 +22,21 @@ const usage =
     \\  neuron run --def <manifest.json> --neuron <id> --stimulus <file|-> [--json]
     \\                         fire an external script-neuron through the real
     \\                         validate + commit lifecycle
-    \\  neuron serve <ip:port> <write_prefix>
+    \\  neuron serve <ip:port> <write_prefix> [state_dir] [ceilings.json]
     \\                         run the mesh daemon: tailnet peers (100.64.0.0/10)
     \\                         may stimulate mesh/proxy under a ceiling pinned to
-    \\                         <write_prefix>; everyone else is dropped
-    \\  neuron mcp <write_prefix>
+    \\                         <write_prefix>; everyone else is dropped. With
+    \\                         [state_dir] the substrate is journaled there and
+    \\                         survives restart; without it, state is in-memory.
+    \\                         With [ceilings.json] (schema
+    \\                         neuron.tailnet-ceilings/v1) each peer is resolved
+    \\                         via `tailscale whois` and fires under its own
+    \\                         per-node ceiling; unlisted nodes are dropped
+    \\  neuron mcp <write_prefix> [state_dir]
     \\                         run the stdio MCP edge: neuron.info + neuron.fire
-    \\                         under a ceiling pinned to <write_prefix>
+    \\                         under a ceiling pinned to <write_prefix>, with
+    \\                         optional tailnet gateway (address argument) and
+    \\                         the same optional durable state_dir as serve
     \\  neuron --version       print the build version
     \\  neuron --help          show this help
     \\
@@ -62,16 +70,22 @@ pub fn main(init: std.process.Init) !void {
         };
         const ceiling: caps_mod.Caps = .{ .allow_write = true, .write_prefix = args.items[3] };
         const keys = identity.generateKeyPair(init.io);
-        var substrate = substrate_mod.Substrate.init(allocator);
+        var substrate = openState(allocator, init.io, if (args.items.len > 4) args.items[4] else null) catch |err| {
+            var error_buffer: [192]u8 = undefined;
+            const line = std.fmt.bufPrint(&error_buffer, "error: cannot open state dir: {s}\n", .{@errorName(err)}) catch "error: cannot open state dir\n";
+            writeStderr(init.io, line) catch {};
+            std.process.exit(1);
+        };
         defer substrate.deinit();
         var node = mesh_mod.Node.init(allocator, keys, &substrate);
         defer node.deinit();
-        var proxy_scratch: [1024]u8 = undefined;
+        var proxy_arena = std.heap.ArenaAllocator.init(allocator);
+        defer proxy_arena.deinit();
         var proxy_fx: [1]@import("types.zig").Effect = undefined;
         var proxy_ev: [1]@import("types.zig").Evidence = undefined;
         var proxy_src: [1][]const u8 = undefined;
         const proxy_impl: mesh_mod.ProxyNeuron = .{
-            .scratch = &proxy_scratch,
+            .arena = &proxy_arena,
             .fx = &proxy_fx,
             .ev = &proxy_ev,
             .src = &proxy_src,
@@ -87,27 +101,52 @@ pub fn main(init: std.process.Init) !void {
             .{ identity.nodeIdHex(node.id(), &id_hex), ceiling.write_prefix },
         );
         try writeStdout(init.io, line);
-        // No expiry on the unsigned path: proofs are not consulted on a
-        // transport-authenticated connection, so a fixed clock is inert.
-        try tailnet_mod.serve(&node, &server, init.io, tailnet_mod.tailnetClassifier(&ceiling), 0);
+        // Live wall clock (null): expiry and whois cache TTLs are real in
+        // the daemon; fixed clocks are for tests.
+        if (args.items.len > 5) {
+            const table_bytes = std.Io.Dir.cwd().readFileAlloc(init.io, args.items[5], allocator, .limited(256 * 1024)) catch |err| {
+                var error_buffer: [192]u8 = undefined;
+                const eline = std.fmt.bufPrint(&error_buffer, "error: cannot read ceilings file: {s}\n", .{@errorName(err)}) catch "error: cannot read ceilings file\n";
+                writeStderr(init.io, eline) catch {};
+                std.process.exit(1);
+            };
+            defer allocator.free(table_bytes);
+            const table = tailnet_mod.CeilingTable.parse(allocator, table_bytes) catch |err| {
+                var error_buffer: [192]u8 = undefined;
+                const eline = std.fmt.bufPrint(&error_buffer, "error: invalid ceilings file: {s}\n", .{@errorName(err)}) catch "error: invalid ceilings file\n";
+                writeStderr(init.io, eline) catch {};
+                std.process.exit(1);
+            };
+            var per_peer = tailnet_mod.TableClassifier.init(allocator, init.io, table, tailnet_mod.tailscaleWhois(), 300_000);
+            defer per_peer.deinit();
+            try tailnet_mod.serve(&node, &server, init.io, per_peer.classifier(), null);
+            return;
+        }
+        try tailnet_mod.serve(&node, &server, init.io, tailnet_mod.tailnetClassifier(&ceiling), null);
         return;
     }
     if (std.mem.eql(u8, args.items[1], "mcp")) {
         if (args.items.len < 3) {
-            try writeStderr(init.io, "error: usage: neuron mcp <write_prefix>\n");
+            try writeStderr(init.io, "error: usage: neuron mcp <write_prefix> [state_dir]\n");
             std.process.exit(2);
         }
         const keys = identity.generateKeyPair(init.io);
-        var substrate = substrate_mod.Substrate.init(allocator);
+        var substrate = openState(allocator, init.io, if (args.items.len > 3) args.items[3] else null) catch |err| {
+            var error_buffer: [192]u8 = undefined;
+            const line = std.fmt.bufPrint(&error_buffer, "error: cannot open state dir: {s}\n", .{@errorName(err)}) catch "error: cannot open state dir\n";
+            writeStderr(init.io, line) catch {};
+            std.process.exit(1);
+        };
         defer substrate.deinit();
         var node = mesh_mod.Node.init(allocator, keys, &substrate);
         defer node.deinit();
-        var proxy_scratch: [1024]u8 = undefined;
+        var proxy_arena = std.heap.ArenaAllocator.init(allocator);
+        defer proxy_arena.deinit();
         var proxy_fx: [1]@import("types.zig").Effect = undefined;
         var proxy_ev: [1]@import("types.zig").Evidence = undefined;
         var proxy_src: [1][]const u8 = undefined;
         const proxy_impl: mesh_mod.ProxyNeuron = .{
-            .scratch = &proxy_scratch,
+            .arena = &proxy_arena,
             .fx = &proxy_fx,
             .ev = &proxy_ev,
             .src = &proxy_src,
@@ -117,7 +156,7 @@ pub fn main(init: std.process.Init) !void {
             .allocator = allocator,
             .node = &node,
             .ceiling = .{ .allow_write = true, .write_prefix = args.items[2] },
-            .now_ms = 0,
+            .now_ms = null,
             .io = init.io,
         };
         var read_buffer: [64 * 1024]u8 = undefined;
@@ -209,6 +248,13 @@ pub fn main(init: std.process.Init) !void {
     }
     try writeStderr(init.io, "error: unknown command; run `neuron --help`\n");
     return error.InvalidCommand;
+}
+
+/// In-memory by default; journaled under `<dir>/substrate.log` when a state
+/// dir is given — restart then replays the exact committed state (§9/§22).
+fn openState(allocator: std.mem.Allocator, io: std.Io, state_dir: ?[]const u8) !substrate_mod.Substrate {
+    if (state_dir) |dir| return substrate_mod.Substrate.initDir(allocator, io, std.Io.Dir.cwd(), dir);
+    return substrate_mod.Substrate.init(allocator);
 }
 
 fn writeStdout(io: std.Io, bytes: []const u8) !void {

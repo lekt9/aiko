@@ -144,7 +144,7 @@ def conformance_results() -> dict[str, bool]:
 
 
 def run_runtime() -> None:
-    # Any behavioral failure in the 71-test suite aborts before scoring.
+    # Any behavioral failure in the 79-test suite aborts before scoring.
     subprocess.run(["zig", "build", "test"], cwd=ROOT, check=True)
     subprocess.run(["zig", "build"], cwd=ROOT, check=True)
     proc = subprocess.run(

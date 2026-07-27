@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -204,6 +205,13 @@ def render_rust(schema: dict[str, Any], digest: str, package: str) -> str:
 def render_pin(
     schema: dict[str, Any], digest: str, package: str, package_files: list[str]
 ) -> str:
+    # Source is now configurable for published git deps (Option A / ROADMAP R5).
+    # Default keeps the historical sibling layout for dev.
+    # Override with env var TYPED_NEURON_SOURCE when emitting for a git-based checkout.
+    # Example:
+    #   TYPED_NEURON_SOURCE='git+ssh://git@100.67.11.99:2222/Unbrowse/neuron.git#1e69ca97...' \
+    #   python3 tools/generate_wire_bindings.py
+    source = os.environ.get("TYPED_NEURON_SOURCE", "../../neuron")
     return (
         json.dumps(
             {
@@ -213,7 +221,7 @@ def render_pin(
                 "package_digest_algorithm": "sha256-framed-files/v1",
                 "package_files": package_files,
                 "schema_digest": digest,
-                "source": "../../neuron",
+                "source": source,
                 "source_schema": schema["source_schema"],
             },
             indent=2,

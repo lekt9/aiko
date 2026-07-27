@@ -17,27 +17,7 @@ pub const CommitResult = struct {
     decision_digest: types.Digest,
 };
 
-const Pending = union(enum) {
-    write: struct { id: []u8, schema: []u8, bytes: []u8, digest: types.Digest, produced_by: []u8 },
-    send: substrate_mod.StoredMessage,
-    spawn: struct { id: []u8, value: substrate_mod.SpawnedNeuron },
-
-    fn deinit(self: Pending, allocator: Allocator) void {
-        switch (self) {
-            .write => |write| {
-                allocator.free(write.id);
-                allocator.free(write.schema);
-                allocator.free(write.bytes);
-                allocator.free(write.produced_by);
-            },
-            .send => |message| message.deinit(allocator),
-            .spawn => |spawn| {
-                allocator.free(spawn.id);
-                spawn.value.deinit(allocator);
-            },
-        }
-    }
-};
+const Pending = substrate_mod.Pending;
 
 pub const Runtime = struct {
     substrate: *Substrate,
@@ -92,6 +72,10 @@ pub const Runtime = struct {
         try self.substrate.messages.ensureUnusedCapacity(self.substrate.allocator, sends);
         try self.substrate.neurons.ensureUnusedCapacity(@intCast(spawns));
         try self.substrate.firings.ensureUnusedCapacity(1);
+        // WAL: the commit record hits the journal BEFORE the in-memory maps
+        // change. A failed append commits nothing anywhere; replay rebuilds
+        // exactly what the log holds (§20 commit boundary, §22).
+        try self.substrate.journalCommit(stimulus.firing_id, identity, decision.effects.len, pending.items);
         const firing_key = try self.substrate.allocator.dupe(u8, stimulus.firing_id);
         errdefer self.substrate.allocator.free(firing_key);
 
@@ -134,6 +118,7 @@ pub const Runtime = struct {
         if (self.substrate.firings.contains(firing_id)) return error.FiringAlreadySettled;
         const owned = try self.substrate.allocator.dupe(u8, firing_id);
         errdefer self.substrate.allocator.free(owned);
+        try self.substrate.journalFiring(firing_id, types.digest("cancelled"), .cancelled);
         try self.substrate.firings.put(owned, .{
             .decision_digest = types.digest("cancelled"),
             .effects_committed = 0,
@@ -143,6 +128,9 @@ pub const Runtime = struct {
 
     fn recordFailure(self: Runtime, firing_id: []const u8, identity: types.Digest, status: substrate_mod.FiringStatus) void {
         if (firing_id.len == 0 or self.substrate.firings.contains(firing_id)) return;
+        // Memory mirrors the log: if the settlement cannot be journaled it
+        // is not recorded here either.
+        self.substrate.journalFiring(firing_id, identity, status) catch return;
         const owned = self.substrate.allocator.dupe(u8, firing_id) catch return;
         self.substrate.firings.put(owned, .{
             .decision_digest = identity,

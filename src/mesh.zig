@@ -419,23 +419,40 @@ pub fn unsignedEnvelopeJson(
     return envelopeJson(allocator, &envelope);
 }
 
-/// A standard bridge neuron: the wire payload directs the write. Format is
-/// "<artifact-id>\n<bytes>". This is exactly the shape an injected peer
-/// would abuse, which is why it only ever runs under a pinned ceiling —
-/// the validate → commit boundary rejects anything outside it (§24/§27).
+/// A standard bridge neuron: the wire payload directs the write. v2 is a
+/// schema-versioned JSON object — {"schema":"mesh.proxy/v2",
+/// "artifact_id":..., "bytes":...} — decoded strictly: wrong schema tag,
+/// missing fields, unknown fields, or malformed JSON are InvalidPayload
+/// before any effect exists (§19: opaque input plus explicit decode).
+/// v1's raw "<id>\n<bytes>" form is deleted, not flagged: every producer
+/// ships in this repo, so the migration window was zero. Decoded strings
+/// live in the operator-owned arena, reset per firing — the same lifetime
+/// discipline as the effect buffers: stable until the next firing, which
+/// is safely past the commit boundary. This is exactly the shape an
+/// injected peer would abuse, which is why it only ever runs under a
+/// pinned ceiling — the validate → commit boundary rejects anything
+/// outside it (§24/§27).
 pub const ProxyNeuron = struct {
-    scratch: *[1024]u8,
+    arena: *std.heap.ArenaAllocator,
     fx: *[1]types.Effect,
     ev: *[1]types.Evidence,
     src: *[1][]const u8,
 
+    pub const payload_schema = "mesh.proxy/v2";
+
     pub fn fire(self: *const ProxyNeuron, stim: types.Stimulus, _: Caps) !types.Decision {
+        _ = self.arena.reset(.{ .retain_with_limit = 1 << 16 });
         const payload = if (stim.messages.len > 0) stim.messages[0].payload else "";
-        const split = std.mem.indexOfScalar(u8, payload, '\n') orelse return error.InvalidPayload;
-        const id = payload[0..split];
-        const bytes = payload[split + 1 ..];
-        if (id.len == 0) return error.InvalidPayload;
-        self.fx[0] = .{ .write = .{ .id = id, .schema = stim.messages[0].schema, .bytes = bytes } };
+        const PayloadJ = struct {
+            schema: []const u8,
+            artifact_id: []const u8,
+            bytes: []const u8,
+        };
+        const parsed = std.json.parseFromSliceLeaky(PayloadJ, self.arena.allocator(), payload, .{}) catch
+            return error.InvalidPayload;
+        if (!std.mem.eql(u8, parsed.schema, payload_schema)) return error.InvalidPayload;
+        if (parsed.artifact_id.len == 0) return error.InvalidPayload;
+        self.fx[0] = .{ .write = .{ .id = parsed.artifact_id, .schema = stim.messages[0].schema, .bytes = parsed.bytes } };
         self.src[0] = "stimulus";
         self.ev[0] = .{
             .claim = "proxied the wire payload into the substrate",
@@ -450,10 +467,31 @@ pub const ProxyNeuron = struct {
     }
 };
 
+/// Build a mesh.proxy/v2 payload: explicit typed fields, so artifact ids
+/// containing newlines (or any other byte) are unambiguous by
+/// construction — the v1 flat "<id>\n<bytes>" form could not say that.
+pub fn proxyPayloadV2(allocator: Allocator, artifact_id: []const u8, bytes: []const u8) ![]u8 {
+    const id_json = try std.json.Stringify.valueAlloc(allocator, artifact_id, .{});
+    defer allocator.free(id_json);
+    const bytes_json = try std.json.Stringify.valueAlloc(allocator, bytes, .{});
+    defer allocator.free(bytes_json);
+    return try std.fmt.allocPrint(allocator, "{{\"schema\":\"{s}\",\"artifact_id\":{s},\"bytes\":{s}}}", .{ ProxyNeuron.payload_schema, id_json, bytes_json });
+}
+
 // --- Transport: 4-byte BE length-prefixed frames over any Io byte stream.
 // The wire is dumb by design; all authority decisions happen in receive().
 
 pub const net = std.Io.net;
+
+/// The wall clock in milliseconds for daemon and edge paths: delegation
+/// expiry and cache TTLs are only real if the clock is. Tests inject
+/// fixed clocks instead — determinism is a test property, not a
+/// deployment one (§8: the clock is a capability read, so it belongs in
+/// the firing record).
+pub fn wallNowMs(io: std.Io) u64 {
+    const ms = std.Io.Clock.real.now(io).toMilliseconds();
+    return if (ms < 0) 0 else @intCast(ms);
+}
 
 pub fn writeFrame(writer: *std.Io.Writer, bytes: []const u8) !void {
     if (bytes.len > frame_max) return error.FrameTooLarge;
@@ -474,54 +512,94 @@ pub fn readFrame(allocator: Allocator, reader: *std.Io.Reader) !?[]u8 {
     return try reader.readAlloc(allocator, len);
 }
 
+/// The framed result for one admitted envelope, shared by the signed and
+/// transport-authenticated serving loops: one wire semantics, not two
+/// (§7). The response is information for the peer — it carries no
+/// authority: the commit already happened under this node's own ceiling,
+/// or nothing happened at all (§27).
+pub fn commitResultJson(allocator: Allocator, commit: runtime_mod.CommitResult) ![]u8 {
+    return try std.fmt.allocPrint(allocator, "{{\"status\":\"committed\",\"effects_committed\":{},\"duplicates_skipped\":{}}}", .{ commit.effects_committed, commit.duplicates_skipped });
+}
+
+pub fn errorResultJson(allocator: Allocator, err: anyerror) ![]u8 {
+    return try std.fmt.allocPrint(allocator, "{{\"status\":\"error\",\"error\":\"{s}\"}}", .{@errorName(err)});
+}
+
 /// Serve one connection until the peer closes it: every frame is admitted
-/// through receive(). Returns the number of envelopes admitted.
-pub fn serveConnection(node: *Node, reader: *std.Io.Reader, now_ms: u64) !usize {
+/// through receive() and answered with a framed result — commit summary or
+/// typed error — so one protocol has one semantics on both the signed and
+/// transport-authenticated paths. A rejected envelope answers an error
+/// frame and the connection keeps serving (§27 typed failures, no silent
+/// retries). Fire-and-forget peers close after writing; a broken response
+/// pipe ends the connection without undoing anything committed.
+pub fn serveConnection(node: *Node, reader: *std.Io.Reader, writer: *std.Io.Writer, now_ms: u64) !usize {
     var received: usize = 0;
-    while (try readFrame(node.allocator, reader)) |bytes| {
+    while (true) {
+        const maybe = readFrame(node.allocator, reader) catch |err| switch (err) {
+            // A fire-and-forget peer's close can surface as a reset once
+            // the response is written: same as EOF — the peer is gone and
+            // everything already committed stays committed (§27).
+            error.ReadFailed => break,
+            else => return err,
+        };
+        const bytes = maybe orelse break;
         defer node.allocator.free(bytes);
-        _ = try node.receive(bytes, now_ms);
+        const response = if (node.receive(bytes, now_ms)) |result|
+            try commitResultJson(node.allocator, result.commit)
+        else |err|
+            try errorResultJson(node.allocator, err);
+        defer node.allocator.free(response);
         received += 1;
+        writeFrame(writer, response) catch return received;
     }
     return received;
 }
 
 /// Accept exactly one connection on the listener and serve it to EOF.
+/// Read and write buffers stay separate so a pipelined frame buffered by
+/// the reader is never clobbered by an outgoing response.
 pub fn acceptOnce(
     node: *Node,
     server: *net.Server,
     io: std.Io,
     now_ms: u64,
-    buffer: []u8,
+    read_buffer: []u8,
+    write_buffer: []u8,
 ) !usize {
     const stream = try server.accept(io);
     defer stream.close(io);
-    var reader = stream.reader(io, buffer);
-    return serveConnection(node, &reader.interface, now_ms);
+    var reader = stream.reader(io, read_buffer);
+    var writer = stream.writer(io, write_buffer);
+    return serveConnection(node, &reader.interface, &writer.interface, now_ms);
 }
 
-/// Connect to a peer, write one framed envelope, and close. Symmetric with
-/// acceptOnce: every node runs both sides.
-pub fn dialSend(
-    address: *const net.IpAddress,
-    io: std.Io,
-    bytes: []const u8,
-    buffer: []u8,
-) !void {
-    const stream = try address.connect(io, .{ .mode = .stream });
-    defer stream.close(io);
-    var writer = stream.writer(io, buffer);
-    try writeFrame(&writer.interface, bytes);
+/// Monotonic milliseconds for exchange deadlines: immune to wall-clock
+/// jumps, so a peer cannot stall a deadline by adjusting the clock.
+fn monoNowMs(io: std.Io) u64 {
+    const ms = std.Io.Clock.awake.now(io).toMilliseconds();
+    return if (ms < 0) 0 else @intCast(ms);
 }
 
-/// A dial bounded by a deadline (§20). This toolchain's Threaded Io
-/// backend panics on connect timeouts, so the bounded path drives the fd
-/// directly: non-blocking connect, poll for writable, SO_ERROR for the
-/// verdict, then back to blocking for the framed exchange above. The
-/// deadline converts a dead or silent peer into typed errors — Timeout,
-/// ConnectionRefused, NetworkUnreachable — instead of an unbounded hang.
-/// Windows keeps the unbounded Io connect until the backend grows support.
-pub fn connectBounded(address: *const net.IpAddress, io: std.Io, timeout_ms: u32) !net.Stream {
+/// Poll until the fd is ready for `events` or the shared deadline passes.
+fn pollWaitBounded(fd: posix.fd_t, events: i16, io: std.Io, deadline_ms: u64) !void {
+    const remaining = deadline_ms -| monoNowMs(io);
+    if (remaining == 0) return error.Timeout;
+    var pfd = [_]posix.pollfd{.{ .fd = fd, .events = events, .revents = 0 }};
+    if (try posix.poll(&pfd, @intCast(@min(remaining, @as(u64, std.math.maxInt(i32))))) == 0)
+        return error.Timeout;
+}
+
+/// A dial bounded by an absolute monotonic deadline (§20). This toolchain's
+/// Threaded Io backend panics on connect timeouts, so the bounded path
+/// drives the fd directly: non-blocking connect, poll for writable,
+/// SO_ERROR for the verdict. The fd STAYS non-blocking: dialExchange
+/// reads the response through the same deadline, so a peer that accepts
+/// and never answers is as bounded as a peer that never accepts.
+/// The deadline converts a dead or silent peer into typed errors —
+/// Timeout, ConnectionRefused, NetworkUnreachable — instead of an
+/// unbounded hang. Windows keeps the unbounded Io connect until the
+/// backend grows support.
+pub fn connectBounded(address: *const net.IpAddress, io: std.Io, deadline_ms: u64) !net.Stream {
     if (builtin.os.tag == .windows) {
         return try address.connect(io, .{ .mode = .stream });
     }
@@ -566,8 +644,7 @@ pub fn connectBounded(address: *const net.IpAddress, io: std.Io, timeout_ms: u32
             else => return error.ConnectFailed,
         }
     }
-    var pfd = [_]posix.pollfd{.{ .fd = fd, .events = posix.POLL.OUT, .revents = 0 }};
-    if (try posix.poll(&pfd, @intCast(timeout_ms)) == 0) return error.Timeout;
+    try pollWaitBounded(fd, posix.POLL.OUT, io, deadline_ms);
     var so_err: c_int = 0;
     var so_len: posix.socklen_t = @sizeOf(c_int);
     if (std.c.getsockopt(fd, posix.SOL.SOCKET, posix.SO.ERROR, &so_err, &so_len) == -1)
@@ -580,17 +657,79 @@ pub fn connectBounded(address: *const net.IpAddress, io: std.Io, timeout_ms: u32
             else => error.ConnectFailed,
         };
     }
-    // Connected: restore blocking semantics for the framed exchange above.
-    // The address field mirrors what accept() fills on the receive side:
+    // Connected — and deliberately left non-blocking: the exchange above
+    // shares this deadline through poll-gated reads and writes. The
+    // address field mirrors what accept() fills on the receive side:
     // the peer this stream talks to.
-    if (std.c.fcntl(fd, posix.F.SETFL, flags & ~nonblock_bits) == -1) return error.FcntlFailed;
     return .{ .socket = .{ .handle = fd, .address = address.* } };
+}
+
+/// Write all bytes to a non-blocking fd, poll-gating on the shared
+/// deadline whenever the kernel would block.
+fn writeAllBounded(fd: posix.fd_t, io: std.Io, bytes: []const u8, deadline_ms: u64) !void {
+    var off: usize = 0;
+    while (off < bytes.len) {
+        const rc = std.c.write(fd, bytes.ptr + off, bytes.len - off);
+        if (rc > 0) {
+            off += @intCast(rc);
+            continue;
+        }
+        if (rc == 0) return error.WriteFailed;
+        switch (posix.errno(rc)) {
+            .AGAIN => try pollWaitBounded(fd, posix.POLL.OUT, io, deadline_ms),
+            .INTR => continue,
+            .PIPE, .CONNRESET => return error.PeerClosed,
+            else => return error.WriteFailed,
+        }
+    }
+}
+
+/// Read exactly buf.len bytes unless EOF arrives first; returns the byte
+/// count. Resets surface as EOF: the peer is gone either way (§27).
+fn readExactBounded(fd: posix.fd_t, io: std.Io, buf: []u8, deadline_ms: u64) !usize {
+    var off: usize = 0;
+    while (off < buf.len) {
+        const rc = std.c.read(fd, buf.ptr + off, buf.len - off);
+        if (rc > 0) {
+            off += @intCast(rc);
+            continue;
+        }
+        if (rc == 0) break;
+        switch (posix.errno(rc)) {
+            .AGAIN => try pollWaitBounded(fd, posix.POLL.IN, io, deadline_ms),
+            .INTR => continue,
+            .CONNRESET => break,
+            else => return error.ReadFailed,
+        }
+    }
+    return off;
+}
+
+/// Read one length-prefixed frame from a non-blocking fd under the shared
+/// deadline. EOF before any header byte is NoResponse; EOF mid-frame is
+/// TruncatedFrame — both typed, neither silent (§27).
+fn readFrameBounded(allocator: Allocator, fd: posix.fd_t, io: std.Io, deadline_ms: u64) ![]u8 {
+    var header: [4]u8 = undefined;
+    const got = try readExactBounded(fd, io, &header, deadline_ms);
+    if (got == 0) return error.NoResponse;
+    if (got < 4) return error.TruncatedFrame;
+    const len = std.mem.readInt(u32, &header, .big);
+    if (len > frame_max) return error.FrameTooLarge;
+    const payload = try allocator.alloc(u8, len);
+    errdefer allocator.free(payload);
+    if (try readExactBounded(fd, io, payload, deadline_ms) < len) return error.TruncatedFrame;
+    return payload;
 }
 
 /// Connect, write one framed envelope, and read the peer's framed result
 /// (commit summary or typed error). The response is validated only as JSON
 /// shape by callers — it is information, never authority. `timeout_ms`
-/// bounds the dial (§20); null waits indefinitely like dialSend.
+/// is ONE deadline shared by dial, request write, and response read (§20):
+/// a peer that accepts and never answers surfaces error.Timeout inside
+/// the budget. Null waits indefinitely on the legacy blocking path, as
+/// does Windows until the Io backend grows connect-timeout support.
+/// This is the only client shape: fire-and-forget dials were deleted so
+/// the wire has exactly one semantics — every frame is answered.
 pub fn dialExchange(
     allocator: Allocator,
     address: *const net.IpAddress,
@@ -599,10 +738,21 @@ pub fn dialExchange(
     buffer: []u8,
     timeout_ms: ?u32,
 ) ![]u8 {
-    const stream = if (timeout_ms) |ms|
-        try connectBounded(address, io, ms)
-    else
-        try address.connect(io, .{ .mode = .stream });
+    if (timeout_ms) |ms| {
+        if (builtin.os.tag != .windows) {
+            const deadline = monoNowMs(io) +| ms;
+            const stream = try connectBounded(address, io, deadline);
+            defer stream.close(io);
+            if (bytes.len > frame_max) return error.FrameTooLarge;
+            const frame = try allocator.alloc(u8, 4 + bytes.len);
+            defer allocator.free(frame);
+            std.mem.writeInt(u32, frame[0..4], @intCast(bytes.len), .big);
+            @memcpy(frame[4..], bytes);
+            try writeAllBounded(stream.socket.handle, io, frame, deadline);
+            return try readFrameBounded(allocator, stream.socket.handle, io, deadline);
+        }
+    }
+    const stream = try address.connect(io, .{ .mode = .stream });
     defer stream.close(io);
     var writer = stream.writer(io, buffer);
     try writeFrame(&writer.interface, bytes);
