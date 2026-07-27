@@ -1,0 +1,136 @@
+{
+  "package": "typed_neuron",
+  "core_version": "typed-neuron/2",
+  "source_schema": "typed-neuron-wire-schema/1",
+  "hash_profile": "deterministic-cbor-sha256/1",
+  "constants": {
+    "FIRE_SCHEMA": "neuron.fire/v2",
+    "RESULT_SCHEMA": "neuron.fire-result/v2",
+    "CAPS_SCHEMA": "neuron.caps/v1",
+    "FIRING_VECTOR": "0f9b9bd0c968af050a021557f3ec62e2f6ed622d42b2f64cf169e560bcb62d9b",
+    "DECISION_VECTOR": "1fda1ac7aef670317fee571651689f642e0ba32d46140d2d05af007d6fb9d596"
+  },
+  "enums": [
+    {
+      "name": "NeuronFireStatus",
+      "values": ["committed", "replayed"]
+    }
+  ],
+  "types": [
+    {
+      "name": "NeuronIdentity",
+      "fields": [
+        {"name": "id", "kind": "string"},
+        {"name": "version", "kind": "string"},
+        {"name": "digest", "kind": "string"}
+      ]
+    },
+    {
+      "name": "NeuronMessage",
+      "fields": [
+        {"name": "schema", "kind": "string"},
+        {"name": "correlation_id", "kind": "string"},
+        {"name": "causation_id", "kind": "string"},
+        {"name": "payload_digest", "kind": "string"},
+        {"name": "durable", "kind": "bool", "default": true},
+        {"name": "ttl_ms", "kind": "optional_u64", "default": null}
+      ]
+    },
+    {
+      "name": "NeuronStimulus",
+      "fields": [
+        {"name": "id", "kind": "string"},
+        {"name": "schema", "kind": "string"},
+        {"name": "payload_digest", "kind": "string"},
+        {"name": "read_digests", "kind": "list_string", "default": []},
+        {"name": "messages", "kind": "list_type", "item": "NeuronMessage", "default": []},
+        {"name": "now_ms", "kind": "u64"},
+        {"name": "deadline_ms", "kind": "optional_u64", "default": null},
+        {"name": "random_digest", "kind": "optional_string", "default": null},
+        {"name": "adapter_versions", "kind": "list_string", "default": []}
+      ]
+    },
+    {
+      "name": "NeuronGrant",
+      "fields": [
+        {"name": "kind", "kind": "string"},
+        {"name": "target", "kind": "string"},
+        {"name": "classification", "kind": "string"},
+        {"name": "expires_ms", "kind": "optional_u64", "default": null},
+        {"name": "human_approval", "kind": "bool", "default": false},
+        {"name": "delegation", "kind": "bool", "default": false}
+      ]
+    },
+    {
+      "name": "NeuronCaps",
+      "fields": [
+        {"name": "schema", "kind": "string"},
+        {"name": "fingerprint", "kind": "string"},
+        {"name": "grants", "kind": "list_type", "item": "NeuronGrant", "default": []},
+        {"name": "effects", "kind": "list_string"},
+        {"name": "max_effects", "kind": "u64"},
+        {"name": "max_bytes", "kind": "u64"},
+        {"name": "max_cost_micros", "kind": "u64", "default": 0}
+      ]
+    },
+    {
+      "name": "NeuronControl",
+      "fields": [
+        {"name": "kind", "kind": "string"},
+        {"name": "value", "kind": "string"}
+      ]
+    },
+    {
+      "name": "NeuronEffect",
+      "fields": [
+        {"name": "kind", "kind": "string"},
+        {"name": "target", "kind": "string"},
+        {"name": "schema", "kind": "string"},
+        {"name": "payload_digest", "kind": "string"},
+        {"name": "bytes", "kind": "u64", "default": 0},
+        {"name": "idempotency_key", "kind": "string"}
+      ]
+    },
+    {
+      "name": "NeuronEvidence",
+      "fields": [
+        {"name": "claim", "kind": "string"},
+        {"name": "sources", "kind": "list_string"},
+        {"name": "method", "kind": "string"},
+        {"name": "digest", "kind": "string", "default": ""},
+        {"name": "producer", "kind": "string", "default": ""},
+        {"name": "observed_at_ms", "kind": "u64", "default": 0},
+        {"name": "confidence_milli", "kind": "u16", "default": 1000}
+      ]
+    },
+    {
+      "name": "NeuronDecision",
+      "fields": [
+        {"name": "control", "kind": "type", "item": "NeuronControl"},
+        {"name": "effects", "kind": "list_type", "item": "NeuronEffect", "default": []},
+        {"name": "evidence", "kind": "list_type", "item": "NeuronEvidence"}
+      ]
+    },
+    {
+      "name": "NeuronFireRequest",
+      "fields": [
+        {"name": "schema", "kind": "string"},
+        {"name": "neuron", "kind": "type", "item": "NeuronIdentity"},
+        {"name": "stimulus", "kind": "type", "item": "NeuronStimulus"},
+        {"name": "caps", "kind": "type", "item": "NeuronCaps"},
+        {"name": "decision", "kind": "type", "item": "NeuronDecision"}
+      ]
+    },
+    {
+      "name": "NeuronFireResult",
+      "fields": [
+        {"name": "schema", "kind": "string"},
+        {"name": "abi_version", "kind": "u32"},
+        {"name": "status", "kind": "type", "item": "NeuronFireStatus"},
+        {"name": "firing_id", "kind": "string"},
+        {"name": "decision_digest", "kind": "string"},
+        {"name": "effects_admitted", "kind": "u64"}
+      ]
+    }
+  ]
+}

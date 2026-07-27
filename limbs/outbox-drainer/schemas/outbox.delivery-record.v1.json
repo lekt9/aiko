@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "outbox.delivery-record/v1",
+  "description": "Final or intermediate settlement record for a delivery key. Written by the reconciler.",
+  "type": "object",
+  "required": ["key", "status", "attempts"],
+  "properties": {
+    "key": { "type": "string" },
+    "status": { "type": "string", "enum": ["acknowledged", "retryable", "dead_letter", "reconciliation_required"] },
+    "attempts": { "type": "integer", "minimum": 0 },
+    "provider_ref": { "type": ["string", "null"] },
+    "detail": { "type": "string" },
+    "settled_by": { "type": "string" },
+    "settled_at": { "type": "integer" },
+    "parked_by_ack": { "type": ["string", "null"] }
+  }
+}

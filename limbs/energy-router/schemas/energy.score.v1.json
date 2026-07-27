@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "energy.score/v1",
+  "description": "Result of an EnergyRouter firing: the chosen candidate and its structural energy. Written as a content-addressed artifact.",
+  "type": "object",
+  "required": ["chosen_id", "energy"],
+  "properties": {
+    "chosen_id": { "type": "string" },
+    "energy": { "type": "number" },
+    "components": {
+      "type": "object",
+      "properties": {
+        "grounding_penalty": { "type": "number" },
+        "evidence_penalty": { "type": "number" },
+        "cost_penalty": { "type": "number" },
+        "settlement_penalty": { "type": "number" },
+        "violation_penalty": { "type": "number" }
+      }
+    },
+    "rationale": { "type": "string" }
+  }
+}

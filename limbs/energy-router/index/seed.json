@@ -1,0 +1,40 @@
+{
+  "schema": "energy.package-index/v1",
+  "generated_at_ms": 1753584000000,
+  "entries": [
+    {
+      "name": "typed-neuron/energy-router",
+      "version": "0.1.0",
+      "package_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "input_schema": "energy.route-request/v1",
+      "output_schema": "energy.score/v1",
+      "price_milli": 1500,
+      "price_unit": "per-routing",
+      "provider_node": "node/0000000000000000000000000000000000000000000000000000000000000000",
+      "ref": "energy-router",
+      "witness_conf_milli": 920,
+      "energy_witness": "demo: context-narrow wins with e=1.02 on reference workload",
+      "offer": {
+        "name": "typed-neuron/energy-router",
+        "version": "0.1.0",
+        "package_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "input_schema": "energy.route-request/v1",
+        "output_schema": "energy.score/v1",
+        "price_milli": 1500
+      }
+    },
+    {
+      "name": "typed-neuron/context-narrow",
+      "version": "0.0.1",
+      "package_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "input_schema": "typed-neuron.work-item/v1",
+      "output_schema": "typed-neuron.context-manifest/v1",
+      "price_milli": 800,
+      "price_unit": "per-context",
+      "provider_node": "node/1111111111111111111111111111111111111111111111111111111111111111",
+      "ref": "context-narrow",
+      "witness_conf_milli": 880,
+      "energy_witness": "good grounding, low settlement distance"
+    }
+  ]
+}

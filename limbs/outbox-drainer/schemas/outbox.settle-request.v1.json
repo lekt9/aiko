@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "outbox.settle-request/v1",
+  "description": "Request to the reconciler to settle (or reconcile) one delivery key.",
+  "type": "object",
+  "required": ["mode", "key", "max_attempts"],
+  "properties": {
+    "mode": { "type": "string", "enum": ["settle", "reconcile"] },
+    "key": { "type": "string" },
+    "max_attempts": { "type": "integer", "minimum": 1 }
+  }
+}

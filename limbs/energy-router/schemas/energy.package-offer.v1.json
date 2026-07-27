@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "energy.package-offer/v1",
+  "description": "A published offer for a digest-pinned Skill / Neuron package in an EBM-native commons. Can be discovered via Registry Neurons and ranked by energy + price.",
+  "type": "object",
+  "required": ["name", "version", "package_digest", "input_schema", "output_schema"],
+  "properties": {
+    "name": { "type": "string" },
+    "version": { "type": "string" },
+    "package_digest": { "type": "string", "description": "Exact content digest (hex) of the admitted inert package" },
+    "input_schema": { "type": "string" },
+    "output_schema": { "type": "string" },
+    "price_milli": { "type": "integer", "minimum": 0, "default": 0 },
+    "price_unit": { "type": "string", "default": "per-invocation" },
+    "witness_conf_milli": { "type": "integer", "default": 800 },
+    "normalized_cost_hint": { "type": "number" },
+    "settlement_distance_hint": { "type": "number" },
+    "energy_witness_url": { "type": "string", "description": "Optional link to JESPA / firing-energy benchmark ledger for this package" },
+    "provider_node": { "type": "string", "description": "node/<hex> that hosts the remote implementation" },
+    "ref": { "type": "string", "description": "neuron ref on the provider node" }
+  }
+}

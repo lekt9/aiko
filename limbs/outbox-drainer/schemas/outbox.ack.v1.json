@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "outbox.ack/v1",
+  "description": "Adapter/provider observation for a delivery key. Can come from the immediate adapter call or from a later --verify reconciliation step.",
+  "type": "object",
+  "required": ["key", "outcome"],
+  "properties": {
+    "key": { "type": "string" },
+    "outcome": { "type": "string", "enum": ["ack", "retryable", "permanent", "uncertain"] },
+    "provider_ref": { "type": ["string", "null"] },
+    "detail": { "type": "string" }
+  }
+}
