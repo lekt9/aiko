@@ -132,6 +132,10 @@ pub const Substrate = struct {
         file: std.Io.File,
         io: std.Io,
         offset: u64,
+        /// Root + sub-path of `substrate.log`, retained so compaction can
+        /// stage the snapshot next to the live log and rename atomically.
+        dir: std.Io.Dir,
+        sub_path: []u8,
     };
 
     pub fn init(allocator: Allocator) Substrate {
@@ -173,7 +177,13 @@ pub const Substrate = struct {
             const n = try file.readPositionalAll(io, bytes, 0);
             try self.replay(bytes[0..n]);
         }
-        self.journal = .{ .file = file, .io = io, .offset = size };
+        self.journal = .{
+            .file = file,
+            .io = io,
+            .offset = size,
+            .dir = dir,
+            .sub_path = try allocator.dupe(u8, sub_path),
+        };
         return self;
     }
 
@@ -271,6 +281,24 @@ pub const Substrate = struct {
         try self.appendLine(out.writer.buffered());
     }
 
+    /// Journal a garbage-collection record: artifacts whose ids start with
+    /// any of `prefixes` are removed from the live set. Replay applies the
+    /// same deletions deterministically so restart rebuilds the identical
+    /// state (§22). Compaction folds gc ops away (the snapshot omits them).
+    pub fn journalGc(self: *Substrate, prefixes: []const []const u8) !void {
+        if (self.journal == null) return;
+        var out: std.Io.Writer.Allocating = .init(self.allocator);
+        defer out.deinit();
+        const w = &out.writer;
+        try w.writeAll("{\"schema\":\"neuron.substrate/v1\",\"op\":\"gc\",\"prefixes\":[");
+        for (prefixes, 0..) |prefix, i| {
+            if (i > 0) try w.writeAll(",");
+            try writeJsonString(w, self.allocator, prefix);
+        }
+        try w.writeAll("]}\n");
+        try self.appendLine(out.writer.buffered());
+    }
+
     /// Journal a delivery-state transition for the message at `index`.
     /// Indices are stable across replay because commit order is log order.
     pub fn journalDelivery(self: *Substrate, index: usize, status: DeliveryStatus, attempts: u8) !void {
@@ -280,6 +308,132 @@ pub const Substrate = struct {
         const w = &out.writer;
         try w.print("{{\"schema\":\"neuron.substrate/v1\",\"op\":\"delivery\",\"index\":{},\"status\":\"{s}\",\"attempts\":{}}}\n", .{ index, @tagName(status), attempts });
         try self.appendLine(out.writer.buffered());
+    }
+
+    pub const CompactResult = struct { prior_size: u64, new_size: u64 };
+
+    /// Fold the live state — the §22 retention closure: every artifact,
+    /// every message with its delivery state, every spawned neuron with its
+    /// grant, and every firing record (audit hold) — into one `snapshot`
+    /// record that atomically replaces the whole journal, so the WAL stops
+    /// growing with superseded history. The snapshot is staged in a sibling
+    /// temp file that is synced and exclusively locked BEFORE the rename:
+    /// the rename is the commit point, the lock follows the inode, and any
+    /// earlier failure leaves the original journal untouched (fail closed,
+    /// §27). Positional delivery indices survive because the snapshot lists
+    /// messages in order with their status; records appended afterwards
+    /// index into the same sequence.
+    pub fn compact(self: *Substrate) !CompactResult {
+        const journal = &(self.journal orelse return error.NoJournal);
+        var out: std.Io.Writer.Allocating = .init(self.allocator);
+        defer out.deinit();
+        try self.writeSnapshotLine(&out.writer);
+        const line = out.writer.buffered();
+
+        const log_path = try std.fmt.allocPrint(self.allocator, "{s}/substrate.log", .{journal.sub_path});
+        defer self.allocator.free(log_path);
+        const tmp_path = try std.fmt.allocPrint(self.allocator, "{s}/substrate.log.compact-tmp", .{journal.sub_path});
+        defer self.allocator.free(tmp_path);
+
+        const prior_size = journal.offset;
+        const tmp = journal.dir.createFile(journal.io, tmp_path, .{
+            .read = true,
+            .truncate = true,
+            .lock = .exclusive,
+            .lock_nonblocking = true,
+        }) catch |err| switch (err) {
+            error.WouldBlock => return error.SubstrateLocked,
+            else => return err,
+        };
+        errdefer tmp.close(journal.io);
+        errdefer journal.dir.deleteFile(journal.io, tmp_path) catch {};
+        try tmp.writePositionalAll(journal.io, line, 0);
+        try tmp.sync(journal.io);
+        // Commit point: atomically replace the log with the durable snapshot.
+        // The old fd still points at the unlinked inode until closed here, so
+        // the single-writer lock never lapses.
+        try journal.dir.rename(tmp_path, journal.dir, log_path, journal.io);
+        journal.file.close(journal.io);
+        journal.file = tmp;
+        journal.offset = @intCast(line.len);
+        return .{ .prior_size = prior_size, .new_size = @intCast(line.len) };
+    }
+
+    /// Serialize the live state as one snapshot record. Map keys are sorted
+    /// so identical states produce byte-identical snapshots (§19 canonical
+    /// form); messages stay in positional order because delivery records
+    /// index them positionally.
+    fn writeSnapshotLine(self: *Substrate, w: *std.Io.Writer) !void {
+        try w.writeAll("{\"schema\":\"neuron.substrate/v1\",\"op\":\"snapshot\",\"artifacts\":[");
+        var first = true;
+
+        const artifact_ids = try sortedKeys(self.allocator, OwnedArtifact, &self.artifacts);
+        defer self.allocator.free(artifact_ids);
+        for (artifact_ids) |id| {
+            const artifact = self.artifacts.get(id).?;
+            if (!first) try w.writeAll(",");
+            first = false;
+            try w.writeAll("{\"id\":");
+            try writeJsonString(w, self.allocator, id);
+            try w.writeAll(",\"schema\":");
+            try writeJsonString(w, self.allocator, artifact.schema);
+            try w.writeAll(",\"bytes\":");
+            try writeHexString(w, artifact.bytes);
+            try w.writeAll(",\"produced_by\":");
+            try writeJsonString(w, self.allocator, artifact.produced_by);
+            try w.writeAll("}");
+        }
+
+        try w.writeAll("],\"messages\":[");
+        first = true;
+        for (self.messages.items) |message| {
+            if (!first) try w.writeAll(",");
+            first = false;
+            try w.writeAll("{\"firing_id\":");
+            try writeJsonString(w, self.allocator, message.firing_id);
+            try w.writeAll(",\"to\":");
+            try writeJsonString(w, self.allocator, message.to);
+            try w.writeAll(",\"msg_schema\":");
+            try writeJsonString(w, self.allocator, message.schema);
+            try w.writeAll(",\"payload\":");
+            try writeHexString(w, message.payload);
+            try w.print(",\"durable\":{},\"status\":\"{s}\",\"attempts\":{}}}", .{ message.durable, @tagName(message.status), message.attempts });
+        }
+
+        try w.writeAll("],\"neurons\":[");
+        first = true;
+        const neuron_ids = try sortedKeys(self.allocator, SpawnedNeuron, &self.neurons);
+        defer self.allocator.free(neuron_ids);
+        for (neuron_ids) |id| {
+            const neuron = self.neurons.get(id).?;
+            if (!first) try w.writeAll(",");
+            first = false;
+            const caps_hex = std.fmt.bytesToHex(neuron.caps_digest, .lower);
+            try w.writeAll("{\"id\":");
+            try writeJsonString(w, self.allocator, id);
+            try w.writeAll(",\"firing_id\":");
+            try writeJsonString(w, self.allocator, neuron.firing_id);
+            try w.writeAll(",\"kind\":");
+            try writeJsonString(w, self.allocator, neuron.kind);
+            try w.print(",\"depth\":{},\"caps_digest\":\"{s}\",\"grant\":", .{ neuron.depth, &caps_hex });
+            try writeGrantJson(w, self.allocator, neuron.grant);
+            try w.writeAll("}");
+        }
+
+        try w.writeAll("],\"firings\":[");
+        first = true;
+        const firing_ids = try sortedKeys(self.allocator, FiringRecord, &self.firings);
+        defer self.allocator.free(firing_ids);
+        for (firing_ids) |id| {
+            const firing = self.firings.get(id).?;
+            if (!first) try w.writeAll(",");
+            first = false;
+            const digest_hex = std.fmt.bytesToHex(firing.decision_digest, .lower);
+            try w.writeAll("{\"firing_id\":");
+            try writeJsonString(w, self.allocator, id);
+            try w.print(",\"digest\":\"{s}\",\"status\":\"{s}\",\"effects_committed\":{}}}", .{ &digest_hex, @tagName(firing.status), firing.effects_committed });
+        }
+        try w.writeAll("]}\n");
     }
 
     /// Rebuild the committed state from the journal, strictly in record
@@ -292,21 +446,38 @@ pub const Substrate = struct {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         var lines = std.mem.splitScalar(u8, bytes, '\n');
+        var first = true;
         while (lines.next()) |line| {
             if (line.len == 0) continue;
-            try self.replayLine(arena.allocator(), line);
+            try self.replayLine(arena.allocator(), line, first);
+            first = false;
             _ = arena.reset(.retain_capacity);
         }
     }
 
-    fn replayLine(self: *Substrate, allocator: Allocator, line: []const u8) !void {
+    fn replayLine(self: *Substrate, allocator: Allocator, line: []const u8, first: bool) !void {
         const record = std.json.parseFromSliceLeaky(RecordJ, allocator, line, .{ .ignore_unknown_fields = true }) catch
             return error.CorruptLog;
         if (!std.mem.eql(u8, record.schema, "neuron.substrate/v1")) return error.CorruptLog;
         if (std.mem.eql(u8, record.op, "commit")) return self.replayCommit(record);
         if (std.mem.eql(u8, record.op, "firing")) return self.replayFiring(record);
         if (std.mem.eql(u8, record.op, "delivery")) return self.replayDelivery(record);
+        if (std.mem.eql(u8, record.op, "snapshot")) {
+            // A snapshot folds history; it is only meaningful as the first
+            // record. A mid-log snapshot would give delivery indices
+            // ambiguous positional semantics, so it fails closed (§27).
+            if (!first) return error.CorruptLog;
+            return self.replaySnapshot(record);
+        }
+        if (std.mem.eql(u8, record.op, "gc")) return self.replayGc(record);
         return error.CorruptLog;
+    }
+
+    fn replaySnapshot(self: *Substrate, record: RecordJ) !void {
+        for (record.artifacts) |artifact| try self.replayArtifact(artifact);
+        for (record.messages) |message| try self.replayMessage(message);
+        for (record.neurons) |neuron| try self.replayNeuron(neuron);
+        for (record.firings) |firing| try self.replayFiringRecord(firing.firing_id, firing.digest, firing.status, firing.effects_committed);
     }
 
     fn replayCommit(self: *Substrate, record: RecordJ) !void {
@@ -358,6 +529,7 @@ pub const Substrate = struct {
     }
 
     fn replayMessage(self: *Substrate, message: MessageJ) !void {
+        const status = std.meta.stringToEnum(DeliveryStatus, message.status) orelse return error.CorruptLog;
         const firing_id = try self.allocator.dupe(u8, message.firing_id);
         errdefer self.allocator.free(firing_id);
         const to = try self.allocator.dupe(u8, message.to);
@@ -372,6 +544,8 @@ pub const Substrate = struct {
             .schema = schema,
             .payload = payload,
             .durable = message.durable,
+            .status = status,
+            .attempts = message.attempts,
         });
     }
 
@@ -423,8 +597,44 @@ pub const Substrate = struct {
         self.messages.items[record.index].attempts = record.attempts;
     }
 
+    fn replayGc(self: *Substrate, record: RecordJ) !void {
+        _ = try self.gcArtifacts(record.prefixes);
+    }
+
+    /// Delete artifacts whose ids start with any prefix; return the count.
+    /// Safe to call during replay (early-history gc) and live operation.
+    pub fn gcArtifacts(self: *Substrate, prefixes: []const []const u8) !usize {
+        var collected: usize = 0;
+        var key_iterator = self.artifacts.keyIterator();
+        var to_remove: std.ArrayList([]const u8) = .empty;
+        errdefer to_remove.deinit(self.allocator);
+        while (key_iterator.next()) |key| {
+            for (prefixes) |prefix| {
+                if (std.mem.startsWith(u8, key.*, prefix)) {
+                    try to_remove.append(self.allocator, key.*);
+                    break;
+                }
+            }
+        }
+        // Perform deletions outside the iterator to avoid in-flight
+        // modification of the hash-map buckets.
+        for (to_remove.items) |id| {
+            const removed = self.artifacts.fetchRemove(id).?;
+            self.allocator.free(removed.key);
+            self.allocator.free(removed.value.schema);
+            self.allocator.free(removed.value.bytes);
+            self.allocator.free(removed.value.produced_by);
+            collected += 1;
+        }
+        to_remove.deinit(self.allocator);
+        return collected;
+    }
+
     pub fn deinit(self: *Substrate) void {
-        if (self.journal) |*journal| journal.file.close(journal.io);
+        if (self.journal) |*journal| {
+            journal.file.close(journal.io);
+            self.allocator.free(journal.sub_path);
+        }
         var firing_it = self.firings.keyIterator();
         while (firing_it.next()) |key| self.allocator.free(key.*);
         self.firings.deinit();
@@ -465,6 +675,15 @@ const RecordJ = struct {
     artifacts: []const ArtifactJ = &.{},
     messages: []const MessageJ = &.{},
     neurons: []const NeuronJ = &.{},
+    firings: []const FiringJ = &.{},
+    prefixes: []const []const u8 = &.{},
+};
+
+const FiringJ = struct {
+    firing_id: []const u8 = "",
+    digest: []const u8 = "",
+    status: []const u8 = "",
+    effects_committed: usize = 0,
 };
 
 const ArtifactJ = struct {
@@ -480,6 +699,10 @@ const MessageJ = struct {
     msg_schema: []const u8 = "",
     payload: []const u8 = "",
     durable: bool = true,
+    /// Delivery state, present only inside snapshot records; commit records
+    /// omit it and default to a fresh queued message.
+    status: []const u8 = "queued",
+    attempts: u8 = 0,
 };
 
 const GrantJ = struct {
@@ -505,6 +728,20 @@ const NeuronJ = struct {
     caps_digest: []const u8 = "",
     grant: ?GrantJ = null,
 };
+
+fn stringLessThan(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.order(u8, a, b) == .lt;
+}
+
+/// Borrowed map keys in sorted order, for deterministic snapshot bytes.
+fn sortedKeys(allocator: Allocator, comptime V: type, map: *const std.StringHashMap(V)) ![][]const u8 {
+    var keys: std.ArrayList([]const u8) = .empty;
+    errdefer keys.deinit(allocator);
+    var iterator = map.keyIterator();
+    while (iterator.next()) |key| try keys.append(allocator, key.*);
+    std.mem.sort([]const u8, keys.items, {}, stringLessThan);
+    return keys.toOwnedSlice(allocator);
+}
 
 fn writeJsonString(w: *std.Io.Writer, allocator: Allocator, raw: []const u8) !void {
     const encoded = try std.json.Stringify.valueAlloc(allocator, raw, .{});

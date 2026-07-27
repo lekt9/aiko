@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.inspect-request/v1",
+  "title": "Introspection Request",
+  "description": "Request for a system capability snapshot. Optional filters narrow the scope.",
+  "type": "object",
+  "required": [],
+  "properties": {
+    "identity_prefix": {
+      "type": "string",
+      "description": "Only include neurons whose identity starts with this prefix."
+    },
+    "schema_prefix": {
+      "type": "string",
+      "description": "Only include artifacts whose schema starts with this prefix."
+    },
+    "include_metrics": {
+      "type": "boolean",
+      "default": true,
+      "description": "Include firing and delivery metrics."
+    },
+    "include_topology": {
+      "type": "boolean",
+      "default": true,
+      "description": "Include registered neurons and edges."
+    },
+    "include_packages": {
+      "type": "boolean",
+      "default": true,
+      "description": "Include admitted and revoked packages."
+    }
+  },
+  "additionalProperties": false
+}

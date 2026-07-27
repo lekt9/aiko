@@ -11,6 +11,12 @@ pub fn build(b: *std.Build) void {
     const version = b.option([]const u8, "version", "Version shown by neuron --version") orelse "0.1.0-dev";
     const options = b.addOptions();
     options.addOption([]const u8, "version", version);
+    // Embed the current Git revision so the binary reports its immutable
+    // source pin.  If the repo is not a Git checkout or the command fails,
+    // the revision defaults to "unknown" — the witness catches this.
+    const git_rev = b.run(&[_][]const u8{ "git", "rev-parse", "HEAD" });
+    const rev = std.mem.trim(u8, git_rev, " \t\r\n");
+    options.addOption([]const u8, "source_revision", if (rev.len == 40) rev else "unknown");
 
     const exe = b.addExecutable(.{
         .name = "neuron",

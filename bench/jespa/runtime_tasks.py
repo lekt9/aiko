@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -24,12 +25,14 @@ ROOT = Path(__file__).resolve().parents[2]
 CONFORMANCE: dict[str, list[str]] = {
     "schema_invalid_rejected": [
         "schema-invalid stimuli and decisions are rejected before effects",
+        "proxy payload v2 decodes typed fields and rejects the v1 flat form",
     ],
     "atomic_multi_effect": [
         "one firing atomically combines write send and spawn",
     ],
     "redelivery_idempotent": [
         "duplicate delivery does not duplicate effects",
+        "durable substrate survives restart with dedupe and delivery state intact",
     ],
     "cas_rejects_stale_and_retries": [
         "compare and swap rejects stale writes without mutation",
@@ -39,6 +42,9 @@ CONFORMANCE: dict[str, list[str]] = {
         "validation is atomic and capability denial commits nothing",
         "unauthorized reads are rejected at admission",
         "spawn delegation may only narrow the parent grant",
+        "ceiling table parses strictly and denies by default",
+        "per-peer ceilings pin each tailnet peer to its own authority",
+        "signed mesh path answers framed results like the tailnet path",
     ],
     "grounding_required": [
         "evidence must be grounded in stimulus or permitted reads",
@@ -49,6 +55,9 @@ CONFORMANCE: dict[str, list[str]] = {
         "spawn depth budget fails closed",
         "deadline and cancellation settle without effects",
         "message delivery acknowledges success and dead letters bounded retries",
+        "bounded exchange read shares the dial deadline",
+        "daemon and edge read the wall clock so delegation expiry is real",
+        "whois cache honors its TTL and re-resolves after expiry",
     ],
     "cache_keys_and_safe_hits": [
         "cache key changes for code stimulus reads caps adapter clock and randomness",
@@ -143,9 +152,42 @@ def conformance_results() -> dict[str, bool]:
     }
 
 
+def suite_size() -> int:
+    # The suite size is derived from the zig summary, never hand-written.
+    proc = subprocess.run(
+        ["zig", "build", "test", "--summary", "all"],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    match = re.search(r"(\d+)/(\d+) tests passed", proc.stdout + proc.stderr)
+    if not match:
+        raise RuntimeError("could not parse the zig test summary for a suite count")
+    passed, total = int(match.group(1)), int(match.group(2))
+    if passed != total:
+        raise RuntimeError(f"zig test summary shows failures: {passed}/{total}")
+    return total
+
+
+def ledger_test_claim() -> int:
+    # The ledger prose's "N executable tests" is the load-bearing claim the
+    # derived count must cover: a removed test fails the gate here, while
+    # adding tests needs no edit anywhere.
+    for line in (ROOT / "bench/jespa/benchmarks-ledger.jsonl").read_text().splitlines():
+        row = json.loads(line)
+        if row.get("bench") == "zig-runtime-claimed-safety-tasks":
+            match = re.search(r"(\d+) executable tests", row["note"])
+            if match:
+                return int(match.group(1))
+    raise RuntimeError("ledger has no zig-runtime test-count claim")
+
+
 def run_runtime() -> None:
-    # Any behavioral failure in the 79-test suite aborts before scoring.
-    subprocess.run(["zig", "build", "test"], cwd=ROOT, check=True)
+    total = suite_size()
+    claim = ledger_test_claim()
+    if total < claim:
+        raise RuntimeError(f"test suite shrank below the ledger claim: {total} < {claim}")
     subprocess.run(["zig", "build"], cwd=ROOT, check=True)
     proc = subprocess.run(
         [str(ROOT / "zig-out/bin/neuron"), "check", "--json"],

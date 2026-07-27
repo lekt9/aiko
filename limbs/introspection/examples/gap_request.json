@@ -1,0 +1,35 @@
+{
+  "firing_id": "introspection-demo-002",
+  "receptor_schema": "neuron.gap-request/v1",
+  "now_ms": 0,
+  "permitted_reads": [
+    "introspection/capability-map"
+  ],
+  "reads": [
+    {
+      "id": "introspection/capability-map",
+      "schema": "neuron.capability-map/v1",
+      "bytes": "{\"inspected_at_ms\":0,\"neurons\":[{\"identity\":\"meta/bootstrap\",\"version\":\"1.0.0\",\"kind\":\"fixed\"},{\"identity\":\"meta/intake\",\"version\":\"1.0.0\",\"kind\":\"fixed\"},{\"identity\":\"meta/governor\",\"version\":\"1.0.0\",\"kind\":\"fixed\"},{\"identity\":\"meta/context\",\"version\":\"1.0.0\",\"kind\":\"fixed\"},{\"identity\":\"meta/planner\",\"version\":\"1.0.0\",\"kind\":\"fixed\"},{\"identity\":\"meta/executor-a\",\"version\":\"1.0.0\",\"kind\":\"fixed\"},{\"identity\":\"meta/executor-b\",\"version\":\"1.0.0\",\"kind\":\"fixed\"},{\"identity\":\"meta/join\",\"version\":\"1.0.0\",\"kind\":\"topology\"},{\"identity\":\"meta/verifier\",\"version\":\"1.0.0\",\"kind\":\"fixed\"},{\"identity\":\"meta/recovery\",\"version\":\"1.0.0\",\"kind\":\"fixed\"},{\"identity\":\"meta/router\",\"version\":\"1.0.0\",\"kind\":\"fixed\"},{\"identity\":\"meta/limb-designer\",\"version\":\"1.0.0\",\"kind\":\"fixed\"},{\"identity\":\"meta/limb-judge\",\"version\":\"1.0.0\",\"kind\":\"fixed\"},{\"identity\":\"meta/generated-repair\",\"version\":\"1.0.0\",\"kind\":\"spec\"},{\"identity\":\"meta/memory-indexer\",\"version\":\"1.0.0\",\"kind\":\"fixed\"},{\"identity\":\"meta/settler\",\"version\":\"1.0.0\",\"kind\":\"fixed\"},{\"identity\":\"generated/repair-capability\",\"version\":\"1.0.0\",\"kind\":\"spec\"}],\"artifacts\":[{\"schema\":\"typed-neuron.intent/v1\",\"count\":1,\"ids\":[\"agents/reference/intent\"]},{\"schema\":\"typed-neuron.work-envelope/v1\",\"count\":1,\"ids\":[\"agents/reference/envelope\"]},{\"schema\":\"typed-neuron.context-manifest/v1\",\"count\":1,\"ids\":[\"agents/reference/context\"]},{\"schema\":\"typed-neuron.plan/v1\",\"count\":1,\"ids\":[\"agents/reference/plan\"]},{\"schema\":\"typed-neuron.proposal/v1\",\"count\":2,\"ids\":[\"agents/reference/work/a\",\"agents/reference/work/b\"]},{\"schema\":\"typed-neuron.recovery/v1\",\"count\":1,\"ids\":[\"agents/reference/recovery\"]},{\"schema\":\"typed-neuron.capability-gap/v1\",\"count\":1,\"ids\":[\"agents/reference/gap\"]},{\"schema\":\"typed-neuron.skill/v1\",\"count\":1,\"ids\":[\"agents/reference/generated/package\"]},{\"schema\":\"typed-neuron.agent-skill-manifest/v1\",\"count\":1,\"ids\":[\"agents/reference/generated/manifest\"]},{\"schema\":\"typed-neuron.result/v1\",\"count\":1,\"ids\":[\"agents/reference/generated/result\"]},{\"schema\":\"typed-neuron.memory-index/v1\",\"count\":1,\"ids\":[\"agents/reference/memory-index\"]},{\"schema\":\"typed-neuron.audit/v1\",\"count\":1,\"ids\":[\"agents/reference/audit\"]},{\"schema\":\"typed-neuron.agent-snapshot/v1\",\"count\":2,\"ids\":[\"agents/reference/snapshots/0001\",\"agents/reference/snapshots/0002\"]},{\"schema\":\"typed-neuron.snapshot-pointer/v1\",\"count\":1,\"ids\":[\"agents/reference/active\"]}],\"messages\":[],\"metrics\":{\"artifact_schemas\":14,\"artifact_ids\":16,\"message_schemas\":0,\"message_count\":0,\"neuron_identities\":17},\"packages\":[{\"name\":\"generated/repair-capability\",\"version\":\"1.0.0\",\"status\":\"generated\",\"digest\":\"abc123\"}],\"topology\":{\"registered\":17,\"waits\":[],\"joins\":[]}}"
+    }
+  ],
+  "messages": [
+    {
+      "to": "introspection/gap-analyzer",
+      "schema": "neuron.gap-request/v1",
+      "payload": "{\"desired\":[{\"kind\":\"neuron\",\"identity\":\"meta/verifier\"},{\"kind\":\"neuron\",\"identity\":\"meta/not-exists\"},{\"kind\":\"schema\",\"schema\":\"typed-neuron.intent/v1\"},{\"kind\":\"schema\",\"schema\":\"energy.router/v1\"},{\"kind\":\"package\",\"package_name\":\"typed-neuron/energy-router\"}]}",
+      "durable": false
+    }
+  ],
+  "caps": {
+    "allow_write": true,
+    "write_prefix": "introspection/",
+    "budget": {
+      "max_effects": 2,
+      "max_writes": 1,
+      "max_messages": 0,
+      "max_spawns": 0,
+      "max_bytes": 131072,
+      "max_depth": 1
+    }
+  }
+}

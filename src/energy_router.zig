@@ -23,6 +23,7 @@ pub const Candidate = struct {
 };
 
 pub const EnergyRouterNeuron = struct {
+    alloc: std.mem.Allocator,
     scratch: []u8,
     effects: []types.Effect,
     evidence: []types.Evidence,
@@ -43,7 +44,7 @@ pub const EnergyRouterNeuron = struct {
             const se = f.next() orelse return error.Bad;
             const vi = f.next() orelse return error.Bad;
             const su = f.next() orelse "0";
-            const idc = try self.dup(id);
+            const idc = self.dup(id);
             try list.append(self.allocator(), .{
                 .id = idc,
                 .grounding_ok = std.mem.eql(u8, g, "1"),
@@ -57,18 +58,16 @@ pub const EnergyRouterNeuron = struct {
         return list.toOwnedSlice(self.allocator());
     }
 
-    fn allocator(_: *const EnergyRouterNeuron) std.mem.Allocator {
-        return std.testing.allocator;
+    fn allocator(self: *const EnergyRouterNeuron) std.mem.Allocator {
+        return self.alloc;
     }
-    fn dup(_: *const EnergyRouterNeuron, s: []const u8) ![]u8 {
-        const b = try std.testing.allocator.alloc(u8, s.len);
-        @memcpy(b, s);
-        return b;
+    fn dup(_: *const EnergyRouterNeuron, s: []const u8) []const u8 {
+        return s;
     }
 
     pub fn fire(self: *const EnergyRouterNeuron, stimulus: types.Stimulus, _: caps_mod.Caps) !types.Decision {
         const cands = try self.parse(stimulus);
-        defer std.testing.allocator.free(cands);
+        defer self.alloc.free(cands);
 
         var bi: usize = 0;
         var be = firingEnergy(cands[0].grounding_ok, cands[0].evidence_conf_milli, cands[0].normalized_cost, cands[0].settlement_distance, cands[0].violations);
@@ -81,16 +80,16 @@ pub const EnergyRouterNeuron = struct {
         }
         const ch = cands[bi];
 
-        const sc = try std.fmt.allocPrint(std.testing.allocator, "{s}|{d:.4}", .{ ch.id, be });
-        defer std.testing.allocator.free(sc);
+        const sc = try std.fmt.allocPrint(self.alloc, "{s}|{d:.4}", .{ ch.id, be });
+        defer self.alloc.free(sc);
 
         self.effects[0] = .{ .write = .{ .id = "energy/score", .schema = "neuron.energy-score/v1", .bytes = sc } };
         var ne: usize = 1;
         var ctrl: types.Control = undefined;
 
         if (ch.wants_sub_ebm) {
-            const sid = try std.fmt.allocPrint(std.testing.allocator, "sub-ebm/{s}", .{ch.id});
-            defer std.testing.allocator.free(sid);
+            const sid = try std.fmt.allocPrint(self.alloc, "sub-ebm/{s}", .{ch.id});
+            defer self.alloc.free(sid);
             self.effects[1] = .{ .spawn = .{ .id = sid, .kind = "energy-sub-ebm", .grant = null } };
             ne = 2;
             ctrl = .{ .terminate = "spawned-sub-ebm" };
@@ -112,14 +111,14 @@ fn mk(n: usize) []u8 {
 }
 
 test "proper energy router: score + branch" {
-    var s = mk(2048);
+    const s = mk(2048);
     defer testing.allocator.free(s);
     var ef: [4]types.Effect = undefined;
     var ev: [4]types.Evidence = undefined;
     var so: [4][]const u8 = undefined;
-    const r = EnergyRouterNeuron{ .scratch = s, .effects = &ef, .evidence = &ev, .sources = &so };
+    const r = EnergyRouterNeuron{ .alloc = testing.allocator, .scratch = s, .effects = &ef, .evidence = &ev, .sources = &so };
     const p = "h|1|400|0.9|3|0|0\nbest|1|950|0.1|0.1|0|0\n";
-    var m: types.Message = .{ .schema = "r", .correlation_id = "c", .causation_id = "p", .payload = p, .durable = true };
+    const m: types.Message = .{ .to = "", .schema = "r", .payload = p, .durable = true };
     const st: types.Stimulus = .{ .firing_id = "e1", .receptor_schema = "w", .messages = (&m)[0..1] };
     const d = try r.fire(st, .{ .allow_write = true });
     try testing.expect(d.effects.len >= 1);
@@ -131,14 +130,14 @@ test "proper energy router: score + branch" {
 }
 
 test "proper energy router: spawns sub-ebm" {
-    var s = mk(2048);
+    const s = mk(2048);
     defer testing.allocator.free(s);
     var ef: [4]types.Effect = undefined;
     var ev: [4]types.Evidence = undefined;
     var so: [4][]const u8 = undefined;
-    const r = EnergyRouterNeuron{ .scratch = s, .effects = &ef, .evidence = &ev, .sources = &so };
+    const r = EnergyRouterNeuron{ .alloc = testing.allocator, .scratch = s, .effects = &ef, .evidence = &ev, .sources = &so };
     const p = "w|1|980|0.05|0.05|0|1\n";
-    var m: types.Message = .{ .schema = "r", .correlation_id = "c", .causation_id = "p", .payload = p, .durable = true };
+    const m: types.Message = .{ .to = "", .schema = "r", .payload = p, .durable = true };
     const st: types.Stimulus = .{ .firing_id = "e2", .receptor_schema = "w", .messages = (&m)[0..1] };
     const d = try r.fire(st, .{ .allow_write = true, .allow_spawn = true });
     try testing.expect(d.effects.len >= 2);

@@ -8,6 +8,7 @@ const mesh_mod = @import("mesh.zig");
 const tailnet_mod = @import("tailnet.zig");
 const mcp_mod = @import("mcp.zig");
 const substrate_mod = @import("substrate.zig");
+const limb_ops = @import("limb_ops.zig");
 const neuron_mod = @import("neuron.zig");
 const caps_mod = @import("caps.zig");
 
@@ -23,20 +24,29 @@ const usage =
     \\                         fire an external script-neuron through the real
     \\                         validate + commit lifecycle
     \\  neuron serve <ip:port> <write_prefix> [state_dir] [ceilings.json]
-    \\                         run the mesh daemon: tailnet peers (100.64.0.0/10)
-    \\                         may stimulate mesh/proxy under a ceiling pinned to
-    \\                         <write_prefix>; everyone else is dropped. With
-    \\                         [state_dir] the substrate is journaled there and
-    \\                         survives restart; without it, state is in-memory.
-    \\                         With [ceilings.json] (schema
-    \\                         neuron.tailnet-ceilings/v1) each peer is resolved
-    \\                         via `tailscale whois` and fires under its own
-    \\                         per-node ceiling; unlisted nodes are dropped
+    \\                         run the mesh daemon (see above)
     \\  neuron mcp <write_prefix> [state_dir]
-    \\                         run the stdio MCP edge: neuron.info + neuron.fire
-    \\                         under a ceiling pinned to <write_prefix>, with
-    \\                         optional tailnet gateway (address argument) and
-    \\                         the same optional durable state_dir as serve
+    \\                         run the stdio MCP edge
+    \\  neuron compact <state_dir>
+    \\                         fold the journaled substrate's live state into a
+    \\                         single snapshot record and truncate the WAL (§22)
+    \\  neuron limb admit <package_dir> <state_dir>
+    \\                         validate manifest, compute content digest, and
+    \\                         write a durable admission record (§29/§30).
+    \\                         Idempotent; prints the hex digest on stdout.
+    \\  neuron limb run <state_dir> --package <dir> --neuron <id>
+    \\         --stimulus <file> [--json] [--dump]
+    \\                         fire one neuron through the admitted path:
+    \\                         digest-pinned, admitted caps, journaled state
+    \\  neuron limb revoke <state_dir> --package <dir>
+    \\                         block all future limb run for this digest (§24)
+    \\  neuron limb detach <state_dir> --package <dir>
+    \\                         write detach record + GC limb scope (§22)
+    \\  neuron limb inspect <state_dir> [--json]
+    \\                         print lifecycle records + substrate counts
+    \\  neuron telemetry project <state_dir> [--json]
+    \\                         project firing records into a deterministic
+    \\                         rollup (firing counts, effects, artifacts)
     \\  neuron --version       print the build version
     \\  neuron --help          show this help
     \\
@@ -55,7 +65,7 @@ pub fn main(init: std.process.Init) !void {
     }
     if (std.mem.eql(u8, args.items[1], "--version")) {
         var buffer: [128]u8 = undefined;
-        const line = try std.fmt.bufPrint(&buffer, "neuron {s}\n", .{build_options.version});
+        const line = try std.fmt.bufPrint(&buffer, "neuron {s}  rev {s}\n", .{ build_options.version, build_options.source_revision });
         try writeStdout(init.io, line);
         return;
     }
@@ -119,10 +129,11 @@ pub fn main(init: std.process.Init) !void {
             };
             var per_peer = tailnet_mod.TableClassifier.init(allocator, init.io, table, tailnet_mod.tailscaleWhois(), 300_000);
             defer per_peer.deinit();
-            try tailnet_mod.serve(&node, &server, init.io, per_peer.classifier(), null);
+            try tailnet_mod.serve(&node, &server, init.io, per_peer.classifier(), null, .{});
             return;
         }
-        try tailnet_mod.serve(&node, &server, init.io, tailnet_mod.tailnetClassifier(&ceiling), null);
+        var single = tailnet_mod.SingleCeiling{ .ceiling = ceiling };
+        try tailnet_mod.serve(&node, &server, init.io, single.classifier(), null, .{});
         return;
     }
     if (std.mem.eql(u8, args.items[1], "mcp")) {
@@ -164,6 +175,151 @@ pub fn main(init: std.process.Init) !void {
         var reader = std.Io.File.stdin().reader(init.io, &read_buffer);
         var writer = std.Io.File.stdout().writer(init.io, &write_buffer);
         try server.serve(&reader.interface, &writer.interface);
+        return;
+    }
+    if (std.mem.eql(u8, args.items[1], "compact")) {
+        if (args.items.len < 3) {
+            try writeStderr(init.io, "error: usage: neuron compact <state_dir>\n");
+            std.process.exit(2);
+        }
+        var substrate = openState(allocator, init.io, args.items[2]) catch |err| {
+            var error_buffer: [192]u8 = undefined;
+            const line = std.fmt.bufPrint(&error_buffer, "error: cannot open state dir: {s}\n", .{@errorName(err)}) catch "error: cannot open state dir\n";
+            writeStderr(init.io, line) catch {};
+            std.process.exit(1);
+        };
+        defer substrate.deinit();
+        const result = substrate.compact() catch |err| {
+            var error_buffer: [192]u8 = undefined;
+            const line = std.fmt.bufPrint(&error_buffer, "error: compaction failed closed: {s}\n", .{@errorName(err)}) catch "error: compaction failed closed\n";
+            writeStderr(init.io, line) catch {};
+            std.process.exit(1);
+        };
+        var buffer: [160]u8 = undefined;
+        const line = try std.fmt.bufPrint(
+            &buffer,
+            "✓ substrate compacted\n  journal {d} bytes → snapshot {d} bytes\n",
+            .{ result.prior_size, result.new_size },
+        );
+        try writeStdout(init.io, line);
+        return;
+    }
+    if (std.mem.eql(u8, args.items[1], "limb")) {
+        if (args.items.len < 3) {
+            try writeStderr(init.io, "error: usage: neuron limb <admit|run|revoke|detach|inspect>\n");
+            std.process.exit(2);
+        }
+        const sub = args.items[2];
+        if (std.mem.eql(u8, sub, "admit")) {
+            if (args.items.len < 5) {
+                try writeStderr(init.io, "error: usage: neuron limb admit <package_dir> <state_dir>\n");
+                std.process.exit(2);
+            }
+            const result = limb_ops.admit(allocator, init.io, args.items[3], args.items[4]) catch |err| {
+                var error_buffer: [192]u8 = undefined;
+                const line = std.fmt.bufPrint(&error_buffer, "error: admission failed closed: {s}\n", .{@errorName(err)}) catch "error: admission failed closed\n";
+                writeStderr(init.io, line) catch {};
+                std.process.exit(1);
+            };
+            var buffer: [160]u8 = undefined;
+            const line = try std.fmt.bufPrint(&buffer, "{s}{s}\n", .{ if (result.created) "" else "(already admitted) ", &result.digest });
+            try writeStdout(init.io, line);
+            return;
+        }
+        if (std.mem.eql(u8, sub, "run")) {
+            if (args.items.len < 5) {
+                try writeStderr(init.io, "error: usage: neuron limb run <state_dir> --package <dir> --neuron <id> --stimulus <file> [--json] [--dump]\n");
+                std.process.exit(2);
+            }
+            const state_dir = args.items[3];
+            var package_dir: ?[]const u8 = null;
+            var neuron_id: ?[]const u8 = null;
+            var stimulus_path: ?[]const u8 = null;
+            var json = false;
+            var dump = false;
+            var i: usize = 4;
+            while (i < args.items.len) : (i += 1) {
+                if (std.mem.eql(u8, args.items[i], "--json")) {
+                    json = true;
+                    continue;
+                }
+                if (std.mem.eql(u8, args.items[i], "--dump")) {
+                    dump = true;
+                    continue;
+                }
+                if (i + 1 >= args.items.len) break;
+                if (std.mem.eql(u8, args.items[i], "--package")) {
+                    package_dir = args.items[i + 1];
+                    i += 1;
+                } else if (std.mem.eql(u8, args.items[i], "--neuron")) {
+                    neuron_id = args.items[i + 1];
+                    i += 1;
+                } else if (std.mem.eql(u8, args.items[i], "--stimulus")) {
+                    stimulus_path = args.items[i + 1];
+                    i += 1;
+                }
+            }
+            try limb_ops.limbRun(allocator, init.io, state_dir, package_dir orelse return error.MissingPackage, neuron_id orelse return error.MissingNeuron, stimulus_path orelse return error.MissingStimulus, json, dump);
+            return;
+        }
+        if (std.mem.eql(u8, sub, "revoke")) {
+            if (args.items.len < 5 or !std.mem.eql(u8, args.items[4], "--package") or args.items.len < 6) {
+                try writeStderr(init.io, "error: usage: neuron limb revoke <state_dir> --package <dir>\n");
+                std.process.exit(2);
+            }
+            limb_ops.revoke(allocator, init.io, args.items[5], args.items[3]) catch |err| {
+                var error_buffer: [192]u8 = undefined;
+                const line = std.fmt.bufPrint(&error_buffer, "error: revocation failed closed: {s}\n", .{@errorName(err)}) catch "error: revocation failed closed\n";
+                writeStderr(init.io, line) catch {};
+                std.process.exit(1);
+            };
+            try writeStdout(init.io, "✓ limb revoked\n");
+            return;
+        }
+        if (std.mem.eql(u8, sub, "detach")) {
+            if (args.items.len < 5 or !std.mem.eql(u8, args.items[4], "--package") or args.items.len < 6) {
+                try writeStderr(init.io, "error: usage: neuron limb detach <state_dir> --package <dir>\n");
+                std.process.exit(2);
+            }
+            const result = limb_ops.detach(allocator, init.io, args.items[5], args.items[3]) catch |err| {
+                var error_buffer: [192]u8 = undefined;
+                const line = std.fmt.bufPrint(&error_buffer, "error: detach failed closed: {s}\n", .{@errorName(err)}) catch "error: detach failed closed\n";
+                writeStderr(init.io, line) catch {};
+                std.process.exit(1);
+            };
+            var buffer: [128]u8 = undefined;
+            const line = try std.fmt.bufPrint(&buffer, "✓ limb detached · {d} artifacts collected\n", .{result.collected});
+            try writeStdout(init.io, line);
+            return;
+        }
+        if (std.mem.eql(u8, sub, "inspect")) {
+            if (args.items.len < 4) {
+                try writeStderr(init.io, "error: usage: neuron limb inspect <state_dir> [--json]\n");
+                std.process.exit(2);
+            }
+            const json_out = args.items.len > 4 and std.mem.eql(u8, args.items[4], "--json");
+            try limb_ops.inspect(allocator, init.io, args.items[3], json_out);
+            return;
+        }
+        try writeStderr(init.io, "error: unknown limb subcommand\n");
+        std.process.exit(2);
+    }
+    if (std.mem.eql(u8, args.items[1], "telemetry")) {
+        if (args.items.len < 3 or !std.mem.eql(u8, args.items[2], "project")) {
+            try writeStderr(init.io, "error: usage: neuron telemetry project <state_dir> [--json]\n");
+            std.process.exit(2);
+        }
+        if (args.items.len < 4) {
+            try writeStderr(init.io, "error: missing state_dir\n");
+            std.process.exit(2);
+        }
+        const json_out = args.items.len > 4 and std.mem.eql(u8, args.items[4], "--json");
+        limb_ops.telemetryProject(allocator, init.io, args.items[3], json_out) catch |err| {
+            var error_buffer: [192]u8 = undefined;
+            const line = std.fmt.bufPrint(&error_buffer, "error: telemetry failed: {s}\n", .{@errorName(err)}) catch "error: telemetry failed\n";
+            writeStderr(init.io, line) catch {};
+            std.process.exit(1);
+        };
         return;
     }
     if (std.mem.eql(u8, args.items[1], "run")) {

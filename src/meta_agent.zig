@@ -9,6 +9,7 @@ const topology_mod = @import("topology.zig");
 const registry_mod = @import("registry.zig");
 const observability = @import("observability.zig");
 const limb_mod = @import("limb.zig");
+const energy_router_mod = @import("energy_router.zig");
 
 const package_bytes = @embedFile("meta_agent_defaults");
 const stimulus_sources = [_][]const u8{"stimulus"};
@@ -494,24 +495,59 @@ pub fn run(allocator: std.mem.Allocator) !Summary {
             "neuron/router",
         );
 
-    // Router materializes the typed gap; designer writes an inert package;
-    // judge reads the exact digest; only then may the registry admit it.
+    // Router: the EnergyRouter scores the verified work against a capability
+    // gap candidate. The lower-energy winner branches to recovery; unresolved
+    // gaps (sub-ebm spawn) keep the scheduler alive (§30 generative limb).
+    var router_scratch: [2048]u8 = undefined;
+    var router_fx: [4]types.Effect = undefined;
+    var router_ev: [4]types.Evidence = undefined;
+    var router_sources: [4][]const u8 = undefined;
+    const candidates = "verified|1|950|0.05|0.05|0|0\ngap-capability|0|200|1.5|2.0|0|1\n";
+    const router_impl: energy_router_mod.EnergyRouterNeuron = .{
+        .alloc = allocator,
+        .scratch = &router_scratch,
+        .effects = &router_fx,
+        .evidence = &router_ev,
+        .sources = &router_sources,
+    };
+    // Router with energy/ scope for the write.
+    const router_caps: caps_mod.Caps = .{ .allow_write = true, .write_prefix = "energy/", .allow_spawn = true };
+    _ = try fireRecorded(
+        runtime,
+        neuron_mod.bind(energy_router_mod.EnergyRouterNeuron, &router_impl, "meta/router", "1.0.0"),
+        .{
+            .firing_id = "meta/090-gap",
+            .receptor_schema = "typed-neuron.retry/v1",
+            .messages = &[_]types.Message{.{
+                .to = "neuron/router",
+                .schema = "energy.candidate/v1",
+                .payload = candidates,
+            }},
+        },
+        router_caps,
+        &replayed,
+    );
+
+    // Gap artifact still written for the limb designer to consume.
     const gap_effects = [_]types.Effect{.{ .write = .{
         .id = "agents/reference/gap",
         .schema = "typed-neuron.capability-gap/v1",
         .bytes = "{\"input\":\"capability/repair/v1\",\"output\":\"typed-neuron.result/v1\",\"authority\":\"write:agents/reference/generated/\"}",
     } }};
-    const gap_impl: FixedNeuron = .{
+    const gap_writer: FixedNeuron = .{
         .control = .{ .terminate = "gap-materialized" },
         .effects = &gap_effects,
     };
     _ = try fireRecorded(
         runtime,
-        neuron_mod.bind(FixedNeuron, &gap_impl, "meta/router", "1.0.0"),
-        .{ .firing_id = "meta/090-gap", .receptor_schema = "typed-neuron.retry/v1" },
+        neuron_mod.bind(FixedNeuron, &gap_writer, "meta/gap-writer", "1.0.0"),
+        .{ .firing_id = "meta/095-gap", .receptor_schema = "typed-neuron.retry/v1" },
         agent_caps,
         &replayed,
     );
+    const gap_materialized = substrate.artifacts.contains("agents/reference/gap") and
+        substrate.artifacts.contains("energy/score");
+    if (!gap_materialized) return error.GapNotMaterialized;
 
     const generated_spec =
         "limb/v1 repair-capability\n" ++

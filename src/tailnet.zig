@@ -49,20 +49,26 @@ pub fn isTailnetAddress(peer: IpAddress) bool {
 
 /// The single-ceiling classifier: any tailnet peer fires under the one
 /// pinned ceiling the operator configured; anything else is denied. The
-/// ceiling is borrowed — the caller keeps it alive. This remains the
-/// fallback configuration; `TableClassifier` refines it to per-peer
-/// ceilings via `tailscale whois`.
-pub fn tailnetClassifier(ceiling: *const caps_mod.Caps) PeerClassifier {
-    return .{
-        .context = @constCast(ceiling),
-        .classify = struct {
-            fn classify(context: *anyopaque, peer: IpAddress, _: u64) ?caps_mod.Caps {
-                const pinned: *const caps_mod.Caps = @ptrCast(@alignCast(context));
-                return if (isTailnetAddress(peer)) pinned.* else null;
-            }
-        }.classify,
-    };
-}
+/// ceiling is OWNED — Caps is a small value struct, so the classifier
+/// holds a copy and there is no borrowed pointer whose lifetime could be
+/// documented, violated, or dangled. This remains the fallback
+/// configuration; `TableClassifier` refines it to per-peer ceilings via
+/// `tailscale whois`.
+pub const SingleCeiling = struct {
+    ceiling: caps_mod.Caps,
+
+    pub fn classifier(self: *SingleCeiling) PeerClassifier {
+        return .{
+            .context = self,
+            .classify = struct {
+                fn classify(context: *anyopaque, peer: IpAddress, _: u64) ?caps_mod.Caps {
+                    const owner: *SingleCeiling = @ptrCast(@alignCast(context));
+                    return if (isTailnetAddress(peer)) owner.ceiling else null;
+                }
+            }.classify,
+        };
+    }
+};
 
 // --- per-peer ceilings (classifier v2) ---
 
@@ -363,21 +369,146 @@ pub fn acceptOnce(
     return try serveConnection(node, &reader.interface, &writer.interface, now_ms, ceiling);
 }
 
-/// The daemon: accept connections forever, each classified on arrival.
-/// A null `now_ms` reads the wall clock at accept time — the production
-/// posture, so delegation expiry and whois cache TTLs are live. Tests
-/// pass a fixed clock.
+pub const ServeOptions = struct {
+    /// Maximum connections served concurrently; peers beyond the cap are
+    /// closed unread — fail closed under load, the kernel backlog is the
+    /// queue (§26 budgets).
+    max_connections: usize = 64,
+    /// One absolute monotonic budget per connection, shared by every read
+    /// and write it performs: a trickling (slow-loris) or non-reading peer
+    /// is cut at the deadline instead of holding a server slot forever.
+    connection_budget_ms: u32 = 30_000,
+    /// Set to stop the daemon: the accept loop exits after the next accept
+    /// (connect once to wake a blocked accept) and in-flight connections
+    /// drain within one connection budget.
+    stop: ?*const std.atomic.Value(bool) = null,
+};
+
+/// In-flight connection accounting: one mutex-guarded count serves both
+/// the concurrency cap and shutdown draining (the 0.16 stdlib has no
+/// WaitGroup; this is exactly one).
+const Drain = struct {
+    mutex: std.Io.Mutex = .init,
+    cond: std.Io.Condition = .init,
+    in_flight: usize = 0,
+
+    fn begin(self: *Drain, io: std.Io) void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        self.in_flight += 1;
+    }
+
+    fn end(self: *Drain, io: std.Io) void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        self.in_flight -= 1;
+        if (self.in_flight == 0) self.cond.signal(io);
+    }
+
+    fn count(self: *Drain, io: std.Io) usize {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        return self.in_flight;
+    }
+
+    /// Block until every in-flight connection ends; bounded by one
+    /// connection budget because each dies at its own deadline.
+    fn wait(self: *Drain, io: std.Io) void {
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        while (self.in_flight != 0) self.cond.waitUncancelable(io, &self.mutex);
+    }
+};
+
+/// One accepted connection's serving context. The stream moves into the
+/// task by value; the task closes it exactly once, on every exit path.
+const ConnectionTask = struct {
+    node: *mesh_mod.Node,
+    stream: mesh_mod.net.Stream,
+    io: std.Io,
+    now_ms: u64,
+    deadline_ms: u64,
+    ceiling: caps_mod.Caps,
+    commit_mutex: *std.Io.Mutex,
+    drain: *Drain,
+
+    fn run(task: ConnectionTask) void {
+        defer task.drain.end(task.io);
+        defer task.stream.close(task.io);
+        _ = mesh_mod.serveConnectionBounded(
+            task.node,
+            task.stream.socket.handle,
+            task.io,
+            task.now_ms,
+            task.deadline_ms,
+            task,
+            respond,
+        ) catch {};
+    }
+
+    fn respond(task: ConnectionTask, node: *mesh_mod.Node, bytes: []const u8, now_ms: u64) ![]u8 {
+        // The substrate is single-writer: commits serialize here even
+        // though reads and response writes run concurrently (§22).
+        task.commit_mutex.lockUncancelable(task.io);
+        defer task.commit_mutex.unlock(task.io);
+        return responseJson(node, bytes, now_ms, task.ceiling);
+    }
+};
+
+/// The daemon: accept connections forever, each classified on arrival and
+/// served on its own thread under a per-connection monotonic deadline, so
+/// one slow peer can never wedge the rest. A null `now_ms` reads the wall
+/// clock at accept time — the production posture, so delegation expiry and
+/// whois cache TTLs are live. Tests pass a fixed clock.
 pub fn serve(
     node: *mesh_mod.Node,
     server: *std.Io.net.Server,
     io: std.Io,
     classify: PeerClassifier,
     now_ms: ?u64,
+    options: ServeOptions,
 ) !void {
-    var read_buffer: [64 * 1024]u8 = undefined;
-    var write_buffer: [64 * 1024]u8 = undefined;
+    var commit_mutex: std.Io.Mutex = .init;
+    var drain: Drain = .{};
+    // Every return path drains in-flight connections; each dies at its own
+    // deadline, so the wait is bounded by one connection budget.
+    defer drain.wait(io);
     while (true) {
+        if (options.stop) |stop| if (stop.load(.acquire)) return;
+        const stream = try server.accept(io);
+        if (options.stop) |stop| if (stop.load(.acquire)) {
+            stream.close(io);
+            return;
+        };
         const now = now_ms orelse mesh_mod.wallNowMs(io);
-        _ = try acceptOnce(node, server, io, classify, now, &read_buffer, &write_buffer);
+        const ceiling = classify.call(stream.socket.address, now) orelse {
+            stream.close(io);
+            continue;
+        };
+        if (drain.count(io) >= options.max_connections) {
+            // Fail closed under load: no reads, no application queue — the
+            // kernel backlog holds pending peers and the rest retry (§27).
+            stream.close(io);
+            continue;
+        }
+        const task: ConnectionTask = .{
+            .node = node,
+            .stream = stream,
+            .io = io,
+            .now_ms = now,
+            .deadline_ms = mesh_mod.monoNowMs(io) +| options.connection_budget_ms,
+            .ceiling = ceiling,
+            .commit_mutex = &commit_mutex,
+            .drain = &drain,
+        };
+        drain.begin(io);
+        const thread = std.Thread.spawn(.{}, ConnectionTask.run, .{task}) catch {
+            // Spawn failure fails closed: the peer is dropped, the daemon
+            // keeps serving (§27 typed degradation, never a wedged accept).
+            drain.end(io);
+            stream.close(io);
+            continue;
+        };
+        thread.detach();
     }
 }

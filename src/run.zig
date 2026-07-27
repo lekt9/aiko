@@ -174,7 +174,7 @@ pub fn run(allocator: Allocator, io: std.Io, args: []const []const u8) !Summary 
 /// Build the hard-typed Stimulus from JSON, staging every read's bytes into
 /// the substrate only after verifying the declared digest — reads are
 /// digest-pinned before the neuron ever sees them (§20 step 3).
-fn stageStimulus(allocator: Allocator, root: std.json.Value, substrate: *substrate_mod.Substrate) !types.Stimulus {
+pub fn stageStimulus(allocator: Allocator, root: std.json.Value, substrate: *substrate_mod.Substrate) !types.Stimulus {
     const schema = jsonString(root, "schema") orelse return error.InvalidStimulus;
     if (!std.mem.eql(u8, schema, "neuron.stimulus/v1")) return error.InvalidStimulus;
 
@@ -237,6 +237,51 @@ fn stageStimulus(allocator: Allocator, root: std.json.Value, substrate: *substra
     }
     stimulus.messages = messages.items;
     return stimulus;
+}
+
+/// Resolve the argv list for one neuron in a parsed manifest. Relative
+/// script paths are joined against the manifest directory so the firing
+/// works from any working directory. Returns the fully resolved argv
+/// and the neuron's caps_request (admission's source of truth for caps).
+/// The caller owns the returned slices (they live in the arena).
+pub fn resolveNeuronArgv(
+    allocator: Allocator,
+    manifest: std.json.Value,
+    manifest_dir: []const u8,
+    wanted_id: []const u8,
+) !struct { argv: []const []const u8, caps: caps_mod.Caps } {
+    if (manifest != .object) return error.InvalidManifest;
+    const neurons = manifest.object.get("neurons") orelse return error.InvalidManifest;
+    if (neurons != .array) return error.InvalidManifest;
+    var argv_list: std.ArrayList([]const u8) = .empty;
+    var caps: caps_mod.Caps = .{};
+    var found = false;
+    for (neurons.array.items) |entry| {
+        if (entry != .object) continue;
+        const id = jsonString(entry, "id") orelse continue;
+        if (!std.mem.eql(u8, id, wanted_id)) continue;
+        found = true;
+        const argv_json = entry.object.get("argv") orelse return error.InvalidManifest;
+        if (argv_json != .array) return error.InvalidManifest;
+        for (argv_json.array.items) |item| {
+            const part = switch (item) {
+                .string => |str| str,
+                else => return error.InvalidManifest,
+            };
+            if (part.len > 0 and part[0] != '/' and std.mem.indexOfScalar(u8, part, '/') != null) {
+                try argv_list.append(allocator, try std.fs.path.join(allocator, &.{ manifest_dir, part }));
+            } else {
+                try argv_list.append(allocator, part);
+            }
+        }
+        if (entry.object.get("caps_request")) |requested| {
+            caps = try script_mod.capsFromJson(requested);
+        }
+        break;
+    }
+    if (!found) return error.NeuronNotInManifest;
+    if (argv_list.items.len == 0) return error.InvalidManifest;
+    return .{ .argv = argv_list.items, .caps = caps };
 }
 
 fn jsonString(value: std.json.Value, key: []const u8) ?[]const u8 {

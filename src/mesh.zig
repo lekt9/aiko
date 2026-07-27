@@ -575,7 +575,7 @@ pub fn acceptOnce(
 
 /// Monotonic milliseconds for exchange deadlines: immune to wall-clock
 /// jumps, so a peer cannot stall a deadline by adjusting the clock.
-fn monoNowMs(io: std.Io) u64 {
+pub fn monoNowMs(io: std.Io) u64 {
     const ms = std.Io.Clock.awake.now(io).toMilliseconds();
     return if (ms < 0) 0 else @intCast(ms);
 }
@@ -719,6 +719,50 @@ fn readFrameBounded(allocator: Allocator, fd: posix.fd_t, io: std.Io, deadline_m
     errdefer allocator.free(payload);
     if (try readExactBounded(fd, io, payload, deadline_ms) < len) return error.TruncatedFrame;
     return payload;
+}
+
+/// Serve one accepted connection on its raw fd with every read and write
+/// gated by ONE absolute monotonic deadline — the accept-side mirror of
+/// dialExchange's bounded path: a peer that trickles bytes (slow-loris) or
+/// stops reading is cut at the deadline instead of holding a server slot
+/// forever. The fd is switched to non-blocking and stays that way; the
+/// caller owns closing it. `respond` is the policy hook — it computes the
+/// framed response for each admitted payload (the tailnet daemon supplies
+/// its ceiling-attributed variant) and MUST be safe under the caller's
+/// concurrency model. Errors end the connection: a committed effect stays
+/// committed, an unanswered frame commits nothing new (§20, §27).
+pub fn serveConnectionBounded(
+    node: *Node,
+    fd: posix.fd_t,
+    io: std.Io,
+    now_ms: u64,
+    deadline_ms: u64,
+    ctx: anytype,
+    comptime respond: fn (@TypeOf(ctx), *Node, []const u8, u64) anyerror![]u8,
+) !usize {
+    const nonblock_bits: c_int = @bitCast(posix.O{ .NONBLOCK = true });
+    const flags = std.c.fcntl(fd, posix.F.GETFL);
+    if (flags == -1) return error.FcntlFailed;
+    if (std.c.fcntl(fd, posix.F.SETFL, flags | nonblock_bits) == -1) return error.FcntlFailed;
+    var admitted: usize = 0;
+    while (true) {
+        const bytes = readFrameBounded(node.allocator, fd, io, deadline_ms) catch |err| switch (err) {
+            // Clean close, or a peer that vanished mid-frame: everything
+            // already committed stays committed (§27).
+            error.NoResponse, error.TruncatedFrame => break,
+            else => return err,
+        };
+        defer node.allocator.free(bytes);
+        const response = try respond(ctx, node, bytes, now_ms);
+        defer node.allocator.free(response);
+        const frame = try node.allocator.alloc(u8, 4 + response.len);
+        defer node.allocator.free(frame);
+        std.mem.writeInt(u32, frame[0..4], @intCast(response.len), .big);
+        @memcpy(frame[4..], response);
+        admitted += 1;
+        writeAllBounded(fd, io, frame, deadline_ms) catch return admitted;
+    }
+    return admitted;
 }
 
 /// Connect, write one framed envelope, and read the peer's framed result

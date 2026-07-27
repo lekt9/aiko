@@ -44,6 +44,7 @@ test {
     _ = @import("mesh.zig");
     _ = @import("tailnet.zig");
     _ = @import("mcp.zig");
+    _ = @import("energy_router.zig");
 }
 
 const Fixture = struct {
@@ -2060,6 +2061,7 @@ test "mesh nodes are symmetric over a real TCP loopback" {
 
 const tailnet_mod = @import("tailnet.zig");
 const mcp_mod = @import("mcp.zig");
+const energy_router_mod = @import("energy_router.zig");
 
 fn ip4(a: u8, b: u8, c: u8, d: u8) mesh_mod.net.IpAddress {
     return .{ .ip4 = .{ .bytes = .{ a, b, c, d }, .port = 0 } };
@@ -2074,7 +2076,8 @@ test "tailnet classification admits CGNAT peers and denies everything else" {
     try std.testing.expect(!tailnet_mod.isTailnetAddress(ip4(192, 168, 1, 1)));
     try std.testing.expect(!tailnet_mod.isTailnetAddress(ip4(127, 0, 0, 1)));
     const ceiling: caps_mod.Caps = .{ .allow_write = true, .write_prefix = "artifact/mesh/" };
-    const classify = tailnet_mod.tailnetClassifier(&ceiling);
+    var single = tailnet_mod.SingleCeiling{ .ceiling = ceiling };
+    const classify = single.classifier();
     try std.testing.expect(classify.call(ip4(100, 100, 1, 1), 0) != null);
     try std.testing.expect(classify.call(ip4(1, 2, 3, 4), 0) == null);
 }
@@ -2322,6 +2325,60 @@ test "tailnet admission fires under the pinned ceiling and proofs carry no autho
     var node_c = mesh_mod.Node.init(allocator, rig.device_a, &fixture_c.substrate);
     defer node_c.deinit();
     try std.testing.expectError(error.WrongRecipient, node_c.receiveTrusted(unsigned, 5_000, mesh_ceiling));
+}
+
+test "proxy payload v2 decodes typed fields and rejects the v1 flat form" {
+    const allocator = std.testing.allocator;
+    const rig = try MeshRig.init();
+    var fixture = Fixture.init();
+    defer fixture.deinit();
+    var node = mesh_mod.Node.init(allocator, rig.device_b, &fixture.substrate);
+    defer node.deinit();
+    var proxy_arena = std.heap.ArenaAllocator.init(allocator);
+    defer proxy_arena.deinit();
+    var proxy_fx: [1]types.Effect = undefined;
+    var proxy_ev: [1]types.Evidence = undefined;
+    var proxy_src: [1][]const u8 = undefined;
+    const proxy_impl: mesh_mod.ProxyNeuron = .{
+        .arena = &proxy_arena,
+        .fx = &proxy_fx,
+        .ev = &proxy_ev,
+        .src = &proxy_src,
+    };
+    try node.register(neuron_mod.bind(mesh_mod.ProxyNeuron, &proxy_impl, "mesh/proxy", "1"));
+
+    // An id containing a newline: the flat v1 form could not say this;
+    // typed v2 round-trips it by construction (§19 explicit decode).
+    const weird_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/mesh/weird\nid", "bytes\nwith\nnewlines");
+    defer allocator.free(weird_payload);
+    const weird = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", weird_payload, true, "firing-v2-1", 1);
+    defer allocator.free(weird);
+    const committed = try node.receiveTrusted(weird, 5_000, mesh_ceiling);
+    try std.testing.expectEqual(@as(usize, 1), committed.commit.effects_committed);
+    try std.testing.expectEqualStrings(
+        "bytes\nwith\nnewlines",
+        fixture.substrate.artifacts.get("artifact/mesh/weird\nid").?.bytes,
+    );
+
+    // The v1 flat form is schema-invalid before any effect exists —
+    // there is no compat flag left to rot.
+    const flat = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v1", "artifact/mesh/flat\nold form", true, "firing-v2-2", 2);
+    defer allocator.free(flat);
+    try std.testing.expectError(error.InvalidPayload, node.receiveTrusted(flat, 5_000, mesh_ceiling));
+    try std.testing.expect(fixture.substrate.artifacts.get("artifact/mesh/flat") == null);
+
+    // Malformed JSON, a wrong schema tag, and a missing field all fail
+    // the same closed way.
+    const malformed = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", "{not json", true, "firing-v2-3", 3);
+    defer allocator.free(malformed);
+    try std.testing.expectError(error.InvalidPayload, node.receiveTrusted(malformed, 5_000, mesh_ceiling));
+    const wrong_tag = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", "{\"schema\":\"mesh.proxy/v1\",\"artifact_id\":\"a\",\"bytes\":\"b\"}", true, "firing-v2-4", 4);
+    defer allocator.free(wrong_tag);
+    try std.testing.expectError(error.InvalidPayload, node.receiveTrusted(wrong_tag, 5_000, mesh_ceiling));
+    const missing = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", "{\"schema\":\"mesh.proxy/v2\",\"artifact_id\":\"a\"}", true, "firing-v2-5", 5);
+    defer allocator.free(missing);
+    try std.testing.expectError(error.InvalidPayload, node.receiveTrusted(missing, 5_000, mesh_ceiling));
+    try std.testing.expectEqual(@as(u32, 1), fixture.substrate.artifacts.count());
 }
 
 fn loopbackClassifier() tailnet_mod.PeerClassifier {
@@ -3021,6 +3078,178 @@ test "bounded exchange read shares the dial deadline" {
     try std.testing.expectEqual(@as(?anyerror, null), delay_ctx.err);
 }
 
+/// Loopback classifier for daemon tests: production classifiers gate on the
+/// CGNAT range; witnesses run on 127.0.0.1, so the injection point carries a
+/// real ceiling for loopback and denies everything else.
+const LoopbackCeiling = struct {
+    ceiling: caps_mod.Caps,
+
+    fn classifier(self: *LoopbackCeiling) tailnet_mod.PeerClassifier {
+        return .{
+            .context = self,
+            .classify = struct {
+                fn classify(context: *anyopaque, peer: tailnet_mod.IpAddress, _: u64) ?caps_mod.Caps {
+                    const this: *LoopbackCeiling = @ptrCast(@alignCast(context));
+                    return if (std.mem.eql(u8, &peer.ip4.bytes, &.{ 127, 0, 0, 1 })) this.ceiling else null;
+                }
+            }.classify,
+        };
+    }
+};
+
+/// Blocking raw connect to a loopback listener — the loris and the shutdown
+/// wakeup both need a connection dialExchange's one-shot shape cannot make.
+fn rawLoopbackConnect(address: mesh_mod.net.IpAddress) !std.posix.fd_t {
+    const posix = std.posix;
+    const fd = std.c.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
+    if (fd == -1) return error.SocketFailed;
+    errdefer _ = std.c.close(fd);
+    const sa: posix.sockaddr.in = .{
+        .port = std.mem.nativeToBig(u16, address.ip4.port),
+        .addr = @bitCast(address.ip4.bytes),
+    };
+    if (std.c.connect(fd, @ptrCast(&sa), @sizeOf(posix.sockaddr.in)) != 0) return error.ConnectFailed;
+    return fd;
+}
+
+/// True when the peer closes (EOF or reset) within the real-time budget.
+/// The fd stays blocking; a non-blocking probe would race the close.
+fn closedWithin(fd: std.posix.fd_t, budget_ms: u64) bool {
+    const posix = std.posix;
+    var waited_ms: u64 = 0;
+    while (waited_ms < budget_ms) {
+        var pfd = [_]posix.pollfd{.{ .fd = fd, .events = posix.POLL.IN, .revents = 0 }};
+        const ready = posix.poll(&pfd, 25) catch return false;
+        if (ready > 0) {
+            var byte: [1]u8 = undefined;
+            const rc = std.c.read(fd, &byte, 1);
+            if (rc == 0) return true; // clean EOF: the server hung up
+            if (rc < 0) {
+                switch (posix.errno(rc)) {
+                    .AGAIN, .INTR => {},
+                    else => return true, // reset: gone either way (§27)
+                }
+            }
+        }
+        waited_ms += 25;
+    }
+    return false;
+}
+
+test "slow-loris peer neither wedges the daemon nor outlives its connection budget" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const posix = std.posix;
+
+    var substrate = substrate_mod.Substrate.init(allocator);
+    defer substrate.deinit();
+    const keys = identity_mod.generateKeyPair(io);
+    var node = mesh_mod.Node.init(allocator, keys, &substrate);
+    defer node.deinit();
+    var proxy_arena = std.heap.ArenaAllocator.init(allocator);
+    defer proxy_arena.deinit();
+    var proxy_fx: [1]types.Effect = undefined;
+    var proxy_ev: [1]types.Evidence = undefined;
+    var proxy_src: [1][]const u8 = undefined;
+    const proxy_impl = proxyNeuron(&proxy_arena, &proxy_fx, &proxy_ev, &proxy_src);
+    try node.register(neuron_mod.bind(mesh_mod.ProxyNeuron, &proxy_impl, "mesh/proxy", "1"));
+
+    // Production classifiers gate on the CGNAT range; this witness runs on
+    // loopback, so it injects a loopback classifier with a real ceiling.
+    var loopback: LoopbackCeiling = .{ .ceiling = mesh_ceiling };
+
+    var listener = try (try mesh_mod.net.IpAddress.parseIp4("127.0.0.1", 0)).listen(io, .{ .reuse_address = true });
+    defer listener.deinit(io);
+    const address = listener.socket.address;
+
+    const DaemonCtx = struct {
+        node: *mesh_mod.Node,
+        server: *mesh_mod.net.Server,
+        classify: tailnet_mod.PeerClassifier,
+        stop: *std.atomic.Value(bool),
+        err: ?anyerror = null,
+
+        fn run(ctx: *@This()) void {
+            tailnet_mod.serve(ctx.node, ctx.server, std.testing.io, ctx.classify, 0, .{
+                .max_connections = 4,
+                .connection_budget_ms = 400,
+                .stop = ctx.stop,
+            }) catch |err| {
+                ctx.err = err;
+            };
+        }
+    };
+    var stop = std.atomic.Value(bool).init(false);
+    var daemon_ctx: DaemonCtx = .{
+        .node = &node,
+        .server = &listener,
+        .classify = loopback.classifier(),
+        .stop = &stop,
+    };
+    const daemon = try std.Thread.spawn(.{}, DaemonCtx.run, .{&daemon_ctx});
+
+    // The loris: connect and trickle two bytes of a four-byte frame header,
+    // then hold. Before per-connection deadlines this is where the whole
+    // daemon went to sleep.
+    const loris_fd = try rawLoopbackConnect(address);
+    defer _ = std.c.close(loris_fd);
+    try std.testing.expectEqual(@as(isize, 2), std.c.write(loris_fd, "\x00\x00", 2));
+
+    // While the loris is still stuck, a well-formed peer is admitted,
+    // committed, and answered — the head-of-line block is gone.
+    var dial_buffer: [8192]u8 = undefined;
+    const wildcard: mesh_mod.NodeId = @splat(0);
+    const ok_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/mesh/loris-ok", "made it past the loris");
+    defer allocator.free(ok_payload);
+    const envelope = try mesh_mod.unsignedEnvelopeJson(allocator, wildcard, "mesh/proxy", "mesh.proxy/v2", ok_payload, true, "firing-loris-1", 1);
+    defer allocator.free(envelope);
+    const response = try mesh_mod.dialExchange(allocator, &address, io, envelope, &dial_buffer, 2_000);
+    defer allocator.free(response);
+    try std.testing.expectEqualStrings(
+        \\{"status":"committed","effects_committed":1,"duplicates_skipped":0}
+    , response);
+
+    // The loris is cut at its own budget: the server closes within the
+    // 400ms connection deadline plus scheduling slack.
+    try std.testing.expect(closedWithin(loris_fd, 3_000));
+
+    // And the loris committed nothing: its partial frame never became a
+    // firing, while the good peer's artifact landed exactly once.
+    try std.testing.expectEqual(@as(u32, 1), substrate.artifacts.count());
+    try std.testing.expectEqualStrings(
+        "made it past the loris",
+        substrate.artifacts.get("artifact/mesh/loris-ok").?.bytes,
+    );
+
+    // The in-flight cap fails closed: with every slot held by a trickling
+    // peer, the next connection is closed unread instead of queued. A real
+    // pause first lets the good peer's slot drain out of the count.
+    var pause: std.c.timespec = .{ .sec = 0, .nsec = 100 * std.time.ns_per_ms };
+    _ = std.c.nanosleep(&pause, null);
+    var held: [4]posix.fd_t = undefined;
+    var held_count: usize = 0;
+    defer for (held[0..held_count]) |fd| {
+        _ = std.c.close(fd);
+    };
+    for (&held) |*fd| {
+        fd.* = try rawLoopbackConnect(address);
+        held_count += 1;
+        try std.testing.expectEqual(@as(isize, 2), std.c.write(fd.*, "\x00\x00", 2));
+    }
+    const excess_fd = try rawLoopbackConnect(address);
+    defer _ = std.c.close(excess_fd);
+    try std.testing.expect(closedWithin(excess_fd, 1_000));
+
+    // Clean shutdown: the stop predicate plus one wakeup connection ends
+    // the accept loop, and every in-flight connection has already drained.
+    stop.store(true, .release);
+    const wake_fd = try rawLoopbackConnect(address);
+    _ = std.c.close(wake_fd);
+    daemon.join();
+    try std.testing.expectEqual(@as(?anyerror, null), daemon_ctx.err);
+}
+
 test "durable substrate survives restart with dedupe and delivery state intact" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
@@ -3089,4 +3318,183 @@ test "durable substrate survives restart with dedupe and delivery state intact" 
         error.CorruptLog,
         substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state"),
     );
+}
+
+test "journal compaction folds history into a snapshot and preserves committed state" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const commit_one = [_]types.Effect{
+        .{ .write = .{ .id = "artifact/compact/a", .schema = "data/v1", .bytes = "alpha" } },
+        .{ .send = .{ .to = "channel/review", .schema = "msg/v1", .payload = "fold me" } },
+    };
+    const commit_two = [_]types.Effect{
+        .{ .write = .{ .id = "artifact/compact/b", .schema = "data/v1", .bytes = "beta" } },
+        .{ .spawn = .{ .id = "worker/compactor", .kind = "test" } },
+    };
+    const commit_four = [_]types.Effect{
+        .{ .write = .{ .id = "artifact/compact/c", .schema = "data/v1", .bytes = "gamma" } },
+    };
+    const denied = [_]types.Effect{
+        .{ .write = .{ .id = "evil/outside", .schema = "data/v1", .bytes = "nope" } },
+    };
+
+    // First life: commits, a delivery transition, and a rejected firing all
+    // hit the journal; compaction folds them into one snapshot record.
+    {
+        var substrate = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state");
+        defer substrate.deinit();
+        const runtime: runtime_mod.Runtime = .{ .substrate = &substrate };
+        _ = try runtime.execute(stimulus("compact-1"), allCaps(), .{
+            .control = .{ .terminate = "done" },
+            .effects = &commit_one,
+            .evidence = &evidence,
+        });
+        _ = try runtime.execute(stimulus("compact-2"), allCaps(), .{
+            .control = .{ .terminate = "done" },
+            .effects = &commit_two,
+            .evidence = &evidence,
+        });
+        const ack = (try delivery_mod.deliverNext(&substrate, acknowledgeAdapter)).?;
+        try std.testing.expectEqual(substrate_mod.DeliveryStatus.acknowledged, ack.status);
+        if (runtime.execute(stimulus("compact-3"), allCaps(), .{
+            .control = .{ .terminate = "done" },
+            .effects = &denied,
+            .evidence = &evidence,
+        })) |_| {
+            return error.TestUnexpectedResult;
+        } else |_| {}
+
+        const log_before = try tmp.dir.openFile(io, "state/substrate.log", .{});
+        const prior_size = (try log_before.stat(io)).size;
+        log_before.close(io);
+
+        const result = try substrate.compact();
+        try std.testing.expectEqual(prior_size, result.prior_size);
+        try std.testing.expect(result.new_size < result.prior_size);
+
+        // In-memory state is untouched and the journal still takes appends.
+        _ = try runtime.execute(stimulus("compact-4"), allCaps(), .{
+            .control = .{ .terminate = "done" },
+            .effects = &commit_four,
+            .evidence = &evidence,
+        });
+        // Still strictly single-writer after the handle swap.
+        try std.testing.expectError(
+            error.SubstrateLocked,
+            substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state"),
+        );
+    }
+
+    // Second life: replay-from-snapshot equals replay-from-full-log —
+    // artifacts, positional delivery state, spawned neuron grants, the
+    // rejected settlement, and the post-compaction commit (§22 retention).
+    {
+        var substrate = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state");
+        defer substrate.deinit();
+        try std.testing.expectEqualStrings("alpha", substrate.artifacts.get("artifact/compact/a").?.bytes);
+        try std.testing.expectEqualStrings("beta", substrate.artifacts.get("artifact/compact/b").?.bytes);
+        try std.testing.expectEqualStrings("gamma", substrate.artifacts.get("artifact/compact/c").?.bytes);
+        try std.testing.expectEqual(@as(usize, 3), substrate.artifacts.count());
+        try std.testing.expectEqual(@as(usize, 1), substrate.messages.items.len);
+        try std.testing.expectEqual(substrate_mod.DeliveryStatus.acknowledged, substrate.messages.items[0].status);
+        try std.testing.expectEqual(@as(u8, 1), substrate.messages.items[0].attempts);
+        try std.testing.expectEqualStrings("test", substrate.neurons.get("worker/compactor").?.kind);
+        try std.testing.expectEqual(@as(usize, 4), substrate.firings.count());
+        try std.testing.expectEqual(substrate_mod.FiringStatus.rejected, substrate.firings.get("compact-3").?.status);
+
+        // Dedupe identity survived compaction: redelivery settles as a
+        // duplicate, never a re-commit (§21 across the snapshot boundary).
+        const runtime: runtime_mod.Runtime = .{ .substrate = &substrate };
+        const duplicate = try runtime.execute(stimulus("compact-1"), allCaps(), .{
+            .control = .{ .terminate = "done" },
+            .effects = &commit_one,
+            .evidence = &evidence,
+        });
+        try std.testing.expectEqual(@as(usize, 0), duplicate.effects_committed);
+        try std.testing.expectEqual(@as(usize, 2), duplicate.duplicates_skipped);
+
+        // The log is exactly snapshot + one appended commit, and compaction
+        // is stable when history is already minimal.
+        const log = try tmp.dir.openFile(io, "state/substrate.log", .{});
+        defer log.close(io);
+        const size = (try log.stat(io)).size;
+        const bytes = try allocator.alloc(u8, @intCast(size));
+        defer allocator.free(bytes);
+        const n = try log.readPositionalAll(io, bytes, 0);
+        var lines = std.mem.splitScalar(u8, bytes[0..n], '\n');
+        const first_line = lines.next().?;
+        try std.testing.expect(std.mem.startsWith(u8, first_line, "{\"schema\":\"neuron.substrate/v1\",\"op\":\"snapshot\""));
+        const second_line = lines.next().?;
+        try std.testing.expect(std.mem.indexOf(u8, second_line, "\"op\":\"commit\"") != null);
+        try std.testing.expectEqualStrings("", lines.next().?); // trailing newline segment
+        try std.testing.expect(lines.next() == null);
+        const second = try substrate.compact();
+        try std.testing.expect(second.new_size < second.prior_size);
+    }
+}
+
+test "journal compaction rejects torn, misplaced, and out-of-range snapshot records" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const zero_digest = "0000000000000000000000000000000000000000000000000000000000000000";
+    const empty_snapshot = "{\"schema\":\"neuron.substrate/v1\",\"op\":\"snapshot\",\"artifacts\":[],\"messages\":[],\"neurons\":[],\"firings\":[]}";
+
+    // Control: a lone snapshot replays to an empty but valid state.
+    {
+        try tmp.dir.createDirPath(io, "ok");
+        const log = try tmp.dir.createFile(io, "ok/substrate.log", .{});
+        try log.writePositionalAll(io, empty_snapshot ++ "\n", 0);
+        log.close(io);
+        var substrate = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "ok");
+        defer substrate.deinit();
+        try std.testing.expectEqual(@as(usize, 0), substrate.artifacts.count());
+        try std.testing.expectEqual(@as(usize, 0), substrate.messages.items.len);
+        try std.testing.expectEqual(@as(usize, 0), substrate.firings.count());
+    }
+
+    const cases = [_]struct { dir: []const u8, bytes: []const u8 }{
+        // Mid-log snapshot: ambiguous positional semantics — fail closed.
+        .{
+            .dir = "mid",
+            .bytes = "{\"schema\":\"neuron.substrate/v1\",\"op\":\"firing\",\"firing_id\":\"f-1\",\"digest\":\"" ++ zero_digest ++ "\",\"status\":\"cancelled\"}\n" ++ empty_snapshot ++ "\n",
+        },
+        // Delivery index past the snapshot's message sequence.
+        .{
+            .dir = "range",
+            .bytes = empty_snapshot ++ "\n{\"schema\":\"neuron.substrate/v1\",\"op\":\"delivery\",\"index\":0,\"status\":\"acknowledged\",\"attempts\":1}\n",
+        },
+        // Torn snapshot line — no trailing newline.
+        .{
+            .dir = "torn",
+            .bytes = empty_snapshot,
+        },
+        // Unknown delivery status inside a snapshot.
+        .{
+            .dir = "status",
+            .bytes = "{\"schema\":\"neuron.substrate/v1\",\"op\":\"snapshot\",\"artifacts\":[],\"messages\":[{\"firing_id\":\"f-1\",\"to\":\"channel/review\",\"msg_schema\":\"msg/v1\",\"payload\":\"00\",\"durable\":true,\"status\":\"exploded\",\"attempts\":0}],\"neurons\":[],\"firings\":[]}\n",
+        },
+    };
+    for (cases) |case| {
+        try tmp.dir.createDirPath(io, case.dir);
+        const log_path = try std.fmt.allocPrint(allocator, "{s}/substrate.log", .{case.dir});
+        defer allocator.free(log_path);
+        const log = try tmp.dir.createFile(io, log_path, .{});
+        try log.writePositionalAll(io, case.bytes, 0);
+        log.close(io);
+        try std.testing.expectError(
+            error.CorruptLog,
+            substrate_mod.Substrate.initDir(allocator, io, tmp.dir, case.dir),
+        );
+    }
+
+    // Compaction is a journaled-substrate operation, not an in-memory one.
+    var memory = substrate_mod.Substrate.init(allocator);
+    defer memory.deinit();
+    try std.testing.expectError(error.NoJournal, memory.compact());
 }

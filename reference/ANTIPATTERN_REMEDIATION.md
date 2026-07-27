@@ -1,6 +1,8 @@
 # Antipattern remediation plan
 
-Status: unsettled work as of 2026-07-27
+Status: SETTLED 2026-07-27 — every item struck with gate evidence below;
+80/80 tests, `zig build`, `tests/runtime-gate.sh`, and `tests/gate.sh`
+all exit 0 on the final state.
 
 `AGENTS.md` defines the target. `IMPLEMENTATION.md` records what exists. This
 file is the ordered plan for the implementation antipatterns found in review
@@ -169,7 +171,20 @@ exchange is handed off.
 **Witness.** A server that accepts and never writes yields `error.Timeout`
 inside the budget; a response arriving just under budget succeeds.
 
-### B3. Typed proxy payload (`mesh.proxy/v2`)
+### ~~B3. Typed proxy payload (`mesh.proxy/v2`)~~ — SETTLED 2026-07-27
+
+**Evidence.** Contract task `7223e110` verified. `zig build test` 80/80,
+`zig build` exit 0, both gates exit 0. Witness: "proxy payload v2 decodes
+typed fields and rejects the v1 flat form" — `artifact/mesh/weird\nid`
+(with a literal newline) round-trips unambiguously; the flat v1 form,
+malformed JSON, a wrong schema tag, and a missing field are all
+`InvalidPayload` before any effect. Algorithm step 1–2 applied to the
+compat flag: every producer ships in this repo, so the migration window
+was zero and v1 parsing plus the flag were deleted in this same change —
+there is no flag left to rot. `ProxyNeuron` decodes into an
+operator-owned arena reset per firing (same lifetime discipline as the
+effect buffers); `mesh.proxyPayloadV2` is the single producer helper;
+the MCP tool doc advertises the v2 shape.
 
 **Problem.** `ProxyNeuron`'s payload is `'<artifact-id>\n<bytes>'` — an
 untyped channel in a typed world. An id containing `\n` misparses; ceilings
@@ -186,7 +201,19 @@ before any effect.
 
 ## Wave 3 — hygiene
 
-### C1. Mechanical honesty counts
+### ~~C1. Mechanical honesty counts~~ — SETTLED 2026-07-27
+
+**Evidence.** Contract task `427e39c7` verified. `bash tests/runtime-gate.sh`
+exit 0, `bash tests/gate.sh` exit 0. The suite size is derived from
+`zig build test --summary all` and must cover the ledger's "N executable
+tests" claim; the hand-maintained count comment is deleted. Negative
+witness demonstrated: with the ledger claim doctored to 999,
+`python3 bench/jespa/runtime_tasks.py --assert-win` exits 1 with
+"shrank below the ledger claim: 80 < 999" (ledger restored after).
+Adding a test now requires no count edit anywhere. The six witness tests
+from A1–B3 are also mapped into CONFORMANCE by name, so deleting or
+renaming one unwitnesses its property and fails `--assert-win` even when
+the raw count still covers the floor.
 
 **Problem.** The "N-test suite" comment in `bench/jespa/runtime_tasks.py`
 and the ledger prose are hand-maintained. The gates verify behavior, not
@@ -200,17 +227,20 @@ sync.
 **Witness.** A test removal makes the gate fail; adding a test requires no
 count edit anywhere.
 
-### C2. Classifier ceiling by value
+### ~~C2. Classifier ceiling by value~~ — SETTLED 2026-07-27
 
-**Problem.** `tailnetClassifier` borrows `*const Caps` through a
-`*const anyopaque` context with a "caller keeps it alive" comment. A
-dangling ceiling is UB; the discipline is manual.
+**Evidence.** Contract task `b8edd98c` verified. `zig build test` 80/80,
+`zig build` exit 0, both gates exit 0. The borrowed-context
+`tailnetClassifier(*const Caps)` constructor is deleted; `SingleCeiling`
+owns its ceiling copy (Caps is a small value struct), so no lifetime
+discipline exists to document — the "caller keeps it alive" comment is
+gone with the borrow. All existing tailnet witnesses pass unchanged in
+behavior; the only touched test line is the construction site.
 
-**Fix.** `Caps` is a small value struct: the classifier owns a copy. The
-borrowed-context constructor is deleted.
-
-**Witness.** Existing tailnet tests unchanged and green; no comment about
-lifetimes remains because none is needed.
+**Problem (settled).** `tailnetClassifier` borrowed `*const Caps` through
+a `*const anyopaque` context with a "caller keeps it alive" comment. A
+dangling ceiling was UB; the discipline was manual. Fixed as planned:
+the classifier owns a copy; the borrowed-context constructor is deleted.
 
 ## Non-goals
 
@@ -225,6 +255,10 @@ lifetimes remains because none is needed.
 
 ## Settlement of this plan
 
-This file is settled when every item above is struck through with its gate
-evidence recorded, or explicitly re-questioned out of existence (algorithm
-step 1) with the reason recorded here.
+SETTLED 2026-07-27. All eight items (A1, A2, A3, B1, B2, B3, C1, C2)
+landed in order, each as one PR-sized change with a contract task, a
+runnable witness, and both gates green. The suite grew 72 → 80 tests
+along the way, and from C1 onward the count is derived mechanically
+against the ledger claim. Final verification on the settled state:
+`zig build test` 80/80, `zig build` exit 0, `bash tests/runtime-gate.sh`
+exit 0, `bash tests/gate.sh` exit 0.

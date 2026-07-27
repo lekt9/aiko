@@ -1,0 +1,8 @@
+{
+  "schema": "neuron.source-lock/v1",
+  "package_digest": "505182bc8b239187d1339411950e92f17cb8f7faf6ceab57d715f160829f0e9b",
+  "schema_digest": "737d6642b24362db7272728e08f248a0839fe9798b0df0f8e0a78d4eb2fc03ca",
+  "core_version": "typed-neuron/2",
+  "hash_profile": "deterministic-cbor-sha256/1",
+  "binding": "main.zig imports @typed_neuron as wire.zig; build.zig adds it as typed_neuron module"
+}

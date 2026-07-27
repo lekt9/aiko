@@ -1,0 +1,96 @@
+{
+  "schema": "typed-neuron.limb-manifest/v1",
+  "package": "typed-neuron/introspection",
+  "version": "0.2.0",
+  "description": "Self-aware introspection: capability discovery, gap analysis, firing-pattern promotion, and limb generation. Closes the mechanical gap from useful firing to reusable limb — observes patterns, ranks candidates, generates inert packages, and proposes admission. The admission gate remains the safety boundary (§30).",
+  "neurons": [
+    {
+      "id": "inspector",
+      "argv": ["python3", "neurons/inspector.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "introspection/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 2,
+          "max_writes": 1,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 131072,
+          "max_depth": 1
+        }
+      }
+    },
+    {
+      "id": "gap-analyzer",
+      "argv": ["python3", "neurons/gap_analyzer.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "introspection/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 2,
+          "max_writes": 1,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 131072,
+          "max_depth": 1
+        }
+      }
+    },
+    {
+      "id": "promoter",
+      "argv": ["python3", "neurons/promoter.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "introspection/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 4,
+          "max_writes": 3,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 196608,
+          "max_depth": 1
+        }
+      }
+    },
+    {
+      "id": "limb-designer",
+      "argv": ["python3", "neurons/limb_designer.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "introspection/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 3,
+          "max_writes": 2,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 131072,
+          "max_depth": 1
+        }
+      }
+    }
+  ],
+  "budgets": {
+    "deadline_ms_per_firing": 10000
+  },
+  "schemas": {
+    "InspectRequest": "neuron.inspect-request/v1",
+    "CapabilityMap": "neuron.capability-map/v1",
+    "GapRequest": "neuron.gap-request/v1",
+    "CapabilityGaps": "neuron.capability-gaps/v1",
+    "Gap": "neuron.gap/v1",
+    "LimbSpec": "neuron.limb-spec/v1",
+    "LimbManifest": "neuron.limb-manifest/v1",
+    "PromoteProposal": "neuron.promote-proposal/v1"
+  },
+  "witnesses": {
+    "python_tests": "python3 -c 'from neurons.inspector import fire; print(\"inspector ok\")' && python3 -c 'from neurons.gap_analyzer import fire; print(\"gap_analyzer ok\")' && python3 -c 'from neurons.promoter import fire; print(\"promoter ok\")' && python3 -c 'from neurons.limb_designer import fire; print(\"limb_designer ok\")'"
+  }
+}

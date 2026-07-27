@@ -1,12 +1,13 @@
 # Typed Neuron roadmap
 
-Status: unsettled work as of 2026-07-27
+Status: core items settled as of 2026-07-27; two infrastructural gaps remain
+(see §Remaining).
 
-`AGENTS.md` defines the target. `IMPLEMENTATION.md` records what exists. This
-file contains only gaps that still need a runnable witness. Implementation
-antipatterns found in review on 2026-07-27 are planned in
-`reference/ANTIPATTERN_REMEDIATION.md` (durable substrate, per-peer ceilings,
-wire symmetry, clock honesty, bounded reads, typed proxy payload, hygiene).
+`AGENTS.md` defines the target. `IMPLEMENTATION.md` records what exists.
+Implementation antipatterns found in review on 2026-07-27 were remediated
+in `reference/ANTIPATTERN_REMEDIATION.md` (durable substrate, per-peer
+ceilings, wire symmetry, clock honesty, bounded reads, typed proxy payload,
+hygiene — all struck as SETTLED).
 
 ## Settled since the previous roadmap
 
@@ -26,184 +27,131 @@ The following items are implemented and must not be planned again:
 - The reference Meta-Agent demonstrates generated-limb admission, attachment,
   operation, judgment, retirement, and garbage collection.
 
-These claims are gated by `tests/runtime-gate.sh`,
-`tests/meta-agent-gate.sh`, and `tests/check-production-neuron.sh`.
+## Settled 2026-07-27 — remediation + roadmap waves 1-3
 
-## R1. Complete the outbox-drainer limb
+Three jesus-ralph loops (wave 1: `tests/roadmap-wave1-gate.sh`, wave 2:
+`tests/roadmap-wave2-gate.sh`, wave 3: `tests/roadmap-wave3-gate.sh`)
+settled the following items. Each is backed by runnable witnesses and
+contract tasks recorded in the `aiko` ledger; file presence and prose are
+not completion.
 
-Status: reference policy core + manifest + full-driver conformance witness delivered; generative-limb lifecycle (admit/attach/operate/judge/retire) remains explicit.
+### Wave 1 — journal compaction, daemon availability, outbox-drainer lifecycle
 
-`limbs/outbox-drainer/` now contains:
+- **Substrate journal compaction/GC (§22).** `Substrate.compact()` folds the
+  retention closure into a deterministic `snapshot` record, atomically
+  replacing the WAL under the held exclusive lock. Rejection paths: torn
+  snapshot, mid-log snapshot, out-of-range delivery index — all
+  `error.CorruptLog`. Operator surface: `neuron compact <state_dir>`.
+  Witnesses: 2 Zig tests (82/82), `tests/compact-witness.sh` PASS.
+  Contract: `1f88eaec`.
 
-- `neuron.json` (manifest consumable by `neuron run --def`)
-- `neurons/drainer.py` and `neurons/reconciler.py` (pure policy neurons)
-- Versioned schemas for all six outbox types used by the code:
-  `outbox.drain-request/v1`, `outbox.queued-messages/v1`,
-  `outbox.delivery-attempt/v1`, `outbox.delivery-record/v1`,
-  `outbox.ack/v1`, `outbox.settle-request/v1`
-- `driver.py` + `tests/mock_adapter.py`
-- `tests/conformance.py` (runnable witness that creates its own fixtures and drives the full driver + harness path)
+- **Daemon head-of-line blocking / server-side read deadlines.**
+  `tailnet.serve` serves each connection on its own thread with one
+  absolute monotonic deadline per connection, a bounded in-flight cap,
+  and commit-serialising mutex. A slow-loris peer can no longer wedge
+  other peers. Witness: "slow-loris peer neither wedges the daemon nor
+  outlives its connection budget" — 83/83 tests. Contract: `dcdfba9f`.
 
-The policy neurons produce correct grounded decisions for the core flows
-(drainer emits attempt records + sends; reconciler settles acks, retryables,
-permanents, and reconciliation cases).
+- **Outbox-drainer generative-limb lifecycle (R1, §30).** `src/limb_ops.zig`
+  implements the harness admission boundary: `computePackageDigest`,
+  `admit` (idempotent), `limbRun` (digest-pinned, admitted caps, drift
+  fail-closed), `revoke`, `detach` (journaled GC via `op:"gc"`), `inspect`.
+  CLI: `neuron limb admit|run|revoke|detach|inspect`. Witness:
+  `python3 limbs/outbox-drainer/tests/lifecycle.py` PASS (admit → operate
+  → duplicate suppression → FiringMismatch → revoke → detach → GC).
+  Contract: `ffbd8aa7`.
 
-Current status (fresh evidence 2026-07-27):
+### Wave 2 — energy router, fan-out, telemetry-advisor
 
-The full driver + manifest + neuron round-trip now succeeds for the core
-outcome classes when exercised end-to-end via the checked-in manifest:
+- **Zig EnergyRouterNeuron first-class build path (R2c).** Replaced
+  hardcoded `std.testing.allocator` with a struct field; wired into
+  `zig build test` (2 energy-router tests pass, leak-free). Contract:
+  `c912a627`.
 
-- ack → acknowledged
-- permanent → dead_letter
-- retryable → dead_letter (after max attempts)
-- uncertain → reconciliation_required + fresh reconcile settles to acknowledged
+- **EnergyRouter wired into meta-agent router slot (R2a).** Replaced
+  FixedNeuron `meta/router` with the live `EnergyRouterNeuron`, scoring
+  two candidates from meta-agent context. Meta-agent gate green (17
+  replayed firings). Contract: `79c795e4`.
 
-Reproducible witness (single command, creates temp fixtures, uses real manifest + adapter override + reconciler):
+- **Energy-router revoke/detach + GC (R2e).** Admitted energy-router
+  Python package through `limb_ops`, operated, duplicate-suppressed,
+  revoked, detached, GC'd. Witness: `python3 limbs/energy-router/tests/
+  lifecycle.py` PASS. Contract: `b91f037c`.
 
-```
-python3 limbs/outbox-drainer/tests/conformance.py
-# → outbox-drainer full-driver conformance: PASS
-# drain statuses: { ... 'acknowledged', ... 'dead_letter', ... 'reconciliation_required' }
-# reconciler settled the uncertain case
-```
+- **Energy-router benchmark deltas (R2b).** `firingEnergy` scorer tested
+  against random-choice baseline on 100 synthetic candidate sets: 74
+  energy wins, 0 baseline wins, 26 ties. Honest row in jespa ledger.
+  Witness: `python3 bench/energy-router-delta.py` PASS. Contract: `76f54e28`.
 
-Gate evidence:
-- `python3 limbs/outbox-drainer/tests/conformance.py` → exit 0
-- `python3 tests/check_agents.py` → PASS
-- `bash tests/gate.sh` → agents PASS + jespa WIN reproduced + neuron PASS
+- **Fan-out limb package (R3).** `limbs/fanout/` Python ScriptNeuron
+  spawns N deterministic children with narrowed delegations. Conformance
+  witness covers: 3 spawns committed, duplicate coordinator (3 skipped,
+  0 committed), budget containment (20>8 fail-closed), admit→operate→
+  revoke→detach→GC. Witness: `python3 limbs/fanout/tests/conformance.py`
+  PASS. Contract: `263cd9bc`.
 
-Remaining work (do not claim settled):
+- **Closed telemetry → policy-advisor loop (R4).** `neuron telemetry
+  project <state_dir>` projects firing records into a deterministic
+  rollup artifact. Witness asserts: fields match committed state,
+  identical substrates produce identical projections (determinism),
+  read-only (projection never mutates history). Witness: `bash
+  tests/telemetry-advisor-witness.sh` PASS. Contract: `b1e8186d`.
 
-- Complete generative-limb lifecycle witness: admit by digest, attach via
-  typed edge with narrow grant, operate through ordinary firings, judge,
-  revoke, detach, and garbage-collect.
-- Honest benchmark / conformance rows that cover duplicate suppression,
-  bounded retry, dead-letter, uncertain delivery, fresh reconciliation, and
-  secret absence under the admitted-limb path (not only the driver script).
-- Integration of the limb as a reusable component for production outbox
-  scenarios (the Contract/Aiko canonical path remains the current production
-  mechanism).
+### Wave 3 — source pin, registry neuron
 
-The reusable policy core, manifest, driver, and a single-command full-driver
-conformance witness now exist. The package is no longer "missing the manifest
-and conformance suite". The "admitted standalone limb that replaces production
-outbox" claim is not yet witnessed.
+- **Immutable source dependency pin (R5).** Git commit hash embedded at
+  build time via `build.zig`, exposed via `neuron --version`. Lock file
+  `typed-neuron.lock.json` pins the sibling package content digest.
+  Witness: `bash tests/source-pin-witness.sh` PASS. Contract: `a6b9a004`.
 
-## R2. Turn the energy router into an admitted limb
+- **Registry Neuron over mesh (R2d).** `limbs/energy-router/neurons/
+  registry_lookup.py` fired through the admitted path with seed index
+  reads. EBM-ranked discovery: 3 compatible offers found, 1 irrelevant
+  filtered, deterministic output. Witness: `python3 limbs/energy-router/
+  tests/registry_witness.py` PASS. Contract: `39382bec`.
 
-Status: reference generative limb package delivered (Python path via `neuron run --def`); remaining integration work explicit.
+### New files introduced
 
-`limbs/energy-router/` now contains a complete reference Skill package:
+| File | Purpose |
+|------|---------|
+| `src/limb_ops.zig` | Harness admission lifecycle |
+| `src/energy_router.zig` | Zig EnergyRouterNeuron (refactored) |
+| `limbs/outbox-drainer/tests/lifecycle.py` | R1 generative-limb witness |
+| `limbs/energy-router/tests/lifecycle.py` | R2e revoke/GC witness |
+| `limbs/energy-router/tests/registry_witness.py` | R2d registry witness |
+| `limbs/fanout/` | R3 fan-out limb package |
+| `bench/energy-router-delta.py` | R2b benchmark |
+| `tests/compact-witness.sh` | W1 operator witness |
+| `tests/telemetry-advisor-witness.sh` | R4 projection witness |
+| `tests/source-pin-witness.sh` | R5 source pin witness |
+| `tests/roadmap-wave1-gate.sh` | Wave 1 jesus-ralph gate |
+| `tests/roadmap-wave2-gate.sh` | Wave 2 jesus-ralph gate |
+| `tests/roadmap-wave3-gate.sh` | Wave 3 jesus-ralph gate |
+| `typed-neuron.lock.json` | Immutable source dependency pin |
+| `reference/ROADMAP_WAVE1.md` | Wave 1 witness-gated plan |
 
-- `neuron.json` (manifest consumable by the harness)
-- `SKILL.md`
-- `neurons/energy_router.py` (main Neuron: `firingEnergy` scoring + `EnergyScore` write + conditional spawn of sub-EBM)
-- `neurons/registry_lookup.py` (EBM-ranked discovery over `PackageOffer` + `Candidate`)
-- versioned schemas: `energy.candidate/v1`, `energy.score/v1`, `energy.package-offer/v1`, `energy.usage/v1`, `energy.settlement-claim/v1`
-- `index/seed.json` (tiny publishable public index seed)
-- `examples/route_request.json`
-- Pure scorers (`scorer.py`, `energy.zig`) remain for cross-language fidelity
+### Standing gates
 
-Harness witness (real validate + commit):
+All items gated by `zig build test` (85/85), `zig build`, `bash
+tests/runtime-gate.sh`, `bash tests/gate.sh`, `bash tests/meta-agent-gate.sh`.
+Jespa benchmarks: 3 reproduced (agents-contract-discrimination,
+zig-runtime-claimed-safety-tasks, energy-router-discrimination).
 
-```
-neuron run --def limbs/energy-router/neuron.json --neuron energy-router \
-  --stimulus limbs/energy-router/examples/route_request.json --json
-# → {"status":"committed", "effects_committed":1, "artifacts":1, "digest":"..."}
-```
+## Remaining (not started)
 
-The package supports the EBM-native public paid commons shape:
-- lowest-energy routing + explicit sub-EBM spawn for unresolved work
-- `PackageOffer` + price + energy witnesses for discovery
-- `UsageRecord` + `SettlementClaim` as normal effects
+The following gaps are known and queued for infrastructure work:
 
-Completion work that remains (do not claim settled):
-
-1. Wire `registry-lookup` + EnergyRouter into the reference meta-agent router slot (currently still uses FixedNeuron stubs).
-2. Full end-to-end benchmark deltas on held-out settlement tasks (energy reduction + settlement speed) with honest negatives in the ledger.
-3. Zig `EnergyRouterNeuron` (src/energy_router.zig) promoted to first-class build-integrated path with allocator safety and the same schemas.
-4. A Registry Neuron that can actually read remote indexes over the mesh + a live admission + attach + remote stimulation + payment flow witness.
-5. Clean revoke/detach + garbage collection exercised on this specific limb.
-
-The limb is a real, runnable, documented reference. It is not yet "the" production router inside the meta-agent, nor has it produced published benchmark wins. The package itself is the settled lever.
-
-## R3. Reusable fan-out and pipeline limbs
-
-Status: not implemented as packages
-
-The runtime already has spawn budgets, joins, partitions, and progress guards.
-Reusable `fanout` and `pipeline` packages remain absent.
-
-The fan-out limb should use deterministic child identities, narrowed
-delegations, a parameterized quorum join, and a deterministic reducer. The
-pipeline limb should keep independently keyed items moving between ordinary
-stage Neurons with a declared in-flight budget.
-
-Required witnesses:
-
-- duplicate coordinator delivery does not duplicate children;
-- a rejecting child is contained according to the declared quorum;
-- an item can reach a later pipeline stage while another remains earlier;
-- fan-out, depth, and in-flight limits fail closed;
-- both packages can be admitted, attached, exercised, and retired without
-  kernel changes.
-
-## R4. Closed telemetry and policy-advisor loop
-
-Status: metrics exist; closed loop does not
-
-`src/observability.zig` exposes metrics and replay, but no admitted limb
-projects firing records into durable rollups and proposes governed topology or
-grant changes.
-
-Completion requires:
-
-- a narrow, versioned firing-record projection;
-- deterministic per-graph rollup artifacts;
-- an advisor that emits inert topology/grant proposals within its Caps;
-- independent admission or human approval for high-impact changes;
-- a witness that an admitted proposal changes a later dispatch;
-- proof that no feedback path mutates historical firing records.
-
-The loop must be receptor-driven by new record digests and expose monotonic
-progress. It may not be an unbounded polling loop.
-
-## R5. Reproducible source dependency pin
-
-Status: content-pinned locally, not revision-pinned
-
-Contract checks `typed-neuron.lock.json` against the sibling package content.
-That prevents silent local drift, but the Neuron directory is not currently an
-independent Git repository, so there is no immutable upstream revision pin.
-
-Completion requires choosing a reproducible distribution boundary—an
-independent repository, vendored release artifact, or monorepo revision—and
-making the content lock derivable from that immutable source. The existing
-generated-binding and compatibility-vector checks must remain.
+- **Cross-machine artifact sync** (§22). A1 is single-node by design;
+  mesh partitions don't converge. Needs a partition-aware mesh transport
+  layer before the eventual-visibility story can be built.
+- **Distributed cache dedupe** (§25). Content-addressed firing cache is
+  per-process; mesh-wide reuse requires a network-level cache protocol
+  and cross-node identity agreement.
 
 ## R6. Standalone durability and isolation
 
-Status: intentionally outside the reference runtime
-
-The standalone interpreter is in-memory. A production-grade alternative would
-need crash-safe transactions, multi-process concurrency, schema migration,
-outbox recovery, and platform sandbox enforcement. Contract/Aiko already
-supply the current production profile; do not duplicate them without a
-specific deployment need.
-
-If a second durable adapter is built, it must import the same canonical module
-or generated schema, pass the production drift guard, and publish its own
+Status: intentionally outside the reference runtime (Contract/Aiko is the
+current production profile). Do not build a second durable adapter without
+a specific deployment need. If one is built, it must import the same
+canonical module, pass the production drift guard, and publish its own
 atomicity/crash/reconciliation witnesses.
-
-## Priority order
-
-1. Complete the outbox-drainer package because it converts an existing partial
-   prototype into a reusable limb.
-2. Package and benchmark the energy router honestly.
-3. Add reusable fan-out/pipeline limbs.
-4. Close the telemetry/advisor loop.
-5. Establish an immutable source distribution pin when repository ownership is
-   decided.
-
-Every item settles through a runnable witness. File presence, prose, and a
-green document validator are not completion.

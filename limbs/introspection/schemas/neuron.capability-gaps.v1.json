@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.capability-gaps/v1",
+  "title": "Capability Gaps",
+  "description": "Ranked list of missing or partially-matched capabilities. Each gap includes a structural energy score and a suggest_action for the limb-designer.",
+  "type": "object",
+  "required": ["gaps", "total_desired", "present", "absent", "partial"],
+  "properties": {
+    "gaps": {
+      "type": "array",
+      "description": "Ranked gaps, lowest energy first (most urgent).",
+      "items": {
+        "type": "object",
+        "required": ["desired", "status", "energy"],
+        "properties": {
+          "desired": {
+            "type": "object",
+            "description": "The desired capability that was checked."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["present", "absent", "partial"],
+            "description": "Whether the capability exists, is missing, or is partially matched."
+          },
+          "energy": {
+            "type": "number",
+            "description": "Structural energy: 0 = fully satisfied, higher = more urgent gap. Absent capabilities score highest."
+          },
+          "suggest_action": {
+            "type": "string",
+            "enum": ["none", "admit_existing", "generate_limb", "upgrade_version", "register_neuron"],
+            "description": "Suggested remediation action."
+          },
+          "detail": {
+            "type": "string",
+            "description": "Human-readable explanation of the gap and suggested fix."
+          },
+          "matching_candidates": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Existing items that partially match (for partial status)."
+          }
+        }
+      }
+    },
+    "total_desired": { "type": "integer" },
+    "present": { "type": "integer", "description": "Count of fully satisfied capabilities." },
+    "absent": { "type": "integer", "description": "Count of completely missing capabilities." },
+    "partial": { "type": "integer", "description": "Count of partially matched capabilities." }
+  },
+  "additionalProperties": false
+}
