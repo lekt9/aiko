@@ -165,14 +165,34 @@ lives in `libcontract/src/shape.zig` / `libcontract/src/pattern.zig` /
 | surface | where | what |
 |---|---|---|
 | CLI | `zig/src/main.zig` → installed as `scripts/contract` (signed, `scripts/contract.sig`) | declaration/resolution plus read-only `status`, `events`, `watch`, and `explain` |
-| C ABI | `libcontract/src/c_abi.zig` | ABI v6 (older symbols preserved) plus canonical stateless-worker lineage, native bounded DAG expansion, binary muscle observation/recall/prediction, durable tick/lease/settle/signal, agency validation, and trust verdicts |
-| dylib + FFI | `libcontract.dylib` (same `c_abi.zig`, dynamic) | aiko-cli calls it in-process via `bun:ffi` (µs, no subprocess) |
+| C ABI | `libcontract/src/c_abi.zig` | ABI v12 (older symbols preserved) plus canonical Neuron firing imported from the sibling `typed_neuron` Zig package, immutable Skill stage/admit/activate/retire/rollback projection, stateless-worker lineage, typed Skill-graph expansion, dependency-ready node claim/lease/settle, canonical effect-outbox acknowledgement, digest-pinned adapters/scripts, private evidence, binary muscle observation/recall/prediction, durable tick/lease/settle/signal, agency validation, and trust verdicts |
+| dylib + FFI | `libcontract.dylib` (same `c_abi.zig`, dynamic) | Aiko loads it in-process from Rust and calls the C ABI without a subprocess |
 | MCP | `libcontract/src/mcp_server.zig` | the same core over stdio for agent frameworks |
 
 All four surfaces reach the identical implementation; there is no
 scripts-layer logic (`DOCTRINE.md` § No scripts in the contract substrate —
 collapse to binary + contracts). The binary verifies itself against its
 signature (`DOCTRINE.md` § Self-aware binary).
+
+### Canonical Neuron transaction
+
+The pure Neuron semantics do not live in Contract. `libcontract/build.zig.zon`
+imports the sibling `typed_neuron` module, and `libcontract/src/neuron.zig`
+delegates validation and firing/decision identities to it. A generated content
+lock rejects drift in the local source dependency.
+
+Production node settlement appends one `neuron_transaction` whose nested rows
+contain the canonical firing, authoritative evidence payload, node settlement,
+and pending effect outbox. This append is the decision/effect linearization
+point. Evidence blob materialization happens afterward as a reconstructible
+content-addressed cache; a missing blob can be recovered from the committed
+transaction.
+
+External effects have two phases. A host first commits the canonical decision
+and pending effect. Only then may its named adapter dispatch. The adapter
+acknowledges that exact effect through `contract_neuron_effect_settle_json`.
+Duplicate decisions replay, contradictory decisions reject, and uncertainty is
+parked for explicit reconciliation rather than silently retried.
 
 ## 11. The substrate supervises itself
 

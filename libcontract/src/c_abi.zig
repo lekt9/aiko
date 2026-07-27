@@ -20,11 +20,16 @@ const collective_state = @import("collective_state.zig");
 const agency = @import("agency.zig");
 const muscle = @import("muscle.zig");
 const ledger = @import("ledger.zig");
+const neuron = @import("neuron.zig");
+const neuron_artifact = @import("artifact.zig");
+const pointer = @import("pointer.zig");
 const reflex = @import("reflex.zig");
+const skill_lifecycle = @import("skill_lifecycle.zig");
+const skill_execution = @import("skill_execution.zig");
 const workflow = @import("workflow.zig");
 
 const gpa = std.heap.c_allocator;
-pub const ABI_VERSION: u32 = 6;
+pub const ABI_VERSION: u32 = neuron.ABI_VERSION;
 extern fn time(timer: ?*i64) i64;
 
 var registry_mutex: std.atomic.Mutex = .unlocked;
@@ -76,6 +81,58 @@ fn registry() *capability_registry.Registry {
 /// Stable compatibility handshake for independently-built Aiko runtimes.
 export fn contract_abi_version() u32 {
     return ABI_VERSION;
+}
+
+/// Validate and durably journal one canonical Neuron firing. This is the
+/// versioned native boundary used by hosts while legacy actions are gradually
+/// adapted into admitted Neuron Skills. The request contains only identities,
+/// digests, authority, budgets, and grounded evidence; payloads remain local to
+/// the host. A repeated identical firing is replayed, while contradictory
+/// decisions for the same firing identity fail closed.
+export fn contract_neuron_fire_json(request_json: [*:0]const u8) ?[*:0]u8 {
+    const result = neuron.fireJson(gpa, extEnv(), cstr(request_json)) catch return null;
+    defer gpa.free(result);
+    return returned(result);
+}
+
+/// Settle one previously committed Neuron outbox effect after its capability
+/// adapter returns. A repeated identical acknowledgement replays; uncertainty
+/// is recorded explicitly and is never converted into an automatic retry.
+export fn contract_neuron_effect_settle_json(request_json: [*:0]const u8) ?[*:0]u8 {
+    const result = neuron.settleEffectJson(gpa, extEnv(), cstr(request_json)) catch return null;
+    defer gpa.free(result);
+    return returned(result);
+}
+
+/// Move an immutable generated Neuron Skill through the Contract-owned
+/// candidate/admission/activation/retirement/rollback state machine.
+export fn contract_neuron_skill_transition_json(request_json: [*:0]const u8) ?[*:0]u8 {
+    const result = skill_lifecycle.transitionJson(gpa, extEnv(), cstr(request_json)) catch return null;
+    defer gpa.free(result);
+    return returned(result);
+}
+
+/// Project the lifecycle state of one content-addressed Neuron Skill artifact
+/// from the append-only Contract ledger.
+export fn contract_neuron_skill_state_json(request_json: [*:0]const u8) ?[*:0]u8 {
+    const result = skill_lifecycle.stateJson(gpa, extEnv(), cstr(request_json)) catch return null;
+    defer gpa.free(result);
+    return returned(result);
+}
+
+/// Lease one dependency-ready wave from the currently admitted Skill graph.
+export fn contract_neuron_skill_node_claim_json(request_json: [*:0]const u8) ?[*:0]u8 {
+    const result = skill_execution.claimJson(gpa, extEnv(), cstr(request_json)) catch return null;
+    defer gpa.free(result);
+    return returned(result);
+}
+
+/// Gate named evidence, journal the canonical Neuron firing, and settle one
+/// previously leased Skill node occurrence.
+export fn contract_neuron_skill_node_settle_json(request_json: [*:0]const u8) ?[*:0]u8 {
+    const result = skill_execution.settleJson(gpa, extEnv(), cstr(request_json)) catch return null;
+    defer gpa.free(result);
+    return returned(result);
 }
 
 /// Train binary muscle memory from a real sanitized invocation. Reward must
@@ -353,6 +410,16 @@ export fn contract_reflex_decide_json(request_json: [*:0]const u8) ?[*:0]u8 {
 ///   {key, plan, action?, depends_on?:[key], requires_authorization?:bool,
 ///    authorization?:"approved"|"pending_authorization"|"denied"}
 /// ]}
+fn validAdapterId(value: []const u8) bool {
+    if (value.len == 0 or value.len > 128) return false;
+    for (value) |byte| {
+        if (!std.ascii.isLower(byte) and !std.ascii.isDigit(byte) and
+            byte != '.' and byte != '-' and byte != '_' and byte != '/' and byte != ':')
+            return false;
+    }
+    return true;
+}
+
 fn expandGraphJson(request_json: [*:0]const u8) !?[*:0]u8 {
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, cstr(request_json), .{}) catch return null;
     defer parsed.deinit();
@@ -371,6 +438,7 @@ fn expandGraphJson(request_json: [*:0]const u8) !?[*:0]u8 {
         else => return null,
     };
     if (child_values.len == 0 or child_values.len > muscle.MAX_PARALLEL) return null;
+    const graph_digest = skill_execution.graphDigest(cstr(request_json));
 
     const owned_root_id = if (existing_root_id == null)
         contract.declare(gpa, extEnv(), plan, action, .{
@@ -396,6 +464,19 @@ fn expandGraphJson(request_json: [*:0]const u8) !?[*:0]u8 {
         keys[index] = objectString(child, "key") orelse return null;
         plans[index] = objectString(child, "plan") orelse return null;
         actions[index] = objectString(child, "action") orelse "neuron";
+        if (std.mem.startsWith(u8, actions[index], "skill:")) {
+            if (!pointer.isValidSkillAction(actions[index])) return null;
+            const skill_id = objectString(child, "skill_id") orelse return null;
+            const skill_version = objectString(child, "skill_version") orelse return null;
+            const worker = objectString(child, "worker") orelse return null;
+            var expected_action_buf: [256]u8 = undefined;
+            const expected_action = std.fmt.bufPrint(
+                &expected_action_buf,
+                "skill:{s}@{s}:{s}",
+                .{ skill_id, skill_version, worker },
+            ) catch return null;
+            if (!std.mem.eql(u8, actions[index], expected_action)) return null;
+        }
         dependency_names[index] = if (child.get("depends_on")) |dependency_value|
             switch (dependency_value) {
                 .array => |array| array.items,
@@ -447,17 +528,108 @@ fn expandGraphJson(request_json: [*:0]const u8) !?[*:0]u8 {
             try appendJsonString(&dependency_json, dependency_value.string);
         }
         try dependency_json.append(gpa, ']');
+
+        const input_bindings_value = child.get("input_bindings") orelse return null;
+        const input_bindings = switch (input_bindings_value) {
+            .object => |object| object,
+            else => return null,
+        };
+        var binding_iterator = input_bindings.iterator();
+        while (binding_iterator.next()) |entry| {
+            const source = switch (entry.value_ptr.*) {
+                .string => |value| value,
+                else => return null,
+            };
+            const dot = std.mem.lastIndexOfScalar(u8, source, '.') orelse return null;
+            const dependency = source[0..dot];
+            if (dependency.len == 0 or dot + 1 == source.len) return null;
+            var direct = false;
+            for (dependency_names[index]) |dependency_value| {
+                const dependency_key = switch (dependency_value) {
+                    .string => |value| value,
+                    else => return null,
+                };
+                if (std.mem.eql(u8, dependency_key, dependency)) {
+                    direct = true;
+                    break;
+                }
+            }
+            if (!direct) return null;
+        }
+        var binding_writer: std.Io.Writer.Allocating = .init(gpa);
+        defer binding_writer.deinit();
+        var binding_stringify = std.json.Stringify{ .writer = &binding_writer.writer };
+        try binding_stringify.write(input_bindings_value);
+
+        const evidence_value = child.get("evidence") orelse return null;
+        const evidence = switch (evidence_value) {
+            .array => |array| array.items,
+            else => return null,
+        };
+        if (evidence.len == 0 or evidence.len > 64) return null;
+        for (evidence) |requirement| {
+            const requirement_name = switch (requirement) {
+                .string => |value| value,
+                else => return null,
+            };
+            if (requirement_name.len == 0) return null;
+        }
+        var evidence_writer: std.Io.Writer.Allocating = .init(gpa);
+        defer evidence_writer.deinit();
+        var evidence_stringify = std.json.Stringify{ .writer = &evidence_writer.writer };
+        try evidence_stringify.write(evidence_value);
+
+        const skill_id = objectString(child, "skill_id") orelse return null;
+        const skill_version = objectString(child, "skill_version") orelse return null;
+        const worker = objectString(child, "worker") orelse return null;
+        const adapter = objectString(child, "adapter") orelse "";
+        const effect_scope = objectString(child, "effect_scope") orelse return null;
+        const activation = objectString(child, "activation") orelse return null;
+        const admission = objectString(child, "admission") orelse return null;
+        const script = objectString(child, "script") orelse "";
+        const script_digest = objectString(child, "script_digest") orelse "";
+        const implementation_valid =
+            (std.mem.eql(u8, worker, "aiko") and adapter.len == 0 and
+                script.len == 0 and script_digest.len == 0) or
+            (std.mem.eql(u8, worker, "host") and validAdapterId(adapter) and
+                script.len == 0 and script_digest.len == 0) or
+            (std.mem.eql(u8, worker, "script") and
+                std.mem.eql(u8, adapter, "aiko.neuron-json-stdio/v1") and
+                script.len > 0 and neuron_artifact.validDigest(script_digest));
+        if (!implementation_valid) return null;
+        const read_only = objectBool(child, "read_only") orelse return null;
+        const reversible = objectBool(child, "reversible") orelse return null;
+        const timeout_ms = objectInt(child, "timeout_ms") orelse return null;
+        if (timeout_ms <= 0) return null;
+        var timeout_buf: [32]u8 = undefined;
+        const timeout = try std.fmt.bufPrint(&timeout_buf, "{d}", .{timeout_ms});
         const authorization = objectString(child, "authorization") orelse "pending_authorization";
         const fields = [_]contract.Field{
             .{ .key = "graph_key", .value = keys[index] },
             .{ .key = "depends_on", .value = dependency_json.items },
             .{ .key = "authorization", .value = authorization },
-            .{ .key = "execution_model", .value = "isolated_aiko_worker" },
+            .{ .key = "execution_model", .value = "typed_neuron_skill_node" },
+            .{ .key = "input_bindings", .value = binding_writer.writer.buffered() },
+            .{ .key = "effect_scope", .value = effect_scope },
+            .{ .key = "read_only", .value = if (read_only) "true" else "false" },
+            .{ .key = "reversible", .value = if (reversible) "true" else "false" },
+            .{ .key = "timeout_ms", .value = timeout },
+            .{ .key = "skill_id", .value = skill_id },
+            .{ .key = "skill_version", .value = skill_version },
+            .{ .key = "worker", .value = worker },
+            .{ .key = "adapter", .value = adapter },
+            .{ .key = "activation", .value = activation },
+            .{ .key = "admission", .value = admission },
+            .{ .key = "evidence_requirements", .value = evidence_writer.writer.buffered() },
+            .{ .key = "script", .value = script },
+            .{ .key = "script_digest", .value = script_digest },
+            .{ .key = "graph_digest", .value = &graph_digest },
         };
         ids[index] = contract.declare(gpa, extEnv(), plans[index], actions[index], .{
             .parent_id = root_id,
             .agent = agent,
             .cwd = cwd,
+            .inputs_file_refs_digest = &graph_digest,
             .extras = &fields,
         }) catch return null;
         root_children[index] = index + 1;
@@ -468,10 +640,13 @@ fn expandGraphJson(request_json: [*:0]const u8) !?[*:0]u8 {
     }
 
     const scheduled = muscle.schedule(nodes[0 .. child_values.len + 1], 0) catch return null;
+    try skill_execution.admitGraph(gpa, extEnv(), root_id, &graph_digest, child_values.len);
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(gpa);
     try out.print(gpa, "{{\"abi_version\":{d},\"root_id\":", .{ABI_VERSION});
     try appendJsonString(&out, root_id);
+    try out.appendSlice(gpa, ",\"graph_digest\":");
+    try appendJsonString(&out, &graph_digest);
     try out.appendSlice(gpa, ",\"children\":[");
     for (0..child_values.len) |index| {
         if (index > 0) try out.append(gpa, ',');
@@ -1788,7 +1963,7 @@ test "C ABI compiles internal systems and rejects invalid specifications" {
 }
 
 test "native ABI version is pinned for independently-built Aiko" {
-    try std.testing.expectEqual(@as(u32, 6), contract_abi_version());
+    try std.testing.expectEqual(@as(u32, 12), contract_abi_version());
 }
 
 test "turn context rejects disconnected and over-budget descendants" {

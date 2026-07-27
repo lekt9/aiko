@@ -72,6 +72,45 @@ and prints only the derived public identity. It never deletes the source file;
 remove that file yourself after the signed build verifies. A Keychain-only root
 will not be silently copied back to `~/.contracts/root.key`.
 
+## Building from source (single clone)
+
+This is the recommended way to get a working `contract` binary from source
+after the published `typed_neuron` dependency change (Option A).
+
+Requirements: Zig 0.16 or newer.
+
+```bash
+# 1. Clone only this repo
+git clone git@gitea:Unbrowse/contract.git
+cd contract
+
+# 2. Fetch the canonical typed-neuron wire (published on gitea)
+#    Replace the commit with the one you want to pin.
+zig fetch 'git+ssh://git@100.67.11.99:2222/Unbrowse/neuron.git#1e69ca97462b63502dd24fedbac8aacfb583928b'
+
+# 3. Build the core library (this pulls the neuron dep via the .url in build.zig.zon)
+cd libcontract
+zig build
+
+# 4. (Optional) Build the full signed pipeline + CLI
+cd ..
+./scripts/build.sh
+```
+
+After step 3 you will have a usable `libcontract`. The `scripts/contract`
+wrapper (or the installed binary) is what you use for:
+
+```bash
+scripts/contract task begin "<goal>" --check "<real proof command>"
+scripts/contract task verify <id>
+```
+
+See `libcontract/build.zig.zon` for the exact current URL + hash and the
+one-line `zig fetch` command.
+
+Packaged Aiko distributions ship a pre-linked `libcontract` — you do not need
+to do the above unless you are doing source development on the kernel.
+
 ## On-chain execution
 
 On-chain/Solana submission is disabled by default. The local ledger, signing,
@@ -115,8 +154,35 @@ An occurrence is materialized once. A new occurrence invalidates cached truth
 and sends the contract back through the same resolver. There is no separate
 cron/pod execution path. Dependency occurrences bind to the dependency's
 latest satisfied proof. Named events bind to a workspace-scoped `signal` row.
-Native hosts use ABI v6's canonical worker lineage, contract-DAG expansion, bounded tick/lease/settle, and binary-muscle surfaces; expired,
-unsettled leases are delivered again.
+Native hosts use ABI v12's canonical Neuron firing, immutable Skill admission
+lifecycle, worker lineage, typed Skill-graph expansion, dependency-ready node
+claim/lease/settle, digest-pinned worker adapters and scripts,
+credential-rejecting authoritative evidence plus reconstructible
+content-addressed caches, canonical
+effect-outbox settlement, bounded tick/lease/settle, and
+binary-muscle surfaces. Expired, unsettled leases are delivered again.
+
+The pure firing contract is not duplicated here. `libcontract/build.zig.zon`
+imports the `typed_neuron` package. By default this is fetched from the
+published git source (Unbrowse/neuron on gitea). The generated
+`typed-neuron.lock.json` content-pins the wire for fidelity.
+
+Source builds can use either:
+- the published git dependency (preferred for "one clone" experience), or
+- a sibling checkout (still supported for local development).
+
+See `libcontract/build.zig.zon` for the current declaration and the exact
+`zig fetch` command needed to materialize the content hash.
+Packaged Aiko distributions contain the already-linked `libcontract` runtime.
+
+One production Neuron settlement is one append-only `neuron_transaction`.
+It contains the canonical firing, authoritative evidence payload, node
+settlement, and pending effect-outbox rows. The transaction is the
+linearization point: evidence blobs written afterward are reconstructible
+caches, not a second truth. Aiko commits a consequential tool effect to this
+outbox before dispatch and acknowledges that exact effect through ABI v12
+after the adapter returns. Replays do not redispatch; uncertain outcomes remain
+parked for reconciliation.
 
 The `contract` invocation of the same binary carries these primary verbs:
 `declare <goal> [--action <ptr>] [--parent <id>] [--agency <schema-v1-json>]

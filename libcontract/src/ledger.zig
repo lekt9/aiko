@@ -136,6 +136,35 @@ pub fn appendRow(allocator: std.mem.Allocator, env: std.process.Environ, row_jso
     return path;
 }
 
+/// Publish several already-encoded JSON events as one JSONL transaction row.
+/// A torn tail is not valid JSON and is ignored by replay; a valid row exposes
+/// the complete event array. The caller owns the higher-level transaction lock.
+pub fn appendRowsAtomic(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    rows: []const []const u8,
+) ![]u8 {
+    if (rows.len == 0) return error.EmptyBatch;
+    var batch: std.ArrayList(u8) = .empty;
+    defer batch.deinit(allocator);
+    var total: usize = 64;
+    for (rows) |row| {
+        if (row.len == 0 or std.mem.indexOfScalar(u8, row, '\n') != null)
+            return error.InvalidRow;
+        total = std.math.add(usize, total, row.len) catch return error.BatchTooLarge;
+        total = std.math.add(usize, total, 1) catch return error.BatchTooLarge;
+    }
+    if (total > 1024 * 1024) return error.BatchTooLarge;
+    try batch.ensureTotalCapacity(allocator, total);
+    batch.appendSliceAssumeCapacity("{\"event\":\"neuron_transaction\",\"version\":1,\"rows\":[");
+    for (rows, 0..) |row, index| {
+        if (index > 0) batch.appendAssumeCapacity(',');
+        batch.appendSliceAssumeCapacity(row);
+    }
+    batch.appendSliceAssumeCapacity("]}");
+    return appendRow(allocator, env, batch.items);
+}
+
 // flock primitive — POSIX-ish but BSD-derived. macOS and Linux both
 // expose it via libc. LOCK_EX = 2 (exclusive, blocking); LOCK_UN = 8.
 extern fn flock(fd: c_int, op: c_int) c_int;

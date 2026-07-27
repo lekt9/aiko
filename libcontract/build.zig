@@ -3,6 +3,11 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const typed_neuron_dep = b.dependency("typed_neuron", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const typed_neuron = typed_neuron_dep.module("typed_neuron");
 
     // ── libcontract.a ────────────────────────────────────────────────────
     // Static library exposing the C ABI declared in src/c_abi.zig.
@@ -13,6 +18,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     lib_mod.addEmbedPath(b.path("data"));
+    lib_mod.addImport("typed_neuron", typed_neuron);
     const lib = b.addLibrary(.{
         .name = "contract",
         .linkage = .static,
@@ -32,6 +38,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     dylib_mod.addEmbedPath(b.path("data"));
+    dylib_mod.addImport("typed_neuron", typed_neuron);
     const dylib = b.addLibrary(.{
         .name = "contract",
         .linkage = .dynamic,
@@ -127,6 +134,10 @@ pub fn build(b: *std.Build) void {
 
     const test_files = [_][]const u8{
         "src/c_abi.zig",
+        "src/neuron.zig",
+        "src/artifact.zig",
+        "src/skill_lifecycle.zig",
+        "src/skill_execution.zig",
         "src/contract.zig",
         "src/pointer.zig",
         "src/guards.zig",
@@ -203,6 +214,7 @@ pub fn build(b: *std.Build) void {
         // available to @embedFile in all test modules (cheap; cost is zero
         // if the file isn't referenced).
         mod.addEmbedPath(b.path("data"));
+        mod.addImport("typed_neuron", typed_neuron);
         if (std.mem.eql(u8, tf, "src/client.zig")) {
             const contract_mod = b.createModule(.{
                 .root_source_file = b.path("src/contract.zig"),

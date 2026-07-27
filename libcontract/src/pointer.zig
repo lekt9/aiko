@@ -1,6 +1,40 @@
 //! Native pointer-type inference + contract:<id> ref extraction.
 const std = @import("std");
 
+/// A Skill is packaging for a Neuron, not another computational primitive.
+/// The immutable package locator has the form:
+///
+///   skill:<lower-hyphen-id>@<numeric-semver>:<aiko|host|tool|script>
+pub fn isValidSkillAction(action: []const u8) bool {
+    const prefix = "skill:";
+    if (!std.mem.startsWith(u8, action, prefix)) return false;
+    const body = action[prefix.len..];
+    const at = std.mem.indexOfScalar(u8, body, '@') orelse return false;
+    if (std.mem.indexOfScalarPos(u8, body, at + 1, '@') != null) return false;
+    const id = body[0..at];
+    const version_worker = body[at + 1 ..];
+    const separator = std.mem.lastIndexOfScalar(u8, version_worker, ':') orelse return false;
+    const version = version_worker[0..separator];
+    const worker = version_worker[separator + 1 ..];
+
+    if (id.len == 0 or id.len > 64 or id[0] == '-' or id[id.len - 1] == '-') return false;
+    for (id) |byte| {
+        if (!std.ascii.isLower(byte) and !std.ascii.isDigit(byte) and byte != '-') return false;
+    }
+    var parts = std.mem.splitScalar(u8, version, '.');
+    var part_count: usize = 0;
+    while (parts.next()) |part| {
+        part_count += 1;
+        if (part.len == 0) return false;
+        for (part) |byte| if (!std.ascii.isDigit(byte)) return false;
+    }
+    if (part_count != 3) return false;
+    return std.mem.eql(u8, worker, "aiko") or
+        std.mem.eql(u8, worker, "host") or
+        std.mem.eql(u8, worker, "tool") or
+        std.mem.eql(u8, worker, "script");
+}
+
 /// Infer the native pointer type from an action string. Only mechanically
 /// implemented composition shapes receive a distinct type; everything else is
 /// a cell unless it is plainly a URL/API action.
@@ -61,6 +95,7 @@ pub fn inferPointerType(action: []const u8) []const u8 {
     if (std.mem.startsWith(u8, action, "word:")) return "word";
     if (std.mem.startsWith(u8, action, "validate:")) return "validate";
     if (std.mem.startsWith(u8, action, "signed:")) return "signed";
+    if (isValidSkillAction(action)) return "neuron";
     if (std.mem.startsWith(u8, action, "curl ") or
         std.mem.startsWith(u8, action, "http://") or
         std.mem.startsWith(u8, action, "https://") or
@@ -91,6 +126,7 @@ pub fn isKnownAction(action: []const u8) bool {
     if (std.mem.eql(u8, action, "harness")) return true;
     if (std.mem.eql(u8, action, "loop")) return true;
     if (std.mem.eql(u8, action, "fulfil")) return true;
+    if (isValidSkillAction(action)) return true;
     // Typed prefixes — each must end with ':' or be a network shape.
     const prefixes = [_][]const u8{
         "word:",         "machine:",        "neuron:",
@@ -341,6 +377,19 @@ test "inferPointerType exposes word/validate/signed shapes" {
     try std.testing.expectEqualStrings("word", inferPointerType("word:contract"));
     try std.testing.expectEqualStrings("validate", inferPointerType("validate:deadbeef"));
     try std.testing.expectEqualStrings("signed", inferPointerType("signed:abc123"));
+}
+
+test "Skill packages resolve to strict native Neuron pointers" {
+    const valid = "skill:aiko-meta-agent@1.0.0:aiko";
+    try std.testing.expect(isValidSkillAction(valid));
+    try std.testing.expect(isKnownAction(valid));
+    try std.testing.expectEqualStrings("neuron", inferPointerType(valid));
+    try std.testing.expectEqual(@as(i32, 3), inferLayer(valid));
+
+    try std.testing.expect(!isValidSkillAction("skill:Aiko@1.0.0:aiko"));
+    try std.testing.expect(!isValidSkillAction("skill:aiko@1:aiko"));
+    try std.testing.expect(!isValidSkillAction("skill:aiko@1.0.0:shell"));
+    try std.testing.expect(!isKnownAction("skill:aiko@1.0.0:shell"));
 }
 
 test "extractTypedRefs picks ids by prefix" {

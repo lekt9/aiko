@@ -3,7 +3,22 @@
     .version = "0.0.1-stage1",
     .fingerprint = 0xe283c4bbc83094de,
     .minimum_zig_version = "0.16.0",
-    .dependencies = .{},
+    .dependencies = .{
+        .typed_neuron = .{
+            // Switched to published git source (Option A) so a single clone of
+            // Unbrowse/contract is sufficient. The hash is the content hash of
+            // the exact tree at the pinned commit.
+            //
+            // To obtain the hash in your environment (Tailscale gitea):
+            //   zig fetch 'git+ssh://git@100.67.11.99:2222/Unbrowse/neuron.git#1e69ca97462b63502dd24fedbac8aacfb583928b'
+            //
+            // Then replace the placeholder below with the printed 1220... hash.
+            // This makes the dep work after a plain `git clone` of contract
+            // (plus zig fetch once for the dep).
+            .url = "git+ssh://git@100.67.11.99:2222/Unbrowse/neuron.git#1e69ca97462b63502dd24fedbac8aacfb583928b",
+            .hash = "12200000000000000000000000000000000000000000000000000000000000000000", // TODO: replace with real hash from zig fetch
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",
