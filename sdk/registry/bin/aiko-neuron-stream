@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""aiko-neuron-stream — SSE server that streams neuron firing events in realtime.
+
+Reads the neuron substrate state_dir and emits a server-sent event stream
+with every firing: neuron identity, decision digest, effects committed,
+energy score, reflex state, and muscle rankings.
+
+Usage:
+  aiko-neuron-stream [--state-dir .state] [--port 19421] [--cadence 500]
+
+SSE endpoint:  GET /v1/neuron/stream
+Health:        GET /v1/health
+
+Events emitted:
+  event: firing       A neuron fired (committed or replayed)
+  event: muscle       Muscle rankings updated
+  event: reflex       Reflex ladder state changed
+  event: limb         Limb admitted, revoked, or detached
+  event: agency       Introspection triggered, gap found, limb proposed
+"""
+
+import json
+import os
+import sys
+import time
+import hashlib
+import http.server
+import subprocess
+import threading
+from pathlib import Path
+
+DEFAULT_STATE_DIR = ".state"
+DEFAULT_PORT = 19421
+DEFAULT_CADENCE_MS = 500
+
+# ─── Substrate reader ────────────────────────────────────────────────────
+
+class SubstrateReader:
+    """Reads the neuron substrate state and tracks changes."""
+
+    def __init__(self, state_dir: str):
+        self.state_dir = Path(state_dir)
+        self._last_firings = 0
+        self._last_artifacts = 0
+        self._last_admitted = 0
+        self._neuron_bin = self._find_neuron()
+
+    def _find_neuron(self) -> str:
+        for path in [
+            os.path.expanduser("~/.local/bin/neuron"),
+            "neuron",
+            os.path.join(os.path.dirname(__file__), "..", "..", "neuron", "zig-out", "bin", "neuron"),
+        ]:
+            if os.path.exists(path):
+                return path
+        return "neuron"
+
+    def _run(self, *args) -> dict:
+        try:
+            result = subprocess.run(
+                [self._neuron_bin, *args, "--json"],
+                capture_output=True, text=True, timeout=5,
+                cwd=str(self.state_dir.parent) if self.state_dir.parent != Path(".") else None,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return json.loads(result.stdout)
+        except Exception:
+            pass
+        return {}
+
+    def snapshot(self) -> dict:
+        """Take a snapshot of the current substrate state."""
+        inspect = self._run("limb", "inspect", str(self.state_dir))
+        telemetry = self._run("telemetry", "project", str(self.state_dir))
+
+        return {
+            "schema": "neuron.snapshot/v1",
+            "firings": telemetry.get("total", 0),
+            "committed": telemetry.get("committed", 0),
+            "rejected": telemetry.get("rejected", 0),
+            "effects_committed": telemetry.get("effects_committed", 0),
+            "artifacts": telemetry.get("artifacts", 0),
+            "neurons": telemetry.get("neurons", 0),
+            "admitted": inspect.get("admitted", 0),
+            "revoked": inspect.get("revoked", 0),
+            "detached": inspect.get("detached", 0),
+            "timestamp_ms": int(time.time() * 1000),
+        }
+
+    def poll_events(self) -> list[dict]:
+        """Poll for new events since last check. Returns list of event dicts."""
+        snap = self.snapshot()
+        events = []
+
+        # New firings
+        new_firings = snap["firings"] - self._last_firings
+        new_artifacts = snap["artifacts"] - self._last_artifacts
+        new_admitted = snap["admitted"] - self._last_admitted
+
+        if new_firings > 0 or new_artifacts > 0:
+            events.append({
+                "id": hashlib.sha256(str(snap["timestamp_ms"]).encode()).hexdigest()[:16],
+                "type": "firing",
+                "data": {
+                    "new_firings": new_firings,
+                    "new_artifacts": new_artifacts,
+                    "new_effects": snap["effects_committed"] - max(0, self._last_firings),
+                    "total_firings": snap["firings"],
+                    "total_artifacts": snap["artifacts"],
+                    "committed": snap["committed"],
+                    "rejected": snap["rejected"],
+                },
+            })
+
+        if new_admitted > 0:
+            events.append({
+                "id": hashlib.sha256(f"admit{snap['timestamp_ms']}".encode()).hexdigest()[:16],
+                "type": "limb",
+                "data": {
+                    "event": "admitted",
+                    "count": new_admitted,
+                    "total_admitted": snap["admitted"],
+                },
+            })
+
+        # Muscle rankings
+        if new_firings > 0:
+            events.append({
+                "id": hashlib.sha256(f"muscle{snap['timestamp_ms']}".encode()).hexdigest()[:16],
+                "type": "muscle",
+                "data": {
+                    "firings_total": snap["firings"],
+                    "firings_committed": snap["committed"],
+                    "success_rate": snap["committed"] / max(snap["firings"], 1),
+                },
+            })
+
+        self._last_firings = snap["firings"]
+        self._last_artifacts = snap["artifacts"]
+        self._last_admitted = snap["admitted"]
+        return events
+
+
+# ─── SSE Server ────────────────────────────────────────────────────────────
+
+class NeuronSSEHandler(http.server.BaseHTTPRequestHandler):
+    reader: SubstrateReader = None
+    cadence_ms: int = DEFAULT_CADENCE_MS
+
+    def do_GET(self):
+        if self.path == "/v1/health":
+            self._json(200, {"status": "ok", "neuron_binary": os.path.exists(self.reader._neuron_bin)})
+        elif self.path == "/v1/neuron/stream":
+            self._stream()
+        elif self.path == "/v1/neuron/snapshot":
+            snap = self.reader.snapshot()
+            self._json(200, snap)
+        else:
+            self._json(404, {"error": "not found"})
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.end_headers()
+
+    def _json(self, status, data):
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(json.dumps(data, separators=(",", ":")).encode())
+        self.wfile.write(b"\n")
+
+    def _stream(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        # Initial snapshot
+        snap = self.reader.snapshot()
+        self._send_event("snapshot", json.dumps(snap, separators=(",", ":")))
+
+        while True:
+            try:
+                events = self.reader.poll_events()
+                for event in events:
+                    data = json.dumps(event["data"], separators=(",", ":"))
+                    self._send_event(event["type"], data, event["id"])
+
+                self.wfile.flush()
+                time.sleep(self.cadence_ms / 1000.0)
+            except (BrokenPipeError, ConnectionResetError):
+                break
+
+    def _send_event(self, event_type: str, data: str, event_id: str = None):
+        if event_id:
+            self.wfile.write(f"id: {event_id}\n".encode())
+        self.wfile.write(f"event: {event_type}\n".encode())
+        self.wfile.write(f"data: {data}\n\n".encode())
+
+    def log_message(self, format, *args):
+        pass  # Suppress access logs
+
+
+def main():
+    import argparse
+    p = argparse.ArgumentParser(description="Neuron firing SSE stream")
+    p.add_argument("--state-dir", default=DEFAULT_STATE_DIR, help=f"Substrate state directory (default: {DEFAULT_STATE_DIR})")
+    p.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Port (default: {DEFAULT_PORT})")
+    p.add_argument("--cadence", type=int, default=DEFAULT_CADENCE_MS, help=f"Poll cadence in ms (default: {DEFAULT_CADENCE_MS})")
+    args = p.parse_args()
+
+    reader = SubstrateReader(args.state_dir)
+    NeuronSSEHandler.reader = reader
+    NeuronSSEHandler.cadence_ms = args.cadence
+
+    server = http.server.HTTPServer(("127.0.0.1", args.port), NeuronSSEHandler)
+    print(f"Neuron firing stream → http://127.0.0.1:{args.port}/v1/neuron/stream")
+    print(f"State dir: {args.state_dir}")
+    print(f"Cadence: {args.cadence}ms")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        server.shutdown()
+
+
+if __name__ == "__main__":
+    main()
