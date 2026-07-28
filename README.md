@@ -15,6 +15,32 @@ aiko "fix the failing test"
 aiko --single "review this repository"
 ```
 
+## Quick Start — 30 seconds to full stack
+
+```bash
+# 1. Build and install aiko (binary + Contract runtime + SDK)
+scripts/contract-runtime.sh install
+
+# 2. Pull neuron + limbs from the Gitea package registry
+~/.aiko/sdk/registry/setup.sh
+
+# 3. Verify
+aiko --version     # Aiko agent TUI
+neuron --help      # typed neuron runtime
+ls ~/.aiko/limbs/  # 8 auto-admitted limbs (preemptor, dispatch-router, etc.)
+```
+
+Or use npm (one command):
+```bash
+npm config set @unbrowse:registry http://100.124.140.92:3000/api/packages/Unbrowse/npm/
+npm install -g @unbrowse/aiko-sdk && aikoSetup
+```
+
+**What you get:** Aiko agent TUI with Contract-native turn lifecycle + a
+typed neuron runtime (fire pure `Stimulus → Decision` neurons) + 8 generative
+limbs that self-observe, preempt redundant work, route stimuli by energy, and
+auto-generate new limbs for missing capabilities.
+
 Contract is built into the turn lifecycle. Users ask Aiko for an outcome; Aiko
 automatically declares that goal in the local Contract ledger before work
 starts and appends a satisfied verdict only when the agent reaches a genuine
@@ -57,19 +83,92 @@ Contract’s causal event stream is local and redacted; the standalone Contract
 CLI can inspect it with `events`, `watch`, and `explain` without requesting
 wallet or Keychain access.
 
+## Canonical Neuron execution
+
+Contract ABI 12 is the durable interpreter for Aiko's typed Skill nodes. Its
+pure `Neuron` types, validation, and identities come from the sibling
+`typed_neuron` Zig package; Aiko consumes mechanically generated Rust transport
+types rather than maintaining a second wire contract.
+
+Each production node returns a canonical decision. Contract commits that
+decision, its authoritative evidence, node settlement, and pending effects in
+one append-only transaction. A consequential product tool follows a strict
+order:
+
+```text
+canonical decision committed → named adapter dispatched → exact effect acknowledged
+```
+
+Replay suppresses duplicate dispatch. An uncertain adapter outcome remains
+held for reconciliation. Admitted scripts run as read-only decision producers
+inside Aiko's enforced sandbox; they cannot perform effects directly.
+
+The ordinary conversational turn declaration remains best-effort as described
+above. A tool effect already under Neuron governance does not bypass the
+pre-dispatch Contract membrane.
+
+## SDK, Neuron & Generative Limbs
+
+Aiko ships with an embedded SDK (`sdk/registry/`) that pulls the full stack
+from your private Gitea package registry over Tailscale:
+
+| Component | Binary | Registry | What it does |
+|-----------|--------|----------|-------------|
+| **aiko** | `~/bin/aiko` | built-in | Agent TUI with Contract-native turns |
+| **contract** | `~/.aiko/lib/libcontract.dylib` | generic package | Contract ledger + typed neuron ABI |
+| **neuron** | `~/.local/bin/neuron` | generic package | Fail-closed typed neuron runtime |
+| **neuron-limbs** | `~/.aiko/limbs/` | generic package | 8 generative limbs |
+
+**Generative limbs** are self-building neuron packages that extend what Aiko
+can do without becoming a second primitive. Eight limbs ship with the SDK:
+
+| Limb | Fires on | What it does |
+|------|----------|-------------|
+| `preemptor` | every stimulus | Skip equivalent firings from cache (confidence ≥ 0.92) |
+| `dispatch-router` | every stimulus | Route to lowest-energy admitted limb over model |
+| `introspection-trigger` | every 50 firings | Auto-fire introspection, detect capability gaps |
+| `auto-attacher` | limb admission | Wire admitted limbs to matching receptors |
+| `energy-router` | candidate scoring | Structural energy minimization for routing |
+| `introspection` | trigger message | Self-observation, gap analysis, limb generation |
+| `pipeline` | staged items | Process items with in-flight budget |
+| `outbox-drainer` | queued messages | Retry, dead-letter, reconcile |
+
+All limbs follow the same lifecycle: **describe → write → admit → attach →
+operate → judge → cache → retire** (§30). The introspection limb generates new
+limbs automatically when it detects capability gaps — the agent learns to
+build its own tools.
+
+**Commands after install:**
+```bash
+neuron limb inspect .state         # list admitted limbs
+neuron limb admit ./my-limb .state # admit a new limb by digest
+neuron limb run .state --package ./my-limb --neuron id --stimulus req.json
+neuron compact .state               # snapshot + truncate WAL
+neuron telemetry project .state     # firing stats
+```
+
 ## Building
 
 Requirements:
 
 - Rust (the repository pins its toolchain in `rust-toolchain.toml`)
+- Zig 0.16.0+ (for the Contract runtime and neuron binary)
 - DotSlash for the hermetic tools under `bin/`
 - Contract's `libcontract.dylib` installed at `~/.aiko/lib/` (or selected with
   `AIKO_CONTRACT_LIBRARY`)
 
 ```sh
-cargo run -p xai-grok-pager-bin
+# Build everything (contract dylib + aiko binary + SDK package)
 scripts/contract-runtime.sh build-aiko
-cargo check -p xai-grok-pager-bin
+
+# Just the aiko binary (no contract rebuild)
+cargo run -p xai-grok-pager-bin
+
+# Package for distribution (includes SDK)
+scripts/contract-runtime.sh package
+
+# Install to ~/bin/aiko + ~/.aiko/
+scripts/contract-runtime.sh install
 ```
 
 The release artifact is `target/release/aiko`. Internal crate names retain
