@@ -1,0 +1,250 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# aiko-publish — Publish packages to the Gitea package registry
+#
+# Usage:
+#   aiko-publish contract  # build + publish libcontract from ../contract
+#   aiko-publish neuron    # build + publish neuron binary from ../neuron
+#   aiko-publish aiko      # build + publish aiko binary from ../aiko
+#   aiko-publish limbs     # package + publish neuron limbs from ../neuron/limbs
+#   aiko-publish all       # publish everything
+#   aiko-publish --bump    # bump version in versions.lock and publish
+
+GITEA_URL="${GITEA_URL:-http://100.124.140.92:3000}"
+GITEA_TOKEN="${GITEA_TOKEN:?GITEA_TOKEN must be set}"
+GITEA_ORG="Unbrowse"
+
+# Source repo roots (relative to this script)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SDK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPOS_ROOT="$(cd "$SDK_ROOT/../../.." && pwd)"
+
+CONTRACT_DIR="$REPOS_ROOT/contract"
+NEURON_DIR="$REPOS_ROOT/neuron"
+AIKO_DIR="$REPOS_ROOT/aiko"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+info()  { echo -e "${CYAN}ℹ${NC}  $*"; }
+ok()    { echo -e "${GREEN}✓${NC}  $*"; }
+warn()  { echo -e "${YELLOW}⚠${NC}  $*"; }
+err()   { echo -e "${RED}✗${NC}  $*" >&2; }
+
+# ─── Platform detection ────────────────────────────────────────────────────
+
+detect_platform() {
+    local os arch
+    os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    arch="$(uname -m)"
+    case "$arch" in
+        arm64|aarch64) arch="arm64" ;;
+        x86_64|amd64)  arch="x86_64" ;;
+    esac
+    echo "${os}-${arch}"
+}
+
+# ─── Version helpers ───────────────────────────────────────────────────────
+
+read_current_version() {
+    local package="$1"
+    local lockfile="$SDK_ROOT/versions.lock"
+    grep "^${package}=" "$lockfile" 2>/dev/null | cut -d= -f2
+}
+
+bump_version() {
+    local package="$1"
+    local lockfile="$SDK_ROOT/versions.lock"
+    local current new
+    current=$(read_current_version "$package")
+
+    # Bump patch version
+    local major minor patch
+    IFS='.' read -r major minor patch <<< "$current"
+    patch=$((patch + 1))
+    new="${major}.${minor}.${patch}"
+
+    # Update lockfile
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        sed -i '' "s|^${package}=.*|${package}=${new}|" "$lockfile"
+    else
+        sed -i "s|^${package}=.*|${package}=${new}|" "$lockfile"
+    fi
+
+    echo "$new"
+}
+
+# ─── Generic package publisher ─────────────────────────────────────────────
+
+publish_generic() {
+    local package="$1"
+    local version="$2"
+    local filename="$3"
+    local file="$4"
+
+    local url="$GITEA_URL/api/packages/$GITEA_ORG/generic/${package}/${version}/${filename}"
+
+    info "Publishing $package v$version → $filename"
+    if curl -sfL -X PUT \
+        -H "Authorization: token $GITEA_TOKEN" \
+        -F "data=@$file" \
+        "$url"; then
+        ok "Published $package v$version"
+    else
+        err "Failed to publish $package v$version"
+        return 1
+    fi
+}
+
+# ─── Build + publish functions ─────────────────────────────────────────────
+
+publish_contract() {
+    local version="${1:-$(read_current_version contract)}"
+    local platform
+    platform="$(detect_platform)"
+
+    info "Building libcontract v${version}..."
+    cd "$CONTRACT_DIR/libcontract"
+    zig build -Doptimize=ReleaseFast 2>/dev/null || {
+        err "zig build failed for libcontract"
+        return 1
+    }
+
+    local lib_ext="dylib"
+    [[ "$(uname -s)" == "Linux" ]] && lib_ext="so"
+    local lib_file="zig-out/lib/libcontract.${lib_ext}"
+    if [[ ! -f "$lib_file" ]]; then
+        err "Built library not found at $lib_file"
+        return 1
+    fi
+
+    # Package
+    local pkg_name="libcontract-${version}-${platform}.tar.gz"
+    local pkg_file="/tmp/${pkg_name}"
+    tar -czf "$pkg_file" -C zig-out/lib "libcontract.${lib_ext}"
+
+    publish_generic "contract" "$version" "$pkg_name" "$pkg_file"
+    rm -f "$pkg_file"
+}
+
+publish_neuron() {
+    local version="${1:-$(read_current_version neuron)}"
+    local platform
+    platform="$(detect_platform)"
+
+    info "Building neuron v${version}..."
+    cd "$NEURON_DIR"
+    zig build -Doptimize=ReleaseFast 2>/dev/null || {
+        err "zig build failed for neuron"
+        return 1
+    }
+
+    local binary="zig-out/bin/neuron"
+    if [[ ! -f "$binary" ]]; then
+        err "Built binary not found at $binary"
+        return 1
+    fi
+
+    # Package
+    local pkg_name="neuron-${version}-${platform}.tar.gz"
+    local pkg_file="/tmp/${pkg_name}"
+    tar -czf "$pkg_file" -C zig-out/bin neuron
+
+    publish_generic "neuron" "$version" "$pkg_name" "$pkg_file"
+    rm -f "$pkg_file"
+}
+
+publish_aiko() {
+    local version="${1:-$(read_current_version aiko)}"
+    local platform
+    platform="$(detect_platform)"
+
+    info "Building aiko v${version}..."
+    cd "$AIKO_DIR"
+    cargo build --release -p xai-grok-pager-bin 2>/dev/null || {
+        err "cargo build failed for aiko"
+        return 1
+    }
+
+    local binary="target/release/aiko"
+    if [[ ! -f "$binary" ]]; then
+        err "Built binary not found at $binary"
+        return 1
+    fi
+
+    # Package
+    local pkg_name="aiko-${version}-${platform}.tar.gz"
+    local pkg_file="/tmp/${pkg_name}"
+    tar -czf "$pkg_file" -C target/release aiko
+
+    publish_generic "aiko" "$version" "$pkg_name" "$pkg_file"
+    rm -f "$pkg_file"
+}
+
+publish_limbs() {
+    local version="${1:-$(read_current_version neuron-limbs)}"
+
+    info "Packaging neuron limbs v${version}..."
+    cd "$NEURON_DIR"
+
+    local pkg_file="/tmp/limbs.tar.gz"
+    tar -czf "$pkg_file" limbs/
+
+    publish_generic "neuron-limbs" "$version" "limbs.tar.gz" "$pkg_file"
+    rm -f "$pkg_file"
+}
+
+# ─── Main ──────────────────────────────────────────────────────────────────
+
+main() {
+    local do_bump=false
+    local targets=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --bump) do_bump=true; shift ;;
+            --help|-h)
+                echo "Usage: aiko-publish <target> [--bump]"
+                echo ""
+                echo "Targets: contract, neuron, aiko, limbs, all"
+                echo "  --bump  Bump patch version before publishing"
+                exit 0
+                ;;
+            *) targets+=("$1"); shift ;;
+        esac
+    done
+
+    [[ ${#targets[@]} -eq 0 ]] && targets=("all")
+
+    for target in "${targets[@]}"; do
+        local version=""
+        if $do_bump; then
+            version=$(bump_version "$target")
+            info "Bumped $target → v$version"
+        fi
+
+        case "$target" in
+            contract) publish_contract "$version" ;;
+            neuron)   publish_neuron "$version" ;;
+            aiko)     publish_aiko "$version" ;;
+            limbs)    publish_limbs "$version" ;;
+            all)
+                publish_contract "$version"
+                publish_neuron "$version"
+                publish_aiko "$version"
+                publish_limbs "$version"
+                ;;
+            *) err "Unknown target: $target"; exit 1 ;;
+        esac
+    done
+
+    ok "Publish complete"
+    info "Update versions.lock and push to sync all machines"
+}
+
+main "$@"

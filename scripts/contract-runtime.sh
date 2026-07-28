@@ -5,6 +5,7 @@ AIKO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 DEFAULT_CONTRACT_REPO=$(CDPATH= cd -- "$AIKO_ROOT/.." && pwd)/contract
 CONTRACT_REPO=${AIKO_CONTRACT_REPO:-"$DEFAULT_CONTRACT_REPO"}
 CONTRACT_ROOT="$CONTRACT_REPO/libcontract"
+TYPED_NEURON_ROOT="$CONTRACT_REPO/../neuron"
 CONTRACT_DYLIB="$CONTRACT_ROOT/zig-out/lib/libcontract.dylib"
 AIKO_PROFILE=${AIKO_BUILD_PROFILE:-release}
 AIKO_TARGET_DIR=${AIKO_CARGO_TARGET_DIR:-"$AIKO_ROOT/target"}
@@ -15,7 +16,7 @@ usage() {
 Usage: scripts/contract-runtime.sh [command]
 
 Commands:
-  build-contract  Build libcontract.dylib from the sibling Contract repository.
+  build-contract  Build libcontract.dylib from sibling Contract + Neuron repositories.
   build-aiko      Build Aiko + Contract and refresh the combined package (default).
   build-aiko-only Build only the Aiko binary without refreshing a package.
   dev-link        Build Contract and link ~/.aiko/lib to its live zig-out dylib.
@@ -26,6 +27,7 @@ Commands:
 
 Environment:
   AIKO_CONTRACT_REPO  Contract repository (default: ../contract)
+                      Its sibling ../neuron supplies the typed_neuron package.
   AIKO_BUILD_PROFILE  Cargo profile (default: release)
   AIKO_CARGO_TARGET_DIR
                       Cargo target directory (default: ./target)
@@ -39,6 +41,12 @@ require_contract() {
     if [ ! -f "$CONTRACT_ROOT/build.zig" ]; then
         echo "Contract source not found at $CONTRACT_ROOT" >&2
         echo "Set AIKO_CONTRACT_REPO to the Contract repository." >&2
+        exit 1
+    fi
+    if [ ! -f "$TYPED_NEURON_ROOT/build.zig.zon" ] ||
+       [ ! -f "$TYPED_NEURON_ROOT/src/wire.zig" ]; then
+        echo "Typed Neuron package not found at $TYPED_NEURON_ROOT" >&2
+        echo "Contract source builds require sibling contract/ and neuron/ repositories." >&2
         exit 1
     fi
 }
@@ -165,13 +173,23 @@ package_runtime() {
     if [ -e "$DEST" ]; then
         mv "$DEST" "$DEST.previous.$(date +%Y%m%d%H%M%S)"
     fi
-    mkdir -p "$DEST/bin" "$DEST/lib" "$DEST/skills"
+    mkdir -p "$DEST/bin" "$DEST/lib" "$DEST/skills" "$DEST/sdk/registry/bin"
     install -m 755 "$BIN" "$DEST/bin/aiko"
     install -m 755 "$CONTRACT_DYLIB" "$DEST/lib/libcontract.dylib"
     if [ "$(uname -s)" = "Darwin" ]; then
         codesign --force --sign - "$DEST/lib/libcontract.dylib"
     fi
     install -m 755 "$AIKO_ROOT/scripts/install-aiko-package.sh" "$DEST/install.sh"
+    # SDK registry — self-bootstrapping installer for contract + neuron + limbs
+    if [ -d "$AIKO_ROOT/sdk/registry" ]; then
+        cp -R "$AIKO_ROOT/sdk/registry/bin" "$DEST/sdk/registry/"
+        cp "$AIKO_ROOT/sdk/registry/setup.sh" "$DEST/sdk/registry/"
+        cp "$AIKO_ROOT/sdk/registry/versions.lock" "$DEST/sdk/registry/"
+        cp "$AIKO_ROOT/sdk/registry/package.json" "$DEST/sdk/registry/"
+        install -m 755 "$DEST/sdk/registry/setup.sh"
+        install -m 755 "$DEST/sdk/registry/bin/aiko-install"
+        install -m 755 "$DEST/sdk/registry/bin/aiko-publish"
+    fi
     for SKILL_DIR in "$AIKO_ROOT"/.agents/skills/*; do
         if [ -f "$SKILL_DIR/contract-skill.json" ]; then
             cp -R "$SKILL_DIR" "$DEST/skills/"
@@ -198,7 +216,7 @@ package_runtime() {
         printf '  "format": 1,\n'
         printf '  "version": "%s",\n' "$VERSION"
         printf '  "platform": "%s",\n' "$PLATFORM"
-        printf '  "contract_abi": 6,\n'
+        printf '  "contract_abi": 10,\n'
         printf '  "application_runtime": "aiko-native-cdp-v1",\n'
         printf '  "aiko_sha256": "%s",\n' "$AIKO_SHA"
         printf '  "aiko_commit": "%s",\n' "$AIKO_COMMIT"

@@ -29,7 +29,7 @@ manifest_number() {
     sed -n -E 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' "$MANIFEST" | head -1
 }
 
-EXPECTED_ABI=6
+EXPECTED_ABI=10
 PACKAGE_ABI=$(manifest_number contract_abi)
 EXPECTED_AIKO=$(manifest_value aiko_sha256)
 EXPECTED_CONTRACT=$(manifest_value contract_sha256)
@@ -53,7 +53,7 @@ AIKO_HOME=${AIKO_HOME:-"$HOME/.aiko"}
 AIKO_BIN_DIR=${AIKO_BIN_DIR:-"$HOME/bin"}
 AIKO_LIB_DIR="$AIKO_HOME/lib"
 mkdir -p "$AIKO_BIN_DIR" "$AIKO_LIB_DIR"
-mkdir -p "$AIKO_HOME/skills"
+mkdir -p "$AIKO_HOME/skills" "$AIKO_HOME/sdk/registry/bin"
 
 BIN_TMP="$AIKO_BIN_DIR/.aiko.install.$$"
 LIB_TMP="$AIKO_LIB_DIR/.libcontract.dylib.install.$$"
@@ -72,6 +72,16 @@ for SKILL_DIR in "$PACKAGED_SKILLS"/*; do
         cp -R "$SKILL_DIR/." "$AIKO_HOME/skills/$SKILL_NAME/"
     fi
 done
+# SDK registry — self-bootstrapping installer for contract + neuron + limbs
+PACKAGED_SDK="$PACKAGE_ROOT/sdk/registry"
+if [ -d "$PACKAGED_SDK" ]; then
+    cp -R "$PACKAGED_SDK/setup.sh" "$AIKO_HOME/sdk/registry/" 2>/dev/null || true
+    cp -R "$PACKAGED_SDK/versions.lock" "$AIKO_HOME/sdk/registry/" 2>/dev/null || true
+    if [ -d "$PACKAGED_SDK/bin" ]; then
+        cp -R "$PACKAGED_SDK/bin/." "$AIKO_HOME/sdk/registry/bin/" 2>/dev/null || true
+    fi
+    echo "Installed Aiko SDK to $AIKO_HOME/sdk/registry/"
+fi
 trap - EXIT HUP INT TERM
 
 echo "Installed Aiko to $AIKO_BIN_DIR/aiko"
