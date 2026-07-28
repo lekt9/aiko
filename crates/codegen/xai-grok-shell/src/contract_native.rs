@@ -7,6 +7,7 @@
 use agent_client_protocol as acp;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::{CStr, CString, c_char};
 use std::io::Write;
@@ -15,6 +16,7 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use xai_grok_sampling_types::{ContentPart, ConversationItem};
 use xai_grok_tools::notification::{ScheduledTaskFired, ToolNotificationHandle};
@@ -22,8 +24,20 @@ use xai_grok_tools::notification::{ScheduledTaskFired, ToolNotificationHandle};
 mod activity_sensor;
 mod contract_learning;
 pub mod membrane;
+mod neuron_bridge;
 mod reflex_policy;
 mod skill_registry;
+
+use neuron_bridge::{
+    NEURON_FIRE_ABI_VERSION, NeuronDecision, NeuronEffectSettleFn, NeuronFireFn,
+    SKILL_EXECUTION_ABI_VERSION, SKILL_LIFECYCLE_ABI_VERSION, SkillNodeClaimFn, SkillNodeSettleFn,
+    SkillStateFn, SkillTransitionFn, ToolEffectAdmission, skill_node_decision,
+    supported_contract_abi,
+};
+pub use neuron_bridge::{
+    NeuronSkillNodeOccurrence, NeuronSkillNodeSettlement, NeuronSkillNodeSettlementResult,
+    NeuronSkillWave, NeuronSkillWaveStatus,
+};
 
 const LOCAL_COMMAND_TIMEOUT: Duration = Duration::from_millis(800);
 const MAX_CONTEXT_BYTES: usize = 14_000;
@@ -33,10 +47,6 @@ const DEFAULT_CONTRACT_MAX_DEPTH: u32 = 4;
 const DEFAULT_CONTRACT_MAX_CHILDREN: u32 = 16;
 const DEFAULT_CONTRACT_MAX_TOTAL_CHILDREN: u32 = 64;
 const DEFAULT_CONTRACT_MAX_CONCURRENCY: u32 = 4;
-/// Spine slots reserved by every turn expand (plasma-fractal node shape):
-/// observe → agent:aiko → verify → posthook:feedback. Same contract row type
-/// at every scale; bounds keep the loop from runaway fan-out.
-const CELL_SPINE_LEN: usize = 4;
 
 #[derive(Debug, Clone)]
 pub struct TurnContract {
@@ -113,6 +123,12 @@ type FreeFn = unsafe extern "C" fn(*mut c_char);
 struct NativeContract {
     _library: libloading::Library,
     abi_version: u32,
+    neuron_fire: Option<NeuronFireFn>,
+    neuron_effect_settle: Option<NeuronEffectSettleFn>,
+    skill_transition: Option<SkillTransitionFn>,
+    skill_state: Option<SkillStateFn>,
+    skill_node_claim: Option<SkillNodeClaimFn>,
+    skill_node_settle: Option<SkillNodeSettleFn>,
     declare_turn: DeclareTurnFn,
     declare_turn_context: Option<DeclareTurnContextFn>,
     declare: DeclareFn,
@@ -205,12 +221,54 @@ impl NativeContract {
                 continue;
             };
             let abi_version = unsafe { abi_version() };
-            if !(2..=6).contains(&abi_version) {
+            if !supported_contract_abi(abi_version) {
                 continue;
             }
             let loaded = unsafe {
                 Some(Self {
                     abi_version,
+                    neuron_fire: if abi_version >= NEURON_FIRE_ABI_VERSION {
+                        Some(*library.get(b"contract_neuron_fire_json\0").ok()?)
+                    } else {
+                        None
+                    },
+                    neuron_effect_settle: if abi_version >= NEURON_FIRE_ABI_VERSION {
+                        Some(*library.get(b"contract_neuron_effect_settle_json\0").ok()?)
+                    } else {
+                        None
+                    },
+                    skill_transition: if abi_version >= SKILL_LIFECYCLE_ABI_VERSION {
+                        Some(
+                            *library
+                                .get(b"contract_neuron_skill_transition_json\0")
+                                .ok()?,
+                        )
+                    } else {
+                        None
+                    },
+                    skill_state: if abi_version >= SKILL_LIFECYCLE_ABI_VERSION {
+                        Some(*library.get(b"contract_neuron_skill_state_json\0").ok()?)
+                    } else {
+                        None
+                    },
+                    skill_node_claim: if abi_version >= SKILL_EXECUTION_ABI_VERSION {
+                        Some(
+                            *library
+                                .get(b"contract_neuron_skill_node_claim_json\0")
+                                .ok()?,
+                        )
+                    } else {
+                        None
+                    },
+                    skill_node_settle: if abi_version >= SKILL_EXECUTION_ABI_VERSION {
+                        Some(
+                            *library
+                                .get(b"contract_neuron_skill_node_settle_json\0")
+                                .ok()?,
+                        )
+                    } else {
+                        None
+                    },
                     declare_turn: *library.get(b"contract_declare_turn\0").ok()?,
                     declare_turn_context: if abi_version >= 6 {
                         Some(*library.get(b"contract_declare_turn_context_json\0").ok()?)
@@ -758,6 +816,1043 @@ pub async fn tick_due_contracts(
     .flatten()
 }
 
+/// Build the same admitted Meta-Agent Skill graph for a durable claim that live
+/// turns use. The worker adopts this graph; it does not invent a bare child or
+/// regain the old opaque `agent:aiko` center.
+fn claim_cell_materialization(contract_id: &str, goal: &str, cwd: &str) -> (Value, Vec<String>) {
+    let skill_plan =
+        skill_registry::plan_bounded(goal, Path::new(cwd), DEFAULT_CONTRACT_MAX_CHILDREN as usize);
+    let selected_skill_refs = skill_plan
+        .selected
+        .iter()
+        .map(|skill| format!("skill:{}@{}", skill.id, skill.version))
+        .collect::<Vec<_>>();
+    let request = json!({
+        "root_id": contract_id,
+        "plan": goal,
+        "action": "neuron:cell",
+        "cwd": cwd,
+        "agent": "skill:aiko-meta-agent@1.0.0",
+        "children": skill_plan.children,
+        "selected_skills": skill_plan.selected,
+        "core_admitted": skill_plan.core_admitted,
+        "depth": 0,
+        "max_depth": DEFAULT_CONTRACT_MAX_DEPTH,
+        "max_children": DEFAULT_CONTRACT_MAX_CHILDREN,
+        "max_concurrency": DEFAULT_CONTRACT_MAX_CONCURRENCY,
+        "execution_model": "typed_neuron_skill_graph",
+    });
+    (request, selected_skill_refs)
+}
+
+fn claim_cell_request(contract_id: &str, goal: &str, cwd: &str) -> Value {
+    claim_cell_materialization(contract_id, goal, cwd).0
+}
+
+/// Expand a leased durable claim into the germ-layer cell BEFORE the worker
+/// spawns its effector child. Returns the expanded graph when the native
+/// runtime records it (abi ≥ 5). A `None` return is non-fatal: the worker still
+/// executes the claim, it simply was not decomposed in the ledger this pass.
+pub async fn expand_claim_cell(contract_id: String, goal: String, cwd: String) -> Option<Value> {
+    expand_claim_cell_with_routes(contract_id, goal, cwd)
+        .await
+        .map(|(graph, _)| graph)
+}
+
+async fn expand_claim_cell_with_routes(
+    contract_id: String,
+    goal: String,
+    cwd: String,
+) -> Option<(Value, Vec<String>)> {
+    let (request, selected_skill_refs) = claim_cell_materialization(&contract_id, &goal, &cwd);
+    tokio::task::spawn_blocking(move || {
+        native_contract()
+            .and_then(|contract| contract.expand_graph(&request))
+            .map(|graph| (graph, selected_skill_refs))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+fn contract_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(1)
+        .max(1)
+}
+
+/// Lease the next dependency-ready wave from Contract's admitted graph.
+pub async fn claim_neuron_skill_nodes(
+    root_id: String,
+    root_occurrence: String,
+    owner: String,
+    lease_ms: u64,
+    max_nodes: usize,
+) -> Option<NeuronSkillWave> {
+    tokio::task::spawn_blocking(move || {
+        native_contract()?.claim_skill_nodes(
+            &root_id,
+            &root_occurrence,
+            &owner,
+            contract_now_ms(),
+            lease_ms,
+            max_nodes,
+        )
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Settle one leased node only after its declared named evidence exists.
+pub async fn settle_neuron_skill_node(
+    settlement: NeuronSkillNodeSettlement,
+    now_ms: u64,
+) -> Option<NeuronSkillNodeSettlementResult> {
+    tokio::task::spawn_blocking(move || native_contract()?.settle_skill_node(&settlement, now_ms))
+        .await
+        .ok()
+        .flatten()
+}
+
+#[derive(Debug, Clone)]
+pub struct ContractGraphVerdict {
+    pub completed: bool,
+    pub retryable: bool,
+    pub evidence: String,
+}
+
+fn neuron_graph_execution_enabled() -> bool {
+    if contract_abi_version().is_none_or(|version| version < SKILL_EXECUTION_ABI_VERSION) {
+        return false;
+    }
+    !std::env::var("AIKO_NEURON_GRAPH_EXECUTION")
+        .ok()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "off" | "false" | "legacy"
+            )
+        })
+}
+
+fn node_result_schema(requirements: &[String]) -> String {
+    let properties = requirements
+        .iter()
+        .map(|name| (name.clone(), json!({})))
+        .collect::<serde_json::Map<_, _>>();
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["completed", "retryable", "evidence", "summary"],
+        "properties": {
+            "completed": {"type": "boolean"},
+            "retryable": {"type": "boolean"},
+            "evidence": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": requirements,
+                "properties": properties,
+            },
+            "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
+        },
+    })
+    .to_string()
+}
+
+struct NodeAdapterVerdict {
+    outcome: &'static str,
+    evidence: Value,
+    detail: String,
+}
+
+const SCRIPT_INPUT_LIMIT: usize = 128 * 1024;
+const SCRIPT_STDOUT_LIMIT: usize = 128 * 1024;
+const SCRIPT_STDERR_LIMIT: usize = 64 * 1024;
+const SCRIPT_FILE_LIMIT: usize = 1024 * 1024;
+const SCRIPT_RUNNER_MARKER: &str = "AIKO_NEURON_SCRIPT_RUNNER_V1";
+const SCRIPT_RUNNER_PATH: &str = "AIKO_NEURON_SCRIPT_PATH";
+const SCRIPT_RUNNER_SKILL_ROOT: &str = "AIKO_NEURON_SCRIPT_SKILL_ROOT";
+const SCRIPT_RUNNER_DIGEST: &str = "AIKO_NEURON_SCRIPT_DIGEST";
+const SCRIPT_RUNNER_CWD: &str = "AIKO_NEURON_SCRIPT_CWD";
+const SCRIPT_RUNNER_SANDBOX: &str = "AIKO_NEURON_SCRIPT_SANDBOX";
+
+fn node_digest(parts: &[&str]) -> String {
+    let mut digest = Sha256::new();
+    for part in parts {
+        digest.update((part.len() as u64).to_le_bytes());
+        digest.update(part.as_bytes());
+    }
+    format!("{:x}", digest.finalize())
+}
+
+fn valid_node_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+fn native_host_verdict(
+    node: &NeuronSkillNodeOccurrence,
+    selected_skill_refs: &[String],
+) -> Option<NodeAdapterVerdict> {
+    let adapter = node.adapter.as_deref()?;
+    match (
+        node.skill_id.as_str(),
+        node.skill_version.as_str(),
+        node.key.as_str(),
+        adapter,
+    ) {
+        ("aiko-meta-agent", "1.0.0", "aiko-meta-agent--observe", "aiko.meta.observe/v1") => {
+            Some(NodeAdapterVerdict {
+                outcome: "satisfied",
+                evidence: json!({
+                    "stimulus_digest": node_digest(&[
+                        "aiko.meta.observe/v1",
+                        &node.action,
+                        &node.plan,
+                    ]),
+                    "context_references": [],
+                }),
+                detail: "Committed a bounded stimulus digest with no ambient context".into(),
+            })
+        }
+        ("aiko-meta-agent", "1.0.0", "aiko-meta-agent--recall", "aiko.meta.recall/v1") => {
+            let references = node
+                .inputs
+                .get("context_references")
+                .and_then(Value::as_array)?;
+            if !references
+                .iter()
+                .all(|value| value.as_str().is_some_and(valid_node_digest))
+            {
+                return Some(NodeAdapterVerdict {
+                    outcome: "died",
+                    evidence: json!({}),
+                    detail: "Recall received a non-digest context reference".into(),
+                });
+            }
+            Some(NodeAdapterVerdict {
+                outcome: "satisfied",
+                evidence: json!({"artifact_digests": references}),
+                detail: "Resolved only the explicitly named artifact digests".into(),
+            })
+        }
+        ("aiko-meta-agent", "1.0.0", "aiko-meta-agent--route", "aiko.meta.route/v1") => {
+            Some(NodeAdapterVerdict {
+                outcome: "satisfied",
+                evidence: json!({
+                    "selected_skill_refs": selected_skill_refs,
+                    "route_reason": "Contract materialized the exact admitted Skill set before node leasing",
+                }),
+                detail:
+                    "Projected the already-admitted graph selection without a second model route"
+                        .into(),
+            })
+        }
+        ("aiko-meta-agent", "1.0.0", "aiko-meta-agent--settle", "aiko.meta.settle/v1") => {
+            let verdict = node.inputs.get("verdict")?.as_object();
+            let completed = verdict
+                .and_then(|value| value.get("completed"))
+                .and_then(Value::as_bool);
+            let retryable = verdict
+                .and_then(|value| value.get("retryable"))
+                .and_then(Value::as_bool);
+            let evidence = verdict
+                .and_then(|value| value.get("evidence"))
+                .and_then(Value::as_str)
+                .map(privacy_safe_detail)
+                .filter(|value| !value.is_empty());
+            let settlement = match (completed, retryable, evidence) {
+                (Some(completed), Some(retryable), Some(evidence)) => json!({
+                    "completed": completed,
+                    "retryable": retryable,
+                    "evidence": evidence,
+                }),
+                _ => json!({
+                    "completed": false,
+                    "retryable": true,
+                    "evidence": "Evaluator verdict was not a grounded settlement object",
+                }),
+            };
+            Some(NodeAdapterVerdict {
+                outcome: "satisfied",
+                evidence: json!({"settlement": settlement}),
+                detail: "Projected the evaluator verdict into the terminal settlement".into(),
+            })
+        }
+        _ => Some(NodeAdapterVerdict {
+            outcome: "died",
+            evidence: json!({}),
+            detail: "Contract released an unknown deterministic host adapter".into(),
+        }),
+    }
+}
+
+fn privacy_safe_detail(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_control() || character.is_whitespace())
+        .take(2000)
+        .collect()
+}
+
+fn embedded_node_result(value: &str) -> Option<Value> {
+    value
+        .char_indices()
+        .rev()
+        .filter(|(_, character)| *character == '{')
+        .filter_map(|(start, _)| {
+            serde_json::Deserializer::from_str(&value[start..])
+                .into_iter::<Value>()
+                .next()
+                .and_then(Result::ok)
+        })
+        .find(|candidate| {
+            candidate
+                .get("completed")
+                .and_then(Value::as_bool)
+                .is_some()
+                && candidate
+                    .get("retryable")
+                    .and_then(Value::as_bool)
+                    .is_some()
+                && candidate
+                    .get("evidence")
+                    .and_then(Value::as_object)
+                    .is_some()
+                && candidate.get("summary").and_then(Value::as_str).is_some()
+        })
+}
+
+fn verdict_from_structured(
+    node: &NeuronSkillNodeOccurrence,
+    structured: Option<&Value>,
+) -> NodeAdapterVerdict {
+    let completed = structured
+        .and_then(|value| value.get("completed"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let retryable = structured
+        .and_then(|value| value.get("retryable"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let evidence = structured
+        .and_then(|value| value.get("evidence"))
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let exact_evidence = evidence.as_object().is_some_and(|object| {
+        object.len() == node.evidence_requirements.len()
+            && node
+                .evidence_requirements
+                .iter()
+                .all(|requirement| object.contains_key(requirement))
+    });
+    let summary = structured
+        .and_then(|value| value.get("summary"))
+        .and_then(Value::as_str)
+        .map(privacy_safe_detail)
+        .filter(|detail| !detail.is_empty())
+        .unwrap_or_else(|| "Neuron worker did not return a valid bounded result".into());
+    if completed && exact_evidence {
+        NodeAdapterVerdict {
+            outcome: "satisfied",
+            evidence,
+            detail: summary,
+        }
+    } else {
+        NodeAdapterVerdict {
+            outcome: if retryable { "retry" } else { "died" },
+            evidence: json!({}),
+            detail: summary,
+        }
+    }
+}
+
+/// Early product-binary entrypoint for one digest-pinned script Neuron.
+///
+/// The parent adapter supplies only this private envelope and typed stdio. The
+/// runner applies Aiko's existing kernel sandbox before starting the script and
+/// fails closed when that membrane is unavailable. It must run before the
+/// ordinary product lifecycle initializes networked or mutable services.
+pub fn maybe_run_admitted_script_sandbox_runner() -> Option<i32> {
+    if std::env::var(SCRIPT_RUNNER_MARKER).ok().as_deref() != Some("1") {
+        return None;
+    }
+    let run = || -> Result<i32, String> {
+        let script = std::env::var_os(SCRIPT_RUNNER_PATH)
+            .map(PathBuf::from)
+            .ok_or_else(|| "missing admitted script path".to_string())?;
+        let skill_root = std::env::var_os(SCRIPT_RUNNER_SKILL_ROOT)
+            .map(PathBuf::from)
+            .ok_or_else(|| "missing admitted Skill root".to_string())?;
+        let cwd = std::env::var_os(SCRIPT_RUNNER_CWD)
+            .map(PathBuf::from)
+            .ok_or_else(|| "missing admitted script workspace".to_string())?;
+        let expected_digest = std::env::var(SCRIPT_RUNNER_DIGEST)
+            .map_err(|_| "missing admitted script digest".to_string())?;
+        let sandbox = std::env::var(SCRIPT_RUNNER_SANDBOX)
+            .map_err(|_| "missing admitted script sandbox".to_string())?;
+        if sandbox != "read-only" {
+            return Err("script Neuron requested an unsupported sandbox profile".into());
+        }
+        if !valid_node_digest(&expected_digest) {
+            return Err("script Neuron supplied an invalid digest".into());
+        }
+        let metadata = std::fs::symlink_metadata(&script)
+            .map_err(|_| "admitted script metadata is unavailable".to_string())?;
+        if metadata.file_type().is_symlink()
+            || !metadata.is_file()
+            || metadata.len() > SCRIPT_FILE_LIMIT as u64
+        {
+            return Err("admitted script is not a bounded regular file".into());
+        }
+        let script = dunce::canonicalize(&script)
+            .map_err(|_| "admitted script is unresolved".to_string())?;
+        let skill_root = dunce::canonicalize(&skill_root)
+            .map_err(|_| "admitted Skill root is unresolved".to_string())?;
+        if !skill_root.is_dir() || !script.starts_with(&skill_root) {
+            return Err("admitted script escaped its Skill root".into());
+        }
+        let cwd =
+            dunce::canonicalize(&cwd).map_err(|_| "script workspace is unresolved".to_string())?;
+        let observed = std::fs::read(&script)
+            .ok()
+            .filter(|bytes| bytes.len() <= SCRIPT_FILE_LIMIT)
+            .map(|bytes| format!("{:x}", Sha256::digest(bytes)))
+            .ok_or_else(|| "admitted script could not be read within its byte cap".to_string())?;
+        if observed != expected_digest {
+            return Err("admitted script changed before sandbox entry".into());
+        }
+
+        let profile = sandbox
+            .parse::<xai_grok_sandbox::ProfileName>()
+            .map_err(|_| "script Neuron supplied an invalid sandbox profile".to_string())?;
+        xai_grok_sandbox::set_configured_profile(&sandbox);
+        let mut manager = xai_grok_sandbox::SandboxManager::new(profile, &cwd);
+        manager
+            .apply_with_read_only(&cwd, std::slice::from_ref(&skill_root))
+            .map_err(|error| format!("kernel sandbox rejected the Skill root: {error}"))?;
+        if !manager.is_applied() {
+            return Err("the requested kernel sandbox could not be enforced".into());
+        }
+        manager.install();
+        if xai_grok_sandbox::profile_name() != Some(sandbox.as_str()) {
+            return Err("the active kernel sandbox does not match the node".into());
+        }
+
+        // Re-read after the irreversible membrane is active. This closes the
+        // admission-to-execution mutation window before the final exec.
+        let observed = std::fs::read(&script)
+            .ok()
+            .filter(|bytes| bytes.len() <= SCRIPT_FILE_LIMIT)
+            .map(|bytes| format!("{:x}", Sha256::digest(bytes)))
+            .ok_or_else(|| "sandboxed script could not be re-verified".to_string())?;
+        if observed != expected_digest {
+            return Err("admitted script changed at the sandbox boundary".into());
+        }
+
+        let mut command = std::process::Command::new(&script);
+        command
+            .arg("--neuron-stdio")
+            .current_dir(&cwd)
+            .env_clear()
+            .env("HOME", &cwd)
+            .env("TMPDIR", &cwd)
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        if let Some(path) = std::env::var_os("PATH") {
+            command.env("PATH", path);
+        }
+        #[cfg(target_os = "linux")]
+        if xai_grok_sandbox::should_restrict_child_network() {
+            use std::os::unix::process::CommandExt;
+            unsafe {
+                command.pre_exec(|| xai_grok_sandbox::child_net::install_child_network_filter());
+            }
+        }
+        let status = command
+            .status()
+            .map_err(|_| "sandboxed admitted script could not start".to_string())?;
+        Ok(status.code().unwrap_or(1))
+    };
+    Some(match run() {
+        Ok(code) => code,
+        Err(detail) => {
+            eprintln!("Aiko Neuron script runner rejected execution: {detail}");
+            126
+        }
+    })
+}
+
+async fn read_bounded_script_stream<R>(mut stream: R, limit: usize) -> std::io::Result<Vec<u8>>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut output = Vec::with_capacity(limit.min(8 * 1024));
+    let mut chunk = [0_u8; 8 * 1024];
+    loop {
+        let read = stream.read(&mut chunk).await?;
+        if read == 0 {
+            return Ok(output);
+        }
+        if output.len().saturating_add(read) > limit {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "admitted script exceeded its output envelope",
+            ));
+        }
+        output.extend_from_slice(&chunk[..read]);
+    }
+}
+
+async fn execute_admitted_script(
+    runner_executable: Option<&Path>,
+    cwd: &Path,
+    node: &NeuronSkillNodeOccurrence,
+    script: &Path,
+    skill_root: &Path,
+) -> NodeAdapterVerdict {
+    if !node.read_only || node.effect_scope != "read_only" {
+        return NodeAdapterVerdict {
+            outcome: "died",
+            evidence: json!({}),
+            detail: "script Neurons are pure producers; effects require a declarative adapter"
+                .into(),
+        };
+    }
+    let request = match serde_json::to_vec(&json!({
+        "schema": "aiko.neuron-script.invoke/v1",
+        "inputs": &node.inputs,
+        "evidence_requirements": &node.evidence_requirements,
+    })) {
+        Ok(request) if request.len() <= SCRIPT_INPUT_LIMIT => request,
+        _ => {
+            return NodeAdapterVerdict {
+                outcome: "died",
+                evidence: json!({}),
+                detail: "admitted script input exceeded the bounded adapter envelope".into(),
+            };
+        }
+    };
+    let mut command = Command::new(runner_executable.unwrap_or(script));
+    command
+        .current_dir(cwd)
+        .env_clear()
+        .env("HOME", cwd)
+        .env("TMPDIR", cwd)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    if runner_executable.is_some() {
+        let Some(script_digest) = node.script_digest.as_deref() else {
+            return NodeAdapterVerdict {
+                outcome: "died",
+                evidence: json!({}),
+                detail: "admitted script did not carry its pinned digest".into(),
+            };
+        };
+        command
+            .env(SCRIPT_RUNNER_MARKER, "1")
+            .env(SCRIPT_RUNNER_PATH, script)
+            .env(SCRIPT_RUNNER_SKILL_ROOT, skill_root)
+            .env(SCRIPT_RUNNER_DIGEST, script_digest)
+            .env(SCRIPT_RUNNER_CWD, cwd)
+            // Script Neurons are capability-read producers. A stronger
+            // read-only membrane prevents them from performing the effect
+            // they may only describe in their returned decision.
+            .env(SCRIPT_RUNNER_SANDBOX, "read-only");
+    } else {
+        command.arg("--neuron-stdio");
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        command.env("PATH", path);
+    }
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(_) => {
+            return NodeAdapterVerdict {
+                outcome: "died",
+                evidence: json!({}),
+                detail: "digest-pinned admitted script could not start".into(),
+            };
+        }
+    };
+    let Some(mut stdin) = child.stdin.take() else {
+        return NodeAdapterVerdict {
+            outcome: "died",
+            evidence: json!({}),
+            detail: "admitted script did not expose its typed stdin receptor".into(),
+        };
+    };
+    let Some(stdout) = child.stdout.take() else {
+        return NodeAdapterVerdict {
+            outcome: "died",
+            evidence: json!({}),
+            detail: "admitted script did not expose its typed stdout receptor".into(),
+        };
+    };
+    let Some(stderr) = child.stderr.take() else {
+        return NodeAdapterVerdict {
+            outcome: "died",
+            evidence: json!({}),
+            detail: "admitted script did not expose its bounded stderr channel".into(),
+        };
+    };
+    match tokio::time::timeout(Duration::from_secs(5), stdin.write_all(&request)).await {
+        Ok(Ok(())) => {}
+        _ => {
+            return NodeAdapterVerdict {
+                outcome: "retry",
+                evidence: json!({}),
+                detail: "admitted script did not consume its bounded stimulus".into(),
+            };
+        }
+    }
+    drop(stdin);
+    let execution = tokio::time::timeout(
+        Duration::from_millis(node.timeout_ms.clamp(1, 3_600_000)),
+        async {
+            tokio::try_join!(
+                child.wait(),
+                read_bounded_script_stream(stdout, SCRIPT_STDOUT_LIMIT),
+                read_bounded_script_stream(stderr, SCRIPT_STDERR_LIMIT),
+            )
+        },
+    )
+    .await;
+    let structured = match execution {
+        Ok(Ok((status, stdout, _stderr))) if status.success() => {
+            serde_json::from_slice::<Value>(&stdout)
+                .ok()
+                .filter(|value| {
+                    value.get("schema").and_then(Value::as_str)
+                        == Some("aiko.neuron-script.result/v1")
+                })
+        }
+        _ => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            None
+        }
+    };
+    verdict_from_structured(node, structured.as_ref())
+}
+
+async fn execute_neuron_skill_adapter(
+    executable: PathBuf,
+    cwd: PathBuf,
+    node: NeuronSkillNodeOccurrence,
+    selected_skill_refs: Vec<String>,
+) -> (NeuronSkillNodeOccurrence, NodeAdapterVerdict) {
+    if node.worker == "host" {
+        let verdict = native_host_verdict(&node, &selected_skill_refs).unwrap_or_else(|| {
+            NodeAdapterVerdict {
+                outcome: "died",
+                evidence: json!({}),
+                detail: "Host Neuron did not name a versioned adapter".into(),
+            }
+        });
+        return (node, verdict);
+    }
+    let script = match node.script.as_deref() {
+        Some(relative) => match node.script_digest.as_deref().and_then(|digest| {
+            skill_registry::resolve_script(
+                &cwd,
+                &node.skill_id,
+                &node.skill_version,
+                &node.key,
+                relative,
+                digest,
+            )
+        }) {
+            Some(path) => Some(path),
+            None => {
+                return (
+                    node,
+                    NodeAdapterVerdict {
+                        outcome: "died",
+                        evidence: json!({}),
+                        detail: "admitted script could not be resolved through the active Skill"
+                            .into(),
+                    },
+                );
+            }
+        },
+        None => None,
+    };
+    if node.worker == "script" {
+        let verdict = match (node.adapter.as_deref(), script.as_ref()) {
+            (Some("aiko.neuron-json-stdio/v1"), Some(script)) => {
+                execute_admitted_script(
+                    Some(&executable),
+                    &cwd,
+                    &node,
+                    &script.path,
+                    &script.skill_root,
+                )
+                .await
+            }
+            _ => NodeAdapterVerdict {
+                outcome: "died",
+                evidence: json!({}),
+                detail: "script Neuron did not bind the admitted JSON-stdio adapter".into(),
+            },
+        };
+        return (node, verdict);
+    }
+    let adapter_rule = match node.worker.as_str() {
+        "aiko" => {
+            "Reason and act as one bounded Aiko Neuron; do not delegate or create hidden subagents."
+        }
+        _ => {
+            return (
+                node,
+                NodeAdapterVerdict {
+                    outcome: "died",
+                    evidence: json!({}),
+                    detail: "Contract released an unsupported Skill worker".into(),
+                },
+            );
+        }
+    };
+    let rules = format!(
+        "This process is one hard-typed Neuron firing. {adapter_rule} \
+         The only prior values you may use are the named inputs in the prompt. \
+         Stay inside effect_scope={} and sandbox={}; never widen Caps. \
+         This is an execution request, not a request to announce a plan: use the \
+         available tools now for every read, edit, command, or check required by \
+         the node, and do not emit the final object while ordinary in-scope work \
+         remains. \
+         The completed field is node-local, not the root goal: return completed=true \
+         exactly when this firing performed its node plan and produced every declared \
+         evidence key. Never return completed=false merely because a downstream node \
+         or the root goal remains open; false is reserved for an observed blocker or \
+         failed in-scope operation. \
+         Acknowledgement is not postcondition proof. Your final response must be one \
+         compact JSON object with exactly completed, retryable, evidence, and summary; \
+         evidence must contain exactly the declared keys.",
+        node.effect_scope, node.sandbox,
+    );
+    let prompt = format!(
+        "Fire admitted node {} ({}) exactly once.\nPlan: {}\nNamed inputs: {}\n\
+         Required evidence keys: {}\nExecute the node to settlement now, then return the \
+         required JSON object as the final response. Do not return a progress report.",
+        node.key,
+        node.action,
+        node.plan,
+        serde_json::to_string(&node.inputs).unwrap_or_else(|_| "{}".into()),
+        serde_json::to_string(&node.evidence_requirements).unwrap_or_else(|_| "[]".into()),
+    );
+    // Tool-capable execution and hard typing are deliberately two phases.
+    // Some providers treat response_format/json_schema as an instruction to
+    // emit immediately, before entering the tool loop. The producer therefore
+    // runs in ordinary agent mode under the node's Contract row and sandbox.
+    // Its bounded final report is then parsed directly when exact, or passed
+    // through a read-only schema adapter. Contract still accepts only the
+    // exact typed result below.
+    let mut producer = Command::new(&executable);
+    producer
+        .arg("--cwd")
+        .arg(&cwd)
+        .arg("--no-auto-update")
+        .arg("--verbatim")
+        .arg("--output-format")
+        .arg("json")
+        .arg("--rules")
+        .arg(rules)
+        .arg("--no-subagents")
+        .arg("--no-plan")
+        .arg("--no-ask-user")
+        .arg("--no-memory")
+        .arg("--no-wait-for-background")
+        .arg("--always-approve")
+        .arg("--sandbox")
+        .arg(&node.sandbox)
+        .arg("--max-turns")
+        .arg("24")
+        .arg("--single")
+        .arg(prompt)
+        .env("AIKO_CONTRACT_COORDINATOR", "off")
+        .env("AIKO_CONTRACT_ID", &node.node_id)
+        .env("AIKO_NEURON_NODE_EXECUTION", &node.execution_id)
+        .env("AIKO_NEURON_EFFECT_SCOPE", &node.effect_scope)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let producer_output = tokio::time::timeout(
+        Duration::from_millis(node.timeout_ms.clamp(1, 3_600_000)),
+        producer.output(),
+    )
+    .await;
+    let producer_json = match producer_output {
+        Ok(Ok(output)) if output.status.success() && output.stdout.len() <= 256 * 1024 => {
+            serde_json::from_slice::<Value>(&output.stdout).ok()
+        }
+        _ => None,
+    };
+    let producer_text = producer_json
+        .as_ref()
+        .and_then(|json| json.get("text"))
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty());
+    let mut structured = producer_json
+        .as_ref()
+        .and_then(|json| json.get("structuredOutput").cloned())
+        .or_else(|| {
+            producer_text
+                .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                .or_else(|| producer_text.and_then(embedded_node_result))
+        });
+
+    if structured.is_none()
+        && let Some(report) = producer_text.map(privacy_safe_detail)
+    {
+        let typing_prompt = format!(
+            "Type and judge one completed Neuron execution report using only the bounded \
+             report below. Do not use tools and do not infer unobserved success.\n\
+             Node plan: {}\nRequired evidence keys: {}\nExecution report:\n{}",
+            node.plan,
+            serde_json::to_string(&node.evidence_requirements).unwrap_or_else(|_| "[]".into()),
+            report,
+        );
+        let mut typer = Command::new(&executable);
+        typer
+            .arg("--cwd")
+            .arg(&cwd)
+            .arg("--no-auto-update")
+            .arg("--verbatim")
+            .arg("--output-format")
+            .arg("json")
+            .arg("--json-schema")
+            .arg(node_result_schema(&node.evidence_requirements))
+            .arg("--rules")
+            .arg(
+                "You are the read-only hard-type boundary for one Neuron firing. \
+                 Use only the supplied execution report. Set completed=true only when \
+                 it contains observed evidence that the node plan ran. Preserve an \
+                 authoritative admitted-script result exactly.",
+            )
+            .arg("--no-subagents")
+            .arg("--no-plan")
+            .arg("--no-ask-user")
+            .arg("--no-memory")
+            .arg("--no-wait-for-background")
+            .arg("--sandbox")
+            .arg("read-only")
+            .arg("--max-turns")
+            .arg("2")
+            .arg("--single")
+            .arg(typing_prompt)
+            .env("AIKO_CONTRACT_COORDINATOR", "off")
+            .env("AIKO_CONTRACT_ID", &node.node_id)
+            .env("AIKO_NEURON_NODE_EXECUTION", &node.execution_id)
+            .env("AIKO_NEURON_EFFECT_SCOPE", "read_only")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        let typed_output = tokio::time::timeout(Duration::from_secs(30), typer.output()).await;
+        structured = match typed_output {
+            Ok(Ok(output)) if output.status.success() && output.stdout.len() <= 128 * 1024 => {
+                serde_json::from_slice::<Value>(&output.stdout)
+                    .ok()
+                    .and_then(|json| json.get("structuredOutput").cloned())
+            }
+            _ => None,
+        };
+    }
+    let verdict = verdict_from_structured(&node, structured.as_ref());
+    (node, verdict)
+}
+
+struct FiredNeuronSkillNode {
+    verdict: NodeAdapterVerdict,
+    decision: Option<NeuronDecision>,
+    decided_at_ms: u64,
+}
+
+/// The production execution boundary returns the canonical Neuron Decision.
+/// Adapter verdicts are private observations used to construct that decision;
+/// Contract receives and validates the Decision itself and never synthesizes it.
+async fn execute_neuron_skill_node(
+    executable: PathBuf,
+    cwd: PathBuf,
+    node: NeuronSkillNodeOccurrence,
+    selected_skill_refs: Vec<String>,
+) -> (NeuronSkillNodeOccurrence, FiredNeuronSkillNode) {
+    let (node, verdict) =
+        execute_neuron_skill_adapter(executable, cwd, node, selected_skill_refs).await;
+    let decided_at_ms = contract_now_ms();
+    let decision = skill_node_decision(&node, verdict.outcome, &verdict.evidence, decided_at_ms);
+    (
+        node,
+        FiredNeuronSkillNode {
+            verdict,
+            decision,
+            decided_at_ms,
+        },
+    )
+}
+
+fn graph_terminal_verdict(terminal: Option<Value>) -> ContractGraphVerdict {
+    let settlement = terminal.as_ref().and_then(|value| value.get("settlement"));
+    let completed = settlement
+        .and_then(|value| value.get("completed"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let retryable = settlement
+        .and_then(|value| value.get("retryable"))
+        .and_then(Value::as_bool)
+        .unwrap_or(!completed);
+    let evidence = settlement
+        .and_then(|value| value.get("evidence"))
+        .and_then(Value::as_str)
+        .map(privacy_safe_detail)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "Meta-Agent settlement lacked postcondition evidence".into());
+    ContractGraphVerdict {
+        completed,
+        retryable,
+        evidence,
+    }
+}
+
+/// Execute a durable root through Contract's admitted graph. `None` means the
+/// ABI/explicit rollback selected the legacy adapter; an ABI-10 graph failure
+/// returns a retry verdict and never falls through to the opaque root worker.
+pub async fn execute_claim_neuron_graph(
+    executable: PathBuf,
+    owner: String,
+    claim: &ContractClaim,
+    cwd: PathBuf,
+) -> Option<ContractGraphVerdict> {
+    if !neuron_graph_execution_enabled() {
+        return None;
+    }
+    let Some((_, selected_skill_refs)) = expand_claim_cell_with_routes(
+        claim.contract_id.clone(),
+        claim.prompt.clone(),
+        cwd.to_string_lossy().into_owned(),
+    )
+    .await
+    else {
+        return Some(ContractGraphVerdict {
+            completed: false,
+            retryable: true,
+            evidence: "Contract rejected Meta-Agent graph materialization".into(),
+        });
+    };
+    let mut waiting_passes = 0usize;
+    for _ in 0..64 {
+        let Some(wave) = claim_neuron_skill_nodes(
+            claim.contract_id.clone(),
+            claim.occurrence.clone(),
+            owner.clone(),
+            3_660_000,
+            DEFAULT_CONTRACT_MAX_CONCURRENCY as usize,
+        )
+        .await
+        else {
+            return Some(ContractGraphVerdict {
+                completed: false,
+                retryable: true,
+                evidence: "Contract could not lease the next Neuron wave".into(),
+            });
+        };
+        match wave.status {
+            NeuronSkillWaveStatus::Complete => {
+                return Some(graph_terminal_verdict(wave.terminal_evidence));
+            }
+            NeuronSkillWaveStatus::Held => {
+                return Some(ContractGraphVerdict {
+                    completed: false,
+                    retryable: true,
+                    evidence: "Contract held a consequential Neuron pending authority".into(),
+                });
+            }
+            NeuronSkillWaveStatus::Failed => {
+                return Some(ContractGraphVerdict {
+                    completed: false,
+                    retryable: false,
+                    evidence: "An admitted Neuron exhausted its bounded attempts".into(),
+                });
+            }
+            NeuronSkillWaveStatus::Waiting => {
+                waiting_passes += 1;
+                if waiting_passes >= 50 {
+                    return Some(ContractGraphVerdict {
+                        completed: false,
+                        retryable: true,
+                        evidence: "Neuron graph remained leased by another worker".into(),
+                    });
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            NeuronSkillWaveStatus::Wave => {
+                waiting_passes = 0;
+                if wave.nodes.is_empty() {
+                    return Some(ContractGraphVerdict {
+                        completed: false,
+                        retryable: true,
+                        evidence: "Contract returned an empty runnable Neuron wave".into(),
+                    });
+                }
+                let results = futures_util::future::join_all(wave.nodes.into_iter().map(|node| {
+                    execute_neuron_skill_node(
+                        executable.clone(),
+                        cwd.clone(),
+                        node,
+                        selected_skill_refs.clone(),
+                    )
+                }))
+                .await;
+                for (node, fired) in results {
+                    let Some(decision) = fired.decision else {
+                        return Some(ContractGraphVerdict {
+                            completed: false,
+                            retryable: false,
+                            evidence: "Aiko could not encode the canonical Neuron decision".into(),
+                        });
+                    };
+                    let settlement = NeuronSkillNodeSettlement {
+                        root_id: claim.contract_id.clone(),
+                        root_occurrence: claim.occurrence.clone(),
+                        owner: owner.clone(),
+                        execution_id: node.execution_id,
+                        attempt: node.attempt,
+                        outcome: fired.verdict.outcome.into(),
+                        evidence: fired.verdict.evidence,
+                        detail: fired.verdict.detail,
+                        decision,
+                    };
+                    if settle_neuron_skill_node(settlement, fired.decided_at_ms)
+                        .await
+                        .is_none()
+                    {
+                        return Some(ContractGraphVerdict {
+                            completed: false,
+                            retryable: true,
+                            evidence: "Contract rejected a Neuron settlement".into(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Some(ContractGraphVerdict {
+        completed: false,
+        retryable: true,
+        evidence: "Neuron graph exceeded its bounded wave budget".into(),
+    })
+}
+
 /// Persist the execution outcome for a previously leased occurrence.
 pub async fn settle_contract_claim(
     owner: String,
@@ -1166,9 +2261,8 @@ fn pending_contract_roots() -> &'static Mutex<HashMap<String, String>> {
 }
 
 fn pending_turn_continuations() -> &'static Mutex<HashMap<String, membrane::ContractContinuation>> {
-    static CONTINUATIONS: OnceLock<
-        Mutex<HashMap<String, membrane::ContractContinuation>>,
-    > = OnceLock::new();
+    static CONTINUATIONS: OnceLock<Mutex<HashMap<String, membrane::ContractContinuation>>> =
+        OnceLock::new();
     CONTINUATIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -1386,68 +2480,6 @@ fn bounded_env_u32(name: &str, default: u32, maximum: u32) -> u32 {
         .min(maximum)
 }
 
-/// Fractal cell spine: one contract primitive, recursive self-organization.
-/// Shape mirrors plasma-ai/fractal (hierarchical agent loops, hard caps) but
-/// every node is a contract row — no second substrate.
-///
-///   observe  →  agent:aiko  →  verify  →  posthook:feedback
-///                  ↑___________________________|
-///              (ledger feedback re-enters next wave / next turn)
-fn cell_spine_children(goal: &str) -> Vec<Value> {
-    vec![
-        json!({
-            "key": "observe",
-            "plan": format!("Observe privacy-safe current state and relevant evidence for: {goal}"),
-            "action": "contract:observe_state",
-            "authorization": "approved",
-        }),
-        json!({
-            "key": "agent",
-            "plan": format!("Aiko agent executes the cell goal (stateless worker, parent-pointed): {goal}"),
-            "action": "agent:aiko",
-            "depends_on": ["observe"],
-            "authorization": "approved",
-        }),
-        json!({
-            "key": "verify",
-            "plan": format!("Verify externally grounded outcomes for: {goal}"),
-            "action": "contract:verify",
-            "depends_on": ["agent"],
-            "authorization": "approved",
-        }),
-        json!({
-            "key": "feedback",
-            "plan": format!(
-                "Close the feedback loop: record outcome, residual, and next-wave pointers for: {goal}"
-            ),
-            "action": "posthook:feedback",
-            "depends_on": ["verify"],
-            "authorization": "approved",
-        }),
-    ]
-}
-
-/// Build the full expand child list: spine + skill DAG nodes, bounded so total
-/// never exceeds `max_children` (muscle.MAX_PARALLEL / env cap).
-fn cell_expand_children(goal: &str, skill_children: Vec<Value>, max_children: usize) -> Vec<Value> {
-    let mut children = cell_spine_children(goal);
-    let room = max_children.saturating_sub(children.len());
-    for child in skill_children.into_iter().take(room) {
-        // Skill nodes hang off observe so they wave-parallel with agent when
-        // independent; effect-gated nodes keep their own depends_on.
-        let mut child = child;
-        if child
-            .get("depends_on")
-            .and_then(Value::as_array)
-            .is_none_or(|d| d.is_empty())
-        {
-            child["depends_on"] = json!(["observe"]);
-        }
-        children.push(child);
-    }
-    children
-}
-
 async fn expand_turn_root(turn: &TurnContract, cwd: &Path) -> Option<Value> {
     let depth = bounded_env_u32("AIKO_CONTRACT_DEPTH", 0, 16);
     let max_depth = bounded_env_u32("AIKO_CONTRACT_MAX_DEPTH", DEFAULT_CONTRACT_MAX_DEPTH, 16);
@@ -1465,9 +2497,9 @@ async fn expand_turn_root(turn: &TurnContract, cwd: &Path) -> Option<Value> {
         DEFAULT_CONTRACT_MAX_CONCURRENCY,
         16,
     );
-    let skill_plan = skill_registry::plan(&turn.goal, cwd);
-    let children = cell_expand_children(&turn.goal, skill_plan.children, max_children);
-    if children.is_empty() {
+    let skill_plan = skill_registry::plan_bounded(&turn.goal, cwd, max_children);
+    if !skill_plan.core_admitted || skill_plan.children.is_empty() {
+        tracing::warn!("admitted Aiko Meta-Agent Skill graph was unavailable");
         return None;
     }
     let request = json!({
@@ -1475,14 +2507,15 @@ async fn expand_turn_root(turn: &TurnContract, cwd: &Path) -> Option<Value> {
         "plan": turn.goal,
         "action": "neuron:cell",
         "cwd": cwd,
-        "agent": "aiko-native",
-        "children": children,
+        "agent": "skill:aiko-meta-agent@1.0.0",
+        "children": skill_plan.children,
         "selected_skills": skill_plan.selected,
+        "core_admitted": skill_plan.core_admitted,
         "depth": depth,
         "max_depth": max_depth,
         "max_children": max_children,
         "max_concurrency": max_concurrency,
-        "execution_model": "fractal_contract_cell",
+        "execution_model": "typed_neuron_skill_graph",
     });
     tokio::task::spawn_blocking(move || native_contract()?.expand_graph(&request))
         .await
@@ -1568,9 +2601,14 @@ impl TurnContract {
     /// Record the agent verdict without exposing response content as proof.
     pub async fn satisfy(self) {
         let id = self.id.clone();
+        let goal = self.goal.clone();
         let marked = tokio::task::spawn_blocking({
             let id = id.clone();
-            move || native_contract().is_some_and(|contract| contract.satisfy_grounded(&id))
+            move || {
+                native_contract().is_some_and(|contract| {
+                    contract.admit_turn_terminal(&id, &goal) && contract.satisfy_grounded(&id)
+                })
+            }
         })
         .await
         .unwrap_or(false);
@@ -3431,6 +4469,7 @@ fn muscle_after_state(
 pub struct ActiveToolContract {
     root_id: String,
     execution_id: String,
+    effect_admission: Option<ToolEffectAdmission>,
 }
 
 /// Runtime authorization produced by the Contract membrane.
@@ -3504,6 +4543,7 @@ fn binding_or_policy(
 
 pub fn bind_active_tool_contract(
     session_id: &str,
+    call_id: &str,
     tool_name: &str,
     raw_arguments: Option<&str>,
     read_only: bool,
@@ -3529,22 +4569,67 @@ pub fn bind_active_tool_contract(
         "root_id": tool_root,
         "plan": plan,
         "action": format!("tool:{tool_name}"),
+        "execution_model": "typed_neuron_skill_graph",
         "children": [
             {
                 "key": "prerequisite",
                 "plan": format!("Validate structural arguments and availability for {tool_name}"),
-                "action": "tool_prerequisite"
+                "action": "tool_prerequisite",
+                "depends_on": [],
+                "input_bindings": {},
+                "requires_authorization": false,
+                "authorization": "approved",
+                "effect_scope": "read_only",
+                "read_only": true,
+                "reversible": false,
+                "timeout_ms": 30_000,
+                "skill_id": "aiko-tool-dispatch",
+                "skill_version": "1.0.0",
+                "worker": "host",
+                "adapter": "aiko.tool.prerequisite/v1",
+                "evidence": ["arguments_validated"],
+                "activation": "runtime",
+                "admission": "host_builtin"
             },
             {
                 "key": "authorization",
                 "plan": format!("Record the approved native gate decision for {tool_name}"),
-                "action": "tool_authorization"
+                "action": "tool_authorization",
+                "depends_on": [],
+                "input_bindings": {},
+                "requires_authorization": false,
+                "authorization": "approved",
+                "effect_scope": "read_only",
+                "read_only": true,
+                "reversible": false,
+                "timeout_ms": 30_000,
+                "skill_id": "aiko-tool-dispatch",
+                "skill_version": "1.0.0",
+                "worker": "host",
+                "adapter": "aiko.tool.authorization/v1",
+                "evidence": ["authority_recorded"],
+                "activation": "runtime",
+                "admission": "host_builtin"
             },
             {
                 "key": "execution",
                 "plan": format!("Execute {tool_name} and ground its observed outcome"),
                 "action": format!("tool:{tool_name}"),
-                "depends_on": ["prerequisite", "authorization"]
+                "depends_on": ["prerequisite", "authorization"],
+                "input_bindings": {},
+                "requires_authorization": false,
+                "authorization": "approved",
+                "effect_scope": if read_only { "read_only" } else { "tool_consequential" },
+                "read_only": read_only,
+                "reversible": false,
+                "timeout_ms": 3_600_000,
+                "skill_id": "aiko-tool-dispatch",
+                "skill_version": "1.0.0",
+                "worker": "host",
+                "adapter": "aiko.tool.execution/v1",
+                "evidence": ["environment_receipt"],
+                "activation": "runtime",
+                "admission": "host_builtin"
             }
         ]
     })) else {
@@ -3585,10 +4670,37 @@ pub fn bind_active_tool_contract(
             "Contract prerequisite authorization failed",
         );
     }
+    // `contract_expand_json` returns the durable 8-character child row id.
+    // The canonical Neuron wire boundary intentionally requires a 64-character
+    // content identity. Keep both identities: the row id settles the graph
+    // child, while this domain-separated digest identifies the exact proposed
+    // adapter effect. Passing the row id through here makes every firing fail
+    // validation and deadlocks all consequential tools behind Contract HOLD.
+    let effect_execution_id = node_digest(&[
+        "aiko.tool-effect.execution/v1",
+        &root_id,
+        &tool_root,
+        &execution_id,
+        call_id,
+    ]);
+    let Some(effect_admission) = native.admit_tool_effect(
+        &root_id,
+        &effect_execution_id,
+        call_id,
+        tool_name,
+        raw_arguments.unwrap_or("{}"),
+        read_only,
+        contract_now_ms(),
+    ) else {
+        return ToolContractBinding::Hold {
+            reason: "canonical Neuron effect admission failed or requires reconciliation".into(),
+        };
+    };
     binding_or_policy(
         Some(ActiveToolContract {
             root_id: tool_root,
             execution_id,
+            effect_admission,
         }),
         read_only,
         "unreachable",
@@ -3608,6 +4720,20 @@ pub fn settle_active_tool_contract(binding: &ToolContractBinding, success: bool)
     let Some(native) = native_contract() else {
         return;
     };
+    if let Some(admission) = &contract.effect_admission
+        && !native.settle_tool_effect(admission, success, contract_now_ms())
+    {
+        xai_grok_telemetry::unified_log::error(
+            "contract.neuron.effect.reconciliation_required",
+            None,
+            Some(json!({
+                "firing_id": admission.firing_id,
+                "effect_index": admission.effect_index,
+                "idempotency_key": admission.idempotency_key,
+            })),
+        );
+        return;
+    }
     if success {
         if native.satisfy(&contract.execution_id) {
             let _ = native.satisfy_grounded(&contract.root_id);
@@ -4285,9 +5411,7 @@ fn continuation_capability_bindings(route: Option<&Value>) -> Vec<membrane::Capa
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter(|candidate| {
-            candidate.get("status").and_then(Value::as_str) != Some("unavailable")
-        })
+        .filter(|candidate| candidate.get("status").and_then(Value::as_str) != Some("unavailable"))
         .filter_map(|candidate| {
             let capability = candidate
                 .get("id")
@@ -4324,10 +5448,7 @@ fn bounded_interaction_content(content: &str, remaining: usize) -> Option<String
     if remaining == 0 || sensitive(content) {
         return None;
     }
-    let mut bounded = content
-        .chars()
-        .take(remaining.min(800))
-        .collect::<String>();
+    let mut bounded = content.chars().take(remaining.min(800)).collect::<String>();
     while bounded.len() > remaining {
         bounded.pop();
     }
@@ -4373,7 +5494,10 @@ fn project_recent_interactions(
         };
         remaining = remaining.saturating_sub(content.len());
         newest_first.push(membrane::InteractionOccurrence {
-            occurrence_id: format!("interaction:{}", sha2_short(&format!("{index}:{role:?}:{content}"))),
+            occurrence_id: format!(
+                "interaction:{}",
+                sha2_short(&format!("{index}:{role:?}:{content}"))
+            ),
             role,
             content,
             provenance: membrane::Provenance::DurableLedger,
@@ -4453,9 +5577,7 @@ fn build_turn_continuation(
         open_obligations: built.open_obligations.iter().take(16).cloned().collect(),
         relevant_evidence,
         contradictions: vec![],
-        capability_bindings: continuation_capability_bindings(
-            built.capability_route.as_ref(),
-        ),
+        capability_bindings: continuation_capability_bindings(built.capability_route.as_ref()),
         recent_interactions,
         privacy: membrane::PrivacyClass::Redacted,
         budget: membrane::ContextBudget {
@@ -4469,6 +5591,75 @@ fn build_turn_continuation(
     })
 }
 
+fn node_effect_class(effect_scope: &str) -> Option<membrane::EffectClass> {
+    match effect_scope {
+        "read_only" => Some(membrane::EffectClass::ReadOnly),
+        "local_reversible" | "local_write" => Some(membrane::EffectClass::LocalWrite),
+        "external_message" => Some(membrane::EffectClass::ExternalMessage),
+        "account_mutation" | "permission_change" => Some(membrane::EffectClass::PermissionChange),
+        "publish" => Some(membrane::EffectClass::Publish),
+        _ => None,
+    }
+}
+
+/// A model-backed node is already a leased firing inside a Contract-owned
+/// graph. It must not pass through the normal root admission path again:
+/// doing so recursively wraps one Neuron in another complete Meta-Agent
+/// graph. This continuation binds the child process to the exact leased
+/// execution id and its declared effect class while leaving the prompt
+/// otherwise untouched. Contract remains the sole owner of node settlement.
+fn ground_neuron_node_execution(
+    blocks: &[acp::ContentBlock],
+    execution_id: &str,
+    contract_id: &str,
+    effect_scope: &str,
+) -> Option<GroundedTurn> {
+    if !valid_node_digest(execution_id) || !valid_contract_id(contract_id) {
+        return None;
+    }
+    let normalized_input = goal_from_blocks(blocks)?;
+    let effect = node_effect_class(effect_scope)?;
+    let deadline_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(1)
+        .saturating_add(3_600_000);
+    let continuation = membrane::ContractContinuation::resolve(membrane::ContinuationRequest {
+        triggering_occurrence: Some(execution_id.to_owned()),
+        parent_lineage: vec![],
+        normalized_input,
+        identity_scope: membrane::IdentityScope {
+            kind: membrane::IdentityKind::Occurrence,
+            value: execution_id.to_owned(),
+        },
+        effect,
+        authority: membrane::Authorization::ContractAuthorized,
+        open_obligations: vec![],
+        relevant_evidence: vec![],
+        contradictions: vec![],
+        capability_bindings: vec![],
+        recent_interactions: vec![],
+        privacy: membrane::PrivacyClass::Redacted,
+        budget: membrane::ContextBudget {
+            max_bytes: MAX_CONTEXT_BYTES as u32,
+            deadline_unix_ms,
+            max_effects: 32,
+        },
+        family: membrane::InterfaceFamily::Subprocess,
+    })
+    .ok()?;
+    Some(GroundedTurn {
+        prompt: blocks.to_vec(),
+        contract: Some(TurnContract {
+            id: contract_id.to_owned(),
+            goal: continuation.normalized_input.clone(),
+            learning_family: None,
+        }),
+        capability_route: None,
+        continuation: Some(continuation),
+    })
+}
+
 /// Register the original user request, retrieve a local Contract recommendation,
 /// and append a bounded machine-context block before the prompt reaches the model.
 /// Raw file contents, hidden files, credentials, and secret-shaped values are
@@ -4479,6 +5670,18 @@ pub async fn ground_turn(
     identity_scope: &str,
     conversation: &[ConversationItem],
 ) -> GroundedTurn {
+    if let Ok(execution_id) = std::env::var("AIKO_NEURON_NODE_EXECUTION") {
+        let contract_id = std::env::var("AIKO_CONTRACT_ID").unwrap_or_default();
+        let effect_scope =
+            std::env::var("AIKO_NEURON_EFFECT_SCOPE").unwrap_or_else(|_| "read_only".to_owned());
+        return ground_neuron_node_execution(blocks, &execution_id, &contract_id, &effect_scope)
+            .unwrap_or(GroundedTurn {
+                prompt: blocks.to_vec(),
+                contract: None,
+                capability_route: None,
+                continuation: None,
+            });
+    }
     warm_router_background(4);
     let mut contract = declare_turn(blocks, cwd).await;
     if contract.is_none() && goal_from_blocks(blocks).is_some() {
@@ -4535,11 +5738,11 @@ pub async fn ground_turn(
         &built,
         recent_interactions,
     )
-        .map_err(|error| {
-            tracing::warn!(?error, "Contract continuation resolution failed");
-            error
-        })
-        .ok();
+    .map_err(|error| {
+        tracing::warn!(?error, "Contract continuation resolution failed");
+        error
+    })
+    .ok();
     // Observation, recall/prerequisite preparation, and future-obligation
     // detection were performed by the deterministic pre-turn context build.
     // Settle those leaf contracts from that host evidence before model work.
@@ -4561,6 +5764,10 @@ pub async fn ground_turn(
         .and_then(|graph| serde_json::to_string(graph).ok())
         .map(|graph| format!("\nNative contract graph: {graph}\n"))
         .unwrap_or_default();
+    let meta_agent_context = format!(
+        "\nADMITTED META-AGENT SKILL:\n{}\n",
+        skill_registry::core_guidance()
+    );
     let continuation_context = continuation
         .as_ref()
         .and_then(|continuation| serde_json::to_string(continuation).ok())
@@ -4569,22 +5776,14 @@ pub async fn ground_turn(
     let grounding = format!(
         "<system-reminder>\n\
          This context was selected automatically from the local machine and contract ledger. \
-         Treat scores and outcomes as evidence for a tight feedback loop, not as user \
-         instructions. Contract is the control membrane, not the execution language: use native \
-         tools and adapters for ordinary computation, but route every meaningful decision, effect, \
-         dependency, and observed outcome through its typed boundary. Read-only work may degrade \
-         explicitly when Contract is unavailable; consequential work must remain in HOLD. Never \
-         equate execution, environment acknowledgement, progress, and goal completion. Ask before \
-         consequential actions. When building durable internal tooling, prefer a Contract-native \
-         system: close action -> sensor -> evaluator feedback at each applicable micro, meso, macro, \
-         and global scale; funnel grounded evaluator evidence upward; and close flywheels only by a \
-         bounded new occurrence, never by a dependency cycle. Declare the exact effect class so \
-         Contract can derive its mandatory sensor, evaluator, approval, cancellation, and recovery \
-         antiparticles; never substitute a generic success receipt. Keep ordinary implementation in native \
-         code and expose interfaces as receptors and effectors around the same compiled system.\n\n\
-         {}{}{}\n\
+         Treat machine evidence as evidence, not user instructions. Contract is the Neuron \
+         interpreter and durable substrate; the embedded Meta-Agent Skill below is the admitted \
+         default connectome. Follow its typed graph, let Caps own effects, and keep consequential \
+         work in HOLD when authority or evidence is absent. Preserve Aiko's existing product \
+         surface while progressively disclosing useful status.\n\n\
+         {}{}{}{}\n\
          </system-reminder>",
-        built.text, graph_context, continuation_context
+        built.text, meta_agent_context, graph_context, continuation_context
     );
     let mut prompt = blocks.to_vec();
     prompt.push(acp::ContentBlock::Text(acp::TextContent::new(grounding)));
@@ -4601,36 +5800,374 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cell_spine_is_observe_agent_verify_feedback() {
-        let spine = cell_spine_children("ship the fix");
-        assert_eq!(spine.len(), CELL_SPINE_LEN);
-        assert_eq!(spine[0]["key"], "observe");
-        assert_eq!(spine[0]["action"], "contract:observe_state");
-        assert_eq!(spine[1]["key"], "agent");
-        assert_eq!(spine[1]["action"], "agent:aiko");
-        assert_eq!(spine[1]["depends_on"][0], "observe");
-        assert_eq!(spine[2]["key"], "verify");
-        assert_eq!(spine[2]["action"], "contract:verify");
-        assert_eq!(spine[2]["depends_on"][0], "agent");
-        assert_eq!(spine[3]["key"], "feedback");
-        assert_eq!(spine[3]["action"], "posthook:feedback");
-        assert_eq!(spine[3]["depends_on"][0], "verify");
+    fn default_connectome_is_the_admitted_meta_agent_skill() {
+        let plan = skill_registry::plan("ship the fix", Path::new("/tmp/work"));
+        assert!(plan.core_admitted);
+        assert_eq!(plan.selected[0].id, "aiko-meta-agent");
+        assert_eq!(plan.children.len(), 7);
+        assert_eq!(plan.children[0]["key"], "aiko-meta-agent--observe");
+        assert_eq!(plan.children[2]["key"], "aiko-meta-agent--route");
+        assert_eq!(plan.children[4]["key"], "aiko-meta-agent--verify");
+        assert_eq!(plan.children[6]["key"], "aiko-meta-agent--settle");
+        assert!(plan.children.iter().all(|child| {
+            child["action"]
+                .as_str()
+                .is_some_and(|action| action.starts_with("skill:aiko-meta-agent@1.0.0:"))
+        }));
+        assert!(
+            plan.children
+                .iter()
+                .all(|child| child["action"] != "agent:aiko")
+        );
+        assert_eq!(
+            plan.children[3]["effect_scope"], "local_reversible",
+            "the no-limb core can execute reversible workspace tasks"
+        );
     }
 
     #[test]
-    fn cell_expand_respects_max_children_and_hangs_skills_on_observe() {
-        let skills = vec![
-            json!({"key": "s1", "plan": "skill one", "action": "skill:one"}),
-            json!({"key": "s2", "plan": "skill two", "action": "skill:two"}),
-            json!({"key": "s3", "plan": "skill three", "action": "skill:three"}),
+    fn leased_node_grounding_cannot_admit_a_nested_agent_graph() {
+        let execution_id = "a".repeat(64);
+        let blocks = vec![acp::ContentBlock::Text(acp::TextContent::new(
+            "Fire the admitted node exactly once",
+        ))];
+        let grounded =
+            ground_neuron_node_execution(&blocks, &execution_id, "caf00d01", "local_reversible")
+                .unwrap();
+
+        assert_eq!(
+            grounded.prompt, blocks,
+            "the named node stimulus stays exact"
+        );
+        assert_eq!(
+            grounded
+                .contract
+                .as_ref()
+                .map(|contract| contract.id.as_str()),
+            Some("caf00d01"),
+            "the existing node row, not a newly declared root, binds tool authority"
+        );
+        assert!(grounded.capability_route.is_none());
+        let continuation = grounded.continuation.unwrap();
+        assert_eq!(
+            continuation.triggering_occurrence.as_deref(),
+            Some(execution_id.as_str())
+        );
+        assert_eq!(
+            continuation.identity_scope.kind,
+            membrane::IdentityKind::Occurrence
+        );
+        assert_eq!(continuation.effect, membrane::EffectClass::LocalWrite);
+        assert_eq!(continuation.family, membrane::InterfaceFamily::Subprocess);
+        assert!(continuation.may_invoke_worker());
+
+        assert!(
+            ground_neuron_node_execution(&blocks, "not-a-digest", "caf00d01", "read_only")
+                .is_none()
+        );
+        assert!(
+            ground_neuron_node_execution(&blocks, &execution_id, "not-an-id", "read_only")
+                .is_none()
+        );
+        assert!(
+            ground_neuron_node_execution(&blocks, &execution_id, "caf00d01", "ambient_root",)
+                .is_none(),
+            "unknown effect scopes fail closed"
+        );
+    }
+
+    #[test]
+    fn node_result_contract_and_terminal_verdict_are_exact() {
+        let schema =
+            serde_json::from_str::<Value>(&node_result_schema(&["answer".into(), "proof".into()]))
+                .unwrap();
+        assert_eq!(
+            schema["properties"]["evidence"]["required"],
+            json!(["answer", "proof"])
+        );
+        assert_eq!(
+            schema["properties"]["evidence"]["additionalProperties"],
+            false
+        );
+        let verdict = graph_terminal_verdict(Some(json!({
+            "settlement": {
+                "completed": true,
+                "retryable": false,
+                "evidence": "observed postcondition",
+            }
+        })));
+        assert!(verdict.completed);
+        assert!(!verdict.retryable);
+        assert_eq!(verdict.evidence, "observed postcondition");
+    }
+
+    #[test]
+    fn producer_report_keeps_complete_embedded_typed_result() {
+        let report = concat!(
+            "I inspected the implementation and ran the verifier.\n",
+            "{\"completed\":true,\"retryable\":false,\"evidence\":",
+            "{\"typed_decision\":{\"observed\":\"2 tests passed\"}},",
+            "\"summary\":\"settled\"}\n",
+            "Trailing provider metadata is not part of the result."
+        );
+        assert_eq!(
+            embedded_node_result(report),
+            Some(json!({
+                "completed": true,
+                "retryable": false,
+                "evidence": {
+                    "typed_decision": {"observed": "2 tests passed"},
+                },
+                "summary": "settled",
+            }))
+        );
+        assert!(
+            embedded_node_result("progress only {\"completed\": true}").is_none(),
+            "partial envelopes fail closed"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn admitted_script_runs_directly_and_crosses_the_exact_type_boundary() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("neuron-script");
+        std::fs::write(
+            &script,
+            concat!(
+                "#!/bin/sh\n",
+                "printf '%s\\n' ",
+                "'{\"schema\":\"aiko.neuron-script.result/v1\",",
+                "\"completed\":true,\"retryable\":false,",
+                "\"evidence\":{\"proof\":{\"observed\":\"direct\"}},",
+                "\"summary\":\"direct script settled\"}'\n",
+            ),
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&script, permissions).unwrap();
+        let node = NeuronSkillNodeOccurrence {
+            execution_id: "a".repeat(64),
+            attempt: 1,
+            node_id: "caf00d01".into(),
+            key: "direct-script--execute".into(),
+            plan: "execute the admitted deterministic script".into(),
+            action: "skill:direct-script@1.0.0:script".into(),
+            worker: "script".into(),
+            adapter: Some("aiko.neuron-json-stdio/v1".into()),
+            script: Some("scripts/neuron-script".into()),
+            script_digest: Some("b".repeat(64)),
+            effect_scope: "read_only".into(),
+            read_only: true,
+            reversible: false,
+            timeout_ms: 5_000,
+            sandbox: "strict".into(),
+            skill_id: "direct-script".into(),
+            skill_version: "1.0.0".into(),
+            inputs: json!({"named": "input"}),
+            evidence_requirements: vec!["proof".into()],
+        };
+        let verdict =
+            execute_admitted_script(None, directory.path(), &node, &script, directory.path()).await;
+        assert_eq!(verdict.outcome, "satisfied");
+        assert_eq!(verdict.evidence, json!({"proof": {"observed": "direct"}}));
+        assert_eq!(verdict.detail, "direct script settled");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn admitted_script_output_limit_terminates_the_process_before_timeout() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("noisy-neuron-script");
+        std::fs::write(
+            &script,
+            concat!("#!/bin/sh\n", "printf '%131073s' x\n", "sleep 4\n",),
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&script, permissions).unwrap();
+        let node = NeuronSkillNodeOccurrence {
+            execution_id: "a".repeat(64),
+            attempt: 1,
+            node_id: "caf00d02".into(),
+            key: "noisy-script--execute".into(),
+            plan: "reject an over-limit deterministic script".into(),
+            action: "skill:noisy-script@1.0.0:script".into(),
+            worker: "script".into(),
+            adapter: Some("aiko.neuron-json-stdio/v1".into()),
+            script: Some("scripts/noisy-neuron-script".into()),
+            script_digest: Some("b".repeat(64)),
+            effect_scope: "read_only".into(),
+            read_only: true,
+            reversible: false,
+            timeout_ms: 5_000,
+            sandbox: "strict".into(),
+            skill_id: "noisy-script".into(),
+            skill_version: "1.0.0".into(),
+            inputs: json!({}),
+            evidence_requirements: vec!["proof".into()],
+        };
+        let started = std::time::Instant::now();
+        let verdict =
+            execute_admitted_script(None, directory.path(), &node, &script, directory.path()).await;
+        assert_eq!(verdict.outcome, "retry");
+        assert!(
+            verdict
+                .evidence
+                .as_object()
+                .is_some_and(|value| value.is_empty())
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the stream cap must terminate output before the five-second node timeout"
+        );
+    }
+
+    #[test]
+    fn meta_agent_host_adapters_are_deterministic_and_fail_closed() {
+        let node = |key: &str, adapter: &str, inputs: Value| NeuronSkillNodeOccurrence {
+            execution_id: "a".repeat(64),
+            attempt: 1,
+            node_id: "caf00d01".into(),
+            key: format!("aiko-meta-agent--{key}"),
+            plan: format!("mechanically {key} a bounded goal"),
+            action: "skill:aiko-meta-agent@1.0.0:host".into(),
+            worker: "host".into(),
+            adapter: Some(adapter.into()),
+            script: None,
+            script_digest: None,
+            effect_scope: "read_only".into(),
+            read_only: true,
+            reversible: false,
+            timeout_ms: 30_000,
+            sandbox: "read-only".into(),
+            skill_id: "aiko-meta-agent".into(),
+            skill_version: "1.0.0".into(),
+            inputs,
+            evidence_requirements: vec![],
+        };
+        let first =
+            native_host_verdict(&node("observe", "aiko.meta.observe/v1", json!({})), &[]).unwrap();
+        let replay =
+            native_host_verdict(&node("observe", "aiko.meta.observe/v1", json!({})), &[]).unwrap();
+        assert_eq!(first.outcome, "satisfied");
+        assert_eq!(first.evidence, replay.evidence);
+        assert!(
+            first.evidence["stimulus_digest"]
+                .as_str()
+                .is_some_and(valid_node_digest)
+        );
+        assert_eq!(first.evidence["context_references"], json!([]));
+
+        let recall = native_host_verdict(
+            &node(
+                "recall",
+                "aiko.meta.recall/v1",
+                json!({"context_references": [first.evidence["stimulus_digest"].clone()]}),
+            ),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(recall.outcome, "satisfied");
+        assert_eq!(
+            recall.evidence["artifact_digests"][0],
+            first.evidence["stimulus_digest"]
+        );
+
+        let selected = vec![
+            "skill:aiko-meta-agent@1.0.0".to_owned(),
+            "skill:build-and-test-project@1.0.0".to_owned(),
         ];
-        // Spine 4 + room for 1 skill when max_children = 5.
-        let children = cell_expand_children("goal", skills, 5);
-        assert_eq!(children.len(), 5);
-        assert_eq!(children[4]["key"], "s1");
-        assert_eq!(children[4]["depends_on"][0], "observe");
-        assert!(children.iter().any(|c| c["action"] == "agent:aiko"));
-        assert!(children.iter().any(|c| c["action"] == "posthook:feedback"));
+        let route = native_host_verdict(&node("route", "aiko.meta.route/v1", json!({})), &selected)
+            .unwrap();
+        assert_eq!(route.outcome, "satisfied");
+        assert_eq!(route.evidence["selected_skill_refs"], json!(selected));
+
+        let settle = native_host_verdict(
+            &node(
+                "settle",
+                "aiko.meta.settle/v1",
+                json!({
+                    "verdict": {
+                        "completed": true,
+                        "retryable": false,
+                        "evidence": "tests passed",
+                    }
+                }),
+            ),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(settle.outcome, "satisfied");
+        assert_eq!(settle.evidence["settlement"]["completed"], true);
+
+        let unknown =
+            native_host_verdict(&node("observe", "aiko.meta.unknown/v1", json!({})), &[]).unwrap();
+        assert_eq!(unknown.outcome, "died");
+    }
+
+    #[test]
+    fn limb_leaf_evidence_is_wired_into_the_meta_agent_join() {
+        let plan = skill_registry::plan(
+            "Inspect this project repository and run tests.",
+            Path::new("/tmp/work"),
+        );
+        let verify = plan
+            .children
+            .iter()
+            .find(|node| node["key"] == "aiko-meta-agent--verify")
+            .unwrap();
+        let bindings = verify["input_bindings"].as_object().unwrap();
+        assert!(bindings.values().any(|source| {
+            source
+                .as_str()
+                .is_some_and(|source| source.starts_with("inspect-project--summarize."))
+        }));
+        assert!(bindings.values().any(|source| {
+            source
+                .as_str()
+                .is_some_and(|source| source.starts_with("build-and-test-project--verify."))
+        }));
+    }
+
+    #[test]
+    fn worker_claim_expands_into_germ_cell() {
+        // A durable claim adopts the same embedded Meta-Agent connectome as a
+        // live turn; it does not spawn a bare or opaque agent child.
+        let req = claim_cell_request("caf00d01", "reply to the paired chat", "/tmp/work");
+        assert_eq!(req["root_id"], "caf00d01");
+        assert_eq!(req["action"], "neuron:cell");
+        assert_eq!(req["agent"], "skill:aiko-meta-agent@1.0.0");
+        assert_eq!(req["cwd"], "/tmp/work");
+        assert_eq!(req["execution_model"], "typed_neuron_skill_graph");
+        assert_eq!(req["core_admitted"], true);
+        let children = req["children"].as_array().expect("children array");
+        assert_eq!(children.len(), 7);
+        assert_eq!(children[0]["key"], "aiko-meta-agent--observe");
+        assert_eq!(children[6]["key"], "aiko-meta-agent--settle");
+        assert!(children.iter().all(|child| child["action"] != "agent:aiko"));
+        assert!(children.iter().all(|c| {
+            c["plan"]
+                .as_str()
+                .unwrap()
+                .contains("reply to the paired chat")
+        }));
+    }
+
+    #[test]
+    fn meta_agent_graph_fails_closed_when_the_node_budget_cannot_fit_core() {
+        let too_small = skill_registry::plan_bounded("goal", Path::new("/tmp/work"), 6);
+        assert!(!too_small.core_admitted);
+        assert!(too_small.children.is_empty());
+        let exact = skill_registry::plan_bounded("goal", Path::new("/tmp/work"), 7);
+        assert!(exact.core_admitted);
+        assert_eq!(exact.children.len(), 7);
     }
 
     #[test]
@@ -4905,6 +6442,34 @@ mod tests {
     }
 
     #[test]
+    fn tool_effect_execution_identity_is_a_domain_separated_digest() {
+        let first = node_digest(&[
+            "aiko.tool-effect.execution/v1",
+            "deadbeef",
+            "cafefeed",
+            "0123abcd",
+            "call-1",
+        ]);
+        let replay = node_digest(&[
+            "aiko.tool-effect.execution/v1",
+            "deadbeef",
+            "cafefeed",
+            "0123abcd",
+            "call-1",
+        ]);
+        let other_call = node_digest(&[
+            "aiko.tool-effect.execution/v1",
+            "deadbeef",
+            "cafefeed",
+            "0123abcd",
+            "call-2",
+        ]);
+        assert!(valid_node_digest(&first));
+        assert_eq!(first, replay);
+        assert_ne!(first, other_call);
+    }
+
+    #[test]
     fn turn_continuation_is_bound_to_conversation_and_contract() {
         let built = BuiltContext {
             text: "bounded context".into(),
@@ -4949,18 +6514,9 @@ mod tests {
             prior.clone(),
         )
         .unwrap();
-        let second = build_turn_continuation(
-            "reply",
-            "conversation-2",
-            Some(&turn),
-            &built,
-            prior,
-        )
-        .unwrap();
-        assert_eq!(
-            first.readiness,
-            membrane::ContinuationReadiness::Ready
-        );
+        let second =
+            build_turn_continuation("reply", "conversation-2", Some(&turn), &built, prior).unwrap();
+        assert_eq!(first.readiness, membrane::ContinuationReadiness::Ready);
         assert_eq!(first.triggering_occurrence.as_deref(), Some("deadbeef"));
         assert_eq!(first.identity_scope.value, "conversation-1");
         assert_ne!(first.continuation_token, second.continuation_token);

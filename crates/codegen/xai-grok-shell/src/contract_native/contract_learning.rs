@@ -1107,7 +1107,9 @@ fn validate_privacy<T: Serialize>(value: &T, label: &str) -> Result<(), String> 
     // Never store credential-shaped fields.
     for token in &["token", "secret", "password", "api_key", "credential"] {
         if lower.contains(token) {
-            return Err(format!("{label}: credential-shaped field '{token}' detected"));
+            return Err(format!(
+                "{label}: credential-shaped field '{token}' detected"
+            ));
         }
     }
     Ok(())
@@ -1134,7 +1136,10 @@ pub(super) fn validate_gap(gap: &CapabilityGap) -> Result<(), String> {
     }
     // Scope must be a recognised value.
     if !matches!(gap.scope.as_str(), "episode" | "archetype" | "global") {
-        return Err(format!("scope '{}' is not a recognised scope kind", gap.scope));
+        return Err(format!(
+            "scope '{}' is not a recognised scope kind",
+            gap.scope
+        ));
     }
     // Budget caps: never unbounded.
     if gap.authority_ceiling.budgets.experiments == 0
@@ -1190,7 +1195,10 @@ pub(super) fn validate_proposal(
         return Err("proposal effects must be a subset of parent authority".into());
     }
     // Budgets must be within parent.
-    if !parent.authority_ceiling.contains(&proposal.effects, &proposal.budgets) {
+    if !parent
+        .authority_ceiling
+        .contains(&proposal.effects, &proposal.budgets)
+    {
         return Err("proposal budgets exceed parent authority".into());
     }
     // Rollback must be declared.
@@ -1391,23 +1399,16 @@ pub(super) enum CandidateTier {
 /// Rank limb proposals by composite energy: progress potential +
 /// information gain - penalties - cost. Returns candidates sorted
 /// lowest-energy-first (better).
-pub(super) fn rank_experiment_candidates(
-    path: &Path,
-    cwd: &Path,
-) -> Vec<ExperimentCandidate> {
+pub(super) fn rank_experiment_candidates(path: &Path, cwd: &Path) -> Vec<ExperimentCandidate> {
     let state = load_growth(path);
     let project = project_id(cwd);
     let mut candidates = Vec::new();
-    for proposal in state
-        .proposals
-        .values()
-        .filter(|p| {
-            state
-                .gaps
-                .get(&p.gap_id)
-                .is_some_and(|g| g.project == project)
-        })
-    {
+    for proposal in state.proposals.values().filter(|p| {
+        state
+            .gaps
+            .get(&p.gap_id)
+            .is_some_and(|g| g.project == project)
+    }) {
         let gap = state.gaps.get(&proposal.gap_id).unwrap();
         // Tier classification.
         let tier = if let Some(decision) = state.decisions.get(&proposal.proposal_id) {
@@ -1443,8 +1444,7 @@ pub(super) fn rank_experiment_candidates(
             0.0
         };
         let action_cost = proposal.cells.len() as f64 * 0.05;
-        let composite_energy = predicted_progress_energy
-            + information_gain
+        let composite_energy = predicted_progress_energy + information_gain
             - loop_penalty
             - failure_penalty
             - action_cost;
@@ -1461,9 +1461,11 @@ pub(super) fn rank_experiment_candidates(
     }
     // Sort by tier first, then by composite energy (lower is better).
     candidates.sort_by(|a, b| {
-        a.tier
-            .cmp(&b.tier)
-            .then_with(|| a.composite_energy.partial_cmp(&b.composite_energy).unwrap_or(std::cmp::Ordering::Equal))
+        a.tier.cmp(&b.tier).then_with(|| {
+            a.composite_energy
+                .partial_cmp(&b.composite_energy)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     });
     candidates
 }
@@ -2024,13 +2026,8 @@ mod contract_learning_tests {
         let path = growth_test_path("classification");
         let cwd = Path::new("/tmp/classification");
         // Structural: should open a gap.
-        let gap = classify_and_open_gap(
-            cwd,
-            FailureClass::NoCandidate,
-            "typed plan",
-            "none",
-            "cli",
-        );
+        let gap =
+            classify_and_open_gap(cwd, FailureClass::NoCandidate, "typed plan", "none", "cli");
         assert!(gap.is_some());
         // Transient: should NOT open a gap.
         let no_gap = classify_and_open_gap(
@@ -2173,8 +2170,15 @@ mod contract_learning_tests {
             .get(&gap.gap_id)
             .expect("gap exists")
             .clone();
-        assert_eq!(pre.status, GapStatus::Open, "gap must still be Open before sweep");
-        assert_eq!(pre.occurrences, 3, "occurrences must exceed the budget of 2");
+        assert_eq!(
+            pre.status,
+            GapStatus::Open,
+            "gap must still be Open before sweep"
+        );
+        assert_eq!(
+            pre.occurrences, 3,
+            "occurrences must exceed the budget of 2"
+        );
         // The render sweep must hold the exhausted active gap.
         let _ = render_growth_context_at(&path, cwd);
         let post = load_growth(&path)
@@ -2182,7 +2186,11 @@ mod contract_learning_tests {
             .get(&gap.gap_id)
             .expect("gap exists")
             .clone();
-        assert_eq!(post.status, GapStatus::Held, "render sweep must hold exhausted gap");
+        assert_eq!(
+            post.status,
+            GapStatus::Held,
+            "render sweep must hold exhausted gap"
+        );
         let _ = std::fs::remove_file(path);
     }
 
@@ -2223,12 +2231,7 @@ mod contract_learning_tests {
         )
         .expect("p2");
         // Promote p1 → Verified tier.
-        evaluate_limb_at(
-            &path,
-            &p1,
-            promotion_evidence(),
-        )
-        .expect("promote p1");
+        evaluate_limb_at(&path, &p1, promotion_evidence()).expect("promote p1");
         let candidates = rank_experiment_candidates(&path, cwd);
         assert!(candidates.len() >= 2);
         // Verified should sort before Unverified.

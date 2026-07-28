@@ -653,10 +653,7 @@ impl ContractContinuation {
         !matches!(self.readiness, ContinuationReadiness::Hold(_))
     }
 
-    pub fn validate_result(
-        &self,
-        result: &ContractResult,
-    ) -> Result<(), ResultValidationError> {
+    pub fn validate_result(&self, result: &ContractResult) -> Result<(), ResultValidationError> {
         if result.continuation_token != self.continuation_token {
             return Err(ResultValidationError::ContinuationMismatch);
         }
@@ -788,8 +785,10 @@ impl ReceptorDeclaration {
         }
         // Ephemeral durability cannot claim restartable durability — a
         // transport that cannot be reconstructed must not promise it.
-        if matches!(self.durability, Durability::Restartable | Durability::HostedDurable)
-            && self.lifecycle.restart_owner.trim().is_empty()
+        if matches!(
+            self.durability,
+            Durability::Restartable | Durability::HostedDurable
+        ) && self.lifecycle.restart_owner.trim().is_empty()
         {
             return Err("restartable durability requires a reconciler (restart_owner)");
         }
@@ -906,13 +905,7 @@ impl ReceptorRegistry {
     /// True iff `owner`/`generation` identify the current live lease and it
     /// is current. A stale worker holding a pre-restart generation is
     /// rejected — it may append observations but cannot commit effects.
-    pub fn may_commit(
-        &self,
-        id: &str,
-        owner: &str,
-        generation: u64,
-        now_unix_ms: u64,
-    ) -> bool {
+    pub fn may_commit(&self, id: &str, owner: &str, generation: u64, now_unix_ms: u64) -> bool {
         match self.live.get(id) {
             Some(lease) => {
                 lease.owner == owner
@@ -1038,8 +1031,7 @@ impl OccurrenceStore {
         let key = event.idempotency_key(self.schema_generation)?;
         match self.seen.get(&key) {
             None => {
-                self.seen
-                    .insert(key, event.content_fingerprint.clone());
+                self.seen.insert(key, event.content_fingerprint.clone());
                 self.appended += 1;
                 Ok(AppendOutcome::New)
             }
@@ -1111,8 +1103,10 @@ impl CursorStore {
 
     /// Install the initial cursor for a receptor/resource.
     pub fn install(&mut self, cursor: ChangeCursor) {
-        self.cursors
-            .insert((cursor.receptor_id.clone(), cursor.resource_key.clone()), cursor);
+        self.cursors.insert(
+            (cursor.receptor_id.clone(), cursor.resource_key.clone()),
+            cursor,
+        );
     }
 
     /// Advance the cursor for `event`'s (receptor, source) under the given
@@ -1189,7 +1183,9 @@ impl RegisteredTransport {
     pub fn binding_id(&self) -> String {
         format!(
             "{}@{}#{}",
-            self.binding.receptor_id, self.binding.adapter_capability, self.binding.lease_generation
+            self.binding.receptor_id,
+            self.binding.adapter_capability,
+            self.binding.lease_generation
         )
     }
 
@@ -1288,11 +1284,7 @@ impl TransportRegistry {
             .collect()
     }
 
-    pub fn get(
-        &self,
-        receptor_id: &str,
-        adapter_capability: &str,
-    ) -> Option<&RegisteredTransport> {
+    pub fn get(&self, receptor_id: &str, adapter_capability: &str) -> Option<&RegisteredTransport> {
         self.bindings
             .get(&(receptor_id.to_string(), adapter_capability.to_string()))
     }
@@ -1444,21 +1436,25 @@ impl AdaptiveBindingController {
     pub fn decide(&mut self, signal: LoadSignal, now_unix_ms: u64) -> BindingDecision {
         if signal.health_lost {
             return match self.current_tier {
-                BindingTier::DurableTunnel => BindingDecision::DemoteTo(BindingTier::EphemeralTunnel),
+                BindingTier::DurableTunnel => {
+                    BindingDecision::DemoteTo(BindingTier::EphemeralTunnel)
+                }
                 BindingTier::EphemeralTunnel => BindingDecision::DemoteTo(BindingTier::Poll),
                 BindingTier::Poll => BindingDecision::Hold,
             };
         }
         // Promotion (with cooldown).
-        let want = if signal.uptime_required || signal.events_per_min >= self.thresholds.durable_freq {
-            BindingTier::DurableTunnel
-        } else if signal.events_per_min >= self.thresholds.ephemeral_freq {
-            BindingTier::EphemeralTunnel
-        } else {
-            BindingTier::Poll
-        };
+        let want =
+            if signal.uptime_required || signal.events_per_min >= self.thresholds.durable_freq {
+                BindingTier::DurableTunnel
+            } else if signal.events_per_min >= self.thresholds.ephemeral_freq {
+                BindingTier::EphemeralTunnel
+            } else {
+                BindingTier::Poll
+            };
         if want > self.current_tier {
-            if now_unix_ms.saturating_sub(self.last_promotion_unix_ms) < self.thresholds.cooldown_ms {
+            if now_unix_ms.saturating_sub(self.last_promotion_unix_ms) < self.thresholds.cooldown_ms
+            {
                 return BindingDecision::Hold;
             }
             self.last_promotion_unix_ms = now_unix_ms;
@@ -1892,10 +1888,7 @@ mod tests {
             None,
         ))
         .unwrap();
-        assert_eq!(
-            read.readiness,
-            ContinuationReadiness::DegradedReadOnly
-        );
+        assert_eq!(read.readiness, ContinuationReadiness::DegradedReadOnly);
         assert!(read.may_invoke_worker());
 
         let write = ContractContinuation::resolve(continuation_request(
@@ -2004,9 +1997,7 @@ mod tests {
                 .advance(&event("digest-b"), "stale-runtime", 3)
                 .is_err()
         );
-        let advanced = cursor
-            .advance(&event("digest-b"), "runtime-1", 3)
-            .unwrap();
+        let advanced = cursor.advance(&event("digest-b"), "runtime-1", 3).unwrap();
         assert_eq!(advanced.generation, 5);
         assert_eq!(advanced.last_changed_at_unix_ms, 10_000);
     }
@@ -2068,7 +2059,10 @@ mod tests {
         reg.declare(test_declaration("msg-in", Durability::Leased))
             .expect("declare");
         assert!(reg.is_declared("msg-in"));
-        assert!(!reg.is_live("msg-in", 1_000), "a ledger row alone is not live");
+        assert!(
+            !reg.is_live("msg-in", 1_000),
+            "a ledger row alone is not live"
+        );
         assert_eq!(reg.live_count(), 0);
         assert_eq!(reg.declaration_count(), 1);
     }
@@ -2086,8 +2080,14 @@ mod tests {
         assert_eq!(reg.live_count(), 1);
         // Kill the reconciler.
         reg.revoke("msg-in");
-        assert!(!reg.is_live("msg-in", 1_000), "killed reconciler -> not live");
-        assert!(reg.is_declared("msg-in"), "declaration persists across kill");
+        assert!(
+            !reg.is_live("msg-in", 1_000),
+            "killed reconciler -> not live"
+        );
+        assert!(
+            reg.is_declared("msg-in"),
+            "declaration persists across kill"
+        );
         assert_eq!(reg.live_count(), 0);
     }
 
@@ -2114,14 +2114,25 @@ mod tests {
             .expect("restart");
         assert!(lease_gen > 1, "restart advances the generation");
         assert!(reg.is_live("msg-in", 2_000));
-        assert_eq!(reg.live_count(), 1, "restart must not create a duplicate receptor");
+        assert_eq!(
+            reg.live_count(),
+            1,
+            "restart must not create a duplicate receptor"
+        );
 
         // Re-running reconcile on the already-live receptor is a no-op.
         let rebound = reg
             .reconcile("msg-in", "reconciler-1", 2_000, 60_000)
             .expect("reconcile");
-        assert!(!rebound, "idempotent reconcile is a no-op on a live receptor");
-        assert_eq!(reg.live_count(), 1, "re-reconcile must not duplicate an effect");
+        assert!(
+            !rebound,
+            "idempotent reconcile is a no-op on a live receptor"
+        );
+        assert_eq!(
+            reg.live_count(),
+            1,
+            "re-reconcile must not duplicate an effect"
+        );
     }
 
     #[test]
@@ -2157,7 +2168,10 @@ mod tests {
         let mut decl = test_declaration("msg-in", Durability::Restartable);
         decl.lifecycle.restart_owner = String::new();
         let err = decl.validate().unwrap_err();
-        assert!(err.contains("reconciler") || err.contains("restart_owner"), "{err}");
+        assert!(
+            err.contains("reconciler") || err.contains("restart_owner"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -2207,7 +2221,13 @@ mod tests {
         }
     }
 
-    fn cursor_for(receptor: &str, source: &str, owner: &str, lease_gen: u64, until: u64) -> ChangeCursor {
+    fn cursor_for(
+        receptor: &str,
+        source: &str,
+        owner: &str,
+        lease_gen: u64,
+        until: u64,
+    ) -> ChangeCursor {
         ChangeCursor {
             receptor_id: receptor.into(),
             resource_key: source.into(),
@@ -2248,7 +2268,11 @@ mod tests {
         let e = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
         assert_eq!(store.append(&e).unwrap(), AppendOutcome::New);
         assert_eq!(store.append(&e).unwrap(), AppendOutcome::Duplicate);
-        assert_eq!(store.distinct_count(), 1, "replay must not add an occurrence");
+        assert_eq!(
+            store.distinct_count(),
+            1,
+            "replay must not add an occurrence"
+        );
         assert!(store.contradictions().is_empty());
     }
 
@@ -2273,8 +2297,15 @@ mod tests {
         let first = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
         let changed = evt("msg-in", "tg-1", "evt-1", "fp-B", 2_000);
         assert_eq!(store.append(&first).unwrap(), AppendOutcome::New);
-        assert_eq!(store.append(&changed).unwrap(), AppendOutcome::Contradiction);
-        assert_eq!(store.distinct_count(), 1, "contradiction must not add an occurrence");
+        assert_eq!(
+            store.append(&changed).unwrap(),
+            AppendOutcome::Contradiction
+        );
+        assert_eq!(
+            store.distinct_count(),
+            1,
+            "contradiction must not add an occurrence"
+        );
         assert_eq!(store.contradictions().len(), 1);
         assert_eq!(store.contradictions()[0].prior_fingerprint, "fp-a");
         assert_eq!(store.contradictions()[0].new_fingerprint, "fp-B");
@@ -2321,7 +2352,13 @@ mod tests {
             cursors.advance(&newer, "r-1", 7, 5_000).unwrap(),
             AdvanceOutcome::Advanced
         );
-        assert_eq!(cursors.get("msg-in", "tg-1").unwrap().last_observed_at_unix_ms, 5_000);
+        assert_eq!(
+            cursors
+                .get("msg-in", "tg-1")
+                .unwrap()
+                .last_observed_at_unix_ms,
+            5_000
+        );
 
         // An older, different event arrives out of order — observed, no
         // backward move.
@@ -2332,7 +2369,10 @@ mod tests {
             AdvanceOutcome::StaleObservation
         );
         assert_eq!(
-            cursors.get("msg-in", "tg-1").unwrap().last_observed_at_unix_ms,
+            cursors
+                .get("msg-in", "tg-1")
+                .unwrap()
+                .last_observed_at_unix_ms,
             5_000,
             "cursor must not move backward"
         );
@@ -2424,20 +2464,52 @@ mod tests {
         // Every live binding requires lease/owner/health/cancellation/restart
         // and a positive child bound. Missing any is rejected.
         let mut reg = TransportRegistry::new();
-        let good = transport("msg-in", "poller-1", IngressMode::Poll, Durability::Leased, "r-1", 1, 60_000);
+        let good = transport(
+            "msg-in",
+            "poller-1",
+            IngressMode::Poll,
+            Durability::Leased,
+            "r-1",
+            1,
+            60_000,
+        );
         assert!(reg.register(good, 4, 0).is_ok());
 
         // Zero child bound rejected.
-        let bad = transport("msg-in", "poller-2", IngressMode::Poll, Durability::Leased, "r-1", 1, 60_000);
+        let bad = transport(
+            "msg-in",
+            "poller-2",
+            IngressMode::Poll,
+            Durability::Leased,
+            "r-1",
+            1,
+            60_000,
+        );
         assert!(reg.register(bad, 0, 0).is_err());
 
         // Invalid binding (endpoint URL, not a secret ref) rejected.
-        let mut leaked = transport("msg-in", "poller-3", IngressMode::Poll, Durability::Leased, "r-1", 1, 60_000);
+        let mut leaked = transport(
+            "msg-in",
+            "poller-3",
+            IngressMode::Poll,
+            Durability::Leased,
+            "r-1",
+            1,
+            60_000,
+        );
         leaked.endpoint_ref = "https://public.example/hook".into();
         assert!(reg.register(leaked, 4, 0).is_err());
 
         // Mode-durability dishonesty rejected (ephemeral cannot be restartable).
-        let mut lying = transport("msg-in", "tunnel-1", IngressMode::EphemeralTunnel, Durability::Restartable, "r-1", 1, 60_000);
+        let mut lying = transport(
+            "msg-in",
+            "tunnel-1",
+            IngressMode::EphemeralTunnel,
+            Durability::Restartable,
+            "r-1",
+            1,
+            60_000,
+        );
         assert!(reg.register(lying.clone(), 4, 0).is_err());
         lying.durability = Durability::Leased;
         assert!(reg.register(lying, 4, 0).is_ok());
@@ -2450,8 +2522,24 @@ mod tests {
         // the registry. Two unrelated adapter names bind the same receptor
         // through the identical shape.
         let mut reg = TransportRegistry::new();
-        let alpha = transport("msg-in", "tunnel-alpha", IngressMode::EphemeralTunnel, Durability::Leased, "r-1", 1, 60_000);
-        let beta = transport("msg-in", "tunnel-beta", IngressMode::EphemeralTunnel, Durability::Leased, "r-1", 1, 60_000);
+        let alpha = transport(
+            "msg-in",
+            "tunnel-alpha",
+            IngressMode::EphemeralTunnel,
+            Durability::Leased,
+            "r-1",
+            1,
+            60_000,
+        );
+        let beta = transport(
+            "msg-in",
+            "tunnel-beta",
+            IngressMode::EphemeralTunnel,
+            Durability::Leased,
+            "r-1",
+            1,
+            60_000,
+        );
         assert!(reg.register(alpha, 4, 0).is_ok());
         assert!(reg.register(beta, 4, 0).is_ok());
         // Both adapters are live for the same receptor — provider-neutral.
@@ -2459,7 +2547,15 @@ mod tests {
         assert!(reg.get("msg-in", "tunnel-alpha").is_some());
         assert!(reg.get("msg-in", "tunnel-beta").is_some());
         // Replacing alpha with a fresh generation supersedes the old one.
-        let alpha2 = transport("msg-in", "tunnel-alpha", IngressMode::EphemeralTunnel, Durability::Leased, "r-1", 2, 60_000);
+        let alpha2 = transport(
+            "msg-in",
+            "tunnel-alpha",
+            IngressMode::EphemeralTunnel,
+            Durability::Leased,
+            "r-1",
+            2,
+            60_000,
+        );
         let replaced = reg.register(alpha2, 4, 0).unwrap();
         assert_eq!(replaced.binding.lease_generation, 2);
         assert_eq!(reg.supersession_count(), 1, "the prior alpha is superseded");
@@ -2470,7 +2566,15 @@ mod tests {
     #[test]
     fn rm3_retire_drops_liveness_but_keeps_supersession_history() {
         let mut reg = TransportRegistry::new();
-        let b = transport("msg-in", "poller-1", IngressMode::Poll, Durability::Leased, "r-1", 1, 60_000);
+        let b = transport(
+            "msg-in",
+            "poller-1",
+            IngressMode::Poll,
+            Durability::Leased,
+            "r-1",
+            1,
+            60_000,
+        );
         let _ = reg.register(b, 4, 0).unwrap();
         assert!(reg.may_receive("msg-in", "poller-1", "r-1", 1, 1_000));
         reg.retire("msg-in", "poller-1");
@@ -2483,14 +2587,34 @@ mod tests {
         // swap_adapter: retire whatever adapter was live for a receptor and
         // register a new one, by descriptor alone.
         let mut reg = TransportRegistry::new();
-        let poller = transport("msg-in", "poller-1", IngressMode::Poll, Durability::Leased, "r-1", 1, 60_000);
+        let poller = transport(
+            "msg-in",
+            "poller-1",
+            IngressMode::Poll,
+            Durability::Leased,
+            "r-1",
+            1,
+            60_000,
+        );
         let _ = reg.register(poller, 4, 0).unwrap();
         assert_eq!(reg.effective("msg-in").len(), 1);
 
         // Promote to an ephemeral tunnel under a different adapter name.
-        let tunnel = transport("msg-in", "tunnel-alpha", IngressMode::EphemeralTunnel, Durability::Leased, "r-1", 1, 60_000);
+        let tunnel = transport(
+            "msg-in",
+            "tunnel-alpha",
+            IngressMode::EphemeralTunnel,
+            Durability::Leased,
+            "r-1",
+            1,
+            60_000,
+        );
         let _ = reg.replace_adapter("msg-in", tunnel, 4).unwrap();
-        assert_eq!(reg.effective("msg-in").len(), 1, "old adapter retired, new one live");
+        assert_eq!(
+            reg.effective("msg-in").len(),
+            1,
+            "old adapter retired, new one live"
+        );
         assert!(reg.get("msg-in", "poller-1").is_none());
         assert!(reg.get("msg-in", "tunnel-alpha").is_some());
     }
@@ -2498,7 +2622,15 @@ mod tests {
     #[test]
     fn rm3_child_count_bound_is_enforced() {
         let mut reg = TransportRegistry::new();
-        let b = transport("msg-in", "poller-1", IngressMode::Poll, Durability::Leased, "r-1", 1, 60_000);
+        let b = transport(
+            "msg-in",
+            "poller-1",
+            IngressMode::Poll,
+            Durability::Leased,
+            "r-1",
+            1,
+            60_000,
+        );
         // child_count exceeding max_children is rejected at registration.
         assert!(reg.register(b.clone(), 2, 3).is_err());
         // Within bound is accepted.
@@ -2516,35 +2648,73 @@ mod tests {
         let mut ctl = controller_starting_poll();
         // Low load -> hold on poll.
         assert_eq!(
-            ctl.decide(LoadSignal { events_per_min: 5, uptime_required: false, health_lost: false }, 1_000),
+            ctl.decide(
+                LoadSignal {
+                    events_per_min: 5,
+                    uptime_required: false,
+                    health_lost: false
+                },
+                1_000
+            ),
             BindingDecision::Hold
         );
         // Load crosses ephemeral threshold -> promote (past cooldown).
         assert_eq!(
-            ctl.decide(LoadSignal { events_per_min: 30, uptime_required: false, health_lost: false }, 10_000),
+            ctl.decide(
+                LoadSignal {
+                    events_per_min: 30,
+                    uptime_required: false,
+                    health_lost: false
+                },
+                10_000
+            ),
             BindingDecision::PromoteTo(BindingTier::EphemeralTunnel)
         );
         ctl.current_tier = BindingTier::EphemeralTunnel;
         // Load crosses durable threshold -> promote.
         assert_eq!(
-            ctl.decide(LoadSignal { events_per_min: 600, uptime_required: false, health_lost: false }, 20_000),
+            ctl.decide(
+                LoadSignal {
+                    events_per_min: 600,
+                    uptime_required: false,
+                    health_lost: false
+                },
+                20_000
+            ),
             BindingDecision::PromoteTo(BindingTier::DurableTunnel)
         );
     }
 
     #[test]
     fn rm4_hysteresis_prevents_oscillation_at_the_threshold() {
-        let mut ctl = AdaptiveBindingController::new(PromotionThresholds::default(), BindingTier::EphemeralTunnel);
+        let mut ctl = AdaptiveBindingController::new(
+            PromotionThresholds::default(),
+            BindingTier::EphemeralTunnel,
+        );
         // Load just under the ephemeral threshold but within hysteresis band
         // (30 - 10 = 20). A small dip to 25 must NOT demote (hysteresis).
         assert_eq!(
-            ctl.decide(LoadSignal { events_per_min: 25, uptime_required: false, health_lost: false }, 1_000),
+            ctl.decide(
+                LoadSignal {
+                    events_per_min: 25,
+                    uptime_required: false,
+                    health_lost: false
+                },
+                1_000
+            ),
             BindingDecision::Hold,
             "hysteresis must absorb a small dip below the threshold"
         );
         // A drop below the hysteresis band demotes.
         assert_eq!(
-            ctl.decide(LoadSignal { events_per_min: 15, uptime_required: false, health_lost: false }, 2_000),
+            ctl.decide(
+                LoadSignal {
+                    events_per_min: 15,
+                    uptime_required: false,
+                    health_lost: false
+                },
+                2_000
+            ),
             BindingDecision::DemoteTo(BindingTier::Poll)
         );
     }
@@ -2554,33 +2724,71 @@ mod tests {
         let mut ctl = controller_starting_poll();
         // First promotion at t=10s succeeds.
         assert_eq!(
-            ctl.decide(LoadSignal { events_per_min: 30, uptime_required: false, health_lost: false }, 10_000),
+            ctl.decide(
+                LoadSignal {
+                    events_per_min: 30,
+                    uptime_required: false,
+                    health_lost: false
+                },
+                10_000
+            ),
             BindingDecision::PromoteTo(BindingTier::EphemeralTunnel)
         );
         ctl.current_tier = BindingTier::EphemeralTunnel;
         // A durable promotion within the cooldown window is blocked.
         assert_eq!(
-            ctl.decide(LoadSignal { events_per_min: 600, uptime_required: false, health_lost: false }, 12_000),
+            ctl.decide(
+                LoadSignal {
+                    events_per_min: 600,
+                    uptime_required: false,
+                    health_lost: false
+                },
+                12_000
+            ),
             BindingDecision::Hold,
             "cooldown must block a promotion inside the window"
         );
         // After the cooldown (5s default), it proceeds.
         assert_eq!(
-            ctl.decide(LoadSignal { events_per_min: 600, uptime_required: false, health_lost: false }, 16_000),
+            ctl.decide(
+                LoadSignal {
+                    events_per_min: 600,
+                    uptime_required: false,
+                    health_lost: false
+                },
+                16_000
+            ),
             BindingDecision::PromoteTo(BindingTier::DurableTunnel)
         );
     }
 
     #[test]
     fn rm4_health_loss_demotes_one_tier() {
-        let mut ctl = AdaptiveBindingController::new(PromotionThresholds::default(), BindingTier::DurableTunnel);
+        let mut ctl = AdaptiveBindingController::new(
+            PromotionThresholds::default(),
+            BindingTier::DurableTunnel,
+        );
         assert_eq!(
-            ctl.decide(LoadSignal { events_per_min: 900, uptime_required: true, health_lost: true }, 1_000),
+            ctl.decide(
+                LoadSignal {
+                    events_per_min: 900,
+                    uptime_required: true,
+                    health_lost: true
+                },
+                1_000
+            ),
             BindingDecision::DemoteTo(BindingTier::EphemeralTunnel)
         );
         ctl.current_tier = BindingTier::EphemeralTunnel;
         assert_eq!(
-            ctl.decide(LoadSignal { events_per_min: 900, uptime_required: true, health_lost: true }, 2_000),
+            ctl.decide(
+                LoadSignal {
+                    events_per_min: 900,
+                    uptime_required: true,
+                    health_lost: true
+                },
+                2_000
+            ),
             BindingDecision::DemoteTo(BindingTier::Poll)
         );
     }
@@ -2599,7 +2807,19 @@ mod tests {
 
         // Start: poller live.
         let _ = reg
-            .register(transport(receptor, "poller", IngressMode::Poll, Durability::Leased, owner, 1, 60_000), 4, 0)
+            .register(
+                transport(
+                    receptor,
+                    "poller",
+                    IngressMode::Poll,
+                    Durability::Leased,
+                    owner,
+                    1,
+                    60_000,
+                ),
+                4,
+                0,
+            )
             .unwrap();
 
         // Deliver event A on poller.
@@ -2607,8 +2827,17 @@ mod tests {
         assert_eq!(store.append(&a).unwrap(), AppendOutcome::New);
 
         // Load spike -> promote to ephemeral (zero-loss handoff).
-        let d = ctl.decide(LoadSignal { events_per_min: 30, uptime_required: false, health_lost: false }, 10_000);
-        let _ = ctl.handoff(d, receptor, owner, 2, 10_000, 60_000, &mut reg).unwrap();
+        let d = ctl.decide(
+            LoadSignal {
+                events_per_min: 30,
+                uptime_required: false,
+                health_lost: false,
+            },
+            10_000,
+        );
+        let _ = ctl
+            .handoff(d, receptor, owner, 2, 10_000, 60_000, &mut reg)
+            .unwrap();
         assert_eq!(ctl.current_tier(), BindingTier::EphemeralTunnel);
         assert!(reg.get(receptor, "tunnel.ephemeral").is_some());
         assert!(reg.get(receptor, "poller").is_none(), "old adapter retired");
@@ -2620,22 +2849,44 @@ mod tests {
         assert_eq!(store.append(&b).unwrap(), AppendOutcome::Duplicate);
 
         // Higher load -> promote to durable.
-        let d = ctl.decide(LoadSignal { events_per_min: 600, uptime_required: false, health_lost: false }, 20_000);
-        let _ = ctl.handoff(d, receptor, owner, 3, 20_000, 60_000, &mut reg).unwrap();
+        let d = ctl.decide(
+            LoadSignal {
+                events_per_min: 600,
+                uptime_required: false,
+                health_lost: false,
+            },
+            20_000,
+        );
+        let _ = ctl
+            .handoff(d, receptor, owner, 3, 20_000, 60_000, &mut reg)
+            .unwrap();
         assert_eq!(ctl.current_tier(), BindingTier::DurableTunnel);
         let c = evt(receptor, "tg-1", "evt-C", "fp-C", 21_000);
         assert_eq!(store.append(&c).unwrap(), AppendOutcome::New);
 
         // Durable loses health -> demote to ephemeral.
-        let d = ctl.decide(LoadSignal { events_per_min: 900, uptime_required: true, health_lost: true }, 30_000);
-        let _ = ctl.handoff(d, receptor, owner, 4, 30_000, 60_000, &mut reg).unwrap();
+        let d = ctl.decide(
+            LoadSignal {
+                events_per_min: 900,
+                uptime_required: true,
+                health_lost: true,
+            },
+            30_000,
+        );
+        let _ = ctl
+            .handoff(d, receptor, owner, 4, 30_000, 60_000, &mut reg)
+            .unwrap();
         assert_eq!(ctl.current_tier(), BindingTier::EphemeralTunnel);
         let ev = evt(receptor, "tg-1", "evt-D", "fp-D", 31_000);
         assert_eq!(store.append(&ev).unwrap(), AppendOutcome::New);
 
         // No duplicate effects (4 distinct events, 4 distinct occurrences),
         // and no missed occurrences (all four processed).
-        assert_eq!(store.distinct_count(), 4, "no duplicate effects across the full trace");
+        assert_eq!(
+            store.distinct_count(),
+            4,
+            "no duplicate effects across the full trace"
+        );
         assert!(store.contradictions().is_empty());
         // The final live binding is the ephemeral tunnel (demoted from durable).
         assert!(reg.get(receptor, "tunnel.durable").is_none());
@@ -2647,9 +2898,12 @@ mod tests {
     #[test]
     fn rm5_reconcile_starts_declared_not_live_stops_orphans_keeps_both() {
         let mut reg = ReceptorRegistry::new();
-        reg.declare(test_declaration("a", Durability::Leased)).unwrap();
-        reg.declare(test_declaration("b", Durability::Leased)).unwrap();
-        reg.declare(test_declaration("c", Durability::Leased)).unwrap();
+        reg.declare(test_declaration("a", Durability::Leased))
+            .unwrap();
+        reg.declare(test_declaration("b", Durability::Leased))
+            .unwrap();
+        reg.declare(test_declaration("c", Durability::Leased))
+            .unwrap();
         // "b" is declared + live -> keep. "c" is live, then its declaration
         // is removed (source snapshot refresh) -> orphan to stop.
         let _ = reg.acquire_lease("b", "r-1", 1_000, 60_000).unwrap();
@@ -2657,9 +2911,18 @@ mod tests {
         reg.remove_declaration("c");
 
         let plan = reconcile(&reg, 1_000);
-        assert!(plan.to_start.contains(&"a".to_string()), "declared-not-live -> start");
-        assert!(plan.to_keep.contains(&"b".to_string()), "declared-and-live -> keep");
-        assert!(plan.to_stop.contains(&"c".to_string()), "live-not-declared -> stop orphan");
+        assert!(
+            plan.to_start.contains(&"a".to_string()),
+            "declared-not-live -> start"
+        );
+        assert!(
+            plan.to_keep.contains(&"b".to_string()),
+            "declared-and-live -> keep"
+        );
+        assert!(
+            plan.to_stop.contains(&"c".to_string()),
+            "live-not-declared -> stop orphan"
+        );
         assert!(!plan.to_start.contains(&"b".to_string()));
         assert!(!plan.to_keep.contains(&"c".to_string()));
     }
@@ -2689,10 +2952,15 @@ mod tests {
         // the occurrence is appended (durable truth first) but not executed.
         let mut cell = ready_cell();
         cell.continuation_ready = false;
-        cell.cursors.install(cursor_for("msg-in", "tg-1", "r-1", 7, 60_000));
+        cell.cursors
+            .install(cursor_for("msg-in", "tg-1", "r-1", 7, 60_000));
         let e = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
         assert_eq!(cell.ingest(&e, "r-1", 7, 1_000).unwrap(), CellOutcome::Held);
-        assert_eq!(cell.occurrences.distinct_count(), 1, "occurrence is still durable");
+        assert_eq!(
+            cell.occurrences.distinct_count(),
+            1,
+            "occurrence is still durable"
+        );
         assert!(!cell.envelope.executed, "held worker did not execute");
     }
 
@@ -2701,24 +2969,40 @@ mod tests {
         let mut cell = ready_cell();
         cell.cursors.install(cursor_from(
             &evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000),
-            "r-1", 7, 60_000,
+            "r-1",
+            7,
+            60_000,
         ));
         let e = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
         // First delivery: New -> Processed (executed + acknowledged + cursor advanced).
-        assert_eq!(cell.ingest(&e, "r-1", 7, 1_000).unwrap(), CellOutcome::Processed);
+        assert_eq!(
+            cell.ingest(&e, "r-1", 7, 1_000).unwrap(),
+            CellOutcome::Processed
+        );
         assert!(cell.envelope.executed);
         // Replay: Duplicate -> Replayed, no re-execution side effect on the cursor.
-        assert_eq!(cell.ingest(&e, "r-1", 7, 2_000).unwrap(), CellOutcome::Replayed);
-        assert_eq!(cell.occurrences.distinct_count(), 1, "replay adds no occurrence");
+        assert_eq!(
+            cell.ingest(&e, "r-1", 7, 2_000).unwrap(),
+            CellOutcome::Replayed
+        );
+        assert_eq!(
+            cell.occurrences.distinct_count(),
+            1,
+            "replay adds no occurrence"
+        );
     }
 
     #[test]
     fn rm5_cell_contradiction_is_held_not_processed() {
         let mut cell = ready_cell();
-        cell.cursors.install(cursor_for("msg-in", "tg-1", "r-1", 7, 60_000));
+        cell.cursors
+            .install(cursor_for("msg-in", "tg-1", "r-1", 7, 60_000));
         let first = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
         let changed = evt("msg-in", "tg-1", "evt-1", "fp-B", 2_000);
-        assert_eq!(cell.ingest(&first, "r-1", 7, 1_000).unwrap(), CellOutcome::Processed);
+        assert_eq!(
+            cell.ingest(&first, "r-1", 7, 1_000).unwrap(),
+            CellOutcome::Processed
+        );
         // Reused ID, changed content -> contradiction, not processed.
         assert_eq!(
             cell.ingest(&changed, "r-1", 7, 2_000),
@@ -2729,7 +3013,8 @@ mod tests {
     #[test]
     fn rm5_cell_expired_lease_blocks_cursor_advance() {
         let mut cell = ready_cell();
-        cell.cursors.install(cursor_for("msg-in", "tg-1", "r-1", 7, 60_000));
+        cell.cursors
+            .install(cursor_for("msg-in", "tg-1", "r-1", 7, 60_000));
         let e = evt("msg-in", "tg-1", "evt-2", "fp-b", 70_000);
         // Lease expired at 60_000; the occurrence is appended but the cursor
         // cannot advance -> StaleCursorLease. The worker does not silently
@@ -2760,7 +3045,8 @@ mod tests {
             )
             .unwrap(),
         };
-        cell.cursors.install(cursor_for("msg-in", "tg-1", "r-1", 7, 60_000));
+        cell.cursors
+            .install(cursor_for("msg-in", "tg-1", "r-1", 7, 60_000));
         let e = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
         assert_eq!(cell.ingest(&e, "r-1", 7, 1_000), Err(CellError::EffectHeld));
     }
@@ -2791,17 +3077,26 @@ mod tests {
         let mut seen = std::collections::BTreeSet::new();
         let mut r = receipt("evt-1", 512, 10_000);
         r.signature_present = false;
-        assert_eq!(r.validate(10_500, 262_144, 60_000, &mut seen), Err(WebhookError::MissingSignature));
+        assert_eq!(
+            r.validate(10_500, 262_144, 60_000, &mut seen),
+            Err(WebhookError::MissingSignature)
+        );
         r.signature_present = true;
         r.signature_valid = false;
-        assert_eq!(r.validate(10_500, 262_144, 60_000, &mut seen), Err(WebhookError::InvalidSignature));
+        assert_eq!(
+            r.validate(10_500, 262_144, 60_000, &mut seen),
+            Err(WebhookError::InvalidSignature)
+        );
     }
 
     #[test]
     fn rm7_webhook_rejects_oversized_body() {
         let mut seen = std::collections::BTreeSet::new();
         let r = receipt("evt-1", 300_000, 10_000);
-        assert_eq!(r.validate(10_500, 262_144, 60_000, &mut seen), Err(WebhookError::Oversized));
+        assert_eq!(
+            r.validate(10_500, 262_144, 60_000, &mut seen),
+            Err(WebhookError::Oversized)
+        );
     }
 
     #[test]
@@ -2809,10 +3104,16 @@ mod tests {
         let mut seen = std::collections::BTreeSet::new();
         // Too old (outside the 60s window).
         let old = receipt("evt-1", 512, 10_000);
-        assert_eq!(old.validate(80_000, 262_144, 60_000, &mut seen), Err(WebhookError::Stale));
+        assert_eq!(
+            old.validate(80_000, 262_144, 60_000, &mut seen),
+            Err(WebhookError::Stale)
+        );
         // Future-dated (clock game).
         let future = receipt("evt-2", 512, 100_000);
-        assert_eq!(future.validate(10_500, 262_144, 60_000, &mut seen), Err(WebhookError::Stale));
+        assert_eq!(
+            future.validate(10_500, 262_144, 60_000, &mut seen),
+            Err(WebhookError::Stale)
+        );
     }
 
     #[test]
@@ -2821,7 +3122,10 @@ mod tests {
         let r = receipt("evt-1", 512, 10_000);
         assert!(r.validate(10_500, 262_144, 60_000, &mut seen).is_ok());
         // Same event id again -> replay.
-        assert_eq!(r.validate(10_600, 262_144, 60_000, &mut seen), Err(WebhookError::Replayed));
+        assert_eq!(
+            r.validate(10_600, 262_144, 60_000, &mut seen),
+            Err(WebhookError::Replayed)
+        );
     }
 
     #[test]
@@ -2829,7 +3133,10 @@ mod tests {
         let mut seen = std::collections::BTreeSet::new();
         let mut r = receipt("evt-1", 512, 10_000);
         r.event_id = "  ".into();
-        assert_eq!(r.validate(10_500, 262_144, 60_000, &mut seen), Err(WebhookError::Malformed));
+        assert_eq!(
+            r.validate(10_500, 262_144, 60_000, &mut seen),
+            Err(WebhookError::Malformed)
+        );
     }
 
     #[test]
@@ -2875,13 +3182,20 @@ mod tests {
         }
         // Read-only is the one non-held class (degraded read path).
         let ro = ExecutionEnvelope::new(
-            Receptor { family: InterfaceFamily::Cli, capability: "read".into(), occurrence_id: "o".into() },
+            Receptor {
+                family: InterfaceFamily::Cli,
+                capability: "read".into(),
+                occurrence_id: "o".into(),
+            },
             EffectClass::ReadOnly,
             None,
             None,
         )
         .unwrap();
-        assert!(ro.may_execute(), "read-only may execute on the degraded path");
+        assert!(
+            ro.may_execute(),
+            "read-only may execute on the degraded path"
+        );
     }
 
     #[test]
@@ -2891,9 +3205,15 @@ mod tests {
         let mut store = OccurrenceStore::new(1);
         let mut e = evt("msg-in", "tg-1", "evt-1", "fp-a", 1_000);
         e.privacy = PrivacyClass::RawSecret;
-        assert!(store.append(&e).is_err(), "raw-secret payload cannot cross the boundary");
+        assert!(
+            store.append(&e).is_err(),
+            "raw-secret payload cannot cross the boundary"
+        );
         e.privacy = PrivacyClass::Sensitive;
-        assert!(store.append(&e).is_err(), "sensitive payload cannot cross the boundary");
+        assert!(
+            store.append(&e).is_err(),
+            "sensitive payload cannot cross the boundary"
+        );
         e.privacy = PrivacyClass::Redacted;
         assert!(store.append(&e).is_ok(), "redacted projection may cross");
     }
@@ -2903,7 +3223,15 @@ mod tests {
         // A binding that smuggles a real endpoint URL is rejected — endpoints
         // and credentials stay in the runtime/secret store only.
         let mut reg = TransportRegistry::new();
-        let mut b = transport("msg-in", "poller-1", IngressMode::Poll, Durability::Leased, "r-1", 1, 60_000);
+        let mut b = transport(
+            "msg-in",
+            "poller-1",
+            IngressMode::Poll,
+            Durability::Leased,
+            "r-1",
+            1,
+            60_000,
+        );
         b.endpoint_ref = "https://public.example/webhook".into();
         assert!(reg.register(b, 4, 0).is_err());
     }

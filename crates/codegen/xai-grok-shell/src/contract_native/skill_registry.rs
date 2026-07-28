@@ -1,13 +1,27 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
+use super::neuron_bridge::{generated_skill_artifact, generated_skill_is_active};
+
+mod graph;
+
+pub use graph::{
+    ContractSkillPlan, ResolvedScript, catalog, core_guidance, dry_run, plan, plan_bounded,
+    resolve_input_bindings, resolve_script,
+};
+
 const MANIFEST_NAME: &str = "contract-skill.json";
 const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
+const MAX_SCRIPT_BYTES: u64 = 1024 * 1024;
 const MAX_SKILLS: usize = 256;
 const MAX_SELECTED_SKILLS: usize = 4;
 const MAX_NODES_PER_SKILL: usize = 16;
+const EMBEDDED_CORE_MANIFEST: &str =
+    include_str!("../../../../../.agents/skills/aiko-meta-agent/contract-skill.json");
+const EMBEDDED_CORE_GUIDANCE: &str =
+    include_str!("../../../../../.agents/skills/aiko-meta-agent/SKILL.md");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -22,6 +36,10 @@ pub struct ContractSkillManifest {
     #[serde(default)]
     pub triggers: Vec<String>,
     #[serde(default)]
+    pub activation: SkillActivation,
+    #[serde(default)]
+    pub composition: Option<SkillComposition>,
+    #[serde(default)]
     pub input_schema: Value,
     #[serde(default)]
     pub output_schema: Value,
@@ -31,6 +49,21 @@ pub struct ContractSkillManifest {
     pub examples: Vec<SkillExample>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillActivation {
+    #[default]
+    Matched,
+    Core,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillComposition {
+    pub attach_children_at: String,
+    pub join_children_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SkillNode {
@@ -38,6 +71,10 @@ pub struct SkillNode {
     pub plan: String,
     #[serde(default = "default_worker")]
     pub worker: String,
+    /// Versioned implementation protocol for deterministic host/script
+    /// workers. Model-backed `aiko` nodes intentionally have no adapter.
+    #[serde(default)]
+    pub adapter: Option<String>,
     #[serde(default)]
     pub script: Option<String>,
     #[serde(default)]
@@ -76,14 +113,24 @@ pub struct LoadedContractSkill {
     pub manifest: ContractSkillManifest,
     pub directory: PathBuf,
     pub source: SkillSource,
+    pub admission: SkillAdmission,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SkillSource {
+    Embedded,
     Bundled,
     User,
     Project,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillAdmission {
+    BuildEmbedded,
+    ManifestValidated,
+    LedgerActivated,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -95,13 +142,6 @@ pub struct RankedContractSkill {
     pub matched_triggers: Vec<String>,
     #[serde(skip)]
     pub skill: LoadedContractSkill,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ContractSkillPlan {
-    pub schema_version: u32,
-    pub selected: Vec<RankedContractSkill>,
-    pub children: Vec<Value>,
 }
 
 fn default_worker() -> String {
@@ -140,6 +180,26 @@ fn safe_relative_path(value: &str) -> bool {
             matches!(component, Component::Normal(_))
                 && !component.as_os_str().to_string_lossy().starts_with('.')
         })
+}
+
+fn safe_adapter(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || matches!(byte, b'.' | b'-' | b'_' | b'/' | b':')
+        })
+}
+
+fn known_host_adapter(value: &str) -> bool {
+    matches!(
+        value,
+        "aiko.meta.observe/v1"
+            | "aiko.meta.recall/v1"
+            | "aiko.meta.route/v1"
+            | "aiko.meta.settle/v1"
+    )
 }
 
 fn known_effect(effect: &str) -> bool {
@@ -218,21 +278,53 @@ pub fn validate_manifest(manifest: &ContractSkillManifest, directory: &Path) -> 
                 node.key
             ));
         }
-        match (&node.worker[..], &node.script) {
-            ("script", Some(script)) if safe_relative_path(script) => {
+        match (&node.worker[..], node.adapter.as_deref(), &node.script) {
+            ("aiko", None, None) => {}
+            ("host", Some(adapter), None)
+                if safe_adapter(adapter) && known_host_adapter(adapter) => {}
+            ("script", Some("aiko.neuron-json-stdio/v1"), Some(script))
+                if safe_relative_path(script) =>
+            {
+                if node.effect != "local_reversible" || node.read_only || !node.reversible {
+                    return Err(format!(
+                        "node {} script must be local_reversible, reversible, and kernel-sandboxed",
+                        node.key
+                    ));
+                }
                 let script_path = directory.join(script);
-                if !script_path.is_file() {
-                    return Err(format!("node {} script does not exist", node.key));
+                let metadata = std::fs::symlink_metadata(&script_path)
+                    .map_err(|_| format!("node {} script does not exist", node.key))?;
+                if metadata.file_type().is_symlink()
+                    || !metadata.is_file()
+                    || metadata.len() > MAX_SCRIPT_BYTES
+                {
+                    return Err(format!(
+                        "node {} script must be a bounded regular file",
+                        node.key
+                    ));
                 }
             }
-            ("script", _) => return Err(format!("node {} has an unsafe script path", node.key)),
-            (_, Some(_)) => {
+            ("tool", _, _) => {
                 return Err(format!(
-                    "node {} declares a script for a non-script worker",
+                    "node {} names an unpinned tool worker; use an aiko node until a typed adapter exists",
                     node.key
                 ));
             }
-            _ => {}
+            ("host", _, _) => {
+                return Err(format!("node {} has an unknown host adapter", node.key));
+            }
+            ("script", _, _) => {
+                return Err(format!(
+                    "node {} must use the pinned JSON-stdio script protocol",
+                    node.key
+                ));
+            }
+            _ => {
+                return Err(format!(
+                    "node {} has an invalid worker implementation",
+                    node.key
+                ));
+            }
         }
         for source in node.input_bindings.values() {
             let Some((dependency, output)) = source.split_once('.') else {
@@ -257,6 +349,30 @@ pub fn validate_manifest(manifest: &ContractSkillManifest, directory: &Path) -> 
         }
     }
     ensure_acyclic(&manifest.nodes)?;
+    match (manifest.activation, manifest.composition.as_ref()) {
+        (SkillActivation::Core, Some(composition)) => {
+            if composition.attach_children_at == composition.join_children_at
+                || !keys.contains(&composition.attach_children_at)
+                || !keys.contains(&composition.join_children_at)
+            {
+                return Err("core composition ports must name two distinct nodes".into());
+            }
+            if !depends_transitively(
+                &manifest.nodes,
+                &composition.join_children_at,
+                &composition.attach_children_at,
+            ) {
+                return Err("core join port must be downstream of its attach port".into());
+            }
+        }
+        (SkillActivation::Core, None) => {
+            return Err("core skills require typed composition ports".into());
+        }
+        (SkillActivation::Matched, Some(_)) => {
+            return Err("matched limb skills cannot declare core composition ports".into());
+        }
+        (SkillActivation::Matched, None) => {}
+    }
     Ok(())
 }
 
@@ -296,6 +412,33 @@ fn ensure_acyclic(nodes: &[SkillNode]) -> Result<(), String> {
     Ok(())
 }
 
+fn depends_transitively(nodes: &[SkillNode], from: &str, target: &str) -> bool {
+    let dependencies = nodes
+        .iter()
+        .map(|node| (node.key.as_str(), node.depends_on.as_slice()))
+        .collect::<BTreeMap<_, _>>();
+    fn walk<'a>(
+        key: &'a str,
+        target: &str,
+        dependencies: &BTreeMap<&'a str, &'a [String]>,
+        visited: &mut BTreeSet<&'a str>,
+    ) -> bool {
+        if key == target {
+            return true;
+        }
+        if !visited.insert(key) {
+            return false;
+        }
+        dependencies
+            .get(key)
+            .copied()
+            .unwrap_or_default()
+            .iter()
+            .any(|dependency| walk(dependency, target, dependencies, visited))
+    }
+    walk(from, target, &dependencies, &mut BTreeSet::new())
+}
+
 fn platform_matches(platforms: &[String]) -> bool {
     platforms.is_empty()
         || platforms.iter().any(|platform| {
@@ -305,25 +448,79 @@ fn platform_matches(platforms: &[String]) -> bool {
         })
 }
 
-fn root_candidates(cwd: &Path) -> Vec<(SkillSource, PathBuf)> {
+fn root_candidates(cwd: &Path) -> Vec<(SkillSource, SkillAdmission, PathBuf)> {
     let mut roots = Vec::new();
     // Lowest precedence first; later inserts replace equal IDs.
     let bundled = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../.agents/skills");
-    roots.push((SkillSource::Bundled, bundled));
+    roots.push((
+        SkillSource::Bundled,
+        SkillAdmission::ManifestValidated,
+        bundled,
+    ));
     if let Some(home) = dirs::home_dir() {
-        roots.push((SkillSource::User, home.join(".grok/skills")));
-        roots.push((SkillSource::User, home.join(".aiko/skills")));
-        roots.push((SkillSource::User, home.join(".agents/skills")));
+        roots.push((
+            SkillSource::User,
+            SkillAdmission::LedgerActivated,
+            home.join(".aiko/neuron-skills/objects"),
+        ));
+        roots.push((
+            SkillSource::User,
+            SkillAdmission::ManifestValidated,
+            home.join(".grok/skills"),
+        ));
+        roots.push((
+            SkillSource::User,
+            SkillAdmission::ManifestValidated,
+            home.join(".aiko/skills"),
+        ));
+        roots.push((
+            SkillSource::User,
+            SkillAdmission::ManifestValidated,
+            home.join(".agents/skills"),
+        ));
     }
-    roots.push((SkillSource::Project, cwd.join(".grok/skills")));
-    roots.push((SkillSource::Project, cwd.join(".aiko/skills")));
-    roots.push((SkillSource::Project, cwd.join(".agents/skills")));
+    roots.push((
+        SkillSource::Project,
+        SkillAdmission::LedgerActivated,
+        cwd.join(".aiko/neuron-skills/objects"),
+    ));
+    roots.push((
+        SkillSource::Project,
+        SkillAdmission::ManifestValidated,
+        cwd.join(".grok/skills"),
+    ));
+    roots.push((
+        SkillSource::Project,
+        SkillAdmission::ManifestValidated,
+        cwd.join(".aiko/skills"),
+    ));
+    roots.push((
+        SkillSource::Project,
+        SkillAdmission::ManifestValidated,
+        cwd.join(".agents/skills"),
+    ));
     roots
+}
+
+fn embedded_core_skill() -> Option<LoadedContractSkill> {
+    let directory =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../.agents/skills/aiko-meta-agent");
+    let manifest = serde_json::from_str::<ContractSkillManifest>(EMBEDDED_CORE_MANIFEST).ok()?;
+    validate_manifest(&manifest, &directory).ok()?;
+    Some(LoadedContractSkill {
+        manifest,
+        directory,
+        source: SkillSource::Embedded,
+        admission: SkillAdmission::BuildEmbedded,
+    })
 }
 
 pub fn discover(cwd: &Path) -> Vec<LoadedContractSkill> {
     let mut selected = BTreeMap::<String, LoadedContractSkill>::new();
-    for (source, root) in root_candidates(cwd) {
+    if let Some(core) = embedded_core_skill() {
+        selected.insert(core.manifest.id.clone(), core);
+    }
+    for (source, admission, root) in root_candidates(cwd) {
         let Ok(entries) = std::fs::read_dir(root) else {
             continue;
         };
@@ -350,12 +547,42 @@ pub fn discover(cwd: &Path) -> Vec<LoadedContractSkill> {
             {
                 continue;
             }
+            if admission == SkillAdmission::LedgerActivated {
+                if !directory.join("SKILL.md").is_file()
+                    || !directory.join("evals/evals.json").is_file()
+                    || !directory.join("tests/cases.json").is_file()
+                {
+                    continue;
+                }
+                let Some(artifact) =
+                    generated_skill_artifact(&directory, &manifest.id, &manifest.version)
+                else {
+                    continue;
+                };
+                if directory.file_name().and_then(|name| name.to_str())
+                    != Some(artifact.digest.as_str())
+                    || !generated_skill_is_active(&artifact)
+                {
+                    continue;
+                }
+            }
+            // The always-on connectome is build-admitted and embedded in the
+            // binary. Filesystem layers may add matched limbs, but cannot
+            // shadow or self-declare a core.
+            if manifest.activation == SkillActivation::Core
+                || selected
+                    .get(&manifest.id)
+                    .is_some_and(|existing| existing.source == SkillSource::Embedded)
+            {
+                continue;
+            }
             selected.insert(
                 manifest.id.clone(),
                 LoadedContractSkill {
                     manifest,
                     directory,
                     source,
+                    admission,
                 },
             );
         }
@@ -377,6 +604,9 @@ pub fn rank(goal: &str, skills: Vec<LoadedContractSkill>) -> Vec<RankedContractS
     let mut ranked = skills
         .into_iter()
         .filter_map(|skill| {
+            if skill.manifest.activation != SkillActivation::Matched {
+                return None;
+            }
             let matched_triggers = skill
                 .manifest
                 .triggers
@@ -394,6 +624,7 @@ pub fn rank(goal: &str, skills: Vec<LoadedContractSkill>) -> Vec<RankedContractS
                 return None;
             }
             let source_penalty = match skill.source {
+                SkillSource::Embedded => 0,
                 SkillSource::Project => 0,
                 SkillSource::User => 2,
                 SkillSource::Bundled => 4,
@@ -421,235 +652,5 @@ pub fn rank(goal: &str, skills: Vec<LoadedContractSkill>) -> Vec<RankedContractS
     ranked
 }
 
-pub fn plan(goal: &str, cwd: &Path) -> ContractSkillPlan {
-    // Reserve CELL_SPINE_LEN (4) for observe → agent:aiko → verify → posthook:feedback.
-    let mut remaining_nodes = 12_usize;
-    let selected = rank(goal, discover(cwd))
-        .into_iter()
-        .filter(|ranked| {
-            let count = ranked.skill.manifest.nodes.len();
-            if count > remaining_nodes {
-                return false;
-            }
-            remaining_nodes -= count;
-            true
-        })
-        .collect::<Vec<_>>();
-    let mut children = Vec::new();
-    for ranked in &selected {
-        for node in &ranked.skill.manifest.nodes {
-            let key = format!("{}--{}", ranked.id, node.key);
-            let dependencies = node
-                .depends_on
-                .iter()
-                .map(|dependency| format!("{}--{}", ranked.id, dependency))
-                .collect::<Vec<_>>();
-            children.push(json!({
-                "key": key,
-                "plan": node.plan.replace("{{goal}}", goal),
-                "action": format!("skill:{}@{}:{}", ranked.id, ranked.version, node.worker),
-                "depends_on": dependencies,
-                "input_bindings": node.input_bindings.iter().map(|(name, source)| {
-                    let (dependency, output) = source.split_once('.').unwrap_or((source, ""));
-                    (name.clone(), format!("{}--{}.{}", ranked.id, dependency, output))
-                }).collect::<BTreeMap<_, _>>(),
-                "requires_authorization": node.requires_authority,
-                "authorization": if node.requires_authority { "pending_authorization" } else { "approved" },
-                "effect_scope": node.effect,
-                "read_only": node.read_only,
-                "reversible": node.reversible,
-                "timeout_ms": node.timeout_ms,
-                "skill_id": ranked.id,
-                "skill_version": ranked.version,
-                "worker": node.worker,
-                "script": node.script,
-                "evidence": node.evidence,
-            }));
-        }
-    }
-    ContractSkillPlan {
-        schema_version: 1,
-        selected,
-        children,
-    }
-}
-
-pub fn dry_run(goal: &str, cwd: &Path) -> Value {
-    serde_json::to_value(plan(goal, cwd)).unwrap_or_else(|_| {
-        json!({
-            "schema_version": 1,
-            "selected": [],
-            "children": [],
-        })
-    })
-}
-
-/// Resolve a node's named inputs from already-settled dependency evidence.
-///
-/// Missing evidence is a hard readiness failure; workers never receive an
-/// ambient concatenation of whichever prior text happens to exist.
-pub fn resolve_input_bindings(
-    node: &SkillNode,
-    settled_evidence: &BTreeMap<String, Value>,
-) -> Result<BTreeMap<String, Value>, String> {
-    let mut resolved = BTreeMap::new();
-    for (input, source) in &node.input_bindings {
-        let (dependency, output) = source
-            .split_once('.')
-            .ok_or_else(|| format!("invalid binding source: {source}"))?;
-        if !node.depends_on.iter().any(|item| item == dependency) {
-            return Err(format!("{dependency} is not a direct dependency"));
-        }
-        let evidence = settled_evidence
-            .get(dependency)
-            .ok_or_else(|| format!("dependency {dependency} has not settled"))?;
-        let value = evidence
-            .get(output)
-            .cloned()
-            .ok_or_else(|| format!("dependency {dependency} has no evidence output {output}"))?;
-        resolved.insert(input.clone(), value);
-    }
-    Ok(resolved)
-}
-
-pub fn catalog(cwd: &Path) -> Value {
-    let items = discover(cwd)
-        .into_iter()
-        .map(|skill| {
-            json!({
-                "id": skill.manifest.id,
-                "version": skill.manifest.version,
-                "description": skill.manifest.description,
-                "source": skill.source,
-                "platforms": skill.manifest.platforms,
-                "triggers": skill.manifest.triggers,
-                "nodes": skill.manifest.nodes.len(),
-            })
-        })
-        .collect::<Vec<_>>();
-    json!({ "schema_version": 1, "items": items })
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn manifest() -> ContractSkillManifest {
-        ContractSkillManifest {
-            schema_version: 1,
-            id: "inspect-project".into(),
-            version: "1.0.0".into(),
-            description: "Inspect a project".into(),
-            platforms: vec!["all".into()],
-            triggers: vec!["inspect project".into(), "git status".into()],
-            input_schema: json!({"type":"object"}),
-            output_schema: json!({"type":"object"}),
-            nodes: vec![
-                SkillNode {
-                    key: "git-state".into(),
-                    plan: "Inspect Git state for {{goal}}".into(),
-                    worker: "host".into(),
-                    script: None,
-                    depends_on: Vec::new(),
-                    input_bindings: BTreeMap::new(),
-                    can_parallel: true,
-                    timeout_ms: 1_000,
-                    effect: "read_only".into(),
-                    reversible: false,
-                    read_only: true,
-                    requires_authority: false,
-                    evidence: vec!["exit_status".into()],
-                },
-                SkillNode {
-                    key: "summarize".into(),
-                    plan: "Summarize".into(),
-                    worker: "aiko".into(),
-                    script: None,
-                    depends_on: vec!["git-state".into()],
-                    input_bindings: BTreeMap::from([(
-                        "inspection".into(),
-                        "git-state.result".into(),
-                    )]),
-                    can_parallel: false,
-                    timeout_ms: 10_000,
-                    effect: "read_only".into(),
-                    reversible: false,
-                    read_only: true,
-                    requires_authority: false,
-                    evidence: Vec::new(),
-                },
-            ],
-            examples: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn accepts_bounded_acyclic_manifest() {
-        assert_eq!(validate_manifest(&manifest(), Path::new(".")), Ok(()));
-        assert!(known_effect("process_spawn"));
-        assert!(!known_effect("untyped_effect"));
-    }
-
-    #[test]
-    fn rejects_cycles_and_unsafe_effects() {
-        let mut cyclic = manifest();
-        cyclic.nodes[0].depends_on = vec!["summarize".into()];
-        assert!(
-            validate_manifest(&cyclic, Path::new("."))
-                .unwrap_err()
-                .contains("cycle")
-        );
-
-        let mut unsafe_manifest = manifest();
-        unsafe_manifest.nodes[0].effect = "publish".into();
-        unsafe_manifest.nodes[0].read_only = false;
-        assert!(
-            validate_manifest(&unsafe_manifest, Path::new("."))
-                .unwrap_err()
-                .contains("ungoverned")
-        );
-    }
-
-    #[test]
-    fn resolves_only_named_dependency_evidence() {
-        let manifest = manifest();
-        let node = &manifest.nodes[1];
-        let evidence = BTreeMap::from([(
-            "git-state".into(),
-            json!({"result": {"branch": "main"}, "ambient": "must not leak"}),
-        )]);
-        let resolved = resolve_input_bindings(node, &evidence).unwrap();
-        assert_eq!(resolved["inspection"]["branch"], "main");
-        assert!(!resolved.contains_key("ambient"));
-        assert!(resolve_input_bindings(node, &BTreeMap::new()).is_err());
-    }
-
-    #[test]
-    fn ranks_matching_skill_and_namespaces_pointer_graph() {
-        let skill = LoadedContractSkill {
-            manifest: manifest(),
-            directory: PathBuf::from("."),
-            source: SkillSource::Bundled,
-        };
-        let ranked = rank("please inspect project git status", vec![skill.clone()]);
-        assert_eq!(ranked[0].id, "inspect-project");
-        let temporary = tempfile::tempdir().unwrap();
-        let root = temporary.path().join(".agents/skills/inspect-project");
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(
-            root.join(MANIFEST_NAME),
-            serde_json::to_vec(&skill.manifest).unwrap(),
-        )
-        .unwrap();
-        let planned = plan("inspect project", temporary.path());
-        assert_eq!(planned.selected[0].source, SkillSource::Project);
-        assert_eq!(
-            planned.children[1]["depends_on"][0],
-            "inspect-project--git-state"
-        );
-        assert_eq!(
-            planned.children[1]["input_bindings"]["inspection"],
-            "inspect-project--git-state.result"
-        );
-    }
-}
+mod tests;

@@ -445,6 +445,7 @@ impl SessionActor {
                 async move {
                     let tool_contract = crate::contract_native::bind_active_tool_contract(
                         session_id.as_ref(),
+                        &prepared.call_id,
                         &prepared.tool_name,
                         Some(&prepared.raw_arguments),
                         prepared.is_read_only,
