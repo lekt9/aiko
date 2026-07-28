@@ -1,0 +1,38 @@
+{
+  "schema": "typed-neuron.limb-manifest/v1",
+  "package": "typed-neuron/dispatch-router",
+  "version": "0.1.0",
+  "description": "Dispatch-controlling router: scores admitted limbs + model path by structural energy, fires the lowest-energy candidate.",
+  "neurons": [
+    {
+      "id": "dispatcher",
+      "argv": ["python3", "neurons/dispatcher.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "dispatch/",
+        "allow_send": true,
+        "send_prefix": "neuron/",
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 3,
+          "max_writes": 1,
+          "max_messages": 1,
+          "max_spawns": 0,
+          "max_bytes": 65536,
+          "max_depth": 1
+        }
+      }
+    }
+  ],
+  "budgets": {
+    "deadline_ms_per_firing": 3000
+  },
+  "schemas": {
+    "DispatchRequest": "neuron.dispatch-request/v1",
+    "DispatchDecision": "neuron.dispatch-decision/v1",
+    "DispatchLog": "neuron.dispatch-log/v1"
+  },
+  "witnesses": {
+    "python_tests": "python3 -c 'import sys; sys.path.insert(0, \"neurons\"); from dispatcher import fire; print(\"dispatcher ok\")'"
+  }
+}

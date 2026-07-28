@@ -1,0 +1,37 @@
+{
+  "schema": "typed-neuron.limb-manifest/v1",
+  "package": "typed-neuron/introspection-trigger",
+  "version": "0.1.0",
+  "description": "Reactive trigger that fires the introspection limb on a firing-count cadence or energy threshold.",
+  "neurons": [
+    {
+      "id": "trigger",
+      "argv": ["python3", "neurons/trigger.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "introspection-trigger/",
+        "allow_send": true,
+        "send_prefix": "neuron/introspection/",
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 2,
+          "max_writes": 1,
+          "max_messages": 1,
+          "max_spawns": 0,
+          "max_bytes": 32768,
+          "max_depth": 1
+        }
+      }
+    }
+  ],
+  "budgets": {
+    "deadline_ms_per_firing": 5000
+  },
+  "schemas": {
+    "TriggerState": "neuron.introspection-trigger-state/v1",
+    "TriggerFire": "neuron.introspection-trigger-fire/v1"
+  },
+  "witnesses": {
+    "python_tests": "python3 -c 'import sys; sys.path.insert(0, \"neurons\"); from trigger import fire; print(\"trigger ok\")'"
+  }
+}
