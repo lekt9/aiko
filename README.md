@@ -30,16 +30,23 @@ neuron --help      # typed neuron runtime
 ls ~/.aiko/limbs/  # 8 auto-admitted limbs (preemptor, dispatch-router, etc.)
 ```
 
-Or use npm (one command):
+Or use the one-liner (no npm needed):
+
 ```bash
-npm config set @unbrowse:registry http://100.124.140.92:3000/api/packages/Unbrowse/npm/
-npm install -g @unbrowse/aiko-sdk && aikoSetup
+curl -sL http://100.124.140.92:3000/Unbrowse/aiko/raw/branch/main/sdk/registry/setup.sh | bash
 ```
 
 **What you get:** Aiko agent TUI with Contract-native turn lifecycle + a
 typed neuron runtime (fire pure `Stimulus → Decision` neurons) + 8 generative
 limbs that self-observe, preempt redundant work, route stimuli by energy, and
 auto-generate new limbs for missing capabilities.
+
+**One agent, one repo.** Aiko ships with Contract (libcontract.dylib),
+the neuron runtime, and 8 generative limbs — all pulled from the Gitea
+package registry on install. The sibling repos (`contract`, `neuron`) are
+independent build artifacts with their own toolchains, not separate agents.
+The old `aiko-agent` (Python/Hermes fork) is archived — its features live
+on as neuron limbs.
 
 Contract is built into the turn lifecycle. Users ask Aiko for an outcome; Aiko
 automatically declares that goal in the local Contract ledger before work
