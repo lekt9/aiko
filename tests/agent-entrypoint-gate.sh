@@ -118,14 +118,26 @@ PY
 run3="$("$binary" agent run "$node_dir" alpha --goal "a second distinct goal" --json)"
 python3 -c 'import json,sys; r=json.loads(sys.argv[1]); assert r["status"]=="settled" and r["seq"]==2, r' "$run3"
 
-# 6. Cancel another goal before it fires; running it then fails closed.
+# 6. A budget-starved run fails closed with durable partial progress; the
+# resume gets a fresh attempt scope, wakes the parked stages from the
+# durable artifacts, and settles. A further identical run replays.
+if "$binary" agent run "$node_dir" alpha --goal "a starved goal" --budget 3 --json >/dev/null 2>&1; then
+    echo "FAIL: under-budget run did not fail closed" >&2
+    exit 1
+fi
+resume="$("$binary" agent run "$node_dir" alpha --goal "a starved goal" --budget 32 --json)"
+python3 -c 'import json,sys; r=json.loads(sys.argv[1]); assert r["status"]=="settled" and r["seq"]==3, r' "$resume"
+resume_replay="$("$binary" agent run "$node_dir" alpha --goal "a starved goal" --json)"
+python3 -c 'import json,sys; r=json.loads(sys.argv[1]); assert r["status"]=="replayed", r' "$resume_replay"
+
+# 7. Cancel another goal before it fires; running it then fails closed.
 "$binary" agent cancel "$node_dir" alpha "a goal that never runs" >/dev/null
 if "$binary" agent run "$node_dir" alpha --goal "a goal that never runs" --json >/dev/null 2>&1; then
     echo "FAIL: cancelled workflow did not fail closed" >&2
     exit 1
 fi
 
-# 7. Retire the agent; new goals and repeat retirement fail closed.
+# 8. Retire the agent; new goals and repeat retirement fail closed.
 "$binary" agent retire "$node_dir" alpha >/dev/null
 if "$binary" agent run "$node_dir" alpha --goal "after retirement" >/dev/null 2>&1; then
     echo "FAIL: retired agent accepted a goal" >&2
@@ -136,15 +148,15 @@ if "$binary" agent retire "$node_dir" alpha >/dev/null 2>&1; then
     exit 1
 fi
 
-# 8. Compaction folds the WAL; a fresh process reconstructs the retired view
+# 9. Compaction folds the WAL; a fresh process reconstructs the retired view
 # with the full goal and beat history intact.
 "$binary" compact "$node_dir/state" >/dev/null
 inspect2="$("$binary" agent inspect "$node_dir" alpha --json)"
 python3 - "$inspect2" <<'PY'
 import json, sys
 view = json.loads(sys.argv[1])
-assert view["status"] == "retired" and view["seq"] == 3, view
-assert view["goals"] == 2, view
+assert view["status"] == "retired" and view["seq"] == 4, view
+assert view["goals"] == 3, view
 assert view["beats"] > 0, view
 assert view["firings"]["cancelled"] == 1, view
 PY

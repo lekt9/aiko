@@ -203,6 +203,9 @@ const SnapshotView = struct {
     result_digest: []const u8,
 };
 
+/// The returned view owns copies of every string: artifact bytes belong to
+/// the substrate and are freed when a CAS overwrite replaces them, so a view
+/// held across further firings must never borrow them.
 fn loadActiveSnapshot(a: Allocator, substrate: *substrate_mod.Substrate, agent: []const u8) !SnapshotView {
     const active_id = try agentPath(a, agent, "active");
     const active = substrate.artifacts.get(active_id) orelse return error.CorruptAgentState;
@@ -212,12 +215,34 @@ fn loadActiveSnapshot(a: Allocator, substrate: *substrate_mod.Substrate, agent: 
     const seq = parsed.object.get("seq") orelse return error.CorruptAgentState;
     const status = parsed.object.get("status") orelse return error.CorruptAgentState;
     return .{
-        .id = active.bytes,
+        .id = try a.dupe(u8, active.bytes),
         .seq = @intCast(seq.integer),
-        .status = status.string,
-        .workflow = if (parsed.object.get("workflow")) |value| value.string else "",
-        .result_digest = if (parsed.object.get("result_digest")) |value| value.string else "",
+        .status = try a.dupe(u8, status.string),
+        .workflow = if (parsed.object.get("workflow")) |value| try a.dupe(u8, value.string) else "",
+        .result_digest = if (parsed.object.get("result_digest")) |value| try a.dupe(u8, value.string) else "",
     };
+}
+
+/// Number of the next free attempt scope for a workflow: 0 when no firing of
+/// the workflow was ever recorded, otherwise one past the highest recorded
+/// attempt (bare-scope firings count as attempt 0).
+fn countAttempts(substrate: *substrate_mod.Substrate, workflow: []const u8) usize {
+    var next: usize = 0;
+    var iterator = substrate.firings.iterator();
+    while (iterator.next()) |entry| {
+        const id = entry.key_ptr.*;
+        if (!std.mem.startsWith(u8, id, workflow) or id.len <= workflow.len or id[workflow.len] != '/')
+            continue;
+        var attempt: usize = 0;
+        const rest = id[workflow.len + 1 ..];
+        if (rest.len > 1 and rest[0] == 'a') {
+            if (std.mem.indexOfScalar(u8, rest, '/')) |slash| {
+                attempt = std.fmt.parseInt(usize, rest[1..slash], 10) catch 0;
+            }
+        }
+        if (attempt + 1 > next) next = attempt + 1;
+    }
+    return next;
 }
 
 fn countPrefix(substrate: *substrate_mod.Substrate, prefix: []const u8) usize {
@@ -298,10 +323,20 @@ pub fn runGoalCore(
     const goal_hex = std.fmt.bytesToHex(goal_digest, .lower);
     const short = goal_hex[0..16];
     const workflow = try std.fmt.allocPrint(a, "agent/{s}/goal/{s}", .{ agent, short });
-    const intake_firing = try std.fmt.allocPrint(a, "{s}/intake", .{workflow});
-    if (substrate.firings.get(intake_firing)) |record| {
+    if (substrate.firings.get(try std.fmt.allocPrint(a, "{s}/intake", .{workflow}))) |record| {
         if (record.status == .cancelled) return error.WorkflowCancelled;
     }
+
+    // Attempt namespace: the first attempt owns the bare workflow ids; a
+    // resume after interruption gets a fresh `a<n>` scope so its firings
+    // never collide with the interrupted attempt's recorded identities,
+    // while durable artifacts still carry the workflow forward by CAS.
+    const attempt = countAttempts(substrate, workflow);
+    const scope = if (attempt == 0)
+        workflow
+    else
+        try std.fmt.allocPrint(a, "{s}/a{d}", .{ workflow, attempt });
+    const intake_firing = try std.fmt.allocPrint(a, "{s}/intake", .{scope});
 
     const goal_id = try std.fmt.allocPrint(a, "agents/{s}/goals/{s}", .{ agent, short });
     const result_id = try std.fmt.allocPrint(a, "agents/{s}/work/{s}/result", .{ agent, short });
@@ -459,7 +494,7 @@ pub fn runGoalCore(
     var pump = pump_mod.Pump.init(a, &scheduler);
     defer pump.deinit();
     pump.max_steps = budget;
-    pump.firing_prefix = try std.fmt.allocPrint(a, "{s}/step", .{workflow});
+    pump.firing_prefix = try std.fmt.allocPrint(a, "{s}/step", .{scope});
     // The hook: every committed firing's durable settlement event re-fires
     // the grounder, so context accrues from real settlements, iteratively,
     // for the whole run — not from a privileged host observer.
@@ -481,40 +516,51 @@ pub fn runGoalCore(
     };
     for (parks) |park| {
         const outcome = try pump.run(park.ref, .{
-            .firing_id = try std.fmt.allocPrint(a, "{s}/{s}", .{ workflow, park.tag }),
+            .firing_id = try std.fmt.allocPrint(a, "{s}/{s}", .{ scope, park.tag }),
             .receptor_schema = "neuron.agent-park/v1",
         }, park.caps);
         steps += outcome.steps;
         quiescent = quiescent and outcome.quiescent;
     }
 
-    // Normalize the goal into the typed receptor stimulus, grounded in the
-    // reconstructed context: the active pointer and snapshot are pinned by
-    // digest so intake's evidence cites the state it actually resumed from.
-    const messages = try a.alloc(types.Message, 1);
-    messages[0] = .{
-        .to = try std.fmt.allocPrint(a, "neuron/{s}", .{intake_ref}),
-        .schema = GOAL_SCHEMA,
-        .payload = goal_bytes,
-        .durable = false,
-    };
-    const snapshot_artifact = substrate.artifacts.get(current.id) orelse return error.CorruptAgentState;
-    const permitted = try a.alloc([]const u8, 2);
-    permitted[0] = active_id;
-    permitted[1] = current.id;
-    const reads = try a.alloc(types.ArtifactRef, 2);
-    reads[0] = .{ .id = active_id, .digest = active_artifact.digest };
-    reads[1] = .{ .id = current.id, .digest = snapshot_artifact.digest };
+    // A resumed workflow may complete entirely during the parks: the waiters
+    // wake from the interrupted attempt's durable artifacts and carry it to
+    // settlement. Reload the view before seeding intake — the pre-park view
+    // is stale the moment the settler advances the active pointer.
+    var pending: usize = 0;
+    const live = try loadActiveSnapshot(a, substrate, agent);
+    if (!std.mem.eql(u8, live.workflow, workflow)) {
+        // Normalize the goal into the typed receptor stimulus, grounded in
+        // the reconstructed context: the active pointer and snapshot are
+        // pinned by digest so intake's evidence cites the state it actually
+        // resumed from.
+        const messages = try a.alloc(types.Message, 1);
+        messages[0] = .{
+            .to = try std.fmt.allocPrint(a, "neuron/{s}", .{intake_ref}),
+            .schema = GOAL_SCHEMA,
+            .payload = goal_bytes,
+            .durable = false,
+        };
+        const live_active = substrate.artifacts.get(active_id) orelse return error.CorruptAgentState;
+        const live_snapshot = substrate.artifacts.get(live.id) orelse return error.CorruptAgentState;
+        const permitted = try a.alloc([]const u8, 2);
+        permitted[0] = active_id;
+        permitted[1] = live.id;
+        const reads = try a.alloc(types.ArtifactRef, 2);
+        reads[0] = .{ .id = active_id, .digest = live_active.digest };
+        reads[1] = .{ .id = live.id, .digest = live_snapshot.digest };
 
-    const outcome = try pump.run(intake_ref, .{
-        .firing_id = intake_firing,
-        .receptor_schema = GOAL_SCHEMA,
-        .permitted_reads = permitted,
-        .reads = reads,
-        .messages = messages,
-    }, intake_caps);
-    steps += outcome.steps;
-    quiescent = quiescent and outcome.quiescent;
+        const outcome = try pump.run(intake_ref, .{
+            .firing_id = intake_firing,
+            .receptor_schema = GOAL_SCHEMA,
+            .permitted_reads = permitted,
+            .reads = reads,
+            .messages = messages,
+        }, intake_caps);
+        steps += outcome.steps;
+        quiescent = quiescent and outcome.quiescent;
+        pending = outcome.pending;
+    }
     if (!quiescent) return error.BudgetExhausted;
 
     const after = try loadActiveSnapshot(a, substrate, agent);
@@ -534,7 +580,7 @@ pub fn runGoalCore(
         .snapshot_seq = after.seq,
         .beats = countPrefix(substrate, context_prefix),
         .steps = steps,
-        .pending = outcome.pending,
+        .pending = pending,
     };
 }
 

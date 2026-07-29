@@ -3830,6 +3830,37 @@ test "distinct goals advance the snapshot chain without firing collisions" {
     try std.testing.expect(!std.mem.eql(u8, &first.result_digest, &second.result_digest));
 }
 
+test "budget-starved workflow resumes in a fresh attempt scope and settles" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var substrate = substrate_mod.Substrate.init(a);
+    defer substrate.deinit();
+
+    try agent_ops.initAgentCore(a, &substrate, "spec");
+    // Budget 3 commits intake and the worker's result, then fails closed
+    // before verification: durable partial progress, no settlement.
+    try std.testing.expectError(
+        error.BudgetExhausted,
+        agent_ops.runGoalCore(a, &substrate, "spec", "big goal", 3),
+    );
+    try std.testing.expect(substrate.artifacts.contains("agents/spec/work/3e97b6cb83ffb36b/result"));
+    const active_before = substrate.artifacts.get("agents/spec/active").?;
+    try std.testing.expectEqualStrings("agents/spec/snapshots/0000", active_before.bytes);
+
+    // The resume gets its own attempt namespace, wakes the parked stages
+    // from the durable artifacts, and carries the workflow to settlement.
+    const resumed = try agent_ops.runGoalCore(a, &substrate, "spec", "big goal", 32);
+    try std.testing.expectEqual(agent_ops.RunStatus.settled, resumed.status);
+    try std.testing.expectEqual(@as(usize, 1), resumed.snapshot_seq);
+
+    // And an identical third run replays without any new firings.
+    const firings = substrate.firings.count();
+    const replayed = try agent_ops.runGoalCore(a, &substrate, "spec", "big goal", 32);
+    try std.testing.expectEqual(agent_ops.RunStatus.replayed, replayed.status);
+    try std.testing.expectEqual(firings, substrate.firings.count());
+}
+
 test "cancelled workflow and retired agent fail closed" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
