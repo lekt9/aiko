@@ -6,9 +6,11 @@ const meta_agent = @import("meta_agent.zig");
 const identity = @import("identity.zig");
 const mesh_mod = @import("mesh.zig");
 const tailnet_mod = @import("tailnet.zig");
+const node_mod = @import("node.zig");
 const mcp_mod = @import("mcp.zig");
 const substrate_mod = @import("substrate.zig");
 const limb_ops = @import("limb_ops.zig");
+const agent_ops = @import("agent_ops.zig");
 const neuron_mod = @import("neuron.zig");
 const caps_mod = @import("caps.zig");
 
@@ -20,6 +22,19 @@ const usage =
     \\  neuron check           run a lightweight runtime self-check
     \\  neuron meta-agent-check [--json]
     \\                         run the complete reference Meta-Agent witness
+    \\  neuron node init <node_dir> [--listen <ip:port>]
+    \\         [--write-prefix <prefix>] [--transport <tailnet|loopback>]
+    \\                         create an idempotent node configuration and
+    \\                         private stable Ed25519 device identity
+    \\  neuron node serve <node_dir>
+    \\                         run the configured persistent swarm node
+    \\  neuron node id <node_dir> [--json]
+    \\                         print its stable public node identity
+    \\  neuron node fire <ip:port> --ref <id> --schema <schema>
+    \\         --payload <json> --firing <id> [--nonce <u64>]
+    \\         [--allow-loopback]
+    \\                         deliver one bounded neuron.wire/v1 stimulus;
+    \\                         tailnet-only unless loopback is explicit
     \\  neuron run --def <manifest.json> --neuron <id> --stimulus <file|-> [--json]
     \\                         fire an external script-neuron through the real
     \\                         validate + commit lifecycle
@@ -47,6 +62,23 @@ const usage =
     \\  neuron telemetry project <state_dir> [--json]
     \\                         project firing records into a deterministic
     \\                         rollup (firing counts, effects, artifacts)
+    \\  neuron agent init <node_dir> <agent_id>
+    \\                         genesis firing: manifest, snapshot 0000, and
+    \\                         CAS-rooted active pointer in the node substrate
+    \\  neuron agent run <node_dir> <agent_id> --goal <text>
+    \\         [--budget <steps>] [--json]
+    \\                         drive one typed goal through the composed stage
+    \\                         network (intake→worker→verifier→settler) with
+    \\                         settlement-event grounding; replay-safe
+    \\  neuron agent inspect <node_dir> <agent_id> [--json]
+    \\                         reconstruct the agent view from durable state
+    \\  neuron agent cancel <node_dir> <agent_id> <workflow|goal-text>
+    \\                         settle a not-yet-fired workflow as cancelled
+    \\  neuron agent retire <node_dir> <agent_id>
+    \\                         CAS-advance the active snapshot to retired
+    \\  neuron interface <discover|describe|test|admit|attach|detach>
+    \\                         universal interface membrane (plan Phases 2+);
+    \\                         parsed, fails closed as NotImplemented
     \\  neuron --version       print the build version
     \\  neuron --help          show this help
     \\
@@ -68,6 +100,141 @@ pub fn main(init: std.process.Init) !void {
         const line = try std.fmt.bufPrint(&buffer, "neuron {s}  rev {s}\n", .{ build_options.version, build_options.source_revision });
         try writeStdout(init.io, line);
         return;
+    }
+    if (std.mem.eql(u8, args.items[1], "node")) {
+        if (args.items.len < 4) {
+            try writeStderr(init.io, "error: usage: neuron node <init|serve|id|fire> ...\n");
+            std.process.exit(2);
+        }
+        const sub = args.items[2];
+        if (std.mem.eql(u8, sub, "init")) {
+            const node_dir = args.items[3];
+            var listen: []const u8 = "0.0.0.0:7331";
+            var write_prefix: []const u8 = "artifact/swarm/";
+            var transport: node_mod.Transport = .tailnet;
+            var i: usize = 4;
+            while (i < args.items.len) : (i += 1) {
+                if (i + 1 >= args.items.len) {
+                    try writeStderr(init.io, "error: node init option needs a value\n");
+                    std.process.exit(2);
+                }
+                const value = args.items[i + 1];
+                if (std.mem.eql(u8, args.items[i], "--listen")) {
+                    listen = value;
+                } else if (std.mem.eql(u8, args.items[i], "--write-prefix")) {
+                    write_prefix = value;
+                } else if (std.mem.eql(u8, args.items[i], "--transport")) {
+                    transport = std.meta.stringToEnum(node_mod.Transport, value) orelse {
+                        try writeStderr(init.io, "error: transport must be tailnet or loopback\n");
+                        std.process.exit(2);
+                    };
+                } else {
+                    try writeStderr(init.io, "error: unknown node init option\n");
+                    std.process.exit(2);
+                }
+                i += 1;
+            }
+            node_mod.initNode(allocator, init.io, node_dir, listen, write_prefix, transport) catch |err| {
+                var buffer: [192]u8 = undefined;
+                const line = std.fmt.bufPrint(&buffer, "error: node init failed closed: {s}\n", .{@errorName(err)}) catch "error: node init failed closed\n";
+                try writeStderr(init.io, line);
+                std.process.exit(1);
+            };
+            const id = try node_mod.nodeId(allocator, init.io, node_dir);
+            var id_hex: [64]u8 = undefined;
+            const line = try std.fmt.allocPrint(
+                allocator,
+                "{{\"schema\":\"neuron.node/v1\",\"status\":\"ready\",\"node\":\"{s}\",\"dir\":\"{s}\"}}\n",
+                .{ identity.nodeIdHex(id, &id_hex), node_dir },
+            );
+            defer allocator.free(line);
+            try writeStdout(init.io, line);
+            return;
+        }
+        if (std.mem.eql(u8, sub, "serve")) {
+            node_mod.serve(allocator, init.io, args.items[3]) catch |err| {
+                var buffer: [192]u8 = undefined;
+                const line = std.fmt.bufPrint(&buffer, "error: node stopped: {s}\n", .{@errorName(err)}) catch "error: node stopped\n";
+                try writeStderr(init.io, line);
+                std.process.exit(1);
+            };
+            return;
+        }
+        if (std.mem.eql(u8, sub, "id")) {
+            const id = node_mod.nodeId(allocator, init.io, args.items[3]) catch |err| {
+                var buffer: [192]u8 = undefined;
+                const line = std.fmt.bufPrint(&buffer, "error: node identity unavailable: {s}\n", .{@errorName(err)}) catch "error: node identity unavailable\n";
+                try writeStderr(init.io, line);
+                std.process.exit(1);
+            };
+            var id_hex: [64]u8 = undefined;
+            var buffer: [128]u8 = undefined;
+            const json_out = args.items.len > 4 and std.mem.eql(u8, args.items[4], "--json");
+            const line = if (json_out)
+                try std.fmt.bufPrint(&buffer, "{{\"schema\":\"neuron.node-id/v1\",\"node\":\"{s}\"}}\n", .{identity.nodeIdHex(id, &id_hex)})
+            else
+                try std.fmt.bufPrint(&buffer, "{s}\n", .{identity.nodeIdHex(id, &id_hex)});
+            try writeStdout(init.io, line);
+            return;
+        }
+        if (std.mem.eql(u8, sub, "fire")) {
+            const address = args.items[3];
+            var neuron_ref: ?[]const u8 = null;
+            var schema: ?[]const u8 = null;
+            var payload: ?[]const u8 = null;
+            var firing: ?[]const u8 = null;
+            var nonce: ?u64 = null;
+            var allow_loopback = false;
+            var i: usize = 4;
+            while (i < args.items.len) : (i += 1) {
+                if (std.mem.eql(u8, args.items[i], "--allow-loopback")) {
+                    allow_loopback = true;
+                    continue;
+                }
+                if (i + 1 >= args.items.len) break;
+                const value = args.items[i + 1];
+                if (std.mem.eql(u8, args.items[i], "--ref")) {
+                    neuron_ref = value;
+                } else if (std.mem.eql(u8, args.items[i], "--schema")) {
+                    schema = value;
+                } else if (std.mem.eql(u8, args.items[i], "--payload")) {
+                    payload = value;
+                } else if (std.mem.eql(u8, args.items[i], "--firing")) {
+                    firing = value;
+                } else if (std.mem.eql(u8, args.items[i], "--nonce")) {
+                    nonce = std.fmt.parseInt(u64, value, 10) catch {
+                        try writeStderr(init.io, "error: nonce must be an unsigned integer\n");
+                        std.process.exit(2);
+                    };
+                } else {
+                    try writeStderr(init.io, "error: unknown node fire option\n");
+                    std.process.exit(2);
+                }
+                i += 1;
+            }
+            const response = node_mod.fireRemote(
+                allocator,
+                init.io,
+                address,
+                neuron_ref orelse return error.MissingNeuron,
+                schema orelse return error.InvalidSchema,
+                payload orelse return error.MissingPayload,
+                firing orelse return error.InvalidFiringId,
+                nonce,
+                allow_loopback,
+            ) catch |err| {
+                var buffer: [192]u8 = undefined;
+                const line = std.fmt.bufPrint(&buffer, "error: remote firing failed closed: {s}\n", .{@errorName(err)}) catch "error: remote firing failed closed\n";
+                try writeStderr(init.io, line);
+                std.process.exit(1);
+            };
+            defer allocator.free(response);
+            try writeStdout(init.io, response);
+            try writeStdout(init.io, "\n");
+            return;
+        }
+        try writeStderr(init.io, "error: unknown node subcommand\n");
+        std.process.exit(2);
     }
     if (std.mem.eql(u8, args.items[1], "serve")) {
         if (args.items.len < 4) {
@@ -304,6 +471,95 @@ pub fn main(init: std.process.Init) !void {
         try writeStderr(init.io, "error: unknown limb subcommand\n");
         std.process.exit(2);
     }
+    if (std.mem.eql(u8, args.items[1], "agent")) {
+        if (args.items.len < 5) {
+            try writeStderr(init.io, "error: usage: neuron agent <init|run|inspect|cancel|retire> <node_dir> <agent_id> ...\n");
+            std.process.exit(2);
+        }
+        const sub = args.items[2];
+        const node_dir = args.items[3];
+        const agent_id = args.items[4];
+        if (std.mem.eql(u8, sub, "init")) {
+            agent_ops.initAgent(allocator, init.io, node_dir, agent_id) catch |err| {
+                try failClosed(init.io, "agent init", err);
+            };
+            var buffer: [192]u8 = undefined;
+            const line = try std.fmt.bufPrint(&buffer, "✓ agent initialized · agents/{s}/snapshots/0000\n", .{agent_id});
+            try writeStdout(init.io, line);
+            return;
+        }
+        if (std.mem.eql(u8, sub, "run")) {
+            var goal: ?[]const u8 = null;
+            var budget: usize = 32;
+            var json = false;
+            var i: usize = 5;
+            while (i < args.items.len) : (i += 1) {
+                if (std.mem.eql(u8, args.items[i], "--json")) {
+                    json = true;
+                    continue;
+                }
+                if (i + 1 >= args.items.len) break;
+                if (std.mem.eql(u8, args.items[i], "--goal")) {
+                    goal = args.items[i + 1];
+                    i += 1;
+                } else if (std.mem.eql(u8, args.items[i], "--budget")) {
+                    budget = std.fmt.parseInt(usize, args.items[i + 1], 10) catch {
+                        try writeStderr(init.io, "error: --budget must be a positive integer\n");
+                        std.process.exit(2);
+                    };
+                    i += 1;
+                }
+            }
+            const goal_text = goal orelse {
+                try writeStderr(init.io, "error: usage: neuron agent run <node_dir> <agent_id> --goal <text> [--budget <steps>] [--json]\n");
+                std.process.exit(2);
+            };
+            agent_ops.runGoal(allocator, init.io, node_dir, agent_id, goal_text, budget, json) catch |err| {
+                try failClosed(init.io, "agent run", err);
+            };
+            return;
+        }
+        if (std.mem.eql(u8, sub, "inspect")) {
+            const json = args.items.len > 5 and std.mem.eql(u8, args.items[5], "--json");
+            agent_ops.inspect(allocator, init.io, node_dir, agent_id, json) catch |err| {
+                try failClosed(init.io, "agent inspect", err);
+            };
+            return;
+        }
+        if (std.mem.eql(u8, sub, "cancel")) {
+            if (args.items.len < 6) {
+                try writeStderr(init.io, "error: usage: neuron agent cancel <node_dir> <agent_id> <workflow|goal-text>\n");
+                std.process.exit(2);
+            }
+            agent_ops.cancelGoal(allocator, init.io, node_dir, agent_id, args.items[5]) catch |err| {
+                try failClosed(init.io, "agent cancel", err);
+            };
+            return;
+        }
+        if (std.mem.eql(u8, sub, "retire")) {
+            agent_ops.retire(allocator, init.io, node_dir, agent_id) catch |err| {
+                try failClosed(init.io, "agent retire", err);
+            };
+            return;
+        }
+        try writeStderr(init.io, "error: unknown agent subcommand\n");
+        std.process.exit(2);
+    }
+    if (std.mem.eql(u8, args.items[1], "interface")) {
+        // Phase 0 command shape: the universal interface membrane is parsed
+        // here but unimplemented; it fails closed instead of pretending.
+        const known = [_][]const u8{ "discover", "describe", "test", "admit", "attach", "detach" };
+        if (args.items.len >= 3) {
+            for (known) |verb| {
+                if (std.mem.eql(u8, args.items[2], verb)) {
+                    try writeStderr(init.io, "error: interface membrane failed closed: NotImplemented (see reference/AGENT_ENTRYPOINT_UNIVERSAL_INTERFACE_PLAN.md Phases 2+)\n");
+                    std.process.exit(1);
+                }
+            }
+        }
+        try writeStderr(init.io, "error: usage: neuron interface <discover|describe|test|admit|attach|detach> ...\n");
+        std.process.exit(2);
+    }
     if (std.mem.eql(u8, args.items[1], "telemetry")) {
         if (args.items.len < 3 or !std.mem.eql(u8, args.items[2], "project")) {
             try writeStderr(init.io, "error: usage: neuron telemetry project <state_dir> [--json]\n");
@@ -411,6 +667,13 @@ pub fn main(init: std.process.Init) !void {
 fn openState(allocator: std.mem.Allocator, io: std.Io, state_dir: ?[]const u8) !substrate_mod.Substrate {
     if (state_dir) |dir| return substrate_mod.Substrate.initDir(allocator, io, std.Io.Dir.cwd(), dir);
     return substrate_mod.Substrate.init(allocator);
+}
+
+fn failClosed(io: std.Io, verb: []const u8, err: anyerror) !noreturn {
+    var buffer: [192]u8 = undefined;
+    const line = std.fmt.bufPrint(&buffer, "error: {s} failed closed: {s}\n", .{ verb, @errorName(err) }) catch "error: failed closed\n";
+    writeStderr(io, line) catch {};
+    std.process.exit(1);
 }
 
 fn writeStdout(io: std.Io, bytes: []const u8) !void {

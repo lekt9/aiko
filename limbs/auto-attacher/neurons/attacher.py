@@ -18,7 +18,6 @@ Key invariants:
 - §2: Pure and stateless — all state comes from the stimulus and reads.
 """
 
-import hashlib
 import json
 import os
 import sys
@@ -42,31 +41,21 @@ DEFAULT_MAX_COST = 1000
 
 
 def extract_receptor_schemas(manifest):
-    """Extract receptor schemas from a limb manifest.
+    """Return the explicit accepted schemas for every neuron.
 
-    The manifest's 'schemas' field maps schema names to versioned schema strings.
-    Request schemas (ending in -request/v1 or similar) are the receptors
-    that this limb can handle. We also include any schema that looks like
-    a request/input schema.
+    Interface inference from friendly schema names is deliberately forbidden:
+    an admitted package is attachable only when its Neuron definitions state
+    the contract mechanically.
     """
-    schemas = manifest.get("schemas", {})
-    if not isinstance(schemas, dict):
-        return []
-
     receptors = []
-    for name, schema_uri in schemas.items():
-        if not isinstance(schema_uri, str):
+    for neuron in manifest.get("neurons", []):
+        neuron_id = neuron.get("id")
+        accepts = neuron.get("accepts")
+        if not isinstance(neuron_id, str) or not isinstance(accepts, list):
             continue
-        # Request schemas are receptors (e.g., "pipeline.stage-request/v1")
-        name_lower = name.lower()
-        schema_lower = schema_uri.lower()
-        if any(kw in name_lower or kw in schema_lower for kw in ("request", "input", "trigger", "stimulus")):
-            receptors.append(schema_uri)
-
-    # Also check neurons for receptor_schema patterns in their argv
-    # (some neurons declare their receptor in the code, not the manifest)
-    # We can't read the code here, but the schemas field should cover it.
-
+        for schema_uri in accepts:
+            if isinstance(schema_uri, str) and schema_uri:
+                receptors.append((neuron_id, schema_uri))
     return receptors
 
 
@@ -79,7 +68,7 @@ def create_edge_manifest(admission_digest, neuron_id, receptor_schema, manifest_
     return {
         "schema": EDGE_MANIFEST_SCHEMA,
         "source": f"receptor/{receptor_schema}",
-        "destination": f"limb/{admission_digest}/{neuron_id}",
+        "destination": f"neuron/limb/{admission_digest}/{neuron_id}",
         "predicate": "schema-match",
         "delivery_mode": "stimulus",
         "partition_key": receptor_schema,
@@ -143,22 +132,12 @@ def fire(stim):
         }]
         return decision({"kind": "terminate", "result": "no-receptors"}, [], evidence, stim)
 
-    # Get neuron IDs from manifest
-    neurons = manifest.get("neurons", [])
-    if not neurons:
-        raise Reject("validation", "manifest has no neurons")
-
-    # Create edge manifests for each receptor × neuron combination
-    # In practice, most limbs have one neuron that handles all receptors,
-    # but we support multi-neuron limbs by attaching the first neuron to each receptor.
-    primary_neuron = neurons[0].get("id", "default")
-
     effects = []
     edges_created = 0
-    for receptor_schema in receptors:
+    for neuron_id, receptor_schema in receptors:
         edge = create_edge_manifest(
             admission_digest=admission_digest,
-            neuron_id=primary_neuron,
+            neuron_id=neuron_id,
             receptor_schema=receptor_schema,
             manifest_package=manifest_package,
         )
@@ -184,8 +163,8 @@ def fire(stim):
         "admission_digest": admission_digest,
         "package": manifest_package,
         "edges_created": edges_created,
-        "receptors": receptors,
-        "neuron_id": primary_neuron,
+        "receptors": [schema for _, schema in receptors],
+        "neurons": sorted({neuron_id for neuron_id, _ in receptors}),
     }
     result_bytes = json.dumps(result, sort_keys=True, separators=(",", ":"))
     effects.append({

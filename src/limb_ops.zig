@@ -101,13 +101,19 @@ pub fn admit(allocator: Allocator, io: std.Io, package_dir: []const u8, state_di
 
     const firing_id = try std.fmt.allocPrint(a, "admission/{s}", .{&hex});
     const write_id = try std.fmt.allocPrint(a, ADMISSION_PREFIX ++ "{s}", .{&hex});
-    var fx: [1]types.Effect = .{
+    var fx: [2]types.Effect = .{
         .{ .write = .{ .id = write_id, .schema = ADMISSION_SCHEMA, .bytes = record_bytes } },
+        .{ .send = .{
+            .to = "event/neuron.limb-admission/v1",
+            .schema = ADMISSION_SCHEMA,
+            .payload = record_bytes,
+            .durable = true,
+        } },
     };
     const result = runtime.execute(.{
         .firing_id = firing_id,
         .receptor_schema = "neuron.limb-admission/v1",
-    }, harnessCaps(ADMISSION_PREFIX), .{
+    }, admissionCaps(), .{
         .control = .{ .terminate = "admitted" },
         .effects = &fx,
         .evidence = &admission_evidence,
@@ -130,44 +136,47 @@ pub fn limbRun(
     json_out: bool,
     dump: bool,
 ) !void {
-    const digest = try computePackageDigest(allocator, io, package_dir);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const digest = try computePackageDigest(a, io, package_dir);
     var hex: [64]u8 = undefined;
     _ = try std.fmt.bufPrint(&hex, "{s}", .{std.fmt.bytesToHex(digest, .lower)});
 
-    var substrate = try substrate_mod.Substrate.initDir(allocator, io, std.Io.Dir.cwd(), state_dir);
+    // The firing is one ownership region: parsed transport JSON, ScriptNeuron
+    // output, staged reads, and replayed substrate all die with this arena.
+    // This keeps leaky dynamic JSON parsing out of the process allocator.
+    var substrate = try substrate_mod.Substrate.initDir(a, io, std.Io.Dir.cwd(), state_dir);
     defer substrate.deinit();
 
-    const admission_id = try std.fmt.allocPrint(allocator, ADMISSION_PREFIX ++ "{s}", .{&hex});
-    defer allocator.free(admission_id);
+    const admission_id = try std.fmt.allocPrint(a, ADMISSION_PREFIX ++ "{s}", .{&hex});
     const admission_artifact = substrate.artifacts.get(admission_id) orelse return error.LimbNotAdmitted;
     if (!std.mem.eql(u8, admission_artifact.schema, ADMISSION_SCHEMA)) return error.LimbNotAdmitted;
-    const revoked_id = try std.fmt.allocPrint(allocator, REVOKED_PREFIX ++ "{s}", .{&hex});
-    defer allocator.free(revoked_id);
+    const revoked_id = try std.fmt.allocPrint(a, REVOKED_PREFIX ++ "{s}", .{&hex});
     if (substrate.artifacts.contains(revoked_id)) return error.LimbRevoked;
-    const detached_id = try std.fmt.allocPrint(allocator, DETACHED_PREFIX ++ "{s}", .{&hex});
-    defer allocator.free(detached_id);
+    const detached_id = try std.fmt.allocPrint(a, DETACHED_PREFIX ++ "{s}", .{&hex});
     if (substrate.artifacts.contains(detached_id)) return error.LimbDetached;
 
-    const admission = try std.json.parseFromSliceLeaky(std.json.Value, allocator, admission_artifact.bytes, .{});
+    const admission = try std.json.parseFromSliceLeaky(std.json.Value, a, admission_artifact.bytes, .{});
     if (admission != .object) return error.CorruptAdmission;
     const package_field = admission.object.get("package") orelse return error.CorruptAdmission;
     if (package_field != .string) return error.CorruptAdmission;
-    const manifest = try std.json.parseFromSliceLeaky(std.json.Value, allocator, package_field.string, .{});
+    const manifest = try std.json.parseFromSliceLeaky(std.json.Value, a, package_field.string, .{});
     if (manifest != .object) return error.InvalidManifest;
-    const resolved = try run_mod.resolveNeuronArgv(allocator, manifest, package_dir, neuron_id);
+    const resolved = try run_mod.resolveNeuronArgv(a, manifest, package_dir, neuron_id);
 
     const cwd = std.Io.Dir.cwd();
     const stimulus_bytes = if (std.mem.eql(u8, stimulus_path, "-"))
-        try readStdin(allocator, io)
+        try readStdin(a, io)
     else
-        try cwd.readFileAlloc(io, stimulus_path, allocator, .limited(1 << 20));
-    defer allocator.free(stimulus_bytes);
-    const stimulus_json = try std.json.parseFromSliceLeaky(std.json.Value, allocator, stimulus_bytes, .{});
+        try cwd.readFileAlloc(io, stimulus_path, a, .limited(1 << 20));
+    const stimulus_json = try std.json.parseFromSliceLeaky(std.json.Value, a, stimulus_bytes, .{});
     if (stimulus_json != .object) return error.InvalidStimulus;
-    const stimulus = try run_mod.stageStimulus(allocator, stimulus_json, &substrate);
+    const stimulus = try run_mod.stageStimulus(a, stimulus_json, &substrate);
 
     var implementation: script_mod.ScriptNeuron = .{
-        .allocator = allocator,
+        .allocator = a,
         .io = io,
         .argv = resolved.argv,
         .substrate = &substrate,
@@ -186,7 +195,7 @@ pub fn limbRun(
     const version = jsonString(manifest.object.get("package") orelse return error.InvalidManifest, "version") orelse "0.0.0";
     const neuron = neuron_mod.bind(script_mod.ScriptNeuron, &implementation, neuron_id, version);
     const result = try (runtime_mod.Runtime{ .substrate = &substrate }).fire(neuron, stimulus, resolved.caps);
-    try printSummary(allocator, io, .{
+    try printSummary(a, io, .{
         .firing_id = stimulus.firing_id,
         .neuron_id = neuron_id,
         .effects_committed = result.effects_committed,
@@ -228,22 +237,25 @@ pub fn revoke(allocator: Allocator, io: std.Io, package_dir: []const u8, state_d
 }
 
 pub fn detach(allocator: Allocator, io: std.Io, package_dir: []const u8, state_dir: []const u8) !DetachResult {
-    const digest = try computePackageDigest(allocator, io, package_dir);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const digest = try computePackageDigest(a, io, package_dir);
     var hex: [64]u8 = undefined;
     _ = try std.fmt.bufPrint(&hex, "{s}", .{std.fmt.bytesToHex(digest, .lower)});
 
-    var substrate = try substrate_mod.Substrate.initDir(allocator, io, std.Io.Dir.cwd(), state_dir);
+    var substrate = try substrate_mod.Substrate.initDir(a, io, std.Io.Dir.cwd(), state_dir);
     defer substrate.deinit();
     const runtime: runtime_mod.Runtime = .{ .substrate = &substrate };
 
-    const admission_id = try std.fmt.allocPrint(allocator, ADMISSION_PREFIX ++ "{s}", .{&hex});
-    defer allocator.free(admission_id);
+    const admission_id = try std.fmt.allocPrint(a, ADMISSION_PREFIX ++ "{s}", .{&hex});
     const admission_artifact = substrate.artifacts.get(admission_id) orelse return error.LimbNotAdmitted;
-    const admission = try std.json.parseFromSliceLeaky(std.json.Value, allocator, admission_artifact.bytes, .{});
+    const admission = try std.json.parseFromSliceLeaky(std.json.Value, a, admission_artifact.bytes, .{});
     if (admission != .object) return error.CorruptAdmission;
     const package_field = admission.object.get("package") orelse return error.CorruptAdmission;
     if (package_field != .string) return error.CorruptAdmission;
-    const manifest = try std.json.parseFromSliceLeaky(std.json.Value, allocator, package_field.string, .{});
+    const manifest = try std.json.parseFromSliceLeaky(std.json.Value, a, package_field.string, .{});
     if (manifest != .object) return error.InvalidManifest;
 
     var prefixes: std.ArrayList([]const u8) = .empty;
@@ -253,14 +265,20 @@ pub fn detach(allocator: Allocator, io: std.Io, package_dir: []const u8, state_d
         if (entry != .object) continue;
         const caps_req = entry.object.get("caps_request") orelse continue;
         const caps = script_mod.capsFromJson(caps_req) catch continue;
-        if (caps.allow_write and caps.write_prefix.len > 0) try prefixes.append(allocator, caps.write_prefix);
+        if (caps.allow_write and caps.write_prefix.len > 0) try prefixes.append(a, caps.write_prefix);
     }
+    // Attachment is topology data owned by the admitted digest. Detaching a
+    // limb must remove its live edges as well as its runtime artifacts, while
+    // the immutable admission/revocation/audit roots remain reachable.
+    try prefixes.append(a, try std.fmt.allocPrint(
+        a,
+        "topology/edges/{s}/",
+        .{&hex},
+    ));
     if (prefixes.items.len == 0) return error.InvalidManifest;
 
-    const detach_id = try std.fmt.allocPrint(allocator, DETACHED_PREFIX ++ "{s}", .{&hex});
-    defer allocator.free(detach_id);
-    const firing_id = try std.fmt.allocPrint(allocator, "detachment/{s}", .{&hex});
-    defer allocator.free(firing_id);
+    const detach_id = try std.fmt.allocPrint(a, DETACHED_PREFIX ++ "{s}", .{&hex});
+    const firing_id = try std.fmt.allocPrint(a, "detachment/{s}", .{&hex});
     var fx: [1]types.Effect = .{
         .{ .write = .{ .id = detach_id, .schema = "neuron.limb-detach/v1", .bytes = &hex } },
     };
@@ -275,8 +293,6 @@ pub fn detach(allocator: Allocator, io: std.Io, package_dir: []const u8, state_d
 
     const collected = try substrate.gcArtifacts(prefixes.items);
     try substrate.journalGc(prefixes.items);
-    for (prefixes.items) |p| allocator.free(p);
-    prefixes.deinit(allocator);
     return .{ .collected = collected };
 }
 
@@ -375,6 +391,21 @@ pub fn telemetryProject(allocator: Allocator, io: std.Io, state_dir: []const u8,
 
 fn harnessCaps(prefix: []const u8) caps_mod.Caps {
     return .{ .allow_write = true, .write_prefix = prefix };
+}
+
+fn admissionCaps() caps_mod.Caps {
+    return .{
+        .allow_write = true,
+        .write_prefix = ADMISSION_PREFIX,
+        .allow_send = true,
+        .send_prefix = "event/neuron.limb-admission/v1",
+        .budget = .{
+            .max_effects = 2,
+            .max_writes = 1,
+            .max_messages = 1,
+            .max_spawns = 0,
+        },
+    };
 }
 
 fn stringLess(_: void, a: []const u8, b: []const u8) bool {

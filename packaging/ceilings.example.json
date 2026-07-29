@@ -1,0 +1,22 @@
+{
+  "schema": "neuron.tailnet-ceilings/v1",
+  "peers": [
+    {
+      "identity": "peer-machine.example-tailnet.ts.net",
+      "ceiling": {
+        "allow_write": true,
+        "write_prefix": "artifact/swarm/peer-machine/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 8,
+          "max_writes": 4,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 262144,
+          "max_depth": 1
+        }
+      }
+    }
+  ]
+}

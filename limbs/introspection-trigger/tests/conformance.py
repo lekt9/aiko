@@ -109,7 +109,7 @@ def test_fires_at_cadence():
     # Should have a send effect to introspection
     send_effects = [e for e in result["effects"] if e["kind"] == "send"]
     assert len(send_effects) == 1
-    assert send_effects[0]["to"] == "neuron/introspection/inspector"
+    assert send_effects[0]["message"]["to"] == "neuron/introspection/inspector"
 
     # State should reset
     write_effects = [e for e in result["effects"] if e["kind"] == "write"]

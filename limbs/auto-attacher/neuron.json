@@ -6,6 +6,8 @@
   "neurons": [
     {
       "id": "attacher",
+      "accepts": ["neuron.limb-admission/v1"],
+      "emits": ["neuron.edge-manifest/v1", "neuron.attach-result/v1"],
       "argv": ["python3", "neurons/attacher.py"],
       "caps_request": {
         "allow_write": true,
@@ -13,8 +15,8 @@
         "allow_send": false,
         "allow_spawn": false,
         "budget": {
-          "max_effects": 4,
-          "max_writes": 4,
+          "max_effects": 32,
+          "max_writes": 32,
           "max_messages": 0,
           "max_spawns": 0,
           "max_bytes": 131072,

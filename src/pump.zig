@@ -58,6 +58,16 @@ const WorkItem = struct {
     ref: []const u8,
     stimulus: types.Stimulus,
     caps: caps_mod.Caps,
+    /// When this firing was stimulated by a durable message, acknowledge the
+    /// message only after the consumer has committed.
+    source_message_index: ?usize = null,
+};
+
+const EventRoute = struct {
+    schema: []const u8,
+    ref: []const u8,
+    caps: caps_mod.Caps,
+    read_ids: []const []const u8,
 };
 
 pub const Pump = struct {
@@ -65,6 +75,7 @@ pub const Pump = struct {
     arena: std.heap.ArenaAllocator,
     waiters: std.StringHashMap(Waiter),
     factories: std.StringHashMap(Factory),
+    event_routes: std.ArrayList(EventRoute),
     /// Grants of neurons attached from spawn records, keyed by identity.
     attached: std.StringHashMap(caps_mod.Caps),
     counter: usize = 0,
@@ -73,18 +84,28 @@ pub const Pump = struct {
     default_caps: caps_mod.Caps = .{},
     /// Maximum firings per run (§26 cumulative budget).
     max_steps: usize = 64,
+    /// Namespace for pump-generated firing identities. A caller driving a
+    /// durable substrate scopes this per workflow so firings from distinct
+    /// workflows never collide, while an identical resumed workflow replays
+    /// deterministically into the same identities (§21 dedupe).
+    firing_prefix: []const u8 = "pump",
 
     pub fn init(allocator: std.mem.Allocator, scheduler: *scheduler_mod.Scheduler) Pump {
+        // A running network observes its own ordinary settlements. Direct
+        // Runtime users retain the conservative opt-in default.
+        scheduler.runtime.emit_settlement_events = true;
         return .{
             .scheduler = scheduler,
             .arena = std.heap.ArenaAllocator.init(allocator),
             .waiters = std.StringHashMap(Waiter).init(allocator),
             .factories = std.StringHashMap(Factory).init(allocator),
+            .event_routes = .empty,
             .attached = std.StringHashMap(caps_mod.Caps).init(allocator),
         };
     }
 
     pub fn deinit(self: *Pump) void {
+        self.event_routes.deinit(self.scheduler.runtime.substrate.allocator);
         self.attached.deinit();
         self.factories.deinit();
         self.waiters.deinit();
@@ -95,6 +116,58 @@ pub const Pump = struct {
     /// firable instances built by the factory (§30 attach step).
     pub fn registerFactory(self: *Pump, kind: []const u8, factory: Factory) !void {
         try self.factories.put(kind, factory);
+    }
+
+    /// Subscribe an admitted neuron to a durable lifecycle schema. Optional
+    /// read ids are resolved and digest-pinned at delivery time, allowing a
+    /// stateless observer to reconstruct its narrow state with every event.
+    pub fn subscribe(
+        self: *Pump,
+        schema: []const u8,
+        ref: []const u8,
+        caps: caps_mod.Caps,
+        read_ids: []const []const u8,
+    ) !void {
+        const allocator = self.arena.allocator();
+        const owned_reads = try allocator.alloc([]const u8, read_ids.len);
+        for (read_ids, 0..) |id, i| owned_reads[i] = try allocator.dupe(u8, id);
+        try self.event_routes.append(self.scheduler.runtime.substrate.allocator, .{
+            .schema = try allocator.dupe(u8, schema),
+            .ref = try allocator.dupe(u8, ref),
+            .caps = caps,
+            .read_ids = owned_reads,
+        });
+    }
+
+    /// Dispatch through a router using the current committed topology. The
+    /// schema projection is rebuilt for every call, so an edge attached by a
+    /// previous firing is live on the next stimulus without a host restart.
+    /// Every selected artifact is digest-pinned into the firing provenance.
+    pub fn runRouted(
+        self: *Pump,
+        router_ref: []const u8,
+        stimulus: types.Stimulus,
+        caps: caps_mod.Caps,
+    ) !PumpResult {
+        const allocator = self.arena.allocator();
+        var permitted: std.ArrayList([]const u8) = .empty;
+        var reads: std.ArrayList(types.ArtifactRef) = .empty;
+        try permitted.appendSlice(allocator, stimulus.permitted_reads);
+        try reads.appendSlice(allocator, stimulus.reads);
+
+        var iterator = self.scheduler.runtime.substrate.artifacts.iterator();
+        while (iterator.next()) |entry| {
+            if (!std.mem.eql(u8, entry.value_ptr.schema, "neuron.edge-manifest/v1")) continue;
+            try permitted.append(allocator, entry.key_ptr.*);
+            try reads.append(allocator, .{
+                .id = entry.key_ptr.*,
+                .digest = entry.value_ptr.digest,
+            });
+        }
+        var routed = stimulus;
+        routed.permitted_reads = permitted.items;
+        routed.reads = reads.items;
+        return self.run(router_ref, routed, caps);
     }
 
     /// Drive the network from one seed stimulus until the worklist empties,
@@ -112,6 +185,8 @@ pub const Pump = struct {
         var steps: usize = 0;
         var cycles: usize = 0;
         var quiescent = true;
+        var inflight = std.AutoHashMap(usize, void).init(self.scheduler.runtime.substrate.allocator);
+        defer inflight.deinit();
         try worklist.append(allocator, .{ .ref = start_ref, .stimulus = stimulus, .caps = caps });
         while (worklist.pop()) |item| {
             if (steps >= self.max_steps) {
@@ -125,6 +200,10 @@ pub const Pump = struct {
                 },
                 else => return err,
             };
+            if (item.source_message_index) |index| {
+                try self.acknowledgeMessage(index);
+                _ = inflight.remove(index);
+            }
             steps += 1;
             switch (outcome.next) {
                 .terminated => |result| {
@@ -148,7 +227,7 @@ pub const Pump = struct {
             }
             try self.attachSpawned(allocator);
             try self.wakeReadyWaiters(allocator, &worklist);
-            try self.deliverNeuronMessages(allocator, &worklist);
+            try self.deliverMessages(allocator, &worklist, &inflight);
         }
         return .{
             .steps = steps,
@@ -208,15 +287,33 @@ pub const Pump = struct {
     }
 
     /// Receiving a message simply appears as part of the next stimulus (§10).
-    /// Messages addressed to `neuron/<identity>` are delivered once, to a
-    /// registered neuron, and acknowledged at that point.
-    fn deliverNeuronMessages(self: *Pump, allocator: std.mem.Allocator, worklist: *std.ArrayList(WorkItem)) !void {
+    /// Both direct neuron messages and subscribed lifecycle events use the
+    /// same durable queue. They remain queued until the consumer commits.
+    fn deliverMessages(
+        self: *Pump,
+        allocator: std.mem.Allocator,
+        worklist: *std.ArrayList(WorkItem),
+        inflight: *std.AutoHashMap(usize, void),
+    ) !void {
         const substrate = self.scheduler.runtime.substrate;
-        for (substrate.messages.items) |*message| {
+        for (substrate.messages.items, 0..) |*message, index| {
             if (message.status != .queued) continue;
-            if (!std.mem.startsWith(u8, message.to, "neuron/")) continue;
-            const ref = message.to["neuron/".len..];
-            if (!self.scheduler.registry.contains(ref)) continue;
+            if (inflight.contains(index)) continue;
+            var ref: []const u8 = undefined;
+            var caps: caps_mod.Caps = undefined;
+            var read_ids: []const []const u8 = &.{};
+            if (std.mem.startsWith(u8, message.to, "neuron/")) {
+                ref = message.to["neuron/".len..];
+                if (!self.scheduler.registry.contains(ref)) continue;
+                caps = self.attached.get(ref) orelse self.default_caps;
+            } else if (std.mem.startsWith(u8, message.to, "event/")) {
+                const route = self.findEventRoute(message.schema) orelse continue;
+                ref = route.ref;
+                if (!self.scheduler.registry.contains(ref)) continue;
+                caps = route.caps;
+                read_ids = route.read_ids;
+            } else continue;
+
             const envelope = try allocator.alloc(types.Message, 1);
             envelope[0] = .{
                 .to = message.to,
@@ -224,24 +321,50 @@ pub const Pump = struct {
                 .payload = message.payload,
                 .durable = message.durable,
             };
-            message.status = .acknowledged;
-            const caps = self.attached.get(ref) orelse self.default_caps;
+            var permitted: std.ArrayList([]const u8) = .empty;
+            var reads: std.ArrayList(types.ArtifactRef) = .empty;
+            for (read_ids) |id| {
+                const artifact = substrate.artifacts.get(id) orelse continue;
+                try permitted.append(allocator, id);
+                try reads.append(allocator, .{ .id = id, .digest = artifact.digest });
+            }
             const depth: u8 = if (substrate.neurons.get(ref)) |spawned| spawned.depth else 0;
             try worklist.append(allocator, .{
                 .ref = ref,
                 .stimulus = .{
                     .firing_id = try self.firingId(),
                     .receptor_schema = message.schema,
+                    .permitted_reads = permitted.items,
+                    .reads = reads.items,
                     .messages = envelope,
                     .depth = depth,
                 },
                 .caps = caps,
+                .source_message_index = index,
             });
+            try inflight.put(index, {});
         }
+    }
+
+    fn findEventRoute(self: *const Pump, schema: []const u8) ?EventRoute {
+        for (self.event_routes.items) |route| {
+            if (std.mem.eql(u8, route.schema, schema)) return route;
+        }
+        return null;
+    }
+
+    fn acknowledgeMessage(self: *Pump, index: usize) !void {
+        const substrate = self.scheduler.runtime.substrate;
+        if (index >= substrate.messages.items.len) return error.MessageIndexInvalid;
+        const message = &substrate.messages.items[index];
+        const attempts = message.attempts +| 1;
+        try substrate.journalDelivery(index, .acknowledged, attempts);
+        message.attempts = attempts;
+        message.status = .acknowledged;
     }
 
     fn firingId(self: *Pump) ![]const u8 {
         self.counter += 1;
-        return std.fmt.allocPrint(self.arena.allocator(), "pump/{d}", .{self.counter});
+        return std.fmt.allocPrint(self.arena.allocator(), "{s}/{d}", .{ self.firing_prefix, self.counter });
     }
 };

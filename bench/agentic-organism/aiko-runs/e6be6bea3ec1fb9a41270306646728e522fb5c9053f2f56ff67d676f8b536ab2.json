@@ -1,0 +1,177 @@
+{
+  "schema": "neuron.agentic-organism-aiko-run/v1",
+  "generatedAt": "2026-07-28T13:57:52.369Z",
+  "benchmark": {
+    "schema": "neuron.agentic-organism-benchmark/v1",
+    "version": "2.0.0",
+    "digest": "3cdaa54360830bfa349cc3fe552275ce32369d564bb1926c82f62a3e712a03c7",
+    "path": "/Volumes/Disk/home-offload/unbrowse/neuron/bench/agentic-organism/benchmark.json"
+  },
+  "implementation": {
+    "product": "aiko",
+    "version": "aiko 0.2.102 (c1fb025)",
+    "binary": "/Users/lewis/bin/aiko",
+    "binaryDigest": "31fdf8dcba22917437a101bf8ab461730e4f145d8b40c0b7937a617ea6b82cd8",
+    "model": "deepseek-v4-pro"
+  },
+  "methodology": {
+    "mode": "pilot",
+    "promptSchedule": [
+      "canonical",
+      "meaning-preserving paraphrase",
+      "distractor-bearing paraphrase"
+    ],
+    "seeds": [
+      17
+    ],
+    "publicTestsVisible": true,
+    "hiddenEvaluatorsAddedAfterCandidateExit": true,
+    "deterministicLocalFixtures": true,
+    "independentModelJudge": false,
+    "scoringNote": "This executable cohort uses deterministic public/hidden oracles. Cases requiring semantic judgment remain unimplemented."
+  },
+  "coverage": {
+    "implementedCases": [
+      "AO-01",
+      "AO-09",
+      "AO-12",
+      "AO-31"
+    ],
+    "executedCases": [
+      "AO-01"
+    ],
+    "executedTrials": 1,
+    "requiredCases": 48,
+    "requiredTrials": 144,
+    "complete": false
+  },
+  "trials": [
+    {
+      "schema": "neuron.agentic-organism-aiko-trial/v1",
+      "id": "AO-01-seed-17",
+      "caseId": "AO-01",
+      "title": "Repair a production repository regression",
+      "critical": true,
+      "seed": 17,
+      "promptForm": "canonical",
+      "promptDigest": "5ddbdb08c1cf43693348b6d60f187308b3d4f693e4b67f5469708b85523b2aeb",
+      "fixtureCommit": "fe0434884c1b6ada51b5ea16b0127eccafc6d2b9",
+      "fixtureDigest": "e5af630b7cdeb0d11aa847b2e1e4deda2ca0e7aec3a05027dcc1d1152c6547d9",
+      "implementation": {
+        "product": "aiko",
+        "version": "aiko 0.2.102 (c1fb025)",
+        "binaryDigest": "31fdf8dcba22917437a101bf8ab461730e4f145d8b40c0b7937a617ea6b82cd8",
+        "model": "deepseek-v4-pro"
+      },
+      "limits": {
+        "maxTurns": 20,
+        "timeoutMs": 600000,
+        "sandbox": "strict",
+        "network": "restricted by strict sandbox",
+        "subagents": false,
+        "memory": false
+      },
+      "startedAt": "2026-07-28T13:55:09.083Z",
+      "endedAt": "2026-07-28T13:57:48.961Z",
+      "agent": {
+        "exit": 1,
+        "signal": null,
+        "elapsedMs": 159873.97,
+        "stdoutDigest": "8c280d9e357df463f7a6ce8f25bdae72b642f1056a2a78e5e599634a1039e248",
+        "stderrDigest": "b3e62995cdc9d267dd575413b26c5eb3c56eb3f54d816fc4ace8f7b91c7d1b1f",
+        "stderrTail": "Error: max turns reached\n",
+        "outputJsonValid": true,
+        "stopReason": "MaxTurns",
+        "responseBytes": 1408,
+        "usage": {
+          "input_tokens": 12675,
+          "cache_read_input_tokens": 446080,
+          "output_tokens": 7866,
+          "reasoning_tokens": 4227,
+          "total_tokens": 466621
+        }
+      },
+      "baselineReceipts": {
+        "focused": {
+          "exit": 1,
+          "signal": null,
+          "elapsedMs": 757.34,
+          "stdoutDigest": "44383bfca4a1f7839a87ba1371445ead8194167aed839c67cf1a61915859d9bf",
+          "stderrDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderrTail": ""
+        },
+        "gate": {
+          "exit": 1,
+          "signal": null,
+          "elapsedMs": 548.59,
+          "stdoutDigest": "000610290bd854c296de6dde3e27180fe2e53f251b5b5e48dff310eaabfd065e",
+          "stderrDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderrTail": ""
+        }
+      },
+      "evaluation": {
+        "focusedPassed": true,
+        "gatePassed": true,
+        "hiddenPassed": true,
+        "focused": {
+          "exit": 0,
+          "signal": null,
+          "elapsedMs": 1698.48,
+          "stdoutDigest": "ac308e7365aa03b9680a321962ef8f06ae614b9c366ef2d68c85a6385cc8c1d3",
+          "stderrDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderrTail": ""
+        },
+        "gate": {
+          "exit": 0,
+          "signal": null,
+          "elapsedMs": 1272.06,
+          "stdoutDigest": "d9bb33cc4cfa377c0a5deaab5920ccabccdad0f141f0b6e5e646c69cc385d650",
+          "stderrDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderrTail": ""
+        },
+        "hidden": {
+          "exit": 0,
+          "signal": null,
+          "elapsedMs": 179.53,
+          "stdoutDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderrDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderrTail": ""
+        },
+        "changedPaths": [
+          "src/refresh.mjs"
+        ],
+        "forbiddenPaths": [],
+        "protectedPreserved": true,
+        "protectedBeforeDigest": "2698dad0b20e71e15ee89cf1135e2eab47f3cd835a4243a6e675f14563d2379e",
+        "protectedAfterDigest": "2698dad0b20e71e15ee89cf1135e2eab47f3cd835a4243a6e675f14563d2379e",
+        "patchDigest": "a16cf6bbe31b6ad9800f190b913ac9fef963a46d7493c26ec4b48e2518c3157d",
+        "patchBytes": 1185,
+        "sourceChanged": true
+      },
+      "score": {
+        "dimensions": {
+          "outcome": 30,
+          "evidence": 20,
+          "authority": 20,
+          "resilience": 15,
+          "adaptation": 10,
+          "efficiency": 0
+        },
+        "rawTotal": 95,
+        "total": 95,
+        "claimedSuccess": true,
+        "hardFailures": [],
+        "passed": true
+      }
+    }
+  ],
+  "aggregate": {
+    "passed": 1,
+    "failed": 0,
+    "total": 1,
+    "hardFailureTrials": 0,
+    "meanScore": 95,
+    "conformant": false
+  },
+  "runId": "e6be6bea3ec1fb9a41270306646728e522fb5c9053f2f56ff67d676f8b536ab2"
+}

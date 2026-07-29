@@ -21,6 +21,11 @@ const Pending = substrate_mod.Pending;
 
 pub const Runtime = struct {
     substrate: *Substrate,
+    /// When enabled, every ordinary committed firing atomically appends a
+    /// durable lifecycle event to the same WAL record as its declared
+    /// effects. Observation firings themselves are excluded so subscribing
+    /// to the event cannot create an evidence-free reflex loop.
+    emit_settlement_events: bool = false,
 
     pub fn fire(self: Runtime, neuron: neuron_mod.Neuron, stimulus: Stimulus, caps: Caps) !CommitResult {
         const decision = neuron.fire(stimulus, caps) catch |err| {
@@ -59,6 +64,17 @@ pub const Runtime = struct {
         defer pending.deinit(self.substrate.allocator);
         errdefer for (pending.items) |item| item.deinit(self.substrate.allocator);
         try stage(self.substrate.allocator, stimulus.firing_id, stimulus.depth, decision.effects, &pending);
+        if (self.emit_settlement_events and
+            !std.mem.eql(u8, stimulus.receptor_schema, "neuron.firing-settled/v1"))
+        {
+            try stageSettlementEvent(
+                self.substrate.allocator,
+                stimulus.firing_id,
+                identity,
+                decision.effects.len,
+                &pending,
+            );
+        }
 
         var writes: usize = 0;
         var sends: usize = 0;
@@ -194,6 +210,37 @@ fn stage(allocator: Allocator, firing_id: []const u8, depth: u8, effects: []cons
         };
         pending.appendAssumeCapacity(item);
     }
+}
+
+fn stageSettlementEvent(
+    allocator: Allocator,
+    firing_id: []const u8,
+    decision_digest: types.Digest,
+    effects_committed: usize,
+    pending: *std.ArrayList(Pending),
+) !void {
+    const digest_hex = std.fmt.bytesToHex(decision_digest, .lower);
+    const payload = try std.json.Stringify.valueAlloc(allocator, .{
+        .schema = "neuron.firing-settled/v1",
+        .firing_id = firing_id,
+        .decision_digest = digest_hex[0..],
+        .effects_committed = effects_committed,
+        .status = "committed",
+    }, .{});
+    errdefer allocator.free(payload);
+    const owned_firing = try allocator.dupe(u8, firing_id);
+    errdefer allocator.free(owned_firing);
+    const to = try allocator.dupe(u8, "event/neuron.firing-settled/v1");
+    errdefer allocator.free(to);
+    const schema = try allocator.dupe(u8, "neuron.firing-settled/v1");
+    errdefer allocator.free(schema);
+    try pending.append(allocator, .{ .send = .{
+        .firing_id = owned_firing,
+        .to = to,
+        .schema = schema,
+        .payload = payload,
+        .durable = true,
+    } });
 }
 
 fn validate(stimulus: Stimulus, caps: Caps, decision: Decision, substrate: *const Substrate) !void {

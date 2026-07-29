@@ -2,16 +2,19 @@
 
 **Status**: reference generative limb (§30)
 
-Predictive preemption: short-circuits firings equivalent to cached decisions.
+Safe preemption proposal: finds exact replay-safe cache candidates.
 
 ## What it is
 
-A pure Neuron that receives a stimulus and a set of cached firing records. It computes a stimulus fingerprint and checks for high-confidence matches against cached firings. If a match is found and the cached decision is replay-safe (no `send` or `spawn` effects), it returns `preempted` with the cached decision's effects.
+A pure Neuron that receives a stimulus and cached firing records. It proposes an
+exact identity match only when the recorded decision is replay-safe. It never
+replays effects. The canonical Zig cache independently recomputes the complete
+identity and revalidates policy, reachability, and idempotency before reuse.
 
 ## Key invariants
 
-- §25: Cache reuse never replays non-idempotent external effects. Only `write` effects to stable prefixes are eligible. `send` and `spawn` effects are never preempted.
-- §30: The preemptor is a limb, not a kernel feature. It proposes preemption; the runtime still validates.
+- §25: The limb emits an inert candidate record and replays zero effects.
+- §30: Learned prediction may rank candidates but cannot become a second cache authority.
 - §2: Pure and stateless.
 
 ## Conformance

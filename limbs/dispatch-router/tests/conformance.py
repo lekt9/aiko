@@ -36,7 +36,7 @@ def read_of(rid, schema, obj):
             "digest": hashlib.sha256(body.encode()).hexdigest()}
 
 
-def make_edge(source_schema, dest="limb/abc123/neuron-1", digest="abc123"):
+def make_edge(source_schema, dest="neuron/limb/abc123/neuron-1", digest="abc123"):
     return {
         "schema": EDGE_MANIFEST_SCHEMA,
         "source": f"receptor/{source_schema}",
@@ -128,15 +128,15 @@ def test_matching_limb_dispatches_to_limb():
     # Should have a send effect to the limb
     send_effects = [e for e in result["effects"] if e["kind"] == "send"]
     assert len(send_effects) == 1
-    assert send_effects[0]["to"] == "limb/abc123/neuron-1"
+    assert send_effects[0]["message"]["to"] == "neuron/limb/abc123/neuron-1"
     print("✓ matching limb → dispatched-to-limb")
 
 
 def test_selects_lowest_energy():
     """Multiple limbs → lowest energy wins (first in sorted order)."""
     # Both have the same energy (same score_limb_candidate), so the first one wins
-    edge1 = make_edge("test.echo/v1", dest="limb/digest1/neuron-1", digest="digest1")
-    edge2 = make_edge("test.echo/v1", dest="limb/digest2/neuron-2", digest="digest2")
+    edge1 = make_edge("test.echo/v1", dest="neuron/limb/digest1/neuron-1", digest="digest1")
+    edge2 = make_edge("test.echo/v1", dest="neuron/limb/digest2/neuron-2", digest="digest2")
     stim = make_stim(receptor="test.echo/v1", edges=[edge1, edge2])
     result = run_fire(stim)
     assert result["control"]["result"] == "dispatched-to-limb"

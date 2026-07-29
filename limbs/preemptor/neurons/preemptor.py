@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""preemptor Neuron — predictive preemption via stimulus fingerprint matching.
+"""preemptor Neuron — cache-candidate proposal via stimulus identity.
 
 Pure policy neuron (§2). Receives a stimulus and a set of cached firing records
 (from substrate reads). Computes a stimulus fingerprint and checks for
-high-confidence matches against cached firings. If a match is found and the
-cached decision is replay-safe, returns "preempted" with the cached decision's
-effects. Otherwise returns "no-preempt" with no effects.
+exact replay-safe matches against cached firings. A match is only a proposal:
+the canonical Zig cache must independently recompute the complete identity,
+revalidate current policy and reachability, and decide whether to reuse it.
 
 Key invariants:
-- §25: Cache reuse MUST never replay a non-idempotent external effect.
-  Only `write` effects to stable prefixes are eligible for preemption.
-  `send` effects to external channels are NEVER preempted.
+- §25: This limb never replays cached effects. It emits an inert candidate
+  record; only the canonical runtime may reuse a committed Decision.
 - §30: The preemptor is a limb, not a kernel feature. It proposes preemption;
   the runtime still validates the decision before committing.
 - §2: Pure and stateless — all state comes from the stimulus and reads.
@@ -34,8 +33,8 @@ PREEMPT_REQUEST_SCHEMA = "neuron.preempt-request/v1"
 PREEMPT_CACHE_SCHEMA = "neuron.preempt-cache/v1"
 PREEMPT_RESULT_SCHEMA = "neuron.preempt-result/v1"
 
-# Confidence threshold for preemption (cosine similarity of stimulus fingerprints).
-# Conservative start; adjusted by the judge based on misprediction rate.
+# Kept in the request schema for compatibility. Cache eligibility itself is
+# exact; learned similarity may rank candidates but can never establish reuse.
 DEFAULT_THRESHOLD = 0.92
 MIN_THRESHOLD = 0.85
 MAX_THRESHOLD = 0.98
@@ -93,26 +92,12 @@ def is_replay_safe(decision_obj):
 
 
 def cosine_similarity_hash(h1, h2):
-    """Approximate cosine similarity for hash-based fingerprints.
-
-    Since we use SHA-256 hashes (not vectors), we compare hex strings
-    character-by-character. This is a conservative proxy: two identical
-    stimuli produce similarity 1.0; completely different stimuli produce
-    ~0.5 (random hex overlap). The threshold is set high (0.92) to only
-    preempt near-exact matches.
-
-    For true JEPA-based semantic similarity, this would be replaced with
-    a vector cosine similarity. The hash-based approach is the deterministic
-    seed that the JEPA layer can augment.
-    """
-    if not h1 or not h2 or len(h1) != len(h2):
-        return 0.0
-    matching = sum(1 for a, b in zip(h1, h2) if a == b)
-    return matching / len(h1)
+    """Return exact content-identity agreement, never hash-shape similarity."""
+    return 1.0 if h1 and h1 == h2 else 0.0
 
 
 def find_preempt_match(stim, cache_entries, threshold=DEFAULT_THRESHOLD):
-    """Search cache entries for a high-confidence match.
+    """Search cache entries for an exact replay-safe candidate.
 
     Returns (cache_entry, similarity) if found, or (None, 0.0) if no match.
     """
@@ -136,7 +121,7 @@ def find_preempt_match(stim, cache_entries, threshold=DEFAULT_THRESHOLD):
         if entry.get("receptor_schema", "") != stim.get("receptor_schema", ""):
             continue
 
-        if sim >= threshold and sim > best_sim:
+        if sim == 1.0 and sim >= threshold and sim > best_sim:
             best_match = entry
             best_sim = sim
 
@@ -189,24 +174,26 @@ def fire(stim):
 
     if match is None:
         evidence = [{
-            "claim": f"no cache match above threshold {threshold}",
+            "claim": "no exact replay-safe cache candidate",
             "sources": ["stimulus"],
-            "method": "stimulus-fingerprint cosine similarity against cache",
+            "method": "exact stimulus-fingerprint identity check",
             "confidence_milli": 950,
         }]
         return decision({"kind": "terminate", "result": "no-preempt"}, [], evidence, stim)
 
-    # Preempt! Return the cached decision's effects
+    # Proposal only. The canonical runtime owns reuse and effect safety.
     cached_decision = match.get("decision", {})
     cached_effects = cached_decision.get("effects", [])
 
     # Write a preempt audit artifact
     audit = {
         "schema": PREEMPT_RESULT_SCHEMA,
-        "preempted_firing_id": match.get("firing_id", "unknown"),
+        "candidate_firing_id": match.get("firing_id", "unknown"),
         "similarity": round(similarity, 4),
         "threshold": threshold,
-        "effects_replayed": len(cached_effects),
+        "effects_replayed": 0,
+        "cached_effects": len(cached_effects),
+        "requires_canonical_revalidation": True,
     }
     audit_bytes = json.dumps(audit, sort_keys=True, separators=(",", ":"))
 
@@ -220,13 +207,13 @@ def fire(stim):
     }]
 
     evidence = [{
-        "claim": f"preempted: similarity {similarity:.4f} >= threshold {threshold}, {len(cached_effects)} effects replayed",
+        "claim": f"proposed exact cache candidate {match.get('firing_id', 'unknown')}; zero effects replayed",
         "sources": ["stimulus"],
-        "method": "stimulus-fingerprint cosine similarity match against cached firing",
+        "method": "exact identity proposal for canonical runtime revalidation",
         "confidence_milli": int(similarity * 1000),
     }]
 
-    return decision({"kind": "terminate", "result": "preempted"}, effects, evidence, stim)
+    return decision({"kind": "terminate", "result": "cache-candidate"}, effects, evidence, stim)
 
 
 if __name__ == "__main__":

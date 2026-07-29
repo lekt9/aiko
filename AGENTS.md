@@ -270,6 +270,165 @@ Required elements (themselves expressed as Neurons and Caps) include:
 12. Maintain the hard-typed firing envelope, validator, and identity algorithms as one
     importable canonical package. Production interpreters MUST import that package rather
     than copy it; substrate adapters may add ingress, commit, replay, and persistence only.
+13. Treat every durable relationship between machines, limbs, schemas, or authorities as
+    a typed, versioned contract artifact. Transport supplies reachability; it MUST NOT
+    silently create membership, trust, authority, or topology.
+14. Consult the registered default patterns before generating new coordination machinery.
+    A matching pattern SHOULD be composed automatically as an admitted limb; divergence
+    requires explicit evidence, a compatibility account, and its own runnable witness.
+15. Be **anything-first** at the adapter boundary. Any callable or observable interface
+    MAY be described, wrapped, tested, admitted, and attached as a Neuron interface,
+    including code, libraries, binaries, filesystems, databases, APIs, protocols,
+    streams, models, devices, humans, and remote Neurons. Interface kind, transport,
+    authentication, and economics (including x402) are orthogonal profiles; none creates
+    a second primitive or grants ambient execution authority.
+
+#### 17.1 Registered Default Patterns
+
+`AGENTS.md` is the normative pattern registry. A registered pattern states its trigger,
+typed artifacts, invariants, trust boundary, lifecycle, and runnable falsifier. Planning,
+generation, admission, and review Neurons MUST consult this registry before creating a
+new mechanism or promoting policy into the kernel. The IDs, triggers, and defaults below
+are normative. `reference/SUPER_META_PATTERNS.md` is the required expanded catalog: it
+records the six interrogatives, lifecycle, relations, sources, falsifier, implementation
+status, and complete Part I coverage for every ID.
+
+| ID | Pattern | Trigger | Required default |
+|---|---|---|---|
+| SMP-01 | One primitive, many scales | new executable behavior | implement or wrap it as a hard-typed Neuron |
+| SMP-02 | Polymorphic specialization | selecting model, function, tool, verifier, or human | hard-filter typed inhabitants and preserve independent failure domains |
+| SMP-03 | Self-similar composition | work needs children or a larger network | compose the same interface recursively without capability inheritance |
+| SMP-04 | Mechanism below, policy in limbs | policy is proposed for the kernel | keep it in an admitted limb unless boundary integrity requires mechanism |
+| SMP-05 | Pure decision, declarative effects | computation wants an external effect | return one decision; validate and commit effects through the harness |
+| SMP-06 | Sparse receptor-driven firing | a typed event or predicate becomes ready | fire only the grounded ready frontier |
+| SMP-07 | Cardiac valve and dual circulation | model output may become external action | keep streams inert; validate complete decisions before outbox dispatch |
+| SMP-08 | Persistent organism, finite work | daemon, subscription, retry, or cycle | permit indefinite waiting but bound every invocation and progress loop |
+| SMP-09 | Multiple timescales | fast work may alter slow structure | separate execution, learning, morphogenesis, and compatibility cadences |
+| SMP-10 | Artifacts are reconstructible memory | stateless logic needs continuity | write immutable artifacts and read narrow pinned refs |
+| SMP-11 | Immutable successors and CAS roots | a durable view must advance | write a successor and compare-and-swap its active pointer |
+| SMP-12 | Content identity, cache, and replay | settled work may be identical | fingerprint complete inputs and revalidate safe reuse |
+| SMP-13 | Provenance as causal spine | a claim or transition must be explained | carry source digests and causation through reads, decisions, and commits |
+| SMP-14 | Least authority, deny by default | any capability operation is requested | enforce immutable scoped Caps before the operation |
+| SMP-15 | Discovery is not authority | a peer, package, binary, or tool is found | emit an inert candidate; separate installation, admission, and execution |
+| SMP-16 | Code inert until admission | code or a Skill is generated/imported | test and admit the exact digest independently before execution |
+| SMP-17 | Grounded independent evidence | a meaningful claim or completion appears | require recorded provenance and independent corroboration |
+| SMP-18 | Adapter membrane and reconciliation | a committed effect crosses outside | outbox first, idempotent dispatch, acknowledgement, typed reconciliation |
+| SMP-19 | Typed at-least-once messaging | work crosses a boundary | commit before acknowledgement and deduplicate stable effect identities |
+| SMP-20 | Topology as typed data | a route, join, cycle, or attachment changes | version edges and CAS the active manifest |
+| SMP-21 | Contract-native mesh formation | an authenticated remote node appears | claim → lease → negotiate → mutually admit → operate → retire |
+| SMP-22 | Federated truth and convergence | independent partitions diverge | retain local causal views and reconcile explicitly without false consensus |
+| SMP-23 | Eligibility before ranking | multiple routes are available | reject invalid candidates before energy, cost, latency, or load ranking |
+| SMP-24 | Reuse before generation | a capability or pattern gap appears | search compatible admitted content identities before building |
+| SMP-25 | Generative limb lifecycle | a reusable higher-order capability is needed | describe → write → admit → attach → operate → judge → cache → retire |
+| SMP-26 | Bounded growth and retirement | spawn, fan-out, retry, or self-growth is proposed | enforce cumulative bounds, progress, ownership, detachment, and GC |
+| SMP-27 | Typed failure as next stimulus | execution fails or becomes uncertain | classify, record, and route failure evidence before retry or settlement |
+| SMP-28 | Reflect and rebalance from receipts | accumulated additions regress outcomes | locate the verified peak, simplify reversibly, and retest |
+| SMP-29 | Pattern registry and PatternGap | planning, generation, repair, or review starts | match and reuse governed records; emit a typed gap on miss |
+| SMP-30 | Runnable witness, no fabricated green | anything claims completion | settle only through a real independent command or sensor |
+| SMP-31 | Authority layers and honest docs | architecture or status documentation changes | change the owning authority, regenerate projections, and gate claims |
+| SMP-32 | Analogy translates, never proves | another domain is used to shape design | map and cite primitives, preserve gaps, and derive a runnable consequence |
+
+Registration is not implementation evidence. Adding a row MUST be accompanied by:
+
+1. a normative definition in Part I;
+2. an honest implemented/unimplemented statement in Part II;
+3. an unsettled roadmap item when no runnable implementation exists;
+4. a document check that prevents silent removal of the pattern; and
+5. a behavioral witness before the implementation may claim conformance.
+
+A discovered pattern MAY be proposed automatically by a Neuron, but changing this
+normative registry remains a governed source write. No pattern may grant itself Caps,
+admit its own code, weaken a verifier, or convert discovery into authorization.
+
+#### 17.2 The Meta-Superpattern: How Patterns Generate and Apply Patterns
+
+The registry itself MUST follow the same self-similar shape as the systems it governs.
+Every `PatternRecord`, from a whole-machine architecture down to one edge predicate, is a
+complete node answering the six interrogatives:
+
+| Interrogative | Required field in a registered pattern |
+|---|---|
+| **why** | root purpose and the invariant it protects |
+| **what** | typed problem, schemas, inputs, outputs, and acceptance claim |
+| **who** | owner, affected authorities, independent witness, and retirement owner |
+| **when** | trigger, deadline/lease, settlement predicate, retry bound, and invalidators |
+| **where** | scope, parent/children, topology attachment points, and trust boundary |
+| **how** | make / route / read verbs, Caps, and Plan → Build → Test → Judge gate |
+
+The ten settlement atoms are the canonical meta-pattern for every record:
+
+| Atom | Pattern-registry meaning |
+|---|---|
+| root | trace the pattern to the single Neuron primitive and an end-to-end purpose |
+| node | one six-interrogative `PatternRecord` with a stable identity and version |
+| tree | compose records self-similarly; every child is itself a complete pattern node |
+| verb | reduce operations to **make**, **route**, or **read**, expressed through Caps and declarative effects |
+| settle | declare a quorum, predicate, deadline, lease expiry, or bounded exhaustion rule |
+| witness | require an independent sensor, verifier, human gate, or runnable counterexample |
+| cache | content-address the settled record, artifacts, and witness for exact reuse |
+| seal | admit only after the fresh artifact passes its pinned release/conformance gate |
+| walk | traverse matching and unresolved records as an explicit ordered worklist |
+| loop | settle every open node through **Plan → Build → Test → Judge**, then re-plan from typed failure evidence |
+
+The prior-art grounding and Typed-Neuron translation of these atoms are normative in
+§32. A pattern is malformed if any atom or interrogative is absent; prose similarity,
+keyword presence, or an LLM preference cannot fill the missing structure.
+
+At the start of planning, generation, attachment, or repair, a Registry Neuron MUST:
+
+1. describe the present work as a six-interrogative root node;
+2. walk registered patterns whose triggers and scope match;
+3. apply hard schema, Caps, provenance, trust-boundary, budget, and settlement filters;
+4. rank only eligible patterns, preferring an admitted content-identical record;
+5. instantiate the chosen pattern as ordinary Neurons, artifacts, messages, and edges;
+6. run its Plan → Build → Test → Judge loop against the real path;
+7. cache and reuse it only after its witness settles;
+8. emit a typed `PatternGap` when no record fits; and
+9. propose a new complete `PatternRecord`, with its own falsifier, without self-admitting
+   it or weakening the root contract.
+
+This process recurses: the contract-native mesh pattern uses the generative-limb pattern;
+the limb uses admission, evidence, cache, topology, and retirement patterns; each edge
+again uses the same meta-superpattern. Automatic application therefore means a sparse,
+event-driven walk over already governed patterns, never an unbounded prompt that invents
+special cases.
+
+#### 17.3 Universal Interface Membrane
+
+The architecture is interface-first and **anything-first**, not API-first,
+binary-first, model-first, or payment-first. Anything with a callable or observable
+boundary MAY participate without being rewritten internally as a Neuron. An admitted
+adapter presents that boundary through the hard-typed Neuron contract.
+
+The default lifecycle is:
+
+`discover → describe → adapt → test → admit → attach → operate → judge → reuse/retire`.
+
+Discovery yields an inert candidate and MUST NOT confer authority. Description MUST pin
+the implementation and adapter identities and declare typed inputs, outputs, errors,
+effects, data classifications, determinism, idempotency, streaming behavior, budgets,
+Caps, evidence requirements, and settlement. Generated or imported adapters remain data
+until an independent admission gate accepts their exact digests.
+
+Every operation MUST be classified as either a capability **read** or a consequential
+**command**. Reads become recorded firing provenance. Commands become declarative effects
+and cross the adapter membrane only after atomic outbox commit, with idempotency,
+acknowledgement, and reconciliation. Unknown or mixed behavior defaults to command.
+There is no raw universal `execute-anything` capability: locators such as paths, symbols,
+URLs, device names, model names, and peer addresses are inert unless current immutable
+Caps authorize the exact operation.
+
+Interface kind is topology data, not a new execution unit. Functions, libraries, native
+ABIs, processes, filesystems, databases, HTTP/RPC services, streams, MCP or custom
+protocols, queues, models, devices, human gates, remote Neurons, and paid resources all
+use the same membrane. Authentication and economics are independent adapter profiles.
+x402 MAY mediate payment for an HTTP resource, but payment MUST NOT imply identity,
+membership, trust, admission, correctness, or settlement.
+
+The target standalone entrypoint and phased implementation plan are recorded honestly in
+`reference/AGENT_ENTRYPOINT_UNIVERSAL_INTERFACE_PLAN.md`. Its target commands and schemas
+are not implementation evidence; each phase settles only through its named runnable
+witness.
 
 ---
 
@@ -499,6 +658,122 @@ Topology is typed, versioned data. An edge names source and destination schemas,
 delivery mode, partition key, priority, and budget. A topology change is proposed as an
 artifact and admitted only after validation.
 
+#### 26.1 Contract-Native Automatic Mesh Formation
+
+The mesh transport provides authenticated reachability; it is not membership, relative
+awareness, routing authority, or a global scheduler. A conforming multi-machine deployment
+MUST express those relationships through the following typed, versioned artifacts:
+
+```ts
+type NodeClaim = {
+  schema: "neuron.node-claim/v1"
+  node: NodeId
+  endpoints: readonly EndpointRef[]
+  wireVersions: readonly string[]
+  accepts: readonly SchemaRef[]
+  emits: readonly SchemaRef[]
+  packageDigests: readonly Digest[]
+  epoch: number
+  expiresAt: string
+  provenance: ProvenanceRef
+}
+
+type PresenceLease = {
+  schema: "neuron.presence-lease/v1"
+  node: NodeId
+  claim: ArtifactRef
+  observer: NodeId
+  observedAt: string
+  expiresAt: string
+  evidence: readonly EvidenceRef[]
+}
+
+type EdgeContract = {
+  schema: "neuron.edge-contract/v1"
+  fromNode: NodeId
+  toNode: NodeId
+  sourceSchema: SchemaRef
+  destinationSchema: SchemaRef
+  predicate: PredicateRef
+  delivery: "durable" | "transient"
+  partitionKey: string
+  priority: number
+  budget: Budget
+  grant: CapabilityGrantRef
+  producerDigest: Digest
+  consumerDigest: Digest
+  lease: ArtifactRef
+  settlement: PredicateRef
+}
+
+type TopologyManifest = {
+  schema: "neuron.topology-manifest/v1"
+  owner: NodeId
+  predecessor?: ArtifactRef
+  claims: readonly ArtifactRef[]
+  leases: readonly ArtifactRef[]
+  edges: readonly ArtifactRef[]
+  version: LogicalClock
+}
+```
+
+These names describe contracts as data; they are not additional computational
+primitives. Neurons produce, validate, reconcile, and consume them. The trusted harness
+or production Contract substrate atomically admits their exact digests and advances the
+active topology pointer through compare-and-swap.
+
+A multi-machine deployment MUST attach an admitted `mesh-topology` limb, or a compatible
+replacement, at startup or before its first non-health remote firing. That limb MUST
+automatically:
+
+1. **Observe** authenticated endpoints and emit signed or transport-bound `NodeClaim`
+   candidates without granting them authority.
+2. **Lease** reachability using bounded `PresenceLease` records. A heartbeat is liveness
+   evidence only; it is never correctness evidence or a capability grant.
+3. **Negotiate** an `EdgeContract` only when producer and consumer schemas, immutable
+   package digests, current Caps, data classifications, budgets, and settlement rules are
+   compatible.
+4. **Accept** the exact edge digest under both endpoint policies. One-way data flow still
+   requires destination acceptance; discovery MUST NOT grant authority.
+5. **Admit and attach** the mutually accepted digest atomically into a new
+   `TopologyManifest`. A Neuron may propose this transaction but may not commit or
+   authorize itself.
+6. **Operate** ordinary firings through the admitted edge and preserve correlation,
+   causation, idempotency, and local commit semantics across the transport.
+7. **Renew and reconcile** leases and manifests using causal predecessors, explicit
+   conflicts, and typed merge or human-gate policies. The system MUST NOT pretend there
+   is one synchronized global view during a partition.
+8. **Retire** an expired, revoked, incompatible, or unreachable edge: stop new routes,
+   revoke its grants when policy requires, settle or cancel descendants, detach it, and
+   retain its audit roots.
+
+Relative machine awareness is therefore a derived projection of admitted claims, live
+leases, edge contracts, observed latency, reachable artifact indexes, roles, load, and
+evidence. Physical location MUST remain unknown unless an explicit sensor capability
+provides it.
+
+Routing MUST apply hard eligibility before ranking:
+
+```text
+eligible =
+  authenticated and live claim
+  ∧ mutually admitted edge digest
+  ∧ compatible source/destination schemas
+  ∧ current Caps and data-flow policy
+  ∧ reachable required artifacts
+  ∧ budget, deadline, and settlement compatibility
+
+eligible candidates
+  → rank by evidence, structural energy, expected settlement distance,
+    latency, load, cost, and deterministic tie-break
+```
+
+No score, model preference, payment, proximity, or historical success may rescue an
+ineligible route. Automatic mesh formation means automatic observation, proposal,
+validation, attachment within pre-authorized policy, renewal, and retirement. It does
+not mean automatic trust, capability widening, execution of discovered code, or
+consensus without an explicit quorum contract.
+
 Self-growth MUST be bounded by:
 
 - maximum spawn depth, fan-out, live instances, and cumulative cost;
@@ -651,16 +926,33 @@ An implementation conforms only if runnable tests demonstrate all of the followi
   changes, and cache hits never duplicate external effects;
 - crash recovery and external-effect reconciliation preserve the audit trail;
 - joins, cycles, rewiring, and garbage collection obey their declared policies;
+- a multi-machine profile automatically forms a contract-native mesh through typed node
+  claims, presence leases, mutually accepted edge contracts, and CAS-versioned topology;
+  rejects incompatible schemas and capability widening before ranking; expires routes
+  without erasing audit; and reconciles after restart or partition without kernel changes;
 - imported and generated Skills receive no authority before admission;
 - production substrate adapters import the canonical Neuron wire types, validator, and
   identity functions, with a runnable guard rejecting local duplicate implementations;
 - a non-trivial generative limb passes the describe → write → admit → attach → operate →
   judge → retire lifecycle without kernel modification or ambient authority;
+- the registered super-meta catalog contains every SMP ID, answers all six
+  interrogatives, maps all ten atoms, covers every Part I section and subsection, cites
+  concrete sources, distinguishes implementation status, and names a falsifier;
+- the **Agentic Organism Real-World Benchmark** retains 48 prompts across twelve
+  domains, three paired trials, twelve adversarial stressor families, twelve organism
+  functions, thirteen interface families, six score dimensions totaling 100, independent
+  judge and contamination controls, evidence minimums, aggregate thresholds, and
+  zero-tolerance hard failures;
 - deterministic replay reproduces the decision digest with effects disabled.
 
 Document conformance is checked by `tests/check_agents.py`. Behavioral runtime
 conformance requires an implementation-specific adapter that exercises the same named
 properties; a document-only pass MUST NOT be represented as runtime correctness.
+The natural-system translation and its benchmark derivation live in
+`reference/AGENTIC_ORGANISM.md`. The canonical prompt and scoring corpus is
+`bench/agentic-organism/benchmark.json`. Passing its structural document check proves
+only that the benchmark remains well formed; it MUST NOT be represented as an agent
+passing the behavioral cases.
 
 ### 32. Superpattern Translation
 
@@ -690,6 +982,7 @@ the original harness/loop/graph terms remain diagnostic projections.
 The document is settled only when:
 
 ```bash
+python3 tests/check_super_meta_patterns.py
 python3 tests/check_agents.py
 python3 bench/jespa/benchmark.py --seeds 17 43
 JESPA_WIN_TARGET=1 bash bench/jespa/jespa-benchmarks-gate.sh
@@ -717,6 +1010,14 @@ The executable authorities are:
 - the exported `typed_neuron` module for pure types, validation, and identities;
 - an interpreter's atomic transaction and recovery tests for substrate behavior;
 - `reference/META_AGENT.md` plus its runnable witness for the default composed agent;
+- the SMP-01–SMP-32 registry in §17.1, its expanded
+  `reference/SUPER_META_PATTERNS.md` projection, and
+  `tests/check_super_meta_patterns.py` for structural catalog closure;
+- `reference/AGENT_ENTRYPOINT_UNIVERSAL_INTERFACE_PLAN.md` for the unsettled canonical
+  agent-entrypoint and universal-interface implementation sequence;
+- `reference/AGENTIC_ORGANISM.md` and
+  `bench/agentic-organism/benchmark.json` for the governed natural-system translation,
+  real-world prompt corpus, score model, and independent judge protocol;
 - the production conformance gate for cross-repository claims.
 
 Generated bindings are codec projections, not semantic authorities. A source directory
@@ -747,8 +1048,8 @@ neuron/
 ├── build.zig                     # typed_neuron module, CLI artifact, test steps
 ├── src/                          # canonical package + standalone reference runtime (Zig 0.16)
 ├── limbs/                        # generative limb packages in Skill form
-├── reference/                    # META_AGENT.md, defaults/meta-agent.json, EBM lens, energy router, ROADMAP.md
-├── tests/                        # document, specification, runtime, Meta-Agent, and production gates
+├── reference/                    # Meta-Agent, super-meta catalog, defaults, lenses, roadmap
+├── tests/                        # document/catalog, runtime, Meta-Agent, swarm, and production gates
 ├── bench/jespa/                  # JESPA benchmarks and the honest ledger
 ├── tools/                        # generate_wire_bindings.py (binding generator and drift guard)
 └── zig-out/                      # built CLI and retained witnesses
@@ -759,6 +1060,21 @@ holds the canonical package and executable reference runtime; sibling Contract i
 durable production interpreter and substrate; sibling Aiko is the production host. This
 directory is not currently its own Git repository, so the production dependency is
 pinned by content, not by revision (R5).
+
+As of 2026-07-28, §17.1 registers SMP-01–SMP-32 and
+`reference/SUPER_META_PATTERNS.md` carries their expanded six-interrogative records,
+atom translation, sources, status, coverage, and residual frontier.
+`tests/check_super_meta_patterns.py` witnesses document closure and representative
+mutation rejection. The automatic runtime Pattern Registry Neuron described by SMP-29
+is not yet implemented and remains R8.
+The canonical `neuron agent ...` entrypoint and universal `InterfaceManifest` membrane
+are specified in `reference/AGENT_ENTRYPOINT_UNIVERSAL_INTERFACE_PLAN.md`. As of
+2026-07-29 its Phase 1 (standalone agent bootstrap) is implemented:
+`neuron agent init|run|inspect|cancel|retire` drive a composed stage network through
+the ordinary Runtime and Pump against the durable node substrate, witnessed by
+`bash tests/agent-entrypoint-gate.sh` without Aiko or Contract. The universal
+interface membrane (Phases 2+) is not implemented — `neuron interface ...` parses and
+fails closed as NotImplemented — and remains R9.
 
 ### 36. Current State: Canonical Package and Generated Bindings
 
@@ -818,6 +1134,7 @@ responsibilities:
 | `src/observability.zig` | Metrics projection and effect-disabled replay verification |
 | `src/script.zig` | Bounded JSON-stdio script-Neuron adapter; hung children are killed and recorded `timed_out` |
 | `src/run.zig` | `neuron run` manifest/stimulus ingress through the real Runtime |
+| `src/agent_ops.zig` | Standalone `neuron agent` lifecycle: composed stage neurons, settlement-event grounding, CAS snapshot advance |
 | `src/main.zig`, `src/demo.zig` | CLI dispatch and the atomic write/send/spawn demonstration |
 | `src/meta_agent.zig` | Full default Meta-Agent composition witness |
 | `src/identity.zig` | Ed25519 node identities and signed, expiring, attenuated Delegations |
@@ -831,9 +1148,12 @@ responsibilities:
 
 The CLI (`zig-out/bin/neuron`) provides `demo`, `check`, `meta-agent-check [--json]`,
 `run --def/--neuron/--stimulus [--json] [--dump]`, `serve <ip:port> <write_prefix>`
-(mesh daemon), `mcp <write_prefix>` (stdio edge), and `--version/--help`.
+(mesh daemon), `mcp <write_prefix>` (stdio edge),
+`agent init|run|inspect|cancel|retire <node_dir> <agent_id>` (standalone agent
+entrypoint against the durable node substrate), `interface ...` (parsed, fails closed
+as NotImplemented until plan Phases 2+), and `--version/--help`.
 
-The behavioral suite holds fifty-one named witnesses in `src/tests.zig`, plus
+The behavioral suite holds seventy-one named witnesses in `src/tests.zig`, plus
 module-embedded tests in `wire` (3), `types` (1), `caps` (1), `cache` (1), `limb` (2),
 `interface` (1), `script` (9), and `energy_router` (2). Coverage spans: atomic
 write/send/spawn commit; validation atomicity and capability denial; duplicate-delivery
@@ -847,7 +1167,9 @@ admission; the full generative-limb lifecycle; interface normalization, per-chat
 scoping, and self-contained loops; pump multi-turn settlement and bounded cycle
 handling; the middleware decision cage; generational spawn attachment; Meta-Agent
 settlement; mesh delegation chains, fail-closed envelope admission, and TCP symmetry;
-tailnet classification; and the MCP edge ceiling and CGNAT-only egress.
+tailnet classification; the MCP edge ceiling and CGNAT-only egress; and the standalone
+agent lifecycle (composed-stage settlement, replay without new effects, workflow
+cancellation, and fail-closed retirement).
 
 ### 38. Current State: Generative Limbs
 
@@ -928,6 +1250,7 @@ Run the smallest gate that proves the claim being changed:
 | Specification discrimination | `bash tests/gate.sh` |
 | Standalone behavior, CLI, benchmarks, Meta-Agent | `bash tests/runtime-gate.sh` |
 | Meta-Agent lifecycle only | `bash tests/meta-agent-gate.sh` |
+| Standalone agent entrypoint (plan Phase 1) | `bash tests/agent-entrypoint-gate.sh` |
 | Generated files and Neuron/Contract/Aiko boundary | `bash tests/check-production-neuron.sh` |
 | Wire generator drift only | `python3 tools/generate_wire_bindings.py --check` |
 
@@ -944,6 +1267,12 @@ Gate contents:
 - `tests/meta-agent-gate.sh` runs the Meta-Agent from an empty temporary directory,
   asserts fifteen witness fields, and installs `zig-out/meta-agent-witness.json`
   (mode 600).
+- `tests/agent-entrypoint-gate.sh` initializes a logical agent in an empty node
+  directory through the public CLI, settles a deterministic goal through the composed
+  intake→worker→verifier→settler network, asserts durable settlement-event grounding
+  in the WAL, reconstructs the snapshot in a fresh process, replays the identical goal
+  with a byte-identical WAL, cancels an unfired workflow, retires the agent fail-closed,
+  and reconstructs after compaction.
 - `tests/check-production-neuron.sh` checks generated bindings and the content lock,
   builds and tests Neuron and Contract, and runs three focused Aiko `cargo test -p
   xai-grok-shell` suites (generated-binding vectors, script-Neuron boundary, and
@@ -969,9 +1298,12 @@ by named executable tests against a sequential-executor baseline).
 The standalone reference runtime does not claim: crash-safe multi-process storage;
 production schema migration; a complete OS sandbox on every platform; content-pinned
 executable admission in `neuron run`; exactly-once remote effects; globally ordered
-peer messages; or that an experimental limb is admitted merely because its source
-exists. Contract supplies the durable production transaction and recovery path; Aiko
-supplies product adapters and sandbox enforcement.
+peer messages; automatic node discovery; signed presence leasing; mutually admitted
+cross-machine edge contracts; topology convergence; or that an experimental limb is
+admitted merely because its source exists. The current mesh is an address-directed
+transport, not yet the §26.1 automatic mesh-formation profile. Contract supplies the
+durable production transaction and recovery path; Aiko supplies product adapters and
+sandbox enforcement.
 
 Unsettled work lives only in `reference/ROADMAP.md`, in priority order:
 
@@ -987,6 +1319,27 @@ Unsettled work lives only in `reference/ROADMAP.md`, in priority order:
 6. **R6** — standalone durability and isolation remain intentionally outside the
    reference runtime; a second durable adapter must import the canonical module, pass
    the drift guard, and publish its own atomicity, crash, and reconciliation witnesses.
+7. **R7** — implement the §26.1 `mesh-topology` limb: node claims, presence leases,
+   bilateral edge admission, live topology projection, eligibility-first routing,
+   partition reconciliation, expiry, revocation, and a two-machine lifecycle witness.
+8. **R8** — implement the SMP-29 Pattern Registry Neuron: consume a typed work root,
+   query admitted pattern records, hard-filter and rank compatible matches, reuse one or
+   emit `PatternGap`, and prove that neither path gains authority.
+9. **R9** — complete the universal interface membrane in
+   `reference/AGENT_ENTRYPOINT_UNIVERSAL_INTERFACE_PLAN.md` (Phases 2–7): describe,
+   test, admit, and attach code, libraries, binaries, stores, APIs, protocols, models,
+   devices, humans, remote Neurons, and optional paid interfaces through one typed
+   lifecycle. Phase 1 — the standalone `neuron agent init|run|inspect|cancel|retire`
+   entrypoint — settled on 2026-07-29 through `tests/agent-entrypoint-gate.sh` and runs
+   without Aiko; Aiko and Contract remain compatible host and durability profiles
+   rather than prerequisites. `neuron interface ...` still fails closed as
+   NotImplemented.
+10. **R10** — implement behavioral fixtures and public-entrypoint runners for all
+    48 cases in `bench/agentic-organism/benchmark.json`, seal receipt bundles, run
+    independent judge invocations, and publish complete scores including honest failures.
+    Four deterministic Aiko pilot fixtures now exist with sealed run and improvement
+    ledgers; they are measured partial evidence, not a suite score. The structural
+    JESPA gate remains benchmark integrity evidence, not an agent score.
 
 Every item settles through a runnable witness. File presence, prose, and a green
 document validator are not completion.

@@ -30,6 +30,18 @@ generative limb. The trusted interpreter retains only mechanisms needed for
 typing, isolation, capability enforcement, atomic commit, identity, delivery,
 and liveness.
 
+Dependency flows toward the canonical package:
+
+```text
+Aiko (host/adapters) → Contract (durable interpreter) → typed_neuron
+```
+
+The standalone Neuron build, CLI, tests, and installable swarm node have no
+runtime dependency on Aiko or Contract. Contract imports `typed_neuron`; Aiko
+loads Contract's ABI and consumes generated transport DTOs. Sibling paths used
+by binding generation and production conformance do not reverse this
+dependency.
+
 ## Documentation authority
 
 | Document | Authority |
@@ -37,6 +49,10 @@ and liveness.
 | `AGENTS.md` | Normative architecture and conformance requirements |
 | `schema/typed-neuron-wire.json` | Canonical transport schema source |
 | `reference/META_AGENT.md` | Normative seed for composed agent behavior |
+| `reference/SUPER_META_PATTERNS.md` | Expanded SMP-01–SMP-32 catalog, sources, coverage, status, and residuals |
+| `reference/AGENT_ENTRYPOINT_UNIVERSAL_INTERFACE_PLAN.md` | Anything-first agent-entrypoint and universal-interface plan (Phase 1 implemented; Phases 2+ unsettled) |
+| `reference/AGENTIC_ORGANISM.md` | Normative natural-system translation and benchmark derivation |
+| `bench/agentic-organism/benchmark.json` | Structural authority for 48 benchmark prompts, trials, stressors, scoring, evidence, hard failures, and judge output |
 | `reference/defaults/meta-agent.json` | Machine-readable default Meta-Agent package |
 | `IMPLEMENTATION.md` | Current implementation and production integration |
 | `reference/ROADMAP.md` | Unsettled work only |
@@ -129,6 +145,7 @@ Complete source map:
 | `src/observability.zig` | Metrics and effect-disabled replay verification |
 | `src/script.zig` | JSON-stdio adapter for an external Neuron implementation |
 | `src/run.zig` | Manifest/stimulus ingress and CLI execution projection |
+| `src/agent_ops.zig` | Standalone `neuron agent` lifecycle: composed stage neurons, settlement-event grounding, CAS snapshot advance |
 | `src/main.zig`, `src/demo.zig` | CLI dispatch and atomic write/send/spawn demonstration |
 | `src/meta_agent.zig` | Full default Meta-Agent composition witness |
 | `src/mesh.zig`, `src/identity.zig` | Signed delegation and framed peer delivery |
@@ -289,9 +306,11 @@ Run the smallest gate that proves the claim being changed:
 | Claim | Command |
 |---|---|
 | Normative document shape | `python3 tests/check_agents.py` |
+| Super-meta pattern/atom/section closure | `python3 tests/check_super_meta_patterns.py` |
 | Spec discrimination benchmark | `bash tests/gate.sh` |
 | Standalone behavior, CLI, benchmark, Meta-Agent | `bash tests/runtime-gate.sh` |
 | Meta-Agent lifecycle only | `bash tests/meta-agent-gate.sh` |
+| Standalone agent entrypoint (plan Phase 1) | `bash tests/agent-entrypoint-gate.sh` |
 | Generated files and Neuron/Contract/Aiko boundary | `bash tests/check-production-neuron.sh` |
 | Wire generator drift only | `python3 tools/generate_wire_bindings.py --check` |
 
@@ -316,6 +335,16 @@ does not claim:
 - content-pinned executable admission in the standalone `neuron run` adapter;
 - exactly-once remote effects;
 - globally ordered peer messages;
+- automatic contract-native mesh formation or cross-machine topology convergence;
+- an admitted runtime Pattern Registry Neuron that consumes the document catalog;
+- the universal `InterfaceManifest` registry for arbitrary code, binaries,
+  stores, APIs, protocols, models, devices, humans, remote Neurons, and paid
+  resources (the standalone `neuron agent init|run|inspect|cancel|retire`
+  lifecycle is implemented and witnessed by `tests/agent-entrypoint-gate.sh`;
+  every `neuron interface ...` verb still fails closed as NotImplemented);
+- behavioral execution adapters, fixtures, or measured agent scores for the
+  Agentic Organism prompt benchmark; its current gate validates the corpus and
+  rubric only;
 - that an experimental limb is admitted merely because its source exists.
 
 Contract supplies the current durable production transaction and recovery

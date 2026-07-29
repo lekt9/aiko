@@ -189,7 +189,12 @@ pub const Node = struct {
             .firing_id = envelope.firing_id,
             .receptor_schema = envelope_schema,
             .messages = &messages,
-            .now_ms = now_ms,
+            // The signed envelope nonce is the firing's recorded logical
+            // clock. Admission still uses the receiver's live `now_ms` for
+            // delegation expiry, but an at-least-once redelivery must
+            // reconstruct byte-identical stimulus identity even when it
+            // reaches the receiver later.
+            .now_ms = envelope.nonce,
         };
         const commit = try self.runtime.fire(neuron, stimulus, envelope.delegation.caps);
         return .{ .commit = commit, .from = envelope.from };
@@ -201,7 +206,7 @@ pub const Node = struct {
     /// operator pinned for this peer, so nothing the peer sends can widen
     /// its authority (§24). The recipient check still applies, and the
     /// firing still passes the full validate → commit boundary.
-    pub fn receiveTrusted(self: *Node, bytes: []const u8, now_ms: u64, ceiling: Caps) !ReceiveResult {
+    pub fn receiveTrusted(self: *Node, bytes: []const u8, _: u64, ceiling: Caps) !ReceiveResult {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         const envelope = try parseEnvelope(arena.allocator(), bytes, false);
@@ -222,7 +227,9 @@ pub const Node = struct {
             .firing_id = envelope.firing_id,
             .receptor_schema = envelope_schema,
             .messages = &messages,
-            .now_ms = now_ms,
+            // See the signed path above: transport redelivery reuses the
+            // original envelope nonce while peer admission uses live time.
+            .now_ms = envelope.nonce,
         };
         const commit = try self.runtime.fire(neuron, stimulus, ceiling);
         return .{ .commit = commit, .from = envelope.from };
@@ -417,6 +424,17 @@ pub fn unsignedEnvelopeJson(
         .signature = @splat(0),
     };
     return envelopeJson(allocator, &envelope);
+}
+
+/// Stable logical clock for clients that reconstruct a firing instead of
+/// retaining its serialized envelope. The firing id is already required to
+/// be unique within a workflow, so deriving the nonce from it gives retries
+/// the same canonical stimulus without relying on arrival time.
+pub fn nonceForFiring(firing_id: []const u8) u64 {
+    const digest = types.digest(firing_id);
+    // JSON's interoperable integer representation in the current wire
+    // decoder is signed i64, so keep the derived value in that domain.
+    return std.mem.readInt(u64, digest[0..8], .big) & std.math.maxInt(i64);
 }
 
 /// A standard bridge neuron: the wire payload directs the write. v2 is a

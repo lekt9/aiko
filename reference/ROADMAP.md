@@ -1,6 +1,6 @@
 # Typed Neuron roadmap
 
-Status: core items settled as of 2026-07-27; two infrastructural gaps remain
+Status: core items settled as of 2026-07-27; six infrastructural gaps remain
 (see §Remaining).
 
 `AGENTS.md` defines the target. `IMPLEMENTATION.md` records what exists.
@@ -151,6 +151,42 @@ The following gaps are known and queued for infrastructure work:
 - **Distributed cache dedupe** (§25). Content-addressed firing cache is
   per-process; mesh-wide reuse requires a network-level cache protocol
   and cross-node identity agreement.
+- **Contract-native automatic mesh formation** (§26.1). The current mesh is
+  address-directed transport. It does not yet exchange signed `NodeClaim`
+  artifacts, maintain expiring `PresenceLease` records, mutually admit
+  `EdgeContract` digests, converge `TopologyManifest` versions, or route from
+  eligibility-filtered relative awareness. This must be an admitted
+  `mesh-topology` limb, not new kernel policy, and requires a two-machine
+  claim → lease → edge → route → expire → reconcile → retire witness.
+- **Automatic Pattern Registry Neuron** (SMP-29). `AGENTS.md` and
+  `reference/SUPER_META_PATTERNS.md` provide the governed document registry,
+  but no admitted runtime Neuron yet consumes a typed six-interrogative work
+  root, matches compatible pattern records, rejects ineligible records, reuses
+  an admitted pattern, or emits `PatternGap` on a miss. Its witness must prove
+  both match and gap paths without authority gain.
+- **Universal interface membrane** (§17.3, plan Phases 2–7).
+  `reference/AGENT_ENTRYPOINT_UNIVERSAL_INTERFACE_PLAN.md` defines the target
+  `neuron interface ...` lifecycle for anything with a callable or observable
+  boundary: code, libraries, binaries, stores, APIs, protocols, models,
+  devices, humans, remote Neurons, and optional paid resources.
+  `InterfaceManifest` and the interface verbs are not implemented; the CLI
+  parses them and fails closed as NotImplemented. Phase 1 settled 2026-07-29:
+  `neuron agent init|run|inspect|cancel|retire` initializes and runs a logical
+  agent without Aiko through the composed stage network with settlement-event
+  grounding, witnessed by `bash tests/agent-entrypoint-gate.sh`. The next
+  witness must compose differently implemented interfaces without bypassing
+  Caps, admission, outbox, evidence, or settlement.
+- **Agentic Organism behavioral benchmark runner** (§31–§32).
+  `bench/agentic-organism/benchmark.json` now defines 48 real-world prompts
+  across twelve domains, three paired trials, twelve adversarial stressor
+  families, six score dimensions, independent judging, evidence minimums, and
+  catastrophic hard failures. Four cases (AO-01, AO-09, AO-12, and AO-31) now
+  have deterministic red fixtures and execute through Aiko's installed public
+  CLI with post-exit hidden evaluators, immutable run reports, an append-only
+  run/correction ledger, and a durable opened/resolved improvement stream.
+  This is pilot evidence only: the other 44 fixtures, all 144 scheduled trials,
+  paired baselines, independent judge invocations, aggregate uncertainty, and
+  complete honest reporting remain unsettled.
 
 ## R6. Standalone durability and isolation
 

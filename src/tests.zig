@@ -13,6 +13,7 @@ const cache_mod = @import("cache.zig");
 const topology_mod = @import("topology.zig");
 const limb_mod = @import("limb.zig");
 const interface_mod = @import("interface.zig");
+const script_mod = @import("script.zig");
 const pump_mod = @import("pump.zig");
 const middleware_mod = @import("middleware.zig");
 const meta_agent = @import("meta_agent.zig");
@@ -135,6 +136,45 @@ test "duplicate delivery does not duplicate effects" {
     const duplicate = try fixture.runtime().execute(stimulus("fire-3"), allCaps(), decision);
     try std.testing.expectEqual(@as(usize, 0), duplicate.effects_committed);
     try std.testing.expectEqual(@as(usize, 1), duplicate.duplicates_skipped);
+    try std.testing.expectEqual(@as(usize, 1), fixture.substrate.messages.items.len);
+}
+
+test "settlement event is atomic, durable, deduplicated, and non-reflexive" {
+    var fixture = Fixture.init();
+    defer fixture.deinit();
+    const runtime: runtime_mod.Runtime = .{
+        .substrate = &fixture.substrate,
+        .emit_settlement_events = true,
+    };
+    const decision: types.Decision = .{
+        .control = .{ .terminate = "done" },
+        .evidence = &evidence,
+    };
+    const first = try runtime.execute(stimulus("settlement-source"), allCaps(), decision);
+    try std.testing.expectEqual(@as(usize, 0), first.effects_committed);
+    try std.testing.expectEqual(@as(usize, 1), fixture.substrate.messages.items.len);
+    const event = fixture.substrate.messages.items[0];
+    try std.testing.expectEqualStrings("event/neuron.firing-settled/v1", event.to);
+    try std.testing.expectEqualStrings("neuron.firing-settled/v1", event.schema);
+    try std.testing.expect(event.durable);
+    const payload = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, event.payload, .{});
+    defer payload.deinit();
+    try std.testing.expectEqualStrings(
+        "committed",
+        payload.value.object.get("status").?.string,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 64),
+        payload.value.object.get("decision_digest").?.string.len,
+    );
+
+    _ = try runtime.execute(stimulus("settlement-source"), allCaps(), decision);
+    try std.testing.expectEqual(@as(usize, 1), fixture.substrate.messages.items.len);
+
+    _ = try runtime.execute(.{
+        .firing_id = "settlement-observer",
+        .receptor_schema = "neuron.firing-settled/v1",
+    }, allCaps(), decision);
     try std.testing.expectEqual(@as(usize, 1), fixture.substrate.messages.items.len);
 }
 
@@ -1244,6 +1284,228 @@ fn pumpCaps() caps_mod.Caps {
     };
 }
 
+const SettlementObserver = struct {
+    fires: *usize,
+
+    pub fn fire(self: *const SettlementObserver, stim: types.Stimulus, _: caps_mod.Caps) !types.Decision {
+        self.fires.* += 1;
+        try std.testing.expectEqualStrings("neuron.firing-settled/v1", stim.receptor_schema);
+        try std.testing.expectEqual(@as(usize, 1), stim.messages.len);
+        try std.testing.expectEqualStrings("neuron.firing-settled/v1", stim.messages[0].schema);
+        return .{ .control = .{ .terminate = "observed" }, .evidence = &evidence };
+    }
+};
+
+const RoutedSink = struct {
+    fires: *usize,
+
+    pub fn fire(self: *const RoutedSink, stim: types.Stimulus, _: caps_mod.Caps) !types.Decision {
+        self.fires.* += 1;
+        try std.testing.expectEqualStrings("neuron.dispatch-decision/v1", stim.receptor_schema);
+        try std.testing.expectEqual(@as(usize, 1), stim.messages.len);
+        return .{ .control = .{ .terminate = "limb-ran" }, .evidence = &evidence };
+    }
+};
+
+test "admission event auto-attaches explicit interfaces and routed pump consumes live edge" {
+    const allocator = std.testing.allocator;
+    var fixture = Fixture.init();
+    defer fixture.deinit();
+    var scheduler = scheduler_mod.Scheduler.init(allocator, fixture.runtime());
+    defer scheduler.deinit();
+    var pump = pump_mod.Pump.init(allocator, &scheduler);
+    defer pump.deinit();
+    pump.default_caps = .{};
+
+    var scripts = std.heap.ArenaAllocator.init(allocator);
+    defer scripts.deinit();
+    const attacher_argv = [_][]const u8{ "python3", "limbs/auto-attacher/neurons/attacher.py" };
+    const dispatcher_argv = [_][]const u8{ "python3", "limbs/dispatch-router/neurons/dispatcher.py" };
+    const attacher_impl: script_mod.ScriptNeuron = .{
+        .allocator = scripts.allocator(),
+        .io = std.testing.io,
+        .argv = &attacher_argv,
+        .substrate = &fixture.substrate,
+    };
+    const dispatcher_impl: script_mod.ScriptNeuron = .{
+        .allocator = scripts.allocator(),
+        .io = std.testing.io,
+        .argv = &dispatcher_argv,
+        .substrate = &fixture.substrate,
+    };
+    const seed_impl: StaticNeuron = .{ .control = .{ .terminate = "seeded" } };
+    var sink_fires: usize = 0;
+    const sink_impl: RoutedSink = .{ .fires = &sink_fires };
+    try scheduler.register(neuron_mod.bind(StaticNeuron, &seed_impl, "seed/attach", "1"));
+    try scheduler.register(neuron_mod.bind(script_mod.ScriptNeuron, &attacher_impl, "system/attacher", "0.1.0"));
+    try scheduler.register(neuron_mod.bind(script_mod.ScriptNeuron, &dispatcher_impl, "system/dispatcher", "0.1.0"));
+    try scheduler.register(neuron_mod.bind(RoutedSink, &sink_impl, "limb/deadbeef/echo", "1"));
+
+    const attacher_caps: caps_mod.Caps = .{
+        .allow_write = true,
+        .write_prefix = "topology/edges/",
+        .budget = .{
+            .max_effects = 32,
+            .max_writes = 32,
+            .max_messages = 0,
+            .max_spawns = 0,
+        },
+    };
+    try pump.subscribe("neuron.limb-admission/v1", "system/attacher", attacher_caps, &.{});
+
+    const admission =
+        \\{"schema":"neuron.limb-admission/v1","digest":"deadbeef","package":"{\"schema\":\"typed-neuron.limb-manifest/v1\",\"package\":\"fixture/echo\",\"version\":\"1.0.0\",\"neurons\":[{\"id\":\"echo\",\"accepts\":[\"fixture.echo/v1\"],\"emits\":[\"fixture.echo-result/v1\"],\"argv\":[\"echo\"],\"caps_request\":{}}]}"}
+    ;
+    const admission_effects = [_]types.Effect{
+        .{ .write = .{
+            .id = "artifact/limbs/admitted/deadbeef",
+            .schema = "neuron.limb-admission/v1",
+            .bytes = admission,
+        } },
+        .{ .send = .{
+            .to = "event/neuron.limb-admission/v1",
+            .schema = "neuron.limb-admission/v1",
+            .payload = admission,
+            .durable = true,
+        } },
+    };
+    _ = try scheduler.runtime.execute(.{
+        .firing_id = "admission/deadbeef",
+        .receptor_schema = "neuron.limb-admission/v1",
+    }, .{
+        .allow_write = true,
+        .write_prefix = "artifact/limbs/admitted/",
+        .allow_send = true,
+        .send_prefix = "event/neuron.limb-admission/v1",
+        .budget = .{ .max_effects = 2, .max_writes = 1, .max_messages = 1, .max_spawns = 0 },
+    }, .{
+        .control = .{ .terminate = "admitted" },
+        .effects = &admission_effects,
+        .evidence = &evidence,
+    });
+
+    const attached = try pump.run("seed/attach", .{
+        .firing_id = "seed-auto-attach",
+        .receptor_schema = "fixture.seed/v1",
+    }, .{});
+    try std.testing.expectEqual(@as(usize, 2), attached.steps);
+    try std.testing.expect(fixture.substrate.artifacts.contains(
+        "topology/edges/deadbeef/fixture-echo-v1",
+    ));
+
+    const dispatcher_caps: caps_mod.Caps = .{
+        .allow_write = true,
+        .write_prefix = "dispatch/",
+        .allow_send = true,
+        .send_prefix = "neuron/",
+        .budget = .{ .max_effects = 3, .max_writes = 1, .max_messages = 1, .max_spawns = 0 },
+    };
+    const routed = try pump.runRouted("system/dispatcher", .{
+        .firing_id = "dispatch-live-edge",
+        .receptor_schema = "fixture.echo/v1",
+    }, dispatcher_caps);
+    try std.testing.expectEqual(@as(usize, 2), routed.steps);
+    try std.testing.expectEqual(@as(usize, 1), sink_fires);
+    try std.testing.expect(fixture.substrate.artifacts.contains("dispatch/dispatch-live-edge"));
+}
+
+test "pump routes settlement subscriptions and journals ack after consumer commit" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    {
+        var substrate = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state");
+        defer substrate.deinit();
+        var scheduler = scheduler_mod.Scheduler.init(allocator, .{ .substrate = &substrate });
+        defer scheduler.deinit();
+        var pump = pump_mod.Pump.init(allocator, &scheduler);
+        defer pump.deinit();
+
+        var observer_fires: usize = 0;
+        const seed_impl: StaticNeuron = .{ .control = .{ .terminate = "seeded" } };
+        const observer_impl: SettlementObserver = .{ .fires = &observer_fires };
+        try scheduler.register(neuron_mod.bind(StaticNeuron, &seed_impl, "seed", "1"));
+        try scheduler.register(neuron_mod.bind(SettlementObserver, &observer_impl, "observer", "1"));
+        try pump.subscribe("neuron.firing-settled/v1", "observer", .{}, &.{});
+
+        const result = try pump.run("seed", stimulus("settlement-pump-seed"), .{});
+        try std.testing.expectEqual(@as(usize, 2), result.steps);
+        try std.testing.expectEqual(@as(usize, 1), observer_fires);
+        try std.testing.expectEqual(@as(usize, 1), substrate.messages.items.len);
+        try std.testing.expectEqual(substrate_mod.DeliveryStatus.acknowledged, substrate.messages.items[0].status);
+        try std.testing.expectEqual(@as(u8, 1), substrate.messages.items[0].attempts);
+    }
+
+    var replayed = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state");
+    defer replayed.deinit();
+    try std.testing.expectEqual(@as(usize, 1), replayed.messages.items.len);
+    try std.testing.expectEqual(substrate_mod.DeliveryStatus.acknowledged, replayed.messages.items[0].status);
+    try std.testing.expectEqual(@as(u8, 1), replayed.messages.items[0].attempts);
+}
+
+test "real introspection trigger automatically reconstructs and CAS-updates state from settlement events" {
+    const allocator = std.testing.allocator;
+    var fixture = Fixture.init();
+    defer fixture.deinit();
+    var scheduler = scheduler_mod.Scheduler.init(allocator, fixture.runtime());
+    defer scheduler.deinit();
+    var pump = pump_mod.Pump.init(allocator, &scheduler);
+    defer pump.deinit();
+
+    var scripts = std.heap.ArenaAllocator.init(allocator);
+    defer scripts.deinit();
+    const trigger_argv = [_][]const u8{ "python3", "limbs/introspection-trigger/neurons/trigger.py" };
+    const trigger_impl: script_mod.ScriptNeuron = .{
+        .allocator = scripts.allocator(),
+        .io = std.testing.io,
+        .argv = &trigger_argv,
+        .substrate = &fixture.substrate,
+    };
+    const seed_impl: StaticNeuron = .{ .control = .{ .terminate = "seeded" } };
+    try scheduler.register(neuron_mod.bind(StaticNeuron, &seed_impl, "seed/trigger", "1"));
+    try scheduler.register(neuron_mod.bind(script_mod.ScriptNeuron, &trigger_impl, "system/trigger", "0.1.0"));
+
+    const trigger_caps: caps_mod.Caps = .{
+        .allow_write = true,
+        .write_prefix = "introspection-trigger/",
+        .allow_send = true,
+        .send_prefix = "neuron/introspection/",
+        .budget = .{ .max_effects = 2, .max_writes = 1, .max_messages = 1, .max_spawns = 0 },
+    };
+    try pump.subscribe(
+        "neuron.firing-settled/v1",
+        "system/trigger",
+        trigger_caps,
+        &.{"introspection-trigger/state"},
+    );
+
+    const first = try pump.run("seed/trigger", .{
+        .firing_id = "automatic-trigger-seed-1",
+        .receptor_schema = "fixture.seed-one/v1",
+    }, .{});
+    try std.testing.expectEqual(@as(usize, 2), first.steps);
+
+    const second = try pump.run("seed/trigger", .{
+        .firing_id = "automatic-trigger-seed-2",
+        .receptor_schema = "fixture.seed-two/v1",
+    }, .{});
+    try std.testing.expectEqual(@as(usize, 2), second.steps);
+    const state_artifact = fixture.substrate.artifacts.get("introspection-trigger/state").?;
+    const state = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        state_artifact.bytes,
+        .{},
+    );
+    defer state.deinit();
+    try std.testing.expectEqual(
+        @as(i64, 2),
+        state.value.object.get("firings_since_introspection").?.integer,
+    );
+}
+
 test "pump drives multi-turn agents to settlement without external turns" {
     const allocator = std.testing.allocator;
     var fixture = Fixture.init();
@@ -1870,7 +2132,9 @@ test "mesh envelope stimulates a remote neuron under delegated caps" {
     try std.testing.expectEqual(@as(u32, 0), fixture_a.substrate.artifacts.count());
 
     // At-least-once transport redelivery is absorbed by firing identity (§21).
-    const again = try node_b.receive(bytes, 5_000);
+    // The receiver's admission clock advances, while the original signed
+    // envelope retains the firing's logical clock and therefore dedupes.
+    const again = try node_b.receive(bytes, 5_001);
     try std.testing.expectEqual(@as(usize, 0), again.commit.effects_committed);
     try std.testing.expectEqual(@as(usize, 1), again.commit.duplicates_skipped);
 }
@@ -3497,4 +3761,103 @@ test "journal compaction rejects torn, misplaced, and out-of-range snapshot reco
     var memory = substrate_mod.Substrate.init(allocator);
     defer memory.deinit();
     try std.testing.expectError(error.NoJournal, memory.compact());
+}
+
+// ---------------------------------------------------------------------------
+// Standalone agent entrypoint (R9 Phase 1): the agent is composed of the same
+// stage neurons and pump the limbs use, grounded beat-by-beat through the
+// settlement-event hook, with one CAS-advanced active snapshot pointer.
+// ---------------------------------------------------------------------------
+
+const agent_ops = @import("agent_ops.zig");
+
+test "standalone agent settles a typed goal through composed stage neurons" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var substrate = substrate_mod.Substrate.init(a);
+    defer substrate.deinit();
+
+    try agent_ops.initAgentCore(a, &substrate, "spec");
+    try std.testing.expectError(
+        error.AgentAlreadyInitialized,
+        agent_ops.initAgentCore(a, &substrate, "spec"),
+    );
+
+    const result = try agent_ops.runGoalCore(a, &substrate, "spec", "typed goal", 32);
+    try std.testing.expectEqual(agent_ops.RunStatus.settled, result.status);
+    try std.testing.expectEqual(@as(usize, 1), result.snapshot_seq);
+    try std.testing.expectEqualStrings("agents/spec/snapshots/0001", result.snapshot_id);
+    // The grounder hook committed one context artifact per settled beat.
+    try std.testing.expect(result.beats > 0);
+    // The active pointer, goal, result, and verdict are all durable artifacts.
+    try std.testing.expect(substrate.artifacts.contains("agents/spec/active"));
+    const active = substrate.artifacts.get("agents/spec/active").?;
+    try std.testing.expectEqualStrings("agents/spec/snapshots/0001", active.bytes);
+}
+
+test "identical settled goal replays with zero new firings or effects" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var substrate = substrate_mod.Substrate.init(a);
+    defer substrate.deinit();
+
+    try agent_ops.initAgentCore(a, &substrate, "spec");
+    const first = try agent_ops.runGoalCore(a, &substrate, "spec", "same goal", 32);
+    const firings = substrate.firings.count();
+    const artifacts = substrate.artifacts.count();
+    const replayed = try agent_ops.runGoalCore(a, &substrate, "spec", "same goal", 32);
+    try std.testing.expectEqual(agent_ops.RunStatus.replayed, replayed.status);
+    try std.testing.expectEqual(@as(usize, 0), replayed.steps);
+    try std.testing.expectEqual(firings, substrate.firings.count());
+    try std.testing.expectEqual(artifacts, substrate.artifacts.count());
+    try std.testing.expectEqualSlices(u8, &first.result_digest, &replayed.result_digest);
+}
+
+test "distinct goals advance the snapshot chain without firing collisions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var substrate = substrate_mod.Substrate.init(a);
+    defer substrate.deinit();
+
+    try agent_ops.initAgentCore(a, &substrate, "spec");
+    const first = try agent_ops.runGoalCore(a, &substrate, "spec", "goal one", 32);
+    const second = try agent_ops.runGoalCore(a, &substrate, "spec", "goal two", 32);
+    try std.testing.expectEqual(agent_ops.RunStatus.settled, second.status);
+    try std.testing.expectEqual(first.snapshot_seq + 1, second.snapshot_seq);
+    try std.testing.expect(!std.mem.eql(u8, &first.result_digest, &second.result_digest));
+}
+
+test "cancelled workflow and retired agent fail closed" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var substrate = substrate_mod.Substrate.init(a);
+    defer substrate.deinit();
+
+    try std.testing.expectError(
+        error.AgentNotInitialized,
+        agent_ops.runGoalCore(a, &substrate, "spec", "early", 32),
+    );
+    try agent_ops.initAgentCore(a, &substrate, "spec");
+
+    // Cancellation settles the deterministic intake firing before it fires.
+    _ = try agent_ops.cancelCore(a, &substrate, "spec", "doomed goal");
+    try std.testing.expectError(
+        error.WorkflowCancelled,
+        agent_ops.runGoalCore(a, &substrate, "spec", "doomed goal", 32),
+    );
+
+    // Retirement is itself a CAS snapshot advance; new goals fail closed.
+    try agent_ops.retireCore(a, &substrate, "spec");
+    try std.testing.expectError(
+        error.AgentRetired,
+        agent_ops.runGoalCore(a, &substrate, "spec", "after retire", 32),
+    );
+    try std.testing.expectError(error.AgentRetired, agent_ops.retireCore(a, &substrate, "spec"));
+    const view = try agent_ops.inspectCore(a, &substrate, "spec");
+    try std.testing.expectEqualStrings("retired", view.status);
+    try std.testing.expectEqual(@as(usize, 1), view.cancelled);
 }

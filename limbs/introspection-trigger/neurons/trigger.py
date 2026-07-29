@@ -18,7 +18,6 @@ Key invariants:
 - §2: Pure and stateless — all state comes from the stimulus and reads.
 """
 
-import hashlib
 import json
 import os
 import sys
@@ -52,9 +51,9 @@ def load_trigger_state(stim):
     """Read the trigger state from substrate reads, or return default."""
     ref, body = artifact_ref(stim, TRIGGER_STATE_SCHEMA, required=False)
     if body is not None:
-        return body
+        return ref, body
     # Default state
-    return {
+    return None, {
         "schema": TRIGGER_STATE_SCHEMA,
         "firings_since_introspection": 0,
         "cadence": DEFAULT_CADENCE,
@@ -107,7 +106,7 @@ def fire(stim):
         raise Reject("validation", f"trigger expects {FIRING_SETTLED_SCHEMA}, got {receptor}")
 
     # Load trigger state
-    state = load_trigger_state(stim)
+    state_ref, state = load_trigger_state(stim)
 
     # Check for energy score in the firing-settled event
     # The event payload may contain the last energy score
@@ -150,28 +149,33 @@ def fire(stim):
         }
         state_bytes = json.dumps(new_state, sort_keys=True, separators=(",", ":"))
 
+        state_artifact = {
+            "id": "introspection-trigger/state",
+            "schema": TRIGGER_STATE_SCHEMA,
+            "bytes": state_bytes,
+        }
+        if state_ref is not None:
+            state_artifact["expected_prior"] = state_ref["digest"]
         effects = [
             {
                 "kind": "send",
-                "to": "neuron/introspection/inspector",
-                "schema": TRIGGER_FIRE_SCHEMA,
-                "payload": json.dumps(introspection_msg, sort_keys=True, separators=(",", ":")),
-                "durable": True,
+                "message": {
+                    "to": "neuron/introspection/inspector",
+                    "schema": TRIGGER_FIRE_SCHEMA,
+                    "payload": json.dumps(introspection_msg, sort_keys=True, separators=(",", ":")),
+                    "durable": True,
+                },
             },
             {
                 "kind": "write",
-                "artifact": {
-                    "id": "introspection-trigger/state",
-                    "schema": TRIGGER_STATE_SCHEMA,
-                    "bytes": state_bytes,
-                },
+                "artifact": state_artifact,
             },
         ]
 
         trigger_reason = "cadence" if energy_score is None else f"energy={energy_score:.3f}"
         evidence = [{
             "claim": f"triggered introspection: {trigger_reason}, count={state.get('firings_since_introspection', 0) + 1}",
-            "sources": ["stimulus"],
+            "sources": ["stimulus"] if state_ref is None else ["stimulus", state_ref["id"]],
             "method": "firing-count cadence + energy threshold check",
             "confidence_milli": 1000,
         }]
@@ -188,18 +192,21 @@ def fire(stim):
         }
         state_bytes = json.dumps(new_state, sort_keys=True, separators=(",", ":"))
 
+        state_artifact = {
+            "id": "introspection-trigger/state",
+            "schema": TRIGGER_STATE_SCHEMA,
+            "bytes": state_bytes,
+        }
+        if state_ref is not None:
+            state_artifact["expected_prior"] = state_ref["digest"]
         effects = [{
             "kind": "write",
-            "artifact": {
-                "id": "introspection-trigger/state",
-                "schema": TRIGGER_STATE_SCHEMA,
-                "bytes": state_bytes,
-            },
+            "artifact": state_artifact,
         }]
 
         evidence = [{
             "claim": f"counted firing: {new_state['firings_since_introspection']}/{new_state['cadence']}",
-            "sources": ["stimulus"],
+            "sources": ["stimulus"] if state_ref is None else ["stimulus", state_ref["id"]],
             "method": "firing-count increment",
             "confidence_milli": 1000,
         }]

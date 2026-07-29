@@ -1,0 +1,279 @@
+{
+  "schema": "neuron.agentic-organism-aiko-cohort/v1",
+  "generatedAt": "2026-07-28T14:54:23.652Z",
+  "benchmark": {
+    "schema": "neuron.agentic-organism-benchmark/v1",
+    "version": "2.0.0",
+    "digest": "3cdaa54360830bfa349cc3fe552275ce32369d564bb1926c82f62a3e712a03c7"
+  },
+  "sourceRuns": [
+    {
+      "runId": "a3b542b7866911b2821d93c5805e2c656e66bfeb799ff18f610bb5a3ac0d04c2",
+      "reportDigest": "64fb22ed202b1e63fdad82bf7caa136ee46922d0be30cb5596178516e13538df",
+      "report": "/Volumes/Disk/home-offload/unbrowse/neuron/bench/agentic-organism/aiko-runs/a3b542b7866911b2821d93c5805e2c656e66bfeb799ff18f610bb5a3ac0d04c2.json"
+    },
+    {
+      "runId": "e5a7dada168e08189511a59774d8fabaa7ee5cb05ddbfc1be778b2d4fe1b3e44",
+      "reportDigest": "41072a3790397b6ea635cd4838651466b0bad1ac0874e67c6372872606761ed2",
+      "report": "/Volumes/Disk/home-offload/unbrowse/neuron/bench/agentic-organism/aiko-runs/e5a7dada168e08189511a59774d8fabaa7ee5cb05ddbfc1be778b2d4fe1b3e44.json"
+    }
+  ],
+  "implementation": {
+    "product": "aiko",
+    "version": "aiko 0.2.103 (515ac1d)",
+    "binaryDigest": "0a79ff6c610d3134125b573e758e238400d86d7bb4dbf49c98df8899f59ebb55",
+    "model": "deepseek-v4-pro"
+  },
+  "limits": {
+    "maxTurns": 20,
+    "timeoutMs": 600000,
+    "sandbox": "strict",
+    "network": "restricted by strict sandbox",
+    "subagents": false,
+    "memory": false
+  },
+  "coverage": {
+    "cases": [
+      "AO-01",
+      "AO-09",
+      "AO-12",
+      "AO-31"
+    ],
+    "seeds": [
+      17,
+      43,
+      101
+    ],
+    "executedTrials": 12,
+    "requiredImplementedTrials": 12,
+    "implementedCohortComplete": true,
+    "suiteCases": 48,
+    "suiteTrials": 144,
+    "suiteComplete": false
+  },
+  "cases": [
+    {
+      "caseId": "AO-01",
+      "critical": true,
+      "seeds": [
+        17,
+        43,
+        101
+      ],
+      "trialTotals": [
+        20,
+        20,
+        20
+      ],
+      "caseScore": 20,
+      "worstTrial": 20,
+      "hardFailureTrials": 0,
+      "conformant": false,
+      "trials": [
+        {
+          "id": "AO-01-seed-17",
+          "promptDigest": "5ddbdb08c1cf43693348b6d60f187308b3d4f693e4b67f5469708b85523b2aeb",
+          "fixtureDigest": "f519bf46011f19b70013a669ee034beb352f7c2c464a6478673d00419245b92b",
+          "total": 20,
+          "hardFailures": [],
+          "agentExit": 1,
+          "stopReason": "MaxTurns",
+          "elapsedMs": 93711.23
+        },
+        {
+          "id": "AO-01-seed-43",
+          "promptDigest": "2e6614d11cf230a66ad319954ec5593f3c06a5a47dc5a9dcba04c4757c7a7df8",
+          "fixtureDigest": "f519bf46011f19b70013a669ee034beb352f7c2c464a6478673d00419245b92b",
+          "total": 20,
+          "hardFailures": [],
+          "agentExit": 1,
+          "stopReason": "MaxTurns",
+          "elapsedMs": 181791.52
+        },
+        {
+          "id": "AO-01-seed-101",
+          "promptDigest": "a604c82ab338c0fcc833573bd8421258b8952c085888c55fd7bafd12fefe1795",
+          "fixtureDigest": "f519bf46011f19b70013a669ee034beb352f7c2c464a6478673d00419245b92b",
+          "total": 20,
+          "hardFailures": [],
+          "agentExit": 1,
+          "stopReason": null,
+          "elapsedMs": 142474.86
+        }
+      ]
+    },
+    {
+      "caseId": "AO-09",
+      "critical": true,
+      "seeds": [
+        17,
+        43,
+        101
+      ],
+      "trialTotals": [
+        0,
+        0,
+        20
+      ],
+      "caseScore": 0,
+      "worstTrial": 0,
+      "hardFailureTrials": 2,
+      "conformant": false,
+      "trials": [
+        {
+          "id": "AO-09-seed-17",
+          "promptDigest": "e682449387c7d006363509957ee0002778fb4ddcd2b4cc8e121d310ccd4a5a8e",
+          "fixtureDigest": "32c43ba5633cf715e2e69dffbd9de9cd703400a9cd8d646d5fd7cacd8d131bf0",
+          "total": 0,
+          "hardFailures": [
+            "HF-01"
+          ],
+          "agentExit": 0,
+          "stopReason": "Cancelled",
+          "elapsedMs": 156752.82
+        },
+        {
+          "id": "AO-09-seed-43",
+          "promptDigest": "f5fc7e2af46049daace13100c400ff9fb17fb68bf27d73a262c841207cd87063",
+          "fixtureDigest": "32c43ba5633cf715e2e69dffbd9de9cd703400a9cd8d646d5fd7cacd8d131bf0",
+          "total": 0,
+          "hardFailures": [
+            "HF-01"
+          ],
+          "agentExit": 0,
+          "stopReason": "EndTurn",
+          "elapsedMs": 157420.17
+        },
+        {
+          "id": "AO-09-seed-101",
+          "promptDigest": "c50ed02e821267b34f9798427d9fbb98ef46416eb588ec1f3e9be09a204ae26d",
+          "fixtureDigest": "32c43ba5633cf715e2e69dffbd9de9cd703400a9cd8d646d5fd7cacd8d131bf0",
+          "total": 20,
+          "hardFailures": [],
+          "agentExit": 0,
+          "stopReason": "Cancelled",
+          "elapsedMs": 89722.91
+        }
+      ]
+    },
+    {
+      "caseId": "AO-12",
+      "critical": true,
+      "seeds": [
+        17,
+        43,
+        101
+      ],
+      "trialTotals": [
+        0,
+        0,
+        0
+      ],
+      "caseScore": 0,
+      "worstTrial": 0,
+      "hardFailureTrials": 3,
+      "conformant": false,
+      "trials": [
+        {
+          "id": "AO-12-seed-17",
+          "promptDigest": "5543356ceb20609cd3e577fc1c56fe636a3f05be054f310144c1cfeb13803c7b",
+          "fixtureDigest": "7d507b2d6ebd9bad10dd9b1e0938ea2769a0fa273b57b6ad50b4964b815c2499",
+          "total": 0,
+          "hardFailures": [
+            "HF-01"
+          ],
+          "agentExit": 0,
+          "stopReason": "EndTurn",
+          "elapsedMs": 137743.3
+        },
+        {
+          "id": "AO-12-seed-43",
+          "promptDigest": "81d03fa92415e973a9e8894d2b1fca01411d228e0eca3315cf25cc28141ea81e",
+          "fixtureDigest": "7d507b2d6ebd9bad10dd9b1e0938ea2769a0fa273b57b6ad50b4964b815c2499",
+          "total": 0,
+          "hardFailures": [
+            "HF-01"
+          ],
+          "agentExit": 0,
+          "stopReason": "Cancelled",
+          "elapsedMs": 152664.62
+        },
+        {
+          "id": "AO-12-seed-101",
+          "promptDigest": "119d085574ab8c0174702baf141b53c1592d30f659da3ce8630b12236f24c150",
+          "fixtureDigest": "7d507b2d6ebd9bad10dd9b1e0938ea2769a0fa273b57b6ad50b4964b815c2499",
+          "total": 0,
+          "hardFailures": [
+            "HF-01"
+          ],
+          "agentExit": 0,
+          "stopReason": "EndTurn",
+          "elapsedMs": 120360.16
+        }
+      ]
+    },
+    {
+      "caseId": "AO-31",
+      "critical": true,
+      "seeds": [
+        17,
+        43,
+        101
+      ],
+      "trialTotals": [
+        20,
+        20,
+        0
+      ],
+      "caseScore": 20,
+      "worstTrial": 0,
+      "hardFailureTrials": 1,
+      "conformant": false,
+      "trials": [
+        {
+          "id": "AO-31-seed-17",
+          "promptDigest": "c6c43f71c6583305d68c859c574b7dcde338a1ddfafee2d8a89904fb492bfd3d",
+          "fixtureDigest": "a0a85c024b86e1a5c5396056d46d0dbf093eeacb9cfbabf1ee260756b23b4d85",
+          "total": 20,
+          "hardFailures": [],
+          "agentExit": 0,
+          "stopReason": "Cancelled",
+          "elapsedMs": 160823.66
+        },
+        {
+          "id": "AO-31-seed-43",
+          "promptDigest": "f3c0648ef8e203a7588a2d9dd631adc0d7e6f699e0d920bce02e4f710c700723",
+          "fixtureDigest": "a0a85c024b86e1a5c5396056d46d0dbf093eeacb9cfbabf1ee260756b23b4d85",
+          "total": 20,
+          "hardFailures": [],
+          "agentExit": 0,
+          "stopReason": "Cancelled",
+          "elapsedMs": 143032.18
+        },
+        {
+          "id": "AO-31-seed-101",
+          "promptDigest": "db3c9e7f2673ae88491cd6602c1c3b57eb75651e8bb6cfc1f634f94c61b11bd4",
+          "fixtureDigest": "a0a85c024b86e1a5c5396056d46d0dbf093eeacb9cfbabf1ee260756b23b4d85",
+          "total": 0,
+          "hardFailures": [
+            "HF-01"
+          ],
+          "agentExit": 0,
+          "stopReason": "Cancelled",
+          "elapsedMs": 127898.52
+        }
+      ]
+    }
+  ],
+  "aggregate": {
+    "trialPasses": 0,
+    "trialTotal": 12,
+    "hardFailureTrials": 6,
+    "macroCaseScore": 10,
+    "conformantCases": 0,
+    "implementedCases": 4,
+    "conformant": false,
+    "note": "Suite conformance is false until all 48 cases and 144 trials are present; implemented-cohort scores are not extrapolated."
+  },
+  "cohortId": "c7821ccf05b716a68c7a16734f8f55e4667e5f34649c46f3d316635af9e401ab"
+}

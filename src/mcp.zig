@@ -38,8 +38,9 @@ pub const Server = struct {
     allocator: Allocator,
     node: *mesh_mod.Node,
     ceiling: caps_mod.Caps,
-    /// Fixed clock for deterministic tests; null reads the wall clock at
-    /// fire time, which is what production edges do.
+    /// Fixed admission clock for deterministic tests; null reads the wall
+    /// clock at fire time, which is what production edges do. The envelope
+    /// carries a separate stable logical clock for firing identity.
     now_ms: ?u64,
     io: std.Io,
     /// Egress guard for remote fires: the edge may only dial addresses
@@ -162,7 +163,7 @@ pub const Server = struct {
             payload,
             true,
             firing_id,
-            self.nonce,
+            mesh_mod.nonceForFiring(firing_id),
         );
         const now = self.now_ms orelse mesh_mod.wallNowMs(self.io);
         const result = try self.node.receiveTrusted(bytes, now, self.ceiling);
@@ -206,7 +207,7 @@ pub const Server = struct {
             payload,
             true,
             firing_id,
-            self.nonce,
+            mesh_mod.nonceForFiring(firing_id),
         );
         var io_buffer: [16 * 1024]u8 = undefined;
         const response = try mesh_mod.dialExchange(allocator, &address, self.io, bytes, &io_buffer, dial_timeout_ms);

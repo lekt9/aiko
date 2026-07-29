@@ -200,10 +200,12 @@ def fire(stim):
         effects = [
             {
                 "kind": "send",
-                "to": best_limb.get("destination", ""),
-                "schema": DISPATCH_DECISION_SCHEMA,
-                "payload": json.dumps(dispatch_msg, sort_keys=True, separators=(",", ":")),
-                "durable": True,
+                "message": {
+                    "to": best_limb.get("destination", ""),
+                    "schema": DISPATCH_DECISION_SCHEMA,
+                    "payload": json.dumps(dispatch_msg, sort_keys=True, separators=(",", ":")),
+                    "durable": True,
+                },
             },
             {
                 "kind": "write",

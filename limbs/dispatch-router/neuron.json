@@ -6,6 +6,8 @@
   "neurons": [
     {
       "id": "dispatcher",
+      "accepts": ["neuron.dispatch-request/v1"],
+      "emits": ["neuron.dispatch-decision/v1", "neuron.dispatch-log/v1"],
       "argv": ["python3", "neurons/dispatcher.py"],
       "caps_request": {
         "allow_write": true,

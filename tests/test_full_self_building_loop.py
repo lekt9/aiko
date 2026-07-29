@@ -2,14 +2,14 @@
 """Full self-building limb loop integration test (§30 architectural falsifier).
 
 Proves the closed loop end-to-end:
-1. Preemptor: high-confidence match → preempted, low-confidence → no-preempt, send → never preempted
+1. Preemptor: exact safe match → candidate, send → no candidate
 2. Auto-attacher: admission → edge manifests created for each receptor
 3. Introspection-trigger: counts firings, triggers at cadence, triggers on high energy
 4. Dispatch-router: matching limb beats model, no match → model wins
 
-This test does NOT require the neuron binary or Zig runtime — it exercises
-the pure fire() functions of all four limbs in sequence, simulating the
-substrate state that would normally be provided by the runtime.
+This is a fast policy-unit composition test. It intentionally does not prove
+runtime wiring; tests/self-constructing-agent-gate.sh is the binding witness
+and exercises the Zig runtime plus durable substrate.
 
 If any of the four work items is missing, the test fails at a specific step.
 """
@@ -140,8 +140,11 @@ def step_1_preemptor_high_confidence(substrate):
                                     "payload": json.dumps(cache_entry), "durable": True}])
 
     result = run_fire(sys.modules["preemptor"], new_stim)
-    assert result["control"]["result"] == "preempted", f"expected preempted, got {result['control']['result']}"
-    print("  ✓ step 1: preemptor returns 'preempted' for high-confidence match")
+    assert result["control"]["result"] == "cache-candidate", f"expected cache-candidate, got {result['control']['result']}"
+    audit = json.loads(result["effects"][0]["artifact"]["bytes"])
+    assert audit["effects_replayed"] == 0
+    assert audit["requires_canonical_revalidation"] is True
+    print("  ✓ step 1: preemptor proposes an exact candidate and replays zero effects")
 
 
 def step_2_preemptor_send_never_preempted(substrate):
@@ -183,7 +186,13 @@ def step_3_auto_attacher_creates_edges(substrate):
         "schema": "typed-neuron.limb-manifest/v1",
         "package": "test-echo-limb",
         "version": "0.1.0",
-        "neurons": [{"id": "echo-neuron", "argv": ["python3", "neurons/echo.py"], "caps_request": {}}],
+        "neurons": [{
+            "id": "echo-neuron",
+            "accepts": ["test.echo-request/v1"],
+            "emits": ["test.echo-result/v1"],
+            "argv": ["python3", "neurons/echo.py"],
+            "caps_request": {},
+        }],
         "schemas": {
             "Request": "test.echo-request/v1",
             "Result": "test.echo-result/v1",
@@ -226,8 +235,8 @@ def step_4_dispatch_router_selects_limb(substrate):
     # Verify it sent to the limb, not the model
     send_effects = [e for e in result["effects"] if e["kind"] == "send"]
     assert len(send_effects) == 1
-    assert "limb/" in send_effects[0]["to"]
-    print(f"  ✓ step 4: dispatch-router selected limb over model (→ {send_effects[0]['to']})")
+    assert "neuron/limb/" in send_effects[0]["message"]["to"]
+    print(f"  ✓ step 4: dispatch-router selected limb over model (→ {send_effects[0]['message']['to']})")
 
 
 def step_5_dispatch_router_no_match_falls_through(substrate):
@@ -275,7 +284,7 @@ def step_7_introspection_trigger_fires_at_cadence(substrate):
     # Verify it sent a message to introspection
     send_effects = [e for e in result["effects"] if e["kind"] == "send"]
     assert len(send_effects) == 1
-    assert send_effects[0]["to"] == "neuron/introspection/inspector"
+    assert send_effects[0]["message"]["to"] == "neuron/introspection/inspector"
     print("  ✓ step 7: introspection-trigger fired at cadence 50 → sent to inspector")
 
 
@@ -296,12 +305,12 @@ def step_8_introspection_trigger_high_energy(substrate):
 
 
 def main():
-    print("=== Full Self-Building Limb Loop Integration Test ===")
-    print("(§30 architectural falsifier)\n")
+    print("=== Self-Building Limb Policy Composition Test ===")
+    print("(fast unit witness; the runtime gate is binding)\n")
 
     substrate = SimulatedSubstrate()
 
-    print("Step 1 — Preemptor: high-confidence match → preempted")
+    print("Step 1 — Preemptor: exact safe match → cache candidate")
     step_1_preemptor_high_confidence(substrate)
 
     print("Step 2 — Preemptor: send effects → never preempted")
@@ -326,17 +335,17 @@ def main():
     step_8_introspection_trigger_high_energy(substrate)
 
     print(f"\n{'=' * 60}")
-    print("FULL SELF-BUILDING LIMB LOOP: PASS")
+    print("SELF-BUILDING LIMB POLICY COMPOSITION: PASS")
     print(f"{'=' * 60}")
     print("""
-Closed loop verified:
-  • Preemptor: preempted high-confidence match, refused send effects
+Policy composition verified:
+  • Preemptor: proposed exact candidate with zero replay, refused send effects
   • Auto-attacher: created edge manifest from admission artifact
   • Dispatch-router: selected limb (energy 0.8) over model (energy 10.0)
   • Dispatch-router: fell through to model on unknown receptor
   • Introspection-trigger: counted 1/50, triggered at 50/50, triggered on energy 0.85
 
-All four limbs compose correctly. The loop closes:
+All four pure policies compose in the expected shape:
   stimulus → preempt? → route to limb → fire → settle → count → 
   at cadence → introspect → generate → admit → auto-attach →
   next turn: preempt or route to new limb

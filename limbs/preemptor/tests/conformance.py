@@ -2,7 +2,7 @@
 """Preemptor limb conformance witness.
 
 Tests the preemptor neuron's pure fire() function directly:
-- High-confidence match → preempted
+- Exact match → cache candidate
 - Low-confidence match → no-preempt
 - Send effects → never preempted
 - Empty cache → no-preempt
@@ -79,7 +79,7 @@ def test_empty_cache_returns_no_preempt():
 
 
 def test_high_confidence_match_preempts():
-    """Identical stimulus fingerprint → preempted."""
+    """Identical stimulus fingerprint → candidate proposal."""
     stim = make_stim(firing_id="test-1", receptor="test.echo/v1")
     fp = stimulus_fingerprint(stim)
 
@@ -95,7 +95,7 @@ def test_high_confidence_match_preempts():
     match, sim = find_preempt_match(stim, [cache_entry], DEFAULT_THRESHOLD)
     assert match is not None, "expected a match"
     assert sim >= DEFAULT_THRESHOLD, f"similarity {sim} < threshold {DEFAULT_THRESHOLD}"
-    print(f"✓ high confidence match (sim={sim:.4f}) → preempted")
+    print(f"✓ exact match (sim={sim:.4f}) → cache candidate")
 
 
 def test_low_confidence_no_preempt():
@@ -194,14 +194,11 @@ def test_threshold_adjustment():
     # With default threshold (0.92), partial match may not preempt
     match_default, sim_default = find_preempt_match(stim, [cache_entry], DEFAULT_THRESHOLD)
 
-    # With very low threshold (0.85), it might preempt
+    # A lower threshold cannot turn a different identity into a cache hit.
     match_low, sim_low = find_preempt_match(stim, [cache_entry], 0.85)
 
-    # The low threshold should be more permissive (match found OR same)
-    if match_default is None and match_low is not None:
-        print(f"✓ threshold adjustment: default rejects (sim={sim_default:.4f}), low accepts (sim={sim_low:.4f})")
-    else:
-        print(f"✓ threshold adjustment: default={match_default is not None}, low={match_low is not None} (sim={sim_default:.4f})")
+    assert match_default is None and match_low is None
+    print(f"✓ threshold cannot weaken exact identity (sim={sim_default:.4f})")
 
 
 def main():

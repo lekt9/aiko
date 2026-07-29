@@ -39,7 +39,7 @@ def make_manifest(package="test-limb", schemas=None, neurons=None):
         "package": package,
         "version": "0.1.0",
         "description": "Test limb",
-        "neurons": neurons or [{"id": "test-neuron", "argv": ["python3", "neurons/test.py"], "caps_request": {}}],
+        "neurons": neurons or [{"id": "test-neuron", "accepts": [], "emits": [], "argv": ["python3", "neurons/test.py"], "caps_request": {}}],
         "schemas": schemas or {},
     }
 
@@ -79,17 +79,17 @@ def make_stim(admission=None, firing_id="attach-test"):
 
 def test_extract_receptor_schemas():
     """Test receptor schema extraction from manifest."""
-    manifest = make_manifest(schemas={
-        "Request": "test.echo-request/v1",
-        "Result": "test.echo-result/v1",
-        "Input": "test.input/v1",
-        "Output": "test.output/v1",
-    })
+    manifest = make_manifest(neurons=[{
+        "id": "test-neuron",
+        "accepts": ["test.echo-request/v1", "test.input/v1"],
+        "emits": ["test.echo-result/v1", "test.output/v1"],
+        "argv": ["python3", "neurons/test.py"],
+        "caps_request": {},
+    }])
     receptors = extract_receptor_schemas(manifest)
-    assert "test.echo-request/v1" in receptors, "should find request schema"
-    assert "test.input/v1" in receptors, "should find input schema"
-    assert "test.echo-result/v1" not in receptors, "should not include result schema"
-    assert "test.output/v1" not in receptors, "should not include output schema"
+    assert ("test-neuron", "test.echo-request/v1") in receptors
+    assert ("test-neuron", "test.input/v1") in receptors
+    assert all(schema not in ("test.echo-result/v1", "test.output/v1") for _, schema in receptors)
     print(f"✓ extract_receptor_schemas: found {len(receptors)} receptors")
 
 
@@ -103,7 +103,7 @@ def test_create_edge_manifest():
     )
     assert edge["schema"] == EDGE_MANIFEST_SCHEMA
     assert edge["source"] == "receptor/test.echo-request/v1"
-    assert edge["destination"] == "limb/abc123/test-neuron"
+    assert edge["destination"] == "neuron/limb/abc123/test-neuron"
     assert edge["predicate"] == "schema-match"
     assert edge["delivery_mode"] == "stimulus"
     assert "priority" in edge
@@ -145,7 +145,13 @@ def test_creates_edges_for_receptors():
             "Request": "test.echo-request/v1",
             "Result": "test.echo-result/v1",
         },
-        neurons=[{"id": "echo-neuron", "argv": ["python3", "neurons/echo.py"], "caps_request": {}}],
+        neurons=[{
+            "id": "echo-neuron",
+            "accepts": ["test.echo-request/v1"],
+            "emits": ["test.echo-result/v1"],
+            "argv": ["python3", "neurons/echo.py"],
+            "caps_request": {},
+        }],
     )
     admission = make_admission(digest="deadbeef", manifest=manifest)
     stim = make_stim(admission=admission, firing_id="attach-1")
@@ -173,7 +179,7 @@ def test_creates_edges_for_receptors():
 
     # Verify the edge content
     edge_data = json.loads(edge_effect["artifact"]["bytes"])
-    assert edge_data["destination"] == "limb/deadbeef/echo-neuron"
+    assert edge_data["destination"] == "neuron/limb/deadbeef/echo-neuron"
     assert edge_data["source"] == "receptor/test.echo-request/v1"
     print("✓ creates edge manifests for each receptor schema")
 

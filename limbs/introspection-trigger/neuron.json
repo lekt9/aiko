@@ -6,6 +6,8 @@
   "neurons": [
     {
       "id": "trigger",
+      "accepts": ["neuron.firing-settled/v1"],
+      "emits": ["neuron.introspection-trigger-state/v1", "neuron.introspection-trigger-fire/v1"],
       "argv": ["python3", "neurons/trigger.py"],
       "caps_request": {
         "allow_write": true,

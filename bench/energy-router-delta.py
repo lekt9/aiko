@@ -5,12 +5,12 @@ varied grounding, evidence, cost, settlement, and violations. The energy scorer
 picks the lowest-energy candidate; random picks uniformly. A win = the energy
 choice has strictly lower energy than the random choice (when they differ).
 
-Honest ledger: real reproduced counts, including negatives (random wins when
-energies are equal or near-zero). The ledger row is appended to the jespa
-benchmark file, additive and reproducible.
+The benchmark is read-only by default so a ledger gate can execute it without
+mutating the file being verified. ``--record`` explicitly updates its named
+ledger row with the real reproduced result.
 """
 
-import hashlib
+import argparse
 import json
 import random
 import sys
@@ -47,6 +47,9 @@ def score(c: dict) -> float:
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--record", action="store_true")
+    args = parser.parse_args()
     rand = random.Random(42)
     total = 100
     energy_wins = 0
@@ -97,24 +100,22 @@ def main():
 
     print(json.dumps(result, indent=2))
 
-    # Append to the additive ledger (idempotent per bench name — use a stable
-    # digest of the bench name so re-runs update the row positionally).
-    existing = []
-    if LEDGER.exists():
-        with open(LEDGER) as fh:
-            for line in fh:
-                line = line.strip()
-                if line:
-                    try:
-                        r = json.loads(line)
-                        if r.get("bench") != "energy-router-discrimination":
+    if args.record:
+        # Explicitly update only this named row. Normal benchmark witnesses never
+        # write the ledger they are proving.
+        existing = []
+        if LEDGER.exists():
+            with open(LEDGER) as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line:
+                        row = json.loads(line)
+                        if row.get("bench") != "energy-router-discrimination":
                             existing.append(line)
-                    except json.JSONDecodeError:
-                        pass
-    with open(LEDGER, "w") as fh:
-        for line in existing:
-            fh.write(line + "\n")
-        fh.write(json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n")
+        with open(LEDGER, "w") as fh:
+            for line in existing:
+                fh.write(line + "\n")
+            fh.write(json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n")
 
     if not result["won"]:
         print("FAIL: energy scorer did not beat random baseline", file=sys.stderr)

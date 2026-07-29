@@ -2,10 +2,12 @@
   "schema": "typed-neuron.limb-manifest/v1",
   "package": "typed-neuron/preemptor",
   "version": "0.1.0",
-  "description": "Predictive preemption: outcome prediction that short-circuits firings equivalent to cached decisions.",
+  "description": "Safe preemption proposal: finds exact replay-safe cache candidates for canonical runtime revalidation.",
   "neurons": [
     {
       "id": "preemptor",
+      "accepts": ["neuron.preempt-request/v1"],
+      "emits": ["neuron.preempt-result/v1"],
       "argv": ["python3", "neurons/preemptor.py"],
       "caps_request": {
         "allow_write": true,
