@@ -201,6 +201,103 @@ pub(super) fn render_context(goal: &str, cwd: &Path) -> Option<String> {
     ))
 }
 
+/// The one wire connecting deliberate bypass to Proposer.
+///
+/// When the deliberate node (LLM) succeeds at a goal where a self-growing
+/// limb was proposed but never used, this function:
+///
+/// 1. Demotes the proposed limb — after N contradictions its status drops to
+///    ``Contradicted`` and the Proposer skips it.
+/// 2. Captures the actual tools that succeeded as learning contracts, so the
+///    working path is codified rather than rediscovered ad-hoc every time.
+///
+/// This is the minimal fix for Break 2 and Break 3 from
+/// `docs/self-growing-limb-wiring-gaps.md`.
+pub(super) fn deliberate_bypass_gap(
+    gap_id: &str,
+    actual_tools: &[&str],
+    goal: &str,
+    cwd: &Path,
+) {
+    // ── 1. Demote any limb proposed for this gap ──────────────────────
+    if let Some(store_path) = growth_store_path() {
+        let state = load_growth(&store_path);
+        // Find proposals linked to this gap and currently Experimenting
+        for proposal in state.proposals.values() {
+            if proposal.gap_id != gap_id {
+                continue;
+            }
+            let gap = state.gaps.get(gap_id);
+            if gap.is_some_and(|g| g.status == GapStatus::Experimenting) {
+                // Demote the limb family — after N contradictions it becomes
+                // Contradicted and the Proposer will skip it.
+                let family = format!("limb-family:{}", proposal.proposal_id);
+                if !load().contains_key(&family) {
+                    // Initialize the learning contract for this limb family
+                    // if it doesn't exist yet (it won't — limbs don't
+                    // auto-create learning contracts).
+                    append(&LearningContract {
+                        family: family.clone(),
+                        claim: format!(
+                            "Rejected limb {} for gap {} (deliberate bypass succeeded)",
+                            proposal.proposal_id, gap_id
+                        ),
+                        project: project_id(cwd),
+                        keywords: keywords(goal),
+                        status: Status::Proposed,
+                        supports: 0,
+                        contradictions: 0,
+                        confidence: 0.5,
+                    });
+                }
+                observe(&family, Verdict::Contradicted);
+            }
+            break; // one proposal per gap is typical
+        }
+
+        // ── 2. Mark the gap as held (evidence: deliberate succeeded) ──
+        if let Some(mut gap) = state.gaps.get(gap_id).cloned() {
+            if gap.status == GapStatus::Experimenting {
+                gap.status = GapStatus::Held;
+                let _ = append_growth(&store_path, &GrowthRecord::Gap { value: gap });
+            }
+        }
+    }
+
+    // ── 3. Capture actual tools as learning contracts ─────────────────
+    for tool in actual_tools {
+        if !tool.trim().is_empty() {
+            let _ = propose_route(tool, goal, cwd);
+        }
+    }
+}
+
+/// Convenience wrapper: finds all Experimenting gaps whose hypothesis
+/// overlaps the turn goal and demotes their proposed limbs. Called from the
+/// turn satisfaction path to wire deliberate success back to the Proposer.
+pub(super) fn deliberate_bypass_gap_for_goal(goal: &str, cwd: &Path) {
+    let Some(store_path) = growth_store_path() else {
+        return;
+    };
+    let state = load_growth(&store_path);
+    let query = keywords(goal);
+    for (gap_id, gap) in &state.gaps {
+        if gap.status != GapStatus::Experimenting {
+            continue;
+        }
+        // Check if this gap is relevant to the current goal — either the
+        // gap was opened for a similar goal, or the project matches.
+        if !state
+            .proposals
+            .values()
+            .any(|p| p.gap_id == *gap_id && p.hypothesis.split_whitespace().any(|w| query.contains(&w.to_ascii_lowercase())))
+        {
+            continue;
+        }
+        deliberate_bypass_gap(gap_id, &[], goal, cwd);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum GapKind {

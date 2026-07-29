@@ -7,6 +7,7 @@
 //! the parent module's private helpers.
 use super::*;
 use futures::StreamExt;
+use crate::contract_native::contract_events;
 /// Whether a tool name is an MCP `create_pull_request` (qualified
 /// `server__create_pull_request` or bare).
 fn is_mcp_create_pull_request(tool_name: &str) -> bool {
@@ -589,6 +590,7 @@ impl SessionActor {
                             prepared.concatenated_json_count,
                             &prepared.model_id,
                             &prepared.parsed_args,
+                            tool_start.elapsed().as_millis() as u64,
                         )
                         .await?;
                     deferred_followups.extend(followups);
@@ -2073,6 +2075,7 @@ impl SessionActor {
         concatenated_json_count: usize,
         model_id: &str,
         tool_parsed_args: &serde_json::Value,
+        duration_ms: u64,
     ) -> Result<Vec<ConversationItem>, acp::Error> {
         use crate::session::acp_conversion::{acp_plan_update, acp_tool_update, maybe_rewrite};
         let consumed_ids =
@@ -2242,6 +2245,24 @@ impl SessionActor {
                 pdf.total_pages,
             );
         }
+        // ── neuron event injection ────────────────────────────────────────
+        // Append a compact ⟐-prefixed event line so the LLM can introspect
+        // on its own membrane activity. Gated by AIKO_NEURON_EVENTS env var.
+        {
+            let variant = contract_events::Variant::from_env();
+            let settled = !result.output.is_error();
+            if let Some(event_line) = contract_events::format_firing_event(
+                variant,
+                requested_tool_name,
+                duration_ms,
+                settled,
+            ) {
+                prompt_text.push('\n');
+                prompt_text.push_str(&event_line);
+            }
+        }
+        // ── end neuron event injection ────────────────────────────────────
+
         let tool_chat = if inline_images.is_empty() {
             ConversationItem::tool_result(call_id.to_string(), prompt_text)
         } else {

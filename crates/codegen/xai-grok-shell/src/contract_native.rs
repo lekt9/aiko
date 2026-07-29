@@ -22,6 +22,7 @@ use xai_grok_sampling_types::{ContentPart, ConversationItem};
 use xai_grok_tools::notification::{ScheduledTaskFired, ToolNotificationHandle};
 
 mod activity_sensor;
+pub(crate) mod contract_events;
 mod contract_learning;
 pub mod membrane;
 mod neuron_bridge;
@@ -2638,6 +2639,16 @@ impl TurnContract {
             if let Some(family) = self.learning_family {
                 contract_learning::observe(&family, contract_learning::Verdict::Supported);
             }
+            // ── deliberate bypass wire ──────────────────────────────
+            // When the deliberate node (LLM) succeeds, demote any
+            // self-growing limb that was proposed but never used. This
+            // closes the feedback loop between the Proposer and the
+            // deliberate node — Break 2/3 from the wiring-gaps analysis.
+            let _ = contract_learning::deliberate_bypass_gap_for_goal(
+                &self.goal,
+                &std::env::current_dir().unwrap_or_default(),
+            );
+            // ── end deliberate bypass wire ──────────────────────────
         }
     }
 }

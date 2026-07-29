@@ -702,6 +702,7 @@ async fn handle_bridge_tool_success_runs_consumed_completion_sweep() {
                     0,
                     "test-model",
                     &parsed_args,
+                    0,
                 )
                 .await;
             let state = actor.state.lock().await;
