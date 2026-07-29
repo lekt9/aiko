@@ -1080,6 +1080,55 @@ export fn contract_mark_satisfied(
     return 0;
 }
 
+const GroundedScan = struct {
+    parent_id: []const u8,
+    child_ids: *[muscle.MAX_NODES][8]u8,
+    child_count: *usize,
+    satisfied: *[muscle.MAX_NODES]bool,
+    transferred: *[muscle.MAX_NODES]bool,
+    overflow: bool = false,
+};
+
+fn markGroundedLine(opaque_ctx: *anyopaque, line: []const u8) void {
+    const ctx: *GroundedScan = @ptrCast(@alignCast(opaque_ctx));
+    if (ctx.overflow) return;
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch return;
+    defer parsed.deinit();
+    if (parsed.value != .object) return;
+    const object = parsed.value.object;
+    const event = objectString(object, "event") orelse return;
+    const row_id = objectString(object, "id") orelse return;
+    if (std.mem.eql(u8, event, "declared")) {
+        const row_parent = objectString(object, "parent_id") orelse return;
+        if (!std.mem.eql(u8, row_parent, ctx.parent_id) or !validContractId(row_id)) return;
+        var known = false;
+        for (ctx.child_ids[0..ctx.child_count.*]) |child_id| if (std.mem.eql(u8, &child_id, row_id)) {
+            known = true;
+            break;
+        };
+        if (!known) {
+            if (ctx.child_count.* >= muscle.MAX_NODES) {
+                ctx.overflow = true;
+                return;
+            }
+            @memcpy(&ctx.child_ids[ctx.child_count.*], row_id);
+            // A future obligation is grounded for the current turn once it
+            // has been durably transferred to the scheduler. Its eventual
+            // execution belongs to a later root and must not keep this
+            // conversational root open forever.
+            ctx.transferred[ctx.child_count.*] = if (objectString(object, "future_obligation")) |value|
+                std.mem.eql(u8, value, "true")
+            else
+                false;
+            ctx.child_count.* += 1;
+        }
+    } else if (std.mem.eql(u8, event, "satisfied")) {
+        for (ctx.child_ids[0..ctx.child_count.*], 0..) |child_id, index| {
+            if (std.mem.eql(u8, &child_id, row_id)) ctx.satisfied[index] = true;
+        }
+    }
+}
+
 /// Settle a parent only when every directly declared child has a grounded
 /// satisfied event. Returns 2 when children are still open or failed.
 export fn contract_mark_grounded_satisfied(
@@ -1089,48 +1138,19 @@ export fn contract_mark_grounded_satisfied(
 ) c_int {
     const parent_id = cstr(id);
     if (!validContractId(parent_id)) return 1;
-    const rows = ledger.readAll(gpa, extEnv()) catch return 1;
-    defer gpa.free(rows);
     var child_ids: [muscle.MAX_NODES][8]u8 = undefined;
     var child_count: usize = 0;
     var satisfied = [_]bool{false} ** muscle.MAX_NODES;
     var transferred = [_]bool{false} ** muscle.MAX_NODES;
-    var lines = std.mem.splitScalar(u8, rows, '\n');
-    while (lines.next()) |line| {
-        if (line.len == 0) continue;
-        var parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch continue;
-        defer parsed.deinit();
-        if (parsed.value != .object) continue;
-        const object = parsed.value.object;
-        const event = objectString(object, "event") orelse continue;
-        const row_id = objectString(object, "id") orelse continue;
-        if (std.mem.eql(u8, event, "declared")) {
-            const row_parent = objectString(object, "parent_id") orelse continue;
-            if (!std.mem.eql(u8, row_parent, parent_id) or !validContractId(row_id)) continue;
-            var known = false;
-            for (child_ids[0..child_count]) |child_id| if (std.mem.eql(u8, &child_id, row_id)) {
-                known = true;
-                break;
-            };
-            if (!known) {
-                if (child_count >= muscle.MAX_NODES) return 2;
-                @memcpy(&child_ids[child_count], row_id);
-                // A future obligation is grounded for the current turn once it
-                // has been durably transferred to the scheduler. Its eventual
-                // execution belongs to a later root and must not keep this
-                // conversational root open forever.
-                transferred[child_count] = if (objectString(object, "future_obligation")) |value|
-                    std.mem.eql(u8, value, "true")
-                else
-                    false;
-                child_count += 1;
-            }
-        } else if (std.mem.eql(u8, event, "satisfied")) {
-            for (child_ids[0..child_count], 0..) |child_id, index| {
-                if (std.mem.eql(u8, &child_id, row_id)) satisfied[index] = true;
-            }
-        }
-    }
+    var scan: GroundedScan = .{
+        .parent_id = parent_id,
+        .child_ids = &child_ids,
+        .child_count = &child_count,
+        .satisfied = &satisfied,
+        .transferred = &transferred,
+    };
+    ledger.forEachLine(gpa, extEnv(), &scan, markGroundedLine) catch return 1;
+    if (scan.overflow) return 2;
     // A satisfied event can precede discovery in the single-pass scan only if
     // the ledger is malformed; normal append-only order is declare→satisfy.
     for (satisfied[0..child_count], transferred[0..child_count]) |done, durable_transfer| {

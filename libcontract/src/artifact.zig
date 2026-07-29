@@ -209,30 +209,50 @@ fn committedPayload(value: std.json.Value, value_digest: []const u8) ?std.json.V
     return value.object.get("evidence_payload");
 }
 
+const CommittedPayloadScan = struct {
+    allocator: std.mem.Allocator,
+    value_digest: []const u8,
+    result: ?[]u8 = null,
+    err: ?Error = null,
+};
+
+fn readCommittedPayloadLine(opaque_ctx: *anyopaque, line: []const u8) void {
+    const ctx: *CommittedPayloadScan = @ptrCast(@alignCast(opaque_ctx));
+    if (ctx.result != null or ctx.err != null) return;
+    readCommittedPayloadLineChecked(ctx, line) catch |err| {
+        ctx.err = err;
+    };
+}
+
+fn readCommittedPayloadLineChecked(ctx: *CommittedPayloadScan, line: []const u8) Error!void {
+    var parsed = std.json.parseFromSlice(std.json.Value, ctx.allocator, line, .{}) catch return;
+    defer parsed.deinit();
+    const payload = committedPayload(parsed.value, ctx.value_digest) orelse return;
+    var allocating: std.Io.Writer.Allocating = .init(ctx.allocator);
+    defer allocating.deinit();
+    var out = std.json.Stringify{ .writer = &allocating.writer };
+    out.write(payload) catch return Error.OutOfMemory;
+    const bytes = allocating.toOwnedSlice() catch return Error.OutOfMemory;
+    errdefer ctx.allocator.free(bytes);
+    if (bytes.len == 0 or bytes.len > MAX_BYTES) return Error.ArtifactTooLarge;
+    const observed = digest(bytes);
+    if (!std.mem.eql(u8, &observed, ctx.value_digest)) return Error.ArtifactConflict;
+    ctx.result = bytes;
+}
+
+/// Streaming committed-payload lookup — same selection and digest-verification
+/// rules as the retired body scan, replayed line-by-line so artifact reads
+/// work on stores past readAll's 16 MiB cap.
 fn readCommittedPayload(
     allocator: std.mem.Allocator,
     env: std.process.Environ,
     value_digest: []const u8,
 ) Error![]u8 {
-    const body = ledger.readAll(allocator, env) catch return Error.StoreFailure;
-    defer allocator.free(body);
-    var lines = std.mem.tokenizeScalar(u8, body, '\n');
-    while (lines.next()) |line| {
-        var parsed = std.json.parseFromSlice(std.json.Value, allocator, line, .{}) catch continue;
-        defer parsed.deinit();
-        const payload = committedPayload(parsed.value, value_digest) orelse continue;
-        var allocating: std.Io.Writer.Allocating = .init(allocator);
-        errdefer allocating.deinit();
-        var out = std.json.Stringify{ .writer = &allocating.writer };
-        out.write(payload) catch return Error.OutOfMemory;
-        const bytes = allocating.toOwnedSlice() catch return Error.OutOfMemory;
-        errdefer allocator.free(bytes);
-        if (bytes.len == 0 or bytes.len > MAX_BYTES) return Error.ArtifactTooLarge;
-        const observed = digest(bytes);
-        if (!std.mem.eql(u8, &observed, value_digest)) return Error.ArtifactConflict;
-        return bytes;
-    }
-    return Error.ArtifactMissing;
+    var ctx: CommittedPayloadScan = .{ .allocator = allocator, .value_digest = value_digest };
+    ledger.forEachLine(allocator, env, &ctx, readCommittedPayloadLine) catch
+        return Error.StoreFailure;
+    if (ctx.err) |err| return err;
+    return ctx.result orelse Error.ArtifactMissing;
 }
 
 test "artifact digests are deterministic lower hex and bounded" {

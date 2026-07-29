@@ -39,10 +39,9 @@ pub fn claimJson(
     const scratch = arena.allocator();
     const lock = ledger.acquireExclusive(allocator, env) catch return common.Error.LedgerFailure;
     defer ledger.releaseExclusive(lock);
-    const body = ledger.readAll(scratch, env) catch return common.Error.LedgerFailure;
-    const graph_digest = common.latestGraphDigest(body, request.root_id) orelse
-        return common.Error.GraphMissing;
-    const nodes = try common.loadNodes(scratch, body, request.root_id, graph_digest);
+    const graph_digest = (common.latestGraphDigestStreaming(scratch, env, request.root_id) catch
+        return common.Error.LedgerFailure) orelse return common.Error.GraphMissing;
+    const nodes = try common.loadNodesStreaming(scratch, env, request.root_id, graph_digest);
     const execution_ids = scratch.alloc([64]u8, nodes.len) catch
         return common.Error.OutOfMemory;
     for (nodes, 0..) |node, index| {
@@ -56,7 +55,7 @@ pub fn claimJson(
     const states = scratch.alloc(common.NodeState, nodes.len) catch
         return common.Error.OutOfMemory;
     @memset(states, .{});
-    common.scanStates(body, execution_ids, states);
+    try common.scanStatesStreaming(scratch, env, execution_ids, states);
 
     var eligible: [common.MAX_NODES]usize = undefined;
     var eligible_count: usize = 0;

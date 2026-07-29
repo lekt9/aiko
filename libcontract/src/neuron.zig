@@ -53,15 +53,43 @@ pub const EffectSettleRequest = struct {
     observed_at_ms: u64,
 };
 
+const PriorScan = struct {
+    firing_needle: []const u8,
+    result: ?[64]u8 = null,
+};
+
+fn findPriorLine(opaque_ctx: *anyopaque, line: []const u8) void {
+    const ctx: *PriorScan = @ptrCast(@alignCast(opaque_ctx));
+    if (ctx.result != null) return;
+    if (std.mem.indexOf(u8, line, "\"event\":\"neuron_fired\"") == null or
+        std.mem.indexOf(u8, line, ctx.firing_needle) == null) return;
+    const marker = "\"decision_digest\":\"";
+    const start = (std.mem.indexOf(u8, line, marker) orelse return) + marker.len;
+    const end = std.mem.indexOfScalarPos(u8, line, start, '"') orelse return;
+    if (end - start != 64) return;
+    var digest: [64]u8 = undefined;
+    @memcpy(&digest, line[start..end]);
+    ctx.result = digest;
+}
+
 pub fn prepare(
     allocator: std.mem.Allocator,
+    env: std.process.Environ,
     request: FireRequest,
-    ledger_body: []const u8,
 ) Error!Prepared {
     try validate(request);
     const firing_id = firingId(request);
     const decision_digest = decisionDigest(request);
-    if (findPrior(ledger_body, &firing_id)) |prior| {
+    var needle_buf: [96]u8 = undefined;
+    const needle = std.fmt.bufPrint(
+        &needle_buf,
+        "\"firing_id\":\"{s}\"",
+        .{&firing_id},
+    ) catch return Error.OutOfMemory;
+    var scan: PriorScan = .{ .firing_needle = needle };
+    ledger.forEachLine(allocator, env, &scan, findPriorLine) catch
+        return Error.LedgerFailure;
+    if (scan.result) |prior| {
         if (!std.mem.eql(u8, &prior, &decision_digest)) return Error.FiringConflict;
         return .{
             .result = .{
@@ -96,9 +124,7 @@ pub fn fireJson(
     defer parsed.deinit();
     const lock = ledger.acquireExclusive(allocator, env) catch return Error.LedgerFailure;
     defer ledger.releaseExclusive(lock);
-    const body = ledger.readAll(allocator, env) catch return Error.LedgerFailure;
-    defer allocator.free(body);
-    const prepared = try prepare(allocator, parsed.value, body);
+    const prepared = try prepare(allocator, env, parsed.value);
     if (prepared.row) |row| {
         defer allocator.free(row);
         const path = ledger.appendRow(allocator, env, row) catch return Error.LedgerFailure;
@@ -123,12 +149,32 @@ pub fn settleEffectJson(
         request.idempotency_key.len == 0 or request.idempotency_key.len > 256 or
         request.observed_at_ms == 0) return Error.InvalidEffect;
 
+    var firing_buf: [96]u8 = undefined;
+    const firing = std.fmt.bufPrint(
+        &firing_buf,
+        "\"firing_id\":\"{s}\"",
+        .{request.firing_id},
+    ) catch return Error.InvalidEffect;
+    var key_buf: [320]u8 = undefined;
+    const key = std.fmt.bufPrint(
+        &key_buf,
+        "\"idempotency_key\":\"{s}\"",
+        .{request.idempotency_key},
+    ) catch return Error.InvalidEffect;
+    var index_buf: [64]u8 = undefined;
+    const index = std.fmt.bufPrint(
+        &index_buf,
+        "\"effect_index\":{d}",
+        .{request.effect_index},
+    ) catch return Error.InvalidEffect;
+
     const lock = ledger.acquireExclusive(allocator, env) catch return Error.LedgerFailure;
     defer ledger.releaseExclusive(lock);
-    const body = ledger.readAll(allocator, env) catch return Error.LedgerFailure;
-    defer allocator.free(body);
-    if (!effectWasAdmitted(body, request)) return Error.EffectNotFound;
-    const status: []const u8 = if (findEffectSettlement(body, request)) |prior|
+    var scan: EffectSettleScan = .{ .firing = firing, .key = key, .index = index };
+    ledger.forEachLine(allocator, env, &scan, effectSettleLine) catch
+        return Error.LedgerFailure;
+    if (!scan.admitted) return Error.EffectNotFound;
+    const status: []const u8 = if (scan.outcome()) |prior|
         if (std.mem.eql(u8, prior, @tagName(request.outcome))) "replayed" else return Error.EffectConflict
     else blk: {
         const row = encodeEffectSettlement(allocator, request) catch return Error.OutOfMemory;
@@ -156,87 +202,44 @@ pub const validate = core.validate;
 pub const firingId = core.firingId;
 pub const decisionDigest = core.decisionDigest;
 
-fn findPrior(body: []const u8, firing_id: []const u8) ?[64]u8 {
-    var lines = std.mem.tokenizeScalar(u8, body, '\n');
-    var firing_needle_buf: [96]u8 = undefined;
-    const firing_needle = std.fmt.bufPrint(
-        &firing_needle_buf,
-        "\"firing_id\":\"{s}\"",
-        .{firing_id},
-    ) catch return null;
-    while (lines.next()) |line| {
-        if (std.mem.indexOf(u8, line, "\"event\":\"neuron_fired\"") == null or
-            std.mem.indexOf(u8, line, firing_needle) == null) continue;
-        const marker = "\"decision_digest\":\"";
-        const start = (std.mem.indexOf(u8, line, marker) orelse return null) + marker.len;
-        const end = std.mem.indexOfScalarPos(u8, line, start, '"') orelse return null;
-        if (end - start != 64) return null;
-        var digest: [64]u8 = undefined;
-        @memcpy(&digest, line[start..end]);
-        return digest;
-    }
-    return null;
-}
-
 fn isDigest(value: []const u8) bool {
     if (value.len != 64) return false;
     for (value) |byte| if (!std.ascii.isHex(byte)) return false;
     return true;
 }
 
-fn effectWasAdmitted(body: []const u8, request: EffectSettleRequest) bool {
-    var firing_buf: [96]u8 = undefined;
-    const firing = std.fmt.bufPrint(
-        &firing_buf,
-        "\"firing_id\":\"{s}\"",
-        .{request.firing_id},
-    ) catch return false;
-    var key_buf: [320]u8 = undefined;
-    const key = std.fmt.bufPrint(
-        &key_buf,
-        "\"idempotency_key\":\"{s}\"",
-        .{request.idempotency_key},
-    ) catch return false;
-    var index_buf: [64]u8 = undefined;
-    const index = std.fmt.bufPrint(
-        &index_buf,
-        "\"effect_index\":{d}",
-        .{request.effect_index},
-    ) catch return false;
-    var lines = std.mem.tokenizeScalar(u8, body, '\n');
-    while (lines.next()) |line| {
-        if (std.mem.indexOf(u8, line, "\"event\":\"neuron_fired\"") != null and
-            std.mem.indexOf(u8, line, firing) != null and
-            std.mem.indexOf(u8, line, key) != null and
-            std.mem.indexOf(u8, line, index) != null) return true;
-    }
-    return false;
-}
+const EffectSettleScan = struct {
+    firing: []const u8,
+    key: []const u8,
+    index: []const u8,
+    admitted: bool = false,
+    outcome_buf: [32]u8 = undefined,
+    outcome_len: usize = 0,
 
-fn findEffectSettlement(body: []const u8, request: EffectSettleRequest) ?[]const u8 {
-    var firing_buf: [96]u8 = undefined;
-    const firing = std.fmt.bufPrint(
-        &firing_buf,
-        "\"firing_id\":\"{s}\"",
-        .{request.firing_id},
-    ) catch return null;
-    var index_buf: [64]u8 = undefined;
-    const index = std.fmt.bufPrint(
-        &index_buf,
-        "\"effect_index\":{d}",
-        .{request.effect_index},
-    ) catch return null;
-    var lines = std.mem.tokenizeScalar(u8, body, '\n');
-    while (lines.next()) |line| {
-        if (std.mem.indexOf(u8, line, "\"event\":\"neuron_effect_settled\"") == null or
-            std.mem.indexOf(u8, line, firing) == null or
-            std.mem.indexOf(u8, line, index) == null) continue;
-        const marker = "\"outcome\":\"";
-        const start = (std.mem.indexOf(u8, line, marker) orelse return null) + marker.len;
-        const end = std.mem.indexOfScalarPos(u8, line, start, '"') orelse return null;
-        return line[start..end];
+    fn outcome(self: *const EffectSettleScan) ?[]const u8 {
+        if (self.outcome_len == 0) return null;
+        return self.outcome_buf[0..self.outcome_len];
     }
-    return null;
+};
+
+fn effectSettleLine(opaque_ctx: *anyopaque, line: []const u8) void {
+    const ctx: *EffectSettleScan = @ptrCast(@alignCast(opaque_ctx));
+    if (std.mem.indexOf(u8, line, "\"event\":\"neuron_fired\"") != null and
+        std.mem.indexOf(u8, line, ctx.firing) != null and
+        std.mem.indexOf(u8, line, ctx.key) != null and
+        std.mem.indexOf(u8, line, ctx.index) != null) ctx.admitted = true;
+    if (ctx.outcome_len == 0 and
+        std.mem.indexOf(u8, line, "\"event\":\"neuron_effect_settled\"") != null and
+        std.mem.indexOf(u8, line, ctx.firing) != null and
+        std.mem.indexOf(u8, line, ctx.index) != null)
+    {
+        const marker = "\"outcome\":\"";
+        const start = (std.mem.indexOf(u8, line, marker) orelse return) + marker.len;
+        const end = std.mem.indexOfScalarPos(u8, line, start, '"') orelse return;
+        if (end - start > ctx.outcome_buf.len) return;
+        @memcpy(ctx.outcome_buf[0 .. end - start], line[start..end]);
+        ctx.outcome_len = end - start;
+    }
 }
 
 fn encodeEffectSettlement(
@@ -366,15 +369,27 @@ test "outbox acknowledgements bind to one admitted effect and replay outcome" {
         .evidence_digest = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         .observed_at_ms = 1,
     };
-    const firing =
+    const firing_line =
         "{\"event\":\"neuron_fired\",\"firing_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"," ++
-        "\"effect_outbox\":[{\"effect_index\":0,\"idempotency_key\":\"tool-call-1\",\"status\":\"pending\"}]}\n";
-    try std.testing.expect(effectWasAdmitted(firing, request));
-    var wrong = request;
-    wrong.effect_index = 1;
-    try std.testing.expect(!effectWasAdmitted(firing, wrong));
+        "\"effect_outbox\":[{\"effect_index\":0,\"idempotency_key\":\"tool-call-1\",\"status\":\"pending\"}]}";
+    var scan: EffectSettleScan = .{
+        .firing = "\"firing_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+        .key = "\"idempotency_key\":\"tool-call-1\"",
+        .index = "\"effect_index\":0",
+    };
+    effectSettleLine(&scan, firing_line);
+    try std.testing.expect(scan.admitted);
+
+    var wrong: EffectSettleScan = .{
+        .firing = scan.firing,
+        .key = scan.key,
+        .index = "\"effect_index\":1",
+    };
+    effectSettleLine(&wrong, firing_line);
+    try std.testing.expect(!wrong.admitted);
 
     const row = try encodeEffectSettlement(std.testing.allocator, request);
     defer std.testing.allocator.free(row);
-    try std.testing.expectEqualStrings("committed", findEffectSettlement(row, request).?);
+    effectSettleLine(&scan, row);
+    try std.testing.expectEqualStrings("committed", scan.outcome().?);
 }

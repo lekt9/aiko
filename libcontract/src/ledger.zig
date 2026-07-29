@@ -171,6 +171,37 @@ extern fn flock(fd: c_int, op: c_int) c_int;
 const LOCK_EX: c_int = 2;
 const LOCK_UN: c_int = 8;
 
+/// Homeostasis trigger shared by every lock-acquiring writer. Compaction used
+/// to run only from the CLI tick, so FFI-only writers (runtime session
+/// ledgers) grew unbounded until readAll's 16 MiB cap wedged every read verb
+/// (observed 2026-07-29: a 23k-row session ledger HOLDed all consequential
+/// tools). Check the size before taking the lock and compact inline past
+/// COMPACT_THRESHOLD. The atomic flag makes the nested acquireExclusive
+/// inside compactIfOversized skip the re-check (no recursion) and dedupes
+/// concurrent triggers. Compaction failure is swallowed deliberately: the
+/// next lock acquisition retries, and blocking the writer would be worse
+/// than deferring the counter-breath.
+var compaction_active: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
+var last_compact_size: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+
+fn maybeCompact(allocator: std.mem.Allocator, env: std.process.Environ) void {
+    const size = currentSize(allocator, env);
+    if (size <= COMPACT_THRESHOLD) {
+        // Store shrank (rotation, or a compaction that won) — re-arm so the
+        // next crossing compacts promptly.
+        last_compact_size.store(0, .release);
+        return;
+    }
+    // Hysteresis: a keep-row-heavy store may not shrink below the threshold
+    // when compacted, so without a growth floor every lock acquisition would
+    // rewrite the whole store. Re-attempt at most once per MiB of growth.
+    if (size -| last_compact_size.load(.acquire) < 1024 * 1024) return;
+    if (compaction_active.swap(true, .acq_rel)) return;
+    defer _ = compaction_active.store(false, .release);
+    last_compact_size.store(size, .release);
+    _ = compactIfOversized(allocator, env) catch {};
+}
+
 /// Acquire an exclusive advisory lock on the ledger's sidecar `.lock` file.
 /// Blocks until the lock is granted. Returns the fd holding the lock; the
 /// caller MUST close it (via `releaseExclusive` or `c.close`) to release.
@@ -181,6 +212,7 @@ const LOCK_UN: c_int = 8;
 /// the serialization cost. Used by contract.declare() to make the
 /// findCachedDeclared+appendRow seam atomic against concurrent declares.
 pub fn acquireExclusive(allocator: std.mem.Allocator, env: std.process.Environ) !c_int {
+    maybeCompact(allocator, env);
     const path = try resolvePath(allocator, env);
     defer allocator.free(path);
 

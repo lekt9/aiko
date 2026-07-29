@@ -108,10 +108,9 @@ pub fn settleJson(
         return common.Error.LedgerFailure;
     var lock_held = true;
     defer if (lock_held) ledger.releaseExclusive(lock);
-    var body = ledger.readAll(scratch, env) catch return common.Error.LedgerFailure;
-    const graph_digest = common.latestGraphDigest(body, root_id) orelse
-        return common.Error.GraphMissing;
-    const nodes = try common.loadNodes(scratch, body, root_id, graph_digest);
+    const graph_digest = (common.latestGraphDigestStreaming(scratch, env, root_id) catch
+        return common.Error.LedgerFailure) orelse return common.Error.GraphMissing;
+    const nodes = try common.loadNodesStreaming(scratch, env, root_id, graph_digest);
     const execution_ids = scratch.alloc([64]u8, nodes.len) catch
         return common.Error.OutOfMemory;
     var node_index: ?usize = null;
@@ -123,7 +122,7 @@ pub fn settleJson(
     const states = scratch.alloc(common.NodeState, nodes.len) catch
         return common.Error.OutOfMemory;
     @memset(states, .{});
-    common.scanStates(body, execution_ids, states);
+    try common.scanStatesStreaming(scratch, env, execution_ids, states);
     const state = states[index];
     const owner_digest = common.hashFields(&.{
         "contract.neuron-skill-node.owner/v1",
@@ -310,9 +309,8 @@ pub fn settleJson(
         return common.Error.LedgerFailure;
     var settle_lock_held = true;
     defer if (settle_lock_held) ledger.releaseExclusive(settle_lock);
-    body = ledger.readAll(scratch, env) catch return common.Error.LedgerFailure;
     @memset(states, .{});
-    common.scanStates(body, execution_ids, states);
+    try common.scanStatesStreaming(scratch, env, execution_ids, states);
     if (states[index].outcome != .none) {
         if (states[index].attempt == attempt and states[index].outcome == outcome and
             states[index].evidence_digest != null and
@@ -327,7 +325,7 @@ pub fn settleJson(
             );
         return common.Error.FiringConflict;
     }
-    const prepared = neuron.prepare(allocator, fire_request, body) catch |err| switch (err) {
+    const prepared = neuron.prepare(allocator, env, fire_request) catch |err| switch (err) {
         error.FiringConflict => return common.Error.FiringConflict,
         else => return common.Error.InvalidRequest,
     };

@@ -98,23 +98,21 @@ pub fn transitionJson(
     const request_digest = requestDigest(parsed.value);
     const lock = ledger.acquireExclusive(allocator, env) catch return Error.LedgerFailure;
     defer ledger.releaseExclusive(lock);
-    const body = ledger.readAll(allocator, env) catch return Error.LedgerFailure;
-    defer allocator.free(body);
+    const scan = try scanLifecycle(allocator, env, parsed.value.artifact, &transition_id);
 
-    if (priorRequestDigest(body, &transition_id)) |prior| {
+    if (scan.priorRequestDigest()) |prior| {
         if (!std.mem.eql(u8, prior, &request_digest)) return Error.FiringConflict;
-        const projection = project(body, parsed.value.artifact);
         return encodeTransitionResult(
             allocator,
             "replayed",
             &transition_id,
             &request_digest,
-            projection.state,
-            projection.active_digest,
+            scan.state,
+            scan.activeDigest(),
         );
     }
 
-    const before = project(body, parsed.value.artifact);
+    const before: Projection = .{ .state = scan.state, .active_digest = scan.activeDigest() };
     const after = try decide(parsed.value, before);
     const row = encodeRow(
         allocator,
@@ -154,9 +152,8 @@ pub fn stateJson(
     defer parsed.deinit();
     if (!std.mem.eql(u8, parsed.value.schema, STATE_SCHEMA)) return Error.UnsupportedSchema;
     try validateArtifact(parsed.value.artifact);
-    const body = ledger.readAll(allocator, env) catch return Error.LedgerFailure;
-    defer allocator.free(body);
-    const projection = project(body, parsed.value.artifact);
+    const scan = try scanLifecycle(allocator, env, parsed.value.artifact, null);
+    const projection: Projection = .{ .state = scan.state, .active_digest = scan.activeDigest() };
     return encodeStateResult(allocator, parsed.value.artifact, projection);
 }
 
@@ -229,56 +226,99 @@ fn decide(request: TransitionRequest, before: Projection) Error!State {
     return Error.InvalidTransition;
 }
 
-fn project(body: []const u8, artifact: Artifact) Projection {
-    var state: State = .absent;
-    var active_digest: ?[]const u8 = null;
-    var lines = std.mem.tokenizeScalar(u8, body, '\n');
-    while (lines.next()) |line| {
-        if (!isLifecycleRow(line)) continue;
-        const id = fieldString(line, "skill_id") orelse continue;
-        if (!std.mem.eql(u8, id, artifact.id)) continue;
-        const digest = fieldString(line, "skill_digest") orelse continue;
-        const action = fieldString(line, "action") orelse continue;
-        const supersedes = fieldString(line, "supersedes_digest");
-        if (std.mem.eql(u8, action, "activate") or std.mem.eql(u8, action, "rollback")) {
-            active_digest = digest;
-        } else if (std.mem.eql(u8, action, "retire") and
-            active_digest != null and std.mem.eql(u8, active_digest.?, digest))
-        {
-            active_digest = null;
-        }
-        if (supersedes) |prior| {
-            if (std.mem.eql(u8, prior, artifact.digest)) state = .retired;
-        }
-        if (!std.mem.eql(u8, digest, artifact.digest)) continue;
-        state = if (std.mem.eql(u8, action, "stage"))
-            .candidate
-        else if (std.mem.eql(u8, action, "admit"))
-            .admitted
-        else if (std.mem.eql(u8, action, "activate") or std.mem.eql(u8, action, "rollback"))
-            .active
-        else if (std.mem.eql(u8, action, "retire"))
-            .retired
-        else
-            state;
+const LifecycleScan = struct {
+    artifact: Artifact,
+    watch_transition: ?[]const u8 = null,
+    state: State = .absent,
+    active_buf: [64]u8 = undefined,
+    active_len: usize = 0,
+    has_active: bool = false,
+    prior_buf: [64]u8 = undefined,
+    prior_len: usize = 0,
+    has_prior: bool = false,
+
+    fn activeDigest(self: *const LifecycleScan) ?[]const u8 {
+        if (!self.has_active) return null;
+        return self.active_buf[0..self.active_len];
     }
-    return .{ .state = state, .active_digest = active_digest };
+
+    fn priorRequestDigest(self: *const LifecycleScan) ?[]const u8 {
+        if (!self.has_prior) return null;
+        return self.prior_buf[0..self.prior_len];
+    }
+};
+
+fn lifecycleLine(opaque_ctx: *anyopaque, line: []const u8) void {
+    const ctx: *LifecycleScan = @ptrCast(@alignCast(opaque_ctx));
+    if (!isLifecycleRow(line)) return;
+    // First transition row with the watched transition_id pins its
+    // request_digest (replay dedupe) — same first-match rule as the retired
+    // body scan.
+    if (ctx.watch_transition) |watch| {
+        if (!ctx.has_prior) {
+            if (fieldString(line, "transition_id")) |candidate| {
+                if (std.mem.eql(u8, candidate, watch)) {
+                    if (fieldString(line, "request_digest")) |digest| {
+                        if (digest.len <= ctx.prior_buf.len) {
+                            @memcpy(ctx.prior_buf[0..digest.len], digest);
+                            ctx.prior_len = digest.len;
+                            ctx.has_prior = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    const id = fieldString(line, "skill_id") orelse return;
+    if (!std.mem.eql(u8, id, ctx.artifact.id)) return;
+    const digest = fieldString(line, "skill_digest") orelse return;
+    const action = fieldString(line, "action") orelse return;
+    const supersedes = fieldString(line, "supersedes_digest");
+    if (std.mem.eql(u8, action, "activate") or std.mem.eql(u8, action, "rollback")) {
+        if (digest.len <= ctx.active_buf.len) {
+            @memcpy(ctx.active_buf[0..digest.len], digest);
+            ctx.active_len = digest.len;
+            ctx.has_active = true;
+        }
+    } else if (std.mem.eql(u8, action, "retire") and
+        ctx.has_active and std.mem.eql(u8, ctx.activeDigest().?, digest))
+    {
+        ctx.has_active = false;
+        ctx.active_len = 0;
+    }
+    if (supersedes) |prior| {
+        if (std.mem.eql(u8, prior, ctx.artifact.digest)) ctx.state = .retired;
+    }
+    if (!std.mem.eql(u8, digest, ctx.artifact.digest)) return;
+    ctx.state = if (std.mem.eql(u8, action, "stage"))
+        .candidate
+    else if (std.mem.eql(u8, action, "admit"))
+        .admitted
+    else if (std.mem.eql(u8, action, "activate") or std.mem.eql(u8, action, "rollback"))
+        .active
+    else if (std.mem.eql(u8, action, "retire"))
+        .retired
+    else
+        ctx.state;
+}
+
+/// Streaming lifecycle projection — the same fold as the retired body scan,
+/// replayed line-by-line so transitions work on stores past readAll's 16 MiB
+/// cap. Digests are copied out of the reused line buffer.
+fn scanLifecycle(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    artifact: Artifact,
+    watch_transition: ?[]const u8,
+) Error!LifecycleScan {
+    var ctx: LifecycleScan = .{ .artifact = artifact, .watch_transition = watch_transition };
+    ledger.forEachLine(allocator, env, &ctx, lifecycleLine) catch return Error.LedgerFailure;
+    return ctx;
 }
 
 fn isLifecycleRow(line: []const u8) bool {
     const event = fieldString(line, "event") orelse return false;
     return std.mem.eql(u8, event, "neuron_skill_transition");
-}
-
-fn priorRequestDigest(body: []const u8, transition_id: []const u8) ?[]const u8 {
-    var lines = std.mem.tokenizeScalar(u8, body, '\n');
-    while (lines.next()) |line| {
-        if (!isLifecycleRow(line)) continue;
-        const candidate = fieldString(line, "transition_id") orelse continue;
-        if (!std.mem.eql(u8, candidate, transition_id)) continue;
-        return fieldString(line, "request_digest");
-    }
-    return null;
 }
 
 fn fieldString(line: []const u8, key: []const u8) ?[]const u8 {
@@ -545,14 +585,26 @@ test "ledger projection supports replacement retirement and rollback" {
         "{\"event\":\"neuron_skill_transition\",\"skill_id\":\"generated-limb\",\"skill_digest\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"action\":\"activate\",\"supersedes_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}\n" ++
         "{\"event\":\"neuron_skill_transition\",\"skill_id\":\"generated-limb\",\"skill_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"action\":\"rollback\",\"supersedes_digest\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}\n";
     const old = fixture("rollback").artifact;
-    const old_projection = project(body, old);
+    const old_projection = projectBody(body, old);
     try std.testing.expectEqual(State.active, old_projection.state);
-    try std.testing.expectEqualStrings(digest_a, old_projection.active_digest.?);
+    try std.testing.expectEqualStrings(digest_a, old_projection.activeDigest().?);
     var replacement = old;
     replacement.digest = digest_b;
-    const replacement_projection = project(body, replacement);
+    const replacement_projection = projectBody(body, replacement);
     try std.testing.expectEqual(State.retired, replacement_projection.state);
-    try std.testing.expectEqualStrings(digest_a, replacement_projection.active_digest.?);
+    try std.testing.expectEqualStrings(digest_a, replacement_projection.activeDigest().?);
+}
+
+/// Fold a synthetic ledger body through the streaming lifecycle callback —
+/// same projection the ledger scan produces, without touching the filesystem.
+fn projectBody(body: []const u8, artifact: Artifact) LifecycleScan {
+    var ctx: LifecycleScan = .{ .artifact = artifact };
+    var lines = std.mem.splitScalar(u8, body, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        lifecycleLine(&ctx, line);
+    }
+    return ctx;
 }
 
 test "transition identity detects changed intent within one stimulus" {
