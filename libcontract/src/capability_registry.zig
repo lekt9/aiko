@@ -518,6 +518,23 @@ fn validIdentifier(value: []const u8) bool {
     return true;
 }
 
+/// Every field a descriptor must carry. Validation is by field shape, never by
+/// an exact key count: an additive optional field must not make a whole
+/// provider snapshot unroutable.
+const required_descriptor_fields = [_][]const u8{
+    "schema_version", "id",       "capability_version", "provider",
+    "tool",           "action",   "description",        "input_schema",
+    "output_schema",  "requires", "permission",         "effects",
+    "available",
+};
+
+/// Declared additive fields. Unknown keys still fail closed.
+const optional_descriptor_fields = [_][]const u8{"roles"};
+
+/// A position in the receptor → predictor → planner → executor → sensor limb
+/// sequence, declared by the adapter that owns the capability.
+const cell_roles = [_][]const u8{ "receptor", "predictor", "planner", "executor", "sensor" };
+
 fn validateSnapshot(allocator: std.mem.Allocator, source: []const u8, json: []const u8) !usize {
     var parsed = std.json.parseFromSlice(std.json.Value, allocator, json, .{}) catch return RegistryError.InvalidJson;
     defer parsed.deinit();
@@ -528,7 +545,15 @@ fn validateSnapshot(allocator: std.mem.Allocator, source: []const u8, json: []co
         if (descriptor != .object) return RegistryError.InvalidDescriptor;
         if (containsForbiddenContent(descriptor)) return RegistryError.InvalidDescriptor;
         const object = descriptor.object;
-        if (object.count() != 13) return RegistryError.InvalidDescriptor;
+        var keys = object.iterator();
+        while (keys.next()) |entry| {
+            const key = entry.key_ptr.*;
+            if (!oneOf(key, &required_descriptor_fields) and !oneOf(key, &optional_descriptor_fields))
+                return RegistryError.InvalidDescriptor;
+        }
+        for (required_descriptor_fields) |field| {
+            if (!object.contains(field)) return RegistryError.InvalidDescriptor;
+        }
         const schema_version = object.get("schema_version") orelse return RegistryError.InvalidDescriptor;
         if (schema_version != .integer or schema_version.integer != 1) return RegistryError.InvalidDescriptor;
         const id = stringField(object, "id") orelse return RegistryError.InvalidDescriptor;
@@ -555,6 +580,12 @@ fn validateSnapshot(allocator: std.mem.Allocator, source: []const u8, json: []co
         const effects = object.get("effects") orelse return RegistryError.InvalidDescriptor;
         if (effects != .array or effects.array.items.len == 0) return RegistryError.InvalidDescriptor;
         for (effects.array.items) |effect| if (effect != .string or !oneOf(effect.string, &.{ "read_only", "local_write", "network_read", "network_write", "message_send", "purchase" })) return RegistryError.InvalidDescriptor;
+        if (object.get("roles")) |roles| {
+            if (roles != .array) return RegistryError.InvalidDescriptor;
+            for (roles.array.items) |role| {
+                if (role != .string or !oneOf(role.string, &cell_roles)) return RegistryError.InvalidDescriptor;
+            }
+        }
         _ = boolField(object, "available") orelse return RegistryError.InvalidDescriptor;
     }
     return parsed.value.array.items.len;
@@ -685,6 +716,25 @@ test "unknown and secret-bearing top-level fields fail closed" {
         \\[{"schema_version":1,"id":"mcp:github.issues.list","capability_version":"1","provider":"mcp:github","tool":"issues","action":"list","description":"Fetch https://private.example/issues","input_schema":{},"output_schema":{},"requires":[],"permission":"network","effects":["network_read"],"available":true}]
     ;
     try std.testing.expectError(RegistryError.InvalidDescriptor, registry.replaceSource("mcp:github", embedded_url));
+}
+
+test "declared optional roles are admitted while unknown fields still fail closed" {
+    var registry = Registry.init(std.testing.allocator);
+    defer registry.deinit();
+    const with_roles =
+        \\[{"schema_version":1,"id":"binary.rg.invoke","capability_version":"1","provider":"binary","tool":"Bash","action":"rg","description":"Run the locally installed rg command.","input_schema":{},"output_schema":{},"requires":[],"permission":"write","effects":["local_write"],"roles":["executor"],"available":true}]
+    ;
+    try std.testing.expectEqual(@as(usize, 1), try registry.replaceSource("binary", with_roles));
+
+    const unknown_role =
+        \\[{"schema_version":1,"id":"binary.rg.invoke","capability_version":"1","provider":"binary","tool":"Bash","action":"rg","description":"Run the locally installed rg command.","input_schema":{},"output_schema":{},"requires":[],"permission":"write","effects":["local_write"],"roles":["overlord"],"available":true}]
+    ;
+    try std.testing.expectError(RegistryError.InvalidDescriptor, registry.replaceSource("binary", unknown_role));
+
+    const missing_required =
+        \\[{"schema_version":1,"id":"binary.rg.invoke","capability_version":"1","provider":"binary","tool":"Bash","action":"rg","description":"Run the locally installed rg command.","input_schema":{},"output_schema":{},"requires":[],"permission":"write","roles":["executor"],"available":true}]
+    ;
+    try std.testing.expectError(RegistryError.InvalidDescriptor, registry.replaceSource("binary", missing_required));
 }
 
 test "versioned live availability inhibits a dynamic capability" {
