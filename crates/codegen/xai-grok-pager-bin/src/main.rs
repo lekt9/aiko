@@ -176,43 +176,57 @@ async fn run_contract_worker(once: bool, poll_seconds: u64) -> Result<()> {
             } else {
                 std::path::PathBuf::from(&claim.cwd)
             };
-            let mut child = tokio::process::Command::new(&executable);
-            child
-                .arg("--cwd")
-                .arg(&cwd)
-                .arg("--no-auto-update")
-                .arg("--verbatim")
-                .arg("--output-format")
-                .arg("json")
-                .arg("--json-schema")
-                .arg(VERDICT_SCHEMA)
-                .arg("--rules")
-                .arg(WORKER_RULES)
-                .arg("--single")
-                .arg(&claim.prompt)
-                .env("AIKO_CONTRACT_COORDINATOR", "off")
-                .stdout(std::process::Stdio::piped())
-                // A headless child may include task or provider details on
-                // stderr. Do not persist those in the LaunchAgent log.
-                .stderr(std::process::Stdio::null())
-                .kill_on_drop(true);
-            let verdict = match tokio::time::timeout(Duration::from_secs(3_600), child.output())
-                .await
-            {
-                Ok(Ok(output)) if output.status.success() => {
-                    serde_json::from_slice::<serde_json::Value>(&output.stdout)
-                        .ok()
-                        .and_then(|json| json.get("structuredOutput").cloned())
+            // ABI 10 executes digest-pinned Skill implementations node by node. The old
+            // whole-prompt child remains only as an explicit/operator rollback
+            // or compatibility adapter for an older Contract library.
+            let graph_verdict = xai_grok_shell::contract_native::execute_claim_neuron_graph(
+                executable.clone(),
+                owner.clone(),
+                &claim,
+                cwd.clone(),
+            )
+            .await;
+            let verdict = if let Some(graph_verdict) = graph_verdict {
+                Some(serde_json::json!({
+                    "completed": graph_verdict.completed,
+                    "retryable": graph_verdict.retryable,
+                    "evidence": graph_verdict.evidence,
+                }))
+            } else {
+                let mut child = tokio::process::Command::new(&executable);
+                child
+                    .arg("--cwd")
+                    .arg(&cwd)
+                    .arg("--no-auto-update")
+                    .arg("--verbatim")
+                    .arg("--output-format")
+                    .arg("json")
+                    .arg("--json-schema")
+                    .arg(VERDICT_SCHEMA)
+                    .arg("--rules")
+                    .arg(WORKER_RULES)
+                    .arg("--single")
+                    .arg(&claim.prompt)
+                    .env("AIKO_CONTRACT_COORDINATOR", "off")
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .kill_on_drop(true);
+                match tokio::time::timeout(Duration::from_secs(3_600), child.output()).await {
+                    Ok(Ok(output)) if output.status.success() => {
+                        serde_json::from_slice::<serde_json::Value>(&output.stdout)
+                            .ok()
+                            .and_then(|json| json.get("structuredOutput").cloned())
+                    }
+                    Ok(Err(error)) => {
+                        tracing::warn!(%error, contract_id = %claim.contract_id, "legacy Contract worker failed to start Aiko");
+                        None
+                    }
+                    Err(_) => {
+                        tracing::warn!(contract_id = %claim.contract_id, "legacy Contract worker timed out");
+                        None
+                    }
+                    Ok(Ok(_)) => None,
                 }
-                Ok(Err(error)) => {
-                    tracing::warn!(%error, contract_id = %claim.contract_id, "Contract worker failed to start Aiko");
-                    None
-                }
-                Err(_) => {
-                    tracing::warn!(contract_id = %claim.contract_id, "Contract worker timed out");
-                    None
-                }
-                Ok(Ok(_)) => None,
             };
             let completed = verdict
                 .as_ref()
@@ -1853,6 +1867,10 @@ fn install_heap_profile_hooks() {
     });
 }
 fn main() {
+    if let Some(code) = xai_grok_shell::contract_native::maybe_run_admitted_script_sandbox_runner()
+    {
+        std::process::exit(code);
+    }
     xai_grok_pager_minimal::install();
     #[cfg(all(feature = "jemalloc", unix))]
     xai_grok_pager::memory_release::install_release_hook(purge_jemalloc_retained_pages);

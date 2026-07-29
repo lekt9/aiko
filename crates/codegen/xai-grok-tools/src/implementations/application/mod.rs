@@ -398,7 +398,9 @@ fn record_contract_outcome(
                 else {
                     continue;
                 };
-                if !(2..=3).contains(&unsafe { abi_version() }) {
+                // This symbol's signature is stable from ABI v2 onward. Probe
+                // the symbol itself instead of rejecting additive newer ABIs.
+                if unsafe { abi_version() } < 2 {
                     continue;
                 }
                 let Ok(record) = (unsafe {

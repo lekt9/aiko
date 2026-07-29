@@ -32,8 +32,8 @@ mod skill_registry;
 use neuron_bridge::{
     NEURON_FIRE_ABI_VERSION, NeuronDecision, NeuronEffectSettleFn, NeuronFireFn,
     SKILL_EXECUTION_ABI_VERSION, SKILL_LIFECYCLE_ABI_VERSION, SkillNodeClaimFn, SkillNodeSettleFn,
-    SkillStateFn, SkillTransitionFn, ToolEffectAdmission, skill_node_decision,
-    supported_contract_abi,
+    SkillStateFn, SkillTransitionFn, ToolEffectAdmission, negotiated_contract_abi,
+    skill_node_decision, supported_contract_abi,
 };
 pub use neuron_bridge::{
     NeuronSkillNodeOccurrence, NeuronSkillNodeSettlement, NeuronSkillNodeSettlementResult,
@@ -221,9 +221,20 @@ impl NativeContract {
             else {
                 continue;
             };
-            let abi_version = unsafe { abi_version() };
-            if !supported_contract_abi(abi_version) {
+            let library_abi = unsafe { abi_version() };
+            if !supported_contract_abi(library_abi) {
                 continue;
+            }
+            // Speak the highest ABI both sides know. A library ahead of this
+            // build keeps every feature this build can address instead of
+            // disabling Contract entirely.
+            let abi_version = negotiated_contract_abi(library_abi);
+            if abi_version != library_abi {
+                tracing::info!(
+                    library_abi,
+                    negotiated_abi = abi_version,
+                    "Contract library is newer than this Aiko build; negotiated down to the known ABI"
+                );
             }
             let loaded = unsafe {
                 Some(Self {
@@ -1229,19 +1240,30 @@ pub fn maybe_run_admitted_script_sandbox_runner() -> Option<i32> {
             return Err("admitted script changed before sandbox entry".into());
         }
 
-        let profile = sandbox
-            .parse::<xai_grok_sandbox::ProfileName>()
-            .map_err(|_| "script Neuron supplied an invalid sandbox profile".to_string())?;
-        xai_grok_sandbox::set_configured_profile(&sandbox);
-        let mut manager = xai_grok_sandbox::SandboxManager::new(profile, &cwd);
+        // The node declares the logical `read-only` scope; kernel enforcement
+        // uses the read-confined `strict` profile. The `read-only` profile
+        // keeps `default_read` and would leave every file on the machine
+        // readable to the script — an admitted script may read only the
+        // system paths, its workspace, its Skill root, and interpreter
+        // prefixes, all as explicit roots.
+        let kernel_profile = xai_grok_sandbox::ProfileName::Strict;
+        xai_grok_sandbox::set_configured_profile(kernel_profile.to_string());
+        let mut manager = xai_grok_sandbox::SandboxManager::new(kernel_profile, &cwd);
+        let mut package_roots = vec![skill_root.clone()];
+        for prefix in ["/opt/homebrew", "/usr/local", "/nix"] {
+            let prefix = PathBuf::from(prefix);
+            if prefix.is_dir() {
+                package_roots.push(prefix);
+            }
+        }
         manager
-            .apply_with_read_only(&cwd, std::slice::from_ref(&skill_root))
+            .apply_with_read_only(&cwd, &package_roots)
             .map_err(|error| format!("kernel sandbox rejected the Skill root: {error}"))?;
         if !manager.is_applied() {
             return Err("the requested kernel sandbox could not be enforced".into());
         }
         manager.install();
-        if xai_grok_sandbox::profile_name() != Some(sandbox.as_str()) {
+        if xai_grok_sandbox::profile_name() != Some("strict") {
             return Err("the active kernel sandbox does not match the node".into());
         }
 
@@ -4880,7 +4902,7 @@ pub async fn refresh_capabilities_and_recommend(
     snapshots.push(crate::capability_catalog::discover_unbrowse_snapshot(
         command_tool,
     ));
-    snapshots.push(crate::capability_catalog::discover_external_registry_snapshot(&tools));
+    snapshots.extend(crate::capability_catalog::discover_external_registry_snapshots(&tools));
     let composition_descriptors = snapshots
         .iter()
         .flat_map(|snapshot| snapshot.descriptors.iter().cloned())
@@ -4898,21 +4920,44 @@ pub async fn refresh_capabilities_and_recommend(
         // A provider disappearing is a source replacement with an empty
         // snapshot. Contract retains historical evidence but cannot route it.
         for source in previous.difference(&current) {
-            native.register_capabilities(
-                source,
-                &Vec::<crate::capability_catalog::CapabilityDescriptor>::new(),
-            )?;
+            if native
+                .register_capabilities(
+                    source,
+                    &Vec::<crate::capability_catalog::CapabilityDescriptor>::new(),
+                )
+                .is_none()
+            {
+                tracing::warn!(%source, "Contract did not clear the retired capability source");
+            }
         }
         let mut availability = Vec::new();
+        let mut registered: BTreeSet<String> = BTreeSet::new();
         for snapshot in &snapshots {
-            native.register_capabilities(&snapshot.source, &snapshot.descriptors)?;
+            // One provider Contract refuses (an unknown descriptor field, a
+            // descriptor that trips its privacy filter) must cost that provider
+            // only. Aborting here is what turned a single rejected snapshot
+            // into a whole session with no route at all.
+            if native
+                .register_capabilities(&snapshot.source, &snapshot.descriptors)
+                .is_none()
+            {
+                tracing::warn!(
+                    source = %snapshot.source,
+                    descriptors = snapshot.descriptors.len(),
+                    "Contract rejected this capability snapshot; routing continues without that provider"
+                );
+                continue;
+            }
+            registered.insert(snapshot.source.clone());
             availability.extend(snapshot.availability.iter().cloned());
         }
         if let Err(error) = crate::collective_host::publish_collective_snapshots(&snapshots) {
             tracing::warn!(%error, "Collective publication pipeline could not process the refreshed capability catalog");
         }
         if let Ok(mut sources) = registered_capability_sources().lock() {
-            *sources = current;
+            // Only what Contract actually holds is a live source; a rejected
+            // snapshot must not be "retired" next turn as if it were routed.
+            *sources = registered;
         }
         // Read back Contract's effective catalog so Contract-owned built-in
         // priors can receive exact-version execution observations too.
@@ -5035,7 +5080,7 @@ pub fn capability_plan_notification(
             })
         })
         .collect();
-    let reason_codes = plan
+    let mut reason_codes = plan
         .and_then(|value| value.get("reason_codes"))
         .and_then(Value::as_array)
         .into_iter()
@@ -5043,6 +5088,20 @@ pub fn capability_plan_notification(
         .filter_map(Value::as_str)
         .map(str::to_owned)
         .collect::<Vec<_>>();
+    // A degraded turn must say WHY. "No runtime" (a missing or unloadable
+    // libcontract) and "runtime present, nothing matched" are different
+    // failures with different fixes, and reading them off one bare
+    // "unavailable" label costs hours.
+    if plan.is_none() && reason_codes.is_empty() {
+        reason_codes.push(
+            if contract_abi_version().is_some() {
+                "no_capability_candidate"
+            } else {
+                "contract_runtime_unavailable"
+            }
+            .to_owned(),
+        );
+    }
     let prerequisites = plan
         .and_then(|value| value.get("sequence"))
         .and_then(Value::as_array)

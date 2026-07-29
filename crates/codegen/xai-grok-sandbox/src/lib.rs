@@ -43,9 +43,7 @@ use nono::Sandbox;
 pub use profiles::{
     ProfileName, SandboxConfig, SandboxProfile, load_sandbox_config, sandbox_profile_conflicts,
 };
-use std::path::Path;
-#[cfg(any(target_os = "linux", all(feature = "enforce", test)))]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 pub use types::{SandboxEvent, SandboxEventType, SandboxMetrics};
@@ -148,20 +146,38 @@ impl SandboxManager {
     pub fn apply(&mut self, workspace: &Path) -> anyhow::Result<()> {
         self.apply_with_read_only(workspace, &[])
     }
-    /// Apply the sandbox while granting additional, explicit read-only roots.
+    /// Apply the profile with a bounded set of additional read-only roots.
+    ///
+    /// This is for already-admitted immutable packages that live outside the
+    /// workspace. It does not grant writes and is still subject to profile
+    /// deny rules.
     #[cfg(all(feature = "enforce", unix))]
     pub fn apply_with_read_only(
         &mut self,
         workspace: &Path,
-        read_only: &[std::path::PathBuf],
+        additional_read_only: &[PathBuf],
     ) -> anyhow::Result<()> {
         if self.profile == ProfileName::Off {
             tracing::info!("Sandbox disabled (profile: off)");
             return Ok(());
         }
+        anyhow::ensure!(
+            additional_read_only.len() <= 16,
+            "sandbox additional read-only root limit exceeded"
+        );
         let config = profiles::load_sandbox_config(workspace);
         let mut resolved = self.profile.resolve_profile(workspace, &config)?;
-        resolved.read_only.extend(read_only.iter().cloned());
+        for path in additional_read_only {
+            let canonical = path.canonicalize()?;
+            anyhow::ensure!(
+                canonical.exists(),
+                "sandbox additional read-only root does not exist"
+            );
+            if !resolved.read_only.contains(&canonical) && !resolved.read_write.contains(&canonical)
+            {
+                resolved.read_only.push(canonical);
+            }
+        }
         self.net_restricted = resolved.restrict_network;
         let support = Sandbox::support_info();
         if !support.is_supported {
@@ -216,14 +232,19 @@ impl SandboxManager {
         );
         Ok(())
     }
-    /// Stub when `enforce` is unavailable.
+    /// Stub companion to [`Self::apply_with_read_only`] when enforcement is
+    /// unavailable.
     #[cfg(not(all(feature = "enforce", unix)))]
     pub fn apply_with_read_only(
         &mut self,
-        workspace: &Path,
-        _read_only: &[std::path::PathBuf],
+        _workspace: &Path,
+        _additional_read_only: &[PathBuf],
     ) -> anyhow::Result<()> {
-        self.apply(workspace)
+        tracing::info!(
+            profile = % self.profile,
+            "Sandbox enforcement unavailable (built without 'enforce' feature)"
+        );
+        Ok(())
     }
     /// Store globally for session-lifetime violation logging.
     pub fn install(self) {

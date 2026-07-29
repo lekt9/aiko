@@ -193,8 +193,20 @@ pub(super) type SkillStateFn = unsafe extern "C" fn(*const c_char) -> *mut c_cha
 pub(super) type SkillNodeClaimFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 pub(super) type SkillNodeSettleFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 
+/// Contract's ABI is additive: every version keeps the older exports and adds
+/// new ones. A library NEWER than this build is therefore usable at the subset
+/// this build knows — refusing it outright turned one stale binary into a total
+/// substrate blackout (no route, no muscle, no neuron, every turn "degraded").
+/// The structural signal for a capability is the presence of its symbol, not a
+/// version number, so only the floor is a real bound.
 pub(super) fn supported_contract_abi(version: u32) -> bool {
-    (MIN_CONTRACT_ABI..=CONTRACT_ABI_VERSION).contains(&version)
+    version >= MIN_CONTRACT_ABI
+}
+
+/// The ABI actually spoken with a loaded library: what it offers, capped by
+/// what this build understands.
+pub(super) fn negotiated_contract_abi(library_version: u32) -> u32 {
+    library_version.min(CONTRACT_ABI_VERSION)
 }
 
 fn neuron_native_enabled() -> bool {
@@ -834,8 +846,15 @@ mod tests {
         assert!(!supported_contract_abi(1));
         for version in MIN_CONTRACT_ABI..=CONTRACT_ABI_VERSION {
             assert!(supported_contract_abi(version));
+            assert_eq!(negotiated_contract_abi(version), version);
         }
-        assert!(!supported_contract_abi(CONTRACT_ABI_VERSION + 1));
+        // A newer Contract stays usable at this build's known subset instead
+        // of degrading the whole substrate to "unavailable".
+        assert!(supported_contract_abi(CONTRACT_ABI_VERSION + 1));
+        assert_eq!(
+            negotiated_contract_abi(CONTRACT_ABI_VERSION + 7),
+            CONTRACT_ABI_VERSION
+        );
         assert!(neuron_native_enabled_from(None));
         assert!(neuron_native_enabled_from(Some("on")));
         assert!(!neuron_native_enabled_from(Some("off")));

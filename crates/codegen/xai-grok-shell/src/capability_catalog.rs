@@ -33,7 +33,37 @@ pub struct CapabilityDescriptor {
     pub requires: Vec<String>,
     pub permission: Permission,
     pub effects: Vec<Effect>,
+    /// Limb-cell roles this capability explicitly declares it can fill.
+    /// Roles are declared by the adapter that owns the capability, never
+    /// inferred from names or descriptions. An empty list means the
+    /// capability can never be composed into a self-growing limb cell.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roles: Vec<CellRole>,
     pub available: bool,
+}
+
+/// A position in the receptor → predictor → planner → executor → sensor
+/// limb sequence. Declared explicitly on each capability descriptor.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CellRole {
+    Receptor,
+    Predictor,
+    Planner,
+    Executor,
+    Sensor,
+}
+
+impl CellRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CellRole::Receptor => "receptor",
+            CellRole::Predictor => "predictor",
+            CellRole::Planner => "planner",
+            CellRole::Executor => "executor",
+            CellRole::Sensor => "sensor",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -349,6 +379,11 @@ pub fn normalize_tool_definitions(tools: &[ToolDefinition]) -> Vec<CatalogSnapsh
                 requires: Vec::new(),
                 permission,
                 effects,
+                // Tool definitions carry no role declarations yet; the
+                // registration-time declaration surface is a follow-up.
+                // Until then tools inform the deliberate node but never
+                // bind as limb cells.
+                roles: Vec::new(),
                 available: true,
             });
     }
@@ -437,6 +472,9 @@ pub fn normalize_binary_paths(roots: &[PathBuf], command_tool: Option<&str>) -> 
                 requires: Vec::new(),
                 permission: Permission::Write,
                 effects: vec![Effect::LocalWrite],
+                // A binary capability IS an action route: it runs a local
+                // command as the limb's effect.
+                roles: vec![CellRole::Executor],
                 available: command_tool.is_some(),
             }
         })
@@ -543,6 +581,9 @@ pub fn normalize_skill_paths(roots: &[PathBuf]) -> CatalogSnapshot {
                     requires: Vec::new(),
                     permission: Permission::Read,
                     effects: vec![Effect::ReadOnly],
+                    // Skill prose is guidance for the deliberate node, not
+                    // an executable ABI — it never binds as a limb cell.
+                    roles: Vec::new(),
                     available: true,
                 });
         }
@@ -570,7 +611,10 @@ pub fn discover_unbrowse_snapshot(command_tool: Option<&str>) -> CatalogSnapshot
 /// Register governed discovery receptors for public implementation and
 /// research registries. These descriptors only search and traverse metadata;
 /// they never clone, compile, install, or execute discovered code.
-pub fn discover_external_registry_snapshot(tools: &[ToolDefinition]) -> CatalogSnapshot {
+/// One snapshot per registry: Contract keys a snapshot by its provider, so a
+/// source carrying descriptors from two providers is unregistrable and the
+/// whole inventory silently disappears from routing.
+pub fn discover_external_registry_snapshots(tools: &[ToolDefinition]) -> Vec<CatalogSnapshot> {
     let web_tool = tools.iter().find_map(|definition| {
         let name = definition.function.name.as_str();
         matches!(
@@ -584,7 +628,7 @@ pub fn discover_external_registry_snapshot(tools: &[ToolDefinition]) -> CatalogS
         let lower = name.to_ascii_lowercase();
         (lower.contains("github") || lower == "use_tool").then_some(name.to_owned())
     });
-    let mut descriptors = Vec::new();
+    let mut by_provider = BTreeMap::<String, Vec<CapabilityDescriptor>>::new();
     let mut add = |id: &str,
                    provider: &str,
                    tool: Option<&String>,
@@ -594,7 +638,7 @@ pub fn discover_external_registry_snapshot(tools: &[ToolDefinition]) -> CatalogS
                    output_schema: Value,
                    requires: Vec<String>| {
         let available = tool.is_some();
-        descriptors.push(CapabilityDescriptor {
+        by_provider.entry(provider.to_owned()).or_default().push(CapabilityDescriptor {
             schema_version: 1,
             id: id.into(),
             capability_version: semantic_version(&[
@@ -613,11 +657,16 @@ pub fn discover_external_registry_snapshot(tools: &[ToolDefinition]) -> CatalogS
             requires,
             permission: Permission::Network,
             effects: vec![Effect::NetworkRead],
+            // These adapters are governed discovery receptors by design:
+            // they search and traverse metadata, nothing else.
+            roles: vec![CellRole::Receptor],
             available,
         });
     };
+    // Contract requires `id` to be namespaced by its provider, exactly as the
+    // quarantined-artifact adapter below does.
     add(
-        "registry.github.search",
+        "registry:github.search",
         "registry:github",
         github_tool.as_ref().or(web_tool.as_ref()),
         "search_repositories",
@@ -627,17 +676,17 @@ pub fn discover_external_registry_snapshot(tools: &[ToolDefinition]) -> CatalogS
         vec![],
     );
     add(
-        "registry.github.traverse_tree",
+        "registry:github.traverse_tree",
         "registry:github",
         github_tool.as_ref().or(web_tool.as_ref()),
         "traverse_pinned_tree",
         "Traverse a public GitHub repository tree at an immutable revision without executing its contents.",
         json!({"type":"object","properties":{"repository":{"type":"string"},"revision":{"type":"string"}},"required":["repository","revision"]}),
         json!({"type":"object","properties":{"files":{"type":"array","items":{"type":"object"}}}}),
-        vec!["registry.github.search".into()],
+        vec!["registry:github.search".into()],
     );
     add(
-        "registry.arxiv.search",
+        "registry:arxiv.search",
         "registry:arxiv",
         web_tool.as_ref(),
         "search_papers",
@@ -647,24 +696,24 @@ pub fn discover_external_registry_snapshot(tools: &[ToolDefinition]) -> CatalogS
         vec![],
     );
     add(
-        "registry.arxiv.read",
+        "registry:arxiv.read",
         "registry:arxiv",
         web_tool.as_ref(),
         "read_pinned_paper",
         "Read a specific arXiv revision as design evidence without treating claims as verified implementation.",
         json!({"type":"object","properties":{"paper_id":{"type":"string"},"revision":{"type":"string"}},"required":["paper_id","revision"]}),
         json!({"type":"object","properties":{"evidence":{"type":"object"}}}),
-        vec!["registry.arxiv.search".into()],
+        vec!["registry:arxiv.search".into()],
     );
-    snapshot(
-        "external-registries".into(),
-        descriptors,
-        if web_tool.is_some() || github_tool.is_some() {
-            AvailabilityReason::Ready
-        } else {
-            AvailabilityReason::ProviderDisconnected
-        },
-    )
+    let reason = if web_tool.is_some() || github_tool.is_some() {
+        AvailabilityReason::Ready
+    } else {
+        AvailabilityReason::ProviderDisconnected
+    };
+    by_provider
+        .into_iter()
+        .map(|(provider, descriptors)| snapshot(provider, descriptors, reason))
+        .collect()
 }
 
 /// Convert discovered artifacts into quarantined catalog entries. Even with a
@@ -712,6 +761,8 @@ pub fn normalize_external_candidates(candidates: &[ExternalArtifactCandidate]) -
                 ],
                 permission: Permission::Read,
                 effects: vec![Effect::ReadOnly],
+                // Quarantined artifacts are evidence, never executable cells.
+                roles: Vec::new(),
                 available: false,
             }
         })
@@ -776,6 +827,14 @@ pub fn normalize_unbrowse_cache(cache_path: &Path, command_tool: Option<&str>) -
             } else {
                 (Permission::Network, vec![Effect::NetworkWrite])
             };
+            // The HTTP method declares the role: read endpoints observe
+            // world state (they can open a limb or verify its outcome);
+            // write endpoints act on the world.
+            let roles = if matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS") {
+                vec![CellRole::Receptor, CellRole::Sensor]
+            } else {
+                vec![CellRole::Executor]
+            };
             let description = bounded_description(&endpoint.description);
             let response = object_or_empty(
                 endpoint
@@ -811,6 +870,7 @@ pub fn normalize_unbrowse_cache(cache_path: &Path, command_tool: Option<&str>) -
                     requires: Vec::new(),
                     permission,
                     effects,
+                    roles,
                     available: runtime_available,
                 },
             );
@@ -1161,24 +1221,39 @@ mod tests {
             Some("Search the web"),
             json!({"type":"object"}),
         )];
-        let snapshot = discover_external_registry_snapshot(&tools);
-        assert_eq!(snapshot.source, "external-registries");
-        assert_eq!(snapshot.descriptors.len(), 4);
-        assert!(snapshot.descriptors.iter().all(|descriptor| {
-            descriptor.available
-                && descriptor.permission == Permission::Network
-                && descriptor.effects == vec![Effect::NetworkRead]
-        }));
-        let tree = snapshot
-            .descriptors
+        let snapshots = discover_external_registry_snapshots(&tools);
+        assert_eq!(
+            snapshots
+                .iter()
+                .map(|snapshot| snapshot.source.as_str())
+                .collect::<Vec<_>>(),
+            vec!["registry:arxiv", "registry:github"]
+        );
+        // Contract keys a snapshot by its provider and namespaces every id
+        // under it. Violating either rule makes the whole source unregistrable
+        // — which is invisible until routing is already gone.
+        for snapshot in &snapshots {
+            for descriptor in &snapshot.descriptors {
+                assert_eq!(descriptor.provider, snapshot.source);
+                assert!(descriptor.id.starts_with(&format!("{}.", snapshot.source)));
+                assert!(descriptor.available);
+                assert_eq!(descriptor.permission, Permission::Network);
+                assert_eq!(descriptor.effects, vec![Effect::NetworkRead]);
+            }
+        }
+        let descriptors = snapshots
             .iter()
-            .find(|descriptor| descriptor.id == "registry.github.traverse_tree")
+            .flat_map(|snapshot| snapshot.descriptors.iter())
+            .collect::<Vec<_>>();
+        assert_eq!(descriptors.len(), 4);
+        let tree = descriptors
+            .iter()
+            .find(|descriptor| descriptor.id == "registry:github.traverse_tree")
             .expect("GitHub traversal receptor");
-        assert_eq!(tree.requires, vec!["registry.github.search"]);
-        let paper = snapshot
-            .descriptors
+        assert_eq!(tree.requires, vec!["registry:github.search"]);
+        let paper = descriptors
             .iter()
-            .find(|descriptor| descriptor.id == "registry.arxiv.read")
+            .find(|descriptor| descriptor.id == "registry:arxiv.read")
             .expect("arXiv evidence receptor");
         assert!(paper.description.contains("evidence"));
     }
@@ -1289,6 +1364,7 @@ mod tests {
             requires: vec![],
             permission: Permission::Network,
             effects: vec![Effect::NetworkRead],
+            roles: vec![CellRole::Receptor],
             available: true,
         };
         let candidate = collective_candidate(

@@ -639,6 +639,10 @@ fn open_gap_at(
     Ok(gap)
 }
 
+/// The role sequence a temporary limb walks. This is only a scaffold:
+/// `compose_registered_cells` keeps a cell solely when a registered
+/// capability with a matching *declared* role binds to it, so the
+/// placeholder capability names below never appear in a proposal.
 fn default_limb_cells(effects: &BTreeSet<String>) -> Vec<LimbCell> {
     let executor_effect = if effects.contains("local_write") {
         "local_write"
@@ -713,51 +717,6 @@ fn descriptor_effects(descriptor: &CapabilityDescriptor) -> BTreeSet<String> {
         .collect()
 }
 
-fn inferred_cell_roles(descriptor: &CapabilityDescriptor) -> BTreeSet<&'static str> {
-    let identity = format!(
-        "{} {} {}",
-        descriptor.id, descriptor.action, descriptor.tool
-    )
-    .to_ascii_lowercase();
-    let text = format!(
-        "{} {} {} {}",
-        descriptor.id, descriptor.action, descriptor.tool, descriptor.description
-    )
-    .to_ascii_lowercase();
-    let mut roles = BTreeSet::new();
-    if ["search", "read", "list", "fetch", "observe", "traverse"]
-        .iter()
-        .any(|token| text.contains(token))
-    {
-        roles.insert("receptor");
-    }
-    if ["predict", "model", "research", "paper", "evidence"]
-        .iter()
-        .any(|token| text.contains(token))
-    {
-        roles.insert("predictor");
-    }
-    if ["plan", "compose", "workflow", "design"]
-        .iter()
-        .any(|token| text.contains(token))
-    {
-        roles.insert("planner");
-    }
-    if ["execute", "invoke", "send", "write", "create", "run"]
-        .iter()
-        .any(|token| identity.contains(token))
-    {
-        roles.insert("executor");
-    }
-    if ["verify", "check", "evaluate", "test", "inspect", "evidence"]
-        .iter()
-        .any(|token| text.contains(token))
-    {
-        roles.insert("sensor");
-    }
-    roles
-}
-
 fn keyword_overlap(descriptor: &CapabilityDescriptor, hypothesis: &str) -> usize {
     let text = format!(
         "{} {} {}",
@@ -770,17 +729,24 @@ fn keyword_overlap(descriptor: &CapabilityDescriptor, hypothesis: &str) -> usize
         .count()
 }
 
-/// Replace abstract limb cells with registered, available implementations
-/// where typed effects fit inside the inherited envelope. Stable ordering and
-/// keyword score make the composition deterministic; unavailable remote
-/// artifacts can inform research but can never become executable cells.
+/// Bind limb cells to registered, available implementations whose declared
+/// roles match, where typed effects fit inside the inherited envelope.
+///
+/// v2: roles are *declared* on each capability descriptor, never inferred
+/// from name or description substrings. A scaffold role with no explicitly
+/// declared, available binding produces NO cell — abstract placeholder
+/// cells (`observe.typed-state`, `predict.relational-delta`, ...) never
+/// appear in a proposal. A partial limb (e.g. receptor → executor →
+/// sensor) is valid; the deliberate node fills the gaps. Stable ordering
+/// and keyword score keep the composition deterministic; unavailable
+/// remote artifacts can inform research but can never become cells.
 fn compose_registered_cells(
     defaults: Vec<LimbCell>,
     descriptors: &[CapabilityDescriptor],
     hypothesis: &str,
     authority: &AuthorityEnvelope,
 ) -> Vec<LimbCell> {
-    let mut composed = Vec::with_capacity(defaults.len());
+    let mut composed: Vec<LimbCell> = Vec::with_capacity(defaults.len());
     for mut cell in defaults {
         let predecessor_outputs = composed
             .last()
@@ -796,7 +762,12 @@ fn compose_registered_cells(
                     .effects
                     .is_superset(&descriptor_effects(descriptor))
             })
-            .filter(|descriptor| inferred_cell_roles(descriptor).contains(cell.role.as_str()))
+            .filter(|descriptor| {
+                descriptor
+                    .roles
+                    .iter()
+                    .any(|role| role.as_str() == cell.role)
+            })
             .filter(|descriptor| {
                 let inputs = schema_ports(&descriptor.input_schema);
                 predecessor_outputs.is_empty()
@@ -810,31 +781,30 @@ fn compose_registered_cells(
                     .cmp(&keyword_overlap(right, hypothesis))
                     .then_with(|| right.id.cmp(&left.id))
             });
-        if let Some(descriptor) = selected {
-            cell.capability = descriptor.id.clone();
-            let effects = descriptor_effects(descriptor);
-            cell.effect = effects.iter().next().cloned().unwrap_or(cell.effect);
-            cell.binding = Some(CapabilityBinding {
-                provider: descriptor.provider.clone(),
-                capability_version: descriptor.capability_version.clone(),
-                input_ports: schema_ports(&descriptor.input_schema),
-                output_ports: schema_ports(&descriptor.output_schema),
-                requires: descriptor.requires.clone(),
-            });
-        }
+        let Some(descriptor) = selected else {
+            // No declared binding: the cell is omitted from the proposal,
+            // not replaced with a placeholder or a guessed match.
+            continue;
+        };
+        cell.capability = descriptor.id.clone();
+        let effects = descriptor_effects(descriptor);
+        cell.effect = effects.iter().next().cloned().unwrap_or(cell.effect);
+        cell.binding = Some(CapabilityBinding {
+            provider: descriptor.provider.clone(),
+            capability_version: descriptor.capability_version.clone(),
+            input_ports: schema_ports(&descriptor.input_schema),
+            output_ports: schema_ports(&descriptor.output_schema),
+            requires: descriptor.requires.clone(),
+        });
+        // Rewire the chain to the nearest surviving predecessor so a
+        // partial limb never references a dropped cell's role.
+        cell.depends_on = composed
+            .last()
+            .map(|predecessor| vec![predecessor.role.clone()])
+            .unwrap_or_default();
         composed.push(cell);
     }
     composed
-}
-
-fn propose_limb_at(
-    path: &Path,
-    gap: &CapabilityGap,
-    requested_effects: BTreeSet<String>,
-    budgets: GrowthBudgets,
-    hypothesis: &str,
-) -> Result<LimbProposal, String> {
-    propose_limb_with_catalog_at(path, gap, requested_effects, budgets, hypothesis, &[])
 }
 
 fn propose_limb_with_catalog_at(
@@ -1043,21 +1013,12 @@ fn maintain_runtime_gap_at(path: &Path, gap: &CapabilityGap) {
         let mut held = gap.clone();
         held.status = GapStatus::Held;
         let _ = append_growth(path, &GrowthRecord::Gap { value: held });
-        return;
     }
-    let already_proposed = load_growth(path)
-        .proposals
-        .values()
-        .any(|proposal| proposal.gap_id == gap.gap_id);
-    if !already_proposed {
-        let _ = propose_limb_at(
-            path,
-            gap,
-            BTreeSet::from(["read_only".into()]),
-            gap.authority_ceiling.budgets.clone(),
-            "Observe and explain the failed capability without repeating its effect",
-        );
-    }
+    // v2: runtime gaps never mint proposals. Without a live catalog there
+    // are no declared-role capabilities to bind, so any proposal here
+    // would be built from abstract placeholder cells. The deliberate node
+    // handles the gap ad-hoc and `deliberate_bypass_gap` captures the
+    // working path as learning contracts.
 }
 
 pub(super) fn open_runtime_gap(
@@ -1604,6 +1565,51 @@ mod contract_learning_tests {
         }
     }
 
+    /// A capability with explicitly declared limb-cell roles (v2: roles are
+    /// declared, never inferred from names or descriptions).
+    fn declared_descriptor(
+        id: &str,
+        roles: &[&str],
+        effect: &str,
+        available: bool,
+    ) -> CapabilityDescriptor {
+        serde_json::from_value::<CapabilityDescriptor>(serde_json::json!({
+            "schema_version": 1,
+            "id": id,
+            "capability_version": "v1",
+            "provider": "test",
+            "tool": "test_tool",
+            "action": "invoke",
+            "description": format!("declared test capability {id}"),
+            "input_schema": {"type":"object"},
+            "output_schema": {"type":"object"},
+            "requires": [],
+            "permission": "read",
+            "effects": [effect],
+            "roles": roles,
+            "available": available
+        }))
+        .expect("descriptor")
+    }
+
+    /// Read-only catalog: receptor + sensor. A valid partial limb — the
+    /// deliberate node fills the predictor/planner/executor gaps.
+    fn declared_readonly_catalog() -> Vec<CapabilityDescriptor> {
+        vec![
+            declared_descriptor("test.receptor.read", &["receptor"], "read_only", true),
+            declared_descriptor("test.sensor.check", &["sensor"], "read_only", true),
+        ]
+    }
+
+    /// The canonical v2 partial limb: receptor → executor → sensor.
+    fn declared_full_catalog() -> Vec<CapabilityDescriptor> {
+        vec![
+            declared_descriptor("test.receptor.read", &["receptor"], "read_only", true),
+            declared_descriptor("test.executor.write", &["executor"], "local_write", true),
+            declared_descriptor("test.sensor.check", &["sensor"], "read_only", true),
+        ]
+    }
+
     #[test]
     fn repeated_contradictions_reject_a_family() {
         let mut item = LearningContract {
@@ -1727,9 +1733,11 @@ mod contract_learning_tests {
         let gap = state.gaps.values().next().expect("persisted gap");
         assert_eq!(gap.occurrences, 4);
         assert_eq!(gap.status, GapStatus::Held);
-        assert_eq!(state.proposals.len(), 1);
+        // v2: runtime gaps never mint proposals — without declared-role
+        // capabilities any limb would be built from placeholder cells.
+        assert!(state.proposals.is_empty());
         let raw = std::fs::read_to_string(&path).expect("ledger");
-        assert_eq!(raw.matches("\"record_type\":\"proposal\"").count(), 1);
+        assert_eq!(raw.matches("\"record_type\":\"proposal\"").count(), 0);
         let _ = std::fs::remove_file(path);
     }
 
@@ -1749,15 +1757,16 @@ mod contract_learning_tests {
             test_authority(),
         )
         .expect("gap");
-        let escalation = propose_limb_at(
+        let escalation = propose_limb_with_catalog_at(
             &path,
             &gap,
             BTreeSet::from(["network".into()]),
             GrowthBudgets::default(),
             "spawn an ungoverned network limb",
+            &declared_readonly_catalog(),
         );
         assert!(escalation.is_err());
-        let oversized = propose_limb_at(
+        let oversized = propose_limb_with_catalog_at(
             &path,
             &gap,
             BTreeSet::from(["read_only".into()]),
@@ -1766,6 +1775,7 @@ mod contract_learning_tests {
                 ..GrowthBudgets::default()
             },
             "run forever",
+            &declared_readonly_catalog(),
         );
         assert!(oversized.is_err());
         let _ = std::fs::remove_file(path);
@@ -1787,12 +1797,13 @@ mod contract_learning_tests {
             test_authority(),
         )
         .expect("gap");
-        let proposal = propose_limb_at(
+        let proposal = propose_limb_with_catalog_at(
             &path,
             &gap,
             BTreeSet::from(["read_only".into()]),
             GrowthBudgets::default(),
             "memorize the training episode",
+            &declared_readonly_catalog(),
         )
         .expect("proposal");
         let mut overfit = promotion_evidence();
@@ -1828,21 +1839,39 @@ mod contract_learning_tests {
             test_authority(),
         )
         .expect("gap");
-        let proposal = propose_limb_at(
+        let proposal = propose_limb_with_catalog_at(
             &path,
             &gap,
             BTreeSet::from(["read_only".into(), "local_write".into()]),
             GrowthBudgets::default(),
             "track selected objects and predict relational action deltas",
+            &declared_full_catalog(),
         )
         .expect("bounded proposal");
+        // v2: a partial limb of declared, bound cells. The predictor and
+        // planner gaps are left for the deliberate node — placeholder
+        // cells never appear in a proposal.
         assert_eq!(
             proposal
                 .cells
                 .iter()
                 .map(|cell| cell.role.as_str())
                 .collect::<Vec<_>>(),
-            vec!["receptor", "predictor", "planner", "executor", "sensor"]
+            vec!["receptor", "executor", "sensor"]
+        );
+        assert!(
+            proposal
+                .cells
+                .iter()
+                .all(|cell| cell.binding.is_some())
+        );
+        assert_eq!(
+            proposal
+                .cells
+                .iter()
+                .map(|cell| cell.depends_on.clone())
+                .collect::<Vec<_>>(),
+            vec![Vec::<String>::new(), vec!["receptor".into()], vec!["executor".into()]]
         );
         assert!(!proposal.rollback.is_empty());
         let far = SemanticRelation {
@@ -1899,6 +1928,9 @@ mod contract_learning_tests {
         assert!(persisted.contains("\"record_type\":\"decision\""));
         assert!(!persisted.contains("\"x\":"));
         assert!(!persisted.contains("\"y\":"));
+        // No abstract placeholder capabilities survive composition.
+        assert!(!persisted.contains("observe.typed-state"));
+        assert!(!persisted.contains("predict.relational-delta"));
         let _ = std::fs::remove_file(path);
     }
 
@@ -1923,19 +1955,23 @@ mod contract_learning_tests {
             authority,
         )
         .expect("gap");
-        let proposal = propose_limb_at(
+        let proposal = propose_limb_with_catalog_at(
             &path,
             &gap,
             BTreeSet::from(["read_only".into()]),
             GrowthBudgets::default(),
             "observe an unknown surface safely",
+            &declared_readonly_catalog(),
         )
         .expect("proposal");
 
         let context = render_growth_context_at(&path, cwd).expect("growth context");
         assert!(context.contains(&proposal.proposal_id));
-        assert!(context.contains("receptor:observe.typed-state"));
-        assert!(context.contains("executor:simulate.bounded-action"));
+        // The prompt shows real, declared bindings — never placeholders.
+        assert!(context.contains("receptor:test.receptor.read"));
+        assert!(context.contains("sensor:test.sensor.check"));
+        assert!(!context.contains("observe.typed-state"));
+        assert!(!context.contains("simulate.bounded-action"));
         assert!(context.contains(&proposal.rollback));
         assert!(context.contains("effects=read_only"));
         assert!(context.contains("hypothesis=\"observe an unknown surface safely\""));
@@ -1963,6 +1999,8 @@ mod contract_learning_tests {
             authority,
         )
         .expect("gap");
+        // Both descriptors declare the receptor role explicitly; the
+        // quarantined one is excluded by availability, not by role absence.
         let descriptor = |id: &str, description: &str, available: bool| {
             serde_json::from_value::<CapabilityDescriptor>(serde_json::json!({
                 "schema_version": 1,
@@ -1977,6 +2015,7 @@ mod contract_learning_tests {
                 "requires": [],
                 "permission": "network",
                 "effects": ["network_read"],
+                "roles": ["receptor"],
                 "available": available
             }))
             .expect("descriptor")
@@ -1997,20 +2036,31 @@ mod contract_learning_tests {
             BTreeSet::from(["read_only".into(), "network_read".into()]),
             GrowthBudgets::default(),
             "find a GitHub sensor library before generating glue",
-            &[quarantined, registered],
+            &[
+                quarantined,
+                registered,
+                declared_descriptor("test.sensor.check", &["sensor"], "read_only", true),
+            ],
         )
         .expect("composed proposal");
-        assert!(
+        // Declared roles only: the search capability fills the receptor
+        // cell it declared, and nothing else — under substring matching it
+        // also posed as the "sensor" because its description contained the
+        // word. Undeclared scaffold roles produce no cell at all.
+        assert_eq!(
             proposal
                 .cells
                 .iter()
-                .any(|cell| cell.capability == "registry.github.search")
+                .map(|cell| cell.role.as_str())
+                .collect::<Vec<_>>(),
+            vec!["receptor", "sensor"]
         );
         let github_cell = proposal
             .cells
             .iter()
             .find(|cell| cell.capability == "registry.github.search")
             .expect("registered GitHub cell");
+        assert_eq!(github_cell.role, "receptor");
         assert_eq!(
             github_cell
                 .binding
@@ -2019,12 +2069,22 @@ mod contract_learning_tests {
                 .provider,
             "registry:github"
         );
+        assert_eq!(
+            proposal
+                .cells
+                .iter()
+                .find(|cell| cell.role == "sensor")
+                .expect("sensor cell")
+                .capability,
+            "test.sensor.check"
+        );
         assert!(
             proposal
                 .cells
                 .iter()
                 .all(|cell| cell.capability != "artifact:github.unverified.inspect")
         );
+        assert!(proposal.cells.iter().all(|cell| cell.binding.is_some()));
         assert!(proposal.effects.is_subset(&gap.authority_ceiling.effects));
         let read_only_cells = compose_registered_cells(
             default_limb_cells(&BTreeSet::from(["read_only".into()])),
@@ -2040,9 +2100,7 @@ mod contract_learning_tests {
             },
         );
         assert!(
-            read_only_cells
-                .iter()
-                .all(|cell| cell.capability != "registry.github.search"),
+            read_only_cells.is_empty(),
             "network discovery must not expand a read-only parent envelope"
         );
         let _ = std::fs::remove_file(path);
@@ -2166,12 +2224,13 @@ mod contract_learning_tests {
             test_authority(),
         )
         .expect("gap");
-        let proposal = propose_limb_at(
+        let proposal = propose_limb_with_catalog_at(
             &path,
             &gap,
             BTreeSet::from(["read_only".into()]),
             GrowthBudgets::default(),
             "test limb",
+            &declared_readonly_catalog(),
         )
         .expect("proposal");
         kill_limb(&path, &proposal.proposal_id).expect("killed");
@@ -2311,20 +2370,22 @@ mod contract_learning_tests {
             test_authority(),
         )
         .expect("gap");
-        let p1 = propose_limb_at(
+        let p1 = propose_limb_with_catalog_at(
             &path,
             &gap,
             BTreeSet::from(["read_only".into()]),
             GrowthBudgets::default(),
             "explore broadly",
+            &declared_readonly_catalog(),
         )
         .expect("p1");
-        let p2 = propose_limb_at(
+        let p2 = propose_limb_with_catalog_at(
             &path,
             &gap,
             BTreeSet::from(["read_only".into()]),
             GrowthBudgets::default(),
             "target specific action",
+            &declared_readonly_catalog(),
         )
         .expect("p2");
         // Promote p1 → Verified tier.
