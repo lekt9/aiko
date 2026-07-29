@@ -294,7 +294,11 @@ fn payShWrite(allocator: std.mem.Allocator, svc: []const u8, value: []const u8) 
     var cmd_buf: [4608]u8 = undefined;
     const cmd = try std.fmt.bufPrintZ(
         &cmd_buf,
-        "printf '%s' '{s}' | {s}\"{s}/.cache/pay/pay.sh\" store {s} 2>/dev/null",
+        // stdout MUST be discarded, not inherited: pay.sh prints "OK" after a
+        // store, and an inherited fd 1 corrupts any framed protocol stream the
+        // caller owns (observed 2026-07-29: `zig build test` server mode
+        // deadlocked — "OK\n" in the test-results frame desynced the runner).
+        "printf '%s' '{s}' | {s}\"{s}/.cache/pay/pay.sh\" store {s} >/dev/null 2>/dev/null",
         .{ value, payTimeoutPrefix(), home, svc },
     );
     const rc = system(cmd.ptr);
