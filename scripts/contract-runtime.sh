@@ -6,7 +6,11 @@ DEFAULT_CONTRACT_REPO=$(CDPATH= cd -- "$AIKO_ROOT/.." && pwd)/contract
 CONTRACT_REPO=${AIKO_CONTRACT_REPO:-"$DEFAULT_CONTRACT_REPO"}
 CONTRACT_ROOT="$CONTRACT_REPO/libcontract"
 TYPED_NEURON_ROOT="$CONTRACT_REPO/../neuron"
-CONTRACT_DYLIB="$CONTRACT_ROOT/zig-out/lib/libcontract.dylib"
+case "$(uname -s)" in
+    Darwin) CONTRACT_DYLIB="$CONTRACT_ROOT/zig-out/lib/libcontract.dylib" ;;
+    Linux) CONTRACT_DYLIB="$CONTRACT_ROOT/zig-out/lib/libcontract.so" ;;
+    *) CONTRACT_DYLIB="$CONTRACT_ROOT/zig-out/lib/libcontract.dylib" ;;
+esac
 AIKO_PROFILE=${AIKO_BUILD_PROFILE:-release}
 AIKO_TARGET_DIR=${AIKO_CARGO_TARGET_DIR:-"$AIKO_ROOT/target"}
 PACKAGE_ROOT="$AIKO_ROOT/target/aiko-package"
@@ -186,9 +190,9 @@ package_runtime() {
         cp "$AIKO_ROOT/sdk/registry/setup.sh" "$DEST/sdk/registry/"
         cp "$AIKO_ROOT/sdk/registry/versions.lock" "$DEST/sdk/registry/"
         cp "$AIKO_ROOT/sdk/registry/package.json" "$DEST/sdk/registry/"
-        install -m 755 "$DEST/sdk/registry/setup.sh"
-        install -m 755 "$DEST/sdk/registry/bin/aiko-install"
-        install -m 755 "$DEST/sdk/registry/bin/aiko-publish"
+        chmod 755 "$DEST/sdk/registry/setup.sh"
+        chmod 755 "$DEST/sdk/registry/bin/aiko-install"
+        chmod 755 "$DEST/sdk/registry/bin/aiko-publish"
     fi
     for SKILL_DIR in "$AIKO_ROOT"/.agents/skills/*; do
         if [ -f "$SKILL_DIR/contract-skill.json" ]; then

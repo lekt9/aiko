@@ -146,12 +146,22 @@ impl SandboxManager {
     /// Degrades gracefully if the platform doesn't support it.
     #[cfg(all(feature = "enforce", unix))]
     pub fn apply(&mut self, workspace: &Path) -> anyhow::Result<()> {
+        self.apply_with_read_only(workspace, &[])
+    }
+    /// Apply the sandbox while granting additional, explicit read-only roots.
+    #[cfg(all(feature = "enforce", unix))]
+    pub fn apply_with_read_only(
+        &mut self,
+        workspace: &Path,
+        read_only: &[std::path::PathBuf],
+    ) -> anyhow::Result<()> {
         if self.profile == ProfileName::Off {
             tracing::info!("Sandbox disabled (profile: off)");
             return Ok(());
         }
         let config = profiles::load_sandbox_config(workspace);
         let mut resolved = self.profile.resolve_profile(workspace, &config)?;
+        resolved.read_only.extend(read_only.iter().cloned());
         self.net_restricted = resolved.restrict_network;
         let support = Sandbox::support_info();
         if !support.is_supported {
@@ -205,6 +215,15 @@ impl SandboxManager {
             "Sandbox enforcement unavailable (built without 'enforce' feature)"
         );
         Ok(())
+    }
+    /// Stub when `enforce` is unavailable.
+    #[cfg(not(all(feature = "enforce", unix)))]
+    pub fn apply_with_read_only(
+        &mut self,
+        workspace: &Path,
+        _read_only: &[std::path::PathBuf],
+    ) -> anyhow::Result<()> {
+        self.apply(workspace)
     }
     /// Store globally for session-lifetime violation logging.
     pub fn install(self) {
