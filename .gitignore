@@ -1,0 +1,27 @@
+# Monorepo-wide artifact exclusions
+node_modules/
+dist/
+build/
+target/
+zig-out/
+zig-cache/
+.zig-cache/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Benchmark & run artifacts
+**/benchmarks/harbor/
+**/benchmarks/agentic-organism/
+**/benchmarks/task-benchmark/
+**/benchmarks/tools/
+**/runs/
+**/traces/
+**/tmp/
+
+# Local agent/session state
+.grok/
+.graff/
+.hallmark/
+.DS_Store
