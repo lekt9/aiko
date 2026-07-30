@@ -187,6 +187,9 @@ pub fn stageStimulus(allocator: Allocator, root: std.json.Value, substrate: *sub
         if (v == .integer) stimulus.deadline_ms = @intCast(v.integer);
     }
     if (jsonInt(root, "depth")) |v| stimulus.depth = @intCast(v);
+    // The firing's own attested address. An operator-supplied stimulus that
+    // omits it produces a neuron that can send but cannot be answered.
+    if (jsonString(root, "self_ref")) |v| stimulus.self_ref = v;
 
     var permitted: std.ArrayList([]const u8) = .empty;
     if (root.object.get("permitted_reads")) |value| {
@@ -227,11 +230,18 @@ pub fn stageStimulus(allocator: Allocator, root: std.json.Value, substrate: *sub
         if (value != .array) return error.InvalidStimulus;
         for (value.array.items) |item| {
             if (item != .object) return error.InvalidStimulus;
+            // An inbound message may carry the attested envelope it was
+            // committed with, which is what confers reply authority on this
+            // firing. Absent fields mean a one-way message: nothing to answer.
             try messages.append(allocator, .{
                 .to = jsonString(item, "to") orelse return error.InvalidStimulus,
                 .schema = jsonString(item, "schema") orelse return error.InvalidStimulus,
                 .payload = jsonString(item, "payload") orelse return error.InvalidStimulus,
                 .durable = if (item.object.get("durable")) |v| v == .bool and v.bool else true,
+                .from = jsonString(item, "from") orelse "",
+                .correlation = jsonString(item, "correlation") orelse "",
+                .reply_to = jsonString(item, "reply_to") orelse "",
+                .turn = if (jsonInt(item, "turn")) |v| @intCast(v) else 0,
             });
         }
     }
@@ -310,7 +320,7 @@ fn readStdin(allocator: Allocator, io: std.Io) ![]u8 {
 
 pub fn printSummary(summary: Summary, json: bool, io: std.Io) !void {
     var out_buffer: [1024]u8 = undefined;
-    var writer = std.Io.File.stdout().writer(io, &out_buffer);
+    var writer = std.Io.File.stdout().writerStreaming(io, &out_buffer);
     if (json) {
         try writer.interface.print(
             "{{\"status\":\"committed\",\"firing_id\":\"{s}\",\"neuron\":\"{s}\",\"effects_committed\":{d},\"duplicates_skipped\":{d},\"artifacts\":{d},\"messages\":{d},\"neurons\":{d},\"digest\":\"{x}\"",

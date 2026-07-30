@@ -33,11 +33,25 @@ pub const PumpResult = struct {
     quiescent: bool,
 };
 
+/// The reserved predicate namespace for conversations: a neuron that returns
+/// `continue` on `reply/<correlation>` is not waiting for an artifact, it is
+/// waiting for an answer. The pump wakes it with the reply itself pinned into
+/// the stimulus, and holds unrelated traffic meanwhile so one conversation
+/// cannot be interrupted by another (§10).
+pub const REPLY_PREDICATE_PREFIX = "reply/";
+
 const Waiter = struct {
     predicate: []const u8,
     caps: caps_mod.Caps,
     receptor_schema: []const u8,
     depth: u8,
+
+    /// The correlation this waiter is parked on, or null for an ordinary
+    /// artifact predicate.
+    fn awaitedCorrelation(self: Waiter) ?[]const u8 {
+        if (!std.mem.startsWith(u8, self.predicate, REPLY_PREDICATE_PREFIX)) return null;
+        return self.predicate[REPLY_PREDICATE_PREFIX.len..];
+    }
 };
 
 /// An archetype constructor for spawned neurons. A spawn effect records only
@@ -179,6 +193,23 @@ pub const Pump = struct {
         stimulus: types.Stimulus,
         caps: caps_mod.Caps,
     ) !PumpResult {
+        var seed = stimulus;
+        if (seed.self_ref.len == 0) seed.self_ref = try self.selfRef(start_ref);
+        return self.drive(.{ .ref = start_ref, .stimulus = seed, .caps = caps });
+    }
+
+    /// Re-check parked predicates with no new seed stimulus.
+    ///
+    /// A waiter is woken by evidence, and evidence can appear from outside this
+    /// pump — a harness that dispatched a committed outbox record, another
+    /// process, a restart. Re-seeding the parked neuron to make it notice would
+    /// be an evidence-free re-entry, which the cycle guard rightly rejects; so
+    /// the pump exposes the wake pass itself instead (§26).
+    pub fn resumeWaiters(self: *Pump) !PumpResult {
+        return self.drive(null);
+    }
+
+    fn drive(self: *Pump, seed: ?WorkItem) !PumpResult {
         const allocator = self.arena.allocator();
         var worklist: std.ArrayList(WorkItem) = .empty;
         var settled: std.ArrayList([]const u8) = .empty;
@@ -187,7 +218,12 @@ pub const Pump = struct {
         var quiescent = true;
         var inflight = std.AutoHashMap(usize, void).init(self.scheduler.runtime.substrate.allocator);
         defer inflight.deinit();
-        try worklist.append(allocator, .{ .ref = start_ref, .stimulus = stimulus, .caps = caps });
+        if (seed) |item| {
+            try worklist.append(allocator, item);
+        } else {
+            try self.wakeReadyWaiters(allocator, &worklist);
+            try self.deliverMessages(allocator, &worklist, &inflight);
+        }
         while (worklist.pop()) |item| {
             if (steps >= self.max_steps) {
                 quiescent = false;
@@ -221,6 +257,7 @@ pub const Pump = struct {
                     .stimulus = .{
                         .firing_id = try self.firingId(),
                         .receptor_schema = item.stimulus.receptor_schema,
+                        .self_ref = try self.selfRef(target),
                     },
                     .caps = item.caps,
                 }),
@@ -265,6 +302,9 @@ pub const Pump = struct {
         var woken: std.ArrayList([]const u8) = .empty;
         var iterator = self.waiters.iterator();
         while (iterator.next()) |entry| {
+            // Conversation waiters are woken by their reply, never by an
+            // artifact that happens to share the reserved name.
+            if (entry.value_ptr.awaitedCorrelation() != null) continue;
             const artifact = substrate.artifacts.get(entry.value_ptr.predicate) orelse continue;
             const permitted = try allocator.alloc([]const u8, 1);
             permitted[0] = entry.value_ptr.predicate;
@@ -275,6 +315,7 @@ pub const Pump = struct {
                 .stimulus = .{
                     .firing_id = try self.firingId(),
                     .receptor_schema = entry.value_ptr.receptor_schema,
+                    .self_ref = try self.selfRef(entry.key_ptr.*),
                     .permitted_reads = permitted,
                     .reads = reads,
                     .depth = entry.value_ptr.depth,
@@ -305,6 +346,15 @@ pub const Pump = struct {
             if (std.mem.startsWith(u8, message.to, "neuron/")) {
                 ref = message.to["neuron/".len..];
                 if (!self.scheduler.registry.contains(ref)) continue;
+                // A neuron parked on a conversation takes its own reply and
+                // nothing else: other traffic stays queued until it unparks,
+                // so an unrelated message cannot silently discard the park.
+                if (self.waiters.get(ref)) |waiter| {
+                    if (waiter.awaitedCorrelation()) |awaited| {
+                        if (!std.mem.eql(u8, awaited, message.correlation)) continue;
+                        _ = self.waiters.remove(ref);
+                    }
+                }
                 caps = self.attached.get(ref) orelse self.default_caps;
             } else if (std.mem.startsWith(u8, message.to, "event/")) {
                 const route = self.findEventRoute(message.schema) orelse continue;
@@ -320,6 +370,13 @@ pub const Pump = struct {
                 .schema = message.schema,
                 .payload = message.payload,
                 .durable = message.durable,
+                // The attested envelope travels with the message: this is what
+                // lets the recipient answer without knowing the sender in
+                // advance, and what the valve checks a reply against.
+                .from = message.from,
+                .correlation = message.correlation,
+                .reply_to = message.reply_to,
+                .turn = message.turn,
             };
             var permitted: std.ArrayList([]const u8) = .empty;
             var reads: std.ArrayList(types.ArtifactRef) = .empty;
@@ -334,6 +391,7 @@ pub const Pump = struct {
                 .stimulus = .{
                     .firing_id = try self.firingId(),
                     .receptor_schema = message.schema,
+                    .self_ref = try self.selfRef(ref),
                     .permitted_reads = permitted.items,
                     .reads = reads.items,
                     .messages = envelope,
@@ -344,6 +402,13 @@ pub const Pump = struct {
             });
             try inflight.put(index, {});
         }
+    }
+
+    /// The address a firing is stamped with and answered on. Every neuron the
+    /// pump dispatches is addressable, so any message it sends can be replied
+    /// to — bidirectionality is a property of the network, not an opt-in.
+    fn selfRef(self: *Pump, ref: []const u8) ![]const u8 {
+        return std.fmt.allocPrint(self.arena.allocator(), "neuron/{s}", .{ref});
     }
 
     fn findEventRoute(self: *const Pump, schema: []const u8) ?EventRoute {

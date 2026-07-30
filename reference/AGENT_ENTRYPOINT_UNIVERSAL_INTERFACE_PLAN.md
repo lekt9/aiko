@@ -1,9 +1,11 @@
 # Neuron Agent Entrypoint and Universal Interface Plan
 
-Status: implementation plan; Phase 1 (standalone agent bootstrap) is implemented and
-witnessed by `bash tests/agent-entrypoint-gate.sh` as of 2026-07-29; commands and
-schemas marked **target** in later phases do not exist yet  
-Version: 0.2  
+Status: implementation plan; Phase 1 (standalone agent bootstrap) and Phase 2
+(local universal interface membrane) are implemented and witnessed by
+`bash tests/agent-entrypoint-gate.sh` and `bash tests/universal-interface-gate.sh`
+as of 2026-07-29; commands and schemas marked **target** in later phases do not
+exist yet  
+Version: 0.3  
 Date: 2026-07-29  
 Scope: standalone Neuron package, optional Contract durability, optional Aiko host
 
@@ -245,12 +247,14 @@ neuron agent expose <node_dir> <agent_id> \
 ```
 
 Implemented as of 2026-07-29: `neuron agent init|run|inspect|cancel|retire`
-(Phase 1; `neuron agent run` currently takes `--goal` plus `--budget` with the
-acceptance predicate fixed to the deterministic reference verifier, and
-`expose` remains target). Every `neuron interface ...` verb parses and fails
-closed as NotImplemented. The existing `neuron run`, `neuron limb ...`,
-`neuron mcp`, and `neuron node ...` commands are implementation material to
-reuse, not parallel paths to retain indefinitely.
+(Phase 1) and `neuron interface discover|describe|test|admit|attach|detach|
+revoke|call|dispatch|list` (Phase 2). `neuron agent run` takes `--goal`,
+`--budget`, and `--acceptance <predicate.json>`; the predicate is required when
+an attached worker interface declares itself non-deterministic, since such a
+product cannot be verified by repetition. `neuron agent expose` remains target.
+The existing `neuron run`, `neuron limb ...`, `neuron mcp`, and `neuron node
+...` commands are implementation material to reuse, not parallel paths to
+retain indefinitely.
 
 ## 7. Agent Execution
 
@@ -450,16 +454,49 @@ directory, initialize an agent, solve a deterministic goal, restart,
 reconstruct the same snapshot, replay without duplicate effects (byte-identical
 WAL), cancel another goal, and retire the agent.
 
-### Phase 2 — Local universal interfaces
+### Phase 2 — Local universal interfaces — **implemented 2026-07-29**
 
-- Unify existing script, limb, and binary paths under `InterfaceManifest`.
-- Add pure-function, library/WASM, process, filesystem, and database adapters.
-- Implement discovery, description, sandbox tests, admission, attachment, and
-  detachment.
+- `InterfaceManifest` as `neuron.interface-manifest/v1`, parsed and fully
+  validated in `src/membrane.zig`. ✓
+- Pure-function, process, and filesystem adapters. ✓ The pure-function kind is
+  a total op pipeline whose canonical text *is* the pinned code digest;
+  process is a bounded argv/stdin/stdout/exit boundary with an enforced
+  deadline and output ceiling; filesystem is a path-confined store with
+  content-addressed writes.
+- `neuron interface discover|describe|test|admit|attach|detach|revoke|call|
+  dispatch|list`, in `src/membrane_ops.zig`. ✓ Discovery and description write
+  nothing; admission re-pins the implementation and re-runs the adversarial
+  battery itself rather than trusting a prior `interface test`.
+- Read/command classification enforced structurally: `invokeRead` refuses a
+  command manifest, so relabelling a mutation cannot bypass the outbox. ✓
+- Attachment derives a least-authority grant (`agents/<id>/work/`, no spawn,
+  budgets clamped to the interface ceiling) instead of adopting the one the
+  manifest asked for. ✓
+- The agent's work slot routes through an attached `worker` interface, and a
+  judged product crosses an attached `effector` boundary through the outbox
+  before the snapshot advances. ✓ `neuron agent run --acceptance` supplies the
+  explicit predicate a non-deterministic boundary requires.
 
-Witness: compose a pure function, an admitted test binary, and a local store;
-reject an untyped binary, argv injection, capability widening, timeout, and
-digest drift.
+Witness — implemented as `bash tests/universal-interface-gate.sh`: a pure
+function, an admitted test binary, and a local store are described, tested,
+admitted, and used through one membrane; an untyped binary, argv injection, a
+locator/argv0 mismatch, capability widening, a mislabelled kind, a missed
+deadline, a path traversal, a symlink escape, and digest drift are each
+rejected with zero commits; a command commits to the outbox before it crosses,
+is reconciled by independent read-back, and does not duplicate on retry; a real
+agent goal is performed by a real boundary and independently reproduced before
+settlement; revocation and detachment stop new calls while the audit survives
+compaction.
+
+Not in this phase, and still open: library/WASM and database adapters, and
+process *commands*. A process mutation has no independent local sensor to
+reconcile against, so `mode: "command"` is admitted for the filesystem kind
+only and fails closed as `UnverifiableCommand` elsewhere until Phase 3 brings
+real sensors. Multi-hop chaining of several boundaries within one goal is
+Phase 3; the Phase 2 agent has one `worker` and one `effector` slot. The
+existing script/limb path is not yet unified under `InterfaceManifest` — both
+membranes admit by digest and run through the same valve, but a limb package is
+still described by `typed-neuron.limb-manifest/v1`.
 
 ### Phase 3 — Protocol and remote interfaces
 
@@ -473,7 +510,7 @@ Witness: one goal chains local code → process → HTTP → MCP → verifier; a
 duplicate request does not duplicate effects and a poisoned response fails
 closed.
 
-### Phase 4 — Models, devices, and humans
+### Phase 4 — Models, devices, and humans — **implemented 2026-07-30**
 
 - Model adapters become ordinary interface capabilities with exact provider,
   model, tokenizer/protocol, cost, and nondeterministic-input provenance.
@@ -484,7 +521,32 @@ Witness: swap two compatible model providers without topology changes; require
 human approval before a simulated actuator; prove model output and human input
 remain untrusted evidence until validation.
 
-### Phase 5 — Optional economic adapters
+Implemented as three kinds on the existing membrane, so no new transport was
+invented: `model` pins its *contract* like `http` — with provider, model,
+protocol, and cost inside the pin, which is what makes a provider swap a
+different admitted interface rather than a silent substitution; `device` splits
+`sensor` (read) from `actuator` (content-addressed command with an independent
+state read-back); `human` is a typed decision document read out of an inbox.
+
+Two properties are structural rather than advisory:
+
+- **Nondeterminism cannot be disclaimed.** `Kind.nondeterministic()` covers
+  model and human, and a manifest claiming `deterministic` is refused with
+  `InterfaceNondeterminismClaim` — because verification-by-second-invocation,
+  the settlement every deterministic boundary relies on, is unavailable to a
+  boundary that samples. Their answers settle only against the caller's
+  acceptance predicate, and the manifest records that in `settlement`.
+- **An actuator cannot move without a human.** The gate is enforced on the
+  dispatch path *before* the boundary is crossed. A missing decision parks as
+  `InterfaceApprovalMissing` (retryable — a human may still answer), a refusal
+  is `InterfaceApprovalDenied` (permanent), a decision naming different bytes
+  is `InterfaceApprovalMalformed`, and a gate that is not a human approval
+  boundary is `InterfaceSafetyGateMissing`. Silence is never consent.
+
+Witness: `bash tests/model-device-human-interface-gate.sh` (mutation-proven —
+disabling the dispatch-path approval check turns the gate red).
+
+### Phase 5 — Optional economic adapters — **implemented 2026-07-30**
 
 - Add economics as an optional interface profile.
 - Implement quote and spending-policy schemas.
@@ -499,7 +561,38 @@ over-budget and unapproved calls never sign; resource correctness is judged
 separately from payment success. An optional testnet witness may supplement,
 not replace, the deterministic local gate.
 
-### Phase 6 — Automatic interface morphogenesis
+Economics is a *profile*, not a kind: `economics: none | x402` sits on an
+ordinary `http` or `model` manifest and defaults to `none`, so an omitted
+profile can never authorize spending. The order of the paid flow is the whole
+safety property — **challenge → decode → govern → approve → sign → retry** —
+and every refusal happens before the adapter is reached, so an over-budget or
+unapproved call provably cannot have signed anything.
+
+- **The core never signs.** `governSpend` is a pure decision over declared
+  numbers that performs no I/O; the signature comes from an admitted adapter
+  invoked through the ordinary read path (plan §10, "keys never enter Neuron
+  data"). Refusals are typed: `InterfacePaymentUnaffordable`,
+  `InterfacePaymentUnacceptable`, `InterfacePaymentUnapproved`,
+  `InterfacePaymentQuoteInvalid`, `InterfacePaymentProfileIncomplete`.
+- **The policy is the operator's, never the resource's.** It lives at
+  `interfaces/policy/spending` as a durable node artifact installed by
+  `neuron interface policy`, so the boundary being paid cannot state what it
+  may charge. Cumulative spend is recomputed from the durable payment receipts
+  rather than held in a counter, so a restart cannot reset a budget.
+- **Idempotency is a stored proof, not a flag.** A repeated call finds the
+  prior payment receipt and re-presents the same payload instead of buying a
+  second quote — one receipt, one signature, one charge at the far end.
+- **Payment ≠ correctness.** The payment receipt is committed in its own firing,
+  separate from the resource result, and a rejected proof
+  (`InterfacePaymentProofRejected`) is a distinct condition from a challenge.
+- A 402 answer to an unpaid admission probe is recorded as `payment-challenged`
+  and passes: admission must never require paying.
+
+Witness: `bash tests/paid-interface-gate.sh` (mutation-proven — disabling the
+governor's asset check makes it pay for a disallowed asset and turns the gate
+red).
+
+### Phase 6 — Automatic interface morphogenesis — **implemented 2026-07-30**
 
 - Registry Neurons consume typed CapabilityGaps and PatternRecords.
 - Search admitted interfaces before external discovery.
@@ -511,7 +604,45 @@ Witness: begin with no compatible adapter, discover a test interface, generate
 and admit its adapter, attach it without restart, resolve the original goal,
 reuse it on the second goal, then revoke/detach it and preserve audit.
 
-### Phase 7 — Multi-machine interface swarm
+Implemented in `src/morphogenesis.zig` behind
+`neuron interface resolve-gap <node_dir> <agent> --gap <gap.json>`. A typed
+`neuron.capability-gap/v1` goes in; an admitted, attached, and *verified* edge
+comes out — or nothing does.
+
+**"Generate" means deriving a complete, inert adapter manifest for a discovered
+boundary, not synthesizing code.** A synthesized implementation could not be
+pinned to bytes that existed before the pin, which is the property every
+admission depends on. How a boundary takes its input is part of its contract and
+cannot be read off its name (§9 forbids inventing schemas from names), so it is
+established by **bounded experiment**: each admissible input shape is drafted as
+an inert artifact, and the one kept is the one that both passes the contract +
+adversarial battery and actually satisfies the gap.
+
+Three refusals are structural:
+
+- **Reuse is searched before discovery**, ranked by accumulated verified
+  successes, so a boundary that has actually worked is preferred over one that
+  merely type-matches. Generating an adapter for a capability the node already
+  holds is a defect, not an optimization.
+- **Nothing is retained on compilation alone.** A candidate that admits and
+  attaches but fails the gap on the real path is revoked and detached
+  (`GeneratedAdapterRetired`). Admission is not success.
+- **Rankings are learned only from verified results.** A `PatternRecord` is
+  written *after* the real-path retry succeeds, never before, so a boundary that
+  never worked cannot train the ranking. A gap with no acceptance is
+  unfalsifiable and is refused (`InvalidCapabilityGap`) rather than trivially
+  resolved.
+
+The generated edge never inherits the generator's authority: `attachCore`
+computes the grant, scoped to `agents/<agent>/work/` with no spawn and — for a
+`worker`, which is a capability read — no send.
+
+Witness: `bash tests/interface-morphogenesis-gate.sh` (mutation-proven in two
+directions — disabling the reuse search, and skipping the real-path judgement,
+each turn the gate red; the second makes a regressing boundary be retained and
+reported `verified: true`, which is exactly the failure §9 forbids).
+
+### Phase 7 — Multi-machine interface swarm — **implemented 2026-07-30**
 
 - Advertise admitted interface digests through NodeClaims.
 - Negotiate EdgeContracts under per-peer Caps.
@@ -521,6 +652,40 @@ reuse it on the second goal, then revoke/detach it and preserve audit.
 Witness: two installed nodes expose different interface kinds, construct one
 cross-machine agent chain, survive one node restart, reject a widened edge,
 expire a lease, reconcile, and settle without a global-memory claim.
+
+Implemented in `src/swarm.zig` (types and the pure eligibility decision) and
+`src/swarm_ops.zig` (`neuron swarm negotiate|route|reconcile|revoke`), over the
+existing framed `neuron.wire/v1` federation rather than a second protocol. Two
+read refs were added to the node: `mesh/claims` and `mesh/interface-call`.
+
+Serving them required one wire change: a response may now carry a `reply`. It is
+additive — a ref that commits and returns nothing answers with the unchanged
+commit summary, so `swarm-package-gate.sh`'s exact-equality assertion still
+holds. Only capability **reads** are advertised across a machine boundary: a
+peer edge does not confer this node's outbox.
+
+Three properties are structural:
+
+- **Hard eligibility is a gate, not a ranking.** `eligible` checks membership in
+  the peer's *live* claim, the lease, and the caps. An ineligible peer is
+  excluded outright — energy and cost may only reorder what already passed.
+- **A widened edge is refused, never clamped.** Silent narrowing would leave a
+  caller believing it holds authority it does not. The peer's declared ceiling
+  is consulted independently of the local one.
+- **No global memory.** A contract records what this node *observed* of a peer;
+  every route re-reads the claim, so an interface the peer retires stops being
+  routable without this node being told. A partition is recorded as a state
+  (`ConnectionRefused`) rather than assumed away, and an expired lease is a
+  distinct status from an unreachable peer. The peer's reported output digest
+  becomes evidence only by agreeing with one recomputed locally over the bytes
+  actually received.
+
+The lease is counted in **uses**, not wall time: a node partitioned for an hour
+has spent nothing, and a clock it does not control should not be able to extend
+or shorten its authority.
+
+Witness: `bash tests/multi-machine-agent-gate.sh` (mutation-proven — disabling
+lease expiry, and allowing widened per-peer caps, each turn the gate red).
 
 ## 13. Dependency Order
 
@@ -549,7 +714,7 @@ are green.
 
 ```sh
 bash tests/agent-entrypoint-gate.sh    # implemented (Phase 1)
-bash tests/universal-interface-gate.sh
+bash tests/universal-interface-gate.sh # implemented (Phase 2)
 bash tests/remote-interface-chain-gate.sh
 bash tests/model-device-human-interface-gate.sh
 bash tests/paid-interface-gate.sh

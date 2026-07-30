@@ -164,6 +164,9 @@ pub const Server = struct {
             true,
             firing_id,
             mesh_mod.nonceForFiring(firing_id),
+            // Same posture as the remote path: a tool call is not a
+            // conversation the local neuron can answer back into.
+            .one_way,
         );
         const now = self.now_ms orelse mesh_mod.wallNowMs(self.io);
         const result = try self.node.receiveTrusted(bytes, now, self.ceiling);
@@ -208,6 +211,9 @@ pub const Server = struct {
             true,
             firing_id,
             mesh_mod.nonceForFiring(firing_id),
+            // The MCP edge is a one-shot tool call with no durable inbox to
+            // answer on, so it opens no conversation.
+            .one_way,
         );
         var io_buffer: [16 * 1024]u8 = undefined;
         const response = try mesh_mod.dialExchange(allocator, &address, self.io, bytes, &io_buffer, dial_timeout_ms);

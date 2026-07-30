@@ -161,9 +161,20 @@ assert view["beats"] > 0, view
 assert view["firings"]["cancelled"] == 1, view
 PY
 
-# The unimplemented interface membrane stays honest: parsed, fails closed.
-if "$binary" interface discover /bin/echo >/dev/null 2>&1; then
-    echo "FAIL: unimplemented interface verb did not fail closed" >&2
+# The interface membrane is live (Phase 2), and discovery still confers
+# nothing: it reports a candidate without admitting or granting anything.
+candidate="$("$binary" interface discover /bin/echo --json)"
+python3 - "$candidate" <<'PY'
+import json, sys
+found = json.loads(sys.argv[1])
+assert found["kind"] == "process" and found["exists"], found
+assert found["implementation_digest"], "a discovered boundary must be pinnable"
+assert found["authority"].startswith("none"), found
+PY
+# Discovery wrote nothing: an unadmitted boundary is not callable.
+if "$binary" interface call "$node_dir" --interface "$(python3 -c '
+import json,sys; print(json.loads(sys.argv[1])["implementation_digest"])' "$candidate")" --input x >/dev/null 2>&1; then
+    echo "FAIL: an unadmitted interface was callable" >&2
     exit 1
 fi
 

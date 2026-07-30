@@ -38,4 +38,9 @@ JESPA_WIN_TARGET=4 bash bench/jespa/jespa-benchmarks-gate.sh
 # this gate would notice its absence.
 bash tests/observability-retention-gate.sh
 
+# The live observability edge. Included for assertion 4 above all: an
+# observability port that streams artifact payloads is an exfiltration
+# surface, and nothing else in this gate would notice it opening.
+bash tests/observe-live-gate.sh
+
 echo "[neuron] PASS — document contract, honest benchmark witness, and derivation retention are green"

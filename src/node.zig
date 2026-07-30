@@ -10,6 +10,9 @@ const neuron_mod = @import("neuron.zig");
 const substrate_mod = @import("substrate.zig");
 const tailnet_mod = @import("tailnet.zig");
 const types = @import("types.zig");
+const membrane = @import("membrane.zig");
+const membrane_ops = @import("membrane_ops.zig");
+const swarm_mod = @import("swarm.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -186,6 +189,120 @@ const HealthNeuron = struct {
     }
 };
 
+const swarm_evidence = [_]types.Evidence{.{
+    .claim = "this node's own advertised interface set",
+    .sources = &[_][]const u8{"stimulus"},
+    .method = "read of the local admitted-interface records",
+}};
+
+const remote_call_evidence = [_]types.Evidence{.{
+    .claim = "an admitted local interface was invoked on behalf of a peer edge",
+    .sources = &[_][]const u8{"stimulus"},
+    .method = "capability read through the local membrane",
+}};
+
+/// `mesh/claims` — advertise which admitted interface digests this node exposes.
+///
+/// A read: it commits nothing and answers with the claim. Only the digest,
+/// kind, and mode cross the wire; the locator stays local, because a peer needs
+/// to know *what* is offered, never where it lives on this machine.
+const ClaimNeuron = struct {
+    arena: *std.heap.ArenaAllocator,
+    substrate: *substrate_mod.Substrate,
+    node: *mesh_mod.Node,
+    write_prefix: []const u8,
+
+    pub fn fire(self: *const ClaimNeuron, _: types.Stimulus, _: caps_mod.Caps) !types.Decision {
+        // The previous answer has already been written to the wire, so its
+        // memory is reclaimable here. Without this a long-lived node would grow
+        // by one reply per request, forever.
+        _ = self.arena.reset(.retain_capacity);
+        const a = self.arena.allocator();
+        var items: std.ArrayList(std.json.Value) = .empty;
+        var iterator = self.substrate.artifacts.iterator();
+        while (iterator.next()) |entry| {
+            const id = entry.key_ptr.*;
+            if (!std.mem.startsWith(u8, id, membrane_ops.ADMITTED_PREFIX)) continue;
+            const hex = id[membrane_ops.ADMITTED_PREFIX.len..];
+            if (hex.len != 64) continue;
+            // A revoked interface resolves as an error, so retired boundaries
+            // simply stop being advertised.
+            const manifest = membrane_ops.resolveAdmitted(a, self.substrate, hex) catch continue;
+            // Only capability reads are offered across a machine boundary: a
+            // remote command would need this node's outbox and reconciliation,
+            // which an edge contract does not confer.
+            if (manifest.invocation.mode != .read) continue;
+            var obj: std.json.ObjectMap = .empty;
+            try obj.put(a, "interface", .{ .string = try a.dupe(u8, hex) });
+            try obj.put(a, "kind", .{ .string = manifest.kind.name() });
+            try obj.put(a, "mode", .{ .string = manifest.invocation.mode.name() });
+            try obj.put(a, "id", .{ .string = manifest.id });
+            try items.append(a, .{ .object = obj });
+            if (items.items.len >= swarm_mod.MAX_ADVERTISED) break;
+        }
+        var array = std.json.Array.init(a);
+        array.items = items.items;
+        array.capacity = items.capacity;
+
+        var root: std.json.ObjectMap = .empty;
+        try root.put(a, "schema", .{ .string = swarm_mod.CLAIM_SCHEMA });
+        try root.put(a, "node", .{ .string = try mesh_mod.nodeAddress(a, self.node.id()) });
+        try root.put(a, "interfaces", .{ .array = array });
+        try root.put(a, "max_writes", .{ .integer = 4 });
+        try root.put(a, "max_bytes", .{ .integer = 64 * 1024 });
+        try root.put(a, "write_prefix", .{ .string = self.write_prefix });
+
+        self.node.reply = try std.json.Stringify.valueAlloc(a, std.json.Value{ .object = root }, .{});
+        return .{ .control = .{ .terminate = "claimed" }, .evidence = &swarm_evidence };
+    }
+};
+
+/// `mesh/interface-call` — invoke one admitted local interface for a peer.
+///
+/// The interface must be admitted here and must be a read, so a peer edge can
+/// never reach this node's outbox. The answer is the interface's real output;
+/// nothing about the caller's state is assumed or asserted.
+const RemoteCallNeuron = struct {
+    arena: *std.heap.ArenaAllocator,
+    substrate: *substrate_mod.Substrate,
+    node: *mesh_mod.Node,
+    io: std.Io,
+
+    pub fn fire(self: *const RemoteCallNeuron, stim: types.Stimulus, _: caps_mod.Caps) !types.Decision {
+        _ = self.arena.reset(.retain_capacity);
+        const a = self.arena.allocator();
+        if (stim.messages.len == 0) return error.InvalidRemoteCall;
+        const payload = stim.messages[stim.messages.len - 1].payload;
+        const root = std.json.parseFromSliceLeaky(std.json.Value, a, payload, .{}) catch
+            return error.InvalidRemoteCall;
+        if (root != .object) return error.InvalidRemoteCall;
+        const interface = switch (root.object.get("interface") orelse return error.InvalidRemoteCall) {
+            .string => |text| text,
+            else => return error.InvalidRemoteCall,
+        };
+        const input = switch (root.object.get("input") orelse return error.InvalidRemoteCall) {
+            .string => |text| text,
+            else => return error.InvalidRemoteCall,
+        };
+        const manifest = membrane_ops.resolveAdmitted(a, self.substrate, interface) catch
+            return error.InterfaceNotAdmitted;
+        if (manifest.invocation.mode != .read) return error.UnverifiableCommand;
+        const outcome = membrane.invokeRead(a, self.io, &manifest, input) catch
+            return error.InterfaceCallFailed;
+
+        var reply: std.json.ObjectMap = .empty;
+        try reply.put(a, "schema", .{ .string = swarm_mod.REMOTE_CALL_SCHEMA });
+        try reply.put(a, "interface", .{ .string = interface });
+        try reply.put(a, "output", .{ .string = outcome.output });
+        try reply.put(a, "output_digest", .{
+            .string = try a.dupe(u8, &std.fmt.bytesToHex(outcome.output_digest, .lower)),
+        });
+        try reply.put(a, "served_by", .{ .string = try mesh_mod.nodeAddress(a, self.node.id()) });
+        self.node.reply = try std.json.Stringify.valueAlloc(a, std.json.Value{ .object = reply }, .{});
+        return .{ .control = .{ .terminate = "served" }, .evidence = &remote_call_evidence };
+    }
+};
+
 pub fn serve(allocator: Allocator, io: std.Io, node_dir: []const u8) !void {
     var config = try loadConfig(allocator, io, node_dir);
     defer config.deinit();
@@ -212,10 +329,30 @@ pub fn serve(allocator: Allocator, io: std.Io, node_dir: []const u8) !void {
     try node.register(neuron_mod.bind(mesh_mod.ProxyNeuron, &proxy, "mesh/proxy", "1"));
     try node.register(neuron_mod.bind(HealthNeuron, &health, "mesh/health", "1"));
 
+    // The swarm read refs. Both answer with a value and commit nothing, so a
+    // peer can learn what this node offers, and use it, without ever gaining
+    // authority over this node's substrate.
+    var swarm_arena = std.heap.ArenaAllocator.init(allocator);
+    defer swarm_arena.deinit();
+    const claims: ClaimNeuron = .{
+        .arena = &swarm_arena,
+        .substrate = &substrate,
+        .node = &node,
+        .write_prefix = config.write_prefix,
+    };
+    const remote_call: RemoteCallNeuron = .{
+        .arena = &swarm_arena,
+        .substrate = &substrate,
+        .node = &node,
+        .io = io,
+    };
+    try node.register(neuron_mod.bind(ClaimNeuron, &claims, swarm_mod.CLAIM_REF, "1"));
+    try node.register(neuron_mod.bind(RemoteCallNeuron, &remote_call, swarm_mod.CALL_REF, "1"));
+
     const address = mesh_mod.net.IpAddress.parseLiteral(config.listen) catch return error.InvalidListenAddress;
     var server = try address.listen(io, .{ .reuse_address = true });
     defer server.deinit(io);
-    try printReady(io, &node, &config);
+    try printReady(allocator, io, &node, &config);
 
     const ceiling: caps_mod.Caps = .{
         .allow_write = true,
@@ -257,6 +394,9 @@ pub fn fireRemote(
     firing_id: []const u8,
     nonce: ?u64,
     allow_loopback: bool,
+    /// Non-empty opens a conversation the remote neuron may answer; empty
+    /// keeps the CLI's original one-way posture.
+    correlation: []const u8,
 ) ![]u8 {
     if (neuron_ref.len == 0 or msg_schema.len == 0 or firing_id.len == 0)
         return error.InvalidRemoteFire;
@@ -273,6 +413,7 @@ pub fn fireRemote(
         true,
         firing_id,
         nonce orelse mesh_mod.nonceForFiring(firing_id),
+        if (correlation.len > 0) mesh_mod.Conversation.open(correlation) else .one_way,
     );
     defer allocator.free(envelope);
     var buffer: [16 * 1024]u8 = undefined;
@@ -307,16 +448,42 @@ const LoopbackCeiling = struct {
     }
 };
 
-fn printReady(io: std.Io, node: *const mesh_mod.Node, config: *const Config) !void {
+/// Announce what this node actually serves. The ref list is enumerated from the
+/// live registry and sorted, rather than written out by hand: a readiness line
+/// that names a fixed set would drift the moment a ref is added, and an
+/// advertisement nobody maintains is worse than none.
+fn printReady(
+    allocator: Allocator,
+    io: std.Io,
+    node: *const mesh_mod.Node,
+    config: *const Config,
+) !void {
+    var refs: std.ArrayList([]const u8) = .empty;
+    defer refs.deinit(allocator);
+    var iterator = node.registry.keyIterator();
+    while (iterator.next()) |key| try refs.append(allocator, key.*);
+    std.mem.sort([]const u8, refs.items, {}, struct {
+        fn lessThan(_: void, left: []const u8, right: []const u8) bool {
+            return std.mem.lessThan(u8, left, right);
+        }
+    }.lessThan);
+
+    var line: std.ArrayList(u8) = .empty;
+    defer line.deinit(allocator);
     var id_hex: [64]u8 = undefined;
-    var buffer: [512]u8 = undefined;
-    const line = try std.fmt.bufPrint(
-        &buffer,
-        "{{\"schema\":\"neuron.node-ready/v1\",\"node\":\"{s}\",\"listen\":\"{s}\",\"transport\":\"{s}\",\"neurons\":[\"mesh/health\",\"mesh/proxy\"]}}\n",
+    try line.appendSlice(allocator, try std.fmt.allocPrint(
+        allocator,
+        "{{\"schema\":\"neuron.node-ready/v1\",\"node\":\"{s}\",\"listen\":\"{s}\",\"transport\":\"{s}\",\"neurons\":[",
         .{ identity.nodeIdHex(node.id(), &id_hex), config.listen, @tagName(config.transport) },
-    );
-    var out_buffer: [512]u8 = undefined;
-    var writer = std.Io.File.stdout().writer(io, &out_buffer);
-    try writer.interface.writeAll(line);
+    ));
+    for (refs.items, 0..) |ref, index| {
+        if (index != 0) try line.append(allocator, ',');
+        try line.appendSlice(allocator, try std.json.Stringify.valueAlloc(allocator, ref, .{}));
+    }
+    try line.appendSlice(allocator, "]}\n");
+
+    var out_buffer: [1024]u8 = undefined;
+    var writer = std.Io.File.stdout().writerStreaming(io, &out_buffer);
+    try writer.interface.writeAll(line.items);
     try writer.interface.flush();
 }

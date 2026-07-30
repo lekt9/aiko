@@ -38,24 +38,34 @@ pub const Envelope = struct {
     schema: []const u8,
     payload: []const u8,
     durable: bool,
+    /// Conversation identity across the mesh. Non-empty means the sender
+    /// invites an answer; the receiver's neuron sees the peer node as its
+    /// attested return address. Signed like every other field, so a relay
+    /// cannot retarget a reply by rewriting the correlation.
+    correlation: []const u8 = "",
+    /// Position of the message in its conversation, as attested by the peer.
+    /// Clamped by the receiver's own turn ceiling at the valve.
+    turn: u8 = 0,
     delegation: identity.Delegation,
     nonce: u64,
     signature: identity.SignatureBytes,
 
     /// Canonical bytes: from ‖ to ‖ lp(ref) ‖ lp(firing_id) ‖ lp(schema) ‖
-    /// lp(payload) ‖ durable ‖ delegation-canonical ‖ nonce (BE u64).
+    /// lp(payload) ‖ lp(correlation) ‖ durable ‖ turn ‖ delegation-canonical ‖
+    /// nonce (BE u64).
     pub fn canonicalBytes(self: *const Envelope, allocator: Allocator) ![]u8 {
         var bytes: std.ArrayList(u8) = .empty;
         errdefer bytes.deinit(allocator);
         try bytes.appendSlice(allocator, &self.from);
         try bytes.appendSlice(allocator, &self.to);
-        for ([_][]const u8{ self.ref, self.firing_id, self.schema, self.payload }) |field| {
+        for ([_][]const u8{ self.ref, self.firing_id, self.schema, self.payload, self.correlation }) |field| {
             var len: [4]u8 = undefined;
             std.mem.writeInt(u32, &len, @intCast(field.len), .big);
             try bytes.appendSlice(allocator, &len);
             try bytes.appendSlice(allocator, field);
         }
         try bytes.append(allocator, if (self.durable) 1 else 0);
+        try bytes.append(allocator, self.turn);
         var delegation_bytes: [104]u8 = undefined;
         try bytes.appendSlice(allocator, self.delegation.canonicalBytes(&delegation_bytes));
         var nonce: [8]u8 = undefined;
@@ -84,6 +94,30 @@ fn verifyEnvelope(envelope: *const Envelope, allocator: Allocator) !void {
     try signature.verify(canonical, public_key);
 }
 
+/// The conversation an outbound envelope belongs to. `.one_way` is the
+/// default posture: it confers no return path, so the recipient's neuron
+/// cannot answer. A correlated envelope invites exactly one answer per turn.
+pub const Conversation = struct {
+    correlation: []const u8 = "",
+    turn: u8 = 0,
+
+    pub const one_way: Conversation = .{};
+
+    /// Open a conversation the peer may answer.
+    pub fn open(correlation: []const u8) Conversation {
+        return .{ .correlation = correlation, .turn = 1 };
+    }
+};
+
+/// The address of a peer node's inbox, as stamped on an inbound message's
+/// return path. A local reply to this address is an ordinary committed
+/// outbox message; carrying it back over the wire is the drainer adapter's
+/// job, not the valve's.
+pub fn nodeAddress(allocator: Allocator, node: NodeId) ![]u8 {
+    const hex = std.fmt.bytesToHex(node, .lower);
+    return std.fmt.allocPrint(allocator, "node/{s}", .{&hex});
+}
+
 /// A symmetric mesh node: client and server in one. It owns its device
 /// keypair, the account trust ceilings it honors, the local neuron registry
 /// peers may stimulate, and the substrate those firings commit into.
@@ -94,6 +128,15 @@ pub const Node = struct {
     runtime: runtime_mod.Runtime,
     registry: std.StringHashMap(neuron_mod.Neuron),
     accounts: std.AutoHashMap(NodeId, Caps),
+    /// A read answer for the frame currently being served.
+    ///
+    /// Most refs commit effects and answer with a commit summary; a *read* ref
+    /// — "what interfaces do you advertise", "what did that interface return" —
+    /// has nothing to commit and a value to return. Registered neurons are
+    /// constructed by this binary, so a locally owned slot is how they hand one
+    /// back without the wire growing a second protocol. It is cleared before
+    /// every receive, so a stale answer can never be served for a later frame.
+    reply: ?[]const u8 = null,
 
     pub fn init(
         allocator: Allocator,
@@ -142,6 +185,7 @@ pub const Node = struct {
         delegation: identity.Delegation,
         firing_id: []const u8,
         nonce: u64,
+        conversation: Conversation,
     ) ![]u8 {
         var envelope: Envelope = .{
             .from = self.id(),
@@ -151,6 +195,8 @@ pub const Node = struct {
             .schema = msg_schema,
             .payload = payload,
             .durable = durable,
+            .correlation = conversation.correlation,
+            .turn = conversation.turn,
             .delegation = delegation,
             .nonce = nonce,
             .signature = undefined,
@@ -165,6 +211,9 @@ pub const Node = struct {
         // The parsed document, the envelope, and every string it lends to
         // validation die with the firing — the substrate stages its own
         // copies of anything it commits.
+        // A read answer belongs to exactly one frame: clear it before this one
+        // fires so a previous frame's value can never be served again.
+        self.reply = null;
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         const envelope = try parseEnvelope(arena.allocator(), bytes, true);
@@ -179,15 +228,27 @@ pub const Node = struct {
         try verifyEnvelope(envelope, self.allocator);
         const neuron = self.registry.get(envelope.ref) orelse return error.UnknownNeuron;
 
+        // The peer's verified device key is the attested sender — the same
+        // authority that admitted the envelope also names who may be answered,
+        // so a cross-node reply cannot be aimed anywhere the proof did not
+        // reach. A correlated envelope confers a return path; an uncorrelated
+        // one is one-way.
+        const peer = try nodeAddress(arena.allocator(), envelope.from);
+        const local = try nodeAddress(arena.allocator(), self.id());
         const messages = [_]types.Message{.{
             .to = envelope.ref,
             .schema = envelope.schema,
             .payload = envelope.payload,
             .durable = envelope.durable,
+            .from = peer,
+            .correlation = envelope.correlation,
+            .reply_to = if (envelope.correlation.len > 0) peer else "",
+            .turn = envelope.turn,
         }};
         const stimulus: types.Stimulus = .{
             .firing_id = envelope.firing_id,
             .receptor_schema = envelope_schema,
+            .self_ref = local,
             .messages = &messages,
             // The signed envelope nonce is the firing's recorded logical
             // clock. Admission still uses the receiver's live `now_ms` for
@@ -207,6 +268,8 @@ pub const Node = struct {
     /// its authority (§24). The recipient check still applies, and the
     /// firing still passes the full validate → commit boundary.
     pub fn receiveTrusted(self: *Node, bytes: []const u8, _: u64, ceiling: Caps) !ReceiveResult {
+        // As on the signed path: a read answer belongs to one frame only.
+        self.reply = null;
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         const envelope = try parseEnvelope(arena.allocator(), bytes, false);
@@ -217,15 +280,25 @@ pub const Node = struct {
         if (!std.mem.eql(u8, &envelope.to, &self.id()) and
             !std.mem.eql(u8, &envelope.to, &wildcard)) return error.WrongRecipient;
         const neuron = self.registry.get(envelope.ref) orelse return error.UnknownNeuron;
+        // On a trusted pipe the envelope's own `from` is unproven, so the
+        // return path is the transport-authenticated peer the operator pinned
+        // this ceiling for — never a self-declared identity in the frame.
+        const peer = try nodeAddress(arena.allocator(), envelope.from);
+        const local = try nodeAddress(arena.allocator(), self.id());
         const messages = [_]types.Message{.{
             .to = envelope.ref,
             .schema = envelope.schema,
             .payload = envelope.payload,
             .durable = envelope.durable,
+            .from = peer,
+            .correlation = envelope.correlation,
+            .reply_to = if (envelope.correlation.len > 0) peer else "",
+            .turn = envelope.turn,
         }};
         const stimulus: types.Stimulus = .{
             .firing_id = envelope.firing_id,
             .receptor_schema = envelope_schema,
+            .self_ref = local,
             .messages = &messages,
             // See the signed path above: transport redelivery reuses the
             // original envelope nonce while peer admission uses live time.
@@ -295,8 +368,10 @@ fn envelopeJson(allocator: Allocator, envelope: *const Envelope) ![]u8 {
         defer allocator.free(encoded_schema);
         const encoded_payload = try jsonEncodeString(allocator, envelope.payload);
         defer allocator.free(encoded_payload);
-        try w.print("\"schema\":{s},\"payload\":{s},\"durable\":{}", .{
-            encoded_schema, encoded_payload, envelope.durable,
+        const encoded_correlation = try jsonEncodeString(allocator, envelope.correlation);
+        defer allocator.free(encoded_correlation);
+        try w.print("\"schema\":{s},\"payload\":{s},\"durable\":{},\"correlation\":{s},\"turn\":{}", .{
+            encoded_schema, encoded_payload, envelope.durable, encoded_correlation, envelope.turn,
         });
     }
     try w.writeAll("}");
@@ -362,6 +437,11 @@ fn parseEnvelope(allocator: Allocator, bytes: []const u8, require_proof: bool) !
             .bool => |flag| flag,
             else => return error.InvalidEnvelope,
         } else true,
+        .correlation = try allocator.dupe(u8, getString(message.object, "correlation") orelse ""),
+        .turn = if (message.object.get("turn")) |value| switch (value) {
+            .integer => |n| if (n < 0 or n > std.math.maxInt(u8)) return error.InvalidEnvelope else @intCast(n),
+            else => return error.InvalidEnvelope,
+        } else 0,
         .delegation = .{
             .account = @splat(0),
             .device = @splat(0),
@@ -404,6 +484,7 @@ pub fn unsignedEnvelopeJson(
     durable: bool,
     firing_id: []const u8,
     nonce: u64,
+    conversation: Conversation,
 ) ![]u8 {
     var envelope: Envelope = .{
         .from = @splat(0),
@@ -413,6 +494,8 @@ pub fn unsignedEnvelopeJson(
         .schema = msg_schema,
         .payload = payload,
         .durable = durable,
+        .correlation = conversation.correlation,
+        .turn = conversation.turn,
         .delegation = .{
             .account = @splat(0),
             .device = @splat(0),
@@ -539,6 +622,22 @@ pub fn commitResultJson(allocator: Allocator, commit: runtime_mod.CommitResult) 
     return try std.fmt.allocPrint(allocator, "{{\"status\":\"committed\",\"effects_committed\":{},\"duplicates_skipped\":{}}}", .{ commit.effects_committed, commit.duplicates_skipped });
 }
 
+/// The answer for a read ref: the same commit summary plus the value, so one
+/// response shape covers both and a caller can always read `status`.
+pub fn replyResultJson(
+    allocator: Allocator,
+    commit: runtime_mod.CommitResult,
+    reply: []const u8,
+) ![]u8 {
+    const encoded = try jsonEncodeString(allocator, reply);
+    defer allocator.free(encoded);
+    return std.fmt.allocPrint(
+        allocator,
+        "{{\"status\":\"committed\",\"effects_committed\":{},\"duplicates_skipped\":{},\"reply\":{s}}}",
+        .{ commit.effects_committed, commit.duplicates_skipped, encoded },
+    );
+}
+
 pub fn errorResultJson(allocator: Allocator, err: anyerror) ![]u8 {
     return try std.fmt.allocPrint(allocator, "{{\"status\":\"error\",\"error\":\"{s}\"}}", .{@errorName(err)});
 }
@@ -563,7 +662,13 @@ pub fn serveConnection(node: *Node, reader: *std.Io.Reader, writer: *std.Io.Writ
         const bytes = maybe orelse break;
         defer node.allocator.free(bytes);
         const response = if (node.receive(bytes, now_ms)) |result|
-            try commitResultJson(node.allocator, result.commit)
+            // A ref that answered a read carries its value; everything else
+            // keeps the unchanged commit summary, so adding read refs did not
+            // change the shape of any existing answer.
+            (if (node.reply) |value|
+                try replyResultJson(node.allocator, result.commit, value)
+            else
+                try commitResultJson(node.allocator, result.commit))
         else |err|
             try errorResultJson(node.allocator, err);
         defer node.allocator.free(response);

@@ -192,6 +192,9 @@ pub fn stimulusJson(
     try root.put(allocator, "schema", .{ .string = "neuron.stimulus/v1" });
     try root.put(allocator, "firing_id", .{ .string = stimulus.firing_id });
     try root.put(allocator, "receptor_schema", .{ .string = stimulus.receptor_schema });
+    // The script neuron's own attested address: what it will be recorded as
+    // having sent from, and what a peer answers on (§19).
+    try root.put(allocator, "self_ref", .{ .string = stimulus.self_ref });
     try root.put(allocator, "now_ms", .{ .integer = @intCast(stimulus.now_ms) });
     if (stimulus.deadline_ms) |deadline| {
         try root.put(allocator, "deadline_ms", .{ .integer = @intCast(deadline) });
@@ -229,6 +232,13 @@ pub fn stimulusJson(
         try entry.put(allocator, "schema", .{ .string = message.schema });
         try entry.put(allocator, "payload", .{ .string = message.payload });
         try entry.put(allocator, "durable", .{ .bool = message.durable });
+        // The attested envelope, so a script neuron can answer a request it
+        // did not anticipate — it reads the return address off the message
+        // rather than being configured with its peers in advance.
+        try entry.put(allocator, "from", .{ .string = message.from });
+        try entry.put(allocator, "correlation", .{ .string = message.correlation });
+        try entry.put(allocator, "reply_to", .{ .string = message.reply_to });
+        try entry.put(allocator, "turn", .{ .integer = message.turn });
         try messages.append(.{ .object = entry });
     }
     try root.put(allocator, "messages", .{ .array = messages });
@@ -245,6 +255,7 @@ fn budgetJson(allocator: Allocator, budget: caps_mod.Budget) !std.json.Value {
     try obj.put(allocator, "max_spawns", .{ .integer = @intCast(budget.max_spawns) });
     try obj.put(allocator, "max_bytes", .{ .integer = @intCast(budget.max_bytes) });
     try obj.put(allocator, "max_depth", .{ .integer = budget.max_depth });
+    try obj.put(allocator, "max_turns", .{ .integer = budget.max_turns });
     return .{ .object = obj };
 }
 
@@ -280,6 +291,7 @@ pub fn capsFromJson(value: std.json.Value) !caps_mod.Caps {
         if (getInt(budget, "max_spawns")) |v| caps.budget.max_spawns = @intCast(v);
         if (getInt(budget, "max_bytes")) |v| caps.budget.max_bytes = @intCast(v);
         if (getInt(budget, "max_depth")) |v| caps.budget.max_depth = @intCast(v);
+        if (getInt(budget, "max_turns")) |v| caps.budget.max_turns = @intCast(v);
     }
     return caps;
 }
@@ -355,11 +367,20 @@ fn parseEffect(allocator: Allocator, value: std.json.Value) !types.Effect {
     }
     if (std.mem.eql(u8, kind, "send")) {
         const message = value.object.get("message") orelse return error.InvalidDecision;
+        // `correlation` is the one envelope field a neuron may choose: it
+        // opens a conversation or answers one. Interpreter-owned fields are
+        // parsed as presented rather than stripped, so a script that forges
+        // its own sender is rejected by the valve instead of silently
+        // succeeding with different provenance than it asked for.
         return .{ .send = .{
             .to = getString(message, "to") orelse return error.InvalidDecision,
             .schema = getString(message, "schema") orelse return error.InvalidDecision,
             .payload = getString(message, "payload") orelse return error.InvalidDecision,
             .durable = getBool(message, "durable", true),
+            .correlation = getString(message, "correlation") orelse "",
+            .from = getString(message, "from") orelse "",
+            .reply_to = getString(message, "reply_to") orelse "",
+            .turn = if (getInt(message, "turn")) |v| @intCast(v) else 0,
         } };
     }
     if (std.mem.eql(u8, kind, "spawn")) {

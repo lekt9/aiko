@@ -49,6 +49,10 @@ pub const Budget = struct {
     max_spawns: usize = 8,
     max_bytes: usize = 1024 * 1024,
     max_depth: u8 = 8,
+    /// Ceiling on how many turns one correlated conversation may take. A
+    /// reply is a turn; two neurons answering each other forever is an
+    /// arrhythmia, so the exchange fails closed at this bound (§26).
+    max_turns: u8 = 8,
 };
 
 pub const Caps = struct {
@@ -74,11 +78,30 @@ pub const ArtifactWrite = struct {
     expected_prior: ?Digest = null,
 };
 
+/// One directed message. A message is bidirectional by construction: it
+/// carries an attested sender and, when correlated, the return address the
+/// recipient may answer on. Neurons never author `from`, `reply_to`, or
+/// `turn` — the interpreter stamps all three at the commit boundary from the
+/// firing's own attested identity, so provenance cannot be forged by the
+/// neuron that benefits from it (§20).
 pub const Message = struct {
     to: []const u8,
     schema: []const u8,
     payload: []const u8,
     durable: bool = true,
+    /// Attested sender address. Interpreter-owned; a decision that presents a
+    /// non-empty `from` is rejected as forged.
+    from: []const u8 = "",
+    /// Conversation identity. Sender-chosen on a request; a reply repeats the
+    /// correlation of the request it answers. Empty means a one-way send that
+    /// grants no reply authority.
+    correlation: []const u8 = "",
+    /// The address the recipient may answer on. Interpreter-owned: it is
+    /// always the sender's own attested address.
+    reply_to: []const u8 = "",
+    /// Position of this message in its conversation, counted from 1 on the
+    /// opening request. Interpreter-owned; bounded by `Budget.max_turns`.
+    turn: u8 = 0,
 };
 
 pub const Spawn = struct {
@@ -113,6 +136,11 @@ pub const Artifact = struct {
 pub const Stimulus = struct {
     firing_id: []const u8,
     receptor_schema: []const u8,
+    /// The firing neuron's own attested address (`neuron/<identity>`), set by
+    /// the harness that dispatched it. It is what the interpreter stamps as
+    /// `from` on this firing's messages, and what a recipient answers on.
+    /// Empty means an unaddressed firing: it may send, but nothing can reply.
+    self_ref: []const u8 = "",
     permitted_reads: []const []const u8 = &.{},
     reads: []const ArtifactRef = &.{},
     messages: []const Message = &.{},
@@ -173,6 +201,14 @@ pub const Error = error{
     MissingEvidence,
     UngroundedEvidence,
     DeadlineExceeded,
+    /// A decision presented sender provenance it does not own.
+    ForgedSender,
+    /// A send claimed to answer a request this firing never received.
+    ReplyUnauthorized,
+    /// One firing answered the same correlation more than once.
+    DuplicateReply,
+    /// The conversation exceeded its turn ceiling.
+    ConversationTurnsExceeded,
 };
 
 pub fn validate(request: FireRequest) Error!void {
@@ -490,7 +526,8 @@ pub fn allowsDelegation(parent: Caps, child: Caps) bool {
         child.budget.max_messages <= parent.budget.max_messages and
         child.budget.max_spawns <= parent.budget.max_spawns and
         child.budget.max_bytes <= parent.budget.max_bytes and
-        child.budget.max_depth <= parent.budget.max_depth;
+        child.budget.max_depth <= parent.budget.max_depth and
+        child.budget.max_turns <= parent.budget.max_turns;
 }
 
 pub fn fingerprint(caps: Caps) Digest {
@@ -510,16 +547,33 @@ fn cborRuntimeCaps(cbor: *CborHash, caps: Caps) void {
     cbor.unsigned(caps.budget.max_effects);
     cbor.unsigned(caps.budget.max_writes);
     cbor.unsigned(caps.budget.max_messages);
-    cbor.array(3);
+    cbor.array(4);
     cbor.unsigned(caps.budget.max_spawns);
     cbor.unsigned(caps.budget.max_bytes);
     cbor.unsigned(caps.budget.max_depth);
+    cbor.unsigned(caps.budget.max_turns);
+}
+
+/// Canonical encoding of one message. Every field is encoded unconditionally,
+/// including the interpreter-owned provenance, so two messages that differ
+/// only in sender or conversation can never collide on one identity.
+fn cborRuntimeMessage(cbor: *CborHash, message: Message) void {
+    cbor.array(8);
+    cbor.text(message.to);
+    cbor.text(message.schema);
+    cbor.bytes(message.payload);
+    cbor.boolean(message.durable);
+    cbor.text(message.from);
+    cbor.text(message.correlation);
+    cbor.text(message.reply_to);
+    cbor.unsigned(message.turn);
 }
 
 fn cborRuntimeStimulus(cbor: *CborHash, stimulus: Stimulus) void {
-    cbor.array(9);
+    cbor.array(10);
     cbor.text(stimulus.firing_id);
     cbor.text(stimulus.receptor_schema);
+    cbor.text(stimulus.self_ref);
     cborTexts(cbor, stimulus.permitted_reads);
     cbor.array(stimulus.reads.len);
     for (stimulus.reads) |read| {
@@ -528,13 +582,7 @@ fn cborRuntimeStimulus(cbor: *CborHash, stimulus: Stimulus) void {
         cbor.bytes(&read.digest);
     }
     cbor.array(stimulus.messages.len);
-    for (stimulus.messages) |message| {
-        cbor.array(4);
-        cbor.text(message.to);
-        cbor.text(message.schema);
-        cbor.bytes(message.payload);
-        cbor.boolean(message.durable);
-    }
+    for (stimulus.messages) |message| cborRuntimeMessage(cbor, message);
     cbor.unsigned(stimulus.now_ms);
     if (stimulus.deadline_ms) |deadline| cbor.unsigned(deadline) else cbor.nullValue();
     cbor.unsigned(stimulus.depth);
@@ -571,12 +619,9 @@ fn cborRuntimeDecision(cbor: *CborHash, decision: Decision) void {
             if (write.expected_prior) |prior| cbor.bytes(&prior) else cbor.nullValue();
         },
         .send => |message| {
-            cbor.array(5);
+            cbor.array(2);
             cbor.text("send");
-            cbor.text(message.to);
-            cbor.text(message.schema);
-            cbor.bytes(message.payload);
-            cbor.boolean(message.durable);
+            cborRuntimeMessage(cbor, message);
         },
         .spawn => |spawn| {
             cbor.array(4);

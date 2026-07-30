@@ -309,6 +309,12 @@ fn ipKey(buf: []u8, peer: IpAddress) ?[]const u8 {
 /// protocol, one semantics (mesh.commitResultJson / errorResultJson).
 fn responseJson(node: *mesh_mod.Node, bytes: []const u8, now_ms: u64, ceiling: caps_mod.Caps) ![]u8 {
     if (node.receiveTrusted(bytes, now_ms, ceiling)) |result| {
+        // A read ref answers with its value; everything else keeps the
+        // unchanged commit summary. Both paths encode identically, so the
+        // trusted pipe and the signed pipe still have one semantics.
+        if (node.reply) |value| {
+            return try mesh_mod.replyResultJson(node.allocator, result.commit, value);
+        }
         return try mesh_mod.commitResultJson(node.allocator, result.commit);
     } else |err| {
         return try mesh_mod.errorResultJson(node.allocator, err);

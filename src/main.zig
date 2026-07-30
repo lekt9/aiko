@@ -10,7 +10,11 @@ const node_mod = @import("node.zig");
 const mcp_mod = @import("mcp.zig");
 const substrate_mod = @import("substrate.zig");
 const limb_ops = @import("limb_ops.zig");
+const observe_mod = @import("observe.zig");
 const agent_ops = @import("agent_ops.zig");
+const membrane = @import("membrane.zig");
+const membrane_ops = @import("membrane_ops.zig");
+const swarm_ops = @import("swarm_ops.zig");
 const neuron_mod = @import("neuron.zig");
 const caps_mod = @import("caps.zig");
 
@@ -59,6 +63,18 @@ const usage =
     \\                         write detach record + GC limb scope (§22)
     \\  neuron limb inspect <state_dir> [--json]
     \\                         print lifecycle records + substrate counts
+    \\  neuron telemetry trace <state_dir> [--json]
+    \\                         per-firing view from the journal: when each
+    \\                         firing settled, what it cited, what it wrote
+    \\  neuron telemetry serve <state_dir> [--listen <ip:port>]
+    \\                         live read-only web view: tails the journal and
+    \\                         streams each committed firing over SSE. Loopback
+    \\                         only unless --allow-public. Artifact payloads are
+    \\                         never streamed - ids, sizes, and citations only
+    \\  neuron telemetry stale <state_dir> [--json]
+    \\                         artifacts whose cited sources have since been
+    \\                         rewritten, and whether each is safely redrivable
+    \\                         (writes-only firings are; boundary crossings are not)
     \\  neuron telemetry project <state_dir> [--json]
     \\                         project firing records into a deterministic
     \\                         rollup (firing counts, effects, artifacts)
@@ -66,21 +82,57 @@ const usage =
     \\                         genesis firing: manifest, snapshot 0000, and
     \\                         CAS-rooted active pointer in the node substrate
     \\  neuron agent run <node_dir> <agent_id> --goal <text>
-    \\         [--budget <steps>] [--json]
+    \\         [--acceptance <predicate.json>] [--budget <steps>] [--json]
     \\                         drive one typed goal through the composed stage
     \\                         network (intake→worker→verifier→settler) with
-    \\                         settlement-event grounding; replay-safe
+    \\                         settlement-event grounding; replay-safe. Work
+    \\                         crosses an attached worker interface when one is
+    \\                         attached, else the reference resolution
     \\  neuron agent inspect <node_dir> <agent_id> [--json]
     \\                         reconstruct the agent view from durable state
     \\  neuron agent cancel <node_dir> <agent_id> <workflow|goal-text>
     \\                         settle a not-yet-fired workflow as cancelled
     \\  neuron agent retire <node_dir> <agent_id>
     \\                         CAS-advance the active snapshot to retired
-    \\  neuron interface <discover|describe|test|admit|attach|detach>
-    \\                         universal interface membrane (plan Phases 2+);
-    \\                         parsed, fails closed as NotImplemented
+    \\  neuron interface discover <target> [--json]
+    \\                         inspect a boundary and report an inert candidate;
+    \\                         a read that admits nothing and grants nothing
+    \\  neuron interface describe <target> [--kind <k>] [--mode read|command]
+    \\         [--id <id>] [--target-template <t>] [--input-channel <c>]
+    \\         [--deterministic] [--output <file>]
+    \\         remote kinds: [--method <m>] [--url-template <u>] [--tool <t>]
+    \\         [--response-encoding raw|json] [--response-field <f>]
+    \\         [--non-mutating] [--reconcile-url-template <u>]
+    \\                         emit a draft InterfaceManifest with the
+    \\                         implementation pinned by digest (inert data)
+    \\  neuron interface test <interface.json> [--json]
+    \\                         run the contract + adversarial battery without
+    \\                         admitting anything
+    \\  neuron interface admit <node_dir> <interface.json> [--json]
+    \\                         re-pin, re-run the battery, and publish the
+    \\                         immutable admission record (the authority step)
+    \\  neuron interface list <node_dir> [--json]
+    \\  neuron interface attach <node_dir> <agent_id> --interface <digest>
+    \\         [--role worker|effector] [--step <n>] [--replace] [--json]
+    \\                         wire an admitted interface into an agent role
+    \\                         under a derived least-authority grant. Worker
+    \\                         steps form an ordered chain: each hop's product
+    \\                         is the next hop's input
+    \\  neuron interface detach <node_dir> <agent_id> [--role <role>] [--step <n>]
+    \\  neuron interface revoke <node_dir> --interface <digest>
+    \\  neuron interface call <node_dir> --interface <digest> --input <text>
+    \\                         reads invoke now; commands only commit to the
+    \\                         outbox and cross the boundary on dispatch
+    \\  neuron interface dispatch <node_dir> [--json]
+    \\                         drain one outbox record: dispatch, independently
+    \\                         reconcile, acknowledge, receipt
     \\  neuron --version       print the build version
     \\  neuron --help          show this help
+    \\
+;
+
+const swarm_usage =
+    \\error: usage: neuron swarm <negotiate|route|reconcile|revoke> <node_dir> ...
     \\
 ;
 
@@ -184,6 +236,7 @@ pub fn main(init: std.process.Init) !void {
             var payload: ?[]const u8 = null;
             var firing: ?[]const u8 = null;
             var nonce: ?u64 = null;
+            var correlation: []const u8 = "";
             var allow_loopback = false;
             var i: usize = 4;
             while (i < args.items.len) : (i += 1) {
@@ -201,6 +254,8 @@ pub fn main(init: std.process.Init) !void {
                     payload = value;
                 } else if (std.mem.eql(u8, args.items[i], "--firing")) {
                     firing = value;
+                } else if (std.mem.eql(u8, args.items[i], "--correlation")) {
+                    correlation = value;
                 } else if (std.mem.eql(u8, args.items[i], "--nonce")) {
                     nonce = std.fmt.parseInt(u64, value, 10) catch {
                         try writeStderr(init.io, "error: nonce must be an unsigned integer\n");
@@ -222,6 +277,7 @@ pub fn main(init: std.process.Init) !void {
                 firing orelse return error.InvalidFiringId,
                 nonce,
                 allow_loopback,
+                correlation,
             ) catch |err| {
                 var buffer: [192]u8 = undefined;
                 const line = std.fmt.bufPrint(&buffer, "error: remote firing failed closed: {s}\n", .{@errorName(err)}) catch "error: remote firing failed closed\n";
@@ -340,7 +396,7 @@ pub fn main(init: std.process.Init) !void {
         var read_buffer: [64 * 1024]u8 = undefined;
         var write_buffer: [4096]u8 = undefined;
         var reader = std.Io.File.stdin().reader(init.io, &read_buffer);
-        var writer = std.Io.File.stdout().writer(init.io, &write_buffer);
+        var writer = std.Io.File.stdout().writerStreaming(init.io, &write_buffer);
         try server.serve(&reader.interface, &writer.interface);
         return;
     }
@@ -490,6 +546,7 @@ pub fn main(init: std.process.Init) !void {
         }
         if (std.mem.eql(u8, sub, "run")) {
             var goal: ?[]const u8 = null;
+            var acceptance: ?[]const u8 = null;
             var budget: usize = 32;
             var json = false;
             var i: usize = 5;
@@ -502,6 +559,9 @@ pub fn main(init: std.process.Init) !void {
                 if (std.mem.eql(u8, args.items[i], "--goal")) {
                     goal = args.items[i + 1];
                     i += 1;
+                } else if (std.mem.eql(u8, args.items[i], "--acceptance")) {
+                    acceptance = args.items[i + 1];
+                    i += 1;
                 } else if (std.mem.eql(u8, args.items[i], "--budget")) {
                     budget = std.fmt.parseInt(usize, args.items[i + 1], 10) catch {
                         try writeStderr(init.io, "error: --budget must be a positive integer\n");
@@ -511,10 +571,10 @@ pub fn main(init: std.process.Init) !void {
                 }
             }
             const goal_text = goal orelse {
-                try writeStderr(init.io, "error: usage: neuron agent run <node_dir> <agent_id> --goal <text> [--budget <steps>] [--json]\n");
+                try writeStderr(init.io, "error: usage: neuron agent run <node_dir> <agent_id> --goal <text> [--acceptance <predicate.json>] [--budget <steps>] [--json]\n");
                 std.process.exit(2);
             };
-            agent_ops.runGoal(allocator, init.io, node_dir, agent_id, goal_text, budget, json) catch |err| {
+            agent_ops.runGoal(allocator, init.io, node_dir, agent_id, goal_text, budget, acceptance, json) catch |err| {
                 try failClosed(init.io, "agent run", err);
             };
             return;
@@ -545,32 +605,377 @@ pub fn main(init: std.process.Init) !void {
         try writeStderr(init.io, "error: unknown agent subcommand\n");
         std.process.exit(2);
     }
-    if (std.mem.eql(u8, args.items[1], "interface")) {
-        // Phase 0 command shape: the universal interface membrane is parsed
-        // here but unimplemented; it fails closed instead of pretending.
-        const known = [_][]const u8{ "discover", "describe", "test", "admit", "attach", "detach" };
-        if (args.items.len >= 3) {
-            for (known) |verb| {
-                if (std.mem.eql(u8, args.items[2], verb)) {
-                    try writeStderr(init.io, "error: interface membrane failed closed: NotImplemented (see reference/AGENT_ENTRYPOINT_UNIVERSAL_INTERFACE_PLAN.md Phases 2+)\n");
-                    std.process.exit(1);
-                }
-            }
+    if (std.mem.eql(u8, args.items[1], "swarm")) {
+        if (args.items.len < 3) {
+            try writeStderr(init.io, swarm_usage);
+            std.process.exit(2);
         }
-        try writeStderr(init.io, "error: usage: neuron interface <discover|describe|test|admit|attach|detach> ...\n");
+        const sub = args.items[2];
+        var flags = try parseFlags(allocator, args.items[3..]);
+        defer flags.deinit(allocator);
+        const node_dir = flags.positional(0) orelse {
+            try writeStderr(init.io, swarm_usage);
+            std.process.exit(2);
+        };
+        if (std.mem.eql(u8, sub, "negotiate")) {
+            const agent = flags.positional(1) orelse {
+                try writeStderr(init.io, "error: usage: neuron swarm negotiate <node_dir> <agent> --peer <addr> --interface <hex> [--uses N] [--max-writes W] [--max-bytes B]\n");
+                std.process.exit(2);
+            };
+            const peer = flags.value("--peer") orelse {
+                try writeStderr(init.io, "error: --peer <host:port> is required\n");
+                std.process.exit(2);
+            };
+            const interface_hex = flags.value("--interface") orelse {
+                try writeStderr(init.io, "error: --interface <hex> is required\n");
+                std.process.exit(2);
+            };
+            const uses = if (flags.value("--uses")) |t| std.fmt.parseInt(u32, t, 10) catch 1 else 1;
+            const max_writes = if (flags.value("--max-writes")) |t| std.fmt.parseInt(u32, t, 10) catch 1 else 1;
+            const max_bytes = if (flags.value("--max-bytes")) |t| std.fmt.parseInt(u64, t, 10) catch 1024 else 1024;
+            swarm_ops.negotiate(allocator, init.io, node_dir, agent, peer, interface_hex, uses, max_writes, max_bytes, flags.has("--json")) catch |err| {
+                try failClosed(init.io, "swarm negotiate", err);
+            };
+            return;
+        }
+        if (std.mem.eql(u8, sub, "route")) {
+            const contract_id = flags.value("--contract") orelse {
+                try writeStderr(init.io, "error: --contract <id> is required\n");
+                std.process.exit(2);
+            };
+            swarm_ops.route(allocator, init.io, node_dir, contract_id, flags.value("--input") orelse "", flags.has("--json")) catch |err| {
+                try failClosed(init.io, "swarm route", err);
+            };
+            return;
+        }
+        if (std.mem.eql(u8, sub, "reconcile")) {
+            swarm_ops.reconcile(allocator, init.io, node_dir, flags.has("--json")) catch |err| {
+                try failClosed(init.io, "swarm reconcile", err);
+            };
+            return;
+        }
+        if (std.mem.eql(u8, sub, "revoke")) {
+            const contract_id = flags.value("--contract") orelse {
+                try writeStderr(init.io, "error: --contract <id> is required\n");
+                std.process.exit(2);
+            };
+            swarm_ops.revoke(allocator, init.io, node_dir, contract_id) catch |err| {
+                try failClosed(init.io, "swarm revoke", err);
+            };
+            return;
+        }
+        try writeStderr(init.io, swarm_usage);
+        std.process.exit(2);
+    }
+    if (std.mem.eql(u8, args.items[1], "interface")) {
+        if (args.items.len < 3) {
+            try writeStderr(init.io, interface_usage);
+            std.process.exit(2);
+        }
+        const sub = args.items[2];
+        var flags = try parseFlags(allocator, args.items[3..]);
+        defer flags.deinit(allocator);
+
+        // Discovery and description are reads: neither opens a substrate.
+        if (std.mem.eql(u8, sub, "discover")) {
+            const target = flags.positional(0) orelse {
+                try writeStderr(init.io, "error: usage: neuron interface discover <target> [--json]\n");
+                std.process.exit(2);
+            };
+            membrane_ops.discover(allocator, init.io, target, flags.has("--json")) catch |err| {
+                try failClosed(init.io, "interface discover", err);
+            };
+            return;
+        }
+        if (std.mem.eql(u8, sub, "describe")) {
+            const target = flags.positional(0) orelse {
+                try writeStderr(init.io, "error: usage: neuron interface describe <target> [--kind <kind>] [--id <id>] [--mode read|command] [--target-template <t>] [--output <file>]\n");
+                std.process.exit(2);
+            };
+            var options: membrane.DescribeOptions = .{};
+            if (flags.value("--kind")) |text| {
+                options.kind = membrane.Kind.parse(text) orelse {
+                    try writeStderr(init.io, "error: --kind must be function, process, filesystem, http, mcp, model, device, or human\n");
+                    std.process.exit(2);
+                };
+            }
+            if (flags.value("--id")) |text| options.id = text;
+            if (flags.value("--mode")) |text| options.mode = membrane.Mode.parse(text);
+            if (flags.value("--target-template")) |text| options.target_template = text;
+            if (flags.value("--input-channel")) |text| {
+                options.input_channel = membrane.InputChannel.parse(text) orelse {
+                    try writeStderr(init.io, "error: --input-channel must be none, argv, or stdin\n");
+                    std.process.exit(2);
+                };
+            }
+            options.deterministic = flags.has("--deterministic");
+            // A remote boundary's identity is its declared contract, so these
+            // are declarations by the author, never discoveries.
+            if (flags.value("--method")) |text| {
+                options.method = membrane.Method.parse(text) orelse {
+                    try writeStderr(init.io, "error: --method must be GET, HEAD, POST, PUT, PATCH, or DELETE\n");
+                    std.process.exit(2);
+                };
+            }
+            if (flags.value("--url-template")) |text| options.url_template = text;
+            if (flags.value("--response-encoding")) |text| {
+                options.response_encoding = membrane.ResponseEncoding.parse(text) orelse {
+                    try writeStderr(init.io, "error: --response-encoding must be raw or json\n");
+                    std.process.exit(2);
+                };
+            }
+            if (flags.value("--response-field")) |text| options.response_field = text;
+            if (flags.value("--reconcile-url-template")) |text| options.reconcile_url_template = text;
+            if (flags.value("--reconcile-encoding")) |text| {
+                options.reconcile_encoding = membrane.ResponseEncoding.parse(text) orelse {
+                    try writeStderr(init.io, "error: --reconcile-encoding must be raw or json\n");
+                    std.process.exit(2);
+                };
+            }
+            if (flags.value("--reconcile-field")) |text| options.reconcile_field = text;
+            if (flags.value("--tool")) |text| options.tool = text;
+            // Phase 4: a nondeterministic boundary must declare what produced
+            // its answer, and an actuator must name the gate that permits it.
+            if (flags.value("--provider")) |text| options.provider = text;
+            if (flags.value("--model-name")) |text| options.model_name = text;
+            if (flags.value("--protocol")) |text| options.protocol = text;
+            if (flags.value("--cost-micros")) |text| {
+                options.cost_micros = std.fmt.parseInt(u64, text, 10) catch {
+                    try writeStderr(init.io, "error: --cost-micros must be a non-negative integer\n");
+                    std.process.exit(2);
+                };
+            }
+            if (flags.value("--device-role")) |text| {
+                options.device_role = membrane.DeviceRole.parse(text) orelse {
+                    try writeStderr(init.io, "error: --device-role must be sensor or actuator\n");
+                    std.process.exit(2);
+                };
+            }
+            if (flags.value("--device-state-template")) |text| options.device_state_template = text;
+            if (flags.value("--human-interaction")) |text| {
+                options.human_interaction = membrane.HumanInteraction.parse(text) orelse {
+                    try writeStderr(init.io, "error: --human-interaction must be approval, review, or annotation\n");
+                    std.process.exit(2);
+                };
+            }
+            if (flags.value("--approval-interface")) |text| options.approval_interface = text;
+            // Phase 5: economics is an optional profile over an ordinary
+            // interface — omitted means `none`, so it can never be enabled by
+            // accident.
+            if (flags.value("--economics")) |text| {
+                options.economics = membrane.Economics.parse(text) orelse {
+                    try writeStderr(init.io, "error: --economics must be none or x402\n");
+                    std.process.exit(2);
+                };
+            }
+            if (flags.value("--payment-adapter")) |text| options.payment_adapter = text;
+            if (flags.value("--payment-approval-interface")) |text|
+                options.payment_approval_interface = text;
+            if (flags.value("--payment-response-field")) |text| options.payment_response_field = text;
+            options.non_mutating = flags.has("--non-mutating");
+            if (flags.value("--timeout-ms")) |text| {
+                options.timeout_ms = std.fmt.parseInt(u32, text, 10) catch {
+                    try writeStderr(init.io, "error: --timeout-ms must be a positive integer\n");
+                    std.process.exit(2);
+                };
+            }
+            membrane_ops.describe(allocator, init.io, target, options, flags.value("--output")) catch |err| {
+                try failClosed(init.io, "interface describe", err);
+            };
+            return;
+        }
+        if (std.mem.eql(u8, sub, "test")) {
+            const path = flags.positional(0) orelse {
+                try writeStderr(init.io, "error: usage: neuron interface test <interface.json> [--json]\n");
+                std.process.exit(2);
+            };
+            membrane_ops.testInterface(allocator, init.io, path, flags.has("--json")) catch |err| {
+                try failClosed(init.io, "interface test", err);
+            };
+            return;
+        }
+
+        // The remaining verbs are writes against a node substrate.
+        const node_dir = flags.positional(0) orelse {
+            try writeStderr(init.io, interface_usage);
+            std.process.exit(2);
+        };
+        if (std.mem.eql(u8, sub, "resolve-gap")) {
+            const agent = flags.positional(1) orelse {
+                try writeStderr(init.io, "error: usage: neuron interface resolve-gap <node_dir> <agent> --gap <gap.json> [--role worker|effector] [--step N] [--json]\n");
+                std.process.exit(2);
+            };
+            const gap_path = flags.value("--gap") orelse {
+                try writeStderr(init.io, "error: usage: neuron interface resolve-gap <node_dir> <agent> --gap <gap.json>\n");
+                std.process.exit(2);
+            };
+            var gap_role: membrane_ops.Role = .worker;
+            if (flags.value("--role")) |text| {
+                gap_role = membrane_ops.Role.parse(text) orelse {
+                    try writeStderr(init.io, "error: --role must be worker or effector\n");
+                    std.process.exit(2);
+                };
+            }
+            var gap_step: usize = 0;
+            if (flags.value("--step")) |text| {
+                gap_step = std.fmt.parseInt(usize, text, 10) catch {
+                    try writeStderr(init.io, "error: --step must be a non-negative integer\n");
+                    std.process.exit(2);
+                };
+            }
+            membrane_ops.resolveGap(
+                allocator,
+                init.io,
+                node_dir,
+                agent,
+                gap_path,
+                gap_role,
+                gap_step,
+                flags.has("--json"),
+            ) catch |err| {
+                try failClosed(init.io, "interface resolve-gap", err);
+            };
+            return;
+        }
+        if (std.mem.eql(u8, sub, "policy")) {
+            const path = flags.positional(1) orelse {
+                try writeStderr(init.io, "error: usage: neuron interface policy <node_dir> <spending-policy.json> [--json]\n");
+                std.process.exit(2);
+            };
+            membrane_ops.policy(allocator, init.io, node_dir, path, flags.has("--json")) catch |err| {
+                try failClosed(init.io, "interface policy", err);
+            };
+            return;
+        }
+        if (std.mem.eql(u8, sub, "admit")) {
+            const path = flags.positional(1) orelse {
+                try writeStderr(init.io, "error: usage: neuron interface admit <node_dir> <interface.json> [--json]\n");
+                std.process.exit(2);
+            };
+            membrane_ops.admit(allocator, init.io, node_dir, path, flags.has("--json")) catch |err| {
+                try failClosed(init.io, "interface admit", err);
+            };
+            return;
+        }
+        if (std.mem.eql(u8, sub, "list")) {
+            membrane_ops.list(allocator, init.io, node_dir, flags.has("--json")) catch |err| {
+                try failClosed(init.io, "interface list", err);
+            };
+            return;
+        }
+        if (std.mem.eql(u8, sub, "dispatch")) {
+            membrane_ops.dispatch(allocator, init.io, node_dir, flags.has("--json")) catch |err| {
+                try failClosed(init.io, "interface dispatch", err);
+            };
+            return;
+        }
+        if (std.mem.eql(u8, sub, "revoke")) {
+            const digest = flags.value("--interface") orelse {
+                try writeStderr(init.io, "error: usage: neuron interface revoke <node_dir> --interface <digest>\n");
+                std.process.exit(2);
+            };
+            membrane_ops.revoke(allocator, init.io, node_dir, digest) catch |err| {
+                try failClosed(init.io, "interface revoke", err);
+            };
+            return;
+        }
+        if (std.mem.eql(u8, sub, "call")) {
+            const digest = flags.value("--interface") orelse {
+                try writeStderr(init.io, "error: usage: neuron interface call <node_dir> --interface <digest> --input <text> [--json]\n");
+                std.process.exit(2);
+            };
+            const input = flags.value("--input") orelse {
+                try writeStderr(init.io, "error: usage: neuron interface call <node_dir> --interface <digest> --input <text> [--json]\n");
+                std.process.exit(2);
+            };
+            membrane_ops.call(allocator, init.io, node_dir, digest, input, flags.has("--json")) catch |err| {
+                try failClosed(init.io, "interface call", err);
+            };
+            return;
+        }
+        if (std.mem.eql(u8, sub, "attach") or std.mem.eql(u8, sub, "detach")) {
+            const agent_id = flags.positional(1) orelse {
+                try writeStderr(init.io, "error: usage: neuron interface <attach|detach> <node_dir> <agent_id> [--role worker|effector] ...\n");
+                std.process.exit(2);
+            };
+            const role = membrane_ops.Role.parse(flags.value("--role") orelse "worker") orelse {
+                try writeStderr(init.io, "error: --role must be worker or effector\n");
+                std.process.exit(2);
+            };
+            var step: usize = 0;
+            if (flags.value("--step")) |text| {
+                step = std.fmt.parseInt(usize, text, 10) catch {
+                    try writeStderr(init.io, "error: --step must be a non-negative integer\n");
+                    std.process.exit(2);
+                };
+            }
+            if (std.mem.eql(u8, sub, "detach")) {
+                membrane_ops.detach(allocator, init.io, node_dir, agent_id, role, step) catch |err| {
+                    try failClosed(init.io, "interface detach", err);
+                };
+                return;
+            }
+            const digest = flags.value("--interface") orelse {
+                try writeStderr(init.io, "error: usage: neuron interface attach <node_dir> <agent_id> --interface <digest> [--role worker|effector] [--replace]\n");
+                std.process.exit(2);
+            };
+            membrane_ops.attach(
+                allocator,
+                init.io,
+                node_dir,
+                agent_id,
+                role,
+                step,
+                digest,
+                flags.has("--replace"),
+                flags.has("--json"),
+            ) catch |err| {
+                try failClosed(init.io, "interface attach", err);
+            };
+            return;
+        }
+        try writeStderr(init.io, interface_usage);
         std.process.exit(2);
     }
     if (std.mem.eql(u8, args.items[1], "telemetry")) {
-        if (args.items.len < 3 or !std.mem.eql(u8, args.items[2], "project")) {
-            try writeStderr(init.io, "error: usage: neuron telemetry project <state_dir> [--json]\n");
+        const is_project = args.items.len >= 3 and std.mem.eql(u8, args.items[2], "project");
+        const is_trace = args.items.len >= 3 and std.mem.eql(u8, args.items[2], "trace");
+        const is_stale = args.items.len >= 3 and std.mem.eql(u8, args.items[2], "stale");
+        const is_serve = args.items.len >= 3 and std.mem.eql(u8, args.items[2], "serve");
+        if (!is_project and !is_trace and !is_stale and !is_serve) {
+            try writeStderr(init.io, "error: usage: neuron telemetry <project|trace|stale|serve> <state_dir> [--json]\n");
             std.process.exit(2);
         }
         if (args.items.len < 4) {
             try writeStderr(init.io, "error: missing state_dir\n");
             std.process.exit(2);
         }
+        if (is_serve) {
+            var listen: []const u8 = "127.0.0.1:8787";
+            var allow_public = false;
+            var i: usize = 4;
+            while (i < args.items.len) : (i += 1) {
+                if (std.mem.eql(u8, args.items[i], "--listen") and i + 1 < args.items.len) {
+                    i += 1;
+                    listen = args.items[i];
+                } else if (std.mem.eql(u8, args.items[i], "--allow-public")) allow_public = true;
+            }
+            observe_mod.serve(allocator, init.io, args.items[3], listen, allow_public) catch |err| {
+                var eb: [200]u8 = undefined;
+                const l = std.fmt.bufPrint(&eb, "error: observe failed: {s}\n", .{@errorName(err)}) catch "error: observe failed\n";
+                writeStderr(init.io, l) catch {};
+                std.process.exit(1);
+            };
+            return;
+        }
         const json_out = args.items.len > 4 and std.mem.eql(u8, args.items[4], "--json");
-        limb_ops.telemetryProject(allocator, init.io, args.items[3], json_out) catch |err| {
+        const result = if (is_trace)
+            limb_ops.telemetryTrace(allocator, init.io, args.items[3], json_out)
+        else if (is_stale)
+            limb_ops.telemetryStale(allocator, init.io, args.items[3], json_out)
+        else
+            limb_ops.telemetryProject(allocator, init.io, args.items[3], json_out);
+        result catch |err| {
             var error_buffer: [192]u8 = undefined;
             const line = std.fmt.bufPrint(&error_buffer, "error: telemetry failed: {s}\n", .{@errorName(err)}) catch "error: telemetry failed\n";
             writeStderr(init.io, line) catch {};
@@ -662,6 +1067,94 @@ pub fn main(init: std.process.Init) !void {
     return error.InvalidCommand;
 }
 
+const interface_usage =
+    \\error: usage: neuron interface <verb> ...
+    \\  discover <target> [--json]
+    \\  describe <target> [--kind function|process|filesystem] [--id <id>]
+    \\           [--mode read|command] [--target-template <t>] [--output <file>]
+    \\  test     <interface.json> [--json]
+    \\  admit    <node_dir> <interface.json> [--json]
+    \\  list     <node_dir> [--json]
+    \\  attach   <node_dir> <agent_id> --interface <digest>
+    \\           [--role worker|effector] [--replace] [--json]
+    \\  detach   <node_dir> <agent_id> [--role worker|effector]
+    \\  revoke   <node_dir> --interface <digest>
+    \\  call     <node_dir> --interface <digest> --input <text> [--json]
+    \\  dispatch <node_dir> [--json]
+    \\
+;
+
+/// Flag parsing for the interface verbs: `--key value` pairs, standalone
+/// boolean switches, and bare positionals, in any order.
+const Flags = struct {
+    positionals: std.ArrayList([]const u8),
+    keys: std.ArrayList([]const u8),
+    values: std.ArrayList([]const u8),
+    switches: std.ArrayList([]const u8),
+
+    fn has(self: *const Flags, name: []const u8) bool {
+        for (self.switches.items) |item| {
+            if (std.mem.eql(u8, item, name)) return true;
+        }
+        return false;
+    }
+
+    fn value(self: *const Flags, name: []const u8) ?[]const u8 {
+        for (self.keys.items, self.values.items) |key, item| {
+            if (std.mem.eql(u8, key, name)) return item;
+        }
+        return null;
+    }
+
+    fn positional(self: *const Flags, index: usize) ?[]const u8 {
+        if (index >= self.positionals.items.len) return null;
+        return self.positionals.items[index];
+    }
+
+    fn deinit(self: *Flags, allocator: std.mem.Allocator) void {
+        self.positionals.deinit(allocator);
+        self.keys.deinit(allocator);
+        self.values.deinit(allocator);
+        self.switches.deinit(allocator);
+    }
+};
+
+fn parseFlags(allocator: std.mem.Allocator, args: []const []const u8) !Flags {
+    const boolean_switches = [_][]const u8{ "--json", "--replace", "--sandbox", "--dump", "--deterministic", "--non-mutating" };
+    var flags: Flags = .{
+        .positionals = .empty,
+        .keys = .empty,
+        .values = .empty,
+        .switches = .empty,
+    };
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        const arg = args[index];
+        if (!std.mem.startsWith(u8, arg, "--")) {
+            try flags.positionals.append(allocator, arg);
+            continue;
+        }
+        var is_switch = false;
+        for (boolean_switches) |name| {
+            if (std.mem.eql(u8, arg, name)) is_switch = true;
+        }
+        if (is_switch) {
+            try flags.switches.append(allocator, arg);
+            continue;
+        }
+        // A trailing `--key` with no value is recorded as a switch so the
+        // verb can report a precise usage error rather than reading past the end.
+        if (index + 1 >= args.len) {
+            try flags.switches.append(allocator, arg);
+            continue;
+        }
+        try flags.keys.append(allocator, arg);
+        try flags.values.append(allocator, args[index + 1]);
+        index += 1;
+    }
+    return flags;
+}
+
 /// In-memory by default; journaled under `<dir>/substrate.log` when a state
 /// dir is given — restart then replays the exact committed state (§9/§22).
 fn openState(allocator: std.mem.Allocator, io: std.Io, state_dir: ?[]const u8) !substrate_mod.Substrate {
@@ -678,14 +1171,14 @@ fn failClosed(io: std.Io, verb: []const u8, err: anyerror) !noreturn {
 
 fn writeStdout(io: std.Io, bytes: []const u8) !void {
     var buffer: [1024]u8 = undefined;
-    var writer = std.Io.File.stdout().writer(io, &buffer);
+    var writer = std.Io.File.stdout().writerStreaming(io, &buffer);
     try writer.interface.writeAll(bytes);
     try writer.interface.flush();
 }
 
 fn writeStderr(io: std.Io, bytes: []const u8) !void {
     var buffer: [512]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
+    var writer = std.Io.File.stderr().writerStreaming(io, &buffer);
     try writer.interface.writeAll(bytes);
     try writer.interface.flush();
 }

@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CATALOG = ROOT / "reference" / "SUPER_META_PATTERNS.md"
 AGENTS = ROOT / "AGENTS.md"
 
-PATTERN_IDS = [f"SMP-{number:02d}" for number in range(1, 33)]
+PATTERN_IDS = [f"SMP-{number:02d}" for number in range(1, 34)]
 REQUIRED_FIELDS = [
     "Version",
     "Trigger",

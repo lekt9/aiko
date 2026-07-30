@@ -16,7 +16,7 @@ The runner extends Aiko's existing task harness rather than introducing a second
 agent launcher:
 
 ```bash
-cd /Users/lewis/Unbrowse/aiko
+cd /Users/lewis/Unbrowse/commons/aiko
 ORGANISM_CASES=AO-01,AO-09,AO-12,AO-31 \
 ORGANISM_SEEDS=17 \
 AIKO_MODEL=deepseek-v4-pro \
@@ -34,8 +34,8 @@ Verify the latest sealed report and archive reference with:
 
 ```bash
 node scripts/benchmark-agent-tasks.mjs --organism-verify \
-  /Users/lewis/Unbrowse/neuron/bench/agentic-organism/aiko-results.json \
-  /Users/lewis/Unbrowse/neuron/bench/agentic-organism/aiko-run-ledger.jsonl
+  /Users/lewis/Unbrowse/commons/neuron/bench/agentic-organism/aiko-results.json \
+  /Users/lewis/Unbrowse/commons/neuron/bench/agentic-organism/aiko-run-ledger.jsonl
 ```
 
 ## Trial boundary

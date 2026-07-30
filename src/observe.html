@@ -1,0 +1,153 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>neuron · live</title>
+<style>
+:root{--ink:#0E1519;--paper:#EDF0F1;--panel:#fff;--rule:#C9D2D6;--dim:#5C6C74;
+ --signal:#B96A1E;--stale:#A6432C;--live:#2E6B60;--grid:rgba(14,21,25,.07);
+ --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+ --serif:"Iowan Old Style",Palatino,Georgia,serif}
+@media(prefers-color-scheme:dark){:root{--ink:#DCE4E7;--paper:#0D1418;--panel:#141E23;
+ --rule:#27363D;--dim:#8095A0;--signal:#E0913C;--stale:#D46A4E;--live:#4E9C8D;
+ --grid:rgba(220,228,231,.07)}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--serif);font-size:15px}
+.wrap{max-width:1200px;margin:0 auto;padding:26px 20px 60px;display:flex;flex-direction:column;gap:20px}
+.eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+h1{font-size:28px;margin:5px 0 0;font-weight:600;letter-spacing:-.01em}
+.sub{color:var(--dim);margin:3px 0 0;max-width:62ch}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--dim);margin-right:7px}
+.dot.on{background:var(--live);box-shadow:0 0 0 3px color-mix(in srgb,var(--live) 22%,transparent)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+.dot.on{animation:pulse 2s ease-in-out infinite}
+@media(prefers-reduced-motion:reduce){.dot.on{animation:none}}
+.strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:3px;overflow:hidden}
+.cell{background:var(--panel);padding:12px 14px}
+.k{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);display:block}
+.v{font-family:var(--mono);font-size:22px;font-variant-numeric:tabular-nums}
+.warn .v{color:var(--stale)}
+.panel{background:var(--panel);border:1px solid var(--rule);border-radius:3px}
+.ph{padding:11px 14px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.pt{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase}
+.pn{font-size:13px;color:var(--dim)}
+canvas{display:block;width:100%}
+.split{display:grid;grid-template-columns:1fr;gap:20px}
+@media(min-width:900px){.split{grid-template-columns:1.5fr 1fr}}
+.feed{max-height:420px;overflow-y:auto;font-family:var(--mono);font-size:11.5px}
+.row{padding:7px 14px;border-bottom:1px solid var(--rule);display:flex;gap:10px;align-items:baseline;cursor:pointer}
+.row:hover{background:color-mix(in srgb,var(--signal) 7%,transparent)}
+.row.new{background:color-mix(in srgb,var(--live) 13%,transparent)}
+.sq{color:var(--dim);font-variant-numeric:tabular-nums;min-width:30px}
+.fid{word-break:break-all;flex:1}
+.tag{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;padding:1px 6px;border:1px solid currentColor;border-radius:2px;color:var(--dim)}
+.tag.w{color:var(--live)}.tag.s{color:var(--signal)}
+.det{padding:14px;display:flex;flex-direction:column;gap:11px;min-height:150px}
+.claim{border-left:2px solid var(--signal);padding:1px 0 1px 11px}
+.claim .c{font-size:14px}
+.claim .m{font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-top:2px}
+.src{font-family:var(--mono);font-size:11px;color:var(--dim);word-break:break-all}
+.src b{color:var(--live);font-weight:600}
+.empty{color:var(--dim);font-style:italic}
+code{font-family:var(--mono);font-size:11px}
+footer{font-family:var(--mono);font-size:10.5px;color:var(--dim);line-height:1.75}
+</style></head><body><div class="wrap">
+<header>
+  <div class="eyebrow"><span class="dot" id="dot"></span><span id="conn">connecting…</span></div>
+  <h1>Live substrate</h1>
+  <p class="sub">Tailing the journal. Every committed firing appends exactly one record, so this is
+  the firing stream itself — not a poll of derived state. Read-only: the exclusive lock is never taken,
+  so the node keeps running while you watch.</p>
+</header>
+<div class="strip">
+  <div class="cell"><span class="k">firings</span><span class="v" id="n-f">0</span></div>
+  <div class="cell"><span class="k">artifacts</span><span class="v" id="n-a">0</span></div>
+  <div class="cell"><span class="k">citations</span><span class="v" id="n-e">0</span></div>
+  <div class="cell warn"><span class="k">stale</span><span class="v" id="n-s">0</span></div>
+</div>
+<section class="panel">
+  <div class="ph"><span class="pt">Derivation graph</span>
+    <span class="pn">x is the commit ordinal — every citation flows left to right, because a source must exist before it is cited.</span></div>
+  <canvas id="cv" height="330"></canvas>
+</section>
+<div class="split">
+  <section class="panel"><div class="ph"><span class="pt">Firing feed</span><span class="pn">newest first</span></div>
+    <div class="feed" id="feed"></div></section>
+  <section class="panel"><div class="ph"><span class="pt">Detail</span></div>
+    <div class="det" id="det"><p class="empty">Select a firing.</p></div></section>
+</div>
+<footer>
+  <code>neuron telemetry serve &lt;state_dir&gt;</code> · artifact payloads are never streamed —
+  ids, sizes, and citations only.
+</footer>
+</div>
+<script>
+const F=[],A={},E=[];let sel=null,seen=new Set();
+const $=i=>document.getElementById(i);
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function add(r){
+  if(seen.has(r.id))return; seen.add(r.id);
+  F.push(r);
+  (r.w||[]).forEach(a=>A[a.id]={seq:r.seq,by:r.id,n:a.n,sch:a.sch});
+  (r.cites||[]).forEach(s=>{if(s!=="stimulus")E.push({from:s,to:r.id,seq:r.seq});});
+  const d=document.createElement('div');
+  d.className='row new'; d.onclick=()=>show(r.id);
+  const tag=(r.s||[]).some(x=>x.startsWith('outbox/'))?'<span class="tag s">outbox</span>'
+    :(r.s||[]).length?'<span class="tag">event</span>':'<span class="tag w">write</span>';
+  d.innerHTML=`<span class="sq">${r.seq}</span><span class="fid">${r.id}</span>${tag}`;
+  $('feed').prepend(d);
+  setTimeout(()=>d.classList.remove('new'),1400);
+  while($('feed').children.length>300)$('feed').lastChild.remove();
+  stats();draw();
+}
+function stats(){
+  $('n-f').textContent=F.length; $('n-a').textContent=Object.keys(A).length;
+  $('n-e').textContent=E.length;
+  const last={}; Object.entries(A).forEach(([k,v])=>last[k]=v.seq);
+  let st=0;
+  F.forEach(f=>(f.w||[]).forEach(a=>{
+    (f.cites||[]).forEach(s=>{ if(s==="stimulus")return;
+      if(last[s]!==undefined && last[s]>f.seq && last[a.id]===f.seq) st++; });}));
+  $('n-s').textContent=st;
+}
+const lane=id=>/\/goals\//.test(id)?-2:/result/.test(id)?-1:/verdict/.test(id)?1
+  :/snapshots/.test(id)?2:/active$/.test(id)?3:/context/.test(id)?-3:(id.length%5)-2;
+function draw(){
+  const cv=$('cv'),dpr=Math.min(devicePixelRatio||1,2),w=cv.parentElement.clientWidth||900;
+  cv.width=w*dpr;cv.height=330*dpr;cv.style.height='330px';
+  const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);
+  const max=Math.max(9,...F.map(f=>f.seq)),pl=20,pr=20,tp=18,bt=26;
+  const x=s=>pl+((w-pl-pr)*s)/max, mid=(330-tp-bt)/2+tp, lh=Math.min(38,(330-tp-bt)/8), y=l=>mid+l*lh;
+  g.clearRect(0,0,w,330);
+  g.strokeStyle=css('--grid');
+  for(let s=0;s<=max;s+=Math.max(1,Math.round(max/12))){const px=Math.round(x(s))+.5;
+    g.beginPath();g.moveTo(px,tp);g.lineTo(px,330-bt);g.stroke();}
+  g.fillStyle=css('--dim');g.font='10px '+css('--mono');g.textAlign='left';
+  g.fillText('commit ordinal →',pl,330-9);
+  E.forEach(e=>{const a=A[e.from];if(!a)return;
+    const x0=x(a.seq),y0=y(lane(e.from)),x1=x(e.seq),y1=y(0);
+    g.strokeStyle=css('--signal');g.globalAlpha=sel&&sel!==e.to?.2:.85;g.lineWidth=1.4;
+    g.beginPath();g.moveTo(x0,y0);g.bezierCurveTo((x0+x1)/2,y0,(x0+x1)/2,y1,x1,y1);g.stroke();g.globalAlpha=1;});
+  Object.entries(A).forEach(([id,a])=>{const px=x(a.seq),py=y(lane(id));
+    g.fillStyle=css('--panel');g.strokeStyle=css('--dim');g.lineWidth=1.3;
+    g.beginPath();g.rect(px-3.4,py-3.4,6.8,6.8);g.fill();g.stroke();});
+  F.forEach(f=>{if(!(f.cites||[]).some(s=>s!=="stimulus"))return;
+    const px=x(f.seq),py=y(0);g.fillStyle=css('--live');
+    g.beginPath();g.arc(px,py,sel===f.id?6:4.2,0,7);g.fill();
+    if(sel===f.id){g.strokeStyle=css('--signal');g.lineWidth=2;g.beginPath();g.arc(px,py,9,0,7);g.stroke();}});
+}
+function show(id){sel=id;const f=F.find(v=>v.id===id);const d=$('det');
+  if(!f){d.innerHTML='<p class="empty">No record.</p>';return;}
+  const ev=(f.ev||[]).map(x=>`<div class="claim"><div class="c">${x.c}</div><div class="m">${x.m}</div></div>`).join('');
+  const cites=(f.cites||[]).filter(s=>s!=="stimulus").map(s=>`<div class="src">cites <b>${s}</b></div>`).join('');
+  const wrote=(f.w||[]).map(a=>`<div class="src">wrote <b>${a.id}</b> · ${a.n}B</div>`).join('');
+  d.innerHTML=`<div class="src" style="font-size:12.5px;color:var(--ink)">${f.id}</div>
+    <div class="src">ordinal <b>${f.seq}</b></div>${ev||''}${cites}${wrote}`;
+  draw();}
+addEventListener('resize',draw);
+fetch('graph').then(r=>r.json()).then(j=>{(j.firings||[]).forEach(add);}).catch(()=>{}).finally(()=>{
+  const es=new EventSource('events');
+  es.onopen=()=>{$('dot').className='dot on';$('conn').textContent='live · tailing journal';};
+  es.onerror=()=>{$('dot').className='dot';$('conn').textContent='disconnected — retrying';};
+  es.onmessage=m=>{try{add(JSON.parse(m.data));}catch(e){}};
+});
+draw();
+</script></body></html>

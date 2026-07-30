@@ -11,4 +11,8 @@ python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); assert d["status"]=
 python3 bench/jespa/runtime_tasks.py --assert-win
 JESPA_WIN_TARGET=2 bash bench/jespa/jespa-benchmarks-gate.sh
 bash tests/meta-agent-gate.sh
+# The agent entrypoint and the interface membrane are what make the runtime do
+# outside work, so they belong in the default sweep rather than beside it.
+bash tests/agent-entrypoint-gate.sh
+bash tests/universal-interface-gate.sh
 echo "[runtime] PASS — Zig build, behavioral claims, CLI UX, and reproduced task ledger are green"

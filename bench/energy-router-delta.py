@@ -89,7 +89,7 @@ def main():
         "jespa_rate": round(energy_wins / (energy_wins + random_wins), 4) if (energy_wins + random_wins) > 0 else 1.0,
         "won": (energy_wins > random_wins),
         "reproduced": True,
-        "witness": "cd /Users/lewis/Unbrowse/neuron && python3 bench/energy-router-delta.py",
+        "witness": "cd /Users/lewis/Unbrowse/commons/neuron && python3 bench/energy-router-delta.py",
         "note": f"Energy scorer ({energy_wins} wins, {random_wins} losses, {ties} ties) "
                 "discriminates grounded/low-cost candidates from ungrounded/"
                 "high-cost ones. Random baseline treats all equally. "

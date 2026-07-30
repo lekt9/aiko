@@ -43,7 +43,13 @@ DEFAULT_BUDGET = {
     "max_spawns": 8,
     "max_bytes": 1024 * 1024,
     "max_depth": 8,
+    "max_turns": 8,
 }
+
+# Predicate namespace for `continue`-parking on a reply (pump.zig
+# REPLY_PREDICATE_PREFIX). Waiting here is waiting for an answer, not an
+# artifact.
+REPLY_PREDICATE_PREFIX = "reply/"
 
 
 class Reject(Exception):
@@ -128,6 +134,81 @@ def artifact_refs(stim, schema):
     return out
 
 
+def inbound(stim, schema=None, correlation=None):
+    """Inbound messages, optionally filtered by schema or conversation.
+
+    A message carries its own attested envelope (`from`, `correlation`,
+    `reply_to`, `turn`), stamped by the interpreter at the sender's commit
+    boundary. A neuron therefore answers a peer it was never configured with:
+    the return address arrives with the request.
+    """
+    out = []
+    for msg in stim.get("messages", []):
+        if schema is not None and msg.get("schema") != schema:
+            continue
+        if correlation is not None and msg.get("correlation") != correlation:
+            continue
+        out.append(msg)
+    return out
+
+
+def request(to, schema, payload, correlation):
+    """A send effect that opens a conversation and invites an answer.
+
+    `correlation` names the exchange; the interpreter stamps this neuron's own
+    address as the return path, so the recipient can reply without the sender
+    granting it anything in advance. Reaching `to` still requires an ordinary
+    send capability (§24).
+    """
+    if not correlation:
+        raise Reject("validation", "a request must carry a non-empty correlation")
+    return {
+        "kind": "send",
+        "message": {
+            "to": to,
+            "schema": schema,
+            "payload": payload,
+            "correlation": correlation,
+        },
+    }
+
+
+def reply(message, schema, payload):
+    """A send effect answering `message` on its own return path.
+
+    Authority comes from possessing the request: the effect targets exactly
+    the attested `reply_to` on exactly that correlation, so it cannot be
+    redirected to a third party and needs no send prefix (runtime.zig
+    answeredRequest). Passing a message that invited no reply is a typed
+    rejection rather than a silent one-way send.
+    """
+    reply_to = message.get("reply_to") or ""
+    correlation = message.get("correlation") or ""
+    if not reply_to or not correlation:
+        raise Reject("capability_denied", "message carries no return path to reply on")
+    return {
+        "kind": "send",
+        "message": {
+            "to": reply_to,
+            "schema": schema,
+            "payload": payload,
+            "correlation": correlation,
+        },
+    }
+
+
+def await_reply(correlation):
+    """A `continue` control that parks this neuron until its answer arrives.
+
+    The pump holds unrelated traffic for a parked neuron, so one conversation
+    is not interrupted by another; an answer that never comes surfaces as
+    pending rather than spinning (§26).
+    """
+    if not correlation:
+        raise Reject("validation", "cannot await a reply without a correlation")
+    return {"kind": "continue", "wait_for": f"{REPLY_PREDICATE_PREFIX}{correlation}"}
+
+
 def check_budget(stim, n_effects, n_writes=0, n_messages=0, n_spawns=0, n_bytes=0):
     """Budget enforcement (§16, caps.zig Budget) before any effect is declared."""
     budget = stim["budget"]
@@ -143,6 +224,43 @@ def check_budget(stim, n_effects, n_writes=0, n_messages=0, n_spawns=0, n_bytes=
     for key, used in checks:
         if used > budget.get(key, DEFAULT_BUDGET[key]):
             raise Reject("budget_exhausted", f"{key}: need {used}, have {budget.get(key)}")
+
+
+def check_conversation(stim, effects):
+    """Mirror the interpreter's conversation valve (runtime.zig) locally, so a
+    neuron fails typed at its own boundary instead of being rejected at commit.
+
+    Three rules: provenance is never self-asserted, one firing answers a given
+    conversation once, and an exchange cannot outrun its turn ceiling.
+    """
+    budget = stim["budget"]
+    max_turns = budget.get("max_turns", DEFAULT_BUDGET["max_turns"])
+    answered = set()
+    for effect in effects:
+        if effect.get("kind") != "send":
+            continue
+        msg = effect.get("message", {})
+        for owned in ("from", "reply_to", "turn"):
+            if msg.get(owned):
+                raise Reject(
+                    "invariant_violation",
+                    f"'{owned}' is stamped by the interpreter and must not be self-asserted",
+                )
+        correlation = msg.get("correlation") or ""
+        if not correlation:
+            continue
+        key = (correlation, msg.get("to"))
+        if key in answered:
+            raise Reject("invariant_violation", f"conversation {correlation} answered twice in one firing")
+        answered.add(key)
+        for request_msg in inbound(stim, correlation=correlation):
+            if request_msg.get("reply_to") != msg.get("to"):
+                continue
+            if request_msg.get("turn", 0) >= max_turns:
+                raise Reject(
+                    "budget_exhausted",
+                    f"conversation {correlation} exceeded max_turns ({max_turns})",
+                )
 
 
 def allows_delegation(parent, child):
@@ -180,6 +298,7 @@ def decision(control, effects, evidence, stim):
     n_spawns = sum(1 for e in effects if e.get("kind") == "spawn")
     n_bytes = sum(len(e.get("artifact", {}).get("bytes", "")) for e in effects if e.get("kind") == "write")
     check_budget(stim, len(effects), n_writes, n_messages, n_spawns, n_bytes)
+    check_conversation(stim, effects)
     out = {"schema": SCHEMA_DECISION, "control": control, "effects": effects, "evidence": evidence}
     json.dump(out, sys.stdout, sort_keys=True, separators=(",", ":"))
     sys.stdout.write("\n")
