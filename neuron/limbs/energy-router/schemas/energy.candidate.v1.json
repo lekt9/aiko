@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "energy.candidate/v1",
+  "description": "A scored candidate for energy-based neuron routing / action selection. Used by EnergyRouter and Registry lookup.",
+  "type": "object",
+  "required": ["id", "grounding_ok", "evidence_conf_milli", "normalized_cost", "settlement_distance"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "grounding_ok": { "type": "boolean" },
+    "evidence_conf_milli": { "type": "integer", "minimum": 0, "maximum": 1000 },
+    "normalized_cost": { "type": "number", "minimum": 0 },
+    "settlement_distance": { "type": "number", "minimum": 0 },
+    "violations": { "type": "integer", "minimum": 0, "default": 0 },
+    "wants_sub_ebm": { "type": "boolean", "default": false },
+    "package_digest": { "type": "string", "description": "If this candidate is a remote published package, its exact content digest" },
+    "price_milli": { "type": "integer", "minimum": 0, "description": "Optional price in milli-units for using this candidate (for paid commons)" }
+  }
+}

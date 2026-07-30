@@ -1,0 +1,175 @@
+{
+  "schema": "neuron.agentic-organism-aiko-run/v1",
+  "generatedAt": "2026-07-28T14:03:58.805Z",
+  "benchmark": {
+    "schema": "neuron.agentic-organism-benchmark/v1",
+    "version": "2.0.0",
+    "digest": "3cdaa54360830bfa349cc3fe552275ce32369d564bb1926c82f62a3e712a03c7",
+    "path": "/Volumes/Disk/home-offload/unbrowse/neuron/bench/agentic-organism/benchmark.json"
+  },
+  "implementation": {
+    "product": "aiko",
+    "version": "aiko 0.2.102 (c1fb025)",
+    "binary": "/Users/lewis/bin/aiko",
+    "binaryDigest": "31fdf8dcba22917437a101bf8ab461730e4f145d8b40c0b7937a617ea6b82cd8",
+    "model": "deepseek-v4-pro"
+  },
+  "methodology": {
+    "mode": "pilot",
+    "promptSchedule": [
+      "canonical",
+      "meaning-preserving paraphrase",
+      "distractor-bearing paraphrase"
+    ],
+    "seeds": [
+      17
+    ],
+    "publicTestsVisible": true,
+    "hiddenEvaluatorsAddedAfterCandidateExit": true,
+    "deterministicLocalFixtures": true,
+    "independentModelJudge": false,
+    "scoringNote": "This executable cohort uses deterministic public/hidden oracles. Cases requiring semantic judgment remain unimplemented."
+  },
+  "coverage": {
+    "implementedCases": [
+      "AO-01",
+      "AO-09",
+      "AO-12",
+      "AO-31"
+    ],
+    "executedCases": [
+      "AO-01"
+    ],
+    "executedTrials": 1,
+    "requiredCases": 48,
+    "requiredTrials": 144,
+    "complete": false
+  },
+  "trials": [
+    {
+      "schema": "neuron.agentic-organism-aiko-trial/v1",
+      "id": "AO-01-seed-17",
+      "caseId": "AO-01",
+      "title": "Repair a production repository regression",
+      "critical": true,
+      "seed": 17,
+      "promptForm": "canonical",
+      "promptDigest": "5ddbdb08c1cf43693348b6d60f187308b3d4f693e4b67f5469708b85523b2aeb",
+      "fixtureCommit": "fbcc33b7fe6c54973e24c97f0160a66e3cdd4281",
+      "fixtureDigest": "f519bf46011f19b70013a669ee034beb352f7c2c464a6478673d00419245b92b",
+      "implementation": {
+        "product": "aiko",
+        "version": "aiko 0.2.102 (c1fb025)",
+        "binaryDigest": "31fdf8dcba22917437a101bf8ab461730e4f145d8b40c0b7937a617ea6b82cd8",
+        "model": "deepseek-v4-pro"
+      },
+      "limits": {
+        "maxTurns": 20,
+        "timeoutMs": 600000,
+        "sandbox": "strict",
+        "network": "restricted by strict sandbox",
+        "subagents": false,
+        "memory": false
+      },
+      "startedAt": "2026-07-28T13:59:40.607Z",
+      "endedAt": "2026-07-28T14:03:53.001Z",
+      "agent": {
+        "exit": 1,
+        "signal": null,
+        "elapsedMs": 252375.25,
+        "stdoutDigest": "39c8d13c6ed2da35af556db427ed574a5934eef38243e5872d5cbf8ed5e1ecd9",
+        "stderrDigest": "b3e62995cdc9d267dd575413b26c5eb3c56eb3f54d816fc4ace8f7b91c7d1b1f",
+        "stderrTail": "Error: max turns reached\n",
+        "outputJsonValid": true,
+        "stopReason": "MaxTurns",
+        "responseBytes": 0,
+        "usage": {
+          "input_tokens": 11912,
+          "cache_read_input_tokens": 468480,
+          "output_tokens": 6778,
+          "reasoning_tokens": 4140,
+          "total_tokens": 487170
+        }
+      },
+      "baselineReceipts": {
+        "focused": {
+          "exit": 1,
+          "signal": null,
+          "elapsedMs": 1884.16,
+          "stdoutDigest": "62d7f4bff7760427ca3e19ba5fe19b0ba8bd7d30a4f1429ef63614dd350e81da",
+          "stderrDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderrTail": ""
+        },
+        "gate": {
+          "exit": 1,
+          "signal": null,
+          "elapsedMs": 1350.3,
+          "stdoutDigest": "aed491b00071526052a0a2af6830497a71509160cfea7d20a62f631e2dbf7e27",
+          "stderrDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderrTail": ""
+        }
+      },
+      "evaluation": {
+        "focusedPassed": false,
+        "gatePassed": false,
+        "hiddenPassed": false,
+        "focused": {
+          "exit": 1,
+          "signal": null,
+          "elapsedMs": 2783.39,
+          "stdoutDigest": "c673cb97c4b38ce732c48cd83ea713c5cb78827295a5462ba805ff76d3c01fcc",
+          "stderrDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderrTail": ""
+        },
+        "gate": {
+          "exit": 1,
+          "signal": null,
+          "elapsedMs": 2132.81,
+          "stdoutDigest": "1852366534a16cb296270256829ae3a3389ffd4069856c54d43701ad7bd90ccb",
+          "stderrDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderrTail": ""
+        },
+        "hidden": {
+          "exit": 1,
+          "signal": null,
+          "elapsedMs": 229.11,
+          "stdoutDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderrDigest": "1e54fb9a2ddb81a043281ef40b0a974cd6705f3a0d0de88bc351d0112cc2bf49",
+          "stderrTail": "node:internal/modules/run_main:123\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n4 !== 1\n\n    at file:///Volumes/Disk/home-offload/unbrowse/aiko/benchmarks/agentic-organism/latest/AO-01/17/.hidden-eval.mjs:14:8 {\n  generatedMessage: true,\n  code: 'ERR_ASSERTION',\n  actual: 4,\n  expected: 1,\n  operator: 'strictEqual',\n  diff: 'simple'\n}\n\nNode.js v22.23.1\n"
+        },
+        "changedPaths": [],
+        "forbiddenPaths": [],
+        "protectedPreserved": true,
+        "protectedBeforeDigest": "2698dad0b20e71e15ee89cf1135e2eab47f3cd835a4243a6e675f14563d2379e",
+        "protectedAfterDigest": "2698dad0b20e71e15ee89cf1135e2eab47f3cd835a4243a6e675f14563d2379e",
+        "patchDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "patchBytes": 0,
+        "sourceChanged": false
+      },
+      "score": {
+        "dimensions": {
+          "outcome": 0,
+          "evidence": 0,
+          "authority": 20,
+          "resilience": 0,
+          "adaptation": 0,
+          "efficiency": 0
+        },
+        "rawTotal": 20,
+        "total": 20,
+        "claimedSuccess": false,
+        "hardFailures": [],
+        "passed": false
+      }
+    }
+  ],
+  "aggregate": {
+    "passed": 0,
+    "failed": 1,
+    "total": 1,
+    "hardFailureTrials": 0,
+    "meanScore": 20,
+    "conformant": false
+  },
+  "runId": "bccb89234877cb7bde35066e3e9e1f215bc607483a8f348335e3790125cb75bb"
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "energy.usage/v1",
+  "description": "Durable record of using a (possibly remote/paid) neuron or package. Emitted as a write effect for later settlement or audit.",
+  "type": "object",
+  "required": ["usage_id", "consumer", "package_digest", "neuron_ref", "timestamp_ms"],
+  "properties": {
+    "usage_id": { "type": "string", "description": "Idempotency key" },
+    "consumer": { "type": "string", "description": "account or node id of the caller" },
+    "package_digest": { "type": "string" },
+    "neuron_ref": { "type": "string" },
+    "timestamp_ms": { "type": "integer" },
+    "work_ref": { "type": "string" },
+    "energy": { "type": "number" },
+    "price_milli": { "type": "integer", "default": 0 },
+    "evidence_digest": { "type": "string" }
+  }
+}

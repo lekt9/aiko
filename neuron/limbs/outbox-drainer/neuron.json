@@ -1,0 +1,59 @@
+{
+  "schema": "typed-neuron.limb-manifest/v1",
+  "package": "typed-neuron/outbox-drainer",
+  "version": "0.1.0",
+  "description": "Reusable outbox drainer limb: pure policy neurons for draining queued messages to adapters with bounded retry, dead-letter, and reconciliation. Does not move retry policy into the kernel.",
+  "neurons": [
+    {
+      "id": "drainer",
+      "argv": ["python3", "neurons/drainer.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "artifact/outbox/attempts/",
+        "allow_send": true,
+        "send_prefix": "",
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 32,
+          "max_writes": 16,
+          "max_messages": 16,
+          "max_spawns": 0,
+          "max_bytes": 1048576,
+          "max_depth": 1
+        }
+      }
+    },
+    {
+      "id": "reconciler",
+      "argv": ["python3", "neurons/reconciler.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "artifact/outbox/delivery/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 2,
+          "max_writes": 1,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 65536,
+          "max_depth": 1
+        }
+      }
+    }
+  ],
+  "adapters": {
+    "registry": {}
+  },
+  "budgets": {
+    "deadline_ms_per_firing": 60000
+  },
+  "schemas": {
+    "drain-request": "outbox.drain-request/v1",
+    "queued-messages": "outbox.queued-messages/v1",
+    "delivery-attempt": "outbox.delivery-attempt/v1",
+    "delivery-record": "outbox.delivery-record/v1",
+    "ack": "outbox.ack/v1",
+    "settle-request": "outbox.settle-request/v1"
+  }
+}

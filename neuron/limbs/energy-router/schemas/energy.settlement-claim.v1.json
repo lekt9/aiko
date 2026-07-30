@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "energy.settlement-claim/v1",
+  "description": "Claim for compensation after usage of a paid neuron/package. Idempotent and reconcilable. Can be emitted by the provider or a settlement limb.",
+  "type": "object",
+  "required": ["claim_id", "usage_id", "provider", "amount_milli", "currency"],
+  "properties": {
+    "claim_id": { "type": "string" },
+    "usage_id": { "type": "string" },
+    "provider": { "type": "string" },
+    "amount_milli": { "type": "integer" },
+    "currency": { "type": "string", "default": "USD" },
+    "status": { "type": "string", "enum": ["open", "paid", "disputed", "cancelled"], "default": "open" },
+    "evidence": { "type": "array", "items": { "type": "string" } }
+  }
+}

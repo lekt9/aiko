@@ -1,0 +1,39 @@
+{
+  "schema": "typed-neuron.limb-manifest/v1",
+  "package": "typed-neuron/auto-attacher",
+  "version": "0.1.0",
+  "description": "Automatically wires admitted limbs to matching receptor schemas via typed edges.",
+  "neurons": [
+    {
+      "id": "attacher",
+      "accepts": ["neuron.limb-admission/v1"],
+      "emits": ["neuron.edge-manifest/v1", "neuron.attach-result/v1"],
+      "argv": ["python3", "neurons/attacher.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "topology/edges/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 32,
+          "max_writes": 32,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 131072,
+          "max_depth": 1
+        }
+      }
+    }
+  ],
+  "budgets": {
+    "deadline_ms_per_firing": 10000
+  },
+  "schemas": {
+    "AttachRequest": "neuron.attach-request/v1",
+    "EdgeManifest": "neuron.edge-manifest/v1",
+    "AttachResult": "neuron.attach-result/v1"
+  },
+  "witnesses": {
+    "python_tests": "python3 -c 'import sys; sys.path.insert(0, \"neurons\"); from attacher import fire; print(\"attacher ok\")'"
+  }
+}

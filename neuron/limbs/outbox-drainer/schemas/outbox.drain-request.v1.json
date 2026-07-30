@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "outbox.drain-request/v1",
+  "description": "Request to a drainer neuron for one partition. Contains max batch and attempt limits.",
+  "type": "object",
+  "required": ["partition", "max_batch", "max_attempts"],
+  "properties": {
+    "partition": { "type": "string", "minLength": 1 },
+    "max_batch": { "type": "integer", "minimum": 1 },
+    "max_attempts": { "type": "integer", "minimum": 1 }
+  }
+}

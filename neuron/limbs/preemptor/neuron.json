@@ -1,0 +1,39 @@
+{
+  "schema": "typed-neuron.limb-manifest/v1",
+  "package": "typed-neuron/preemptor",
+  "version": "0.1.0",
+  "description": "Safe preemption proposal: finds exact replay-safe cache candidates for canonical runtime revalidation.",
+  "neurons": [
+    {
+      "id": "preemptor",
+      "accepts": ["neuron.preempt-request/v1"],
+      "emits": ["neuron.preempt-result/v1"],
+      "argv": ["python3", "neurons/preemptor.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "preempt/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 2,
+          "max_writes": 1,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 65536,
+          "max_depth": 1
+        }
+      }
+    }
+  ],
+  "budgets": {
+    "deadline_ms_per_firing": 5000
+  },
+  "schemas": {
+    "PreemptRequest": "neuron.preempt-request/v1",
+    "PreemptResult": "neuron.preempt-result/v1",
+    "PreemptCacheEntry": "neuron.preempt-cache/v1"
+  },
+  "witnesses": {
+    "python_tests": "python3 -c 'import sys; sys.path.insert(0, \"neurons\"); from preemptor import fire; print(\"preemptor ok\")'"
+  }
+}

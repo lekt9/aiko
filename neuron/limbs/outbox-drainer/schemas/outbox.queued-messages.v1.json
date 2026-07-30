@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "outbox.queued-messages/v1",
+  "description": "Projection of currently queued messages for a partition. Produced by folding the substrate or outbox state.",
+  "type": "object",
+  "required": ["partition", "messages"],
+  "properties": {
+    "partition": { "type": "string" },
+    "messages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "firing_id", "to", "schema", "payload"],
+        "properties": {
+          "key": { "type": "string" },
+          "firing_id": { "type": "string" },
+          "to": { "type": "string" },
+          "schema": { "type": "string" },
+          "payload": { "type": "string" }
+        }
+      }
+    }
+  }
+}

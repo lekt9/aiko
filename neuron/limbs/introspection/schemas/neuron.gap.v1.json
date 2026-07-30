@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.gap/v1",
+  "title": "Single Capability Gap",
+  "description": "A single capability gap entry, extracted from a capability-gaps artifact for limb generation.",
+  "type": "object",
+  "required": ["kind", "status", "energy"],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": ["neuron", "schema", "artifact", "package"]
+    },
+    "desired_identity": { "type": "string" },
+    "desired_schema": { "type": "string" },
+    "desired_package": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["absent", "partial"]
+    },
+    "energy": { "type": "number" },
+    "suggest_action": {
+      "type": "string",
+      "enum": ["generate_limb", "upgrade_version", "register_neuron"]
+    },
+    "detail": { "type": "string" }
+  },
+  "additionalProperties": false
+}

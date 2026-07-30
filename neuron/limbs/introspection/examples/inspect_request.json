@@ -1,0 +1,54 @@
+{
+  "firing_id": "introspection-demo-001",
+  "receptor_schema": "neuron.inspect-request/v1",
+  "now_ms": 0,
+  "permitted_reads": [
+    "agents/reference/intent",
+    "agents/reference/envelope",
+    "agents/reference/context",
+    "agents/reference/plan",
+    "agents/reference/work/a",
+    "agents/reference/work/b",
+    "agents/reference/recovery",
+    "agents/reference/gap",
+    "agents/reference/generated/package",
+    "agents/reference/generated/manifest",
+    "agents/reference/generated/result",
+    "agents/reference/memory-index",
+    "agents/reference/audit",
+    "agents/reference/snapshots/0001",
+    "agents/reference/snapshots/0002",
+    "agents/reference/active"
+  ],
+  "reads": [
+    {"id": "agents/reference/intent", "schema": "typed-neuron.intent/v1", "bytes": "{\"request\":\"repair capability\",\"origin\":\"gate\",\"priority\":1}"},
+    {"id": "agents/reference/envelope", "schema": "typed-neuron.work-envelope/v1", "bytes": "{\"authority\":\"local_reversible\",\"max_effects\":8,\"deadline\":1000}"},
+    {"id": "agents/reference/context", "schema": "typed-neuron.context-manifest/v1", "bytes": "{\"reads\":[\"agents/reference/intent\"],\"provenance\":\"pinned\"}"},
+    {"id": "agents/reference/plan", "schema": "typed-neuron.plan/v1", "bytes": "{\"fan_out\":2,\"max_fan_out\":4,\"acceptance\":\"independent-verifier-green\"}"},
+    {"id": "agents/reference/work/a", "schema": "typed-neuron.proposal/v1", "bytes": "plausible-but-false"},
+    {"id": "agents/reference/work/b", "schema": "typed-neuron.proposal/v1", "bytes": "verified-work-b"},
+    {"id": "agents/reference/recovery", "schema": "typed-neuron.recovery/v1", "bytes": "{\"attempt\":1,\"strategy\":\"generate-compatible-limb\"}"},
+    {"id": "agents/reference/gap", "schema": "typed-neuron.capability-gap/v1", "bytes": "{\"input\":\"capability/repair/v1\",\"output\":\"typed-neuron.result/v1\",\"authority\":\"write:agents/reference/generated/\"}"},
+    {"id": "agents/reference/generated/package", "schema": "typed-neuron.skill/v1", "bytes": "limb/v1 repair-capability\non capability/repair/v1 write agents/reference/generated/result typed-neuron.result/v1 repaired-through-generated-limb"},
+    {"id": "agents/reference/generated/manifest", "schema": "typed-neuron.agent-skill-manifest/v1", "bytes": "name=repair-capability version=1.0.0 input=capability/repair/v1 output=typed-neuron.result/v1 caps=write:agents/reference/generated/"},
+    {"id": "agents/reference/generated/result", "schema": "typed-neuron.result/v1", "bytes": "repaired-through-generated-limb"},
+    {"id": "agents/reference/memory-index", "schema": "typed-neuron.memory-index/v1", "bytes": "{\"settled\":[\"agents/reference/generated/result\"],\"conversations\":[]}"},
+    {"id": "agents/reference/audit", "schema": "typed-neuron.audit/v1", "bytes": "{\"package\":\"typed-neuron/meta-agent@1.0.0\",\"verdict\":\"green\",\"recovery_attempts\":1,\"generated_limb\":\"repair-capability@1.0.0\"}"},
+    {"id": "agents/reference/snapshots/0001", "schema": "typed-neuron.agent-snapshot/v1", "bytes": "{\"generation\":1,\"frontier\":\"intake\"}"},
+    {"id": "agents/reference/snapshots/0002", "schema": "typed-neuron.agent-snapshot/v1", "bytes": "{\"generation\":2,\"parent\":\"agents/reference/snapshots/0001\",\"frontier\":\"settled\",\"result\":\"agents/reference/generated/result\"}"},
+    {"id": "agents/reference/active", "schema": "typed-neuron.snapshot-pointer/v1", "bytes": "agents/reference/snapshots/0002"}
+  ],
+  "messages": [],
+  "caps": {
+    "allow_write": true,
+    "write_prefix": "introspection/",
+    "budget": {
+      "max_effects": 2,
+      "max_writes": 1,
+      "max_messages": 0,
+      "max_spawns": 0,
+      "max_bytes": 131072,
+      "max_depth": 1
+    }
+  }
+}

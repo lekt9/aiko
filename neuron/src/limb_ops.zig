@@ -1,0 +1,772 @@
+// Generative-limb lifecycle (§30): admit a Skill package by content digest,
+// attach it with exactly its declared caps_request, fire through ordinary
+// Script-Neuron paths, judge, revoke, detach, and garbage-collect (§22).
+
+const std = @import("std");
+const types = @import("types.zig");
+const caps_mod = @import("caps.zig");
+const substrate_mod = @import("substrate.zig");
+const runtime_mod = @import("runtime.zig");
+const neuron_mod = @import("neuron.zig");
+const script_mod = @import("script.zig");
+const run_mod = @import("run.zig");
+
+const Allocator = std.mem.Allocator;
+const Sha256 = std.crypto.hash.sha2.Sha256;
+
+const ADMISSION_SCHEMA = "neuron.limb-admission/v1";
+const ADMISSION_PREFIX = "artifact/limbs/admitted/";
+const REVOKED_PREFIX = "artifact/limbs/revoked/";
+const DETACHED_PREFIX = "artifact/limbs/detached/";
+
+const admission_evidence = [_]types.Evidence{.{
+    .claim = "manifest validated and package digest pinned by the harness admission boundary",
+    .sources = &.{"stimulus"},
+    .method = "harness admission (§29/§30)",
+}};
+
+pub fn computePackageDigest(allocator: Allocator, io: std.Io, package_dir: []const u8) !types.Digest {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const cwd = std.Io.Dir.cwd();
+    const manifest_path = try std.fs.path.join(a, &.{ package_dir, "neuron.json" });
+    const manifest_bytes = try cwd.readFileAlloc(io, manifest_path, a, .limited(1 << 20));
+    const manifest = try std.json.parseFromSliceLeaky(std.json.Value, a, manifest_bytes, .{});
+    if (manifest != .object) return error.InvalidManifest;
+
+    var entries: std.ArrayList([]const u8) = .empty;
+    try entries.append(a, try a.dupe(u8, "neuron.json"));
+    const neurons = manifest.object.get("neurons") orelse return error.InvalidManifest;
+    if (neurons != .array) return error.InvalidManifest;
+    for (neurons.array.items) |entry| {
+        if (entry != .object) continue;
+        const argv = entry.object.get("argv") orelse continue;
+        if (argv != .array) continue;
+        for (argv.array.items) |item| {
+            const part = switch (item) {
+                .string => |s| s,
+                else => continue,
+            };
+            if (part.len > 0 and part[0] != '/' and std.mem.indexOfScalar(u8, part, '/') != null) {
+                const abs = try std.fs.path.join(a, &.{ package_dir, part });
+                _ = cwd.statFile(io, abs, .{}) catch continue;
+                try entries.append(a, try a.dupe(u8, part));
+            }
+        }
+    }
+    const schemas_path = try std.fs.path.join(a, &.{ package_dir, "schemas" });
+    if (cwd.openDir(io, schemas_path, .{})) |schemas_dir| {
+        defer schemas_dir.close(io);
+        var walker = try schemas_dir.walk(a);
+        defer walker.deinit();
+        while (try walker.next(io)) |entry| {
+            if (entry.kind == .file) try entries.append(a, try std.fmt.allocPrint(a, "schemas/{s}", .{entry.path}));
+        }
+    } else |_| {}
+    std.mem.sort([]const u8, entries.items, {}, stringLess);
+    var hasher = Sha256.init(.{});
+    hasher.update("neuron.limb-package/v1\n");
+    for (entries.items) |relpath| {
+        const abs = try std.fs.path.join(a, &.{ package_dir, relpath });
+        const file_bytes = cwd.readFileAlloc(io, abs, a, .limited(1 << 20)) catch return error.PackageIoError;
+        hasher.update(relpath);
+        hasher.update(file_bytes);
+    }
+    var digest: types.Digest = undefined;
+    hasher.final(&digest);
+    return digest;
+}
+
+pub fn admit(allocator: Allocator, io: std.Io, package_dir: []const u8, state_dir: []const u8) !AdmitResult {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const digest = try computePackageDigest(a, io, package_dir);
+    var hex: [64]u8 = undefined;
+    _ = try std.fmt.bufPrint(&hex, "{s}", .{std.fmt.bytesToHex(digest, .lower)});
+
+    var substrate = try substrate_mod.Substrate.initDir(allocator, io, std.Io.Dir.cwd(), state_dir);
+    defer substrate.deinit();
+    const runtime: runtime_mod.Runtime = .{ .substrate = &substrate };
+
+    const manifest_path = try std.fs.path.join(a, &.{ package_dir, "neuron.json" });
+    const manifest_bytes = try std.Io.Dir.cwd().readFileAlloc(io, manifest_path, a, .limited(1 << 20));
+    const manifest_str = try std.json.Stringify.valueAlloc(a, manifest_bytes, .{});
+    const record_bytes = try std.fmt.allocPrint(a,
+        \\{{"schema":"{s}","package":{s},"digest":"{s}"}}
+    , .{ ADMISSION_SCHEMA, manifest_str, &hex });
+
+    const firing_id = try std.fmt.allocPrint(a, "admission/{s}", .{&hex});
+    const write_id = try std.fmt.allocPrint(a, ADMISSION_PREFIX ++ "{s}", .{&hex});
+    var fx: [2]types.Effect = .{
+        .{ .write = .{ .id = write_id, .schema = ADMISSION_SCHEMA, .bytes = record_bytes } },
+        .{ .send = .{
+            .to = "event/neuron.limb-admission/v1",
+            .schema = ADMISSION_SCHEMA,
+            .payload = record_bytes,
+            .durable = true,
+        } },
+    };
+    const result = runtime.execute(.{
+        .firing_id = firing_id,
+        .receptor_schema = "neuron.limb-admission/v1",
+    }, admissionCaps(), .{
+        .control = .{ .terminate = "admitted" },
+        .effects = &fx,
+        .evidence = &admission_evidence,
+    }) catch |err| {
+        if (err == error.FiringAlreadySettled or err == error.FiringMismatch) return .{ .digest = hex, .created = false };
+        return err;
+    };
+    return .{ .digest = hex, .created = result.effects_committed > 0 };
+}
+
+pub const AdmitResult = struct { digest: [64]u8, created: bool };
+
+pub fn limbRun(
+    allocator: Allocator,
+    io: std.Io,
+    state_dir: []const u8,
+    package_dir: []const u8,
+    neuron_id: []const u8,
+    stimulus_path: []const u8,
+    json_out: bool,
+    dump: bool,
+) !void {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const digest = try computePackageDigest(a, io, package_dir);
+    var hex: [64]u8 = undefined;
+    _ = try std.fmt.bufPrint(&hex, "{s}", .{std.fmt.bytesToHex(digest, .lower)});
+
+    // The firing is one ownership region: parsed transport JSON, ScriptNeuron
+    // output, staged reads, and replayed substrate all die with this arena.
+    // This keeps leaky dynamic JSON parsing out of the process allocator.
+    var substrate = try substrate_mod.Substrate.initDir(a, io, std.Io.Dir.cwd(), state_dir);
+    defer substrate.deinit();
+
+    const admission_id = try std.fmt.allocPrint(a, ADMISSION_PREFIX ++ "{s}", .{&hex});
+    const admission_artifact = substrate.artifacts.get(admission_id) orelse return error.LimbNotAdmitted;
+    if (!std.mem.eql(u8, admission_artifact.schema, ADMISSION_SCHEMA)) return error.LimbNotAdmitted;
+    const revoked_id = try std.fmt.allocPrint(a, REVOKED_PREFIX ++ "{s}", .{&hex});
+    if (substrate.artifacts.contains(revoked_id)) return error.LimbRevoked;
+    const detached_id = try std.fmt.allocPrint(a, DETACHED_PREFIX ++ "{s}", .{&hex});
+    if (substrate.artifacts.contains(detached_id)) return error.LimbDetached;
+
+    const admission = try std.json.parseFromSliceLeaky(std.json.Value, a, admission_artifact.bytes, .{});
+    if (admission != .object) return error.CorruptAdmission;
+    const package_field = admission.object.get("package") orelse return error.CorruptAdmission;
+    if (package_field != .string) return error.CorruptAdmission;
+    const manifest = try std.json.parseFromSliceLeaky(std.json.Value, a, package_field.string, .{});
+    if (manifest != .object) return error.InvalidManifest;
+    const resolved = try run_mod.resolveNeuronArgv(a, manifest, package_dir, neuron_id);
+
+    const cwd = std.Io.Dir.cwd();
+    const stimulus_bytes = if (std.mem.eql(u8, stimulus_path, "-"))
+        try readStdin(a, io)
+    else
+        try cwd.readFileAlloc(io, stimulus_path, a, .limited(1 << 20));
+    const stimulus_json = try std.json.parseFromSliceLeaky(std.json.Value, a, stimulus_bytes, .{});
+    if (stimulus_json != .object) return error.InvalidStimulus;
+    const stimulus = try run_mod.stageStimulus(a, stimulus_json, &substrate);
+
+    var implementation: script_mod.ScriptNeuron = .{
+        .allocator = a,
+        .io = io,
+        .argv = resolved.argv,
+        .substrate = &substrate,
+    };
+    if (manifest.object.get("budgets")) |budgets| {
+        if (budgets == .object) {
+            if (budgets.object.get("deadline_ms_per_firing")) |v| {
+                if (v == .integer and v.integer > 0) {
+                    implementation.default_timeout = .{
+                        .duration = .{ .raw = .{ .nanoseconds = @as(i96, @intCast(v.integer)) * std.time.ns_per_ms }, .clock = .boot },
+                    };
+                }
+            }
+        }
+    }
+    const version = jsonString(manifest.object.get("package") orelse return error.InvalidManifest, "version") orelse "0.0.0";
+    const neuron = neuron_mod.bind(script_mod.ScriptNeuron, &implementation, neuron_id, version);
+    const result = try (runtime_mod.Runtime{ .substrate = &substrate }).fire(neuron, stimulus, resolved.caps);
+    try printSummary(a, io, .{
+        .firing_id = stimulus.firing_id,
+        .neuron_id = neuron_id,
+        .effects_committed = result.effects_committed,
+        .duplicates_skipped = result.duplicates_skipped,
+        .artifacts = substrate.artifacts.count(),
+        .messages = substrate.messages.items.len,
+        .neurons = substrate.neurons.count(),
+        .digest = result.decision_digest,
+    }, json_out, dump);
+}
+
+pub fn revoke(allocator: Allocator, io: std.Io, package_dir: []const u8, state_dir: []const u8) !void {
+    const digest = try computePackageDigest(allocator, io, package_dir);
+    var hex: [64]u8 = undefined;
+    _ = try std.fmt.bufPrint(&hex, "{s}", .{std.fmt.bytesToHex(digest, .lower)});
+
+    var substrate = try substrate_mod.Substrate.initDir(allocator, io, std.Io.Dir.cwd(), state_dir);
+    defer substrate.deinit();
+    const runtime: runtime_mod.Runtime = .{ .substrate = &substrate };
+
+    const revoke_id = try std.fmt.allocPrint(allocator, REVOKED_PREFIX ++ "{s}", .{&hex});
+    defer allocator.free(revoke_id);
+    const firing_id = try std.fmt.allocPrint(allocator, "revocation/{s}", .{&hex});
+    defer allocator.free(firing_id);
+    var fx: [1]types.Effect = .{
+        .{ .write = .{ .id = revoke_id, .schema = "neuron.limb-revocation/v1", .bytes = &hex } },
+    };
+    _ = runtime.execute(.{
+        .firing_id = firing_id,
+        .receptor_schema = "neuron.limb-revocation/v1",
+    }, harnessCaps(REVOKED_PREFIX), .{
+        .control = .{ .terminate = "revoked" },
+        .effects = &fx,
+        .evidence = &admission_evidence,
+    }) catch |err| {
+        if (err == error.FiringAlreadySettled or err == error.FiringMismatch) return;
+        return err;
+    };
+}
+
+pub fn detach(allocator: Allocator, io: std.Io, package_dir: []const u8, state_dir: []const u8) !DetachResult {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const digest = try computePackageDigest(a, io, package_dir);
+    var hex: [64]u8 = undefined;
+    _ = try std.fmt.bufPrint(&hex, "{s}", .{std.fmt.bytesToHex(digest, .lower)});
+
+    var substrate = try substrate_mod.Substrate.initDir(a, io, std.Io.Dir.cwd(), state_dir);
+    defer substrate.deinit();
+    const runtime: runtime_mod.Runtime = .{ .substrate = &substrate };
+
+    const admission_id = try std.fmt.allocPrint(a, ADMISSION_PREFIX ++ "{s}", .{&hex});
+    const admission_artifact = substrate.artifacts.get(admission_id) orelse return error.LimbNotAdmitted;
+    const admission = try std.json.parseFromSliceLeaky(std.json.Value, a, admission_artifact.bytes, .{});
+    if (admission != .object) return error.CorruptAdmission;
+    const package_field = admission.object.get("package") orelse return error.CorruptAdmission;
+    if (package_field != .string) return error.CorruptAdmission;
+    const manifest = try std.json.parseFromSliceLeaky(std.json.Value, a, package_field.string, .{});
+    if (manifest != .object) return error.InvalidManifest;
+
+    var prefixes: std.ArrayList([]const u8) = .empty;
+    const neurons = manifest.object.get("neurons") orelse return error.InvalidManifest;
+    if (neurons != .array) return error.InvalidManifest;
+    for (neurons.array.items) |entry| {
+        if (entry != .object) continue;
+        const caps_req = entry.object.get("caps_request") orelse continue;
+        const caps = script_mod.capsFromJson(caps_req) catch continue;
+        if (caps.allow_write and caps.write_prefix.len > 0) try prefixes.append(a, caps.write_prefix);
+    }
+    // Attachment is topology data owned by the admitted digest. Detaching a
+    // limb must remove its live edges as well as its runtime artifacts, while
+    // the immutable admission/revocation/audit roots remain reachable.
+    try prefixes.append(a, try std.fmt.allocPrint(
+        a,
+        "topology/edges/{s}/",
+        .{&hex},
+    ));
+    if (prefixes.items.len == 0) return error.InvalidManifest;
+
+    const detach_id = try std.fmt.allocPrint(a, DETACHED_PREFIX ++ "{s}", .{&hex});
+    const firing_id = try std.fmt.allocPrint(a, "detachment/{s}", .{&hex});
+    var fx: [1]types.Effect = .{
+        .{ .write = .{ .id = detach_id, .schema = "neuron.limb-detach/v1", .bytes = &hex } },
+    };
+    _ = runtime.execute(.{
+        .firing_id = firing_id,
+        .receptor_schema = "neuron.limb-detach/v1",
+    }, harnessCaps(DETACHED_PREFIX), .{
+        .control = .{ .terminate = "detached" },
+        .effects = &fx,
+        .evidence = &admission_evidence,
+    }) catch |err| return err;
+
+    const collected = try substrate.gcArtifacts(prefixes.items);
+    try substrate.journalGc(prefixes.items);
+    return .{ .collected = collected };
+}
+
+pub const DetachResult = struct { collected: usize };
+
+pub fn inspect(allocator: Allocator, io: std.Io, state_dir: []const u8, json_out: bool) !void {
+    var substrate = try substrate_mod.Substrate.initDir(allocator, io, std.Io.Dir.cwd(), state_dir);
+    defer substrate.deinit();
+
+    var admitted: usize = 0;
+    var revoked: usize = 0;
+    var detached: usize = 0;
+    var artifact_it = substrate.artifacts.keyIterator();
+    while (artifact_it.next()) |key| {
+        if (std.mem.startsWith(u8, key.*, ADMISSION_PREFIX)) admitted += 1;
+        if (std.mem.startsWith(u8, key.*, REVOKED_PREFIX)) revoked += 1;
+        if (std.mem.startsWith(u8, key.*, DETACHED_PREFIX)) detached += 1;
+    }
+    var out_buffer: [1024]u8 = undefined;
+    var writer = std.Io.File.stdout().writerStreaming(io, &out_buffer);
+    if (json_out) {
+        try writer.interface.writeAll("{");
+        try writer.interface.print(
+            \\"admitted":{},"revoked":{},"detached":{},"artifacts":{},"messages":{},"neurons":{},"firings":{},"artifact_ids":[
+        , .{ admitted, revoked, detached, substrate.artifacts.count(), substrate.messages.items.len, substrate.neurons.count(), substrate.firings.count() });
+        var ait = substrate.artifacts.keyIterator();
+        var afirst = true;
+        while (ait.next()) |key| {
+            if (!afirst) try writer.interface.writeAll(",");
+            afirst = false;
+            try std.json.Stringify.encodeJsonString(key.*, .{}, &writer.interface);
+        }
+        try writer.interface.writeAll("]}\n");
+    } else {
+        try writer.interface.print(
+            \\admitted  {d}
+            \\revoked   {d}
+            \\detached  {d}
+            \\artifacts {d}
+            \\messages  {d}
+            \\neurons   {d}
+            \\firings   {d}
+            \\
+        , .{ admitted, revoked, detached, substrate.artifacts.count(), substrate.messages.items.len, substrate.neurons.count(), substrate.firings.count() });
+    }
+    try writer.interface.flush();
+}
+
+/// One committed firing as the journal recorded it. The trace projection reads
+/// the raw log rather than the replayed substrate because evidence citations
+/// are observability, not state: `validate` already consumed them, so replay
+/// deliberately drops them and only the log still holds the derivation edges.
+const TraceRecordJ = struct {
+    schema: []const u8 = "",
+    op: []const u8 = "",
+    firing_id: []const u8 = "",
+    now_ms: u64 = 0,
+    committed_at_ms: i64 = 0,
+    effects_committed: usize = 0,
+    artifacts: []const struct {
+        id: []const u8 = "",
+        produced_by: []const u8 = "",
+    } = &.{},
+    messages: []const struct { to: []const u8 = "" } = &.{},
+    evidence: []const EvidenceView = &.{},
+    /// Present only on a `snapshot` record: the folded firing table, carrying
+    /// the commit ordinals and citations that let the projections keep working
+    /// after `compact` has removed every per-commit record.
+    firings: []const struct {
+        firing_id: []const u8 = "",
+        seq: u64 = 0,
+        evidence: []const EvidenceView = &.{},
+    } = &.{},
+};
+
+const EvidenceView = struct {
+    claim: []const u8 = "",
+    method: []const u8 = "",
+    sources: []const []const u8 = &.{},
+};
+
+/// Read the journal as a sequence of committed firings, newest last. Pure read:
+/// it opens the log directly and never takes the substrate's exclusive lock,
+/// so tracing a live node cannot block or be blocked by it.
+fn readJournal(allocator: Allocator, io: std.Io, state_dir: []const u8) ![]const u8 {
+    const log_path = try std.fmt.allocPrint(allocator, "{s}/substrate.log", .{state_dir});
+    defer allocator.free(log_path);
+    const file = try std.Io.Dir.cwd().openFile(io, log_path, .{});
+    defer file.close(io);
+    const size = (try file.stat(io)).size;
+    if (size == 0) return "";
+    const bytes = try allocator.alloc(u8, @intCast(size));
+    const n = try file.readPositionalAll(io, bytes, 0);
+    return bytes[0..n];
+}
+
+/// Per-firing trace: what fired, when, what it cited, and what it produced.
+/// The counterpart to `telemetryProject`'s aggregate counters — same source of
+/// truth, one row per firing instead of one row per node.
+pub fn telemetryTrace(allocator: Allocator, io: std.Io, state_dir: []const u8, json_out: bool) !void {
+    const bytes = try readJournal(allocator, io, state_dir);
+    defer if (bytes.len > 0) allocator.free(bytes);
+
+    var out_buffer: [4096]u8 = undefined;
+    var writer = std.Io.File.stdout().writerStreaming(io, &out_buffer);
+    const w = &writer.interface;
+    if (!json_out) try w.writeAll("firing_id                                          now_ms         cites  writes  sends\n");
+
+    var first_ms: i64 = 0;
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        const rec = std.json.parseFromSliceLeaky(TraceRecordJ, arena.allocator(), line, .{
+            .ignore_unknown_fields = true,
+        }) catch continue;
+        if (std.mem.eql(u8, rec.op, "snapshot")) {
+            // Folded firings still have identity, citations, and — via
+            // `produced_by` — their writes. Timing does not survive: a wall
+            // clock cannot enter a canonical snapshot (§28.1), so it is
+            // reported unavailable rather than as `0`, which already means
+            // "no caller set a clock" and would be a different lie.
+            for (rec.firings) |firing| {
+                var folded_cites: usize = 0;
+                for (firing.evidence) |item| folded_cites += item.sources.len;
+                var writes: usize = 0;
+                for (rec.artifacts) |artifact| {
+                    if (std.mem.eql(u8, artifact.produced_by, firing.firing_id)) writes += 1;
+                }
+                if (json_out) {
+                    try w.writeAll("{\"schema\":\"neuron.trace/v1\",\"firing_id\":");
+                    try std.json.Stringify.value(firing.firing_id, .{}, w);
+                    try w.print(",\"seq\":{},\"timing\":\"unavailable\",\"cites\":{},\"writes\":{},\"from\":\"snapshot\"}}\n", .{
+                        firing.seq, folded_cites, writes,
+                    });
+                } else {
+                    try w.print("{s: <50} {s: >8}  {d: >12}  {d: >5}  {s: >5}\n", .{
+                        firing.firing_id, "--", folded_cites, writes, "--",
+                    });
+                }
+            }
+            continue;
+        }
+        if (!std.mem.eql(u8, rec.op, "commit")) continue;
+
+        var cites: usize = 0;
+        for (rec.evidence) |item| cites += item.sources.len;
+        // Elapsed is relative to the first committed firing in this log: an
+        // absolute wall clock is not comparable across nodes, but the offset
+        // within one log is. Journals written before `committed_at_ms` existed
+        // report 0 rather than a fabricated duration.
+        if (first_ms == 0) first_ms = rec.committed_at_ms;
+        const elapsed: i64 = if (rec.committed_at_ms >= first_ms) rec.committed_at_ms - first_ms else 0;
+
+        if (json_out) {
+            try w.writeAll("{\"schema\":\"neuron.trace/v1\",\"firing_id\":");
+            try std.json.Stringify.value(rec.firing_id, .{}, w);
+            try w.print(",\"now_ms\":{},\"elapsed_ms\":{},\"cites\":{},\"writes\":{},\"sends\":{},\"effects\":{}", .{
+                rec.now_ms, elapsed, cites, rec.artifacts.len, rec.messages.len, rec.effects_committed,
+            });
+            try w.writeAll(",\"sources\":[");
+            var n: usize = 0;
+            for (rec.evidence) |item| for (item.sources) |source| {
+                if (n != 0) try w.writeAll(",");
+                n += 1;
+                try std.json.Stringify.value(source, .{}, w);
+            };
+            try w.writeAll("]}\n");
+        } else {
+            try w.print("{s: <50} {d: >8}  {d: >12}  {d: >5}  {d: >5}\n", .{
+                rec.firing_id, elapsed, cites, rec.artifacts.len, rec.messages.len,
+            });
+        }
+    }
+    try w.flush();
+}
+
+/// Emit the stale rows a compacted journal still supports. Ordering comes from
+/// the firing ordinals the snapshot preserved, so the answer matches what the
+/// un-compacted log would have given.
+///
+/// `redrivable` cannot be recovered here: the snapshot keeps final artifact
+/// state, not each firing's messages, so whether a producer crossed an
+/// `outbox/` boundary is genuinely unknown. It is reported `false` — the
+/// conservative direction, since re-driving a boundary-crossing firing repeats
+/// a real-world effect, and a wrong `true` would cause one.
+fn reportSnapshotStale(
+    w: *std.Io.Writer,
+    a: Allocator,
+    rec: TraceRecordJ,
+    last_write: std.StringHashMap(usize),
+    firing_seq: std.StringHashMap(usize),
+    json_out: bool,
+    stale_count: *usize,
+) !void {
+    // A firing may cite many sources, so the lookup has to be firing → its
+    // whole evidence set. Keeping one source per firing silently under-reports
+    // every derivation that rested on more than one input.
+    var cited = std.StringHashMap([]const EvidenceView).init(a);
+    for (rec.firings) |firing| try cited.put(firing.firing_id, firing.evidence);
+
+    for (rec.artifacts) |artifact| {
+        const derived_at = firing_seq.get(artifact.produced_by) orelse continue;
+        const evidence = cited.get(artifact.produced_by) orelse continue;
+        for (evidence) |item| for (item.sources) |source| {
+            if (std.mem.eql(u8, source, "stimulus")) continue;
+            const moved = last_write.get(source) orelse continue;
+            if (moved <= derived_at) continue;
+            stale_count.* += 1;
+            try emitStaleRow(w, artifact.id, source, artifact.produced_by, derived_at, moved, false, true, json_out);
+        };
+    }
+}
+
+/// One row, in whichever form the caller asked for. Shared so the commit-record
+/// and snapshot paths cannot drift into reporting the same fact differently.
+fn emitStaleRow(
+    w: *std.Io.Writer,
+    artifact_id: []const u8,
+    source: []const u8,
+    produced_by: []const u8,
+    derived_at: usize,
+    moved: usize,
+    redrivable: bool,
+    from_snapshot: bool,
+    json_out: bool,
+) !void {
+    if (json_out) {
+        try w.writeAll("{\"schema\":\"neuron.staleness/v1\",\"artifact\":");
+        try std.json.Stringify.value(artifact_id, .{}, w);
+        try w.writeAll(",\"stale_source\":");
+        try std.json.Stringify.value(source, .{}, w);
+        try w.writeAll(",\"produced_by\":");
+        try std.json.Stringify.value(produced_by, .{}, w);
+        try w.print(",\"derived_at\":{},\"source_moved_at\":{},\"redrivable\":{},\"from\":\"{s}\"}}\n", .{
+            derived_at, moved, redrivable, if (from_snapshot) "snapshot" else "journal",
+        });
+    } else {
+        try w.print("{s: <50} {s: <50} {}\n", .{ artifact_id, source, redrivable });
+    }
+}
+
+/// Staleness projection: which committed artifacts were derived from a source
+/// that has since been rewritten.
+///
+/// An artifact written at journal position `i` by a firing that cited source
+/// `s` is stale exactly when `s`'s last write lands at some `j > i` — the
+/// derivation happened, and then an input moved underneath it. Journal order
+/// is the only ordering used, so this needs no clock and is reproducible.
+///
+/// This is a *read*. It marks nothing and re-fires nothing, because re-firing
+/// is only safe under gates this projection cannot enforce on its own: the
+/// producing firing must have been writes-only (a firing with sends crossed a
+/// boundary, so repeating it repeats an external effect, not a derivation).
+/// `redrivable` reports that gate per row; acting on it is a separate step.
+pub fn telemetryStale(allocator: Allocator, io: std.Io, state_dir: []const u8, json_out: bool) !void {
+    const bytes = try readJournal(allocator, io, state_dir);
+    defer if (bytes.len > 0) allocator.free(bytes);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // Pass 1: the position at which each artifact id was last written.
+    //
+    // Two sources, because a compacted journal has no commit records left. A
+    // commit record's position is its log offset; a snapshot's firings carry
+    // an explicit `seq`, and an artifact's position is the seq of the firing
+    // named in its `produced_by`. Both yield the same ordering, which is what
+    // lets staleness survive `compact` (§28.4).
+    var last_write = std.StringHashMap(usize).init(a);
+    var firing_seq = std.StringHashMap(usize).init(a);
+    var index: usize = 0;
+    var pass1 = std.mem.splitScalar(u8, bytes, '\n');
+    while (pass1.next()) |line| {
+        if (line.len == 0) continue;
+        const rec = std.json.parseFromSliceLeaky(TraceRecordJ, a, line, .{
+            .ignore_unknown_fields = true,
+        }) catch continue;
+        if (std.mem.eql(u8, rec.op, "snapshot")) {
+            for (rec.firings) |firing| try firing_seq.put(firing.firing_id, @intCast(firing.seq));
+            for (rec.artifacts) |artifact| {
+                const at = firing_seq.get(artifact.produced_by) orelse continue;
+                try last_write.put(artifact.id, at);
+            }
+            // A snapshot folds every prior firing, so later commit records
+            // continue past the highest ordinal it recorded.
+            var it = firing_seq.valueIterator();
+            while (it.next()) |value| index = @max(index, value.* + 1);
+            continue;
+        }
+        if (!std.mem.eql(u8, rec.op, "commit")) continue;
+        // 0-based, matching the firing ordinals a snapshot carries, so the
+        // same derivation reports the same position before and after compact.
+        for (rec.artifacts) |artifact| try last_write.put(artifact.id, index);
+        index += 1;
+    }
+
+    // Pass 2: an artifact is stale when a source it cited moved after it.
+    var out_buffer: [4096]u8 = undefined;
+    var writer = std.Io.File.stdout().writerStreaming(io, &out_buffer);
+    const w = &writer.interface;
+    if (!json_out) try w.writeAll("stale_artifact                                     stale_source                                       redrivable\n");
+
+    var stale_count: usize = 0;
+    index = 0;
+    var pass2 = std.mem.splitScalar(u8, bytes, '\n');
+    while (pass2.next()) |line| {
+        if (line.len == 0) continue;
+        const rec = std.json.parseFromSliceLeaky(TraceRecordJ, a, line, .{
+            .ignore_unknown_fields = true,
+        }) catch continue;
+        if (std.mem.eql(u8, rec.op, "snapshot")) {
+            try reportSnapshotStale(w, a, rec, last_write, firing_seq, json_out, &stale_count);
+            // Advance past every ordinal the snapshot folded, exactly as pass 1
+            // does. Without this, commits appended after a compaction restart
+            // numbering at zero and collide with the folded firings, so a
+            // mixed-mode journal silently loses rows.
+            for (rec.firings) |firing| index = @max(index, @as(usize, @intCast(firing.seq)) + 1);
+            continue;
+        }
+        if (!std.mem.eql(u8, rec.op, "commit")) continue;
+        const position = index;
+        index += 1;
+        // The re-derivation gate. What disqualifies a firing is crossing an
+        // external boundary, which is an `outbox/` send — repeating that
+        // repeats a real-world effect rather than recomputing a value.
+        // Internal `event/` and `neuron/` traffic (settlement events, stage
+        // hand-offs) is confined to this substrate and re-derives safely, so
+        // gating on `messages.len == 0` would be conservative to the point of
+        // marking every agent firing undrivable.
+        var redrivable = true;
+        for (rec.messages) |message| {
+            if (std.mem.startsWith(u8, message.to, "outbox/")) redrivable = false;
+        }
+        for (rec.artifacts) |artifact| {
+            // Only the artifact as it exists *now*. A version that was later
+            // overwritten is not stale, it is gone — reporting it would invite
+            // re-deriving bytes nothing can read. This is also what makes the
+            // answer identical before and after `compact`, since a snapshot
+            // keeps only final state and structurally cannot report the rest.
+            if ((last_write.get(artifact.id) orelse position) != position) continue;
+            for (rec.evidence) |item| {
+                for (item.sources) |source| {
+                    if (std.mem.eql(u8, source, "stimulus")) continue;
+                    const moved = last_write.get(source) orelse continue;
+                    if (moved <= position) continue;
+                    stale_count += 1;
+                    try emitStaleRow(w, artifact.id, source, rec.firing_id, position, moved, redrivable, false, json_out);
+                }
+            }
+        }
+    }
+    if (!json_out) try w.print("\n{d} stale derivation(s)\n", .{stale_count});
+    try w.flush();
+}
+
+/// Project committed firing records into a deterministic rollup for the
+/// closed telemetry loop (§28, §31). Reads the substrate snapshot, never
+/// writes — no feedback path can mutate historical records.
+pub fn telemetryProject(allocator: Allocator, io: std.Io, state_dir: []const u8, json_out: bool) !void {
+    var substrate = try substrate_mod.Substrate.initDir(allocator, io, std.Io.Dir.cwd(), state_dir);
+    defer substrate.deinit();
+
+    var committed: usize = 0;
+    var rejected: usize = 0;
+    var cancelled: usize = 0;
+    var total_effects: usize = 0;
+    var firing_it = substrate.firings.iterator();
+    while (firing_it.next()) |entry| {
+        switch (entry.value_ptr.status) {
+            .committed => {
+                committed += 1;
+                total_effects += entry.value_ptr.effects_committed;
+            },
+            .rejected => rejected += 1,
+            .cancelled => cancelled += 1,
+            else => {},
+        }
+    }
+    const total = committed + rejected + cancelled;
+    var out_buffer: [1024]u8 = undefined;
+    var writer = std.Io.File.stdout().writerStreaming(io, &out_buffer);
+    if (json_out) {
+        try writer.interface.writeAll("{");
+        try writer.interface.print(
+            \\"schema":"neuron.telemetry/v1","committed":{},"rejected":{},"cancelled":{},"total":{},"effects_committed":{},"artifacts":{},"messages":{},"neurons":{}
+        , .{ committed, rejected, cancelled, total, total_effects, substrate.artifacts.count(), substrate.messages.items.len, substrate.neurons.count() });
+        try writer.interface.writeAll("}\n");
+    } else {
+        try writer.interface.print(
+            \\committed  {d}
+            \\rejected   {d}
+            \\cancelled  {d}
+            \\total      {d}
+            \\effects    {d}
+            \\artifacts  {d}
+            \\messages   {d}
+            \\neurons    {d}
+            \\
+        , .{ committed, rejected, cancelled, total, total_effects, substrate.artifacts.count(), substrate.messages.items.len, substrate.neurons.count() });
+    }
+    try writer.interface.flush();
+}
+
+fn harnessCaps(prefix: []const u8) caps_mod.Caps {
+    return .{ .allow_write = true, .write_prefix = prefix };
+}
+
+fn admissionCaps() caps_mod.Caps {
+    return .{
+        .allow_write = true,
+        .write_prefix = ADMISSION_PREFIX,
+        .allow_send = true,
+        .send_prefix = "event/neuron.limb-admission/v1",
+        .budget = .{
+            .max_effects = 2,
+            .max_writes = 1,
+            .max_messages = 1,
+            .max_spawns = 0,
+        },
+    };
+}
+
+fn stringLess(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.order(u8, a, b) == .lt;
+}
+
+fn jsonString(value: std.json.Value, key: []const u8) ?[]const u8 {
+    if (value != .object) return null;
+    const field = value.object.get(key) orelse return null;
+    return switch (field) {
+        .string => |str| str,
+        else => null,
+    };
+}
+
+fn printSummary(
+    allocator: Allocator,
+    io: std.Io,
+    summary: struct {
+        firing_id: []const u8,
+        neuron_id: []const u8,
+        effects_committed: usize,
+        duplicates_skipped: usize,
+        artifacts: usize,
+        messages: usize,
+        neurons: usize,
+        digest: types.Digest,
+    },
+    json: bool,
+    dump: bool,
+) !void {
+    _ = allocator;
+    _ = dump;
+    var buffer: [1024]u8 = undefined;
+    var writer = std.Io.File.stdout().writerStreaming(io, &buffer);
+    if (json) {
+        try writer.interface.print("{{\"status\":\"committed\",\"firing_id\":\"{s}\",\"neuron\":\"{s}\",\"effects_committed\":{d},\"duplicates_skipped\":{d},\"artifacts\":{d},\"messages\":{d},\"neurons\":{d},\"digest\":\"{x}\"}}\n", .{
+            summary.firing_id, summary.neuron_id, summary.effects_committed, summary.duplicates_skipped,
+            summary.artifacts, summary.messages,  summary.neurons,           summary.digest,
+        });
+    } else {
+        try writer.interface.print(
+            "✓ firing {s} committed via {s}\n  {d} effects · {d} artifacts · {d} messages · {d} neurons\n  decision {x}\n",
+            .{ summary.firing_id, summary.neuron_id, summary.effects_committed, summary.artifacts, summary.messages, summary.neurons, summary.digest },
+        );
+    }
+    try writer.interface.flush();
+}
+
+fn readStdin(allocator: Allocator, io: std.Io) ![]u8 {
+    var buffer: [4096]u8 = undefined;
+    var reader = std.Io.File.stdin().reader(io, &buffer);
+    return reader.interface.allocRemaining(allocator, .limited(1 << 20));
+}

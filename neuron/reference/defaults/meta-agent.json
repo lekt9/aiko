@@ -1,0 +1,113 @@
+{
+  "schema": "typed-neuron.meta-agent-defaults/v1",
+  "package": "typed-neuron/meta-agent",
+  "version": "1.0.0",
+  "topology": "reference/default",
+  "budgets": {
+    "max_fan_out": 4,
+    "max_spawn_depth": 3,
+    "max_recovery_attempts": 3,
+    "max_effects_per_firing": 8,
+    "max_bytes_per_firing": 65536
+  },
+  "requirements": {
+    "deadline_required": true,
+    "acceptance_predicate_required": true,
+    "independent_verifier_required": true,
+    "durable_correctness_messages": true,
+    "reuse_before_generation": true,
+    "ambient_authority": false,
+    "active_snapshot_compare_and_swap": true
+  },
+  "schemas": {
+    "AgentManifest": "typed-neuron.agent-manifest/v1",
+    "AgentSnapshot": "typed-neuron.agent-snapshot/v1",
+    "Intent": "typed-neuron.intent/v1",
+    "WorkEnvelope": "typed-neuron.work-envelope/v1",
+    "ContextManifest": "typed-neuron.context-manifest/v1",
+    "Plan": "typed-neuron.plan/v1",
+    "WorkItem": "typed-neuron.work-item/v1",
+    "Verification": "typed-neuron.verification/v1",
+    "Frontier": "typed-neuron.frontier/v1",
+    "Failure": "typed-neuron.failure/v1",
+    "MemoryIndex": "typed-neuron.memory-index/v1",
+    "LimbRef": "typed-neuron.limb-ref/v1"
+  },
+  "neurons": {
+    "intake": {
+      "input": "typed-neuron.receptor/v1",
+      "output": "typed-neuron.intent/v1",
+      "effects": ["write:agents/<id>/intent"]
+    },
+    "governor": {
+      "input": "typed-neuron.intent/v1",
+      "output": "typed-neuron.work-envelope/v1",
+      "effects": ["write:agents/<id>/envelope"]
+    },
+    "context": {
+      "input": "typed-neuron.work-envelope/v1",
+      "output": "typed-neuron.context-manifest/v1",
+      "effects": ["read:pinned", "write:agents/<id>/context"]
+    },
+    "planner": {
+      "input": "typed-neuron.context-manifest/v1",
+      "output": "typed-neuron.plan/v1",
+      "effects": ["write:agents/<id>/plan"]
+    },
+    "router": {
+      "input": "typed-neuron.work-item/v1",
+      "output": "typed-neuron.limb-ref/v1",
+      "effects": ["send:neuron/<compatible-limb>"]
+    },
+    "executor": {
+      "input": "typed-neuron.work-item/v1",
+      "output": "typed-neuron.proposal/v1",
+      "effects": ["scoped-by-work-envelope"]
+    },
+    "verifier": {
+      "input": "typed-neuron.proposal/v1",
+      "output": "typed-neuron.verification/v1",
+      "effects": ["read:independently-pinned", "send:neuron/recovery|settler"]
+    },
+    "settler": {
+      "input": "typed-neuron.frontier/v1",
+      "output": "typed-neuron.agent-snapshot/v1",
+      "effects": ["write:immutable-snapshot", "cas:agents/<id>/active"]
+    },
+    "recovery": {
+      "input": "typed-neuron.failure/v1",
+      "output": "typed-neuron.work-item/v1",
+      "effects": ["send:neuron/router"]
+    },
+    "memory-indexer": {
+      "input": "typed-neuron.verification/v1",
+      "output": "typed-neuron.memory-index/v1",
+      "effects": ["write:agents/<id>/memory-index"]
+    },
+    "limb-designer": {
+      "input": "typed-neuron.capability-gap/v1",
+      "output": "typed-neuron.skill/v1",
+      "effects": ["write:inert-skill-package"]
+    },
+    "limb-judge": {
+      "input": "typed-neuron.skill/v1",
+      "output": "typed-neuron.admission-recommendation/v1",
+      "effects": ["read:pinned-package"]
+    }
+  },
+  "edges": [
+    ["intake", "governor"],
+    ["governor", "context"],
+    ["context", "planner"],
+    ["planner", "router"],
+    ["router", "executor"],
+    ["executor", "verifier"],
+    ["verifier:red", "recovery"],
+    ["recovery", "router"],
+    ["router:gap", "limb-designer"],
+    ["limb-designer", "limb-judge"],
+    ["limb-judge:admitted", "router"],
+    ["verifier:green", "memory-indexer"],
+    ["memory-indexer", "settler"]
+  ]
+}

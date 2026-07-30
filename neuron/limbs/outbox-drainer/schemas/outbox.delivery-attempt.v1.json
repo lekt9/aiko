@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "outbox.delivery-attempt/v1",
+  "description": "Record of one attempt to deliver a message via an adapter. Written by the drainer before invoking the adapter.",
+  "type": "object",
+  "required": ["key", "message", "attempt", "status"],
+  "properties": {
+    "key": { "type": "string" },
+    "message": {
+      "type": "object",
+      "required": ["firing_id", "to", "schema", "payload"]
+    },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "status": { "type": "string", "enum": ["attempting"] },
+    "drained_by": { "type": "string" },
+    "drained_at": { "type": "integer" }
+  }
+}

@@ -1,0 +1,31 @@
+# Zig
+.zig-cache/
+zig-out/
+*.o
+*.a
+*.dSYM
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Large local artifacts (decide per commit)
+# codedb.snapshot
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+*.log
+
+# Session / local only
+.claude/
+harness.*.jsonl
+tmp/

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.gap-request/v1",
+  "title": "Gap Analysis Request",
+  "description": "Request to identify missing capabilities given a desired set.",
+  "type": "object",
+  "required": ["desired"],
+  "properties": {
+    "desired": {
+      "type": "array",
+      "description": "Desired capabilities, each described by a schema or identity.",
+      "items": {
+        "type": "object",
+        "required": ["kind"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["neuron", "schema", "artifact", "package"]
+          },
+          "identity": {
+            "type": "string",
+            "description": "For kind=neuron: expected identity prefix."
+          },
+          "schema": {
+            "type": "string",
+            "description": "For kind=schema: expected schema name (prefix match ok)."
+          },
+          "package_name": {
+            "type": "string",
+            "description": "For kind=package: expected package name."
+          },
+          "minimum_version": {
+            "type": "string",
+            "description": "Minimum acceptable version for partial matches."
+          }
+        }
+      }
+    },
+    "map_artifact_id": {
+      "type": "string",
+      "description": "ID of the capability-map artifact to analyze (from a prior inspector firing). If absent, the gap-analyzer reads all schema artifacts itself."
+    }
+  },
+  "additionalProperties": false
+}

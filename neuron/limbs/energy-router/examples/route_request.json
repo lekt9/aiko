@@ -1,0 +1,21 @@
+{
+  "schema": "neuron.stimulus/v1",
+  "firing_id": "demo/energy-route/001",
+  "receptor_schema": "energy.route-request/v1",
+  "messages": [
+    {
+      "to": "energy-router",
+      "schema": "energy.route-request/v1",
+      "payload": "context-narrow|1|920|0.15|0.4|0|0\nspawn-micro-ebm|1|880|0.25|0.1|0|1\nrouter-heuristic|1|710|0.35|1.2|0|0",
+      "durable": true
+    }
+  ],
+  "budget": {
+    "max_effects": 4,
+    "max_writes": 2,
+    "max_messages": 0,
+    "max_spawns": 0,
+    "max_bytes": 65536,
+    "max_depth": 2
+  }
+}

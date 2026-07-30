@@ -1,0 +1,58 @@
+{
+  "schema": "typed-neuron.limb-manifest/v1",
+  "package": "typed-neuron/energy-router",
+  "version": "0.1.0",
+  "description": "EBM-native EnergyRouter: structural energy minimization for neuron firing recommendation, context selection, and sub-EBM spawning. Generative limb for public mesh commons.",
+  "neurons": [
+    {
+      "id": "energy-router",
+      "argv": ["python3", "neurons/energy_router.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "energy/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 4,
+          "max_writes": 2,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 65536,
+          "max_depth": 2
+        }
+      }
+    },
+    {
+      "id": "registry-lookup",
+      "argv": ["python3", "neurons/registry_lookup.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "energy/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 2,
+          "max_writes": 1,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 65536,
+          "max_depth": 1
+        }
+      }
+    }
+  ],
+  "budgets": {
+    "deadline_ms_per_firing": 30000
+  },
+  "schemas": {
+    "Candidate": "energy.candidate/v1",
+    "EnergyScore": "energy.score/v1",
+    "PackageOffer": "energy.package-offer/v1",
+    "UsageRecord": "energy.usage/v1",
+    "SettlementClaim": "energy.settlement-claim/v1"
+  },
+  "witnesses": {
+    "scorer_reference": "python3 scorer.py",
+    "energy_zig_tests": "zig test ../energy-router/energy.zig || true"
+  }
+}

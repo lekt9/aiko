@@ -1,0 +1,7 @@
+.{
+    .name = .typed_neuron,
+    .version = "0.1.0",
+    .fingerprint = 0x98a0274e9faa5caf,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src", "README.md", "AGENTS.md" },
+}

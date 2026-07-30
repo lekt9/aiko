@@ -1,0 +1,79 @@
+{
+  "schema": "typed-neuron.limb-manifest/v1",
+  "package": "typed-neuron/conversation",
+  "version": "0.1.0",
+  "description": "Bidirectional conversation limb: an asker opens a correlated exchange and parks on the answer; a responder answers any peer using only the return address pinned into its own stimulus. The responder holds NO send capability — reply authority comes from possessing the request.",
+  "neurons": [
+    {
+      "id": "asker",
+      "accepts": ["conv.start/v1", "conv.answer/v1"],
+      "emits": ["conv.ask/v1", "conv.settled/v1"],
+      "argv": ["python3", "neurons/asker.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "artifact/conversation/",
+        "allow_send": true,
+        "send_prefix": "neuron/",
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 4,
+          "max_writes": 2,
+          "max_messages": 2,
+          "max_spawns": 0,
+          "max_bytes": 65536,
+          "max_depth": 2,
+          "max_turns": 4
+        }
+      }
+    },
+    {
+      "id": "forger",
+      "accepts": ["conv.ask/v1"],
+      "emits": ["conv.answer/v1"],
+      "argv": ["python3", "neurons/forger.py"],
+      "caps_request": {
+        "allow_write": false,
+        "allow_send": true,
+        "send_prefix": "neuron/",
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 2,
+          "max_writes": 0,
+          "max_messages": 2,
+          "max_spawns": 0,
+          "max_bytes": 65536,
+          "max_depth": 2,
+          "max_turns": 4
+        }
+      }
+    },
+    {
+      "id": "responder",
+      "accepts": ["conv.ask/v1"],
+      "emits": ["conv.answer/v1"],
+      "argv": ["python3", "neurons/responder.py"],
+      "caps_request": {
+        "allow_write": false,
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 2,
+          "max_writes": 0,
+          "max_messages": 2,
+          "max_spawns": 0,
+          "max_bytes": 65536,
+          "max_depth": 2,
+          "max_turns": 4
+        }
+      }
+    }
+  ],
+  "budgets": {
+    "deadline_ms_per_firing": 30000
+  },
+  "schemas": {
+    "ask": "conv.ask/v1",
+    "answer": "conv.answer/v1",
+    "settled": "conv.settled/v1"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "schema": "typed-neuron.limb-manifest/v1",
+  "package": "typed-neuron/fanout",
+  "version": "0.1.0",
+  "description": "Reusable fan-out limb: spawns N deterministic children with narrowed delegations from a fanout-request stimulus. Pure policy neuron — the harness still owns budget, depth, and edge policy.",
+  "neurons": [
+    {
+      "id": "fanout",
+      "argv": ["python3", "neurons/fanout.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "artifact/fanout/",
+        "allow_send": false,
+        "allow_spawn": true,
+        "spawn_prefix": "fanout/",
+        "budget": {
+          "max_effects": 16,
+          "max_writes": 8,
+          "max_messages": 0,
+          "max_spawns": 8,
+          "max_bytes": 65536,
+          "max_depth": 2
+        }
+      }
+    }
+  ],
+  "budgets": {
+    "deadline_ms_per_firing": 30000
+  },
+  "schemas": {
+    "request": "fanout.request/v1",
+    "item": "fanout.item/v1"
+  }
+}
