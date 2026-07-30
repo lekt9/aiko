@@ -5,18 +5,24 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .typed_neuron = .{
-            // Switched to published git source (Option A) so a single clone of
-            // Unbrowse/contract is sufficient. The hash is the content hash of
-            // the exact tree at the pinned commit.
+            // Sibling-checkout dependency: clone Unbrowse/contract and
+            // Unbrowse/neuron into the same parent directory and this builds
+            // as-is. It replaces a git+ssh entry that could not build at all
+            // (placeholder `1220…00` hash, and a Tailscale address the gitea
+            // host no longer answers on).
             //
-            // To obtain the hash in your environment (Tailscale gitea):
-            //   zig fetch 'git+ssh://git@100.67.11.99:2222/Unbrowse/neuron.git#1e69ca97462b63502dd24fedbac8aacfb583928b'
+            // For a standalone clone of contract alone, pin the published
+            // package instead — from the neuron checkout, take the commit you
+            // want and print its content hash:
+            //   zig fetch 'git+ssh://git@100.124.140.92:2222/Unbrowse/neuron.git#<commit>'
+            // then swap this line for that .url plus the printed .hash.
             //
-            // Then replace the placeholder below with the printed 1220... hash.
-            // This makes the dep work after a plain `git clone` of contract
-            // (plus zig fetch once for the dep).
-            .url = "git+ssh://git@100.67.11.99:2222/Unbrowse/neuron.git#1e69ca97462b63502dd24fedbac8aacfb583928b",
-            .hash = "12200000000000000000000000000000000000000000000000000000000000000000", // TODO: replace with real hash from zig fetch
+            // Note the pin is load-bearing beyond the build: typed-neuron.lock.json
+            // records the digest of the six wire files, and Aiko's generated
+            // binding (typed_neuron_wire.rs PACKAGE_DIGEST) must name the same
+            // one, so a pinned commit has to contain the wire tree this lock
+            // was generated from.
+            .path = "../../neuron",
         },
     },
     .paths = .{
