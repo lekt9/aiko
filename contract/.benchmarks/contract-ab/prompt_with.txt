@@ -1,0 +1,15 @@
+Work autonomously on the repository in your current working directory.
+
+Read TASK.md, repair and complete the implementation, and run the visible test
+suite. Add or improve tests if useful. Do not access parent directories or any
+external evaluator.
+
+Use `/Users/lewis/Unbrowse/contract/scripts/contract` as the task-control layer:
+before editing, declare the task locally with `--register` and an action pointer
+for the visible test command; retain the returned contract id. Consult the
+contract briefing/status while working, and check that contract's status after
+your tests. The contract is coordination and evidence; you still own the code
+and verification.
+
+Keep the public API intact and finish with a concise summary of changes and
+tests run.

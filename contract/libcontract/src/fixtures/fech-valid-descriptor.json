@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "mcp:github.issues.list",
+  "capability_version": "1",
+  "provider": "mcp:github",
+  "tool": "issues",
+  "action": "list",
+  "description": "List repository issues through the connected GitHub MCP server.",
+  "input_schema": { "type": "object" },
+  "output_schema": { "type": "array" },
+  "requires": [],
+  "permission": "network",
+  "effects": ["network_read"],
+  "available": true
+}

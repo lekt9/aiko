@@ -1,0 +1,12 @@
+# ARC-AGI-3 minimal tasks as /contract plans (use with contract-goal --private)
+# Task 1: copy-color (3x3 single cell object)
+
+# Root claim (the one we want to satisfy with correct grid)
+arc-task-1: given input grid [[0,0,0],[0,2,0],[0,0,0]], produce output grid that copies color 2 to the object shape. Must fulfil against expected [[0,0,0],[0,2,0],[0,0,0]].
+
+# Child 1: the actual rule neuron (will be satisfied with the output grid as its result)
+arc-task-1-rule: implement copy-color rule for single non-zero object on 3x3 grid — input has one cell with color 2 at center; output must be identical grid with that color preserved.
+
+# Fulfilment link (expressed via contract: ref + expectation in plan)
+# The consumer will use contract:<rule-id> and check equality of surfaced result vs expected.
+arc-task-1-verify: verify that the output of contract:ARC-RULE equals expected grid [[0,0,0],[0,2,0],[0,0,0]] — use value surfacing from approved pointer.

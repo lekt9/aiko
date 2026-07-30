@@ -1,0 +1,17 @@
+{
+  "core_version": "typed-neuron/2",
+  "package": "typed_neuron",
+  "package_digest": "29cb6f917c0d5b8ad8f14295edc7a8d733e41693dd51582069a911afa2169e8e",
+  "package_digest_algorithm": "sha256-framed-files/v1",
+  "package_files": [
+    "schema/typed-neuron-wire.json",
+    "tools/generate_wire_bindings.py",
+    "src/wire.zig",
+    "src/runtime.zig",
+    "src/types.zig",
+    "src/caps.zig"
+  ],
+  "schema_digest": "737d6642b24362db7272728e08f248a0839fe9798b0df0f8e0a78d4eb2fc03ca",
+  "source": "../../neuron",
+  "source_schema": "typed-neuron-wire-schema/1"
+}

@@ -1,0 +1,20 @@
+Implemented and repaired the durable SQLite job queue.
+
+Key changes:
+
+- Atomic claims across threads and queue instances.
+- Durable database-backed idempotency.
+- Unpredictable unique lease tokens.
+- Correct lease expiry, heartbeat, acknowledgement, and failure validation.
+- Correct exponential backoff and dead-letter transitions.
+- Reclamation of expired leases without blocking later jobs.
+- Configuration and lease-duration validation.
+- `QueueDataError` for malformed stored JSON.
+- Thread-safe, idempotent `close()`.
+- Added regression tests for concurrency, expiry boundaries, retries, malformed data, and persistence.
+
+Validation:
+
+- `python3 -m unittest -v` — 11 tests passed.
+- Python compilation check passed.
+- `git diff --check` passed.

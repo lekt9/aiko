@@ -1,0 +1,14 @@
+Implemented and completed `run_graph`:
+
+- Added full graph validation and deterministic cycle detection.
+- Added bounded concurrent scheduling in lexicographic order.
+- Added failure isolation and transitive skip propagation.
+- Corrected prior-result reuse behavior.
+- Ensured every task receives exactly one final state.
+- Added tests covering validation, cycles, failures, retries, and invalid concurrency.
+
+Verification:
+
+- `python3 -m unittest -v` — 8 tests passed.
+- `py_compile` and `git diff --check` passed.
+- Contract `7818cadc` checked; status remains `pending` in the task-control layer.

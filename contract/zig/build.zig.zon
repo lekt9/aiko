@@ -1,0 +1,13 @@
+.{
+    .name = .contract_zig,
+    .version = "0.0.1-stage1",
+    .fingerprint = 0x693380534e325502,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "README.md",
+    },
+}

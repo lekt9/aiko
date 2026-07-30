@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "date": "2026-07-20",
+  "fixture": ".benchmarks/task-runtime/.claude/contracts.jsonl",
+  "rounds_per_run": 25,
+  "already_satisfied_task_verify": {
+    "run_1_median_ms": 2.391,
+    "run_2_median_ms": 2.257,
+    "median_variance_percent": 5.60,
+    "run_1_p95_ms": 2.765,
+    "run_2_p95_ms": 2.794
+  },
+  "status_by_id": {
+    "run_1_median_ms": 2.403,
+    "run_2_median_ms": 2.304,
+    "median_variance_percent": 4.12,
+    "run_1_p95_ms": 2.863,
+    "run_2_p95_ms": 2.951
+  },
+  "post_agency_observability_task_verify": {
+    "run_1_median_ms": 2.505,
+    "run_2_median_ms": 2.569,
+    "median_variance_percent": 2.49,
+    "mean_median_regression_vs_baseline_percent": 9.17,
+    "guardrail_percent": 20,
+    "result": "pass"
+  },
+  "result": "pass"
+}

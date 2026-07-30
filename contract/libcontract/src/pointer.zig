@@ -1,0 +1,417 @@
+//! Native pointer-type inference + contract:<id> ref extraction.
+const std = @import("std");
+
+/// A Skill is packaging for a Neuron, not another computational primitive.
+/// The immutable package locator has the form:
+///
+///   skill:<lower-hyphen-id>@<numeric-semver>:<aiko|host|tool|script>
+pub fn isValidSkillAction(action: []const u8) bool {
+    const prefix = "skill:";
+    if (!std.mem.startsWith(u8, action, prefix)) return false;
+    const body = action[prefix.len..];
+    const at = std.mem.indexOfScalar(u8, body, '@') orelse return false;
+    if (std.mem.indexOfScalarPos(u8, body, at + 1, '@') != null) return false;
+    const id = body[0..at];
+    const version_worker = body[at + 1 ..];
+    const separator = std.mem.lastIndexOfScalar(u8, version_worker, ':') orelse return false;
+    const version = version_worker[0..separator];
+    const worker = version_worker[separator + 1 ..];
+
+    if (id.len == 0 or id.len > 64 or id[0] == '-' or id[id.len - 1] == '-') return false;
+    for (id) |byte| {
+        if (!std.ascii.isLower(byte) and !std.ascii.isDigit(byte) and byte != '-') return false;
+    }
+    var parts = std.mem.splitScalar(u8, version, '.');
+    var part_count: usize = 0;
+    while (parts.next()) |part| {
+        part_count += 1;
+        if (part.len == 0) return false;
+        for (part) |byte| if (!std.ascii.isDigit(byte)) return false;
+    }
+    if (part_count != 3) return false;
+    return std.mem.eql(u8, worker, "aiko") or
+        std.mem.eql(u8, worker, "host") or
+        std.mem.eql(u8, worker, "tool") or
+        std.mem.eql(u8, worker, "script");
+}
+
+/// Infer the native pointer type from an action string. Only mechanically
+/// implemented composition shapes receive a distinct type; everything else is
+/// a cell unless it is plainly a URL/API action.
+pub fn inferPointerType(action: []const u8) []const u8 {
+    if (std.mem.eql(u8, action, "neuron")) return "neuron";
+    if (std.mem.eql(u8, action, "children-satisfy") or std.mem.eql(u8, action, "funnel")) return "funnel";
+    if (std.mem.eql(u8, action, "funnel-first")) return "funnel-first";
+    if (std.mem.eql(u8, action, "sequence")) return "sequence";
+    if (std.mem.startsWith(u8, action, "quorum:")) return "quorum";
+    if (std.mem.startsWith(u8, action, "contract:")) return "contract-ref";
+    if (std.mem.startsWith(u8, action, "fulfil:")) return "fulfil";
+    if (std.mem.startsWith(u8, action, "value-of:")) return "value-of";
+    if (std.mem.startsWith(u8, action, "loop-until:")) return "loop";
+    if (std.mem.startsWith(u8, action, "harness:")) return "harness";
+    if (std.mem.startsWith(u8, action, "webhook:")) return "webhook";
+    if (std.mem.startsWith(u8, action, "wallet:")) return "wallet";
+    if (std.mem.startsWith(u8, action, "embedding:")) return "embedding";
+    // sha256 pointers carry their privacy axis on the prefix itself
+    // (`sha256-private:` host-local, `sha256-shared:` cloud-replicable). The
+    // bare `sha256:` form is an alias for `sha256-private:` so existing rows
+    // round-trip with their effective semantics; future writers should pick
+    // one of the scoped prefixes explicitly.
+    if (std.mem.startsWith(u8, action, "sha256-private:")) return "sha256-private";
+    if (std.mem.startsWith(u8, action, "sha256-shared:")) return "sha256-shared";
+    if (std.mem.startsWith(u8, action, "sha256:")) return "sha256-private";
+    if (std.mem.startsWith(u8, action, "sabbath-eval:")) return "sabbath-eval";
+    if (std.mem.startsWith(u8, action, "tunnel:")) return "tunnel";
+    if (std.mem.startsWith(u8, action, "x402:")) return "x402";
+    if (std.mem.startsWith(u8, action, "agent:")) return "agent";
+    if (std.mem.startsWith(u8, action, "machine:")) return "machine";
+    if (std.mem.startsWith(u8, action, "inhibits:")) return "inhibits";
+    if (std.mem.startsWith(u8, action, "bind:")) return "bind";
+    if (std.mem.startsWith(u8, action, "posthook:")) return "posthook";
+    if (std.mem.startsWith(u8, action, "prehook:")) return "prehook";
+    if (std.mem.startsWith(u8, action, "blocked_by:")) return "blocked_by";
+    if (std.mem.startsWith(u8, action, "modality:")) return "modality";
+    // `wrapper:<name>` — a substrate wrapper layer that surfaces the
+    // binary at a higher level of abstraction (the SDK wraps the
+    // binary; the openai-compat HTTP server wraps the SDK; future
+    // adapters wrap that). Each wrapper is itself a /contract whose
+    // parent_id is the layer it wraps. Layer 4 (transport) — wrappers
+    // carry calls between layers without changing the truth claim.
+    if (std.mem.startsWith(u8, action, "wrapper:")) return "wrapper";
+    // (No hardcoded environment prefixes — environment is GENERATIVE
+    // per Lewis 2026-05-27: a contract's location is whatever word in
+    // its plan names a runtime, falling back to the parent's
+    // environment via lineage walk. The substrate looks up
+    // wrapper:<name> contracts in the ledger to find the adapter.
+    // Hardcoded `wasm:` / `binary:` / `telegram:` / `email:` /
+    // `browser-script:` prefixes were reverted because they bound
+    // the environment table to compile-time — the wrong layer.)
+    // Recursive truth-substrate (this turn): every word in a plan is itself
+    // a /contract pointer, and the layer-7 validator → layer-8 signed
+    // pointer-memory cascade is mechanical. `word:<tok>` is a sub-cell
+    // (layer 0); `validate:<id>` is the L7 boundary check; `signed:<sig>`
+    // is the L8 pointer-memory the wallet ratifies. Each remains a
+    // /contract — there is no other primitive.
+    if (std.mem.startsWith(u8, action, "word:")) return "word";
+    if (std.mem.startsWith(u8, action, "validate:")) return "validate";
+    if (std.mem.startsWith(u8, action, "signed:")) return "signed";
+    if (isValidSkillAction(action)) return "neuron";
+    if (std.mem.startsWith(u8, action, "curl ") or
+        std.mem.startsWith(u8, action, "http://") or
+        std.mem.startsWith(u8, action, "https://") or
+        std.mem.startsWith(u8, action, "wget ")) return "api";
+    // `neuron:<subtype>` shapes (e.g. `neuron:user`,
+    // `neuron:openai-session`) — treated as neurons, not cli fallthroughs.
+    // Must come BEFORE the bare "cli" default. Same for the other
+    // graph-layer shapes that admit subtypes.
+    if (std.mem.startsWith(u8, action, "neuron:")) return "neuron";
+    if (std.mem.startsWith(u8, action, "funnel:")) return "funnel";
+    if (std.mem.startsWith(u8, action, "sequence:")) return "sequence";
+    if (std.mem.startsWith(u8, action, "iterate:")) return "iterate";
+    return "cli";
+}
+
+/// Returns true if `action` matches a known exact shape or starts
+/// with a known typed prefix. The substrate's shape validator
+/// (shape.zig) uses this to refuse JSON envelopes carrying actions
+/// the substrate cannot interpret. SDK validators mirror this set.
+pub fn isKnownAction(action: []const u8) bool {
+    // Exact bare-name shapes.
+    if (std.mem.eql(u8, action, "neuron")) return true;
+    if (std.mem.eql(u8, action, "funnel")) return true;
+    if (std.mem.eql(u8, action, "funnel-first")) return true;
+    if (std.mem.eql(u8, action, "sequence")) return true;
+    if (std.mem.eql(u8, action, "cli")) return true;
+    if (std.mem.eql(u8, action, "api")) return true;
+    if (std.mem.eql(u8, action, "harness")) return true;
+    if (std.mem.eql(u8, action, "loop")) return true;
+    if (std.mem.eql(u8, action, "fulfil")) return true;
+    if (isValidSkillAction(action)) return true;
+    // Typed prefixes — each must end with ':' or be a network shape.
+    const prefixes = [_][]const u8{
+        "word:",         "machine:",        "neuron:",
+        "funnel:",       "sequence:",       "quorum:",
+        "contract:",     "fulfil:",         "value-of:",
+        "loop-until:",   "harness:",        "embedding:",
+        "sabbath-eval:", "inhibits:",       "bind:",
+        "blocked_by:",   "webhook:",        "tunnel:",
+        "posthook:",     "prehook:",        "modality:",
+        "wrapper:",      "sha256-private:", "sha256-shared:",
+        "sha256:",       "wallet:",         "x402:",
+        "agent:",        "validate:",       "signed:",
+        "iterate:",      "curl ",           "http://",
+        "https://",      "wget ",
+    };
+    for (prefixes) |p| {
+        if (std.mem.startsWith(u8, action, p)) return true;
+    }
+    return false;
+}
+
+/// Native layer inference for the minimal shape catalog.
+/// Layer convention (contract:d10b3dbb): 1=system, 2=cell, 3=graph,
+/// 4=transport, 5=value, 6=operator.
+///
+/// META-INVARIANT (Lewis 2026-05-27 gap `7783ca73`): ** any prefix
+/// that returns layer 4 is a valid edge carrier between contracts at
+/// any higher layer (5/6/7/8).** Layer 4 IS the transport layer; the
+/// substrate refuses to enumerate a fixed edge-carrier whitelist
+/// because the carrier-vs-non-carrier distinction collapses to the
+/// already-enforced layer-4 membership. Adding a new layer-4 prefix
+/// (e.g. `wireguard-mesh:`, `nats:`, `ipfs:`) automatically makes it
+/// a valid higher-layer edge without any additional registration.
+/// Conversely: prefixes returning other layers are NOT valid edge
+/// carriers between higher-layer contracts — using them as such is
+/// a substrate-doctrine violation the parity gate refuses.
+pub fn inferLayer(action: []const u8) i32 {
+    const pt = inferPointerType(action);
+    if (std.mem.eql(u8, pt, "cli") and std.mem.indexOf(u8, action, "wait-for-event") != null) return 4;
+    if (std.mem.eql(u8, pt, "funnel")) return 3;
+    if (std.mem.eql(u8, pt, "neuron")) return 3;
+    if (std.mem.eql(u8, pt, "funnel-first")) return 3;
+    if (std.mem.eql(u8, pt, "sequence")) return 3;
+    if (std.mem.eql(u8, pt, "quorum")) return 3;
+    if (std.mem.eql(u8, pt, "contract-ref")) return 3;
+    if (std.mem.eql(u8, pt, "fulfil")) return 3;
+    if (std.mem.eql(u8, pt, "value-of")) return 3;
+    if (std.mem.eql(u8, pt, "inhibits")) return 3;
+    if (std.mem.eql(u8, pt, "bind")) return 3;
+    if (std.mem.eql(u8, pt, "blocked_by")) return 3;
+    if (std.mem.eql(u8, pt, "posthook")) return 4;
+    if (std.mem.eql(u8, pt, "prehook")) return 4;
+    if (std.mem.eql(u8, pt, "modality")) return 4;
+    if (std.mem.eql(u8, pt, "wrapper")) return 4;
+    if (std.mem.eql(u8, pt, "embedding")) return 3;
+    if (std.mem.eql(u8, pt, "sha256-private")) return 4;
+    if (std.mem.eql(u8, pt, "sha256-shared")) return 4;
+    if (std.mem.eql(u8, pt, "sabbath-eval")) return 3;
+    if (std.mem.eql(u8, pt, "webhook")) return 4;
+    if (std.mem.eql(u8, pt, "tunnel")) return 4;
+    if (std.mem.eql(u8, pt, "wallet")) return 5;
+    if (std.mem.eql(u8, pt, "x402")) return 5;
+    if (std.mem.eql(u8, pt, "agent")) return 6;
+    if (std.mem.eql(u8, pt, "machine")) return 1;
+    if (std.mem.eql(u8, pt, "cli")) return 2;
+    if (std.mem.eql(u8, pt, "api")) return 2;
+    if (std.mem.eql(u8, pt, "harness")) return 2;
+    if (std.mem.eql(u8, pt, "loop")) return 2;
+    // word: is the sub-cell — every token in a plan is itself a /contract
+    // pointer, mechanically a child of the sentence-contract above it.
+    if (std.mem.eql(u8, pt, "word")) return 0;
+    // validate: is the L7 boundary; signed: is the L8 pointer-memory.
+    // markSatisfied on a L7 row auto-spawns the L8 signed:<sig> row, so
+    // the chain breaks at L7 and ratifies at L8.
+    if (std.mem.eql(u8, pt, "validate")) return 7;
+    if (std.mem.eql(u8, pt, "signed")) return 8;
+    return 2;
+}
+
+/// Extract every `contract:<8hex>` reference id from `action`. Returns a list
+/// of owned slices (each 8 chars). Caller owns the outer slice and each
+/// inner slice — free each then free the slice.
+pub fn extractContractRefs(allocator: std.mem.Allocator, action: []const u8) ![][]u8 {
+    var refs: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (refs.items) |r| allocator.free(r);
+        refs.deinit(allocator);
+    }
+    const needle = "contract:";
+    var i: usize = 0;
+    while (i + needle.len <= action.len) {
+        if (std.mem.startsWith(u8, action[i..], needle)) {
+            const start = i + needle.len;
+            if (start + 8 <= action.len) {
+                const candidate = action[start .. start + 8];
+                var ok = true;
+                for (candidate) |c| {
+                    const is_hex = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+                    if (!is_hex) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok) {
+                    const copy = try allocator.dupe(u8, candidate);
+                    try refs.append(allocator, copy);
+                    i = start + 8;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    return try refs.toOwnedSlice(allocator);
+}
+
+/// Extract every typed contract id reference matching `prefix:<8hex>` from
+/// `text`. Used for `inhibits:`, `bind:`, `blocked_by:`, etc.
+pub fn extractTypedRefs(allocator: std.mem.Allocator, text: []const u8, prefix: []const u8) ![][]u8 {
+    var refs: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (refs.items) |r| allocator.free(r);
+        refs.deinit(allocator);
+    }
+    var i: usize = 0;
+    while (i + prefix.len <= text.len) {
+        if (std.mem.startsWith(u8, text[i..], prefix)) {
+            const start = i + prefix.len;
+            if (start + 8 <= text.len) {
+                const candidate = text[start .. start + 8];
+                var ok = true;
+                for (candidate) |c| {
+                    const is_hex = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+                    if (!is_hex) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok) {
+                    const copy = try allocator.dupe(u8, candidate);
+                    try refs.append(allocator, copy);
+                    i = start + 8;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    return try refs.toOwnedSlice(allocator);
+}
+
+/// Extract synapse suffixes where the suffix is NOT an 8-hex id but a
+/// free-form opaque token consumed verbatim until the next whitespace,
+/// quote, or closing bracket. Used for the `at:` (RFC3339 timestamps) and
+/// `repeat:` (cron expressions) synapse kinds — both carry payloads whose
+/// shape is structurally a string, not an id.
+///
+/// Matches the same prefix-anchored pattern as extractTypedRefs, then
+/// scans forward consuming non-terminator characters. The terminator set
+/// is whitespace + JSON-shape closers + comma, so embedded RFC3339
+/// timestamps like "2026-05-26T08:00:00Z" or cron expressions like
+/// "0 9 * * *" are captured as a single token (cron spaces ARE
+/// terminators — callers should quote multi-word cron expressions or
+/// pre-canonicalize them, e.g. "every-day-9am" → "0_9_*_*_*").
+pub fn extractFreeformRefs(allocator: std.mem.Allocator, text: []const u8, prefix: []const u8) ![][]u8 {
+    var refs: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (refs.items) |r| allocator.free(r);
+        refs.deinit(allocator);
+    }
+    var i: usize = 0;
+    while (i + prefix.len <= text.len) {
+        if (std.mem.startsWith(u8, text[i..], prefix)) {
+            // Word boundary: previous char must be whitespace / quote / line-
+            // start. Otherwise prefixes embed in substrings — `repeat:` would
+            // match the `at:` extractor on its trailing "at:..." segment.
+            const at_boundary = i == 0 or blk: {
+                const prev = text[i - 1];
+                break :blk prev == ' ' or prev == '\t' or prev == '\n' or
+                    prev == '\r' or prev == '"' or prev == '\'' or
+                    prev == ',' or prev == '[' or prev == '(';
+            };
+            if (!at_boundary) {
+                i += 1;
+                continue;
+            }
+            const start = i + prefix.len;
+            var end = start;
+            while (end < text.len) {
+                const c = text[end];
+                if (c == ' ' or c == '\t' or c == '\n' or c == '\r' or
+                    c == '"' or c == '\'' or c == ',' or c == ']' or c == ')')
+                {
+                    break;
+                }
+                end += 1;
+            }
+            if (end > start) {
+                const copy = try allocator.dupe(u8, text[start..end]);
+                try refs.append(allocator, copy);
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    return try refs.toOwnedSlice(allocator);
+}
+
+test "inferPointerType exposes only native shapes plus cell/api" {
+    try std.testing.expectEqualStrings("funnel", inferPointerType("funnel"));
+    try std.testing.expectEqualStrings("neuron", inferPointerType("neuron"));
+    try std.testing.expectEqualStrings("funnel", inferPointerType("children-satisfy"));
+    try std.testing.expectEqualStrings("contract-ref", inferPointerType("contract:deadbeef"));
+    try std.testing.expectEqualStrings("quorum", inferPointerType("quorum:foo"));
+    try std.testing.expectEqualStrings("loop", inferPointerType("loop-until:true"));
+    try std.testing.expectEqualStrings("cli", inferPointerType("loop"));
+    try std.testing.expectEqualStrings("api", inferPointerType("https://example.com"));
+    try std.testing.expectEqualStrings("cli", inferPointerType("ls -la"));
+    try std.testing.expectEqualStrings("webhook", inferPointerType("webhook:https://hooks.local/x"));
+    try std.testing.expectEqualStrings("wallet", inferPointerType("wallet:abc"));
+    try std.testing.expectEqualStrings("embedding", inferPointerType("embedding:deadbeef"));
+    try std.testing.expectEqualStrings("tunnel", inferPointerType("tunnel:wg0"));
+    try std.testing.expectEqualStrings("x402", inferPointerType("x402:/v1/credits/debit"));
+    try std.testing.expectEqualStrings("agent", inferPointerType("agent:lewis"));
+    try std.testing.expectEqualStrings("machine", inferPointerType("machine:mlx"));
+    try std.testing.expectEqualStrings("inhibits", inferPointerType("inhibits:deadbeef"));
+    try std.testing.expectEqualStrings("bind", inferPointerType("bind:deadbeef"));
+    try std.testing.expectEqualStrings("posthook", inferPointerType("posthook:deadbeef"));
+    try std.testing.expectEqualStrings("prehook", inferPointerType("prehook:deadbeef"));
+    try std.testing.expectEqualStrings("blocked_by", inferPointerType("blocked_by:deadbeef"));
+}
+
+test "inferLayer matches contract d10b3dbb convention" {
+    try std.testing.expectEqual(@as(i32, 3), inferLayer("neuron"));
+    try std.testing.expectEqual(@as(i32, 3), inferLayer("contract:deadbeef"));
+    try std.testing.expectEqual(@as(i32, 3), inferLayer("inhibits:deadbeef"));
+    try std.testing.expectEqual(@as(i32, 4), inferLayer("webhook:https://x"));
+    try std.testing.expectEqual(@as(i32, 5), inferLayer("wallet:abc"));
+    try std.testing.expectEqual(@as(i32, 1), inferLayer("machine:mlx"));
+    try std.testing.expectEqual(@as(i32, 6), inferLayer("agent:lewis"));
+    try std.testing.expectEqual(@as(i32, 0), inferLayer("word:contract"));
+    try std.testing.expectEqual(@as(i32, 7), inferLayer("validate:deadbeef"));
+    try std.testing.expectEqual(@as(i32, 8), inferLayer("signed:abc123"));
+}
+
+test "inferPointerType exposes word/validate/signed shapes" {
+    try std.testing.expectEqualStrings("word", inferPointerType("word:contract"));
+    try std.testing.expectEqualStrings("validate", inferPointerType("validate:deadbeef"));
+    try std.testing.expectEqualStrings("signed", inferPointerType("signed:abc123"));
+}
+
+test "Skill packages resolve to strict native Neuron pointers" {
+    const valid = "skill:aiko-meta-agent@1.0.0:aiko";
+    try std.testing.expect(isValidSkillAction(valid));
+    try std.testing.expect(isKnownAction(valid));
+    try std.testing.expectEqualStrings("neuron", inferPointerType(valid));
+    try std.testing.expectEqual(@as(i32, 3), inferLayer(valid));
+
+    try std.testing.expect(!isValidSkillAction("skill:Aiko@1.0.0:aiko"));
+    try std.testing.expect(!isValidSkillAction("skill:aiko@1:aiko"));
+    try std.testing.expect(!isValidSkillAction("skill:aiko@1.0.0:shell"));
+    try std.testing.expect(!isKnownAction("skill:aiko@1.0.0:shell"));
+}
+
+test "extractTypedRefs picks ids by prefix" {
+    const allocator = std.testing.allocator;
+    const refs = try extractTypedRefs(allocator, "inhibits:deadbeef and inhibits:c0ffee99 plus contract:f00dbabe", "inhibits:");
+    defer {
+        for (refs) |r| allocator.free(r);
+        allocator.free(refs);
+    }
+    try std.testing.expectEqual(@as(usize, 2), refs.len);
+    try std.testing.expectEqualStrings("deadbeef", refs[0]);
+    try std.testing.expectEqualStrings("c0ffee99", refs[1]);
+}
+
+test "extractContractRefs picks ids" {
+    const allocator = std.testing.allocator;
+    const refs = try extractContractRefs(allocator, "see contract:deadbeef and contract:c0ffee99");
+    defer {
+        for (refs) |r| allocator.free(r);
+        allocator.free(refs);
+    }
+    try std.testing.expectEqual(@as(usize, 2), refs.len);
+    try std.testing.expectEqualStrings("deadbeef", refs[0]);
+    try std.testing.expectEqualStrings("c0ffee99", refs[1]);
+}

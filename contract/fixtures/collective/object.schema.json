@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aiko.dev/schemas/collective-object-v1.json",
+  "title": "Aiko Collective signed object v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "object_id", "unsigned", "signature"],
+  "properties": {
+    "protocol": { "const": "aiko-collective/1" },
+    "object_id": { "$ref": "#/$defs/object_id" },
+    "unsigned": { "$ref": "#/$defs/unsigned" },
+    "signature": { "$ref": "#/$defs/signature" }
+  },
+  "$defs": {
+    "hex64": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "hex128": { "type": "string", "pattern": "^[0-9a-f]{128}$" },
+    "object_id": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
+    "publisher": { "type": "string", "pattern": "^ed25519:[0-9a-f]{64}$" },
+    "signature": { "type": "string", "pattern": "^ed25519:[0-9a-f]{128}$" },
+    "timestamp": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 20,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 255,
+      "pattern": "^[a-z0-9_:-]+(?:\\.[a-z0-9_:-]+)+$"
+    },
+    "bounded_string": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "shape_field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "required"],
+      "properties": {
+        "type": { "enum": ["null", "boolean", "integer", "number", "string", "array", "object"] },
+        "required": { "type": "boolean" },
+        "items_type": { "enum": ["null", "boolean", "integer", "number", "string", "object"] }
+      }
+    },
+    "shape": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z][A-Za-z0-9_-]*$" },
+      "additionalProperties": { "$ref": "#/$defs/shape_field" }
+    },
+    "capability_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability_id", "capability_version", "origin", "operation", "summary", "input_shape", "output_shape", "permission", "effects", "requires", "sanitizer_version"],
+      "properties": {
+        "capability_id": { "$ref": "#/$defs/identifier" },
+        "capability_version": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9._+-]+$" },
+        "origin": { "type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[a-z0-9.-]+$" },
+        "operation": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z][a-z0-9_-]*$" },
+        "summary": { "$ref": "#/$defs/bounded_string" },
+        "input_shape": { "$ref": "#/$defs/shape" },
+        "output_shape": { "$ref": "#/$defs/shape" },
+        "permission": { "enum": ["read", "network"] },
+        "effects": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["read_only", "network_read"] }
+        },
+        "requires": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/object_id" } },
+        "sanitizer_version": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "provider_record_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "objects", "addresses", "transport"],
+      "properties": {
+        "node_id": { "$ref": "#/$defs/publisher" },
+        "objects": { "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/$defs/object_id" } },
+        "addresses": { "type": "array", "maxItems": 16, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 256 } },
+        "transport": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "enum": ["quic-v1", "tcp-v1", "relay-v1"] } }
+      }
+    },
+    "attestation_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject", "capability_version", "outcome", "latency_bucket_ms", "environment", "observed_bucket"],
+      "properties": {
+        "subject": { "$ref": "#/$defs/object_id" },
+        "capability_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "outcome": { "enum": ["success", "permission_denied", "provider_unavailable", "timeout", "invalid_input", "provider_failure"] },
+        "latency_bucket_ms": { "enum": [0, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000] },
+        "environment": { "enum": ["macos-arm64", "macos-x86_64", "windows-x86_64", "windows-arm64", "linux-x86_64", "linux-arm64", "other"] },
+        "observed_bucket": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "revocation_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_kind", "target", "reason", "effective_at"],
+      "properties": {
+        "target_kind": { "enum": ["object", "publisher", "delegation"] },
+        "target": { "type": "string", "minLength": 32, "maxLength": 135 },
+        "reason": { "enum": ["superseded", "compromised", "invalid", "privacy", "publisher_request"] },
+        "effective_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "key_rotation_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["previous_publisher", "new_publisher", "effective_at"],
+      "properties": {
+        "previous_publisher": { "$ref": "#/$defs/publisher" },
+        "new_publisher": { "$ref": "#/$defs/publisher" },
+        "effective_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "delegation_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["delegate", "scope", "not_before", "not_after"],
+      "properties": {
+        "delegate": { "$ref": "#/$defs/publisher" },
+        "scope": { "type": "array", "minItems": 1, "maxItems": 7, "uniqueItems": true, "items": { "enum": ["capability", "provider_record", "attestation", "checkpoint", "index_root", "index_segment", "revocation"] } },
+        "not_before": { "$ref": "#/$defs/timestamp" },
+        "not_after": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "checkpoint_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tree_size", "root_hash", "previous"],
+      "properties": {
+        "tree_size": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "root_hash": { "$ref": "#/$defs/hex64" },
+        "previous": { "oneOf": [{ "$ref": "#/$defs/object_id" }, { "type": "null" }] }
+      }
+    },
+    "index_shard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prefix", "object_id", "count"],
+      "properties": {
+        "prefix": { "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[a-z0-9_.:-]+$" },
+        "object_id": { "$ref": "#/$defs/object_id" },
+        "count": { "type": "integer", "minimum": 0, "maximum": 10000000 }
+      }
+    },
+    "index_root_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generation", "schema_version", "shards"],
+      "properties": {
+        "generation": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "schema_version": { "const": 1 },
+        "shards": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/index_shard" } }
+      }
+    },
+    "index_segment_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["object_id", "publisher", "capability_id", "capability_version", "summary", "operation", "origin", "effects"],
+      "properties": {
+        "object_id": { "$ref": "#/$defs/object_id" },
+        "publisher": { "$ref": "#/$defs/publisher" },
+        "capability_id": { "$ref": "#/$defs/identifier" },
+        "capability_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "summary": { "$ref": "#/$defs/bounded_string" },
+        "operation": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "origin": { "type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[a-z0-9.-]+$" },
+        "effects": { "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true, "items": { "enum": ["read_only", "network_read"] } }
+      }
+    },
+    "index_segment_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generation", "prefix", "entries"],
+      "properties": {
+        "generation": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "prefix": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "entries": { "type": "array", "maxItems": 512, "items": { "$ref": "#/$defs/index_segment_entry" } }
+      }
+    },
+    "unsigned": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "kind", "publisher", "sequence", "created_at", "expires_at", "payload"],
+      "properties": {
+        "protocol": { "const": "aiko-collective/1" },
+        "kind": { "enum": ["capability", "provider_record", "attestation", "revocation", "key_rotation", "delegation", "checkpoint", "index_root", "index_segment"] },
+        "publisher": { "$ref": "#/$defs/publisher" },
+        "sequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "expires_at": { "$ref": "#/$defs/timestamp" },
+        "payload": {}
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "capability" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/capability_payload" } } } },
+        { "if": { "properties": { "kind": { "const": "provider_record" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/provider_record_payload" } } } },
+        { "if": { "properties": { "kind": { "const": "attestation" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/attestation_payload" } } } },
+        { "if": { "properties": { "kind": { "const": "revocation" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/revocation_payload" } } } },
+        { "if": { "properties": { "kind": { "const": "key_rotation" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/key_rotation_payload" } } } },
+        { "if": { "properties": { "kind": { "const": "delegation" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/delegation_payload" } } } },
+        { "if": { "properties": { "kind": { "const": "checkpoint" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/checkpoint_payload" } } } },
+        { "if": { "properties": { "kind": { "const": "index_root" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/index_root_payload" } } } },
+        { "if": { "properties": { "kind": { "const": "index_segment" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/index_segment_payload" } } } }
+      ]
+    }
+  }
+}

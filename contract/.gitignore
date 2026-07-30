@@ -1,0 +1,27 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+.zig-cache/
+zig-out/
+contracts/
+
+
+# machine-local state — never committed
+.claude/
+.contract-package
+.graff/
+.harness/
+harness.trace.jsonl
+harness.trajectory.jsonl
+deploy/
+contract-docs-pdf.zip
+.kuri/
+research/
+traces/
+.benchmarks/reach-gate/
+.benchmarks/task-runtime/
+.benchmarks/typed-runtime/
+.benchmarks/typed-task-trace/
+.benchmarks/contract-ab/run-*/
+.benchmarks/queue-ab/run-*/
