@@ -107,6 +107,32 @@ curl -s "http://127.0.0.1:$port/graph" > "$gate_root/g.json"
 python3 "$repo_dir/tests/_observe_sizes.py" "$gate_root/g.json" ||
     fail "redaction removed more than payloads"
 
+# --- 6. the observer survives compaction ---------------------------------
+# The projections were made compaction-proof in §28.4; an observability edge
+# that still reads only commit records goes blind the moment a node compacts,
+# which is the same silent failure wearing a different hat.
+before_fold="$(curl -s "http://127.0.0.1:$port/graph" |
+    python3 -c 'import json,sys; print(len(json.load(sys.stdin)["firings"]))')"
+kill "$srv" 2>/dev/null; srv=""
+"$binary" compact "$node/state" >/dev/null
+"$binary" telemetry serve "$node/state" --listen "127.0.0.1:$port" >>"$gate_root/serve.log" 2>&1 &
+srv=$!
+for _ in $(seq 1 40); do curl -s -o /dev/null "http://127.0.0.1:$port/" && break; sleep 0.25; done
+after_fold="$(curl -s "http://127.0.0.1:$port/graph" |
+    python3 -c 'import json,sys; print(len(json.load(sys.stdin)["firings"]))')"
+[ "$after_fold" = "$before_fold" ] ||
+    fail "the observer went blind across compaction ($before_fold → $after_fold firings)"
+cited="$(curl -s "http://127.0.0.1:$port/graph" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print(sum(1 for f in d["firings"] for c in f["cites"] if c != "stimulus"))')"
+[ "$cited" -gt 0 ] || fail "citations did not survive the fold on the observability edge"
+# Redaction must hold on the folded path too, not only on commit records.
+body="$(curl -s "http://127.0.0.1:$port/graph")"
+case "$body" in
+    *"$secret"*|*"$hex_secret"*) fail "artifact payload leaked from the folded snapshot" ;;
+esac
+
 kill "$srv" 2>/dev/null; srv=""
 
 # --- 5. off-loopback fails closed -----------------------------------------

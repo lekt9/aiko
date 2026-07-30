@@ -46,12 +46,68 @@ const Record = struct {
         produced_by: []const u8 = "",
     } = &.{},
     messages: []const struct { to: []const u8 = "" } = &.{},
-    evidence: []const struct {
-        claim: []const u8 = "",
-        method: []const u8 = "",
-        sources: []const []const u8 = &.{},
+    evidence: []const EvidenceView = &.{},
+    /// Present only on a `snapshot`: the folded firing table. Without reading
+    /// this, an observer goes blind the moment a node is compacted — the same
+    /// silent failure the projections had before §28.4.
+    firings: []const struct {
+        firing_id: []const u8 = "",
+        seq: u64 = 0,
+        evidence: []const EvidenceView = &.{},
     } = &.{},
 };
+
+const EvidenceView = struct {
+    claim: []const u8 = "",
+    method: []const u8 = "",
+    sources: []const []const u8 = &.{},
+};
+
+/// Emit one observer event. Shared by the commit-record and snapshot paths so
+/// the two cannot drift into describing the same firing differently.
+fn writeEvent(
+    w: *std.Io.Writer,
+    id: []const u8,
+    seq: u64,
+    artifacts: anytype,
+    messages: []const []const u8,
+    evidence: []const EvidenceView,
+) !void {
+    try w.writeAll("{\"id\":");
+    try std.json.Stringify.value(id, .{}, w);
+    try w.print(",\"seq\":{},\"w\":[", .{seq});
+    for (artifacts, 0..) |artifact, i| {
+        if (i != 0) try w.writeAll(",");
+        try w.writeAll("{\"id\":");
+        try std.json.Stringify.value(artifact.id, .{}, w);
+        try w.writeAll(",\"sch\":");
+        try std.json.Stringify.value(artifact.schema, .{}, w);
+        // Size, never content: hex is two chars per byte.
+        try w.print(",\"n\":{}}}", .{artifact.bytes.len / 2});
+    }
+    try w.writeAll("],\"s\":[");
+    for (messages, 0..) |to, i| {
+        if (i != 0) try w.writeAll(",");
+        try std.json.Stringify.value(to, .{}, w);
+    }
+    try w.writeAll("],\"cites\":[");
+    var n: usize = 0;
+    for (evidence) |item| for (item.sources) |source| {
+        if (n != 0) try w.writeAll(",");
+        n += 1;
+        try std.json.Stringify.value(source, .{}, w);
+    };
+    try w.writeAll("],\"ev\":[");
+    for (evidence, 0..) |item, i| {
+        if (i != 0) try w.writeAll(",");
+        try w.writeAll("{\"c\":");
+        try std.json.Stringify.value(item.claim, .{}, w);
+        try w.writeAll(",\"m\":");
+        try std.json.Stringify.value(item.method, .{}, w);
+        try w.writeAll("}");
+    }
+    try w.writeAll("]}");
+}
 
 fn isLoopback(address: mesh_mod.net.IpAddress) bool {
     return switch (address) {
@@ -70,42 +126,34 @@ fn lineToEvent(a: Allocator, line: []const u8, seq: usize) !?[]u8 {
     if (!std.mem.eql(u8, rec.op, "commit")) return null;
 
     var out: std.Io.Writer.Allocating = .init(a);
-    const w = &out.writer;
-    try w.writeAll("{\"id\":");
-    try std.json.Stringify.value(rec.firing_id, .{}, w);
-    try w.print(",\"seq\":{},\"w\":[", .{seq});
-    for (rec.artifacts, 0..) |artifact, i| {
-        if (i != 0) try w.writeAll(",");
-        try w.writeAll("{\"id\":");
-        try std.json.Stringify.value(artifact.id, .{}, w);
-        try w.writeAll(",\"sch\":");
-        try std.json.Stringify.value(artifact.schema, .{}, w);
-        // Size, never content: hex is two chars per byte.
-        try w.print(",\"n\":{}}}", .{artifact.bytes.len / 2});
-    }
-    try w.writeAll("],\"s\":[");
-    for (rec.messages, 0..) |message, i| {
-        if (i != 0) try w.writeAll(",");
-        try std.json.Stringify.value(message.to, .{}, w);
-    }
-    try w.writeAll("],\"cites\":[");
-    var n: usize = 0;
-    for (rec.evidence) |item| for (item.sources) |source| {
-        if (n != 0) try w.writeAll(",");
-        n += 1;
-        try std.json.Stringify.value(source, .{}, w);
-    };
-    try w.writeAll("],\"ev\":[");
-    for (rec.evidence, 0..) |item, i| {
-        if (i != 0) try w.writeAll(",");
-        try w.writeAll("{\"c\":");
-        try std.json.Stringify.value(item.claim, .{}, w);
-        try w.writeAll(",\"m\":");
-        try std.json.Stringify.value(item.method, .{}, w);
-        try w.writeAll("}");
-    }
-    try w.writeAll("]}");
+    const messages = try a.alloc([]const u8, rec.messages.len);
+    for (rec.messages, 0..) |m, i| messages[i] = m.to;
+    try writeEvent(&out.writer, rec.firing_id, seq, rec.artifacts, messages, rec.evidence);
     return try out.toOwnedSlice();
+}
+
+/// Expand a `snapshot` into one event per folded firing, so an observer of a
+/// compacted node still sees the whole graph. Artifacts are matched to their
+/// producing firing by `produced_by`; the snapshot keeps final state only, so
+/// this is what the node still knows, not a reconstruction of history.
+fn snapshotEvents(a: Allocator, line: []const u8, out: *std.ArrayList([]u8)) !bool {
+    const rec = std.json.parseFromSliceLeaky(Record, a, line, .{
+        .ignore_unknown_fields = true,
+    }) catch return false;
+    if (!std.mem.eql(u8, rec.op, "snapshot")) return false;
+
+    for (rec.firings) |firing| {
+        var mine: std.ArrayList(@TypeOf(rec.artifacts[0])) = .empty;
+        for (rec.artifacts) |artifact| {
+            if (std.mem.eql(u8, artifact.produced_by, firing.firing_id)) try mine.append(a, artifact);
+        }
+        var buf: std.Io.Writer.Allocating = .init(a);
+        // A folded firing's messages are not retained (§28.4), so sends are
+        // reported empty rather than guessed at.
+        try writeEvent(&buf.writer, firing.firing_id, firing.seq, mine.items, &.{}, firing.evidence);
+        try out.append(a, try buf.toOwnedSlice());
+    }
+    return true;
 }
 
 fn readAll(a: Allocator, io: std.Io, path: []const u8, from: u64) !struct { bytes: []u8, size: u64 } {
@@ -180,6 +228,18 @@ fn handle(allocator: Allocator, io: std.Io, stream: std.Io.net.Stream, log_path:
         var first = true;
         while (lines.next()) |l| {
             if (l.len == 0) continue;
+            // A compacted node has no commit records left, only the folded
+            // table — read both or the observer goes blind after `compact`.
+            var folded: std.ArrayList([]u8) = .empty;
+            if (try snapshotEvents(a, l, &folded)) {
+                for (folded.items) |event| {
+                    if (!first) try b.writeAll(",");
+                    first = false;
+                    try b.writeAll(event);
+                    seq += 1;
+                }
+                continue;
+            }
             const event = (try lineToEvent(a, l, seq)) orelse continue;
             if (!first) try b.writeAll(",");
             first = false;
@@ -228,6 +288,16 @@ fn stream_events(a: Allocator, io: std.Io, w: *std.Io.Writer, log_path: []const 
                 if (consumed + l.len >= read.bytes.len) break;
                 consumed += l.len + 1;
                 if (l.len == 0) continue;
+                var folded: std.ArrayList([]u8) = .empty;
+                if (try snapshotEvents(fa, l, &folded)) {
+                    for (folded.items) |event| {
+                        try w.writeAll("data: ");
+                        try w.writeAll(event);
+                        try w.writeAll("\n\n");
+                        seq += 1;
+                    }
+                    continue;
+                }
                 if (try lineToEvent(fa, l, seq)) |event| {
                     try w.writeAll("data: ");
                     try w.writeAll(event);

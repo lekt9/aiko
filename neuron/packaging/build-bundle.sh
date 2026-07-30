@@ -24,6 +24,7 @@ install -d "${bundle}/bin"
 install -m 755 zig-out/bin/neuron "${bundle}/bin/neuron"
 install -m 755 packaging/install.sh "${bundle}/install.sh"
 install -m 644 README.md "${bundle}/README.md"
+install -m 644 packaging/INSTALL.md "${bundle}/INSTALL.md"
 install -m 644 reference/SWARM_NODE.md "${bundle}/SWARM_NODE.md"
 install -m 644 packaging/ceilings.example.json "${bundle}/ceilings.example.json"
 
