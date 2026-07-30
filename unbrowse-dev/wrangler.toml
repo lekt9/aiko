@@ -1,0 +1,20 @@
+name = "unbrowse-proxy"
+main = "src/worker.ts"
+compatibility_date = "2026-07-01"
+workers_dev = true
+# Lewis@getfoundry.app's Account — pinned so deploy works non-interactively
+# (the token also has access to "Selective Ceiling"; this selects the right one).
+account_id = "6d81c1b653effb2e0eac5ee071107122"
+
+# Optional overrides (upstream base + default model). The CODEGRAFF_API_KEY is a
+# SECRET — set it with `wrangler secret put CODEGRAFF_API_KEY`, do NOT put it here.
+[vars]
+UPSTREAM_BASE = "https://gateway.codegraff.com"
+DEFAULT_MODEL = "deepseek-v4-pro"
+# When XAI_API_KEY (a secret) is set, model calls route to xAI with this default model.
+XAI_DEFAULT_MODEL = "grok-4.5"
+
+# Serve the proxy at unbrowse.ai/v1/* (in addition to the workers.dev URL).
+[[routes]]
+pattern = "unbrowse.ai/v1/*"
+zone_name = "unbrowse.ai"
