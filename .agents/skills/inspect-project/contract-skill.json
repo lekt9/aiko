@@ -30,7 +30,7 @@
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "host"
+      "worker": "aiko"
     },
     {
       "can_parallel": true,
@@ -45,7 +45,7 @@
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "host"
+      "worker": "aiko"
     },
     {
       "can_parallel": false,

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Aiko Meta-Agent"
+  short_description: "Compose typed Neuron Skill limbs"
+  default_prompt: "Use $aiko-meta-agent to route, execute, verify, and settle this turn through admitted Neuron Skills."

@@ -7,3 +7,17 @@
 # Local agent / contract-session state — never commit (may carry user secrets,
 # e.g. pasted API keys recorded verbatim by the contract substrate).
 .claude/
+.graff/
+.grok/
+.hallmark/
+
+__pycache__/
+
+# Build output & benchmark artifacts (excluded at monorepo convergence, 2026-07-30)
+dist/
+node_modules/
+benchmarks/harbor/
+benchmarks/agentic-organism/
+benchmarks/task-benchmark/
+benchmarks/tools/
+apps/desktop/src-tauri/binaries/

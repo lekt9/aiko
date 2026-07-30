@@ -14,16 +14,21 @@ specification. Do not add provider branches to Aiko or Contract.
 2. Write one receptor JSON using `references/receptor.schema.json`.
 3. Declare inbound events before filtering and outbound effects with authority,
    idempotency, evidence, privacy, TTL, and supported response variants.
-4. Run `scripts/grow.py SPEC --out DIR`. This emits a Contract-native skill
-   graph, capability catalog, normalized receptor, and an optional generic
-   runtime descriptor.
+4. Run `scripts/grow.py SPEC --out DIR`. This emits a complete inert Neuron
+   Skill candidate: instructions, typed graph, capability catalog, normalized
+   receptor, agent metadata, evals, cases, and a runnable witness.
 5. Validate with `scripts/conform.py DIR`.
-6. Install only when requested: `scripts/grow.py SPEC --install`. Installation
-   copies the generated pack to the user skill layer. A declared runtime can
+6. Install only when requested: `scripts/grow.py SPEC --install`. The generator
+   reproduces and witnesses the package, writes it to the content-addressed
+   object store, then asks Contract to record `stage → admit → activate`.
+   Candidates remain inert before this sequence. A declared runtime can
    additionally be rooted as a user process with `--start`; this is an explicit
    effect and never happens during generation.
 7. Test the same invariant with a second, unlike interface. If the compiler or
    Contract core needs the provider's name, the abstraction has failed.
+8. Replace by activating a new immutable digest. Restore a prior admitted
+   object with `--rollback-to <digest>`, or disable the active object with
+   `--retire`; both are authority-bearing Contract ledger events.
 
 The fixed cell is:
 

@@ -57,7 +57,10 @@ class NativeContract:
                 self.lib.contract_muscle_rank_json.restype = ctypes.c_void_p
         self.lib.contract_free.argtypes = [ctypes.c_void_p]
         self.abi_version = int(self.lib.contract_abi_version())
-        if self.abi_version not in (2, 3, 4, 5, 6):
+        # The symbols used here are stable from ABI v2 onward and newer ABIs
+        # are additive; optional symbols are probed with hasattr above, so
+        # reject only ABIs older than the base signature set.
+        if self.abi_version < 2:
             raise RuntimeError(f"unsupported Contract ABI {self.abi_version}")
 
     def _take(self, pointer: int | None):

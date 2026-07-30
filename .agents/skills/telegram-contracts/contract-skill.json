@@ -24,7 +24,7 @@
     {
       "key": "observe",
       "plan": "Durably observe and normalize the Telegram event for {{goal}} without secrets or raw media.",
-      "worker": "host",
+      "worker": "aiko",
       "depends_on": [],
       "can_parallel": true,
       "timeout_ms": 30000,
@@ -37,7 +37,7 @@
     {
       "key": "authorize",
       "plan": "Resolve actor, conversation, capability, and effect authority for {{goal}}.",
-      "worker": "host",
+      "worker": "aiko",
       "depends_on": ["observe"],
       "can_parallel": true,
       "timeout_ms": 30000,
@@ -63,7 +63,7 @@
     {
       "key": "respond",
       "plan": "Execute the authorized Telegram text, voice, photo, document, edit, callback, or presence response for {{goal}}.",
-      "worker": "tool",
+      "worker": "aiko",
       "depends_on": ["authorize", "prepare"],
       "can_parallel": false,
       "timeout_ms": 120000,
@@ -76,7 +76,7 @@
     {
       "key": "settle",
       "plan": "Evaluate provider evidence and settle or release the Telegram occurrence for {{goal}}.",
-      "worker": "host",
+      "worker": "aiko",
       "depends_on": ["respond"],
       "can_parallel": false,
       "timeout_ms": 30000,

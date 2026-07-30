@@ -220,7 +220,7 @@ package_runtime() {
         printf '  "format": 1,\n'
         printf '  "version": "%s",\n' "$VERSION"
         printf '  "platform": "%s",\n' "$PLATFORM"
-        printf '  "contract_abi": 10,\n'
+        printf '  "contract_abi": 12,\n'
         printf '  "application_runtime": "aiko-native-cdp-v1",\n'
         printf '  "aiko_sha256": "%s",\n' "$AIKO_SHA"
         printf '  "aiko_commit": "%s",\n' "$AIKO_COMMIT"

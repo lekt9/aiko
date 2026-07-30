@@ -1,0 +1,251 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-22T11:58:01Z",
+  "benchmark": "ARC-AGI-3 offline interactive harness comparison",
+  "fairness": {
+    "games": [
+      "ar25",
+      "cn04",
+      "su15"
+    ],
+    "maxActionsPerGame": 1,
+    "oneFreshCliInvocationPerAction": true,
+    "maxHarnessTurnsPerAction": 3,
+    "sameRawGridAndTransitionPrompt": true,
+    "sourceAndReplaysHiddenFromPrompt": true,
+    "parallelIndependentScorecards": true,
+    "scoring": "exact levels_completed from local arc_agi engine"
+  },
+  "versions": {
+    "aiko": "aiko 0.2.102 (8acf895)",
+    "grok": "grok 0.2.106 (bde89716f679) [stable]"
+  },
+  "summary": {
+    "aiko": {
+      "games": 3,
+      "levelsCompleted": 0,
+      "wins": 0,
+      "actions": 3,
+      "modelCalls": 3,
+      "durationMs": 194933.3,
+      "errors": 0
+    },
+    "grok": {
+      "games": 3,
+      "levelsCompleted": 0,
+      "wins": 0,
+      "actions": 1,
+      "modelCalls": 3,
+      "durationMs": 502167.94,
+      "errors": 2
+    }
+  },
+  "trials": [
+    {
+      "harness": "aiko",
+      "model": "mimo-v2.5",
+      "game": "ar25",
+      "levelsCompleted": 0,
+      "winLevels": 8,
+      "won": false,
+      "actions": 1,
+      "modelCalls": 1,
+      "durationMs": 112797.77,
+      "error": null,
+      "transitions": [
+        {
+          "step": 1,
+          "action": 6,
+          "x": 9,
+          "y": 15,
+          "beforeLevel": 0,
+          "afterLevel": 0,
+          "beforeState": "NOT_FINISHED",
+          "afterState": "NOT_FINISHED"
+        }
+      ],
+      "calls": [
+        {
+          "ok": true,
+          "durationMs": 112794.78,
+          "exitCode": 0,
+          "stopReason": "EndTurn",
+          "answer": "Looking at the grid data, I can identify the structure of this 64\u00d764 puzzle:\n\n- **Gray background** (99): fills most of the grid\n- **Green vertical divider** (10/01 alternating): at columns ~30-31, spanning all rows\n- **Red shapes** (5s): two 3\u00d73 blocks on the left side at rows 15-17 and 19-23\n- **Green shapes** (4s): two 3\u00d73 blocks on the right side mirroring the red shapes at rows 15-17 and 19-23\n- **Blue bar** (11): bottom row (row 63) and rightmost column\n- **Blue rectangle** (11): at approximately rows 41-45, columns 46-57\n\nThe puzzle shows symmetric red/green shapes around a central divider \u2014 a classic ARC symmetry/transformation pattern. Since this is the initial state with no transitions, I need to explore by interacting with the puzzle.\n\nMy hypothesis: the red shapes on the left need to be clicked/transformed to match the green shapes on the right (or vice versa), with the green line acting as a mirror axis.\n\n{\"action\":6,\"x\":9,\"y\":15,\"reason\":\"Click on upper-left red shape (3x3 block at cols 9-11, rows 15-17) to probe interaction. Prediction: if this is a color-matching puzzle, clicking the red shape will trigger a transformation toward the symmetric green pattern on the right side of the divider.\"}",
+          "action": {
+            "action": 6,
+            "x": 9,
+            "y": 15,
+            "reason": "Click on upper-left red shape (3x3 block at cols 9-11, rows 15-17) to probe interaction. Prediction: if this is a color-matching puzzle, clicking the red shape will trigger a transformation toward the symmetric green pattern on the right side of the divider."
+          },
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "harness": "grok",
+      "model": "grok-4.5",
+      "game": "ar25",
+      "levelsCompleted": 0,
+      "winLevels": 8,
+      "won": false,
+      "actions": 1,
+      "modelCalls": 1,
+      "durationMs": 78938.02,
+      "error": null,
+      "transitions": [
+        {
+          "step": 1,
+          "action": 6,
+          "x": 22,
+          "y": 16,
+          "beforeLevel": 0,
+          "afterLevel": 0,
+          "beforeState": "NOT_FINISHED",
+          "afterState": "NOT_FINISHED"
+        }
+      ],
+      "calls": [
+        {
+          "ok": true,
+          "durationMs": 78931.02,
+          "exitCode": 0,
+          "stopReason": "EndTurn",
+          "answer": "{\"action\":6,\"x\":22,\"y\":16,\"reason\":\"5-L is mirror of 4-L across 101010 wall; click its 505 core should select/toggle it (highlight or 0/5 flip)\"}",
+          "action": {
+            "action": 6,
+            "x": 22,
+            "y": 16,
+            "reason": "5-L is mirror of 4-L across 101010 wall; click its 505 core should select/toggle it (highlight or 0/5 flip)"
+          },
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "harness": "aiko",
+      "model": "mimo-v2.5",
+      "game": "cn04",
+      "levelsCompleted": 0,
+      "winLevels": 6,
+      "won": false,
+      "actions": 1,
+      "modelCalls": 1,
+      "durationMs": 30797.55,
+      "error": null,
+      "transitions": [
+        {
+          "step": 1,
+          "action": 6,
+          "x": 47,
+          "y": 29,
+          "beforeLevel": 0,
+          "afterLevel": 0,
+          "beforeState": "NOT_FINISHED",
+          "afterState": "NOT_FINISHED"
+        }
+      ],
+      "calls": [
+        {
+          "ok": true,
+          "durationMs": 30779.38,
+          "exitCode": 0,
+          "stopReason": "EndTurn",
+          "answer": "Looking at the grid, I see a mostly dark background (1/0 checkerboard) with:\n- A red bar (color 4) across the top-right (row 0, cols 32-63)\n- A dark rectangle (color 0) mid-left around rows 10-18\n- Dark gray patches (color 8) around rows 19-21\n- A prominent yellow (color 14) block forming an H-like pattern on the right side (rows 25-35, cols 42-51)\n\nThe yellow H-pattern is the most interactive-looking feature. I'll click its center.\n\n{\"action\":6,\"x\":47,\"y\":29,\"reason\":\"Click the center of the yellow (color 14) H-shaped pattern on the right side of the grid, which appears to be the primary interactive element to advance the puzzle.\"}",
+          "action": {
+            "action": 6,
+            "x": 47,
+            "y": 29,
+            "reason": "Click the center of the yellow (color 14) H-shaped pattern on the right side of the grid, which appears to be the primary interactive element to advance the puzzle."
+          },
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "harness": "grok",
+      "model": "grok-4.5",
+      "game": "cn04",
+      "levelsCompleted": 0,
+      "winLevels": 6,
+      "won": false,
+      "actions": 0,
+      "modelCalls": 1,
+      "durationMs": 123207.68,
+      "error": "Error: max turns reached\n",
+      "transitions": [],
+      "calls": [
+        {
+          "ok": false,
+          "durationMs": 123206.51,
+          "exitCode": 1,
+          "stopReason": "Cancelled",
+          "answer": "Parsing the 64\u00d764 grid structure to infer the puzzle rule and pick one action.Checking ARC-AGI-3 grid encoding conventions for this game.",
+          "action": null,
+          "stderr": "Error: max turns reached\n"
+        }
+      ]
+    },
+    {
+      "harness": "aiko",
+      "model": "mimo-v2.5",
+      "game": "su15",
+      "levelsCompleted": 0,
+      "winLevels": 9,
+      "won": false,
+      "actions": 1,
+      "modelCalls": 1,
+      "durationMs": 51337.98,
+      "error": null,
+      "transitions": [
+        {
+          "step": 1,
+          "action": 6,
+          "x": 32,
+          "y": 6,
+          "beforeLevel": 0,
+          "afterLevel": 0,
+          "beforeState": "NOT_FINISHED",
+          "afterState": "NOT_FINISHED"
+        }
+      ],
+      "calls": [
+        {
+          "ok": true,
+          "durationMs": 51311.03,
+          "exitCode": 0,
+          "stopReason": "EndTurn",
+          "answer": "I've analyzed the 64x64 grid for the `su15` puzzle. The grid contains several distinct structures: a 3x3 block of color 15 at the top, a large 9x9 block of color 9 with a 3x3 core of color 3 in the center, a 3x3 block of color 0 at the bottom left, and a 3x3 alternating pattern of 1s and 5s in the bottom left corner. The background is color 5 (gray) with color 4 (yellow) at the top.\n\nGiven the game name `su15` and the structures, this appears to be a pattern-matching or interaction puzzle. The 3x3 block of color 15 at the top seems like a target or a key. The center structure (9s with 3s) looks like a container or a lock. The bottom left structures might be interactive elements.\n\nSince `ACTION6` is a click and I need to choose a target, I'll click on the 3x3 block of color 15 at the top. This is the most distinct \"object\" that might trigger a state change or reveal the next step.\n\nThe coordinates for the 3x3 block of color 15 are approximately:\n- Column: 31 to 33 (center of the 64-column grid)\n- Row: 5 to 7 (near the top)\n\nI'll click at the center of this block: column 32, row 6.\n\n```json\n{\"action\":6,\"x\":32,\"y\":6,\"reason\":\"Click the 3x3 block of color 15 at the top, which is the most distinct 'object' and likely an interactive element or target.\"}\n```",
+          "action": {
+            "action": 6,
+            "x": 32,
+            "y": 6,
+            "reason": "Click the 3x3 block of color 15 at the top, which is the most distinct 'object' and likely an interactive element or target."
+          },
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "harness": "grok",
+      "model": "grok-4.5",
+      "game": "su15",
+      "levelsCompleted": 0,
+      "winLevels": 9,
+      "won": false,
+      "actions": 0,
+      "modelCalls": 1,
+      "durationMs": 300022.24,
+      "error": "timeout after 300s",
+      "transitions": [],
+      "calls": [
+        {
+          "ok": false,
+          "durationMs": 300018.6,
+          "error": "timeout after 300s",
+          "stdout": "",
+          "stderr": ""
+        }
+      ]
+    }
+  ]
+}

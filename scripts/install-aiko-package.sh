@@ -29,7 +29,7 @@ manifest_number() {
     sed -n -E 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' "$MANIFEST" | head -1
 }
 
-EXPECTED_ABI=10
+EXPECTED_ABI=12
 PACKAGE_ABI=$(manifest_number contract_abi)
 EXPECTED_AIKO=$(manifest_value aiko_sha256)
 EXPECTED_CONTRACT=$(manifest_value contract_sha256)

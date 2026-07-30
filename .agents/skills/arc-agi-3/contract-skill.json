@@ -24,7 +24,7 @@
     {
       "key": "perceive",
       "plan": "Extract legal actions, objects, regions, targets, controls, and the current state identity for {{goal}}.",
-      "worker": "tool",
+      "worker": "aiko",
       "depends_on": [],
       "can_parallel": false,
       "read_only": true,
@@ -109,7 +109,7 @@
     {
       "key": "act",
       "plan": "Apply exactly the selected legal environment action for {{goal}}.",
-      "worker": "tool",
+      "worker": "aiko",
       "depends_on": [
         "select"
       ],
@@ -126,7 +126,7 @@
     {
       "key": "observe",
       "plan": "Measure the resulting transition; reward grounded progress, inhibit death or no-op loops, and preserve useful dynamics as muscle memory.",
-      "worker": "tool",
+      "worker": "aiko",
       "depends_on": [
         "act"
       ],

@@ -26,6 +26,7 @@ need_rg() {
 DOC="${FIRST_PRINCIPLES_DOC:-$ROOT/docs/PHOTON-POSITRON-FIRST-PRINCIPLES.md}"
 NATIVE="$ROOT/crates/codegen/xai-grok-shell/src/contract_native.rs"
 WORKER="$ROOT/crates/codegen/xai-grok-pager-bin/src/main.rs"
+META="$ROOT/.agents/skills/aiko-meta-agent/SKILL.md"
 
 printf '=== first-principles witness (aiko integration) ===\n'
 need_file "$DOC"
@@ -62,8 +63,11 @@ need_rg "Contract cancel ABI" 'contract_cancel' "$NATIVE"
 need_rg "reflex bridge" 'pub fn decide_reflex' "$NATIVE"
 need_rg "cold/proven recommendation bridge" 'recommend_proven' "$NATIVE"
 need_rg "resident claim worker" 'run_contract_worker' "$WORKER"
-need_rg "agent multiscale system policy" 'action -> sensor -> evaluator' "$NATIVE"
-need_rg "agent flywheel reentry policy" 'bounded new occurrence' "$NATIVE"
+# The agent-facing policy moved from ambient prompt prose into the admitted
+# Meta-Agent connectome; the native reminder must delegate to it.
+need_rg "native reminder delegates to admitted connectome" 'default connectome' "$NATIVE"
+need_rg "agent multiscale system policy" 'action -> sensor -> evaluator' "$META"
+need_rg "agent flywheel reentry policy" 'bounded new occurrence' "$META"
 need_rg "native internal system compiler" 'pub fn compileInternalSystem' "$CONTRACT/libcontract/src/workflow.zig"
 need_rg "native internal system cycle refusal" '\\"graph_reentry\\":false' "$CONTRACT/libcontract/src/workflow.zig"
 need_rg "Aiko internal system ABI adapter" 'contract_compile_internal_system_json' "$ROOT/scripts/contract_workflow.py"

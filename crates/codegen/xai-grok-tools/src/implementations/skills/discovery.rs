@@ -119,12 +119,42 @@ pub fn find_skill_md_paths(dir: &Path) -> Vec<PathBuf> {
     paths
 }
 
+/// A hidden directory is never part of a user-authored skill, but it is exactly
+/// where VCS metadata and build caches live (`.git`, `.zig-cache`, `.next`).
+///
+/// This is one structural property rather than an enumerated denylist, so the
+/// next cache directory nobody has thought of yet is pruned for free.
+fn is_hidden_dir(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with('.'))
+}
+
 /// Recursively walk directories looking for SKILL.md files.
 ///
 /// Visits entries in lexicographic order: `read_dir` order is
 /// filesystem-dependent, and name-collision handling downstream is
 /// first-seen-wins, so an unsorted walk picks a nondeterministic winner.
+///
+/// Hidden directories are not descended into, and each real directory is
+/// visited once. Both matter because `is_dir()` follows symlinks: a skill
+/// symlinked at a repository checkout (`~/.claude/skills/foo -> /path/to/repo`)
+/// otherwise drags that repo's `.git` and build caches into every walk, and a
+/// symlink pointing back at an ancestor re-walks the same tree.
 pub fn walk_for_skill_md(dir: &Path, paths: &mut Vec<PathBuf>, depth: usize) {
+    let mut visited = HashSet::new();
+    if let Ok(canonical) = dir.canonicalize() {
+        visited.insert(canonical);
+    }
+    walk_for_skill_md_guarded(dir, paths, depth, &mut visited);
+}
+
+fn walk_for_skill_md_guarded(
+    dir: &Path,
+    paths: &mut Vec<PathBuf>,
+    depth: usize,
+    visited: &mut HashSet<PathBuf>,
+) {
     if depth > MAX_SKILL_WALK_DEPTH {
         return;
     }
@@ -132,7 +162,7 @@ pub fn walk_for_skill_md(dir: &Path, paths: &mut Vec<PathBuf>, depth: usize) {
         let mut dirs: Vec<PathBuf> = entries
             .flatten()
             .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
+            .filter(|path| path.is_dir() && !is_hidden_dir(path))
             .collect();
         dirs.sort();
         for path in dirs {
@@ -140,7 +170,20 @@ pub fn walk_for_skill_md(dir: &Path, paths: &mut Vec<PathBuf>, depth: usize) {
             if skill_md_path.is_file() {
                 paths.push(skill_md_path);
             }
-            walk_for_skill_md(&path, paths, depth + 1);
+            // Recurse on canonical identity so a directory reachable by two
+            // symlinks is walked once and a symlink cycle terminates. The
+            // entry's own SKILL.md above is still reported per-path; downstream
+            // collection dedupes those by canonical path.
+            match path.canonicalize() {
+                Ok(canonical) => {
+                    if visited.insert(canonical) {
+                        walk_for_skill_md_guarded(&path, paths, depth + 1, visited);
+                    }
+                }
+                // Unresolvable (broken symlink, permissions): fall back to the
+                // literal path rather than silently dropping a real skill tree.
+                Err(_) => walk_for_skill_md_guarded(&path, paths, depth + 1, visited),
+            }
         }
     }
 }
@@ -1405,6 +1448,115 @@ model: test-model
             !strs.iter().any(|p| p.contains("skills-cursor")),
             "skills-cursor layout must no longer be scanned: {strs:?}"
         );
+    }
+
+    // ── walk pruning: hidden dirs, symlinked repos, cycles ──
+
+    /// Create `<dir>/SKILL.md` (and any missing parents) for a named skill.
+    fn write_skill_md(dir: &Path, name: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {name} skill\n---\nBody\n"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn walk_for_skill_md_skips_hidden_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skills = tmp.path().join("skills");
+        // A real skill, and a SKILL.md buried in VCS/build-cache metadata.
+        write_skill_md(&skills.join("real"), "real");
+        write_skill_md(&skills.join(".git").join("objects").join("ab"), "ghost");
+        write_skill_md(&skills.join(".zig-cache").join("o").join("deadbeef"), "cached");
+
+        let mut paths = Vec::new();
+        walk_for_skill_md(&skills, &mut paths, 0);
+
+        let strs: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+        assert_eq!(strs.len(), 1, "only the real skill may be found: {strs:?}");
+        assert!(strs[0].contains("real"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_does_not_descend_into_a_symlinked_repository_checkout() {
+        // The production shape this fixes: `~/.claude/skills/<name>` symlinked at
+        // a whole repo checkout. `is_dir()` follows symlinks, so without pruning
+        // the repo's `.git`/build caches join every skill walk.
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        write_skill_md(&repo, "contract"); // the repo itself is a skill
+        write_skill_md(&repo.join(".git").join("objects").join("ff"), "git-ghost");
+        write_skill_md(&repo.join("libcontract").join(".zig-cache").join("o"), "zig-ghost");
+        write_skill_md(&repo.join("nested"), "nested-real"); // legitimate nested skill
+
+        let skills = tmp.path().join("skills");
+        std::fs::create_dir_all(&skills).unwrap();
+        std::os::unix::fs::symlink(&repo, skills.join("contract")).unwrap();
+
+        let mut paths = Vec::new();
+        walk_for_skill_md(&skills, &mut paths, 0);
+
+        let strs: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+        assert!(
+            strs.iter().any(|p| p.contains("contract/SKILL.md")),
+            "the symlinked skill itself must still load: {strs:?}"
+        );
+        assert!(
+            strs.iter().any(|p| p.contains("nested")),
+            "a legitimate nested skill must still load through the symlink: {strs:?}"
+        );
+        assert!(
+            !strs.iter().any(|p| p.contains(".git") || p.contains(".zig-cache")),
+            "repo metadata must never be walked: {strs:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_terminates_and_does_not_duplicate_on_symlink_cycle() {
+        // A symlink pointing back at an ancestor must not re-walk the tree.
+        let tmp = tempfile::tempdir().unwrap();
+        let skills = tmp.path().join("skills");
+        write_skill_md(&skills.join("one"), "one");
+        std::os::unix::fs::symlink(&skills, skills.join("loop")).unwrap();
+
+        let mut paths = Vec::new();
+        walk_for_skill_md(&skills, &mut paths, 0);
+
+        let one_hits = paths
+            .iter()
+            .filter(|p| p.display().to_string().contains("one/SKILL.md"))
+            .count();
+        assert_eq!(one_hits, 1, "cycle re-walked the tree: {paths:?}");
+    }
+
+    #[test]
+    fn two_symlinks_to_one_tree_still_surface_each_entry_skill() {
+        // The visited guard prunes recursion, not the entry's own SKILL.md.
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("shared");
+        write_skill_md(&target, "shared");
+
+        let skills = tmp.path().join("skills");
+        std::fs::create_dir_all(&skills).unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&target, skills.join("alias-a")).unwrap();
+            std::os::unix::fs::symlink(&target, skills.join("alias-b")).unwrap();
+        }
+
+        let mut paths = Vec::new();
+        walk_for_skill_md(&skills, &mut paths, 0);
+
+        #[cfg(unix)]
+        {
+            let strs: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+            assert!(strs.iter().any(|p| p.contains("alias-a")), "{strs:?}");
+            assert!(strs.iter().any(|p| p.contains("alias-b")), "{strs:?}");
+        }
     }
 
     // ── vendor-default skill denylist ──────────────────────

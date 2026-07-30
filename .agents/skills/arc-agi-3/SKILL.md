@@ -4,22 +4,22 @@ description: >-
   Solve ARC-AGI-3 (the interactive ARC Prize benchmark) and operate its API for a
   Kaggle submission. Teaches the ARC Prize methodology (RHAE scoring), a falsifiable
   solving playbook (archetype dispatch / "identify offline, win online"), and the
-  hard-won gotchas (AWS-ALB sticky-session cookie, score->levels_completed rename,
-  replay-stall trap, transient odd frames). Ships a runnable client that toggles
-  offline<->online via the ARC_API_MODE env var and DEFAULTS to the Kaggle (offline,
+  hard-won gotchas (AWS-ALB sticky-session cookie, the score to levels_completed
+  rename, replay-stall trap, transient odd frames). Ships a runnable client that
+  toggles offline/online via the ARC_API_MODE env var and DEFAULTS to the Kaggle (offline,
   no-internet, no-key) setup. Use when asked to "solve ARC-AGI-3", "play ARC", "set up
   the ARC-AGI-3 API", "submit to the ARC Prize Kaggle comp", "bench on arc_agi_3", or
   to clear levels of a specific game. Routes sub-steps via lewis-strategy.
-triggers:
-  - solve arc-agi-3
-  - play arc-agi-3
-  - arc agi 3 api
-  - arc prize kaggle
-  - bench on arc_agi_3
-  - clear arc levels
 metadata:
   node_type: skill
   type: project
+  triggers:
+    - solve arc-agi-3
+    - play arc-agi-3
+    - arc agi 3 api
+    - arc prize kaggle
+    - bench on arc_agi_3
+    - clear arc levels
 ---
 
 ## Output mode (load-bearing, never override)
@@ -50,8 +50,9 @@ search, outcome learning, and model proposals without game IDs, replay tables, o
 level rules. `ARC_LEGACY_HEURISTICS=1` exists only for historical reproduction and must
 not be used for comparative evaluation.
 The general solver loads Contract through `scripts/native_contract.py` and uses the
-installed ABI v2/v3 FECH surfaces (`register_capabilities`, `recommend_plan`, and
-`record_capability_observation`). `scripts/native_contract_gate.sh` fails unless the
+installed ABI v2+ FECH surfaces (`register_capabilities`, `recommend_plan`, and
+`record_capability_observation`); newer additive ABI symbols are probed with
+`hasattr` before use. `scripts/native_contract_gate.sh` fails unless the
 real dylib registers actions, ranks a plan, and persists a satisfied observation.
 
 ## What this skill is

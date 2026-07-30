@@ -25,7 +25,7 @@
     {
       "key": "evaluate",
       "plan": "Run the pinned evaluation for {{goal}} and preserve its raw artifact.",
-      "worker": "tool",
+      "worker": "aiko",
       "depends_on": ["capture"],
       "input_bindings": {"inputs": "capture.result"},
       "can_parallel": false,
@@ -39,7 +39,7 @@
     {
       "key": "sign",
       "plan": "Append the measured score to the signed hash-chained archive with scripts/contract_lineage.py.",
-      "worker": "tool",
+      "worker": "aiko",
       "depends_on": ["capture", "evaluate"],
       "input_bindings": {"identity": "capture.result", "measurement": "evaluate.result"},
       "can_parallel": false,

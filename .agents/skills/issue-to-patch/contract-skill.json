@@ -67,7 +67,7 @@
       "requires_authority": false,
       "reversible": true,
       "timeout_ms": 30000,
-      "worker": "tool"
+      "worker": "aiko"
     },
     {
       "can_parallel": false,
@@ -101,7 +101,7 @@
       "requires_authority": true,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "tool"
+      "worker": "aiko"
     }
   ],
   "output_schema": {

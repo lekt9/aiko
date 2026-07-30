@@ -2,15 +2,15 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-VALIDATOR=/Users/lewis/.codex/skills/.system/skill-creator/scripts/quick_validate.py
+VALIDATOR="${SKILL_VALIDATOR:-$HOME/.codex/skills/.system/skill-creator/scripts/quick_validate.py}"
 
 python3 "$ROOT/scripts/test-contract-native-skills.py"
-for SKILL in \
-    inspect-project build-and-test-project transform-local-files observe-desktop \
-    schedule-follow-up apply-standing-rule act-on-web-api send-notification \
-    control-local-media issue-to-patch
-do
-    python3 "$VALIDATOR" "$ROOT/.agents/skills/$SKILL"
+# Structural discovery: every contract-native skill package is validated;
+# adding a skill must require zero new harness entries.
+for MANIFEST in "$ROOT"/.agents/skills/*/contract-skill.json; do
+    # POSIX sh has no nullglob: an unmatched pattern iterates literally.
+    [ -f "$MANIFEST" ] || { echo "no contract-native skill manifests found" >&2; exit 1; }
+    python3 "$VALIDATOR" "$(dirname -- "$MANIFEST")"
 done
 
 if [ "${AIKO_SKILL_TEST_FAST:-0}" = 1 ]; then

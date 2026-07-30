@@ -12,7 +12,11 @@ done
 
 AIKO_HOME="$TMP/user-root" python3 "$SKILL/scripts/grow.py" \
   "$SKILL/tests/http-webhook.json" --out "$TMP/install-source" --install >/dev/null
-test -f "$TMP/user-root/skills/http-webhook/contract-skill.json"
+# Installed packs are immutable content-addressed objects, not mutable id-paths.
+# Guard the store dir explicitly: `find | wc -l` would mask a missing dir as 0.
+test -d "$TMP/user-root/neuron-skills/objects"
+INSTALLED=$(find "$TMP/user-root/neuron-skills/objects" -mindepth 2 -maxdepth 2 -name contract-skill.json | wc -l)
+test "$INSTALLED" -eq 1
 
 python3 - "$TMP" "$SKILL" <<'PY'
 import importlib.util, json, pathlib, subprocess, sys
