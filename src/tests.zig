@@ -13,6 +13,7 @@ const cache_mod = @import("cache.zig");
 const topology_mod = @import("topology.zig");
 const limb_mod = @import("limb.zig");
 const interface_mod = @import("interface.zig");
+const membrane_mod = @import("membrane.zig");
 const script_mod = @import("script.zig");
 const pump_mod = @import("pump.zig");
 const middleware_mod = @import("middleware.zig");
@@ -36,6 +37,7 @@ test {
     _ = @import("topology.zig");
     _ = @import("limb.zig");
     _ = @import("interface.zig");
+    _ = @import("membrane.zig");
     _ = @import("script.zig");
     _ = @import("pump.zig");
     _ = @import("middleware.zig");
@@ -392,13 +394,13 @@ test "message delivery acknowledges success and dead letters bounded retries" {
         .effects = &effects,
         .evidence = &evidence,
     });
-    _ = try delivery_mod.deliverNext(&fixture.substrate, retryAdapter);
-    _ = try delivery_mod.deliverNext(&fixture.substrate, retryAdapter);
-    const dead = (try delivery_mod.deliverNext(&fixture.substrate, retryAdapter)).?;
+    _ = try delivery_mod.deliverNext(&fixture.substrate, delivery_mod.bindFn(retryAdapter));
+    _ = try delivery_mod.deliverNext(&fixture.substrate, delivery_mod.bindFn(retryAdapter));
+    const dead = (try delivery_mod.deliverNext(&fixture.substrate, delivery_mod.bindFn(retryAdapter))).?;
     try std.testing.expectEqual(substrate_mod.DeliveryStatus.dead_letter, dead.status);
-    const ack = (try delivery_mod.deliverNext(&fixture.substrate, acknowledgeAdapter)).?;
+    const ack = (try delivery_mod.deliverNext(&fixture.substrate, delivery_mod.bindFn(acknowledgeAdapter))).?;
     try std.testing.expectEqual(substrate_mod.DeliveryStatus.acknowledged, ack.status);
-    try std.testing.expect((try delivery_mod.deliverNext(&fixture.substrate, acknowledgeAdapter)) == null);
+    try std.testing.expect((try delivery_mod.deliverNext(&fixture.substrate, delivery_mod.bindFn(acknowledgeAdapter))) == null);
 }
 
 test "deadline and cancellation settle without effects" {
@@ -669,11 +671,11 @@ test "uncertain external effects reconcile without losing the audit trail" {
         .effects = &send_fx,
         .evidence = &evidence,
     });
-    const parked = (try delivery_mod.deliverNext(&fixture.substrate, uncertainAdapter)).?;
+    const parked = (try delivery_mod.deliverNext(&fixture.substrate, delivery_mod.bindFn(uncertainAdapter))).?;
     try std.testing.expectEqual(substrate_mod.DeliveryStatus.reconciliation_required, parked.status);
     try std.testing.expectEqual(@as(u8, 1), parked.attempts);
     // Parked messages are not silently retried.
-    try std.testing.expect((try delivery_mod.deliverNext(&fixture.substrate, uncertainAdapter)) == null);
+    try std.testing.expect((try delivery_mod.deliverNext(&fixture.substrate, delivery_mod.bindFn(uncertainAdapter))) == null);
     try std.testing.expectError(error.UnknownMessage, delivery_mod.reconcile(&fixture.substrate, 7, .acknowledged));
     try delivery_mod.reconcile(&fixture.substrate, parked.index, .acknowledged);
     const settled = fixture.substrate.messages.items[parked.index];
@@ -1445,6 +1447,176 @@ test "pump routes settlement subscriptions and journals ack after consumer commi
     try std.testing.expectEqual(@as(u8, 1), replayed.messages.items[0].attempts);
 }
 
+test "substrate retains decision evidence across restart so compaction can carry the derivation graph" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    {
+        var substrate = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state");
+        defer substrate.deinit();
+        const impl: StaticNeuron = .{ .control = .{ .terminate = "seeded" } };
+        _ = try (runtime_mod.Runtime{ .substrate = &substrate }).fire(
+            neuron_mod.bind(StaticNeuron, &impl, "seed", "1"),
+            stimulus("evidence-retention"),
+            allCaps(),
+        );
+        const live = substrate.firings.get("evidence-retention").?;
+        try std.testing.expectEqual(@as(usize, 1), live.evidence.len);
+        try std.testing.expectEqualStrings("unit test", live.evidence[0].method);
+    }
+
+    // The point of the seed: evidence survives the process, not just the call.
+    // Without this, `compact` has nothing to fold into the snapshot.
+    var replayed = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state");
+    defer replayed.deinit();
+    const record = replayed.firings.get("evidence-retention").?;
+    try std.testing.expectEqual(@as(usize, 1), record.evidence.len);
+    try std.testing.expectEqualStrings("fixture claim", record.evidence[0].claim);
+    try std.testing.expectEqualStrings("unit test", record.evidence[0].method);
+    try std.testing.expectEqual(@as(usize, 1), record.evidence[0].sources.len);
+    try std.testing.expectEqualStrings("stimulus", record.evidence[0].sources[0]);
+}
+
+test "compaction carries the derivation graph forward and leaves canonical form intact" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    {
+        var substrate = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state");
+        defer substrate.deinit();
+        const impl: StaticNeuron = .{ .control = .{ .terminate = "seeded" } };
+        _ = try (runtime_mod.Runtime{ .substrate = &substrate }).fire(
+            neuron_mod.bind(StaticNeuron, &impl, "seed", "1"),
+            stimulus("survives-compaction"),
+            allCaps(),
+        );
+        const folded = try substrate.compact();
+        try std.testing.expect(folded.new_size < folded.prior_size);
+    }
+
+    // The whole point of the layer: after the per-commit records are folded
+    // away, the citations must still be there. Without this the staleness
+    // projection goes blind the moment a node is compacted (§28.4).
+    {
+        var replayed = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state");
+        defer replayed.deinit();
+        const record = replayed.firings.get("survives-compaction").?;
+        try std.testing.expectEqual(@as(usize, 1), record.evidence.len);
+        try std.testing.expectEqualStrings("fixture claim", record.evidence[0].claim);
+        try std.testing.expectEqualStrings("unit test", record.evidence[0].method);
+        try std.testing.expectEqual(@as(usize, 1), record.evidence[0].sources.len);
+        try std.testing.expectEqualStrings("stimulus", record.evidence[0].sources[0]);
+    }
+
+    // §19 canonical form: the same live state must serialize byte-identically.
+    // This is the guard that keeps a wall clock out of the snapshot — if
+    // timing ever leaks in here, these two compactions diverge.
+    var first_bytes: []u8 = undefined;
+    {
+        var a = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state");
+        defer a.deinit();
+        _ = try a.compact();
+        const file = try tmp.dir.openFile(io, "state/substrate.log", .{});
+        defer file.close(io);
+        const size = (try file.stat(io)).size;
+        first_bytes = try allocator.alloc(u8, @intCast(size));
+        _ = try file.readPositionalAll(io, first_bytes, 0);
+    }
+    defer allocator.free(first_bytes);
+    {
+        var b = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state");
+        defer b.deinit();
+        _ = try b.compact();
+        const file = try tmp.dir.openFile(io, "state/substrate.log", .{});
+        defer file.close(io);
+        const size = (try file.stat(io)).size;
+        const second = try allocator.alloc(u8, @intCast(size));
+        defer allocator.free(second);
+        _ = try file.readPositionalAll(io, second, 0);
+        try std.testing.expectEqualStrings(first_bytes, second);
+    }
+}
+
+test "retained evidence survives many citations, many sources, and empty on rejection" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const many_sources = [_][]const u8{ "stimulus", "stimulus", "stimulus" };
+    const many = [_]types.Evidence{
+        .{ .claim = "first", .sources = &many_sources, .method = "m1" },
+        .{ .claim = "second", .sources = &many_sources, .method = "m2" },
+    };
+
+    {
+        var substrate = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state");
+        defer substrate.deinit();
+        const runtime: runtime_mod.Runtime = .{ .substrate = &substrate };
+        _ = try runtime.execute(stimulus("multi"), allCaps(), .{
+            .control = .{ .terminate = "ok" },
+            .evidence = &many,
+        });
+        // A firing that never produced a decision has nothing to cite.
+        try std.testing.expectError(error.MissingEvidence, runtime.execute(stimulus("bare"), allCaps(), .{
+            .control = .{ .terminate = "no" },
+            .evidence = &.{},
+        }));
+        try std.testing.expectEqual(
+            substrate_mod.FiringStatus.rejected,
+            substrate.firings.get("bare").?.status,
+        );
+        try std.testing.expectEqual(@as(usize, 0), substrate.firings.get("bare").?.evidence.len);
+    }
+
+    var replayed = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state");
+    defer replayed.deinit();
+    const record = replayed.firings.get("multi").?;
+    try std.testing.expectEqual(@as(usize, 2), record.evidence.len);
+    try std.testing.expectEqualStrings("first", record.evidence[0].claim);
+    try std.testing.expectEqualStrings("m2", record.evidence[1].method);
+    try std.testing.expectEqual(@as(usize, 3), record.evidence[1].sources.len);
+    // A rejected firing replays with no citations, not with the caller's.
+    try std.testing.expectEqual(@as(usize, 0), replayed.firings.get("bare").?.evidence.len);
+}
+
+test "commit ordinals continue past a snapshot so a mixed-mode journal stays consistent" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const impl: StaticNeuron = .{ .control = .{ .terminate = "ok" } };
+
+    {
+        var substrate = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state");
+        defer substrate.deinit();
+        const runtime: runtime_mod.Runtime = .{ .substrate = &substrate };
+        _ = try runtime.fire(neuron_mod.bind(StaticNeuron, &impl, "n", "1"), stimulus("before-1"), allCaps());
+        _ = try runtime.fire(neuron_mod.bind(StaticNeuron, &impl, "n", "1"), stimulus("before-2"), allCaps());
+        _ = try substrate.compact();
+    }
+
+    // Reopening from a snapshot must resume numbering past every folded
+    // ordinal. If it restarted at zero, a post-compaction firing would claim
+    // to have been derived before its own inputs.
+    var substrate = try substrate_mod.Substrate.initDir(allocator, io, tmp.dir, "state");
+    defer substrate.deinit();
+    const before_2 = substrate.firings.get("before-2").?.seq;
+    try std.testing.expectEqual(@as(u64, 2), substrate.next_firing_seq);
+
+    const runtime: runtime_mod.Runtime = .{ .substrate = &substrate };
+    _ = try runtime.fire(neuron_mod.bind(StaticNeuron, &impl, "n", "1"), stimulus("after-1"), allCaps());
+    const after_1 = substrate.firings.get("after-1").?.seq;
+    try std.testing.expect(after_1 > before_2);
+    // And the folded firings kept both their ordinals and their citations.
+    try std.testing.expectEqual(@as(usize, 1), substrate.firings.get("before-1").?.evidence.len);
+}
+
 test "real introspection trigger automatically reconstructs and CAS-updates state from settlement events" {
     const allocator = std.testing.allocator;
     var fixture = Fixture.init();
@@ -2120,6 +2292,7 @@ test "mesh envelope stimulates a remote neuron under delegated caps" {
         delegation,
         "firing-mesh-1",
         1,
+        .one_way,
     );
     defer allocator.free(bytes);
 
@@ -2169,6 +2342,7 @@ test "mesh envelopes fail closed: forged, unknown account, widened proof, wrong 
         delegation,
         "firing-mesh-2",
         2,
+        .one_way,
     );
     defer allocator.free(bytes);
 
@@ -2206,6 +2380,7 @@ test "mesh envelopes fail closed: forged, unknown account, widened proof, wrong 
         widened_proof,
         "firing-mesh-3",
         3,
+        .one_way,
     );
     defer allocator.free(widened);
     try std.testing.expectError(error.AttenuationDenied, node_b.receive(widened, 5_000));
@@ -2273,6 +2448,7 @@ test "mesh nodes are symmetric over a real TCP loopback" {
         delegation_a,
         "firing-tcp-ab",
         11,
+        .one_way,
     );
     defer allocator.free(envelope_ab);
     var dial_buffer: [8192]u8 = undefined;
@@ -2305,6 +2481,7 @@ test "mesh nodes are symmetric over a real TCP loopback" {
         delegation_b,
         "firing-tcp-ba",
         12,
+        .one_way,
     );
     defer allocator.free(envelope_ba);
     const response_ba = try mesh_mod.dialExchange(allocator, &server_a.socket.address, io, envelope_ba, &dial_buffer, 5_000);
@@ -2452,21 +2629,21 @@ test "per-peer ceilings pin each tailnet peer to its own authority" {
     try node.register(neuron_mod.bind(mesh_mod.ProxyNeuron, &proxy_impl, "mesh/proxy", "1"));
     const own_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/alice/x", "from alice");
     defer allocator.free(own_payload);
-    const own = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", own_payload, true, "firing-pp-1", 1);
+    const own = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", own_payload, true, "firing-pp-1", 1, .one_way);
     defer allocator.free(own);
     const committed = try node.receiveTrusted(own, 5_000, alice);
     try std.testing.expectEqual(@as(usize, 1), committed.commit.effects_committed);
     try std.testing.expectEqualStrings("from alice", fixture.substrate.artifacts.get("artifact/alice/x").?.bytes);
     const cross_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/bob/x", "alice reaching bob");
     defer allocator.free(cross_payload);
-    const cross = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", cross_payload, true, "firing-pp-2", 2);
+    const cross = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", cross_payload, true, "firing-pp-2", 2, .one_way);
     defer allocator.free(cross);
     try std.testing.expectError(error.CapabilityDenied, node.receiveTrusted(cross, 5_000, alice));
     try std.testing.expect(fixture.substrate.artifacts.get("artifact/bob/x") == null);
     // Bob's ceiling mirrors: his own prefix commits.
     const bobs_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/bob/y", "from bob");
     defer allocator.free(bobs_payload);
-    const bobs_own = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", bobs_payload, true, "firing-pp-3", 3);
+    const bobs_own = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", bobs_payload, true, "firing-pp-3", 3, .one_way);
     defer allocator.free(bobs_own);
     const bob_committed = try node.receiveTrusted(bobs_own, 5_000, bob);
     try std.testing.expectEqual(@as(usize, 1), bob_committed.commit.effects_committed);
@@ -2533,6 +2710,7 @@ test "tailnet admission fires under the pinned ceiling and proofs carry no autho
         true,
         "firing-tailnet-1",
         1,
+        .one_way,
     );
     defer allocator.free(unsigned);
     const result = try node_b.receiveTrusted(unsigned, 5_000, mesh_ceiling);
@@ -2557,7 +2735,7 @@ test "tailnet admission fires under the pinned ceiling and proofs carry no autho
     };
     const payload_b = try mesh_mod.proxyPayloadV2(allocator, "artifact/mesh/b", "bogus proof");
     defer allocator.free(payload_b);
-    const with_bogus = try node_a.send(node_b.id(), "mesh/proxy", "mesh.proxy/v2", payload_b, true, bogus_proof, "firing-tailnet-2", 2);
+    const with_bogus = try node_a.send(node_b.id(), "mesh/proxy", "mesh.proxy/v2", payload_b, true, bogus_proof, "firing-tailnet-2", 2, .one_way);
     defer allocator.free(with_bogus);
     const bogus_result = try node_b.receiveTrusted(with_bogus, 5_000, mesh_ceiling);
     try std.testing.expectEqual(@as(usize, 1), bogus_result.commit.effects_committed);
@@ -2578,6 +2756,7 @@ test "tailnet admission fires under the pinned ceiling and proofs carry no autho
         true,
         "firing-tailnet-3",
         3,
+        .one_way,
     );
     defer allocator.free(injected);
     try std.testing.expectError(error.CapabilityDenied, node_b.receiveTrusted(injected, 5_000, mesh_ceiling));
@@ -2615,7 +2794,7 @@ test "proxy payload v2 decodes typed fields and rejects the v1 flat form" {
     // typed v2 round-trips it by construction (§19 explicit decode).
     const weird_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/mesh/weird\nid", "bytes\nwith\nnewlines");
     defer allocator.free(weird_payload);
-    const weird = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", weird_payload, true, "firing-v2-1", 1);
+    const weird = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", weird_payload, true, "firing-v2-1", 1, .one_way);
     defer allocator.free(weird);
     const committed = try node.receiveTrusted(weird, 5_000, mesh_ceiling);
     try std.testing.expectEqual(@as(usize, 1), committed.commit.effects_committed);
@@ -2626,20 +2805,20 @@ test "proxy payload v2 decodes typed fields and rejects the v1 flat form" {
 
     // The v1 flat form is schema-invalid before any effect exists —
     // there is no compat flag left to rot.
-    const flat = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v1", "artifact/mesh/flat\nold form", true, "firing-v2-2", 2);
+    const flat = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v1", "artifact/mesh/flat\nold form", true, "firing-v2-2", 2, .one_way);
     defer allocator.free(flat);
     try std.testing.expectError(error.InvalidPayload, node.receiveTrusted(flat, 5_000, mesh_ceiling));
     try std.testing.expect(fixture.substrate.artifacts.get("artifact/mesh/flat") == null);
 
     // Malformed JSON, a wrong schema tag, and a missing field all fail
     // the same closed way.
-    const malformed = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", "{not json", true, "firing-v2-3", 3);
+    const malformed = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", "{not json", true, "firing-v2-3", 3, .one_way);
     defer allocator.free(malformed);
     try std.testing.expectError(error.InvalidPayload, node.receiveTrusted(malformed, 5_000, mesh_ceiling));
-    const wrong_tag = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", "{\"schema\":\"mesh.proxy/v1\",\"artifact_id\":\"a\",\"bytes\":\"b\"}", true, "firing-v2-4", 4);
+    const wrong_tag = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", "{\"schema\":\"mesh.proxy/v1\",\"artifact_id\":\"a\",\"bytes\":\"b\"}", true, "firing-v2-4", 4, .one_way);
     defer allocator.free(wrong_tag);
     try std.testing.expectError(error.InvalidPayload, node.receiveTrusted(wrong_tag, 5_000, mesh_ceiling));
-    const missing = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", "{\"schema\":\"mesh.proxy/v2\",\"artifact_id\":\"a\"}", true, "firing-v2-5", 5);
+    const missing = try mesh_mod.unsignedEnvelopeJson(allocator, node.id(), "mesh/proxy", "mesh.proxy/v2", "{\"schema\":\"mesh.proxy/v2\",\"artifact_id\":\"a\"}", true, "firing-v2-5", 5, .one_way);
     defer allocator.free(missing);
     try std.testing.expectError(error.InvalidPayload, node.receiveTrusted(missing, 5_000, mesh_ceiling));
     try std.testing.expectEqual(@as(u32, 1), fixture.substrate.artifacts.count());
@@ -2703,7 +2882,7 @@ test "tailnet daemon accepts classified peers and drops strangers before reading
     var server = try (try mesh_mod.net.IpAddress.parseIp4("127.0.0.1", 0)).listen(io, .{ .reuse_address = true });
     var ctx: ServerCtx = .{ .node = &node_b, .server = &server, .classify = loopbackClassifier() };
     const thread = try std.Thread.spawn(.{}, ServerCtx.serve, .{&ctx});
-    const envelope = try mesh_mod.unsignedEnvelopeJson(allocator, node_b.id(), "mesh/echo", "mesh.echo/v1", "daemon hello", true, "firing-daemon-1", 1);
+    const envelope = try mesh_mod.unsignedEnvelopeJson(allocator, node_b.id(), "mesh/echo", "mesh.echo/v1", "daemon hello", true, "firing-daemon-1", 1, .one_way);
     defer allocator.free(envelope);
     var dial_buffer: [8192]u8 = undefined;
     const daemon_response = try mesh_mod.dialExchange(allocator, &server.socket.address, io, envelope, &dial_buffer, 5_000);
@@ -2794,11 +2973,11 @@ test "signed mesh path answers framed results like the tailnet path" {
     // the answer is a framed typed error, not a dropped connection.
     const wide: caps_mod.Caps = .{ .allow_write = true, .allow_send = true, .allow_spawn = true };
     const evil_delegation = try identity_mod.issueDelegation(&rig.account, identity_mod.publicKeyId(&rig.device_a), wide, 10_000);
-    const evil = try node_a.send(node_b.id(), "mesh/echo", "mesh.echo/v1", "over the ceiling", true, evil_delegation, "firing-sym-evil", 21);
+    const evil = try node_a.send(node_b.id(), "mesh/echo", "mesh.echo/v1", "over the ceiling", true, evil_delegation, "firing-sym-evil", 21, .one_way);
     defer allocator.free(evil);
     const good_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/mesh/sym-good", "within the ceiling");
     defer allocator.free(good_payload);
-    const good = try node_a.send(node_b.id(), "mesh/proxy", "mesh.proxy/v2", good_payload, true, delegation_a, "firing-sym-good", 22);
+    const good = try node_a.send(node_b.id(), "mesh/proxy", "mesh.proxy/v2", good_payload, true, delegation_a, "firing-sym-good", 22, .one_way);
     defer allocator.free(good);
     const exchange = try server.socket.address.connect(io, .{ .mode = .stream });
     var exchange_read: [8192]u8 = undefined;
@@ -2830,7 +3009,7 @@ test "signed mesh path answers framed results like the tailnet path" {
     // A fire-and-forget client from before the symmetry: writes one frame
     // and closes without reading. The commit stands; the broken response
     // pipe just ends the connection.
-    const late = try node_a.send(node_b.id(), "mesh/echo", "mesh.echo/v1", "close before read", true, delegation_a, "firing-sym-late", 23);
+    const late = try node_a.send(node_b.id(), "mesh/echo", "mesh.echo/v1", "close before read", true, delegation_a, "firing-sym-late", 23, .one_way);
     defer allocator.free(late);
     const bare = try server.socket.address.connect(io, .{ .mode = .stream });
     var bare_buffer: [8192]u8 = undefined;
@@ -2895,7 +3074,7 @@ test "daemon and edge read the wall clock so delegation expiry is real" {
     // Under the old fixed clock (now_ms = 0) this fired; under the wall
     // clock it is a framed typed error and commits nothing.
     const dead = try identity_mod.issueDelegation(&rig.account, identity_mod.publicKeyId(&rig.device_a), mesh_ceiling, 1);
-    const dead_env = try node_a.send(node_b.id(), "mesh/echo", "mesh.echo/v1", "too late", true, dead, "firing-clock-dead", 31);
+    const dead_env = try node_a.send(node_b.id(), "mesh/echo", "mesh.echo/v1", "too late", true, dead, "firing-clock-dead", 31, .one_way);
     defer allocator.free(dead_env);
     var dial_buffer: [8192]u8 = undefined;
     const dead_response = try mesh_mod.dialExchange(allocator, &server.socket.address, io, dead_env, &dial_buffer, 5_000);
@@ -2907,7 +3086,7 @@ test "daemon and edge read the wall clock so delegation expiry is real" {
 
     // A live delegation under the same clock: verifies and commits.
     const live = try identity_mod.issueDelegation(&rig.account, identity_mod.publicKeyId(&rig.device_a), mesh_ceiling, wall + 60_000);
-    const live_env = try node_a.send(node_b.id(), "mesh/echo", "mesh.echo/v1", "right on time", true, live, "firing-clock-live", 32);
+    const live_env = try node_a.send(node_b.id(), "mesh/echo", "mesh.echo/v1", "right on time", true, live, "firing-clock-live", 32, .one_way);
     defer allocator.free(live_env);
     const live_response = try mesh_mod.dialExchange(allocator, &server.socket.address, io, live_env, &dial_buffer, 5_000);
     defer allocator.free(live_response);
@@ -3072,7 +3251,7 @@ test "mesh gateway dials tailnet peers and reports framed results" {
     const wildcard: mesh_mod.NodeId = @splat(0);
     const good_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/mesh/gw", "hello gateway");
     defer allocator.free(good_payload);
-    const good = try mesh_mod.unsignedEnvelopeJson(allocator, wildcard, "mesh/proxy", "mesh.proxy/v2", good_payload, true, "firing-gw-1", 1);
+    const good = try mesh_mod.unsignedEnvelopeJson(allocator, wildcard, "mesh/proxy", "mesh.proxy/v2", good_payload, true, "firing-gw-1", 1, .one_way);
     defer allocator.free(good);
     var dial_buffer: [8192]u8 = undefined;
     const committed = try mesh_mod.dialExchange(allocator, &server.socket.address, io, good, &dial_buffer, 5_000);
@@ -3088,7 +3267,7 @@ test "mesh gateway dials tailnet peers and reports framed results" {
     // as a framed typed error and commits nothing.
     const evil_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/evil/x", "pwned");
     defer allocator.free(evil_payload);
-    const evil = try mesh_mod.unsignedEnvelopeJson(allocator, wildcard, "mesh/proxy", "mesh.proxy/v2", evil_payload, true, "firing-gw-2", 2);
+    const evil = try mesh_mod.unsignedEnvelopeJson(allocator, wildcard, "mesh/proxy", "mesh.proxy/v2", evil_payload, true, "firing-gw-2", 2, .one_way);
     defer allocator.free(evil);
     const rejected = try mesh_mod.dialExchange(allocator, &server.socket.address, io, evil, &dial_buffer, 5_000);
     defer allocator.free(rejected);
@@ -3213,7 +3392,7 @@ test "bounded dial converts dead and absent peers into typed errors" {
     const wildcard: mesh_mod.NodeId = @splat(0);
     const nope_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/mesh/nope", "nope");
     defer allocator.free(nope_payload);
-    const envelope = try mesh_mod.unsignedEnvelopeJson(allocator, wildcard, "mesh/proxy", "mesh.proxy/v2", nope_payload, true, "firing-dead-1", 1);
+    const envelope = try mesh_mod.unsignedEnvelopeJson(allocator, wildcard, "mesh/proxy", "mesh.proxy/v2", nope_payload, true, "firing-dead-1", 1, .one_way);
     defer allocator.free(envelope);
 
     // A port with nobody home: the refusal arrives inside the deadline as
@@ -3466,7 +3645,7 @@ test "slow-loris peer neither wedges the daemon nor outlives its connection budg
     const wildcard: mesh_mod.NodeId = @splat(0);
     const ok_payload = try mesh_mod.proxyPayloadV2(allocator, "artifact/mesh/loris-ok", "made it past the loris");
     defer allocator.free(ok_payload);
-    const envelope = try mesh_mod.unsignedEnvelopeJson(allocator, wildcard, "mesh/proxy", "mesh.proxy/v2", ok_payload, true, "firing-loris-1", 1);
+    const envelope = try mesh_mod.unsignedEnvelopeJson(allocator, wildcard, "mesh/proxy", "mesh.proxy/v2", ok_payload, true, "firing-loris-1", 1, .one_way);
     defer allocator.free(envelope);
     const response = try mesh_mod.dialExchange(allocator, &address, io, envelope, &dial_buffer, 2_000);
     defer allocator.free(response);
@@ -3536,7 +3715,7 @@ test "durable substrate survives restart with dedupe and delivery state intact" 
             .evidence = &evidence,
         });
         try std.testing.expectEqual(@as(usize, 2), committed.effects_committed);
-        const ack = (try delivery_mod.deliverNext(&substrate, acknowledgeAdapter)).?;
+        const ack = (try delivery_mod.deliverNext(&substrate, delivery_mod.bindFn(acknowledgeAdapter))).?;
         try std.testing.expectEqual(substrate_mod.DeliveryStatus.acknowledged, ack.status);
 
         // A second live opener is refused: the log is strictly single-writer.
@@ -3621,7 +3800,7 @@ test "journal compaction folds history into a snapshot and preserves committed s
             .effects = &commit_two,
             .evidence = &evidence,
         });
-        const ack = (try delivery_mod.deliverNext(&substrate, acknowledgeAdapter)).?;
+        const ack = (try delivery_mod.deliverNext(&substrate, delivery_mod.bindFn(acknowledgeAdapter))).?;
         try std.testing.expectEqual(substrate_mod.DeliveryStatus.acknowledged, ack.status);
         if (runtime.execute(stimulus("compact-3"), allCaps(), .{
             .control = .{ .terminate = "done" },
@@ -3784,7 +3963,7 @@ test "standalone agent settles a typed goal through composed stage neurons" {
         agent_ops.initAgentCore(a, &substrate, "spec"),
     );
 
-    const result = try agent_ops.runGoalCore(a, &substrate, "spec", "typed goal", 32);
+    const result = try agent_ops.runGoalCore(a, std.testing.io, &substrate, "spec", "typed goal", 32, null);
     try std.testing.expectEqual(agent_ops.RunStatus.settled, result.status);
     try std.testing.expectEqual(@as(usize, 1), result.snapshot_seq);
     try std.testing.expectEqualStrings("agents/spec/snapshots/0001", result.snapshot_id);
@@ -3804,10 +3983,10 @@ test "identical settled goal replays with zero new firings or effects" {
     defer substrate.deinit();
 
     try agent_ops.initAgentCore(a, &substrate, "spec");
-    const first = try agent_ops.runGoalCore(a, &substrate, "spec", "same goal", 32);
+    const first = try agent_ops.runGoalCore(a, std.testing.io, &substrate, "spec", "same goal", 32, null);
     const firings = substrate.firings.count();
     const artifacts = substrate.artifacts.count();
-    const replayed = try agent_ops.runGoalCore(a, &substrate, "spec", "same goal", 32);
+    const replayed = try agent_ops.runGoalCore(a, std.testing.io, &substrate, "spec", "same goal", 32, null);
     try std.testing.expectEqual(agent_ops.RunStatus.replayed, replayed.status);
     try std.testing.expectEqual(@as(usize, 0), replayed.steps);
     try std.testing.expectEqual(firings, substrate.firings.count());
@@ -3823,8 +4002,8 @@ test "distinct goals advance the snapshot chain without firing collisions" {
     defer substrate.deinit();
 
     try agent_ops.initAgentCore(a, &substrate, "spec");
-    const first = try agent_ops.runGoalCore(a, &substrate, "spec", "goal one", 32);
-    const second = try agent_ops.runGoalCore(a, &substrate, "spec", "goal two", 32);
+    const first = try agent_ops.runGoalCore(a, std.testing.io, &substrate, "spec", "goal one", 32, null);
+    const second = try agent_ops.runGoalCore(a, std.testing.io, &substrate, "spec", "goal two", 32, null);
     try std.testing.expectEqual(agent_ops.RunStatus.settled, second.status);
     try std.testing.expectEqual(first.snapshot_seq + 1, second.snapshot_seq);
     try std.testing.expect(!std.mem.eql(u8, &first.result_digest, &second.result_digest));
@@ -3842,7 +4021,7 @@ test "budget-starved workflow resumes in a fresh attempt scope and settles" {
     // before verification: durable partial progress, no settlement.
     try std.testing.expectError(
         error.BudgetExhausted,
-        agent_ops.runGoalCore(a, &substrate, "spec", "big goal", 3),
+        agent_ops.runGoalCore(a, std.testing.io, &substrate, "spec", "big goal", 3, null),
     );
     try std.testing.expect(substrate.artifacts.contains("agents/spec/work/3e97b6cb83ffb36b/result"));
     const active_before = substrate.artifacts.get("agents/spec/active").?;
@@ -3850,13 +4029,13 @@ test "budget-starved workflow resumes in a fresh attempt scope and settles" {
 
     // The resume gets its own attempt namespace, wakes the parked stages
     // from the durable artifacts, and carries the workflow to settlement.
-    const resumed = try agent_ops.runGoalCore(a, &substrate, "spec", "big goal", 32);
+    const resumed = try agent_ops.runGoalCore(a, std.testing.io, &substrate, "spec", "big goal", 32, null);
     try std.testing.expectEqual(agent_ops.RunStatus.settled, resumed.status);
     try std.testing.expectEqual(@as(usize, 1), resumed.snapshot_seq);
 
     // And an identical third run replays without any new firings.
     const firings = substrate.firings.count();
-    const replayed = try agent_ops.runGoalCore(a, &substrate, "spec", "big goal", 32);
+    const replayed = try agent_ops.runGoalCore(a, std.testing.io, &substrate, "spec", "big goal", 32, null);
     try std.testing.expectEqual(agent_ops.RunStatus.replayed, replayed.status);
     try std.testing.expectEqual(firings, substrate.firings.count());
 }
@@ -3870,7 +4049,7 @@ test "cancelled workflow and retired agent fail closed" {
 
     try std.testing.expectError(
         error.AgentNotInitialized,
-        agent_ops.runGoalCore(a, &substrate, "spec", "early", 32),
+        agent_ops.runGoalCore(a, std.testing.io, &substrate, "spec", "early", 32, null),
     );
     try agent_ops.initAgentCore(a, &substrate, "spec");
 
@@ -3878,17 +4057,765 @@ test "cancelled workflow and retired agent fail closed" {
     _ = try agent_ops.cancelCore(a, &substrate, "spec", "doomed goal");
     try std.testing.expectError(
         error.WorkflowCancelled,
-        agent_ops.runGoalCore(a, &substrate, "spec", "doomed goal", 32),
+        agent_ops.runGoalCore(a, std.testing.io, &substrate, "spec", "doomed goal", 32, null),
     );
 
     // Retirement is itself a CAS snapshot advance; new goals fail closed.
     try agent_ops.retireCore(a, &substrate, "spec");
     try std.testing.expectError(
         error.AgentRetired,
-        agent_ops.runGoalCore(a, &substrate, "spec", "after retire", 32),
+        agent_ops.runGoalCore(a, std.testing.io, &substrate, "spec", "after retire", 32, null),
     );
     try std.testing.expectError(error.AgentRetired, agent_ops.retireCore(a, &substrate, "spec"));
     const view = try agent_ops.inspectCore(a, &substrate, "spec");
     try std.testing.expectEqualStrings("retired", view.status);
     try std.testing.expectEqual(@as(usize, 1), view.cancelled);
+}
+
+// --- Bidirectional neuron communication (§10 conversations) ---
+//
+// A neuron answers a peer it was never configured with, because the request
+// carries its own attested return address. The tests below fix both halves:
+// what the mechanism makes possible, and what it must refuse.
+
+/// A neuron that answers whatever asks it, using only the return path pinned
+/// into its own stimulus. It holds no address book and no send prefix.
+const ResponderNeuron = struct {
+    fx: *[1]types.Effect,
+    ev: *[1]types.Evidence,
+    src: *[1][]const u8,
+    reply_schema: []const u8 = "conv.answer/v1",
+    payload: []const u8 = "42",
+
+    pub fn fire(self: *const ResponderNeuron, stim: types.Stimulus, _: caps_mod.Caps) !types.Decision {
+        if (stim.messages.len == 0) return error.MissingRequest;
+        const request = stim.messages[0];
+        self.fx[0] = .{ .send = .{
+            .to = request.reply_to,
+            .schema = self.reply_schema,
+            .payload = self.payload,
+            .correlation = request.correlation,
+        } };
+        self.src[0] = "stimulus";
+        self.ev[0] = .{
+            .claim = "answered the request on its attested return path",
+            .sources = self.src[0..1],
+            .method = "reply",
+        };
+        return .{
+            .control = .{ .terminate = "answered" },
+            .effects = self.fx[0..1],
+            .evidence = self.ev[0..1],
+        };
+    }
+};
+
+/// An asker that opens a conversation, parks on the answer, and settles with
+/// what came back — the full request/await/resume cycle in one neuron.
+const AskerNeuron = struct {
+    fx: *[1]types.Effect,
+    ev: *[1]types.Evidence,
+    src: *[1][]const u8,
+    peer: []const u8,
+    correlation: []const u8,
+    /// Set by the resumed firing so the test can assert what was received.
+    heard: *?[]const u8,
+
+    pub fn fire(self: *const AskerNeuron, stim: types.Stimulus, _: caps_mod.Caps) !types.Decision {
+        self.src[0] = "stimulus";
+        for (stim.messages) |inbound| {
+            if (!std.mem.eql(u8, inbound.correlation, self.correlation)) continue;
+            self.heard.* = inbound.payload;
+            self.ev[0] = .{
+                .claim = "settled on the answer to its own question",
+                .sources = self.src[0..1],
+                .method = "await-reply",
+            };
+            return .{ .control = .{ .terminate = "heard" }, .evidence = self.ev[0..1] };
+        }
+        self.fx[0] = .{ .send = .{
+            .to = self.peer,
+            .schema = "conv.ask/v1",
+            .payload = "what is it?",
+            .correlation = self.correlation,
+        } };
+        self.ev[0] = .{
+            .claim = "asked a peer and parked on the answer",
+            .sources = self.src[0..1],
+            .method = "request",
+        };
+        return .{
+            .control = .{ .continue_wait = pump_mod.REPLY_PREDICATE_PREFIX ++ "conv-1" },
+            .effects = self.fx[0..1],
+            .evidence = self.ev[0..1],
+        };
+    }
+};
+
+test "two neurons hold a full round trip: ask, park, answer, resume" {
+    var fixture = Fixture.init();
+    defer fixture.deinit();
+    var scheduler = scheduler_mod.Scheduler.init(std.testing.allocator, fixture.runtime());
+    defer scheduler.deinit();
+
+    var asker_fx: [1]types.Effect = undefined;
+    var asker_ev: [1]types.Evidence = undefined;
+    var asker_src: [1][]const u8 = undefined;
+    var heard: ?[]const u8 = null;
+    const asker = AskerNeuron{
+        .fx = &asker_fx,
+        .ev = &asker_ev,
+        .src = &asker_src,
+        .peer = "neuron/responder",
+        .correlation = "conv-1",
+        .heard = &heard,
+    };
+    var responder_fx: [1]types.Effect = undefined;
+    var responder_ev: [1]types.Evidence = undefined;
+    var responder_src: [1][]const u8 = undefined;
+    const responder = ResponderNeuron{ .fx = &responder_fx, .ev = &responder_ev, .src = &responder_src };
+
+    try scheduler.register(neuron_mod.bind(AskerNeuron, &asker, "asker", "1"));
+    try scheduler.register(neuron_mod.bind(ResponderNeuron, &responder, "responder", "1"));
+
+    var pump = pump_mod.Pump.init(std.testing.allocator, &scheduler);
+    defer pump.deinit();
+    // The responder holds NO send capability: its authority to answer comes
+    // entirely from possessing the request.
+    pump.default_caps = .{};
+    const caps: caps_mod.Caps = .{ .allow_send = true, .send_prefix = "neuron/" };
+
+    const result = try pump.run("asker", stimulus("conv-seed"), caps);
+
+    try std.testing.expectEqualStrings("42", heard orelse return error.NoAnswer);
+    try std.testing.expectEqual(@as(usize, 0), result.pending);
+    try std.testing.expectEqual(@as(usize, 3), result.steps);
+
+    // The committed reply carries interpreter-stamped provenance the
+    // responder never authored, and rides the same conversation.
+    var reply: ?substrate_mod.StoredMessage = null;
+    var asked: ?substrate_mod.StoredMessage = null;
+    for (fixture.substrate.messages.items) |message| {
+        if (std.mem.eql(u8, message.schema, "conv.answer/v1")) reply = message;
+        if (std.mem.eql(u8, message.schema, "conv.ask/v1")) asked = message;
+    }
+    const answer = reply orelse return error.NoReplyCommitted;
+    try std.testing.expectEqualStrings("neuron/asker", answer.to);
+    try std.testing.expectEqualStrings("neuron/responder", answer.from);
+    // The answerer's own address rides along, so the exchange can continue.
+    try std.testing.expectEqualStrings("neuron/responder", answer.reply_to);
+    try std.testing.expectEqualStrings("conv-1", answer.correlation);
+    // Request opened at turn 1; the answer is turn 2.
+    try std.testing.expectEqual(@as(u8, 1), (asked orelse return error.NoRequest).turn);
+    try std.testing.expectEqual(@as(u8, 2), answer.turn);
+}
+
+test "a neuron cannot forge the sender of its own message" {
+    var fixture = Fixture.init();
+    defer fixture.deinit();
+    const forged = [_]types.Effect{
+        .{ .send = .{
+            .to = "channel/review",
+            .schema = "msg/v1",
+            .payload = "trust me",
+            .from = "neuron/somebody-else",
+        } },
+    };
+    try std.testing.expectError(error.ForgedSender, fixture.runtime().execute(stimulus("forge-1"), allCaps(), .{
+        .control = .{ .terminate = "done" },
+        .effects = &forged,
+        .evidence = &evidence,
+    }));
+    try std.testing.expectEqual(@as(usize, 0), fixture.substrate.messages.items.len);
+
+    // The same rule covers the return address and the turn counter.
+    const forged_reply_to = [_]types.Effect{
+        .{ .send = .{ .to = "channel/review", .schema = "msg/v1", .payload = "x", .reply_to = "neuron/victim" } },
+    };
+    try std.testing.expectError(error.ForgedSender, fixture.runtime().execute(stimulus("forge-2"), allCaps(), .{
+        .control = .{ .terminate = "done" },
+        .effects = &forged_reply_to,
+        .evidence = &evidence,
+    }));
+    const forged_turn = [_]types.Effect{
+        .{ .send = .{ .to = "channel/review", .schema = "msg/v1", .payload = "x", .turn = 7 } },
+    };
+    try std.testing.expectError(error.ForgedSender, fixture.runtime().execute(stimulus("forge-3"), allCaps(), .{
+        .control = .{ .terminate = "done" },
+        .effects = &forged_turn,
+        .evidence = &evidence,
+    }));
+    try std.testing.expectEqual(@as(usize, 0), fixture.substrate.messages.items.len);
+}
+
+test "reply authority reaches the requester only and never a third party" {
+    var fixture = Fixture.init();
+    defer fixture.deinit();
+    const request = [_]types.Message{.{
+        .to = "neuron/me",
+        .schema = "conv.ask/v1",
+        .payload = "?",
+        .from = "neuron/peer",
+        .correlation = "conv-x",
+        .reply_to = "neuron/peer",
+        .turn = 1,
+    }};
+    var stim = stimulus("reply-1");
+    stim.self_ref = "neuron/me";
+    stim.messages = &request;
+
+    // Deny-all caps: no allow_send, no prefix. Answering the requester is
+    // still permitted, because the request itself is the authority.
+    const none: caps_mod.Caps = .{};
+    const answer = [_]types.Effect{
+        .{ .send = .{ .to = "neuron/peer", .schema = "conv.answer/v1", .payload = "ok", .correlation = "conv-x" } },
+    };
+    const committed = try fixture.runtime().execute(stim, none, .{
+        .control = .{ .terminate = "answered" },
+        .effects = &answer,
+        .evidence = &evidence,
+    });
+    try std.testing.expectEqual(@as(usize, 1), committed.effects_committed);
+
+    // The same correlation aimed at anyone else is an ordinary send, and
+    // ordinary sends need capability — this one has none.
+    const third_party = [_]types.Effect{
+        .{ .send = .{ .to = "neuron/elsewhere", .schema = "conv.answer/v1", .payload = "ok", .correlation = "conv-x" } },
+    };
+    var stim2 = stim;
+    stim2.firing_id = "reply-2";
+    try std.testing.expectError(error.CapabilityDenied, fixture.runtime().execute(stim2, none, .{
+        .control = .{ .terminate = "answered" },
+        .effects = &third_party,
+        .evidence = &evidence,
+    }));
+
+    // And a correlation nobody asked about confers nothing.
+    const invented = [_]types.Effect{
+        .{ .send = .{ .to = "neuron/peer", .schema = "conv.answer/v1", .payload = "ok", .correlation = "never-asked" } },
+    };
+    var stim3 = stim;
+    stim3.firing_id = "reply-3";
+    try std.testing.expectError(error.CapabilityDenied, fixture.runtime().execute(stim3, none, .{
+        .control = .{ .terminate = "answered" },
+        .effects = &invented,
+        .evidence = &evidence,
+    }));
+    try std.testing.expectEqual(@as(usize, 1), fixture.substrate.messages.items.len);
+}
+
+test "a conversation cannot outrun its turn ceiling or answer itself twice" {
+    var fixture = Fixture.init();
+    defer fixture.deinit();
+    const late = [_]types.Message{.{
+        .to = "neuron/me",
+        .schema = "conv.ask/v1",
+        .payload = "?",
+        .from = "neuron/peer",
+        .correlation = "conv-y",
+        .reply_to = "neuron/peer",
+        .turn = 4,
+    }};
+    var stim = stimulus("turns-1");
+    stim.self_ref = "neuron/me";
+    stim.messages = &late;
+
+    const answer = [_]types.Effect{
+        .{ .send = .{ .to = "neuron/peer", .schema = "conv.answer/v1", .payload = "ok", .correlation = "conv-y" } },
+    };
+    // A ceiling of 4 is already reached at turn 4: the exchange stops.
+    const tight: caps_mod.Caps = .{ .budget = .{ .max_turns = 4 } };
+    try std.testing.expectError(error.ConversationTurnsExceeded, fixture.runtime().execute(stim, tight, .{
+        .control = .{ .terminate = "answered" },
+        .effects = &answer,
+        .evidence = &evidence,
+    }));
+    try std.testing.expectEqual(@as(usize, 0), fixture.substrate.messages.items.len);
+
+    // One more turn of headroom and the same answer commits.
+    const roomy: caps_mod.Caps = .{ .budget = .{ .max_turns = 5 } };
+    var stim_ok = stim;
+    stim_ok.firing_id = "turns-ok";
+    const ok = try fixture.runtime().execute(stim_ok, roomy, .{
+        .control = .{ .terminate = "answered" },
+        .effects = &answer,
+        .evidence = &evidence,
+    });
+    try std.testing.expectEqual(@as(usize, 1), ok.effects_committed);
+    try std.testing.expectEqual(@as(u8, 5), fixture.substrate.messages.items[0].turn);
+
+    // One firing settles a conversation turn once.
+    const twice = [_]types.Effect{
+        .{ .send = .{ .to = "neuron/peer", .schema = "conv.answer/v1", .payload = "a", .correlation = "conv-y" } },
+        .{ .send = .{ .to = "neuron/peer", .schema = "conv.answer/v1", .payload = "b", .correlation = "conv-y" } },
+    };
+    var stim2 = stim;
+    stim2.firing_id = "turns-2";
+    try std.testing.expectError(error.DuplicateReply, fixture.runtime().execute(stim2, roomy, .{
+        .control = .{ .terminate = "answered" },
+        .effects = &twice,
+        .evidence = &evidence,
+    }));
+    try std.testing.expectEqual(@as(usize, 1), fixture.substrate.messages.items.len);
+}
+
+test "a parked conversation is not interrupted by unrelated traffic" {
+    var fixture = Fixture.init();
+    defer fixture.deinit();
+    var scheduler = scheduler_mod.Scheduler.init(std.testing.allocator, fixture.runtime());
+    defer scheduler.deinit();
+
+    var asker_fx: [1]types.Effect = undefined;
+    var asker_ev: [1]types.Evidence = undefined;
+    var asker_src: [1][]const u8 = undefined;
+    var heard: ?[]const u8 = null;
+    const asker = AskerNeuron{
+        .fx = &asker_fx,
+        .ev = &asker_ev,
+        .src = &asker_src,
+        .peer = "neuron/responder",
+        .correlation = "conv-1",
+        .heard = &heard,
+    };
+    // This responder answers on a DIFFERENT conversation than the asker is
+    // parked on — the reply must not be mistaken for the awaited answer.
+    var responder_fx: [1]types.Effect = undefined;
+    var responder_ev: [1]types.Evidence = undefined;
+    var responder_src: [1][]const u8 = undefined;
+    const Wrong = struct {
+        fx: *[1]types.Effect,
+        ev: *[1]types.Evidence,
+        src: *[1][]const u8,
+
+        pub fn fire(self: *const @This(), stim: types.Stimulus, _: caps_mod.Caps) !types.Decision {
+            _ = stim;
+            self.src[0] = "stimulus";
+            self.fx[0] = .{ .send = .{
+                .to = "neuron/asker",
+                .schema = "conv.noise/v1",
+                .payload = "unrelated",
+                .correlation = "other-conversation",
+            } };
+            self.ev[0] = .{
+                .claim = "sent an unrelated correlated message",
+                .sources = self.src[0..1],
+                .method = "noise",
+            };
+            return .{
+                .control = .{ .terminate = "noised" },
+                .effects = self.fx[0..1],
+                .evidence = self.ev[0..1],
+            };
+        }
+    };
+    const wrong = Wrong{ .fx = &responder_fx, .ev = &responder_ev, .src = &responder_src };
+
+    try scheduler.register(neuron_mod.bind(AskerNeuron, &asker, "asker", "1"));
+    try scheduler.register(neuron_mod.bind(Wrong, &wrong, "responder", "1"));
+
+    var pump = pump_mod.Pump.init(std.testing.allocator, &scheduler);
+    defer pump.deinit();
+    const caps: caps_mod.Caps = .{ .allow_send = true, .send_prefix = "neuron/" };
+    pump.default_caps = caps;
+
+    const result = try pump.run("asker", stimulus("noise-seed"), caps);
+
+    // The asker never heard its answer and is still parked; the unrelated
+    // message stays queued rather than silently consuming the park.
+    try std.testing.expect(heard == null);
+    try std.testing.expectEqual(@as(usize, 1), result.pending);
+    var queued: usize = 0;
+    for (fixture.substrate.messages.items) |message| {
+        if (message.status == .queued and std.mem.eql(u8, message.schema, "conv.noise/v1")) queued += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), queued);
+}
+
+test "an attested conversation survives restart on a durable substrate" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+
+    {
+        var substrate = try substrate_mod.Substrate.initDir(std.testing.allocator, io, tmp.dir, "conv");
+        defer substrate.deinit();
+        const runtime: runtime_mod.Runtime = .{ .substrate = &substrate };
+        const request = [_]types.Message{.{
+            .to = "neuron/me",
+            .schema = "conv.ask/v1",
+            .payload = "?",
+            .from = "neuron/peer",
+            .correlation = "conv-durable",
+            .reply_to = "neuron/peer",
+            .turn = 1,
+        }};
+        var stim = stimulus("durable-1");
+        stim.self_ref = "neuron/me";
+        stim.messages = &request;
+        const answer = [_]types.Effect{
+            .{ .send = .{ .to = "neuron/peer", .schema = "conv.answer/v1", .payload = "ok", .correlation = "conv-durable" } },
+        };
+        _ = try runtime.execute(stim, .{}, .{
+            .control = .{ .terminate = "answered" },
+            .effects = &answer,
+            .evidence = &evidence,
+        });
+    }
+
+    // Reopen: the return path is reconstructed from the journal exactly as
+    // committed, so a conversation outlives the process that held it.
+    {
+        var reopened = try substrate_mod.Substrate.initDir(std.testing.allocator, io, tmp.dir, "conv");
+        defer reopened.deinit();
+        try std.testing.expectEqual(@as(usize, 1), reopened.messages.items.len);
+        const restored = reopened.messages.items[0];
+        try std.testing.expectEqualStrings("neuron/peer", restored.to);
+        try std.testing.expectEqualStrings("neuron/me", restored.from);
+        // The answerer's address is the return path for the next turn.
+        try std.testing.expectEqualStrings("neuron/me", restored.reply_to);
+        try std.testing.expectEqualStrings("conv-durable", restored.correlation);
+        try std.testing.expectEqual(@as(u8, 2), restored.turn);
+        // Compaction folds the same envelope forward.
+        _ = try reopened.compact();
+    }
+
+    var compacted = try substrate_mod.Substrate.initDir(std.testing.allocator, io, tmp.dir, "conv");
+    defer compacted.deinit();
+    try std.testing.expectEqualStrings("conv-durable", compacted.messages.items[0].correlation);
+    try std.testing.expectEqualStrings("neuron/me", compacted.messages.items[0].reply_to);
+    try std.testing.expectEqual(@as(u8, 2), compacted.messages.items[0].turn);
+}
+
+test "a signed cross-node request confers an attested return path" {
+    const allocator = std.testing.allocator;
+    const rig = try MeshRig.init();
+    var fixture_b = Fixture.init();
+    defer fixture_b.deinit();
+    var node_b = mesh_mod.Node.init(allocator, rig.device_b, &fixture_b.substrate);
+    defer node_b.deinit();
+    var node_a = mesh_mod.Node.init(allocator, rig.device_a, &fixture_b.substrate);
+    defer node_a.deinit();
+
+    try node_b.trustAccount(identity_mod.publicKeyId(&rig.account), mesh_ceiling);
+    const delegation = try identity_mod.issueDelegation(
+        &rig.account,
+        identity_mod.publicKeyId(&rig.device_a),
+        mesh_ceiling,
+        60_000,
+    );
+
+    // A neuron on B that records exactly what return path it was handed.
+    var seen_from: []const u8 = "";
+    var seen_reply_to: []const u8 = "";
+    var seen_correlation: []const u8 = "";
+    var seen_turn: u8 = 0;
+    var seen_self: []const u8 = "";
+    const Observer = struct {
+        from: *[]const u8,
+        reply_to: *[]const u8,
+        correlation: *[]const u8,
+        turn: *u8,
+        self_ref: *[]const u8,
+        buffer: *[5][128]u8,
+
+        pub fn fire(self: *const @This(), stim: types.Stimulus, _: caps_mod.Caps) !types.Decision {
+            const inbound = stim.messages[0];
+            self.from.* = copy(&self.buffer[0], inbound.from);
+            self.reply_to.* = copy(&self.buffer[1], inbound.reply_to);
+            self.correlation.* = copy(&self.buffer[2], inbound.correlation);
+            self.self_ref.* = copy(&self.buffer[3], stim.self_ref);
+            self.turn.* = inbound.turn;
+            const src = struct {
+                const one = [_][]const u8{"stimulus"};
+            };
+            const ev = struct {
+                var one = [_]types.Evidence{.{
+                    .claim = "observed the attested cross-node return path",
+                    .sources = &src.one,
+                    .method = "mesh admission",
+                }};
+            };
+            return .{ .control = .{ .terminate = "observed" }, .evidence = &ev.one };
+        }
+
+        fn copy(slot: *[128]u8, value: []const u8) []const u8 {
+            const n = @min(value.len, slot.len);
+            @memcpy(slot[0..n], value[0..n]);
+            return slot[0..n];
+        }
+    };
+    var buffer: [5][128]u8 = undefined;
+    const observer = Observer{
+        .from = &seen_from,
+        .reply_to = &seen_reply_to,
+        .correlation = &seen_correlation,
+        .turn = &seen_turn,
+        .self_ref = &seen_self,
+        .buffer = &buffer,
+    };
+    try node_b.register(neuron_mod.bind(Observer, &observer, "mesh/observer", "1"));
+
+    const bytes = try node_a.send(
+        identity_mod.publicKeyId(&rig.device_b),
+        "mesh/observer",
+        "conv.ask/v1",
+        "cross-node question",
+        true,
+        delegation,
+        "firing-mesh-conv",
+        7,
+        mesh_mod.Conversation.open("mesh-conv-1"),
+    );
+    defer allocator.free(bytes);
+    _ = try node_b.receive(bytes, 5_000);
+
+    // The return path is the verified sending device, not anything the frame
+    // asserted about itself; the receiver's own address is its self_ref.
+    const peer = try mesh_mod.nodeAddress(allocator, identity_mod.publicKeyId(&rig.device_a));
+    defer allocator.free(peer);
+    const local = try mesh_mod.nodeAddress(allocator, identity_mod.publicKeyId(&rig.device_b));
+    defer allocator.free(local);
+    try std.testing.expectEqualStrings(peer, seen_from);
+    try std.testing.expectEqualStrings(peer, seen_reply_to);
+    try std.testing.expectEqualStrings(local, seen_self);
+    try std.testing.expectEqualStrings("mesh-conv-1", seen_correlation);
+    try std.testing.expectEqual(@as(u8, 1), seen_turn);
+
+    // The correlation is covered by the signature: rewriting it after signing
+    // breaks admission, so a relay cannot retarget or replay a conversation.
+    const tampered = try allocator.dupe(u8, bytes);
+    defer allocator.free(tampered);
+    const at = std.mem.indexOf(u8, tampered, "mesh-conv-1").?;
+    tampered[at] = 'X';
+    try std.testing.expectError(error.SignatureVerificationFailed, node_b.receive(tampered, 5_000));
+}
+
+test "an uncorrelated cross-node message confers no return path" {
+    const allocator = std.testing.allocator;
+    const rig = try MeshRig.init();
+    var fixture_b = Fixture.init();
+    defer fixture_b.deinit();
+    var node_b = mesh_mod.Node.init(allocator, rig.device_b, &fixture_b.substrate);
+    defer node_b.deinit();
+    var node_a = mesh_mod.Node.init(allocator, rig.device_a, &fixture_b.substrate);
+    defer node_a.deinit();
+
+    try node_b.trustAccount(identity_mod.publicKeyId(&rig.account), mesh_ceiling);
+    const delegation = try identity_mod.issueDelegation(
+        &rig.account,
+        identity_mod.publicKeyId(&rig.device_a),
+        mesh_ceiling,
+        60_000,
+    );
+
+    var reply_to_len: usize = 999;
+    const Observer = struct {
+        reply_to_len: *usize,
+
+        pub fn fire(self: *const @This(), stim: types.Stimulus, _: caps_mod.Caps) !types.Decision {
+            self.reply_to_len.* = stim.messages[0].reply_to.len;
+            const src = struct {
+                const one = [_][]const u8{"stimulus"};
+            };
+            const ev = struct {
+                var one = [_]types.Evidence{.{
+                    .claim = "observed a one-way cross-node message",
+                    .sources = &src.one,
+                    .method = "mesh admission",
+                }};
+            };
+            return .{ .control = .{ .terminate = "observed" }, .evidence = &ev.one };
+        }
+    };
+    const observer = Observer{ .reply_to_len = &reply_to_len };
+    try node_b.register(neuron_mod.bind(Observer, &observer, "mesh/observer", "1"));
+
+    const bytes = try node_a.send(
+        identity_mod.publicKeyId(&rig.device_b),
+        "mesh/observer",
+        "mesh.echo/v1",
+        "no answer wanted",
+        true,
+        delegation,
+        "firing-mesh-oneway",
+        8,
+        .one_way,
+    );
+    defer allocator.free(bytes);
+    _ = try node_b.receive(bytes, 5_000);
+    try std.testing.expectEqual(@as(usize, 0), reply_to_len);
+}
+
+const membrane = @import("membrane.zig");
+const membrane_ops = @import("membrane_ops.zig");
+
+/// Build a filesystem-kind manifest rooted at an absolute path, pinned the way
+/// admission would pin it.
+fn fsManifest(
+    a: std.mem.Allocator,
+    io: std.Io,
+    root: []const u8,
+    template: []const u8,
+    mode: membrane.Mode,
+) !membrane.Manifest {
+    return .{
+        .id = "fs/probe",
+        .version = "1.0.0",
+        .kind = .filesystem,
+        .locator = root,
+        .implementation_digest = try membrane.computeImplementationDigest(a, io, .filesystem, root),
+        .target_template = template,
+        .input_channel = if (mode == .read) .argv else .stdin,
+        .accepts = &.{membrane.CALL_SCHEMA},
+        .emits = &.{membrane.RESULT_SCHEMA},
+        .errors = &.{membrane.FAILURE_SCHEMA},
+        .invocation = .{ .mode = mode, .idempotency = .intrinsic, .max_output_bytes = 4096 },
+        .evidence_claim = "c",
+        .evidence_method = "m",
+        .settlement = "s",
+    };
+}
+
+test "a symlink inside an interface root cannot read outside it" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    try tmp.dir.createDirPath(io, "root");
+    try tmp.dir.writeFile(io, .{ .sub_path = "outside.txt", .data = "classified" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "root/inside.txt", .data = "public" });
+
+    const base = try tmp.dir.realPathFileAlloc(io, ".", a);
+    const root = try std.fs.path.join(a, &.{ base, "root" });
+    const manifest = try fsManifest(a, io, root, "{input}", .read);
+
+    // The honest path resolves and reads.
+    const inside = try membrane.invokeRead(a, io, &manifest, "inside.txt");
+    try std.testing.expectEqualStrings("public", inside.output);
+
+    // A traversal in the input dies structurally, before any file is opened.
+    try std.testing.expectError(
+        membrane.Error.InterfacePathEscape,
+        membrane.invokeRead(a, io, &manifest, "../outside.txt"),
+    );
+
+    // A symlink *inside* the root pointing out of it is the case no amount of
+    // string checking catches: the resolved path must still be under the root.
+    try tmp.dir.symLink(io, "../outside.txt", "root/escape.txt", .{});
+    try std.testing.expectError(
+        membrane.Error.InterfacePathEscape,
+        membrane.invokeRead(a, io, &manifest, "escape.txt"),
+    );
+}
+
+test "a filesystem command crosses only once and is judged by read-back" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    try tmp.dir.createDirPath(io, "store");
+    const base = try tmp.dir.realPathFileAlloc(io, ".", a);
+    const root = try std.fs.path.join(a, &.{ base, "store" });
+    const manifest = try fsManifest(a, io, root, "out/{digest}.txt", .command);
+
+    // The read path refuses it outright: consequence requires the outbox.
+    try std.testing.expectError(
+        membrane.Error.InterfaceModeMismatch,
+        membrane.invokeRead(a, io, &manifest, "payload"),
+    );
+
+    const applied = try membrane.applyCommand(a, io, &manifest, "payload");
+    const expected_hex = std.fmt.bytesToHex(types.digest("payload"), .lower);
+    const expected_target = try std.fmt.allocPrint(a, "out/{s}.txt", .{&expected_hex});
+    try std.testing.expectEqualStrings(expected_target, applied.target);
+
+    // Reconciliation reads the external state back through a different path
+    // than the write and compares content identity.
+    try membrane.verifyCommand(a, io, &manifest, "payload");
+
+    // Tamper with the landed product: reconciliation must now refuse.
+    const landed = try std.fs.path.join(a, &.{ "store", applied.target });
+    try tmp.dir.writeFile(io, .{ .sub_path = landed, .data = "tampered" });
+    try std.testing.expectError(
+        membrane.Error.InterfaceReconciliationFailed,
+        membrane.verifyCommand(a, io, &manifest, "payload"),
+    );
+}
+
+test "a moved or swapped implementation is not the admitted implementation" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    try tmp.dir.createDirPath(io, "root");
+    const base = try tmp.dir.realPathFileAlloc(io, ".", a);
+    const root = try std.fs.path.join(a, &.{ base, "root" });
+    var manifest = try fsManifest(a, io, root, "{input}", .read);
+
+    // A digest from a different kind is not interchangeable: the domain
+    // separator makes cross-kind digest reuse impossible.
+    const as_function = try membrane.computeImplementationDigest(a, io, .function, "trim");
+    try std.testing.expect(!std.mem.eql(u8, &as_function, &manifest.implementation_digest));
+
+    // And a manifest whose pin no longer matches the live root fails closed
+    // before anything is invoked.
+    manifest.implementation_digest = types.digest("stale pin");
+    try std.testing.expectError(
+        membrane.Error.InterfaceDigestDrift,
+        membrane.invokeRead(a, io, &manifest, "anything.txt"),
+    );
+}
+
+test "the interface ceiling rejects every widening a manifest could request" {
+    const limit = membrane_ops.ceiling();
+    try std.testing.expect(!limit.allow_spawn);
+
+    // Spawn authority is never available to an interface.
+    try std.testing.expect(!caps_mod.allowsDelegation(limit, .{
+        .allow_spawn = true,
+        .spawn_prefix = "",
+        .budget = limit.budget,
+    }));
+    // A wildcard write prefix is outside the agent namespace.
+    try std.testing.expect(!caps_mod.allowsDelegation(limit, .{
+        .allow_write = true,
+        .write_prefix = "",
+        .budget = limit.budget,
+    }));
+    // Sending anywhere but the interface outbox is outside the ceiling.
+    try std.testing.expect(!caps_mod.allowsDelegation(limit, .{
+        .allow_send = true,
+        .send_prefix = "neuron/",
+        .budget = limit.budget,
+    }));
+    // A budget above the ceiling is a widening like any other.
+    var wide = limit.budget;
+    wide.max_writes = limit.budget.max_writes + 1;
+    try std.testing.expect(!caps_mod.allowsDelegation(limit, .{ .budget = wide }));
+
+    // The grant an attachment derives is scoped to one agent's work namespace
+    // and never carries spawn authority, whatever was requested.
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const granted = try membrane_ops.grantFor(arena.allocator(), "alpha", .{
+        .allow_write = true,
+        .write_prefix = "agents/",
+        .allow_spawn = true,
+        .spawn_prefix = "",
+    });
+    try std.testing.expectEqualStrings("agents/alpha/work/", granted.write_prefix);
+    try std.testing.expect(!granted.allow_spawn);
+    try std.testing.expect(caps_mod.allowsDelegation(membrane_ops.ceiling(), granted));
 }

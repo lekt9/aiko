@@ -162,6 +162,45 @@ Neurons communicate in two complementary ways:
 
 Both remain pure. Messaging is mediated by Caps and the substrate so it stays auditable, cacheable, and governable.
 
+#### 10.1 Conversations: communication is bidirectional
+
+A `send` is not one-way. Every message carries an **attested envelope** —
+`from`, `correlation`, `reply_to`, and `turn` — so a recipient can answer a
+peer it was never configured with. This makes the direction of a message a
+property of the exchange, not of the wiring.
+
+The envelope is **interpreter-owned**. A Neuron may choose exactly one field,
+`correlation`, which names the conversation; a decision that presents its own
+`from`, `reply_to`, or `turn` is rejected as `ForgedSender` before any effect
+exists. Provenance is never self-asserted.
+
+**Reply authority is conferred by possession of the request.** An outgoing
+message is a reply exactly when it targets the `reply_to` of a request pinned
+into the answering firing's own stimulus, on that request's `correlation`.
+Because the stimulus is covered by the firing identity, this authority cannot
+be fabricated after the fact — it is the same grounding rule evidence obeys
+(§23). The consequence: a Neuron holding **no send capability at all** can
+still answer whoever asked it, and can reach nobody else. A reply aimed
+anywhere other than the attested requester is an ordinary `send` and needs
+ordinary capability (§24).
+
+Conversations are bounded like every other cycle (§26):
+
+- a Neuron parks on an answer by returning `continue` on the reserved
+  predicate `reply/<correlation>`; the pump holds unrelated traffic for a
+  parked Neuron, so one conversation cannot be consumed by another;
+- an answer that never arrives surfaces as *pending*, never as a spin;
+- one firing settles a given conversation turn exactly once
+  (`DuplicateReply`);
+- `Budget.max_turns` caps the exchange, and delegation may narrow it but
+  never widen it — two Neurons answering each other forever is an arrhythmia
+  and fails closed (`ConversationTurnsExceeded`).
+
+Across the mesh the same shape holds: the envelope's `correlation` and `turn`
+are covered by the peer's signature, and the attested return path is the
+verified peer device — on a trusted transport, the peer the operator pinned
+the ceiling for, never an identity the frame declares about itself.
+
 ---
 
 ### 11. Parallelism and the Substrate
@@ -327,6 +366,7 @@ status, and complete Part I coverage for every ID.
 | SMP-30 | Runnable witness, no fabricated green | anything claims completion | settle only through a real independent command or sensor |
 | SMP-31 | Authority layers and honest docs | architecture or status documentation changes | change the owning authority, regenerate projections, and gate claims |
 | SMP-32 | Analogy translates, never proves | another domain is used to shape design | map and cite primitives, preserve gaps, and derive a runnable consequence |
+| SMP-33 | Reply authority by possession | a Neuron must answer a peer it was not configured with | stamp provenance in the interpreter, authorize the reply from the request, and bound the turns |
 
 Registration is not implementation evidence. Adding a row MUST be accompanied by:
 
@@ -429,6 +469,20 @@ The target standalone entrypoint and phased implementation plan are recorded hon
 `reference/AGENT_ENTRYPOINT_UNIVERSAL_INTERFACE_PLAN.md`. Its target commands and schemas
 are not implementation evidence; each phase settles only through its named runnable
 witness.
+
+Phases 1 and 2 have settled. The local membrane exists as `neuron.interface-manifest/v1`
+with pure-function, process, and filesystem adapters (`src/membrane.zig`,
+`src/membrane_ops.zig`), witnessed by `bash tests/universal-interface-gate.sh`. Two rules
+of this section are enforced structurally there rather than by convention: a command
+manifest is refused on the read path outright, so consequence cannot reach the world
+without an outbox record; and an attachment *derives* its grant from the agent's namespace
+instead of adopting the one the manifest requested, so no adapter can name its own write
+target. A manifest requesting spawn authority, a wildcard write prefix, a send prefix
+outside the interface outbox, or a budget above the ceiling is rejected before admission.
+Remaining phases — remote protocols, models, devices, human gates, economics, automatic
+adapter construction, and the multi-machine swarm — are unbuilt, and a command whose
+external consequence has no independent local sensor is still refused as
+`UnverifiableCommand`.
 
 ---
 
@@ -817,6 +871,86 @@ and protected by the same capability model as artifacts.
 Audit records are tamper-evident and retained by policy. Operators MUST be able to replay a
 firing with external effects disabled and compare its decision digest.
 
+#### 28.1 Timing MUST live outside the firing identity
+
+The stimulus clock `now_ms` is inside the decision digest (`cborRuntimeStimulus`). A real
+wall clock in the stimulus therefore gives every redelivery of the same firing a different
+identity, and idempotent replay degrades into `FiringMismatch`. Observability MUST NOT buy
+timing at the cost of replay-safety:
+
+- `now_ms` — the stimulus clock, journaled as declared, `0` where no caller sets one;
+- `committed_at_ms` — a wall clock read at journal-append time, on the record and **not**
+  in the identity. Replay ignores it.
+
+Stage networks that need reproducible firings (the agent entrypoint among them) MUST leave
+`now_ms` at `0` and take duration from `committed_at_ms`.
+
+#### 28.2 Evidence is journaled for derivation, not for authority
+
+Committed records carry the decision's `evidence[]` — claim, method, and sources. `validate`
+has already proven every source was a grounded read at a matching digest, so replay derives
+no authority from these and carries them forward inertly. Their purpose is that
+`produced_by` plus `evidence[].sources` reconstitute the **derivation graph**: which
+artifact was computed from which, by which firing.
+
+#### 28.3 Projections
+
+Three read-only projections over the same journal, none of which writes:
+
+| Command | Unit | Answers |
+|---|---|---|
+| `neuron telemetry project` | node | aggregate counters |
+| `neuron telemetry trace` | firing | when it settled, what it cited, what it wrote |
+| `neuron telemetry stale` | derivation | which artifacts were derived from sources that have since moved |
+
+Staleness is ordered by journal position alone, never by clock, so it is reproducible.
+
+An artifact written at position `i` citing source `s` is stale exactly when `s`'s last write
+lands at `j > i`. Each row reports `redrivable`, the mechanical re-derivation gate: a firing
+disqualifies itself by sending to `outbox/`, because repeating an external boundary crossing
+repeats a real-world effect rather than recomputing a value. Internal `event/` and `neuron/`
+traffic — settlement events, stage hand-offs — stays inside the substrate and re-derives
+safely. Gating on "sent anything" instead of "sent outbound" is wrong: it marks every
+ordinary agent firing undrivable.
+
+Detection MUST stay separate from action. These projections mark nothing and re-fire
+nothing; automatic re-derivation additionally requires a deterministic boundary and a
+generation bound, without which a non-deterministic producer never reaches a fixpoint.
+
+#### 28.4 What crosses the fold
+
+`neuron compact` folds firing history into one snapshot record. What may cross that fold is
+decided by §19: the snapshot MUST serialize identical live state to identical bytes, so only
+deterministic content is admissible.
+
+| Crosses | Does not cross |
+|---|---|
+| `evidence[]` — part of the decision, reproducible | `committed_at_ms` — a wall clock |
+| `seq` — the commit ordinal | per-firing `messages` |
+
+Two consequences are normative rather than incidental:
+
+1. **The ordinal is required, not an optimization.** Canonical form sorts firings by id,
+   which destroys log order — and staleness is defined *on* that order ("derived at `i`,
+   source moved at `j > i`"). Carrying evidence without carrying `seq` yields citations that
+   can no longer be compared, so `FiringRecord.seq` MUST be assigned from commit order and
+   MUST resume past every folded ordinal when a substrate reopens from a snapshot.
+2. **Degradation MUST be reported, never fabricated.** A folded firing's `messages` are not
+   retained, so `redrivable` is unknowable and MUST be reported `false` — the conservative
+   direction, since a wrong `true` causes a real external effect to repeat. Likewise `trace`
+   MUST report `timing: "unavailable"` for snapshot-sourced rows and MUST NOT emit
+   `elapsed_ms`; `0` already means "no caller set a clock" and would assert a different
+   falsehood. Rows carry `"from": "snapshot"` so the boundary is visible.
+
+Staleness answers MUST therefore be identical across the four shapes a live node takes —
+un-compacted, compacted, repeatedly compacted, and a mixed journal of snapshot plus fresh
+commits. `tests/observability-retention-gate.sh` is the witness, and it fails closed if
+evidence stops crossing the fold.
+
+A projection reports an artifact only in its *current* version. A version later overwritten
+is not stale but superseded; re-deriving it would produce bytes nothing can read, and a
+snapshot — holding final state only — structurally cannot report it.
+
 ### 29. Registry Neurons and Skill Admission
 
 A Skill package is distribution data, not ambient authority. Admission MUST:
@@ -1010,7 +1144,7 @@ The executable authorities are:
 - the exported `typed_neuron` module for pure types, validation, and identities;
 - an interpreter's atomic transaction and recovery tests for substrate behavior;
 - `reference/META_AGENT.md` plus its runnable witness for the default composed agent;
-- the SMP-01–SMP-32 registry in §17.1, its expanded
+- the SMP-01–SMP-33 registry in §17.1, its expanded
   `reference/SUPER_META_PATTERNS.md` projection, and
   `tests/check_super_meta_patterns.py` for structural catalog closure;
 - `reference/AGENT_ENTRYPOINT_UNIVERSAL_INTERFACE_PLAN.md` for the unsettled canonical
@@ -1061,7 +1195,7 @@ durable production interpreter and substrate; sibling Aiko is the production hos
 directory is not currently its own Git repository, so the production dependency is
 pinned by content, not by revision (R5).
 
-As of 2026-07-28, §17.1 registers SMP-01–SMP-32 and
+As of 2026-07-29, §17.1 registers SMP-01–SMP-33 and
 `reference/SUPER_META_PATTERNS.md` carries their expanded six-interrogative records,
 atom translation, sources, status, coverage, and residual frontier.
 `tests/check_super_meta_patterns.py` witnesses document closure and representative
@@ -1122,7 +1256,7 @@ responsibilities:
 | `src/wire.zig` | Canonical types, validation, deterministic identities, generated transport exports |
 | `src/generated_wire.zig` | Generated transport DTOs and compatibility constants |
 | `src/types.zig`, `src/caps.zig`, `src/neuron.zig` | Thin aliases and binding helpers over `typed_neuron` |
-| `src/runtime.zig` | Execute `Neuron.fire`, validate the whole decision, atomically commit or reject |
+| `src/runtime.zig` | Execute `Neuron.fire`, validate the whole decision, stamp attested message provenance, atomically commit or reject |
 | `src/substrate.zig` | In-memory artifacts, messages, definitions, firings, cache, and transaction state |
 | `src/registry.zig` | Admit and revoke digest-pinned Skill packages without granting authority |
 | `src/scheduler.zig` | Sparse work scheduling, branch-target validation, and cycle-progress checks |
@@ -1134,7 +1268,9 @@ responsibilities:
 | `src/observability.zig` | Metrics projection and effect-disabled replay verification |
 | `src/script.zig` | Bounded JSON-stdio script-Neuron adapter; hung children are killed and recorded `timed_out` |
 | `src/run.zig` | `neuron run` manifest/stimulus ingress through the real Runtime |
-| `src/agent_ops.zig` | Standalone `neuron agent` lifecycle: composed stage neurons, settlement-event grounding, CAS snapshot advance |
+| `src/agent_ops.zig` | Standalone `neuron agent` lifecycle: composed stage neurons, settlement-event grounding, CAS snapshot advance, work routed through attached interfaces |
+| `src/membrane.zig` | Universal interface membrane mechanism: `InterfaceManifest` validation, implementation pinning, read/command classification, function/process/filesystem adapters, acceptance predicates |
+| `src/membrane_ops.zig` | Interface lifecycle against a node substrate: discover, describe, adversarial battery, admit, attach, detach, revoke, call, outbox dispatch and reconciliation |
 | `src/main.zig`, `src/demo.zig` | CLI dispatch and the atomic write/send/spawn demonstration |
 | `src/meta_agent.zig` | Full default Meta-Agent composition witness |
 | `src/identity.zig` | Ed25519 node identities and signed, expiring, attenuated Delegations |
@@ -1142,7 +1278,7 @@ responsibilities:
 | `src/tailnet.zig` | Tailnet (CGNAT `100.64.0.0/10`) peer classification to deny-by-default pinned ceilings |
 | `src/mcp.zig` | MCP stdio edge (NDJSON JSON-RPC 2.0) exposing bounded `neuron.info` and `neuron.fire` |
 | `src/interface.zig` | Provider-neutral channel normalization and scoped router/conversation Neurons |
-| `src/pump.zig` | Bounded event pump driving a seed stimulus to quiescence; wait predicates and factories |
+| `src/pump.zig` | Bounded event pump driving a seed stimulus to quiescence; wait predicates, conversation parks (`reply/<correlation>`), and factories |
 | `src/energy_router.zig` | Orphan experimental router prototype; formatted but not imported by the build |
 | `src/tests.zig` | Behavioral conformance, integration, transport, and lifecycle witnesses |
 
@@ -1153,7 +1289,7 @@ The CLI (`zig-out/bin/neuron`) provides `demo`, `check`, `meta-agent-check [--js
 entrypoint against the durable node substrate), `interface ...` (parsed, fails closed
 as NotImplemented until plan Phases 2+), and `--version/--help`.
 
-The behavioral suite holds seventy-one named witnesses in `src/tests.zig`, plus
+The behavioral suite holds seventy-seven named witnesses in `src/tests.zig`, plus
 module-embedded tests in `wire` (3), `types` (1), `caps` (1), `cache` (1), `limb` (2),
 `interface` (1), `script` (9), and `energy_router` (2). Coverage spans: atomic
 write/send/spawn commit; validation atomicity and capability denial; duplicate-delivery
@@ -1169,7 +1305,12 @@ handling; the middleware decision cage; generational spawn attachment; Meta-Agen
 settlement; mesh delegation chains, fail-closed envelope admission, and TCP symmetry;
 tailnet classification; the MCP edge ceiling and CGNAT-only egress; and the standalone
 agent lifecycle (composed-stage settlement, replay without new effects, workflow
-cancellation, and fail-closed retirement).
+cancellation, and fail-closed retirement); and bidirectional conversations
+(§10.1) — a full ask → park → answer → resume round trip in which the answering
+Neuron holds no send capability, forged `from`/`reply_to`/`turn` rejected, reply
+authority reaching the requester only, the `max_turns` ceiling and one-answer-
+per-firing rule, a parked conversation not consumed by unrelated traffic, and an
+attested envelope surviving restart and compaction.
 
 ### 38. Current State: Generative Limbs
 
@@ -1206,10 +1347,23 @@ named like a Skill is not evidence of that lifecycle (§30, §34). Current statu
   `neurons/drainer.py`, `neurons/reconciler.py`, and `tests/mock_adapter.py` exist, but
   the manifest and conformance suite are missing, so it is not a complete Skill package
   and has no lifecycle witness (R1). The production outbox path does not depend on it.
+- **`limbs/conversation`** — the bidirectional-communication witness limb (§10.1),
+  complete and gated. `neurons/asker.py` opens a correlated exchange and parks on
+  `reply/<correlation>`, then resumes on the answer and settles;
+  `neurons/responder.py` answers whoever asked using only the return address pinned
+  into its stimulus, and its admitted grant requests `allow_send: false` — the load-
+  bearing demonstration that reply authority comes from possessing the request, not
+  from a capability. `neurons/forger.py` is an adversarial fixture that bypasses the
+  Python SDK to write a raw decision asserting provenance it does not own, while
+  holding a *full* send grant; all three forgery modes are rejected `ForgedSender`.
+  Witness: `python3 limbs/conversation/tests/conformance.py` (14 checks, every one a
+  real `neuron limb ...` command against a durable substrate) and
+  `bash tests/conversation-gate.sh`.
 - **`limbs/shared/_neuron.py`** — shared Python runtime for script Neurons: stimulus
   validation, the provenance-set computation matching the Zig grounded-read rule,
-  digest-pinned reads, budget checks, the delegation-narrowing port, and fail-closed
-  decision/typed-rejection emission.
+  digest-pinned reads, budget checks, the delegation-narrowing port, conversation
+  helpers (`request`, `reply`, `await_reply`, `inbound`) with a local mirror of the
+  interpreter's conversation valve, and fail-closed decision/typed-rejection emission.
 
 ### 39. Current State: Production Integration (Contract and Aiko)
 
@@ -1251,6 +1405,8 @@ Run the smallest gate that proves the claim being changed:
 | Standalone behavior, CLI, benchmarks, Meta-Agent | `bash tests/runtime-gate.sh` |
 | Meta-Agent lifecycle only | `bash tests/meta-agent-gate.sh` |
 | Standalone agent entrypoint (plan Phase 1) | `bash tests/agent-entrypoint-gate.sh` |
+| Universal interface membrane (§17.3, plan Phase 2) | `bash tests/universal-interface-gate.sh` |
+| Bidirectional neuron communication (§10.1) | `bash tests/conversation-gate.sh` |
 | Generated files and Neuron/Contract/Aiko boundary | `bash tests/check-production-neuron.sh` |
 | Wire generator drift only | `python3 tools/generate_wire_bindings.py --check` |
 
@@ -1262,8 +1418,9 @@ Gate contents:
 - `tests/runtime-gate.sh` runs `zig fmt --check`, `zig build test`, `zig build`, the
   `demo` and `check --json` CLI witnesses (three effects committed atomically: one
   artifact, one message, one neuron), `python3 bench/jespa/runtime_tasks.py
-  --assert-win`, `JESPA_WIN_TARGET=2 bash bench/jespa/jespa-benchmarks-gate.sh`, and
-  `tests/meta-agent-gate.sh`.
+  --assert-win`, `JESPA_WIN_TARGET=2 bash bench/jespa/jespa-benchmarks-gate.sh`,
+  `tests/meta-agent-gate.sh`, `tests/agent-entrypoint-gate.sh`, and
+  `tests/universal-interface-gate.sh`.
 - `tests/meta-agent-gate.sh` runs the Meta-Agent from an empty temporary directory,
   asserts fifteen witness fields, and installs `zig-out/meta-agent-witness.json`
   (mode 600).
@@ -1273,6 +1430,34 @@ Gate contents:
   in the WAL, reconstructs the snapshot in a fresh process, replays the identical goal
   with a byte-identical WAL, cancels an unfired workflow, retires the agent fail-closed,
   and reconstructs after compaction.
+- `tests/universal-interface-gate.sh` describes, tests, admits, and uses three
+  interface kinds — a pure op pipeline, an admitted test binary, and a local store —
+  through the public CLI against one node. It asserts that discovery and description
+  commit nothing; that an unadmitted draft is not callable; that a read is performed
+  inside its firing while a command commits an outbox record *before* anything crosses,
+  crosses only on dispatch, is settled by independent read-back, and does not duplicate
+  on retry; and that a real agent goal is performed by the real boundary — the product
+  digest is the binary's actual output, not the reference resolution — and independently
+  reproduced before the snapshot advances. Its falsifiers are an untyped binary, an
+  argv template embedding `{input}` inside a larger argument, a locator/argv0 mismatch,
+  a capability widening, a mislabelled kind, a boundary that outruns its 400 ms deadline
+  (asserted to be killed rather than waited out), a path traversal smuggled through a
+  read input, digest drift after admission, an acceptance predicate that cannot hold
+  (which must leave a durable *failed* snapshot and push nothing across the boundary),
+  and calls after revocation and detachment — with WAL-length assertions that each
+  rejection committed nothing. A symlink escape from inside an interface root, and
+  reconciliation refusing a tampered product, are witnessed by `zig build test`.
+- `tests/conversation-gate.sh` runs the canonical runtime tests, then drives
+  `limbs/conversation/` through the public CLI against a durable substrate: an
+  admitted asker opens a correlated exchange and parks; an admitted responder
+  holding `allow_send: false` answers it using only the return address pinned
+  into its stimulus; the asker resumes and settles. Each step is a separate
+  process replaying the journal. Its falsifiers are an adversarial `forger`
+  neuron that bypasses the Python SDK to assert its own `from`/`reply_to`/`turn`
+  while holding a *full* send grant (rejected `ForgedSender` all three ways), a
+  one-way message conferring no reply authority, and a conversation past its
+  `max_turns` ceiling — with a journal-count assertion that all five rejected
+  firings committed nothing.
 - `tests/check-production-neuron.sh` checks generated bindings and the content lock,
   builds and tests Neuron and Contract, and runs three focused Aiko `cargo test -p
   xai-grok-shell` suites (generated-binding vectors, script-Neuron boundary, and
@@ -1304,6 +1489,16 @@ admitted merely because its source exists. The current mesh is an address-direct
 transport, not yet the §26.1 automatic mesh-formation profile. Contract supplies the
 durable production transaction and recovery path; Aiko supplies product adapters and
 sandbox enforcement.
+
+The interface membrane does not claim: remote, protocol, model, device, or human
+boundaries; library/WASM or database adapters; streaming decode (a manifest declaring
+`streaming` is refused); process *commands*, which have no independent local sensor and
+fail closed as `UnverifiableCommand`; multi-hop chaining of several boundaries inside one
+goal; or that a limb package and an interface manifest are yet one record. Path
+confinement is enforced structurally and again by canonical-path comparison after
+resolution, which closes symlink escape but does not defeat a root replaced between
+resolution and open. An admitted process boundary is pinned by the digest of the
+executable file itself, not of its transitive dependencies or interpreter.
 
 Unsettled work lives only in `reference/ROADMAP.md`, in priority order:
 

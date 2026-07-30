@@ -63,7 +63,7 @@ pub const Runtime = struct {
         var pending: std.ArrayList(Pending) = .empty;
         defer pending.deinit(self.substrate.allocator);
         errdefer for (pending.items) |item| item.deinit(self.substrate.allocator);
-        try stage(self.substrate.allocator, stimulus.firing_id, stimulus.depth, decision.effects, &pending);
+        try stage(self.substrate.allocator, stimulus, decision.effects, &pending);
         if (self.emit_settlement_events and
             !std.mem.eql(u8, stimulus.receptor_schema, "neuron.firing-settled/v1"))
         {
@@ -91,9 +91,25 @@ pub const Runtime = struct {
         // WAL: the commit record hits the journal BEFORE the in-memory maps
         // change. A failed append commits nothing anywhere; replay rebuilds
         // exactly what the log holds (§20 commit boundary, §22).
-        try self.substrate.journalCommit(stimulus.firing_id, identity, decision.effects.len, pending.items);
+        try self.substrate.journalCommit(
+            stimulus.firing_id,
+            identity,
+            decision.effects.len,
+            pending.items,
+            stimulus.now_ms,
+            decision.evidence,
+        );
         const firing_key = try self.substrate.allocator.dupe(u8, stimulus.firing_id);
         errdefer self.substrate.allocator.free(firing_key);
+        // Retained so compaction can carry the derivation graph past the point
+        // where per-commit records are folded away (§28.4). Duplicated *here*,
+        // above the infallible section, because a failed allocation must leave
+        // the substrate untouched.
+        const retained_evidence = try substrate_mod.dupeEvidence(self.substrate.allocator, decision.evidence);
+        errdefer {
+            for (retained_evidence) |item| item.deinit(self.substrate.allocator);
+            self.substrate.allocator.free(retained_evidence);
+        }
 
         // From here through the firing record insertion, all allocations are
         // complete. The commit path is infallible and therefore atomic in-memory.
@@ -116,10 +132,14 @@ pub const Runtime = struct {
             .send => |message| self.substrate.messages.appendAssumeCapacity(message),
             .spawn => |spawn| self.substrate.neurons.putAssumeCapacity(spawn.id, spawn.value),
         };
+        const seq = self.substrate.next_firing_seq;
+        self.substrate.next_firing_seq = seq + 1;
         self.substrate.firings.putAssumeCapacity(firing_key, .{
             .decision_digest = identity,
             .effects_committed = decision.effects.len,
             .status = .committed,
+            .seq = seq,
+            .evidence = retained_evidence,
         });
         pending.clearRetainingCapacity(); // ownership moved into the substrate
         return .{
@@ -176,7 +196,9 @@ fn dupeGrant(allocator: Allocator, grant: Caps) !substrate_mod.OwnedCaps {
     };
 }
 
-fn stage(allocator: Allocator, firing_id: []const u8, depth: u8, effects: []const Effect, pending: *std.ArrayList(Pending)) !void {
+fn stage(allocator: Allocator, stimulus: Stimulus, effects: []const Effect, pending: *std.ArrayList(Pending)) !void {
+    const firing_id = stimulus.firing_id;
+    const depth = stimulus.depth;
     try pending.ensureTotalCapacity(allocator, effects.len);
     for (effects) |effect| {
         const item: Pending = switch (effect) {
@@ -187,13 +209,27 @@ fn stage(allocator: Allocator, firing_id: []const u8, depth: u8, effects: []cons
                 .digest = types.digest(write.bytes),
                 .produced_by = try allocator.dupe(u8, firing_id),
             } },
-            .send => |message| .{ .send = .{
-                .firing_id = try allocator.dupe(u8, firing_id),
-                .to = try allocator.dupe(u8, message.to),
-                .schema = try allocator.dupe(u8, message.schema),
-                .payload = try allocator.dupe(u8, message.payload),
-                .durable = message.durable,
-            } },
+            // Stamp the attested envelope: the sender is this firing's own
+            // address, the return address is the same, and the turn advances
+            // from the request being answered (1 when this opens a
+            // conversation). A neuron cannot influence any of the three.
+            .send => |message| blk: {
+                const correlated = message.correlation.len > 0;
+                const turn: u8 = if (answeredRequest(stimulus, message)) |request|
+                    request.turn + 1
+                else if (correlated) 1 else 0;
+                break :blk .{ .send = .{
+                    .firing_id = try allocator.dupe(u8, firing_id),
+                    .to = try allocator.dupe(u8, message.to),
+                    .schema = try allocator.dupe(u8, message.schema),
+                    .payload = try allocator.dupe(u8, message.payload),
+                    .durable = message.durable,
+                    .from = try allocator.dupe(u8, stimulus.self_ref),
+                    .correlation = try allocator.dupe(u8, message.correlation),
+                    .reply_to = try allocator.dupe(u8, if (correlated) stimulus.self_ref else ""),
+                    .turn = turn,
+                } };
+            },
             .spawn => |spawn| .{
                 .spawn = .{
                     .id = try allocator.dupe(u8, spawn.id),
@@ -234,12 +270,18 @@ fn stageSettlementEvent(
     errdefer allocator.free(to);
     const schema = try allocator.dupe(u8, "neuron.firing-settled/v1");
     errdefer allocator.free(schema);
+    // A lifecycle event is an announcement, not a conversation: it is
+    // uncorrelated, so no observer gains reply authority over the firing.
     try pending.append(allocator, .{ .send = .{
         .firing_id = owned_firing,
         .to = to,
         .schema = schema,
         .payload = payload,
         .durable = true,
+        .from = try allocator.dupe(u8, "runtime"),
+        .correlation = try allocator.dupe(u8, ""),
+        .reply_to = try allocator.dupe(u8, ""),
+        .turn = 0,
     } });
 }
 
@@ -267,7 +309,7 @@ fn validate(stimulus: Stimulus, caps: Caps, decision: Decision, substrate: *cons
     var sends: usize = 0;
     var spawns: usize = 0;
     var bytes: usize = 0;
-    for (decision.effects) |effect| switch (effect) {
+    for (decision.effects, 0..) |effect, index| switch (effect) {
         .write => |write| {
             if (!caps.allow_write or !std.mem.startsWith(u8, write.id, caps.write_prefix))
                 return error.CapabilityDenied;
@@ -280,9 +322,25 @@ fn validate(stimulus: Stimulus, caps: Caps, decision: Decision, substrate: *cons
             bytes = std.math.add(usize, bytes, write.bytes.len) catch return error.BudgetExceeded;
         },
         .send => |message| {
-            if (!caps.allow_send or !std.mem.startsWith(u8, message.to, caps.send_prefix))
-                return error.CapabilityDenied;
             if (message.to.len == 0 or message.schema.len == 0) return error.InvalidEffect;
+            // Provenance is interpreter-owned. A neuron that presents its own
+            // sender, return address, or turn count is claiming authority it
+            // cannot verify about itself (§20).
+            if (message.from.len != 0 or message.reply_to.len != 0 or message.turn != 0)
+                return error.ForgedSender;
+            if (message.correlation.len != 0 and stimulus.self_ref.len == 0)
+                return error.UnaddressableSender;
+            if (answeredRequest(stimulus, message)) |request| {
+                // Reply authority is conferred by possession of the request:
+                // it reaches exactly the attested requester on exactly that
+                // correlation, so it can never widen to a third party and
+                // needs no prearranged send grant. Everything else about the
+                // effect — budget, bytes, evidence — is unchanged.
+                if (request.turn >= caps.budget.max_turns) return error.ConversationTurnsExceeded;
+                if (priorReplies(decision.effects, index, message) > 0) return error.DuplicateReply;
+            } else if (!caps.allow_send or !std.mem.startsWith(u8, message.to, caps.send_prefix)) {
+                return error.CapabilityDenied;
+            }
             sends += 1;
             bytes = std.math.add(usize, bytes, message.payload.len) catch return error.BudgetExceeded;
         },
@@ -308,6 +366,36 @@ fn validate(stimulus: Stimulus, caps: Caps, decision: Decision, substrate: *cons
 fn contains(items: []const []const u8, wanted: []const u8) bool {
     for (items) |item| if (std.mem.eql(u8, item, wanted)) return true;
     return false;
+}
+
+/// The inbound request a send answers, if any: an outgoing message is a reply
+/// exactly when it targets the return address of a request pinned into this
+/// firing's own stimulus, on that request's correlation. The stimulus is
+/// covered by the firing identity, so this authority cannot be fabricated
+/// after the fact (§20/§23 — the same grounding rule evidence obeys).
+pub fn answeredRequest(stimulus: Stimulus, message: types.Message) ?types.Message {
+    if (message.correlation.len == 0) return null;
+    for (stimulus.messages) |inbound| {
+        if (inbound.reply_to.len == 0 or inbound.correlation.len == 0) continue;
+        if (!std.mem.eql(u8, inbound.reply_to, message.to)) continue;
+        if (!std.mem.eql(u8, inbound.correlation, message.correlation)) continue;
+        return inbound;
+    }
+    return null;
+}
+
+/// How many earlier effects in the same decision already answer this exact
+/// conversation. One firing settles a conversation turn once.
+fn priorReplies(effects: []const Effect, index: usize, message: types.Message) usize {
+    var count: usize = 0;
+    for (effects[0..index]) |earlier| switch (earlier) {
+        .send => |prior| {
+            if (std.mem.eql(u8, prior.correlation, message.correlation) and
+                std.mem.eql(u8, prior.to, message.to)) count += 1;
+        },
+        else => {},
+    };
+    return count;
 }
 
 fn groundedRead(stimulus: Stimulus, substrate: *const Substrate, wanted: []const u8) bool {

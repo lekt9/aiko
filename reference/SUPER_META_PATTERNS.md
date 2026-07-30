@@ -712,6 +712,23 @@ The repository-specific sources and witnesses are recorded on every pattern.
 - **Sources:** `AGENTS.md` §§4, 15, 32; `reference/SELF_CONSTRUCTING_AGENT.md` §§3–5; `$jesus-pattern:superpattern`.
 - **Status:** implemented as design discipline.
 
+### SMP-33 — Reply Authority Is Conferred by Possession, Not by Grant
+
+- **Version:** `typed-neuron.super-pattern/SMP-33/v1`
+- **Trigger:** A Neuron must answer a peer it was not configured with, or two Neurons must hold a bounded exchange.
+- **Why:** Make communication bidirectional without pre-wiring every pair or widening any Neuron's send authority.
+- **What:** An interpreter-stamped envelope — attested `from`, sender-chosen `correlation`, interpreter-owned `reply_to` and `turn` — travels with each message; answering the attested return path on that correlation is authorized by the request itself.
+- **Who:** The interpreter stamps provenance; the requester chooses the conversation; the responder answers without holding a matching send grant.
+- **When:** At every correlated `send`, at the park on `reply/<correlation>`, and at the turn ceiling.
+- **Where:** Runtime valve, pump waiters, script-neuron protocol, and signed mesh envelopes.
+- **How:** Read the request pinned in the stimulus, make a reply targeting its `reply_to`, route it through the ordinary validate → commit boundary.
+- **Trust boundary:** A Neuron never asserts its own sender, return address, or turn; a correlation nobody asked about confers nothing; a reply aimed at a third party is an ordinary send needing ordinary capability.
+- **Lifecycle:** ask → park → answer → resume → settle; ceiling or unanswered park → typed failure, never a spin.
+- **Relates:** SMP-10, SMP-19, SMP-14, SMP-26.
+- **Falsifier:** A decision forges `from`/`reply_to`/`turn` and commits; a reply reaches a non-requester without send capability; a conversation exceeds `max_turns`; or a parked Neuron is woken by an unrelated message.
+- **Sources:** `AGENTS.md` §10.1; `src/runtime.zig` (`answeredRequest`); `src/pump.zig`; `src/mesh.zig`; `limbs/conversation/`; `tests/conversation-gate.sh`.
+- **Status:** implemented.
+
 ## 5. Normative Section Coverage
 
 Every Part I section and numbered subsection is covered:
@@ -728,6 +745,7 @@ Every Part I section and numbered subsection is covered:
 | §8 | SMP-06, SMP-17 |
 | §9 | SMP-10 |
 | §10 | SMP-10, SMP-19 |
+| §10.1 | SMP-19, SMP-33 |
 | §11 | SMP-03, SMP-06, SMP-20 |
 | §12 | SMP-15, SMP-24 |
 | §13 | SMP-03, SMP-26 |
@@ -750,6 +768,10 @@ Every Part I section and numbered subsection is covered:
 | §26.1 | SMP-21, SMP-22, SMP-23 |
 | §27 | SMP-18, SMP-27 |
 | §28 | SMP-12, SMP-13, SMP-28 |
+| §28.1 | SMP-12, SMP-19 |
+| §28.2 | SMP-13, SMP-17 |
+| §28.3 | SMP-13, SMP-18, SMP-28 |
+| §28.4 | SMP-10, SMP-31 |
 | §29 | SMP-15, SMP-16, SMP-24 |
 | §30 | SMP-04, SMP-16, SMP-25, SMP-26 |
 | §31 | SMP-17, SMP-30, SMP-31 |

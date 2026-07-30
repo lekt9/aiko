@@ -99,10 +99,101 @@ Runnable witness:
 bash tests/agent-entrypoint-gate.sh
 ```
 
-`neuron interface ...` — the universal adapter membrane for functions,
-libraries, binaries, stores, APIs, protocols, streams, models, devices,
-humans, and remote Neurons — is parsed but fails closed as NotImplemented;
-plan Phases 2+ are not built yet.
+## Universal interface membrane
+
+`neuron interface` is how anything with a callable or observable boundary
+participates without being rewritten as a Neuron (Phase 2 of the same plan).
+Three local kinds are implemented: a **pure function** (a total op pipeline
+whose code *is* its pinned digest), a **process** (bounded argv/stdin/stdout
+with a deadline), and a **filesystem** store (path-confined reads, and
+content-addressed writes).
+
+```sh
+neuron interface discover <target> --json          # a read; grants nothing
+neuron interface describe <target> --output i.json # inert draft, boundary pinned
+neuron interface test i.json                       # contract + adversarial battery
+neuron interface admit <node_dir> i.json           # the authority step
+neuron interface attach <node_dir> <agent> --interface <digest> --role worker
+neuron interface call <node_dir> --interface <digest> --input "<text>"
+neuron interface dispatch <node_dir>               # drain + reconcile the outbox
+neuron interface detach|revoke|list ...
+```
+
+Every operation is classified as a capability **read** or a consequential
+**command**; anything unknown or mixed is a command. A read is performed inside
+the firing and recorded as provenance. A command cannot be invoked on the read
+path at all: it commits an outbox record first, crosses the boundary only on
+dispatch, and settles only after the external state is independently read back
+and compared by content digest. Admission re-pins the implementation and runs
+the battery itself, so an untyped boundary, an argv template that smuggles
+arguments, a capability widening, a missed deadline, or digest drift each fail
+closed without committing anything.
+
+Attaching an interface is what makes the agent do real work: with a `worker`
+interface attached, `neuron agent run` sends the goal across that boundary and
+the product is whatever the boundary returned, verified by an independent second
+invocation (deterministic boundaries) or against an explicit `--acceptance`
+predicate. With an `effector` attached, the judged product crosses a
+consequential boundary through the outbox before the snapshot advances. With
+nothing attached the agent falls back to the deterministic reference resolution.
+Runnable witness:
+
+```sh
+bash tests/universal-interface-gate.sh
+```
+
+Plan Phases 3–7 — HTTP/MCP/queue and remote adapters, models, devices, human
+gates, optional payment profiles, automatic adapter generation, and the
+multi-machine swarm — are not built yet.
+
+## Observability
+
+Three read-only projections over the same journal. None of them writes, and
+none takes the substrate's exclusive lock, so a live node can be inspected
+while it runs.
+
+```sh
+neuron telemetry project <state_dir> --json   # aggregate counters, per node
+neuron telemetry trace   <state_dir> --json   # per firing: when, cited, wrote
+neuron telemetry stale   <state_dir> --json   # derivations whose sources moved
+```
+
+`trace` reports `committed_at_ms`, a wall clock stamped when the record is
+appended. It is deliberately not the stimulus clock: `now_ms` sits inside the
+decision digest, so a real clock there would give every redelivery a new
+identity and turn idempotent replay into `FiringMismatch` (AGENTS.md §28.1).
+
+`stale` reconstructs the derivation graph from `produced_by` plus the
+`evidence[].sources` each firing cited, and reports every artifact computed
+from a source that has since been rewritten. Ordering is journal position
+alone, never a clock, so the projection is reproducible:
+
+```json
+{"schema":"neuron.staleness/v1","artifact":"agents/g/goals/8ed3f6ad…",
+ "stale_source":"agents/g/active","derived_at":8,"source_moved_at":28,
+ "redrivable":true}
+```
+
+`redrivable` is the mechanical re-derivation gate: a firing disqualifies itself
+by sending to `outbox/`, since repeating an external boundary crossing repeats a
+real-world effect rather than recomputing a value. Internal `event/` and
+`neuron/` traffic re-derives safely.
+
+Detection is separate from action — these projections mark nothing and re-fire
+nothing.
+
+Both survive `neuron compact`. Citations and commit ordinals are deterministic,
+so they cross the fold into the canonical snapshot; a wall clock cannot, so
+folded rows report `"timing":"unavailable"` and carry `"from":"snapshot"`
+rather than a fabricated `0`. `redrivable` reports `false` after compaction —
+per-firing messages are not retained, and a wrong `true` would repeat a real
+external effect (§28.4). The stale answer is identical whether a node has never
+been compacted, was compacted once, repeatedly, or is a mixed journal of
+snapshot plus fresh commits:
+
+```sh
+bash tests/observability-retention-gate.sh
+```
 
 ## What lives where
 
@@ -163,6 +254,10 @@ bash tests/check-production-neuron.sh
 ## Implemented reference behavior
 
 - one polymorphic hard-typed `Neuron.fire` boundary;
+- bidirectional communication: every message carries an interpreter-stamped
+  envelope (`from`, `correlation`, `reply_to`, `turn`), so a Neuron can answer
+  a peer it was never configured with — reply authority is conferred by
+  possessing the request, not by a send grant, and is bounded by `max_turns`;
 - deny-by-default, prefix-scoped capabilities and aggregate budgets;
 - atomic write/send/spawn decisions and compare-and-swap artifacts;
 - evidence grounding against the exact stimulus, messages, and pinned reads;
@@ -192,6 +287,8 @@ bash tests/gate.sh                   # specification benchmark
 bash tests/runtime-gate.sh           # standalone runtime
 bash tests/meta-agent-gate.sh        # composed agent lifecycle
 bash tests/agent-entrypoint-gate.sh  # standalone agent entrypoint
+bash tests/universal-interface-gate.sh # universal interface membrane
+bash tests/conversation-gate.sh      # bidirectional neuron communication
 bash tests/swarm-package-gate.sh     # bundle + two installed nodes
 bash tests/check-production-neuron.sh # Neuron + Contract + Aiko
 ```

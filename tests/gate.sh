@@ -31,4 +31,11 @@ rm -f "$jespa_gate_ledger"
 rmdir "$jespa_gate_tmp"
 
 JESPA_WIN_TARGET=4 bash bench/jespa/jespa-benchmarks-gate.sh
-echo "[neuron] PASS — document contract and honest benchmark witness are green"
+
+# Derivation-graph retention across compaction (§28.1–28.4). Included here
+# because the failure it guards is silent: a projection that goes blind after
+# `compact` stops reporting staleness rather than erroring, so nothing else in
+# this gate would notice its absence.
+bash tests/observability-retention-gate.sh
+
+echo "[neuron] PASS — document contract, honest benchmark witness, and derivation retention are green"

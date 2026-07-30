@@ -16,6 +16,13 @@ pub const StoredMessage = struct {
     schema: []u8,
     payload: []u8,
     durable: bool,
+    /// Attested envelope, stamped by the interpreter at commit (§20). It is
+    /// journaled with the message, so the return path of a conversation
+    /// survives restart exactly as it was committed.
+    from: []u8,
+    correlation: []u8,
+    reply_to: []u8,
+    turn: u8 = 0,
     status: DeliveryStatus = .queued,
     attempts: u8 = 0,
     max_attempts: u8 = 3,
@@ -25,6 +32,9 @@ pub const StoredMessage = struct {
         allocator.free(self.to);
         allocator.free(self.schema);
         allocator.free(self.payload);
+        allocator.free(self.from);
+        allocator.free(self.correlation);
+        allocator.free(self.reply_to);
     }
 };
 
@@ -85,11 +95,72 @@ pub const SpawnedNeuron = struct {
 
 pub const FiringStatus = enum { committed, rejected, failed, timed_out, cancelled };
 
+/// One retained citation. The substrate keeps evidence so that compaction can
+/// carry the derivation graph forward: `produced_by` gives artifact → firing,
+/// and these give firing → sources. It confers no authority — `validate` has
+/// already proven every source was a grounded read (§28.2) — so nothing on the
+/// commit path may consult it.
+pub const OwnedEvidence = struct {
+    claim: []u8,
+    method: []u8,
+    sources: [][]u8,
+
+    pub fn deinit(self: OwnedEvidence, allocator: Allocator) void {
+        for (self.sources) |source| allocator.free(source);
+        allocator.free(self.sources);
+        allocator.free(self.method);
+        allocator.free(self.claim);
+    }
+};
+
 pub const FiringRecord = struct {
     decision_digest: types.Digest,
     effects_committed: usize,
     status: FiringStatus,
+    /// Position in commit order. Survives compaction so that "this artifact
+    /// was derived before its source moved" stays answerable once the
+    /// canonical snapshot has sorted firings by id.
+    seq: u64 = 0,
+    /// Empty for firings that never produced a decision — a rejection or a
+    /// timeout has no citations to retain.
+    evidence: []OwnedEvidence = &.{},
+
+    pub fn deinit(self: FiringRecord, allocator: Allocator) void {
+        for (self.evidence) |item| item.deinit(allocator);
+        allocator.free(self.evidence);
+    }
 };
+
+/// Duplicate a decision's citations into substrate-owned memory. The commit
+/// path calls this *before* its infallible section, because a failure here
+/// must leave the substrate untouched.
+pub fn dupeEvidence(allocator: Allocator, evidence: []const types.Evidence) ![]OwnedEvidence {
+    const out = try allocator.alloc(OwnedEvidence, evidence.len);
+    var filled: usize = 0;
+    errdefer {
+        for (out[0..filled]) |item| item.deinit(allocator);
+        allocator.free(out);
+    }
+    for (evidence, 0..) |item, i| {
+        const claim = try allocator.dupe(u8, item.claim);
+        errdefer allocator.free(claim);
+        const method = try allocator.dupe(u8, item.method);
+        errdefer allocator.free(method);
+        const sources = try allocator.alloc([]u8, item.sources.len);
+        var sourced: usize = 0;
+        errdefer {
+            for (sources[0..sourced]) |source| allocator.free(source);
+            allocator.free(sources);
+        }
+        for (item.sources, 0..) |source, j| {
+            sources[j] = try allocator.dupe(u8, source);
+            sourced += 1;
+        }
+        out[i] = .{ .claim = claim, .method = method, .sources = sources };
+        filled += 1;
+    }
+    return out;
+}
 
 /// One staged commit item: owned copies ready to move into the substrate.
 /// Staged by the runtime, journaled by the substrate, then applied — in
@@ -122,6 +193,12 @@ pub const Substrate = struct {
     messages: std.ArrayList(StoredMessage) = .empty,
     neurons: std.StringHashMap(SpawnedNeuron),
     firings: std.StringHashMap(FiringRecord),
+    /// Monotonic commit ordinal. Canonical snapshots sort firings by id (§19),
+    /// which destroys log order — so derivation order has to be carried
+    /// explicitly or staleness cannot be computed after compaction. It is
+    /// assigned from commit order and therefore deterministic on replay,
+    /// unlike a wall clock, which is why it may live in the snapshot.
+    next_firing_seq: u64 = 0,
     /// The durable commit journal: null means process-local (init). When
     /// present, every mutation is appended and synced BEFORE the in-memory
     /// maps change, so the log is always ahead of memory and replay
@@ -200,7 +277,15 @@ pub const Substrate = struct {
 
     /// Journal one atomic firing commit: every effect and the firing
     /// record in a single line, so replay never sees half a commit (§20).
-    pub fn journalCommit(self: *Substrate, firing_id: []const u8, digest: types.Digest, effects_committed: usize, pending: []const Pending) !void {
+    pub fn journalCommit(
+        self: *Substrate,
+        firing_id: []const u8,
+        digest: types.Digest,
+        effects_committed: usize,
+        pending: []const Pending,
+        now_ms: u64,
+        evidence: []const types.Evidence,
+    ) !void {
         if (self.journal == null) return;
         var out: std.Io.Writer.Allocating = .init(self.allocator);
         defer out.deinit();
@@ -209,6 +294,36 @@ pub const Substrate = struct {
         try w.writeAll("{\"schema\":\"neuron.substrate/v1\",\"op\":\"commit\",\"firing_id\":");
         try writeJsonString(w, self.allocator, firing_id);
         try w.print(",\"digest\":\"{s}\",\"status\":\"committed\",\"effects_committed\":{}", .{ &digest_hex, effects_committed });
+        // Observability, not authority: the stimulus clock this firing settled
+        // under, and the citations `validate` already proved grounded.
+        //
+        // `committed_at_ms` is a wall clock read here, at journal time, and
+        // deliberately NOT taken from the stimulus: `now_ms` is inside the
+        // firing identity (see cborRuntimeStimulus), so a real clock in the
+        // stimulus would give a redelivered firing a new decision digest and
+        // turn idempotent replay into FiringMismatch. Recording it on the
+        // record instead keeps duration observable while leaving identity —
+        // and therefore replay-safety — untouched. Replay ignores this field.
+        const committed_at_ms: i64 = @intCast(@divTrunc(
+            std.Io.Timestamp.now(self.journal.?.io, .real).nanoseconds,
+            std.time.ns_per_ms,
+        ));
+        try w.print(",\"now_ms\":{},\"committed_at_ms\":{}", .{ now_ms, committed_at_ms });
+        try w.writeAll(",\"evidence\":[");
+        for (evidence, 0..) |item, i| {
+            if (i != 0) try w.writeAll(",");
+            try w.writeAll("{\"claim\":");
+            try writeJsonString(w, self.allocator, item.claim);
+            try w.writeAll(",\"method\":");
+            try writeJsonString(w, self.allocator, item.method);
+            try w.writeAll(",\"sources\":[");
+            for (item.sources, 0..) |source, j| {
+                if (j != 0) try w.writeAll(",");
+                try writeJsonString(w, self.allocator, source);
+            }
+            try w.writeAll("]}");
+        }
+        try w.writeAll("]");
         try w.writeAll(",\"artifacts\":[");
         var first = true;
         for (pending) |item| switch (item) {
@@ -241,7 +356,9 @@ pub const Substrate = struct {
                 try writeJsonString(w, self.allocator, message.schema);
                 try w.writeAll(",\"payload\":");
                 try writeHexString(w, message.payload);
-                try w.print(",\"durable\":{}}}", .{message.durable});
+                try w.print(",\"durable\":{}", .{message.durable});
+                try writeEnvelopeJson(w, self.allocator, message);
+                try w.writeAll("}");
             },
             else => {},
         };
@@ -397,7 +514,9 @@ pub const Substrate = struct {
             try writeJsonString(w, self.allocator, message.schema);
             try w.writeAll(",\"payload\":");
             try writeHexString(w, message.payload);
-            try w.print(",\"durable\":{},\"status\":\"{s}\",\"attempts\":{}}}", .{ message.durable, @tagName(message.status), message.attempts });
+            try w.print(",\"durable\":{}", .{message.durable});
+            try writeEnvelopeJson(w, self.allocator, message);
+            try w.print(",\"status\":\"{s}\",\"attempts\":{}}}", .{ @tagName(message.status), message.attempts });
         }
 
         try w.writeAll("],\"neurons\":[");
@@ -431,7 +550,27 @@ pub const Substrate = struct {
             const digest_hex = std.fmt.bytesToHex(firing.decision_digest, .lower);
             try w.writeAll("{\"firing_id\":");
             try writeJsonString(w, self.allocator, id);
-            try w.print(",\"digest\":\"{s}\",\"status\":\"{s}\",\"effects_committed\":{}}}", .{ &digest_hex, @tagName(firing.status), firing.effects_committed });
+            try w.print(",\"digest\":\"{s}\",\"status\":\"{s}\",\"effects_committed\":{},\"seq\":{}", .{ &digest_hex, @tagName(firing.status), firing.effects_committed, firing.seq });
+            // The derivation graph crosses the fold here. Citations are part of
+            // the decision and therefore deterministic, so writing them keeps
+            // the snapshot byte-identical for identical states (§19). The
+            // commit clock is deliberately *not* written: it is a wall clock,
+            // and would make the same state serialize differently every time.
+            try w.writeAll(",\"evidence\":[");
+            for (firing.evidence, 0..) |item, i| {
+                if (i != 0) try w.writeAll(",");
+                try w.writeAll("{\"claim\":");
+                try writeJsonString(w, self.allocator, item.claim);
+                try w.writeAll(",\"method\":");
+                try writeJsonString(w, self.allocator, item.method);
+                try w.writeAll(",\"sources\":[");
+                for (item.sources, 0..) |source, j| {
+                    if (j != 0) try w.writeAll(",");
+                    try writeJsonString(w, self.allocator, source);
+                }
+                try w.writeAll("]}");
+            }
+            try w.writeAll("]}");
         }
         try w.writeAll("]}\n");
     }
@@ -477,31 +616,82 @@ pub const Substrate = struct {
         for (record.artifacts) |artifact| try self.replayArtifact(artifact);
         for (record.messages) |message| try self.replayMessage(message);
         for (record.neurons) |neuron| try self.replayNeuron(neuron);
-        for (record.firings) |firing| try self.replayFiringRecord(firing.firing_id, firing.digest, firing.status, firing.effects_committed);
+        for (record.firings) |firing| try self.replayFiringRecord(firing.firing_id, firing.digest, firing.status, firing.effects_committed, firing.evidence, firing.seq);
     }
 
     fn replayCommit(self: *Substrate, record: RecordJ) !void {
         for (record.artifacts) |artifact| try self.replayArtifact(artifact);
         for (record.messages) |message| try self.replayMessage(message);
         for (record.neurons) |neuron| try self.replayNeuron(neuron);
-        try self.replayFiringRecord(record.firing_id, record.digest, "committed", record.effects_committed);
+        try self.replayFiringRecord(record.firing_id, record.digest, "committed", record.effects_committed, record.evidence, null);
     }
 
     fn replayFiring(self: *Substrate, record: RecordJ) !void {
-        try self.replayFiringRecord(record.firing_id, record.digest, record.status, 0);
+        // A rejection or timeout produced no committed decision, so there are
+        // no citations to retain.
+        try self.replayFiringRecord(record.firing_id, record.digest, record.status, 0, &.{}, null);
     }
 
-    fn replayFiringRecord(self: *Substrate, firing_id: []const u8, digest_hex_text: []const u8, status_text: []const u8, effects_committed: usize) !void {
+    fn replayFiringRecord(
+        self: *Substrate,
+        firing_id: []const u8,
+        digest_hex_text: []const u8,
+        status_text: []const u8,
+        effects_committed: usize,
+        evidence: []const EvidenceJ,
+        stored_seq: ?u64,
+    ) !void {
         if (firing_id.len == 0) return error.CorruptLog;
         const status = std.meta.stringToEnum(FiringStatus, status_text) orelse return error.CorruptLog;
         const digest = try digestFromHex(digest_hex_text);
         const owned = try self.allocator.dupe(u8, firing_id);
         errdefer self.allocator.free(owned);
+        const retained = try self.dupeEvidenceJ(evidence);
+        errdefer {
+            for (retained) |item| item.deinit(self.allocator);
+            self.allocator.free(retained);
+        }
+        // A snapshot carries the ordinal it recorded; a commit record is
+        // replayed in log order, which is the same order it was assigned in.
+        const seq = stored_seq orelse self.next_firing_seq;
+        if (seq >= self.next_firing_seq) self.next_firing_seq = seq + 1;
         self.firings.putNoClobber(owned, .{
             .decision_digest = digest,
             .effects_committed = effects_committed,
             .status = status,
+            .seq = seq,
+            .evidence = retained,
         }) catch return error.CorruptLog;
+    }
+
+    /// Replay-side counterpart to `dupeEvidence`: the journal's wire shape
+    /// rather than the runtime's.
+    fn dupeEvidenceJ(self: *Substrate, evidence: []const EvidenceJ) ![]OwnedEvidence {
+        const out = try self.allocator.alloc(OwnedEvidence, evidence.len);
+        var filled: usize = 0;
+        errdefer {
+            for (out[0..filled]) |item| item.deinit(self.allocator);
+            self.allocator.free(out);
+        }
+        for (evidence, 0..) |item, i| {
+            const claim = try self.allocator.dupe(u8, item.claim);
+            errdefer self.allocator.free(claim);
+            const method = try self.allocator.dupe(u8, item.method);
+            errdefer self.allocator.free(method);
+            const sources = try self.allocator.alloc([]u8, item.sources.len);
+            var sourced: usize = 0;
+            errdefer {
+                for (sources[0..sourced]) |source| self.allocator.free(source);
+                self.allocator.free(sources);
+            }
+            for (item.sources, 0..) |source, j| {
+                sources[j] = try self.allocator.dupe(u8, source);
+                sourced += 1;
+            }
+            out[i] = .{ .claim = claim, .method = method, .sources = sources };
+            filled += 1;
+        }
+        return out;
     }
 
     fn replayArtifact(self: *Substrate, artifact: ArtifactJ) !void {
@@ -538,12 +728,22 @@ pub const Substrate = struct {
         errdefer self.allocator.free(schema);
         const payload = try hexAlloc(self.allocator, message.payload);
         errdefer self.allocator.free(payload);
+        const from = try self.allocator.dupe(u8, message.from);
+        errdefer self.allocator.free(from);
+        const correlation = try self.allocator.dupe(u8, message.correlation);
+        errdefer self.allocator.free(correlation);
+        const reply_to = try self.allocator.dupe(u8, message.reply_to);
+        errdefer self.allocator.free(reply_to);
         try self.messages.append(self.allocator, .{
             .firing_id = firing_id,
             .to = to,
             .schema = schema,
             .payload = payload,
             .durable = message.durable,
+            .from = from,
+            .correlation = correlation,
+            .reply_to = reply_to,
+            .turn = message.turn,
             .status = status,
             .attempts = message.attempts,
         });
@@ -635,8 +835,13 @@ pub const Substrate = struct {
             journal.file.close(journal.io);
             self.allocator.free(journal.sub_path);
         }
-        var firing_it = self.firings.keyIterator();
-        while (firing_it.next()) |key| self.allocator.free(key.*);
+        // FiringRecord stopped being plain-old-data when it gained retained
+        // evidence, so the values need freeing now, not only the keys.
+        var firing_it = self.firings.iterator();
+        while (firing_it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            entry.value_ptr.deinit(self.allocator);
+        }
         self.firings.deinit();
 
         var neuron_it = self.neurons.iterator();
@@ -672,11 +877,23 @@ const RecordJ = struct {
     effects_committed: usize = 0,
     index: usize = 0,
     attempts: u8 = 0,
+    now_ms: u64 = 0,
+    committed_at_ms: i64 = 0,
     artifacts: []const ArtifactJ = &.{},
     messages: []const MessageJ = &.{},
     neurons: []const NeuronJ = &.{},
     firings: []const FiringJ = &.{},
+    evidence: []const EvidenceJ = &.{},
     prefixes: []const []const u8 = &.{},
+};
+
+/// The citations a committed decision made. Journaled for observability only:
+/// `validate` has already proven every source was a grounded read, so replay
+/// re-derives no authority from these and simply carries them forward.
+const EvidenceJ = struct {
+    claim: []const u8 = "",
+    method: []const u8 = "",
+    sources: []const []const u8 = &.{},
 };
 
 const FiringJ = struct {
@@ -684,6 +901,14 @@ const FiringJ = struct {
     digest: []const u8 = "",
     status: []const u8 = "",
     effects_committed: usize = 0,
+    /// Commit-order ordinal, so derivation order outlives the id-sorted
+    /// canonical snapshot (§19).
+    seq: u64 = 0,
+    /// Carried across compaction so the derivation graph outlives the
+    /// per-commit records that are folded away (§28.4). Deterministic, so it
+    /// does not disturb the canonical byte-identical snapshot (§19) — unlike
+    /// `committed_at_ms`, which is a wall clock and stays off the snapshot.
+    evidence: []const EvidenceJ = &.{},
 };
 
 const ArtifactJ = struct {
@@ -699,6 +924,12 @@ const MessageJ = struct {
     msg_schema: []const u8 = "",
     payload: []const u8 = "",
     durable: bool = true,
+    /// The attested envelope. Absent in journals written before conversations
+    /// existed, which replay as one-way sends with no reply authority.
+    from: []const u8 = "",
+    correlation: []const u8 = "",
+    reply_to: []const u8 = "",
+    turn: u8 = 0,
     /// Delivery state, present only inside snapshot records; commit records
     /// omit it and default to a fresh queued message.
     status: []const u8 = "queued",
@@ -747,6 +978,18 @@ fn writeJsonString(w: *std.Io.Writer, allocator: Allocator, raw: []const u8) !vo
     const encoded = try std.json.Stringify.valueAlloc(allocator, raw, .{});
     defer allocator.free(encoded);
     try w.writeAll(encoded);
+}
+
+/// The attested envelope, written identically by commit and snapshot records
+/// so a conversation's return path is reconstructed byte-for-byte on replay.
+fn writeEnvelopeJson(w: *std.Io.Writer, allocator: Allocator, message: StoredMessage) !void {
+    try w.writeAll(",\"from\":");
+    try writeJsonString(w, allocator, message.from);
+    try w.writeAll(",\"correlation\":");
+    try writeJsonString(w, allocator, message.correlation);
+    try w.writeAll(",\"reply_to\":");
+    try writeJsonString(w, allocator, message.reply_to);
+    try w.print(",\"turn\":{}", .{message.turn});
 }
 
 fn writeHexString(w: *std.Io.Writer, bytes: []const u8) !void {
