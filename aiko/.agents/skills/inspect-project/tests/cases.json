@@ -1,0 +1,11 @@
+[
+  {
+    "expect": {
+      "held_effects": [],
+      "root_count": 1,
+      "selected": "inspect-project"
+    },
+    "name": "default",
+    "prompt": "Please inspect project and show the git status."
+  }
+]

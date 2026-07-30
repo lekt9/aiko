@@ -1,0 +1,156 @@
+{
+  "trace_id": "n3z4o_u3ncM6GTC43o14H",
+  "skill_id": "8jPMOtzhhmOT0HEcAqWs6",
+  "endpoint_id": "-Sws9pxCKeOZK-dzIP7MV",
+  "started_at": "2026-07-20T16:46:32.022Z",
+  "completed_at": "2026-07-20T16:46:33.695Z",
+  "success": true,
+  "status_code": 200,
+  "trace_version": "5d9ebf619c61@0cbffe15e1b7",
+  "decision_trace": [
+    {
+      "step": "probe",
+      "method": "HEAD",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "ms": 673
+    },
+    {
+      "step": "decision",
+      "strategy": "server",
+      "reason": "probe 200 + html + dom_extraction recipe — server fetch + extract"
+    },
+    {
+      "step": "server_fetch",
+      "status": 200
+    }
+  ],
+  "result": [
+    {
+      "title": "repositories Search Results · cloudflare worker openai chat completions proxy",
+      "heading_1": "Filter by",
+      "heading_2": "Languages",
+      "heading_3": "Advanced",
+      "heading_4": "6 results",
+      "heading_5": "cxy13h/chat-to-responses-proxy",
+      "heading_6": "cxy13h/chat-to-responses-proxy",
+      "heading_7": "6Kmfi6HP/chatjimmy-to-api-workers",
+      "heading_8": "6Kmfi6HP/chatjimmy-to-api-workers",
+      "heading_9": "edxeth/a4f-proxyPublic archive",
+      "heading_10": "edxeth/a4f-proxy",
+      "heading_11": "FlameZerg/2api-workersai-proxy",
+      "heading_12": "FlameZerg/2api-workersai-proxy",
+      "heading_13": "andya1lan/azure-openai-responses-proxy",
+      "heading_14": "andya1lan/azure-openai-responses-proxy",
+      "heading_15": "banana2556/assistantui2api-cfworker",
+      "heading_16": "banana2556/assistantui2api-cfworker",
+      "heading_17": "Sponsor open source projects you depend on",
+      "heading_18": "How can we improve search?",
+      "heading_19": "Sponsor open source projects you depend on",
+      "heading_20": "How can we improve search?",
+      "link": "https://github.com/search?q=cloudflare+worker+openai+chat+completions+proxy&type=code",
+      "url": "https://github.com/search?q=cloudflare+worker+openai+chat+completions+proxy&type=code",
+      "image": "https://github.com/cxy13h.png?size=40",
+      "description": "Contributors are working behind the scenes to make open source better for everyone—give them the help and recognition they deserve.",
+      "rating": "296"
+    },
+    {
+      "title": "cxy13h/chat-to-responses-proxy",
+      "heading_1": "cxy13h/chat-to-responses-proxy",
+      "message": "cxy13h/chat-to-responses-proxy",
+      "link": "/cxy13h/chat-to-responses-proxy",
+      "url": "/cxy13h/chat-to-responses-proxy",
+      "image": "https://github.com/cxy13h.png?size=40"
+    },
+    {
+      "title": "cxy13h/chat-to-responses-proxy",
+      "heading_1": "cxy13h/chat-to-responses-proxy",
+      "message": "cxy13h/chat-to-responses-proxy",
+      "link": "/cxy13h/chat-to-responses-proxy",
+      "url": "/cxy13h/chat-to-responses-proxy",
+      "image": "https://github.com/cxy13h.png?size=40"
+    },
+    {
+      "title": "6Kmfi6HP/chatjimmy-to-api-workers",
+      "heading_1": "6Kmfi6HP/chatjimmy-to-api-workers",
+      "message": "6Kmfi6HP/chatjimmy-to-api-workers",
+      "link": "/6Kmfi6HP/chatjimmy-to-api-workers",
+      "url": "/6Kmfi6HP/chatjimmy-to-api-workers",
+      "image": "https://github.com/6Kmfi6HP.png?size=40"
+    },
+    {
+      "title": "6Kmfi6HP/chatjimmy-to-api-workers",
+      "heading_1": "6Kmfi6HP/chatjimmy-to-api-workers",
+      "message": "6Kmfi6HP/chatjimmy-to-api-workers",
+      "link": "/6Kmfi6HP/chatjimmy-to-api-workers",
+      "url": "/6Kmfi6HP/chatjimmy-to-api-workers",
+      "image": "https://github.com/6Kmfi6HP.png?size=40"
+    },
+    {
+      "title": "edxeth/a4f-proxyPublic archive",
+      "heading_1": "edxeth/a4f-proxy",
+      "message": "edxeth/a4f-proxy",
+      "link": "/edxeth/a4f-proxy",
+      "url": "/edxeth/a4f-proxy",
+      "image": "https://github.com/edxeth.png?size=40"
+    },
+    {
+      "title": "edxeth/a4f-proxyPublic archive",
+      "heading_1": "edxeth/a4f-proxy",
+      "message": "edxeth/a4f-proxy",
+      "link": "/edxeth/a4f-proxy",
+      "url": "/edxeth/a4f-proxy",
+      "image": "https://github.com/edxeth.png?size=40"
+    },
+    {
+      "title": "FlameZerg/2api-workersai-proxy",
+      "heading_1": "FlameZerg/2api-workersai-proxy",
+      "message": "FlameZerg/2api-workersai-proxy",
+      "link": "/FlameZerg/2api-workersai-proxy",
+      "url": "/FlameZerg/2api-workersai-proxy",
+      "image": "https://github.com/FlameZerg.png?size=40"
+    },
+    {
+      "title": "FlameZerg/2api-workersai-proxy",
+      "heading_1": "FlameZerg/2api-workersai-proxy",
+      "message": "FlameZerg/2api-workersai-proxy",
+      "link": "/FlameZerg/2api-workersai-proxy",
+      "url": "/FlameZerg/2api-workersai-proxy",
+      "image": "https://github.com/FlameZerg.png?size=40"
+    },
+    {
+      "title": "andya1lan/azure-openai-responses-proxy",
+      "heading_1": "andya1lan/azure-openai-responses-proxy",
+      "message": "andya1lan/azure-openai-responses-proxy",
+      "link": "/andya1lan/azure-openai-responses-proxy",
+      "url": "/andya1lan/azure-openai-responses-proxy",
+      "image": "https://github.com/andya1lan.png?size=40"
+    },
+    {
+      "title": "andya1lan/azure-openai-responses-proxy",
+      "heading_1": "andya1lan/azure-openai-responses-proxy",
+      "message": "andya1lan/azure-openai-responses-proxy",
+      "link": "/andya1lan/azure-openai-responses-proxy",
+      "url": "/andya1lan/azure-openai-responses-proxy",
+      "image": "https://github.com/andya1lan.png?size=40"
+    },
+    {
+      "title": "banana2556/assistantui2api-cfworker",
+      "heading_1": "banana2556/assistantui2api-cfworker",
+      "message": "banana2556/assistantui2api-cfworker",
+      "link": "/banana2556/assistantui2api-cfworker",
+      "url": "/banana2556/assistantui2api-cfworker",
+      "image": "https://github.com/banana2556.png?size=40"
+    },
+    {
+      "title": "banana2556/assistantui2api-cfworker",
+      "heading_1": "banana2556/assistantui2api-cfworker",
+      "message": "banana2556/assistantui2api-cfworker",
+      "link": "/banana2556/assistantui2api-cfworker",
+      "url": "/banana2556/assistantui2api-cfworker",
+      "image": "https://github.com/banana2556.png?size=40"
+    }
+  ],
+  "workflow_selected_bindings": [],
+  "workflow_strategy": "server"
+}

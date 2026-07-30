@@ -1,0 +1,3 @@
+interface:
+  display_name: "Contract Interface"
+  short_description: "Grow any interface into a Contract-native pack"

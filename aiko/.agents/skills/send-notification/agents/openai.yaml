@@ -1,0 +1,4 @@
+interface:
+  display_name: "Send Notification"
+  short_description: "Prepare and govern outbound notifications"
+  default_prompt: "Use $send-notification to prepare this notification safely."

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <title>Aiko application icon</title>
+  <rect width="1024" height="1024" rx="224" fill="#0B1020"/>
+  <rect x="72" y="72" width="880" height="880" rx="176" fill="#111A31"/>
+  <path d="M174 790 427 194h125L304 790H174Z" fill="#AFC1FF"/>
+  <path d="m500 194 117 3 249 593H724l-89-224H424l48-116h119L500 194Z" fill="#7896ED"/>
+  <rect x="724" y="186" width="112" height="112" rx="34" fill="#91E8F2"/>
+</svg>

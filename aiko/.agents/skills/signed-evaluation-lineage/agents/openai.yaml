@@ -1,0 +1,4 @@
+interface:
+  display_name: Signed Evaluation Lineage
+  short_description: Measure variants with signed ancestry
+  default_prompt: Use the Contract graph and verify the signed archive before selecting a variant.

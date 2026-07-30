@@ -1,0 +1,1154 @@
+{
+  "benchmark": "ARC-AGI-3 fresh-store Contract/JESPA vs Python cognitive-map baseline",
+  "games": [
+    "sp80"
+  ],
+  "maxActionsPerGame": 500,
+  "seeds": [
+    11,
+    29
+  ],
+  "rounds": 1,
+  "metric": "aggregate (levels completed, full-game wins, negative actions-to-completion), lexicographic",
+  "jespa": {
+    "levelsCompleted": 0,
+    "wins": 0,
+    "completionActions": 0
+  },
+  "baseline": {
+    "levelsCompleted": 0,
+    "wins": 0,
+    "completionActions": 0
+  },
+  "won": false,
+  "trials": [
+    {
+      "benchmark": "Aiko strict-general ARC-AGI-3 controller",
+      "gameAgnostic": true,
+      "recordedActionReplay": false,
+      "legacyHeuristics": false,
+      "maxActionsPerGame": 500,
+      "games": 1,
+      "levelsCompleted": 0,
+      "wins": 0,
+      "errors": 0,
+      "contractRequired": true,
+      "contractCalls": 99,
+      "trials": [
+        {
+          "solver": "aiko-arc-skill",
+          "mode": "offline-mechanical",
+          "game": "sp80",
+          "actions": 25,
+          "levelsCompleted": 0,
+          "winLevels": 6,
+          "state": "GAME_OVER",
+          "durationMs": 710.99,
+          "contractCalls": 99,
+          "contractLibrary": "/Users/lewis/.aiko/lib/libcontract.dylib",
+          "transitions": [
+            {
+              "step": 1,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 2,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 3,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 4,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 5,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 6,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 7,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 8,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 9,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 10,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 11,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 12,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 13,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 14,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 15,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 16,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 17,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 18,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 19,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 20,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 21,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 22,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 23,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 24,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 25,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "GAME_OVER"
+            }
+          ]
+        }
+      ],
+      "seed": 11,
+      "variant": "jespa",
+      "round": 1
+    },
+    {
+      "benchmark": "Aiko strict-general ARC-AGI-3 controller",
+      "gameAgnostic": true,
+      "recordedActionReplay": false,
+      "legacyHeuristics": false,
+      "maxActionsPerGame": 500,
+      "games": 1,
+      "levelsCompleted": 0,
+      "wins": 0,
+      "errors": 0,
+      "contractRequired": false,
+      "contractCalls": 0,
+      "trials": [
+        {
+          "solver": "aiko-arc-skill",
+          "mode": "offline-mechanical",
+          "game": "sp80",
+          "actions": 25,
+          "levelsCompleted": 0,
+          "winLevels": 6,
+          "state": "GAME_OVER",
+          "durationMs": 157.35,
+          "contractCalls": 0,
+          "contractLibrary": null,
+          "transitions": [
+            {
+              "step": 1,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 2,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 3,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 4,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 5,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 6,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 7,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 8,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 9,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 10,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 11,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 12,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 13,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 14,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 15,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 16,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 17,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 18,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 19,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 20,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 21,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 22,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 23,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 24,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 25,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "GAME_OVER"
+            }
+          ]
+        }
+      ],
+      "seed": 11,
+      "variant": "baseline",
+      "round": 1
+    },
+    {
+      "benchmark": "Aiko strict-general ARC-AGI-3 controller",
+      "gameAgnostic": true,
+      "recordedActionReplay": false,
+      "legacyHeuristics": false,
+      "maxActionsPerGame": 500,
+      "games": 1,
+      "levelsCompleted": 0,
+      "wins": 0,
+      "errors": 0,
+      "contractRequired": true,
+      "contractCalls": 99,
+      "trials": [
+        {
+          "solver": "aiko-arc-skill",
+          "mode": "offline-mechanical",
+          "game": "sp80",
+          "actions": 25,
+          "levelsCompleted": 0,
+          "winLevels": 6,
+          "state": "GAME_OVER",
+          "durationMs": 357.65,
+          "contractCalls": 99,
+          "contractLibrary": "/Users/lewis/.aiko/lib/libcontract.dylib",
+          "transitions": [
+            {
+              "step": 1,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 2,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 3,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 4,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 5,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 6,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 7,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 8,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 9,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 10,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 11,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 12,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 13,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 14,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 15,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 16,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 17,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 18,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 19,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 20,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 21,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 22,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 23,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 24,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 25,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "GAME_OVER"
+            }
+          ]
+        }
+      ],
+      "seed": 29,
+      "variant": "jespa",
+      "round": 1
+    },
+    {
+      "benchmark": "Aiko strict-general ARC-AGI-3 controller",
+      "gameAgnostic": true,
+      "recordedActionReplay": false,
+      "legacyHeuristics": false,
+      "maxActionsPerGame": 500,
+      "games": 1,
+      "levelsCompleted": 0,
+      "wins": 0,
+      "errors": 0,
+      "contractRequired": false,
+      "contractCalls": 0,
+      "trials": [
+        {
+          "solver": "aiko-arc-skill",
+          "mode": "offline-mechanical",
+          "game": "sp80",
+          "actions": 25,
+          "levelsCompleted": 0,
+          "winLevels": 6,
+          "state": "GAME_OVER",
+          "durationMs": 221.59,
+          "contractCalls": 0,
+          "contractLibrary": null,
+          "transitions": [
+            {
+              "step": 1,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 2,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 3,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 4,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 5,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 6,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 7,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 8,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 9,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 10,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 11,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 12,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 13,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 14,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 15,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 16,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 17,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 18,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 19,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 20,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 21,
+              "action": 1,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 22,
+              "action": 2,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 23,
+              "action": 3,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 24,
+              "action": 4,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "NOT_FINISHED"
+            },
+            {
+              "step": 25,
+              "action": 5,
+              "x": 0,
+              "y": 0,
+              "organ": "cogmap-explore",
+              "levelsBefore": 0,
+              "levelsAfter": 0,
+              "state": "GAME_OVER"
+            }
+          ]
+        }
+      ],
+      "seed": 29,
+      "variant": "baseline",
+      "round": 1
+    }
+  ]
+}

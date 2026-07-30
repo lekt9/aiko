@@ -1,0 +1,9 @@
+[
+  {
+    "prompt": "Score this agent variant with a signed evaluation record.",
+    "expect": {
+      "selected": "signed-evaluation-lineage",
+      "held_effects": []
+    }
+  }
+]

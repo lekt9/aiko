@@ -1,0 +1,16 @@
+{
+    "name": "aiko-openai-proxy",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "description": "Aiko OpenAI-compatible proxy → Codegraff gateway (Cloudflare Worker)",
+    "scripts": {
+        "test": "node --test worker.test.js",
+        "dev": "wrangler dev",
+        "deploy": "wrangler deploy",
+        "tail": "wrangler tail"
+    },
+    "devDependencies": {
+        "wrangler": "^4.0.0"
+    }
+}

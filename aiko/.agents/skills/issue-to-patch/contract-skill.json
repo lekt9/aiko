@@ -1,0 +1,122 @@
+{
+  "description": "Turn a repository issue into a narrow verified patch while holding publication.",
+  "examples": [
+    {
+      "expect": {
+        "held_effects": [
+          "local_reversible",
+          "publish"
+        ],
+        "root_count": 1,
+        "selected": "issue-to-patch"
+      },
+      "name": "default",
+      "prompt": "Fix issue 123 and prepare a pull request."
+    }
+  ],
+  "id": "issue-to-patch",
+  "input_schema": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "nodes": [
+    {
+      "can_parallel": true,
+      "depends_on": [],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "inspect",
+      "plan": "Inspect the issue and repository integration points for {{goal}}.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    },
+    {
+      "can_parallel": false,
+      "depends_on": [
+        "inspect"
+      ],
+      "effect": "local_reversible",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "patch",
+      "plan": "Prepare and apply the narrow verified patch for {{goal}}.",
+      "read_only": false,
+      "requires_authority": true,
+      "reversible": true,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    },
+    {
+      "can_parallel": false,
+      "depends_on": [
+        "patch"
+      ],
+      "effect": "local_write",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "test",
+      "plan": "Run focused regression checks for {{goal}}.",
+      "read_only": false,
+      "requires_authority": false,
+      "reversible": true,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    },
+    {
+      "can_parallel": false,
+      "depends_on": [
+        "test"
+      ],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "prepare-publication",
+      "plan": "Prepare commit or pull-request metadata for {{goal}}.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    },
+    {
+      "can_parallel": false,
+      "depends_on": [
+        "prepare-publication"
+      ],
+      "effect": "publish",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "publish",
+      "plan": "Publish the authorized commit or pull request for {{goal}}.",
+      "read_only": false,
+      "requires_authority": true,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    }
+  ],
+  "output_schema": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "platforms": [
+    "all"
+  ],
+  "schema_version": 1,
+  "triggers": [
+    "fix issue",
+    "implement issue",
+    "issue to patch",
+    "prepare pull request"
+  ],
+  "version": "1.0.0"
+}
