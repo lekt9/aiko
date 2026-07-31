@@ -37,6 +37,20 @@ const ToolResult = contract.mcp_server.ToolResult;
 /// bridge-gate. Nothing is exposed here that is not witnessed somewhere.
 pub const TOOLS = [_]ToolSpec{
     .{
+        .name = "aiko.claim.register",
+        .description = "Register a claim about the world with the condition that would REFUTE it and an ordinal deadline. A claim declaring no refutation condition is refused: nothing about it could turn out to be false. The deadline is a commit ordinal, never a wall clock, because a clock inside a firing identity breaks idempotent replay.",
+        .schema =
+        \\{"type":"object","properties":{"statement":{"type":"string"},"refuted_by":{"type":"string","description":"what would show this claim false"},"expect_by":{"type":"string","description":"commit ordinal by which evidence is due"},"dependent":{"type":"string","description":"what to fire on contradiction"}},"required":["statement","refuted_by"]}
+        ,
+    },
+    .{
+        .name = "aiko.claim.observe",
+        .description = "Record evidence against a registered claim. Evidence arriving after a contradiction does NOT un-say it: the contradiction already fired its dependent, and in the staffing case that dependent was a phone call.",
+        .schema =
+        \\{"type":"object","properties":{"claim_id":{"type":"string"},"observation":{"type":"string"}},"required":["claim_id","observation"]}
+        ,
+    },
+    .{
         .name = "aiko.ledger.read",
         .description = "Read the durable contract ledger: one row by id, or all rows. Every row answers who/what/when/where/why/how or it was refused at write time.",
         .schema =
@@ -167,6 +181,52 @@ pub fn dispatch(
     args: std.json.Value,
 ) anyerror!ToolResult {
     const exe = "aiko";
+
+    // The two verbs VISION.md names as the whole simplification. Both go
+    // through `contract.declare`, the same W6H-gated path the bridge uses, so a
+    // claim is a durable row that answers who/what/when/where/why/how or is
+    // refused at write time — and is readable straight back through
+    // `aiko.ledger.read` with no second store to disagree with the first.
+    if (std.mem.eql(u8, tool_name, "aiko.claim.register")) {
+        const statement = str(args, "statement") orelse return missing(a, "statement");
+        // The same refusal a gap gets and a package gets. A claim with no
+        // refutation condition states nothing that could turn out to be false.
+        const refuted_by = str(args, "refuted_by") orelse return missing(a, "refuted_by");
+        const expect_by = str(args, "expect_by") orelse "";
+        const dependent = str(args, "dependent") orelse "";
+        const extras = [_]contract.Field{
+            .{ .key = "claim_refuted_by", .value = refuted_by },
+            // An ORDINAL, not a clock: a wall clock inside a firing identity
+            // makes every redelivery a new identity.
+            .{ .key = "claim_expect_by_ordinal", .value = expect_by },
+            .{ .key = "claim_dependent", .value = dependent },
+            .{ .key = "claim_state", .value = "pending" },
+        };
+        const id = contract.declare(a, env, statement, "aiko:claim/register", .{
+            .extras = &extras,
+        }) catch |err| return .{
+            .text = try std.fmt.allocPrint(a, "claim refused: {t}", .{err}),
+            .is_error = true,
+        };
+        return .{ .text = try std.fmt.allocPrint(a, "claim={s} state=pending", .{id}), .is_error = false };
+    }
+
+    if (std.mem.eql(u8, tool_name, "aiko.claim.observe")) {
+        const claim_id = str(args, "claim_id") orelse return missing(a, "claim_id");
+        const observation = str(args, "observation") orelse return missing(a, "observation");
+        const extras = [_]contract.Field{
+            .{ .key = "claim_ref", .value = claim_id },
+            .{ .key = "claim_evidence", .value = observation },
+        };
+        const id = contract.declare(a, env, observation, "aiko:claim/observe", .{
+            .parent_id = claim_id,
+            .extras = &extras,
+        }) catch |err| return .{
+            .text = try std.fmt.allocPrint(a, "observation refused: {t}", .{err}),
+            .is_error = true,
+        };
+        return .{ .text = try std.fmt.allocPrint(a, "observation={s} claim={s}", .{ id, claim_id }), .is_error = false };
+    }
 
     if (std.mem.eql(u8, tool_name, "aiko.ledger.read")) {
         if (str(args, "id")) |id| {

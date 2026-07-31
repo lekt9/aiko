@@ -90,11 +90,31 @@ aiko.gap.resolve     objective in             ✅   ← reuse | discover | autho
 aiko.redrive         the reactive pass        ✅   ← re-derive | escalate | compensate
 aiko.bridge          firing → W6H ledger row  ✅
 
-aiko.claim.register  { statement, expect_by, evidence_kind, on_contradiction }   ⬜
-aiko.claim.observe   { claim_id, observation } → confirmed | contradicted | pending  ⬜
+aiko.claim.register  { statement, refuted_by, expect_by, dependent }        ✅
+aiko.claim.observe   { claim_id, observation }                             ✅
 ```
 
-That is the simplification. **Not a new architecture — two new verbs.**
+That is the simplification. **Not a new architecture — two new verbs.** Both are
+now live: `tools/list` returns eight, and `dispatch-gate` asserts that as an
+exact set so a caller who believes they are there cannot be silently wrong.
+
+Both go through `contract.declare` — the same W6H-gated path the bridge uses —
+so a claim is a durable row that answers who/what/when/where/why/how or is
+refused at write time, readable straight back through `aiko.ledger.read`. There
+is no second claim store to disagree with the ledger.
+
+`refuted_by` is required. A claim declaring no refutation condition is refused,
+naming the field: the same rule a gap gets and a package gets, on a third
+surface.
+
+**What is NOT an MCP verb: settlement.** Contradicting a claim whose ordinal
+deadline passed unmet is witnessed by `claim-deadline-gate` — seven assertions,
+seven falsifiers, including that a dependent which already crossed a boundary is
+compensated rather than re-fired, and that late evidence never un-says a
+contradiction. It is not yet reachable through the MCP, and the open design
+question is whether it should emit into `redrive` rather than compensate beside
+it. Two compensators that can disagree is a defect this repository has shipped
+once already.
 
 ---
 

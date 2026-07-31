@@ -46,6 +46,8 @@ mkdir -p "$root/.contracts"
   printf '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"aiko.bridge","arguments":{"state_dir":"%s/n/state","agent":"a1"}}}\n' "$root"
   echo '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"aiko.ledger.read","arguments":{}}}'
   echo '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"aiko.port.publish","arguments":{"node":"x"}}}'
+  echo '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"aiko.claim.register","arguments":{"statement":"w1 attends shift 306","refuted_by":"no reply by shift start","expect_by":"2"}}}'
+  echo '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"aiko.claim.register","arguments":{"statement":"something will happen"}}}'
 } | timeout 120 "$doctor" mcp > "$root/out.jsonl" 2>"$root/err.txt" || true
 
 # 5. A MISSING BINARY NAMES THE FIX, NOT THE SYMPTOM.
@@ -116,6 +118,10 @@ print("  identifies as aiko")
 expected = {
     "aiko.ledger.read", "aiko.port.publish", "aiko.port.attach",
     "aiko.gap.resolve", "aiko.redrive", "aiko.bridge",
+    # The two verbs VISION.md names as the whole simplification. Asserted as
+    # part of the EXACT set, so a caller that believes they are there cannot be
+    # silently wrong.
+    "aiko.claim.register", "aiko.claim.observe",
 }
 got = {t["name"] for t in result(2).get("tools", [])}
 if got != expected:
@@ -140,6 +146,24 @@ if not result(5).get("isError"):
 if "document" not in text(5):
     print("FAIL: refusal did not name the missing field: %r" % text(5)[:120]); sys.exit(1)
 print("  refusal names the offending field")
+
+# 6+7. A CLAIM IS DURABLE, AND AN UNFALSIFIABLE ONE IS REFUSED.
+# The claim verbs go through the same W6H-gated `contract.declare` the bridge
+# uses, so a registered claim is a durable row rather than a second store that
+# can disagree with the ledger.
+if result(6).get("isError"):
+    print("FAIL: aiko.claim.register errored: %s" % text(6)[:160]); sys.exit(1)
+if "claim=" not in text(6):
+    print("FAIL: register returned no claim id: %r" % text(6)[:120]); sys.exit(1)
+print("  a claim registers as a durable row")
+
+# The same refusal a gap gets and a package gets: no refutation condition means
+# nothing about the claim could turn out to be false.
+if not result(7).get("isError"):
+    print("FAIL: a claim declaring NO refutation condition was ACCEPTED"); sys.exit(1)
+if "refuted_by" not in text(7):
+    print("FAIL: the refusal did not name refuted_by: %r" % text(7)[:120]); sys.exit(1)
+print("  a claim with no refutation condition is refused, naming the field")
 PY
 
 echo "dispatch gate: PASS"
