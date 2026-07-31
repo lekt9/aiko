@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.publication-plan/v1",
+  "title": "Publication Plan",
+  "description": "The outcome of the reuse search, and the only thing that authorizes generation. `port-drafter` takes this as a required read and refuses unless `route` is \"generate\" for this exact gap, so a caller cannot reach a draft by skipping the search.",
+  "type": "object",
+  "required": ["gap", "route", "candidates_considered"],
+  "properties": {
+    "schema": {"const": "neuron.publication-plan/v1"},
+    "gap": {"type": "string", "minLength": 1},
+    "need": {"type": "string"},
+    "route": {"type": "string", "enum": ["reuse", "generate"]},
+    "reuse_published": {"type": "string", "description": "The port that already serves the contract. Empty when route is \"generate\"."},
+    "reuse_route": {"type": "string"},
+    "reuse_verified_successes": {"type": "integer", "minimum": 0, "description": "Verified successes behind the reused port. Only publication-judge ever increments this."},
+    "candidates_considered": {"type": "integer", "minimum": 0},
+    "rejected": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["published", "reason"],
+        "properties": {"published": {"type": "string"}, "reason": {"type": "string"}},
+        "additionalProperties": false
+      }
+    },
+    "detail": {"type": "string"}
+  },
+  "additionalProperties": false
+}

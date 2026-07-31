@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.publication-pattern/v1",
+  "title": "Publication Pattern",
+  "description": "The accumulated VERIFIED successes of one (gap, published interface) pair. Written by publication-judge on the verified branch and nowhere else, and consumed by reuse-searcher to rank candidates — so the ranking cannot be trained by a port that published, attached, and never served anything. A pattern belongs to one interface: a different port starts its own record rather than inheriting a ranking it never earned.",
+  "type": "object",
+  "required": ["gap", "interface", "verified_successes"],
+  "properties": {
+    "schema": {"const": "neuron.publication-pattern/v1"},
+    "gap": {"type": "string", "minLength": 1},
+    "need": {"type": "string"},
+    "interface": {"type": "string", "minLength": 64, "maxLength": 64},
+    "route": {"type": "string"},
+    "verified_successes": {"type": "integer", "minimum": 1},
+    "last_listener": {"type": "string"},
+    "last_product_schema": {"type": "string"}
+  },
+  "additionalProperties": false
+}

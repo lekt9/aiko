@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.published-manifest/v1",
+  "title": "Published Manifest (input)",
+  "description": "The accepts/emits/errors triple a served boundary promises a caller, plus enough binding metadata to address it. This is read-only input to the client-emitter: it is not admitted, parsed, or trusted by this limb as a capability grant — it is inert data staged as a digest-pinned read (§20 step 3). The emitter never widens what it was handed; it only re-serializes the same triple for a different reader.",
+  "type": "object",
+  "required": ["id", "version", "accepts", "emits", "errors", "manifest_digest", "transport", "bind"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "minLength": 1 },
+    "accepts": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "emits": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "errors": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "manifest_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 hex digest of the published manifest's own canonical bytes. Copied verbatim into every emitted client so drift between the server's live manifest and a caller's stale client is detectable at the caller, not discovered at request time."
+    },
+    "transport": { "type": "string", "enum": ["neuron_wire", "http", "mcp"] },
+    "bind": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "description": "Absolute literal served path. No placeholders." },
+        "method": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "node_address": {
+      "type": "string",
+      "description": "Base address of the serving node (e.g. https://node.example:8443). Required to build an absolute request in a generated client; omitted clients emit a relative path only."
+    }
+  },
+  "additionalProperties": false
+}

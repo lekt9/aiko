@@ -1,0 +1,15 @@
+{
+  "schema": "neuron.publication-probe/v1",
+  "gap": "example/greet",
+  "published": "1ed510c0e9b2df3ca0000000000000000000000000000000000000000000000f",
+  "agent": "porter",
+  "transport": "http-listener",
+  "listener": "127.0.0.1:8791",
+  "url": "http://127.0.0.1:8791/agents/porter/greet",
+  "method": "POST",
+  "request_body": "{\"name\": \"ada\"}",
+  "status": 200,
+  "product_schema": "example.greeting/v1",
+  "neuron_status": "served",
+  "response_body": "{\"answer\":\"hello ada\",\"schema\":\"example.greeting/v1\"}"
+}

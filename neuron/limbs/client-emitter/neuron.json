@@ -1,0 +1,37 @@
+{
+  "schema": "typed-neuron.limb-manifest/v1",
+  "package": "typed-neuron/client-emitter",
+  "version": "0.1.0",
+  "description": "Emits a typed frontend client from a published manifest's accepts/emits/errors, so a frontend consumes the exact pinned contract a server serves. Pure text generation: reads a digest-pinned published-manifest artifact, writes an inert client-source artifact. Makes no capability decision, holds no ambient authority, and executes nothing it generates (§30).",
+  "neurons": [
+    {
+      "id": "client-emitter",
+      "argv": ["python3", "neurons/client_emitter.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "client-emitter/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 2,
+          "max_writes": 1,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 262144,
+          "max_depth": 1
+        }
+      }
+    }
+  ],
+  "budgets": {
+    "deadline_ms_per_firing": 10000
+  },
+  "schemas": {
+    "PublishedManifest": "neuron.published-manifest/v1",
+    "ClientEmitRequest": "neuron.client-emit-request/v1",
+    "EmittedClient": "neuron.emitted-client/v1"
+  },
+  "witnesses": {
+    "python_tests": "python3 -c 'from neurons.client_emitter import fire; print(\"client_emitter ok\")'"
+  }
+}

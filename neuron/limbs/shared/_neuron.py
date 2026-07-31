@@ -134,6 +134,28 @@ def artifact_refs(stim, schema):
     return out
 
 
+def cas_write(stim, artifact_id, schema, body):
+    """A write effect carrying the compare-and-swap the interpreter requires.
+
+    runtime.zig refuses a write over an existing artifact unless the decision
+    names its exact prior digest, and equally refuses an `expected_prior` when
+    nothing is there. A neuron cannot see the substrate, so the prior has to
+    arrive as an ordinary digest-pinned read under the same id — which is the
+    point: replacing a record you have not read is exactly the lost update the
+    rule exists to prevent, and a neuron that was handed no prior fails closed
+    at commit rather than silently clobbering one.
+    """
+    effect = {"kind": "write", "artifact": {
+        "id": artifact_id, "schema": schema, "bytes": body}}
+    for ref in stim.get("reads", []):
+        if ref.get("id") == artifact_id:
+            if "digest" not in ref:
+                raise Reject("validation", f"prior read {artifact_id} carries no digest")
+            effect["artifact"]["expected_prior"] = ref["digest"]
+            break
+    return effect
+
+
 def inbound(stim, schema=None, correlation=None):
     """Inbound messages, optionally filtered by schema or conversation.
 

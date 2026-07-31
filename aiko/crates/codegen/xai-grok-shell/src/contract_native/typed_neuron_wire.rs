@@ -15,7 +15,7 @@ pub(crate) const HASH_PROFILE: &str = "deterministic-cbor-sha256/1";
 pub(crate) const SCHEMA_DIGEST: &str =
     "737d6642b24362db7272728e08f248a0839fe9798b0df0f8e0a78d4eb2fc03ca";
 pub(crate) const PACKAGE_DIGEST: &str =
-    "29cb6f917c0d5b8ad8f14295edc7a8d733e41693dd51582069a911afa2169e8e";
+    "7637db818cb7061e6c000f20af67e86115893ef3ec620c1747493589ec2a57c4";
 pub(crate) const FIRE_SCHEMA: &str = "neuron.fire/v2";
 pub(crate) const RESULT_SCHEMA: &str = "neuron.fire-result/v2";
 pub(crate) const CAPS_SCHEMA: &str = "neuron.caps/v1";

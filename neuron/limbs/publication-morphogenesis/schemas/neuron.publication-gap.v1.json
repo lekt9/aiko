@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.publication-gap/v1",
+  "title": "Publication Gap",
+  "description": "What callers need this node to SERVE but it does not yet serve. The inbound counterpart to morphogenesis.zig's CapabilityGap: it declares both the typed surface required and how to tell whether a candidate port really serves it. A gap never names a handler digest and never names its own capabilities — both are derived from substrate state and from the contract.",
+  "type": "object",
+  "required": ["id", "version", "need", "route", "accepts", "emits", "errors", "callers", "expect_contains"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1, "description": "Stable contract identity. Becomes the published interface's id."},
+    "version": {"type": "string", "minLength": 1},
+    "need": {"type": "string", "minLength": 1, "description": "What a caller gets. Becomes the published interface's evidence_claim."},
+    "route": {"type": "string", "pattern": "^/", "description": "Literal served path, mounted by the kernel under /agents/<agent>. No placeholders, no query: everything a caller may vary travels in the body under a schema."},
+    "method": {"type": "string", "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"], "default": "POST"},
+    "mode": {"type": "string", "enum": ["read", "command"], "default": "read"},
+    "reconcile_route": {"type": "string", "pattern": "^/", "description": "Required for a command, forbidden otherwise: the independent read-back that lets a consequence be settled."},
+    "receptor_schema": {"type": "string", "description": "The schema a request is admitted as. Must be one of accepts; defaults to accepts[0]."},
+    "accepts": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "emits": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "errors": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "callers": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "Peers admitted to call the port, e.g. \"ip4:127.0.0.1\". An inbound surface with no listed peer is deny-all."},
+    "idempotency": {"type": "string", "enum": ["none", "keyed", "natural"], "default": "keyed"},
+    "firing_id_source": {"type": "string", "enum": ["content", "caller_supplied"], "default": "content"},
+    "deterministic": {"type": "boolean"},
+    "timeout_ms": {"type": "integer", "minimum": 1},
+    "max_request_bytes": {"type": "integer", "minimum": 1},
+    "max_output_bytes": {"type": "integer", "minimum": 1},
+    "max_concurrent": {"type": "integer", "minimum": 1},
+    "input_classes": {"type": "array", "items": {"type": "string"}},
+    "output_classes": {"type": "array", "items": {"type": "string"}},
+    "expect_contains": {"type": "string", "minLength": 1, "description": "The gap's own acceptance, judged against the body a real HTTP caller receives. A gap without one is unfalsifiable: anything returning bytes would satisfy it."}
+  },
+  "additionalProperties": false
+}

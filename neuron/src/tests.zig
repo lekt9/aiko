@@ -48,6 +48,7 @@ test {
     _ = @import("tailnet.zig");
     _ = @import("mcp.zig");
     _ = @import("energy_router.zig");
+    _ = @import("redrive.zig");
 }
 
 const Fixture = struct {

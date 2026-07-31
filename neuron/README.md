@@ -180,7 +180,37 @@ real-world effect rather than recomputing a value. Internal `event/` and
 `neuron/` traffic re-derives safely.
 
 Detection is separate from action — these projections mark nothing and re-fire
-nothing.
+nothing. `neuron redrive <state_dir> [--dry-run]` is the verb that acts, and it
+has exactly three outcomes:
+
+```sh
+neuron redrive ./state --json   # or --dry-run to classify and commit nothing
+```
+
+- **`redrivable: true` under a determinism claim** — re-fire the producer
+  against the moved sources. `now_ms` is `0` and the work identity is a content
+  digest, so this lands on a *new* firing id and the superseded result stays in
+  the journal as history. Determinism is the termination proof: a producer that
+  cannot claim it re-derives a different answer every pass and never reaches a
+  fixpoint, so it is routed to the next case instead.
+- **cannot settle mechanically** — open an agent. An agent is three writes
+  (manifest, snapshot 0000, active pointer) plus a goal naming the stale
+  derivation. It is opened, not run. *Not every neuron is a task; every neuron
+  that cannot settle mechanically is.*
+- **already sent to `outbox/`** — never re-fired. A typed
+  `neuron.compensation-gap/v1` records the superseded product, the new product
+  (or honestly that it is unknown, and why), and the delta between the source
+  version that crossed the boundary and the one that stands now. Re-firing
+  "notify 35 workers" after an amendment re-messages the 31 who did not change
+  and still fails to tell the 4 who did.
+
+Cascades are bounded by a generation counter: a re-derivation settles a goal,
+which advances the active snapshot, which invalidates whatever cited it. Past
+the bound the loop stops re-firing and hands the remainder to an agent.
+
+```sh
+bash tests/redrive-gate.sh
+```
 
 Both survive `neuron compact`. Citations and commit ordinals are deterministic,
 so they cross the fold into the canonical snapshot; a wall clock cannot, so

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.publication-probe/v1",
+  "title": "Publication Probe",
+  "description": "One observation of a published port, made from OUTSIDE the process by a real HTTP client against a real `neuron port http` listener. The provenance fields are not documentation: publication-judge refuses any probe whose transport is not \"http-listener\", whose url authority is not the attested listener, or whose path is not the gap's mount point. Firing the handler limb in process would prove the limb works, not that the port works.",
+  "type": "object",
+  "required": ["gap", "published", "agent", "transport", "listener", "url", "method", "status"],
+  "properties": {
+    "gap": {"type": "string", "minLength": 1},
+    "published": {"type": "string", "minLength": 64, "maxLength": 64},
+    "agent": {"type": "string", "minLength": 1},
+    "transport": {"const": "http-listener", "description": "The only value that constitutes evidence about a port."},
+    "listener": {"type": "string", "pattern": "^(?:\\d{1,3}(?:\\.\\d{1,3}){3}|\\[[0-9A-Fa-f:]+\\]):\\d{1,5}$", "description": "The socket the request actually crossed."},
+    "url": {"type": "string", "pattern": "^http://"},
+    "method": {"type": "string"},
+    "request_body": {"type": "string"},
+    "status": {"type": "integer", "description": "The real HTTP status line."},
+    "product_schema": {"type": "string", "description": "The X-Neuron-Product-Schema response header."},
+    "product_digest": {"type": "string"},
+    "neuron_status": {"type": "string", "description": "The X-Neuron-Status response header: served, replayed, ..."},
+    "response_body": {"type": "string"}
+  },
+  "additionalProperties": false
+}

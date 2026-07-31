@@ -44,8 +44,16 @@ pub const GuardError = error{
 ///
 /// Pointer prefixes that count as valid: file: contract: url: machine:
 /// sha256: pointer: agent: x402: bridge:
-pub fn pointerOnly(field_name: []const u8, value: []const u8) GuardError!void {
-    _ = field_name;
+///
+/// Takes only the value. An earlier signature carried a `field_name` the body
+/// never read, and a never-read slice parameter makes the zig 0.16.0
+/// self-hosted x86_64 backend (the Debug default on linux; macOS/aarch64 goes
+/// through LLVM and is unaffected) abandon the prefix loop after its first
+/// iteration — so on linux every long proof except a `file:` one was refused
+/// as unpointered. A guard that refuses valid evidence is as broken as one
+/// that admits invalid evidence: it teaches callers to bypass. Do not
+/// reintroduce an unused parameter here.
+pub fn pointerOnly(value: []const u8) GuardError!void {
     // Empty is fine.
     if (value.len == 0) return;
     // Short narrative (<500 chars) is fine — agent annotation, not transfer.
@@ -221,7 +229,7 @@ pub fn runStack(
     }
     // Σ24 pointer-only on proof
     if (!has.check(.pointer_only, bypassed)) {
-        if (proof) |p| try pointerOnly("proof", p);
+        if (proof) |p| try pointerOnly(p);
     }
     // Π11 env-guard on inferred ptype
     if (!has.check(.env_mismatch, bypassed)) {
@@ -253,20 +261,36 @@ pub fn runStack(
 // folder needed. `zig build test` IS the verification surface.
 
 test "pointerOnly: short narrative passes" {
-    try pointerOnly("proof", "short narrative is fine");
+    try pointerOnly("short narrative is fine");
 }
 
 test "pointerOnly: long value with pointer prefix passes" {
     var buf: [600]u8 = undefined;
     @memset(&buf, 'x');
     @memcpy(buf[0..9], "contract:");
-    try pointerOnly("proof", buf[0..]);
+    try pointerOnly(buf[0..]);
+}
+
+// Every prefix, not just the first — the linux miscompile above passed the
+// single-prefix test while silently refusing the other thirteen.
+test "pointerOnly: every recognized prefix is reached, not just the first" {
+    const cases = [_][]const u8{
+        "file:",    "contract:", "url:",   "http://", "https://",
+        "machine:", "sha256:",   "agent:", "x402:",   "bridge:",
+        "pointer:", "ssh://",    "git+",   "ipfs://",
+    };
+    for (cases) |prefix| {
+        var buf: [600]u8 = undefined;
+        @memset(&buf, 'x');
+        @memcpy(buf[0..prefix.len], prefix);
+        try pointerOnly(buf[0..]);
+    }
 }
 
 test "pointerOnly: long value without pointer prefix refused" {
     var buf: [600]u8 = undefined;
     @memset(&buf, 'x');
-    try std.testing.expectError(GuardError.PointerRequired, pointerOnly("proof", buf[0..]));
+    try std.testing.expectError(GuardError.PointerRequired, pointerOnly(buf[0..]));
 }
 
 test "credEntropy: clean string passes" {

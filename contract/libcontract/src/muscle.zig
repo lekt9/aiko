@@ -115,8 +115,19 @@ pub const Bank = struct {
             return cell;
         }
         if (binary.len > 128) return error.BinaryNameTooLong;
+        // Both branches must hand back a BLANK cell. `cells` is `undefined`
+        // (zeroing 64 x ~2KB on every Bank would cost more than it buys) and
+        // `delete` swap-removes, so a never-used or vacated slot still holds
+        // whatever was there before. Claiming one without resetting inherits
+        // that as evidence: fires/successes/failures become garbage counts —
+        // `successes + failures` in rank() overflows outright — and the
+        // prototype/transition weights become garbage energies, so recall and
+        // predict answer with a binary that was never grounded. Learned
+        // authorization read off uninitialized memory is the worst failure
+        // this bank has: it is confident and it is fabricated.
         const slot: *Cell = if (self.count < MAX_BINARIES) blk: {
             const s = &self.cells[self.count];
+            s.* = .{};
             self.count += 1;
             break :blk s;
         } else blk: {
@@ -512,6 +523,26 @@ test "rank exposes multiple candidates and grounded failure raises energy" {
     try std.testing.expect(rg_after > rg_before);
     try std.testing.expect(bank.delete("rg"));
     try std.testing.expectEqual(@as(usize, 1), bank.rank("search source", null, null, &ranked));
+}
+
+// A slot vacated by `delete` is reachable again through the count<MAX branch,
+// so re-observing a deleted binary must start from zero evidence. Without the
+// reset in `ensure` the new cell inherits the deleted one's grounded failures
+// and answers with borrowed authority.
+test "a deleted binary re-observes from zero, not from the vacated slot's evidence" {
+    var bank: Bank = .{};
+    try bank.observe(.{ .context = "open the door", .binary = "burn-it-down", .before = "closed", .after = "closed", .reward = -1 });
+    try bank.observe(.{ .context = "open the door", .binary = "burn-it-down", .before = "closed", .after = "closed", .reward = -1 });
+    try std.testing.expect(bank.delete("burn-it-down"));
+    try bank.observe(.{ .context = "open the door", .binary = "turn-handle", .before = "closed", .after = "open", .reward = 1 });
+    var ranked: [MAX_BINARIES]Bank.Candidate = undefined;
+    try std.testing.expectEqual(@as(usize, 1), bank.rank("open the door", null, null, &ranked));
+    try std.testing.expectEqualStrings("turn-handle", ranked[0].binary);
+    try std.testing.expectEqual(@as(usize, 1), ranked[0].fires);
+    try std.testing.expectEqual(@as(usize, 1), ranked[0].successes);
+    try std.testing.expectEqual(@as(usize, 0), ranked[0].failures);
+    try std.testing.expectEqual(@as(f64, 1), ranked[0].confidence);
+    try std.testing.expectEqualStrings("turn-handle", bank.recall("open the door").?);
 }
 
 test "pointer trees expand recursively into parallel dependency waves" {

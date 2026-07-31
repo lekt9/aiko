@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.port-census/v1",
+  "title": "Port Census",
+  "description": "The node's own published-interface state, projected out of durable substrate for the reuse search. `live` is the distinction that matters: an admitted published record is not an edge, so an unattached port serves nothing and reusing it would leave the gap open.",
+  "type": "object",
+  "required": ["agent", "ports"],
+  "properties": {
+    "agent": {"type": "string", "minLength": 1},
+    "routes": {"type": "array", "items": {"type": "string"}, "description": "Live routes as reported by `neuron port list --agent <id> --json`."},
+    "ports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["published", "accepts", "emits", "live"],
+        "properties": {
+          "published": {"type": "string", "minLength": 64, "maxLength": 64},
+          "id": {"type": "string"},
+          "path": {"type": "string"},
+          "method": {"type": "string"},
+          "mode": {"type": "string", "enum": ["read", "command"], "default": "read"},
+          "accepts": {"type": "array", "items": {"type": "string"}},
+          "emits": {"type": "array", "items": {"type": "string"}},
+          "errors": {"type": "array", "items": {"type": "string"}},
+          "live": {"type": "boolean", "description": "Attached: its route is in the node's live route table."},
+          "revoked": {"type": "boolean"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
