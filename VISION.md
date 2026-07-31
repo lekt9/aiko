@@ -41,7 +41,7 @@ system survives Aiko being unavailable or handed off. Do not fuse the trees.
 | Missing-skill generation | `Route.authored`, **bounded** by a catalogue that never reads the gap | `authored-gap-gate` |
 | Deterministic assignment | staffing engine, `(last_worked, name)` total order | `staffing-engine-gate` |
 | Reply / no-reply / terminal call | escalation ladder, per-worker, terminating | `escalation-ladder-gate` |
-| Single API surface | `aiko-doctor mcp`, six tools | `dispatch-gate` |
+| Single API surface | `aiko-doctor mcp`, eight tools | `dispatch-gate` |
 
 The proposal's most consequential omission is its `on_contradiction:
 INVALIDATE_AND_PROPAGATE`. Re-deriving "notify 35 workers" **re-messages the 31
@@ -80,7 +80,7 @@ metaphor", and then does no mechanical work.
 
 ## 4. Simplify: the whole thing is eight verbs
 
-Six exist. Two do not.
+All eight now exist; the last two landed here.
 
 ```
 aiko.ledger.read     what happened            ✅
@@ -135,9 +135,11 @@ a boundary produces a **CompensationGap**, never a re-fire. The proposal's
 `INVALIDATE_AND_PROPAGATE` has no such case, which is the one thing that must not
 be copied.
 
-**The witness, which fails today:** a claim whose deadline passes with no
-evidence contradicts itself and fires its dependent — *without re-crossing any
-boundary already crossed*, asserted per recipient rather than in aggregate.
+**The witness, and it passes:** `claim-deadline-gate` — a claim whose deadline
+passes with no evidence contradicts itself and fires its dependent, *without
+re-crossing any boundary already crossed*, asserted per recipient rather than in
+aggregate. Seven assertions, seven independent falsifiers. What remains is
+reaching that settlement through the MCP rather than only through the limb.
 
 ---
 
