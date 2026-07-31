@@ -171,6 +171,28 @@ only correct behaviour yields.
   use `std.process.Args.Iterator.initAllocator(init.minimal.args, a)` and
   `init.minimal.environ`. Both were invisible from reading and only appeared on
   `zig build`.
+
+  These claims are **checked against the compiler**, not asserted. The block
+  below is the source of truth and `tests/zig-doctrine-gate.sh` parses it,
+  generates a `@hasDecl` probe from it, and compiles it. Edit a line to
+  something false and the gate goes red; the doctrine cannot rot quietly when
+  a toolchain moves under it. This is the same refusal `SKILL.md` applies to a
+  package, pointed at prose about the language.
+
+  ```zig-doctrine
+  # <decl-path> <absent|present>   — one claim per line
+  std.process.argsAlloc    absent
+  std.process.Args         present
+  std.time.milliTimestamp  absent
+  std.time.ns_per_ms       present
+  std.Io.Timestamp         present
+  std.Io.Dir               present
+  ```
+
+  Why an external Zig skill was NOT bound here instead: the best-installed one
+  on the registry targets **0.15.2** while this repo pins `0.16.0` in all three
+  manifests. Importing it would be adopting a claim nothing checks — the exact
+  drift this block exists to prevent.
 - **macOS-verified is not Linux-verified.** Two bugs shipped that way: `build.zig`
   never called `linkLibC` while `mesh.zig` used `std.c.fcntl`, and `limb_ops.zig`
   opened `schemas/` without `.iterate` so every package with that directory
