@@ -1,72 +1,248 @@
-# commons
+# Aiko
 
-Converged monorepo for the Unbrowse workspace. Everything that used to be a
-separate clone — several with no remote at all — is now one repository with one
-history.
+A meta-fractal harness for agent-operated business processes, exposed as an MCP
+and mounted inside Hermes.
 
-## Clone
+Most agents can complete a task. The hard problem is a process that runs every
+day, talks to people, waits for replies, and has to be *right* — because being
+wrong costs thirty-five phone calls and a missed vessel. Aiko is built for that
+second problem.
 
-```bash
-git clone git@gitea:Unbrowse/commons.git
+> Spelled **Aiko**. Meeting notes and transcripts say "Ico"; that is a
+> transcription artifact.
+
+---
+
+## The one idea
+
+Every mechanism in Aiko is one refusal wearing different clothes: **refuse to
+claim something happened when it didn't.**
+
+| Mechanism | What it refuses |
+|---|---|
+| W6H | a record that cannot answer who/what/when/where/why/how — the write fails, naming the missing one |
+| admission by digest | code not pinned to bytes that existed before the pin |
+| outbox + independent read-back | settling an external effect on the sender's word |
+| evidence grounding | a claim that cannot cite its sources |
+| nothing-on-compilation-alone | a generated component that compiled but never worked |
+| compensation | re-crossing a boundary already crossed |
+
+This is the honest route to "zero setup". Not magical self-configuration — the
+reason agent onboarding never ends is that you cannot trust the report, so you
+go back and check. Aiko makes *done* mechanically checkable, so re-checking
+stops being rational.
+
+**Aiko is not infallible and does not claim to be.** It is fallible and refuses
+to hide it. That is the property worth paying for in a system you may one day
+hand to someone else.
+
+---
+
+## Architecture
+
+Three layers, one build, one binary, one deliberate direction:
+
+```
+                    zig-out/bin/aiko
+                           │
+        ┌──────────────────┴──────────────────┐
+        │                                     │
+   neuron/                              contract/
+   the firing primitive                 the durable interpreter
+   ─────────────────────                ───────────────────────
+   fire(Stimulus, Caps) → Decision      append-only ledger
+   effects: write | send | spawn        W6H: six interrogatives or refused
+   the membrane: 8 boundary kinds       at: / repeat: occurrences
+   served `port` HTTP surface           occurrence invalidates prior truth
+   redrive: the reactive loop           valid_from / valid_until, cadence
+   limbs: admitted, digest-pinned
+
+   STANDALONE. No runtime dependency    imports neuron, never the reverse
+   on contract or on the Rust host.
 ```
 
-That's it. No submodule init, no `--recurse-submodules`, no bootstrap script.
+**The direction is the product guarantee.** neuron builds and passes its tests
+*without* contract. That is the mechanical evidence that a delivered system
+survives Aiko being unavailable, changed, or handed off — a contractual
+condition expressed as an architecture rather than a promise.
 
-## Pull
+`aiko/` (the Rust host) lives in this repo but is **not** in the Zig build. It
+compiles; its test build exhausts a 16 GB machine, so including it would produce
+a build step that cannot be verified on the hardware it runs on. An unverifiable
+step is worse than an absent one.
 
-```bash
-git pull
+---
+
+## Reactive: what actually makes it event-driven
+
+A node re-fires when the thing it was derived from moves. Not polling, and not
+re-reasoning over the whole world each time.
+
+```
+contract   a NEW OCCURRENCE invalidates the resolved contract and its dependants
+              ↓
+neuron     telemetry stale rebuilds the derivation graph from produced_by
+           plus each firing's cited evidence sources
+              ↓
+aiko redrive   classifies every stale row into exactly three cases:
+
+   ① re-derivable          → re-fire under a NEW firing id
+   ② cannot settle         → open an agent goal
+   ③ ALREADY SENT          → CompensationGap. Never re-fired.
 ```
 
-## What's inside
+**Case ③ is the one most designs lack, and the one production needs.** After an
+amended order, re-firing "notify 35 workers" re-messages the 31 who did not
+change and still fails to tell the 4 who did. Compensation diffs the superseded
+product against the new one and acts on the delta only.
 
-| Path | What it is | Was |
-|------|-----------|-----|
-| `aiko/` | Aiko agent + contract harness, skills, apps | local only, **no remote** |
-| `contract/` | Contract substrate (5263 commits) | local only, **no remote** |
-| `unbrowse/` | Unbrowse core | github.com/unbrowse-ai/unbrowse |
-| `neuron/` | Neuron (Zig) — membrane, swarm, morphogenesis | gitea `Unbrowse/neuron` |
-| `unbrowse-dev/` | Unbrowse dev snapshot | local only, **no remote** |
+Two constraints follow, and they bind anything built on this:
 
-Three of these existed nowhere but this laptop before convergence.
+1. **Producers on the recompute path must be deterministic.** A non-deterministic
+   producer re-derives a different answer each time, invalidates its own
+   dependents, and never settles. Determinism is the termination proof. Models
+   belong at the edges — OCR, message wording, exception summaries — never on
+   the recompute path.
+2. **A step is invisible to invalidation unless it cites its sources.** An
+   uncited read is not a dependency as far as the loop is concerned.
 
-## History
+---
 
-Imported with `git subtree add`, so **all 5393 commits are present and
-reachable**, and `git blame` walks back into the original commits normally.
+## Self-wiring and self-writing
 
-One caveat: `git log -- contract/<file>` stops at the import merge. Historical
-commits recorded that file at the repo root (`CLAUDE.md`), not at
-`contract/CLAUDE.md`, so path-filtered log doesn't cross the merge boundary. To
-read a project's history directly:
+Both exist and are witnessed by gates. They are different things.
 
-```bash
-git log 65b58cad          # contract's pre-merge tip
-git blame contract/CLAUDE.md   # works across the boundary
+- **Self-wiring** — a capability gap is closed by discovering a boundary that
+  already declares a schema, deriving an inert manifest, testing it, admitting
+  it by digest, attaching least authority, retrying on the real path, and
+  judging the outcome. Retained only on a verified real-path success.
+- **Self-writing** — a component is *written inert*, then admitted by digest,
+  attached, used, revoked, detached and collected.
+
+The invariant is not "never write code". It is **write inert → admit by digest →
+never retain on compilation alone.** Generation and admission are separate
+steps, so generated bytes exist before their own pin.
+
+**Honest limit:** the two are not yet joined. Nothing takes a gap and *writes a
+handler for it* — if no boundary satisfies a gap, the loop retires it rather
+than authoring what would close it. That is the next piece of work
+(`PLAN-aiko-convergence.md`, T2).
+
+---
+
+## Quickstart
+
+Requires Zig 0.16.
+
+```sh
+git clone git@gitea:Unbrowse/commons.git && cd commons
+zig build                    # → zig-out/bin/aiko + libcontract.a
+zig build test               # both layers' suites
+zig build gate               # the runnable witnesses
+./zig-out/bin/aiko-doctor    # prove both layers link in one process
+```
+
+No submodule init, no bootstrap script.
+
+Verified natively on Linux (build, both test suites, all gates). macOS is where
+these layers were originally developed and is expected to work, but is not
+verified here — and this repository has already shipped two bugs that were
+invisible on macOS and fatal on Linux, so the reverse is worth re-checking
+rather than assuming.
+
+Serve a contract as an API and mirror firings into the durable ledger:
+
+```sh
+aiko port publish <node> <published.json>      # admit an inbound contract
+aiko port attach  <node> <agent> --published <digest> --handler <pkg>
+aiko port http    <node> --listen 127.0.0.1:8080
+aiko-doctor bridge <node>/state --agent <id>   # firings → W6H-gated rows
+aiko redrive <node>/state                      # the reactive pass
+```
+
+**Gates are the acceptance criterion**, not the unit tests. Each drives the
+public CLI from an empty directory and asserts against durable state.
+
+---
+
+## Status
+
+| | State |
+|---|---|
+| Firing primitive, membrane (8 boundary kinds), limbs | ✅ gated |
+| Served `port` HTTP surface | ✅ gated |
+| `redrive` — three-case invalidation | ✅ gated |
+| Bridge — firing → W6H-gated contract row | ✅ gated |
+| Self-wiring / self-writing (separately) | ✅ gated |
+| One build, Linux-native, both layers linked | ✅ |
+| Joining self-wiring to self-writing | ⬜ T2 |
+| MCP dispatch — the surface Hermes mounts | ⬜ T3 |
+| Operator UI | ⬜ not started |
+| OCR at the model edge | ⬜ open |
+| Credential vault / browser access | ⬜ none, in any layer |
+| Constraint solver | ⬜ none, and none claimed |
+
+---
+
+## Repository layout
+
+Converged monorepo — everything that used to be a separate clone, several with
+no remote at all, is one repository with one history.
+
+| Path | What it is |
+|------|-----------|
+| `neuron/` | Neuron (Zig) — firing, membrane, ports, redrive, limbs |
+| `contract/` | Contract substrate — ledger, W6H, occurrences. **Closed source**, see `contract/NEVER-PUBLISH.md` |
+| `aiko/` | Rust host, skills, desktop app. Not in the Zig build |
+| `unbrowse/` | Unbrowse core |
+| `unbrowse-dev/` | Unbrowse dev snapshot |
+
+### History
+
+Imported with `git subtree add`, so all 5393 commits are reachable and
+`git blame` walks back into the originals.
+
+One caveat: `git log -- contract/<file>` stops at the import merge, because
+historical commits recorded that file at the repo root. To read a project's
+history directly:
+
+```sh
+git log 65b58cad                # contract's pre-merge tip
+git blame contract/CLAUDE.md    # works across the boundary
 ```
 
 Each import merge commit records the source tip SHA in its message.
 
-## Artifacts are not tracked
+### Build outputs are not tracked
 
-The pre-convergence working trees held ~98 GB (aiko 70 G, contract 28 G) —
-almost entirely build output and benchmark runs. Only real source came across
-(~322 MB). The root `.gitignore` keeps it that way: `node_modules/`, `dist/`,
-`build/`, `target/`, `zig-out/`, benchmark run dirs, and local agent state
-(`.grok/`, `.graff/`).
+The pre-convergence trees held ~98 GB, almost entirely build output. A later
+pass removed the last 246 MB still committed — all of it prebuilt macOS
+`.dylib` and Windows `.dll`/`.pdb`, with **no Linux artifact at all**, which is
+why a fresh Linux clone had nothing to link against. A checked-in foreign binary
+was standing in for a build step that never ran.
 
-Excluded at convergence: `dist/` (865 M), `benchmarks/harbor/` (939 M), tauri
-`binaries/` (446 M), `node_modules/` (308 M), and benchmark run dirs that
-contained embedded git repos (they would have become broken gitlinks).
+`zig build` now produces the right artifact for whatever host you are on. The
+root `.gitignore` keeps it that way.
 
-The original clones are untouched at `/Volumes/Disk/home-offload/unbrowse/` if
-you ever need the old artifacts back.
+### Pushing a project upstream
 
-## Pushing a project back upstream
-
-`unbrowse/` and `neuron/` still have upstreams:
-
-```bash
+```sh
 git subtree push --prefix=unbrowse git@github.com:unbrowse-ai/unbrowse.git main
 git subtree push --prefix=neuron   git@gitea:Unbrowse/neuron.git             main
 ```
+
+---
+
+## Documents
+
+| Document | Authority |
+|---|---|
+| `CLAUDE.md` | agent session context — read first if you are an agent |
+| `PLAN-aiko-convergence.md` | risk-ordered remaining work |
+| `neuron/AGENTS.md` | normative architecture |
+| `neuron/IMPLEMENTATION.md` | what exists today, and known limits |
+| `neuron/reference/ROADMAP.md` | unsettled work only |
+| `contract/DOCTRINE.md` | substrate doctrine and parity spec |
+
+Do not place customer operational data — worker names, identity numbers,
+rosters — in this repository.
