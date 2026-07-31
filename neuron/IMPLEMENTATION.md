@@ -287,6 +287,41 @@ Contract bookkeeping for an ordinary conversational turn remains best-effort,
 but a tool effect already governed by a canonical Neuron decision is not
 best-effort: it must cross the Contract membrane before dispatch.
 
+## Every package declares what it is for
+
+Admission requires a `SKILL.md` at the package root. Frontmatter is machine-read
+(`name`, `description`, `probe_input`, `expect_contains`); the prose body is
+for a reader. `readSkillDoc` runs *before* the digest is computed, so a package
+that cannot state its purpose is refused rather than pinned.
+
+| Refusal | When |
+|---|---|
+| `SkillDocMissing` | no `SKILL.md` at the package root |
+| `SkillDocMalformed` | no `---` frontmatter, or `name`/`description` empty |
+| `SkillDocUnfalsifiable` | `expect_contains` empty — nothing about the package could turn out to be false |
+
+Three properties, all asserted by `tests/skill-doc-gate.sh`:
+
+- **The document is inside the digest.** `computePackageDigest` hashes
+  `SKILL.md` alongside `neuron.json` and `schemas/`. Editing only the prose
+  changes the pin. This is the gate's falsifier — remove the allowlist entry
+  and the first assertion goes red.
+- **The acceptance is mandatory.** `expect_contains` is the package's
+  falsifiable claim, the same rule `morphogenesis.CapabilityGap.parse` already
+  applies to a transient gap, carried onto the durable package.
+- **The claim is durable.** The admission record carries a `skill` block, so
+  the ledger records what a package claimed when it was pinned.
+
+Bound: the prose body is cited by digest and **never re-interpreted on the
+recompute path**. A producer that re-reads prose and re-decides each pass is
+non-deterministic; `redrive.zig:234` refuses those for having no termination
+proof. An `expect_contains` a do-nothing handler could print defeats the whole
+mechanism — it would certify an implementation that does nothing.
+
+All 12 limb packages carry one. So do the fixture packages built inside
+`redrive-gate.sh` and `published-interface-gate.sh`: a fixture exempt from the
+rule would be a package admitted without a falsifiable claim.
+
 ## Generative limbs
 
 A limb is executable only after describe, write, admit, and attach. A source

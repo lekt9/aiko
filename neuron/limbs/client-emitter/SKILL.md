@@ -1,3 +1,10 @@
+---
+name: typed-neuron/client-emitter
+description: 'Emits an inert, digest-pinned frontend client (`ts`, `js`, or `json`) from a published boundary''s accepts/emits/errors triple. Use when a frontend must consume the exact contract a server serves instead of a hand-written guess — it fires on a `neuron.client-emit-request/v1` naming a `neuron.published-manifest/v1` read and writes a `neuron.emitted-client/v1` artifact.'
+probe_input: '{"budget":{"max_bytes":262144,"max_depth":1,"max_effects":2,"max_messages":0,"max_spawns":0,"max_writes":1},"firing_id":"client-emitter-probe-001","messages":[{"durable":false,"payload":"{\"client_name\":\"echo\",\"format\":\"ts\",\"manifest_ref_id\":\"client-emitter/example-manifest\"}","schema":"neuron.client-emit-request/v1","to":"client-emitter/client-emitter"}],"now_ms":0,"permitted_reads":["client-emitter/example-manifest"],"reads":[{"bytes":"{\"accepts\":[\"echo.request/v1\"],\"bind\":{\"method\":\"POST\",\"path\":\"/agents/reference/echo\"},\"emits\":[\"echo.response/v1\"],\"errors\":[\"echo.invalid/v1\"],\"id\":\"agents/reference/echo\",\"manifest_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"node_address\":\"https://node.example:8443\",\"transport\":\"http\",\"version\":\"1.0.0\"}","digest":"0081ff7c22676dc4c04c9dd31aeaf20345d00359cc15859bf2c834582c8e9349","id":"client-emitter/example-manifest","schema":"neuron.published-manifest/v1"}],"receptor_schema":"neuron.client-emit-request/v1","schema":"neuron.stimulus/v1"}'
+expect_contains: 'b908dca784d149a2a286200ee992027ae8d6233ae25af3d92716bbe67835a3d0'
+---
+
 # client-emitter — typed frontend clients from a published manifest
 
 A generative limb that turns a published boundary's `accepts`/`emits`/`errors`
@@ -76,3 +83,18 @@ minimal published manifest through the real `neuron limb admit|run|revoke|detach
 lifecycle, and asserts: the emitted source contains the source manifest's
 digest verbatim; a duplicate firing is suppressed; a revoked package refuses
 the next `limb run`; and a detached package's audit firings survive (§30).
+
+## Acceptance
+
+The frontmatter `expect_contains` is the emitted artifact's `generated_digest`
+— SHA-256 over the *rendered TypeScript source*, not over the input. Nothing
+in the probe stimulus contains that value; it exists only once the full
+template has run: `safe_ident("echo")` upcased into `ECHO_MANIFEST_DIGEST` and
+`ECHO_CONTRACT`, the three string unions rendered from `accepts`/`emits`/
+`errors`, the fetch URL built by joining `node_address` with `bind.path`, the
+`POST` method taken from `bind`, and the drift-marker comment carrying the
+manifest digest verbatim. Change any byte of the generated module and the
+digest changes; a handler that only prints a plausible decision cannot reach
+it. This is the same property `client_emitter.py` asserts on itself at line
+215 (`assert manifest["manifest_digest"] in source`), lifted to cover the
+whole rendering rather than one substring.

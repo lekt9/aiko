@@ -1,3 +1,10 @@
+---
+name: typed-neuron/publication-morphogenesis
+description: Inbound interface morphogenesis — searches the node's live ports for reuse, drafts an inert published-interface document bound to an already-admitted handler, and judges a real over-the-listener probe into retain-or-retire. Use when callers need this node to serve a contract it does not serve yet, or when a freshly published port must be proven to actually serve its gap before anything is kept.
+probe_input: {"schema":"neuron.stimulus/v1","firing_id":"f-judge-001","receptor_schema":"neuron.publication-probe/v1","reads":[{"id":"publication-morphogenesis/gaps/f326eb2fa2463be07f0fbf8dbf2ccfa1","schema":"neuron.publication-gap/v1","digest":"16636dc632cf984a98a57ad4d2575500cca1f151e6c546548b264319d6ff7446","bytes":"{\"id\":\"example/greet\",\"need\":\"callers hand this node a name and receive a typed greeting\",\"route\":\"/greet\",\"method\":\"POST\",\"emits\":[\"example.greeting/v1\"],\"expect_contains\":\"hello ada\"}"},{"id":"publication-morphogenesis/probes/f326eb2fa2463be07f0fbf8dbf2ccfa1","schema":"neuron.publication-probe/v1","digest":"a350b06d58c26b94b29dee3cd174dfdc2135119d725a9eae0b6c4003ca7b1dcb","bytes":"{\"schema\":\"neuron.publication-probe/v1\",\"gap\":\"example/greet\",\"published\":\"c0dd2d78f82ed73ec7591fd92ad3e8105a58670551f45f5d373196221160112c\",\"agent\":\"porter\",\"transport\":\"http-listener\",\"listener\":\"127.0.0.1:8791\",\"url\":\"http://127.0.0.1:8791/agents/porter/greet\",\"method\":\"POST\",\"status\":200,\"product_schema\":\"example.greeting/v1\",\"neuron_status\":\"served\",\"response_body\":\"{\\\"answer\\\":\\\"hello ada\\\",\\\"schema\\\":\\\"example.greeting/v1\\\"}\"}"},{"id":"publication-morphogenesis/patterns/f326eb2fa2463be07f0fbf8dbf2ccfa1","schema":"neuron.publication-pattern/v1","digest":"8d61d72520e9eb0d883e4efc94a579a3a911ad8063a575c07f7728514f02c668","bytes":"{\"schema\":\"neuron.publication-pattern/v1\",\"gap\":\"example/greet\",\"interface\":\"c0dd2d78f82ed73ec7591fd92ad3e8105a58670551f45f5d373196221160112c\",\"route\":\"/agents/porter/greet\",\"verified_successes\":2}"}]}
+expect_contains: retained/3
+---
+
 # publication-morphogenesis — a published interface that a listener actually serves
 
 `src/morphogenesis.zig` closes an **outbound** capability gap: the agent needs
@@ -159,3 +166,28 @@ caught every one:
 Run with `PYTHONDONTWRITEBYTECODE=1` and ship no `__pycache__`: a `.pyc` inside
 a digest-pinned package changes its admission digest with the Python version.
 The witness asserts the package digest has not moved by the end of the run.
+
+## Why the acceptance above is not free
+
+The probe drives `publication-judge`, the neuron that carries refusals 2 and 3.
+It is fed the `example/greet` gap, an attested `http-listener` observation, and
+one prior `neuron.publication-pattern/v1` record standing at
+`verified_successes: 2`.
+
+The literal `3` appears nowhere in the input. Reaching `retained/3` requires all
+of the following to have actually happened:
+
+1. `require_listener` accepted the observation — `transport` is `http-listener`,
+   the url authority equals the attested `127.0.0.1:8791`, the path is exactly
+   `/agents/porter/greet`, the method matches the route's declared `POST`, and
+   the published digest is 64 hex characters.
+2. All four `judge` conditions held — HTTP `200`, a `served` firing status, a
+   `product_schema` inside the contract's `emits`, and a response body
+   containing the gap's own `expect_contains` (`hello ada`).
+3. `prior_successes` found the existing pattern for exactly this
+   (gap, interface) pair and incremented it.
+
+Any single failure changes the answer: a wrong-schema answer or a `200` with the
+wrong body yields `retired` and writes no pattern at all; a bad probe is a typed
+`insufficient_evidence` rejection with no artifact; and a handler that ignores
+the prior record yields `retained/1`.

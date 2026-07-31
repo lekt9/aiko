@@ -131,6 +131,52 @@ PY
 # --- limb packages the gate writes itself ---------------------------------
 mkdir -p "$gate_root/greeter/neurons" "$gate_root/commander/neurons" "$gate_root/planter/neurons"
 
+# Every package declares what it is supposed to do, fixtures included. Exempting
+# a fixture would admit a package carrying no falsifiable claim — exactly what
+# `skill-doc-gate.sh` refuses.
+cat >"$gate_root/greeter/SKILL.md" <<'DOC'
+---
+name: gate/greeter
+description: Answers a typed greeting request. Fires on the served goal schema in the published-interface gate.
+probe_input: greeting-probe
+expect_contains: agents/
+---
+
+# gate/greeter
+
+Fixture limb for `published-interface-gate.sh`: the handler reached through the
+published inbound surface.
+DOC
+
+cat >"$gate_root/commander/SKILL.md" <<'DOC'
+---
+name: gate/commander
+description: Commits a consequential request to the outbox. Fires on gate.order-request/v1.
+probe_input: order-probe
+expect_contains: outbox/served/
+---
+
+# gate/commander
+
+Fixture limb for `published-interface-gate.sh`. It crosses an external boundary,
+which is what lets the gate assert that a served surface cannot be used to
+trigger one without admission.
+DOC
+
+cat >"$gate_root/planter/SKILL.md" <<'DOC'
+---
+name: gate/planter
+description: Writes one artifact outside any served namespace. Fires on gate.plant/v1.
+probe_input: plant-probe
+expect_contains: gate.secret/v1
+---
+
+# gate/planter
+
+Fixture limb for `published-interface-gate.sh`. It plants an artifact the served
+surface must NOT expose — the gate asserts the read path refuses it.
+DOC
+
 cat >"$gate_root/greeter/neuron.json" <<JSON
 {
   "schema": "typed-neuron.limb-manifest/v1",

@@ -1,3 +1,10 @@
+---
+name: typed-neuron/introspection
+description: 'Reads the substrate and emits a typed capability map, ranked capability gaps, promotion proposals and inert limb specs; the inspector fires on neuron.inspect-request/v1 whenever the system needs to know what it currently is and what it is missing.'
+probe_input: '{"schema":"neuron.stimulus/v1","firing_id":"probe-1","receptor_schema":"neuron.inspect-request/v1","now_ms":0,"reads":[{"id":"insp-req","schema":"neuron.inspect-request/v1","bytes":"{\"include_metrics\":true}","digest":"7a39f95f1ba0c5b79a70cd416cb21d5d589abc6cb904fe989c1d7b0472d2e872"},{"id":"agents/reference/generated/manifest","schema":"typed-neuron.agent-skill-manifest/v1","bytes":"{\"name\":\"repair-capability\",\"version\":\"1.0.0\"}","digest":"59a78d3b74ecef2033e13323d7a4cd3491c774c6a6831028c97ac4d5c979df19"}],"permitted_reads":["insp-req","agents/reference/generated/manifest"],"messages":[]}'
+expect_contains: '"claim":"capability map with 2 artifact schemas, 1 neurons, 0 packages"'
+---
+
 # Introspection — self-aware capability discovery and self-modification
 
 A generative limb that gives the Neuron system awareness of its own capabilities,

@@ -112,6 +112,7 @@ pub fn build(b: *std.Build) void {
         "neuron/tests/published-interface-gate.sh",
         "neuron/tests/redrive-gate.sh",
         "neuron/tests/authored-gap-gate.sh",
+        "neuron/tests/skill-doc-gate.sh",
         "tests/bridge-gate.sh",
         "tests/dispatch-gate.sh",
         "tests/tick-gate.sh",

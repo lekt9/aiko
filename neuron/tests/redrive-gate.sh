@@ -88,6 +88,23 @@ PY
 # ---------------------------------------------------------------------------
 pkg="$gate_root/pkg"
 mkdir -p "$pkg/neurons"
+# Every package declares what it is supposed to do, fixtures included — a
+# fixture exempt from the rule would be a package the harness admits without a
+# falsifiable claim, which is the thing `skill-doc-gate.sh` exists to prevent.
+cat > "$pkg/SKILL.md" <<'DOC'
+---
+name: gate/roster
+description: Publishes a roster artifact and notifies its workers. Fires on a roster stimulus in the redrive gate.
+probe_input: roster-probe
+expect_contains: artifact/roster/
+---
+
+# gate/roster
+
+Fixture limb for `redrive-gate.sh`. `publish` writes the roster artifact that
+later firings cite; `notify` crosses to `outbox/`, which is what makes its
+re-derivation a compensation case rather than a re-fire.
+DOC
 cat > "$pkg/neuron.json" <<'JSON'
 {
   "schema": "typed-neuron.limb-manifest/v1",

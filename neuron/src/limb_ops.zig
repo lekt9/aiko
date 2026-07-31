@@ -19,6 +19,72 @@ pub const ADMISSION_PREFIX = "artifact/limbs/admitted/";
 pub const REVOKED_PREFIX = "artifact/limbs/revoked/";
 pub const DETACHED_PREFIX = "artifact/limbs/detached/";
 
+/// Every package declares what it is supposed to do, in the same file shape a
+/// skill uses: YAML frontmatter that a machine reads, prose beneath it that a
+/// reader does.
+pub const SKILL_DOC = "SKILL.md";
+
+pub const SkillDocError = error{
+    SkillDocMissing,
+    SkillDocMalformed,
+    SkillDocUnfalsifiable,
+};
+
+/// The machine-read half of a package's SKILL.md.
+///
+/// `expect_contains` is the load-bearing field and the reason this type exists.
+/// `morphogenesis.CapabilityGap` already refuses a gap that declares no
+/// acceptance, because anything returning bytes would "satisfy" it. A package
+/// is the same object with a longer life: without a declared acceptance there
+/// is no statement that could turn out to be false, so "it works" degrades to
+/// "it ran". This carries that refusal from the transient gap onto the durable
+/// package.
+pub const SkillDoc = struct {
+    name: []const u8,
+    description: []const u8,
+    probe_input: []const u8,
+    expect_contains: []const u8,
+
+    /// Parse the frontmatter. The body is deliberately NOT returned: prose is
+    /// evidence to be cited by digest, never a decision procedure re-read on
+    /// the recompute path. A producer that re-interprets prose each pass is
+    /// non-deterministic, and `redrive` refuses those for having no
+    /// termination proof.
+    pub fn parse(bytes: []const u8) SkillDocError!SkillDoc {
+        if (!std.mem.startsWith(u8, bytes, "---\n")) return SkillDocError.SkillDocMalformed;
+        const rest = bytes["---\n".len..];
+        const end = std.mem.indexOf(u8, rest, "\n---") orelse
+            return SkillDocError.SkillDocMalformed;
+        const front = rest[0..end];
+
+        var doc: SkillDoc = .{ .name = "", .description = "", .probe_input = "", .expect_contains = "" };
+        var lines = std.mem.splitScalar(u8, front, '\n');
+        while (lines.next()) |line| {
+            const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+            const key = std.mem.trim(u8, line[0..colon], " \t");
+            const val = std.mem.trim(u8, line[colon + 1 ..], " \t\"");
+            if (std.mem.eql(u8, key, "name")) doc.name = val
+            else if (std.mem.eql(u8, key, "description")) doc.description = val
+            else if (std.mem.eql(u8, key, "probe_input")) doc.probe_input = val
+            else if (std.mem.eql(u8, key, "expect_contains")) doc.expect_contains = val;
+        }
+        if (doc.name.len == 0 or doc.description.len == 0)
+            return SkillDocError.SkillDocMalformed;
+        // The generalized refusal. See the doc comment on this type.
+        if (doc.expect_contains.len == 0) return SkillDocError.SkillDocUnfalsifiable;
+        return doc;
+    }
+};
+
+/// Read and validate a package's SKILL.md. Fails closed: a package that cannot
+/// say what it is for does not get admitted on the strength of compiling.
+pub fn readSkillDoc(a: Allocator, io: std.Io, package_dir: []const u8) !SkillDoc {
+    const path = try std.fs.path.join(a, &.{ package_dir, SKILL_DOC });
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 20)) catch
+        return SkillDocError.SkillDocMissing;
+    return SkillDoc.parse(bytes);
+}
+
 const admission_evidence = [_]types.Evidence{.{
     .claim = "manifest validated and package digest pinned by the harness admission boundary",
     .sources = &.{"stimulus"},
@@ -56,6 +122,17 @@ pub fn computePackageDigest(allocator: Allocator, io: std.Io, package_dir: []con
             }
         }
     }
+    // A package's SKILL.md declares what it is SUPPOSED to do. Leaving it out
+    // of the digest is what lets prose and code drift apart: the description
+    // could be edited to claim anything and the pin would never move, so
+    // admission would keep vouching for bytes the document no longer describes.
+    // Hashing it makes the claim part of the thing admitted — edit the intent
+    // and you have a different package, which must earn admission again.
+    const skill_path = try std.fs.path.join(a, &.{ package_dir, SKILL_DOC });
+    if (cwd.statFile(io, skill_path, .{})) |_| {
+        try entries.append(a, try a.dupe(u8, SKILL_DOC));
+    } else |_| {}
+
     const schemas_path = try std.fs.path.join(a, &.{ package_dir, "schemas" });
     // `.iterate` is required to walk the handle: without it the fd carries no
     // read capability and `walker.next` fails `BADF` on Linux. macOS tolerates
@@ -88,6 +165,12 @@ pub fn admit(allocator: Allocator, io: std.Io, package_dir: []const u8, state_di
     defer arena.deinit();
     const a = arena.allocator();
 
+    // Refuse before pinning, not after. A package that cannot state what it is
+    // supposed to do has nothing that could later be found false, so admitting
+    // it would vouch for bytes on the strength of their compiling — the one
+    // thing §30 says never earns retention.
+    const skill = try readSkillDoc(a, io, package_dir);
+
     const digest = try computePackageDigest(a, io, package_dir);
     var hex: [64]u8 = undefined;
     _ = try std.fmt.bufPrint(&hex, "{s}", .{std.fmt.bytesToHex(digest, .lower)});
@@ -99,9 +182,16 @@ pub fn admit(allocator: Allocator, io: std.Io, package_dir: []const u8, state_di
     const manifest_path = try std.fs.path.join(a, &.{ package_dir, "neuron.json" });
     const manifest_bytes = try std.Io.Dir.cwd().readFileAlloc(io, manifest_path, a, .limited(1 << 20));
     const manifest_str = try std.json.Stringify.valueAlloc(a, manifest_bytes, .{});
+    // The declared intent rides the admission row. A reader of the ledger can
+    // then ask what this package CLAIMED to do at the moment it was pinned,
+    // without trusting a file that may since have been edited — the digest
+    // covers SKILL.md, so a changed claim is a different package entirely.
+    const skill_name = try std.json.Stringify.valueAlloc(a, skill.name, .{});
+    const skill_desc = try std.json.Stringify.valueAlloc(a, skill.description, .{});
+    const skill_expect = try std.json.Stringify.valueAlloc(a, skill.expect_contains, .{});
     const record_bytes = try std.fmt.allocPrint(a,
-        \\{{"schema":"{s}","package":{s},"digest":"{s}"}}
-    , .{ ADMISSION_SCHEMA, manifest_str, &hex });
+        \\{{"schema":"{s}","package":{s},"digest":"{s}","skill":{{"name":{s},"description":{s},"expect_contains":{s}}}}}
+    , .{ ADMISSION_SCHEMA, manifest_str, &hex, skill_name, skill_desc, skill_expect });
 
     const firing_id = try std.fmt.allocPrint(a, "admission/{s}", .{&hex});
     const write_id = try std.fmt.allocPrint(a, ADMISSION_PREFIX ++ "{s}", .{&hex});

@@ -1,3 +1,10 @@
+---
+name: typed-neuron/introspection-trigger
+description: 'Counts settled firings and fires the introspection limb when the count reaches the cadence (default 50) or a cited energy score crosses 0.7; fires on every neuron.firing-settled/v1 event.'
+probe_input: '{"schema":"neuron.stimulus/v1","firing_id":"probe-t1","receptor_schema":"neuron.firing-settled/v1","now_ms":0,"reads":[{"id":"introspection-trigger/state","schema":"neuron.introspection-trigger-state/v1","bytes":"{\"cadence\":50,\"firings_since_introspection\":5,\"last_introspection_ms\":0,\"no_proposal_streak\":0,\"schema\":\"neuron.introspection-trigger-state/v1\"}","digest":"1e956df35a768b1a52d322d6963a2d676fd168279033e87af5d6dcff3428b247"},{"id":"energy-1","schema":"energy.score/v1","bytes":"{\"energy\":0.85}","digest":"44ecd6de056e2200bed359d98311c5dfa0f2ab63c896482e51f6a46cede22e48"}],"permitted_reads":["introspection-trigger/state","energy-1"],"messages":[]}'
+expect_contains: '{"kind":"send","message":{"durable":true,"payload":"{\"energy_score\":0.85,\"firings_since_last\":6,\"schema\":\"neuron.introspection-trigger-fire/v1\",\"trigger\":\"energy\",\"triggered_at_ms\":0}","schema":"neuron.introspection-trigger-fire/v1","to":"neuron/introspection/inspector"}}'
+---
+
 # typed-neuron/introspection-trigger
 
 **Status**: reference generative limb (§30)

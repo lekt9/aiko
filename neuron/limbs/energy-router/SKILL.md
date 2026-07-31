@@ -1,3 +1,27 @@
+---
+name: typed-neuron/energy-router
+description: Scores routing candidates with the deterministic firingEnergy function (grounding, evidence confidence, normalized cost, settlement distance, violations) and branches to the lowest-energy candidate, or spawns a narrow sub-EBM when the winner declares wants_sub_ebm. Use when a firing must choose among candidate limbs, contexts, or actions and the choice has to be replayable and content-addressed rather than model-judged.
+probe_input: {"schema":"neuron.stimulus/v1","firing_id":"probe-energy-1","receptor_schema":"energy.candidate/v1","reads":[{"id":"cands","schema":"energy.candidate/v1","bytes":"[{\"id\":\"router-heuristic\",\"grounding_ok\":true,\"evidence_conf_milli\":710,\"normalized_cost\":0.35,\"settlement_distance\":1.2},{\"id\":\"spawn-micro-ebm\",\"grounding_ok\":true,\"evidence_conf_milli\":880,\"normalized_cost\":0.25,\"settlement_distance\":0.1,\"wants_sub_ebm\":true},{\"id\":\"context-narrow\",\"grounding_ok\":true,\"evidence_conf_milli\":920,\"normalized_cost\":0.15,\"settlement_distance\":0.4}]","digest":"b66adddeff468f045e3a11d39bcdfd5e742b5a4001cde0ba5d858d459ffb12b8"}],"permitted_reads":["cands"],"messages":[]}
+expect_contains: context-narrow|1.02
+---
+
+<!--
+Acceptance note. `expect_contains` is the `bytes` of the emitted
+`energy.score/v1` write: the winning candidate id joined by `|` to its energy,
+rounded to 4 places. For the probe above, in the order the candidates appear:
+
+    router-heuristic 0 + (1000-710)/250 + 0.35*2 + 1.2 + 0  = 3.06
+    spawn-micro-ebm  0 + (1000-880)/250 + 0.25*2 + 0.1 + 0  = 1.08
+    context-narrow   0 + (1000-920)/250 + 0.15*2 + 0.4 + 0  = 1.02   <- argmin
+
+so the string is false unless the scorer ran over every candidate AND took the
+minimum. The winner is deliberately last in the list, is not the cheapest by
+settlement distance, and is not the one asking to spawn — first-item, greedy,
+and "honour wants_sub_ebm" shortcuts each emit a different id, and any
+arithmetic drift emits a different number. A handler that only prints its own
+acceptance cannot know 1.02.
+-->
+
 # typed-neuron/energy-router
 
 **Status**: reference generative limb (in progress)
