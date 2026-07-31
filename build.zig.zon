@@ -1,0 +1,23 @@
+.{
+    .name = .aiko,
+    .version = "0.1.0",
+    .fingerprint = 0xbedc7170fa9dcdc0,
+    .minimum_zig_version = "0.16.0",
+
+    // Path dependencies, not URLs: the layers live in this repository as git
+    // subtrees, so the build resolves them the same way a reader does. This is
+    // also what `contract/libcontract/build.zig.zon` already relies on when it
+    // names `../../neuron` — one tree, one resolution rule.
+    .dependencies = .{
+        .neuron = .{ .path = "neuron" },
+        .libcontract = .{ .path = "contract/libcontract" },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "neuron",
+        "contract",
+        "README.md",
+    },
+}
