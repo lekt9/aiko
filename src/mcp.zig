@@ -117,7 +117,20 @@ fn invokeAiko(a: std.mem.Allocator, argv: []const []const u8) !ToolResult {
         .stdout = .pipe,
         .stderr = .pipe,
     }) catch |err| return .{
-        .text = try std.fmt.allocPrint(a, "could not invoke {s}: {t}", .{ argv[0], err }),
+        // Name the fix, not the symptom. Both sibling binaries are resolved by
+        // bare name through the ambient PATH, so a host that mounts this server
+        // without zig-out/bin on PATH gets a runtime failure on a tool it
+        // invoked correctly. "FileNotFound" tells that caller nothing, and the
+        // product's stated requirement is zero setup — so the one setup step it
+        // does have must announce itself when missing. Same rule `dispatch-gate`
+        // already asserts for a missing argument: a refusal names the offender.
+        .text = if (err == error.FileNotFound)
+            try std.fmt.allocPrint(a, "could not invoke '{s}': not found on PATH. " ++
+                "This server runs neuron's verbs through its own CLI, so the directory " ++
+                "holding the aiko and aiko-doctor binaries (zig-out/bin) must be on PATH " ++
+                "in the environment the mcp server was launched with.", .{argv[0]})
+        else
+            try std.fmt.allocPrint(a, "could not invoke {s}: {t}", .{ argv[0], err }),
         .is_error = true,
     };
     defer child.kill(io);

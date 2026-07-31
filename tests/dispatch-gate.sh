@@ -48,6 +48,41 @@ mkdir -p "$root/.contracts"
   echo '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"aiko.port.publish","arguments":{"node":"x"}}}'
 } | timeout 120 "$doctor" mcp > "$root/out.jsonl" 2>"$root/err.txt" || true
 
+# 5. A MISSING BINARY NAMES THE FIX, NOT THE SYMPTOM.
+# Both sibling binaries are resolved by bare name through the ambient PATH, so a
+# host that mounts this server without zig-out/bin on PATH gets a runtime
+# failure on a tool it invoked correctly. "FileNotFound" tells that caller
+# nothing, and zero setup is the product's stated requirement — the one setup
+# step it does have must announce itself. Launch the server with a PATH that
+# deliberately excludes the binaries and read the refusal.
+{
+  echo '{"jsonrpc":"2.0","id":8,"method":"initialize","params":{}}'
+  printf '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"aiko.bridge","arguments":{"state_dir":"%s/n/state","agent":"a1"}}}\n' "$root"
+} | env PATH=/usr/bin:/bin timeout 60 "$doctor" mcp > "$root/nopath.jsonl" 2>/dev/null || true
+python3 - "$root/nopath.jsonl" <<'PY2' || exit 1
+import json, sys
+for line in open(sys.argv[1], encoding="utf-8"):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        r = json.loads(line)
+    except Exception:
+        continue
+    if r.get("id") != 9:
+        continue
+    c = (r.get("result") or {}).get("content") or [{}]
+    t = c[0].get("text", "")
+    if "PATH" not in t:
+        print("FAIL: a missing binary refused without naming PATH — the caller "
+              "cannot act on it: %r" % t[:160])
+        sys.exit(1)
+    print("  a missing binary refuses by naming PATH, not FileNotFound")
+    sys.exit(0)
+print("FAIL: no response to the no-PATH probe")
+sys.exit(1)
+PY2
+
 [ -s "$root/out.jsonl" ] || fail "the mcp server produced no output: $(head -2 "$root/err.txt")"
 
 python3 - "$root/out.jsonl" <<'PY' || exit 1
