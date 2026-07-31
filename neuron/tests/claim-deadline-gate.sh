@@ -100,7 +100,7 @@ cat > "$pkg/SKILL.md" <<'DOC'
 name: gate/claim-deadline
 description: Registers a claim with a refutation condition and an ordinal deadline, confirms it on evidence, and contradicts it when the deadline passes unmet. Fires on register, observe and settle events.
 probe_input: register c1 expect_by=2
-expect_contains: "state":"contradicted"
+expect_contains: "refuted_by": "no reply by shift", "state": "contradicted"
 ---
 
 # gate/claim-deadline
@@ -369,5 +369,26 @@ fire_ok settle s6 '{"ordinal":3}' yes
 [ "$(sent_to outbox/claims/reassign)" = "$before" ] \
     || fail "settling the SAME ordinal twice contradicted twice ($before -> $(sent_to outbox/claims/reassign)). One silence must not become two calls."
 echo "  5. settling the same ordinal twice changes nothing"
+
+# --- 6. the package's DECLARED acceptance is actually satisfied ------------
+# skill-doc-gate proves a package must DECLARE an acceptance and that the
+# declaration is inside the digest. Nothing proved the declaration is
+# ACHIEVABLE. This fixture shipped with `expect_contains: "state":"contradicted"`
+# while the limb emits `"state": "contradicted"` — json.dumps puts a space after
+# the colon — so the correct implementation failed its own stated claim, and
+# every assertion above still passed. That is the mirror of an acceptance a
+# do-nothing handler satisfies, and it is just as worthless.
+declared="$(sed -n 's/^expect_contains: //p' "$pkg/SKILL.md")"
+[ -n "$declared" ] || fail "the fixture package declares no acceptance"
+scenario E
+fire_ok register r5 '{"id":"c2","statement":"w2 attends","refuted_by":"no reply by shift","expect_by":2,"dependent":"reassign"}'
+fire_ok settle s7 '{"ordinal":4}' yes
+case "$(artifact_bytes artifact/claims/c2)" in
+    *"$declared"*) : ;;
+    *) fail "the package's declared acceptance is NOT satisfied by its own correct output.
+  declared: $declared
+  produced: $(artifact_bytes artifact/claims/c2)" ;;
+esac
+echo "  6. the declared acceptance is satisfied by the real limb"
 
 echo "claim-deadline gate: PASS"
