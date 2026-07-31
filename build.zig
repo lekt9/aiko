@@ -107,7 +107,14 @@ pub fn build(b: *std.Build) void {
     // drives the public CLI from an empty directory and asserts against durable
     // state. Kept as a named step so `zig build gate` is the one command a host
     // runs before trusting a build.
-    const gate = b.addSystemCommand(&.{ "bash", "neuron/tests/published-interface-gate.sh" });
     const gate_step = b.step("gate", "Run the runnable witnesses");
-    gate_step.dependOn(&gate.step);
+    for ([_][]const u8{
+        "neuron/tests/published-interface-gate.sh",
+        "neuron/tests/redrive-gate.sh",
+        "tests/bridge-gate.sh",
+    }) |witness| {
+        const g = b.addSystemCommand(&.{ "bash", witness });
+        g.step.dependOn(b.getInstallStep());
+        gate_step.dependOn(&g.step);
+    }
 }

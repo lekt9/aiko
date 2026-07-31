@@ -16,7 +16,17 @@ const std = @import("std");
 const neuron = @import("typed_neuron");
 const contract = @import("contract");
 
+const bridge = @import("bridge.zig");
+
 pub fn main(init: std.process.Init) !void {
+    const a = init.arena.allocator();
+    var it = try std.process.Args.Iterator.initAllocator(init.minimal.args, a);
+    var argv: std.ArrayList([]const u8) = .empty;
+    while (it.next()) |arg| try argv.append(a, arg);
+    if (argv.items.len >= 2 and std.mem.eql(u8, argv.items[1], "bridge")) {
+        return runBridge(init, a, argv.items[2..]);
+    }
+
     var buf: [4096]u8 = undefined;
     var w = std.Io.File.stdout().writerStreaming(init.io, &buf);
     const out = &w.interface;
@@ -42,5 +52,57 @@ pub fn main(init: std.process.Init) !void {
             try out.print("  {s}\n", .{e.name});
         }
     }
+    try out.flush();
+}
+
+/// `aiko-doctor bridge <neuron_state_dir> [--agent <id>]`
+///
+/// Mirror every committed firing in a neuron journal into the contract ledger
+/// as a W6H-gated row. Re-running is safe: contract's own cache resolves a
+/// repeated (plan, action, cwd, parent) to one row, so the bridge keeps no
+/// watermark of its own — a watermark would be a second source of truth about
+/// what has already been mirrored, and the two would drift.
+fn runBridge(init: std.process.Init, a: std.mem.Allocator, rest: []const []const u8) !void {
+    var buf: [4096]u8 = undefined;
+    var w = std.Io.File.stdout().writerStreaming(init.io, &buf);
+    const out = &w.interface;
+
+    if (rest.len == 0) {
+        try out.print("usage: aiko-doctor bridge <neuron_state_dir> [--agent <id>]\n", .{});
+        try out.flush();
+        std.process.exit(2);
+    }
+    const state_dir = rest[0];
+    var agent: []const u8 = "aiko-bridge";
+    var i: usize = 1;
+    while (i + 1 < rest.len) : (i += 2) {
+        if (std.mem.eql(u8, rest[i], "--agent")) agent = rest[i + 1];
+    }
+
+    const firings = bridge.readFirings(a, init.io, state_dir) catch |err| {
+        try out.print("error: {t} — no journal at {s}/substrate.log\n", .{ err, state_dir });
+        try out.flush();
+        std.process.exit(1);
+    };
+
+    // The node identity is `who`. Taken from the substrate directory being
+    // mirrored, so a row names the node that actually committed the firing
+    // rather than the host that happened to run the bridge.
+    const node_id = std.fs.path.basename(state_dir);
+
+    var declared: usize = 0;
+    for (firings) |f| {
+        const id = bridge.declareFiring(a, init.minimal.environ, node_id, agent, f) catch |err| {
+            // A refusal names the interrogative it could not answer. Surface it
+            // and keep going: one unprojectable firing must not stop the rest
+            // from being mirrored, and a swallowed refusal is worse than a
+            // loud one.
+            try out.print("  REFUSED firing={s} seq={d}: {t}\n", .{ f.firing_id, f.seq, err });
+            continue;
+        };
+        declared += 1;
+        try out.print("  contract={s} firing={s} seq={d}\n", .{ id, f.firing_id, f.seq });
+    }
+    try out.print("\nbridged {d}/{d} firings from {s}\n", .{ declared, firings.len, state_dir });
     try out.flush();
 }
