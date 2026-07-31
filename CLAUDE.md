@@ -32,9 +32,10 @@ transcription artifact.
 ```sh
 zig build                 # → zig-out/bin/aiko  AND  contract/libcontract/zig-out/lib/libcontract.a
 zig build test            # both layers' suites
-zig build gate            # 7 witnesses — THIS is the acceptance criterion
+zig build gate            # 10 witnesses — THIS is the acceptance criterion
                           #   published-interface · redrive · authored-gap
-                          #   skill-doc · bridge · dispatch · tick
+                          #   skill-doc · zig-doctrine · escalation-ladder
+                          #   staffing-engine · bridge · dispatch · tick
 ./zig-out/bin/aiko-doctor # prove both layers are linked in one process
 ```
 
@@ -159,6 +160,39 @@ iterated against its evals. "Rewrite until the acceptance passes" terminates.
 Writing an `expect_contains` that a do-nothing handler could print re-opens
 the hole: it would certify an implementation that does nothing. Pick a value
 only correct behaviour yields.
+
+## The staffing pipeline, as far as it is witnessed
+
+Two nodes of the brief's workflow now exist as admitted limbs with gates. They
+are fixtures — synthetic workers, no customer data — but the *properties* are
+the deliverable, not the fixtures.
+
+```
+order + worker db  ──►  staffing-engine  ──►  roster  ──►  escalation-ladder
+                        (Step 2)                            (Step 3)
+```
+
+| Node | Gate | The assertion that must never regress |
+|---|---|---|
+| `staffing-engine` | `staffing-engine-gate.sh` | a shortfall **refuses and writes nothing** — a short roster that looks complete gets notified |
+| `escalation-ladder` | `escalation-ladder-gate.sh` | the ladder **terminates**; and a confirmed worker is never messaged again |
+
+**The engine is on the recompute path, so determinism is not negotiable.** Its
+assignment is a pure function of pinned reads: qualification filter, then sort
+by `(last_worked, name)` for a *total* order. The realistic way to break this is
+not exotic — a `set`, or sorting by `hash()`. CPython randomises string hashing
+per process, so either is stable inside one firing and different across two:
+invisible in a single run, fatal in a loop. The gate fires twice and compares
+bytes for exactly this reason.
+
+**The ladder crosses a real boundary, so termination is not negotiable.** Each
+rung is an outbound message and the last rung is a phone call. Advancing a rung
+is a compare-and-swap, not a blind overwrite — `error.Conflict` is the substrate
+declining to let two due events both advance one worker, which would be two
+calls for one silence.
+
+Both gates assert per worker, never in aggregate: a total of six messages is
+also what a ladder that messaged the wrong people six times produces.
 
 ## Traps that have cost real time
 

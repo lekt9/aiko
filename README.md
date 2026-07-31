@@ -233,7 +233,8 @@ public CLI from an empty directory and asserts against durable state.
 
 ```
 zig build gate     published-interface · redrive · authored-gap
-                   bridge · dispatch · tick
+                   skill-doc · zig-doctrine · escalation-ladder
+                   staffing-engine · bridge · dispatch · tick
 ```
 
 ---
@@ -250,6 +251,10 @@ zig build gate     published-interface · redrive · authored-gap
 | **Authoring — the two joined** | ✅ | `authored-gap-gate` |
 | **MCP dispatch — the surface Hermes mounts** | ✅ | `dispatch-gate` |
 | **`tick` — the loop runs on its own** | ✅ | `tick-gate` |
+| Every package declares its purpose, inside its digest | ✅ | `skill-doc-gate` |
+| CLAUDE.md's Zig doctrine checked against the compiler | ✅ | `zig-doctrine-gate` |
+| **Staffing engine — deterministic roster, refuses a shortfall** | ✅ | `staffing-engine-gate` |
+| **Escalation ladder — notify → reply\|timeout → call → stop** | ✅ | `escalation-ladder-gate` |
 | One build, Linux-native, both layers linked | ✅ | `aiko-doctor` |
 
 Read-only live view (`telemetry serve`) exists and is gated by
@@ -260,7 +265,7 @@ Read-only live view (`telemetry serve`) exists and is gated by
 | Operator UI — queues, roster edit, approvals | ⬜ not started. The live view is read-only by design |
 | OCR at the model edge | ⬜ open. The substrate is binary-safe; the MCP edge has no read tool (`ROADMAP.md` R11). An OCR *HTTP API* works today |
 | Credential vault / browser access | ⬜ none, in any layer |
-| Constraint solver | ⬜ none, and none claimed. Must be a limb — and **deterministic**, or the loop never settles |
+| Constraint solver | 🟡 partial, and no more than that. `staffing-engine-gate` witnesses a **deterministic** rotational assignment — qualification filter, then `(last_worked, name)` as a total order, refusing rather than under-filling. That is rotation, not a solver: no shift-conflict resolution, no multi-constraint optimisation, no preference weighting. The determinism requirement is the part that generalises — anything richer must keep it, or the loop never settles |
 
 ---
 

@@ -322,6 +322,33 @@ All 12 limb packages carry one. So do the fixture packages built inside
 `redrive-gate.sh` and `published-interface-gate.sh`: a fixture exempt from the
 rule would be a package admitted without a falsifiable claim.
 
+## Staffing pipeline nodes
+
+Two nodes of the operational workflow exist as admitted limbs with runnable
+witnesses. The packages are fixtures built inside their gates (synthetic
+workers, no customer data); the properties are the deliverable.
+
+| Node | Gate | Load-bearing assertion |
+|---|---|---|
+| `gate/staffing-engine` | `tests/staffing-engine-gate.sh` | a shortfall refuses and writes nothing |
+| `gate/staffing-ladder` | `tests/escalation-ladder-gate.sh` | the ladder terminates, and a confirmed worker is never messaged again |
+
+`staffing-engine` sits on the recompute path, so its assignment is a pure
+function of pinned reads — qualification, then `(last_worked, name)` as a total
+order. The gate fires twice over identical inputs and compares bytes. The
+realistic break is a `set` or a `hash()`-ordered sort: CPython randomises string
+hashing per process, so both are stable within a firing and differ across two.
+
+`escalation-ladder` crosses an external boundary at every rung, so it must halt.
+Rung advance is a compare-and-swap; `error.Conflict` is the substrate refusing
+to let two due events both advance one worker.
+
+Both gates assert per worker rather than in aggregate — a total of six messages
+is also what a ladder that messaged the wrong people six times produces.
+
+Not covered by either: OCR ingestion (Step 1), operator review UI, and any
+constraint solving richer than rotation.
+
 ## Generative limbs
 
 A limb is executable only after describe, write, admit, and attach. A source
