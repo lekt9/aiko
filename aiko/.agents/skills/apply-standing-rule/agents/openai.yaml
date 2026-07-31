@@ -1,4 +1,0 @@
-interface:
-  display_name: "Apply Standing Rule"
-  short_description: "Create governed reusable trigger-action rules"
-  default_prompt: "Use $apply-standing-rule to make this explicit rule durable."

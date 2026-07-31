@@ -236,11 +236,21 @@ def outputs() -> dict[Path, str]:
     schema_bytes = canonical_schema(schema)
     digest = hashlib.sha256(schema_bytes).hexdigest()
     package, package_files = package_digest(schema_bytes)
-    return {
+    out = {
         ZIG_PATH: render_zig(schema, digest, package),
-        RUST_PATH: render_rust(schema, digest, package),
         PIN_PATH: render_pin(schema, digest, package, package_files),
     }
+    # The Rust host is an OPTIONAL consumer of these bindings, not a required
+    # one. neuron and contract are the two layers that must always be able to
+    # regenerate and verify their own wire types; a repository that does not
+    # carry the host should still be able to run `--check` and get a real
+    # answer rather than a stale-file error about a tree it deliberately does
+    # not contain. Generate the Rust binding only where a host exists to hold
+    # it — and note the directory must already be there, so this never silently
+    # creates a phantom host.
+    if RUST_PATH.parent.is_dir():
+        out[RUST_PATH] = render_rust(schema, digest, package)
+    return out
 
 
 def main() -> int:

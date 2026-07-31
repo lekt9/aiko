@@ -1,4 +1,0 @@
-interface:
-  display_name: "Schedule Follow-up"
-  short_description: "Create governed durable reminders and schedules"
-  default_prompt: "Use $schedule-follow-up to schedule this explicit follow-up."

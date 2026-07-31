@@ -1,7 +1,7 @@
 {
   "core_version": "typed-neuron/2",
   "package": "typed_neuron",
-  "package_digest": "7637db818cb7061e6c000f20af67e86115893ef3ec620c1747493589ec2a57c4",
+  "package_digest": "067428cc5717b03f1528c80c21f0159e2ee0ce5228c2af56a7faa447daef4238",
   "package_digest_algorithm": "sha256-framed-files/v1",
   "package_files": [
     "schema/typed-neuron-wire.json",
