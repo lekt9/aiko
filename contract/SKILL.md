@@ -93,6 +93,34 @@ contract status                                     # list all
 contract explain <id>                               # evidence trace
 ```
 
+## Proof integrity — qualify the check with exit-zero
+
+`contract task begin --check` records a task whose verdict is the check's exit
+code. It does not establish that the check is *capable of failing*. An
+unqualified check — `--check true`, or one that exits 0 without ever reading the
+artifact it claims to measure — records a green verdict that means nothing. That
+qualification is owned by `exit-zero` (`ez`), which runs a check in a scrubbed
+empty world, at the base commit, and against a corrupted anchor, and refuses to
+call it a witness unless it can come back RED.
+
+For substantive proof-of-work, qualify first, then wrap durably:
+
+```bash
+ez declare <slug> --anchor <file> --check "<real proof command>"   # proves the gate can fail
+contract task begin "<goal>" --check "ez gate <slug>"              # durable execution over a qualified gate
+```
+
+Both steps are required; there is no one-step form. `ez declare` takes only
+`--objective --anchor --check --derived --parent --depends-on --irreversible
+--cap --no-mutate --redeclare --timeout`, and exit-zero contains no contract
+integration at all — so the two commands above stay two commands. The layers
+stay separate and neither is forked: **contract owns durable execution,
+scheduling, dependency resolution, and retries; exit-zero owns the satisfaction
+predicate.**
+Do not register a bare `--check` for substantive work when its ability to fail
+has not been shown — that is the one part an unqualified resolver cannot prove
+for itself.
+
 ## Daemon persistence (limbs)
 
 Aiko runs as a **daemon-first agent**. Beyond one-shot contract tasks, she
