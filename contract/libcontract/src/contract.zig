@@ -115,6 +115,19 @@ pub const shape = @import("shape.zig");
 // that cannot project, naming the unanswered interrogative.
 pub const w6h = @import("w6h.zig");
 
+/// The canonical Neuron adapter: validate a firing, hash it with imported
+/// `typed_neuron` semantics, and append it to the ledger as one transaction.
+///
+/// Re-exported because it was reachable only through the C ABI. A Zig consumer
+/// in this repository therefore had to marshal a struct out to C and back to
+/// arrive at a type both sides already agree on — `contract.neuron.FireRequest`
+/// IS `typed_neuron.FireRequest`. That round trip existed because of a missing
+/// export, not because of a boundary.
+///
+/// This re-export does not reverse the dependency: contract imports neuron,
+/// never the other way round.
+pub const neuron = @import("neuron.zig");
+
 /// Re-export so consumers of libcontract can verify chains without rewiring
 /// the build graph.
 pub const Lineage = lineage;

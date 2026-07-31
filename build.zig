@@ -48,6 +48,23 @@ pub fn build(b: *std.Build) void {
     const install = b.addInstallArtifact(harness, .{ .dest_sub_path = "aiko" });
     b.getInstallStep().dependOn(&install.step);
 
+    // `aiko-doctor` is the first binary in this repository that links BOTH
+    // layers in one process. It is small on purpose: its job is to make the
+    // seam falsifiable rather than assumed. It will not compile unless
+    // contract's module export is real and `contract.FireRequest` is still
+    // `typed_neuron.FireRequest`, which is the assumption the bridge will rest
+    // on.
+    const doctor_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    doctor_mod.addImport("typed_neuron", neuron.module("typed_neuron"));
+    doctor_mod.addImport("contract", contract.module("contract"));
+    const doctor = b.addExecutable(.{ .name = "aiko-doctor", .root_module = doctor_mod });
+    b.installArtifact(doctor);
+
     // contract is a library, not a second entry point: it is what makes a
     // firing durable and time-aware.
     //
@@ -67,7 +84,7 @@ pub fn build(b: *std.Build) void {
     const contract_build = b.addSystemCommand(&.{ "zig", "build" });
     contract_build.setCwd(b.path("contract/libcontract"));
     b.getInstallStep().dependOn(&contract_build.step);
-    _ = contract;
+
 
     const run = b.addRunArtifact(harness);
     run.step.dependOn(b.getInstallStep());
