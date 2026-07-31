@@ -29,6 +29,9 @@ pub fn main(init: std.process.Init) !void {
     }
     // The MCP surface: one door onto the whole harness, which is what Hermes
     // mounts. Protocol from contract, catalog and semantics from mcp.zig.
+    if (argv.items.len >= 2 and std.mem.eql(u8, argv.items[1], "tick")) {
+        return runTick(init, a, argv.items[2..]);
+    }
     if (argv.items.len >= 2 and std.mem.eql(u8, argv.items[1], "mcp")) {
         return mcp.serve(a, init.io, init.minimal.environ);
     }
@@ -111,4 +114,114 @@ fn runBridge(init: std.process.Init, a: std.mem.Allocator, rest: []const []const
     }
     try out.print("\nbridged {d}/{d} firings from {s}\n", .{ declared, firings.len, state_dir });
     try out.flush();
+}
+
+/// `aiko-doctor tick <neuron_state_dir> [--every <seconds>] [--agent <id>]`
+///
+/// One pass of the loop that makes the harness reactive, or resident with
+/// `--every`. Named after `contract tick`, which is the same idea one layer
+/// down: one resolver pass, or resident.
+///
+/// Until now both halves existed and neither ran on its own. `bridge` mirrored
+/// firings into the ledger and `redrive` acted on stale derivations, but each
+/// was a manual one-shot — so a system documented as event-driven still needed
+/// a human to turn each crank. This is the crank.
+///
+/// ORDER IS LOAD-BEARING: bridge BEFORE redrive.
+///
+/// A firing that has not reached the ledger has no contract row, so nothing can
+/// have invalidated it and redrive would find nothing to act on. Bridging first
+/// means each pass evaluates staleness against a ledger that already knows
+/// about everything committed since the last pass. Reversed, a firing would
+/// always be judged one full pass late.
+///
+/// Both halves are idempotent — the bridge relies on contract's cache, redrive
+/// on content-addressed firing identity — so a pass that finds nothing new
+/// writes nothing, and a resident tick over a quiet substrate is free.
+fn runTick(init: std.process.Init, a: std.mem.Allocator, rest: []const []const u8) !void {
+    var buf: [4096]u8 = undefined;
+    var w = std.Io.File.stdout().writerStreaming(init.io, &buf);
+    const out = &w.interface;
+
+    if (rest.len == 0) {
+        try out.print("usage: aiko-doctor tick <neuron_state_dir> [--every <seconds>] [--agent <id>]\n", .{});
+        try out.flush();
+        std.process.exit(2);
+    }
+    const state_dir = rest[0];
+    var agent: []const u8 = "aiko-tick";
+    var every_s: ?u64 = null;
+    var i: usize = 1;
+    while (i + 1 < rest.len) : (i += 2) {
+        if (std.mem.eql(u8, rest[i], "--agent")) agent = rest[i + 1];
+        if (std.mem.eql(u8, rest[i], "--every"))
+            every_s = std.fmt.parseInt(u64, rest[i + 1], 10) catch null;
+    }
+
+    const node_id = std.fs.path.basename(state_dir);
+    var pass: u64 = 0;
+    while (true) {
+        pass += 1;
+        var declared: usize = 0;
+        var refused: usize = 0;
+
+        // --- half one: every committed firing becomes a W6H-gated row -------
+        const firings = bridge.readFirings(a, init.io, state_dir) catch |err| {
+            try out.print("tick {d}: no journal at {s}: {t}\n", .{ pass, state_dir, err });
+            try out.flush();
+            std.process.exit(1);
+        };
+        for (firings) |f| {
+            if (bridge.declareFiring(a, init.minimal.environ, node_id, agent, f)) |_| {
+                declared += 1;
+            } else |_| {
+                // A firing that cannot project into all six interrogatives is
+                // reported and skipped. One unprojectable firing must not stop
+                // the pass; a swallowed refusal would be worse than a loud one.
+                refused += 1;
+            }
+        }
+
+        // --- half two: act on what the ledger now says has gone stale -------
+        const redrove = runRedrive(init, a, state_dir) catch false;
+
+        try out.print("tick {d}: bridged={d} refused={d} redrive={s}\n", .{
+            pass, declared, refused, if (redrove) "ok" else "none",
+        });
+        try out.flush();
+
+        const seconds = every_s orelse break;
+        const nap: std.Io.Clock.Duration = .{
+            .raw = .{ .nanoseconds = @as(i96, @intCast(seconds)) * std.time.ns_per_s },
+            .clock = .boot,
+        };
+        nap.sleep(init.io) catch break;
+    }
+}
+
+/// Run neuron's `redrive` over the same substrate.
+///
+/// Invoked rather than linked, for the reason `mcp.zig` states: neuron's CLI is
+/// the surface its own gates drive, so going through it means this pass
+/// exercises exactly the path `redrive-gate.sh` covers.
+fn runRedrive(init: std.process.Init, a: std.mem.Allocator, state_dir: []const u8) !bool {
+    var child = std.process.spawn(init.io, .{
+        .argv = &.{ "aiko", "redrive", state_dir, "--json" },
+        .stdout = .pipe,
+        .stderr = .pipe,
+    }) catch return false;
+    defer child.kill(init.io);
+
+    var mrbuf: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var mr: std.Io.File.MultiReader = undefined;
+    mr.init(a, init.io, mrbuf.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer mr.deinit();
+    const timeout: std.Io.Timeout = .{ .duration = .{
+        .raw = .{ .nanoseconds = 60 * std.time.ns_per_s },
+        .clock = .boot,
+    } };
+    while (mr.fill(64, timeout)) |_| {} else |_| {}
+
+    const term = child.wait(init.io) catch return false;
+    return term == .exited and term.exited == 0;
 }
