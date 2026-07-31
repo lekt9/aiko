@@ -23,6 +23,7 @@
 
 const std = @import("std");
 const mesh_mod = @import("mesh.zig");
+const limb_ops = @import("limb_ops.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -217,6 +218,47 @@ fn handle(allocator: Allocator, io: std.Io, stream: std.Io.net.Stream, log_path:
     const path = routeOf(head);
 
     if (std.mem.eql(u8, path, "/events")) return stream_events(a, io, w, log_path);
+
+    // The derivation graph's INVALIDATION layer, served from exactly the rows
+    // `redrive` classifies. Recomputing staleness here with a second walk is
+    // how a dashboard ends up disagreeing with the loop it is supposed to show:
+    // the picture would be a claim about the substrate rather than a read of
+    // it. `collectStale` was factored out of the projection for this reason, so
+    // detection, action, and display all settle from one source.
+    if (std.mem.eql(u8, path, "/stale")) {
+        const read = try readAll(a, io, log_path, 0);
+        const rows = limb_ops.collectStale(a, read.bytes) catch &[_]limb_ops.StaleRow{};
+        var body: std.Io.Writer.Allocating = .init(a);
+        const b = &body.writer;
+        try b.writeAll("{\"stale\":[");
+        for (rows, 0..) |r, i| {
+            if (i != 0) try b.writeAll(",");
+            // `route` is the classification redrive would apply, named here so
+            // the operator sees the SAME three cases the loop acts on rather
+            // than a colour invented by the page.
+            const route = if (r.redrivable)
+                "rederive"
+            else if (r.crossed.len != 0)
+                "compensate"
+            else
+                "escalate";
+            try b.print(
+                "{{\"artifact\":\"{s}\",\"stale_source\":\"{s}\",\"produced_by\":\"{s}\"," ++
+                    "\"derived_at\":{d},\"source_moved_at\":{d},\"route\":\"{s}\"," ++
+                    "\"crossed\":\"{s}\",\"from\":\"{s}\"}}",
+                .{
+                    r.artifact,      r.stale_source,    r.produced_by,
+                    r.derived_at,    r.source_moved_at, route,
+                    r.crossed,       if (r.from_snapshot) "snapshot" else "journal",
+                },
+            );
+        }
+        try b.writeAll("]}");
+        const sbytes = body.writer.buffered();
+        try w.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", .{sbytes.len});
+        try w.writeAll(sbytes);
+        return w.flush();
+    }
 
     if (std.mem.eql(u8, path, "/graph")) {
         const read = try readAll(a, io, log_path, 0);
