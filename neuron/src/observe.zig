@@ -233,22 +233,30 @@ fn handle(allocator: Allocator, io: std.Io, stream: std.Io.net.Stream, log_path:
         try b.writeAll("{\"stale\":[");
         for (rows, 0..) |r, i| {
             if (i != 0) try b.writeAll(",");
-            // `route` is the classification redrive would apply, named here so
-            // the operator sees the SAME three cases the loop acts on rather
-            // than a colour invented by the page.
-            const route = if (r.redrivable)
-                "rederive"
-            else if (r.crossed.len != 0)
-                "compensate"
-            else
-                "escalate";
+            // FACTS ONLY. This deliberately does NOT report which of redrive's
+            // three cases a row will take.
+            //
+            // An earlier version did, deriving it from `redrivable` and
+            // `crossed`. That was a SECOND CLASSIFIER and it was wrong:
+            // redrive's `classify` also consults the TOPOLOGY — whether a hop
+            // of the producing chain claims determinism, whether an effector is
+            // attached now — so a row this endpoint called "rederive" is
+            // "escalate" the moment an interface is attached. Caught by testing
+            // the two against each other on a substrate that had one.
+            //
+            // The fix cannot be to call `classify` here: it needs a mutable
+            // Substrate, and this observer's first refusal is that it never
+            // opens one, so a live node keeps committing while it is watched.
+            // An observer that cannot see the topology must not pretend to
+            // classify it. It reports what the projection actually carries and
+            // leaves the verdict to the thing that can compute it.
             try b.print(
                 "{{\"artifact\":\"{s}\",\"stale_source\":\"{s}\",\"produced_by\":\"{s}\"," ++
-                    "\"derived_at\":{d},\"source_moved_at\":{d},\"route\":\"{s}\"," ++
+                    "\"derived_at\":{d},\"source_moved_at\":{d},\"redrivable\":{}," ++
                     "\"crossed\":\"{s}\",\"from\":\"{s}\"}}",
                 .{
                     r.artifact,      r.stale_source,    r.produced_by,
-                    r.derived_at,    r.source_moved_at, route,
+                    r.derived_at,    r.source_moved_at, r.redrivable,
                     r.crossed,       if (r.from_snapshot) "snapshot" else "journal",
                 },
             );

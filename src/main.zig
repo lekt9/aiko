@@ -94,10 +94,7 @@ fn runBridge(init: std.process.Init, a: std.mem.Allocator, rest: []const []const
         std.process.exit(1);
     };
 
-    // The node identity is `who`. Taken from the substrate directory being
-    // mirrored, so a row names the node that actually committed the firing
-    // rather than the host that happened to run the bridge.
-    const node_id = std.fs.path.basename(state_dir);
+    const node_id = nodeIdFor(state_dir);
 
     var declared: usize = 0;
     for (firings) |f| {
@@ -138,6 +135,21 @@ fn runBridge(init: std.process.Init, a: std.mem.Allocator, rest: []const []const
 /// Both halves are idempotent — the bridge relies on contract's cache, redrive
 /// on content-addressed firing identity — so a pass that finds nothing new
 /// writes nothing, and a resident tick over a quiet substrate is free.
+/// Name the node a substrate belongs to.
+///
+/// `basename` alone is wrong and shipped that way: `agent init <node> <agent>`
+/// puts the substrate at `<node>/state`, so every node on earth was recorded as
+/// "state" — a field that identified nothing while claiming to name `who`.
+/// Caught by reading a bridged row back out of the ledger. Take the parent when
+/// the leaf is the conventional `state`.
+fn nodeIdFor(state_dir: []const u8) []const u8 {
+    const leaf = std.fs.path.basename(state_dir);
+    if (!std.mem.eql(u8, leaf, "state")) return leaf;
+    const parent = std.fs.path.dirname(state_dir) orelse return leaf;
+    const up = std.fs.path.basename(parent);
+    return if (up.len == 0) leaf else up;
+}
+
 fn runTick(init: std.process.Init, a: std.mem.Allocator, rest: []const []const u8) !void {
     var buf: [4096]u8 = undefined;
     var w = std.Io.File.stdout().writerStreaming(init.io, &buf);
@@ -158,7 +170,7 @@ fn runTick(init: std.process.Init, a: std.mem.Allocator, rest: []const []const u
             every_s = std.fmt.parseInt(u64, rest[i + 1], 10) catch null;
     }
 
-    const node_id = std.fs.path.basename(state_dir);
+    const node_id = nodeIdFor(state_dir);
     var pass: u64 = 0;
     while (true) {
         pass += 1;

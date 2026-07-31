@@ -66,8 +66,9 @@ footer{font-family:var(--mono);font-size:10.5px;color:var(--dim);line-height:1.7
 <section class="panel">
   <div class="ph"><span class="pt">Derivation graph</span>
     <span class="pn">x is the commit ordinal — every citation flows left to right, because a source must exist before it is cited.
-    A haloed node is stale: <b style="color:var(--live)">re-derive</b> · <b style="color:var(--signal)">escalate</b> ·
-    <b style="color:var(--stale)">compensate</b> (already crossed a boundary — never re-fired).</span></div>
+    A haloed node is <b style="color:var(--signal)">stale</b>; <b style="color:var(--stale)">red</b> means it already crossed
+    a boundary, so it is compensated and never re-fired. Which of the other cases applies depends on topology this
+    read-only view cannot see — <code>aiko redrive --dry-run</code> is the verdict.</span></div>
   <canvas id="cv" height="330"></canvas>
 </section>
 <div class="split">
@@ -114,7 +115,12 @@ function stats(){
 // artifact -> the row redrive would act on. Keyed by produced_by so a firing
 // on the canvas can be marked with the case the loop would take.
 let S={};
-const ROUTE={rederive:'--live',escalate:'--signal',compensate:'--stale'};
+// A stale row is shown as stale, and — where the journal knows it — as having
+// already crossed a boundary. It is NOT shown as one of redrive's three cases:
+// that verdict depends on the topology, which this observer deliberately cannot
+// see (it never opens the substrate). Colouring by a guess would put a verdict
+// on screen that the loop may not agree with.
+const MARK=r=>r.crossed?'--stale':'--signal';
 function stale(){
   return fetch('stale').then(r=>r.json()).then(j=>{
     S={}; (j.stale||[]).forEach(r=>{ S[r.produced_by]=r; });
@@ -144,11 +150,11 @@ function draw(){
     g.beginPath();g.rect(px-3.4,py-3.4,6.8,6.8);g.fill();g.stroke();});
   F.forEach(f=>{if(!(f.cites||[]).some(s=>s!=="stimulus"))return;
     const px=x(f.seq),py=y(0),st=S[f.id];
-    g.fillStyle=css(st?ROUTE[st.route]||'--stale':'--live');
+    g.fillStyle=css(st?MARK(st):'--live');
     g.beginPath();g.arc(px,py,sel===f.id?6:4.2,0,7);g.fill();
     // A stale node wears a halo in the colour of the case the loop would take,
     // so invalidation is visible as it happens rather than as a counter.
-    if(st){g.strokeStyle=css(ROUTE[st.route]||'--stale');g.lineWidth=1.6;g.globalAlpha=.65;
+    if(st){g.strokeStyle=css(MARK(st));g.lineWidth=1.6;g.globalAlpha=.65;
       g.beginPath();g.arc(px,py,10,0,7);g.stroke();g.globalAlpha=1;}
     if(sel===f.id){g.strokeStyle=css('--signal');g.lineWidth=2;g.beginPath();g.arc(px,py,9,0,7);g.stroke();}});
 }
@@ -158,9 +164,10 @@ function show(id){sel=id;const f=F.find(v=>v.id===id);const d=$('det');
   const cites=(f.cites||[]).filter(s=>s!=="stimulus").map(s=>`<div class="src">cites <b>${s}</b></div>`).join('');
   const wrote=(f.w||[]).map(a=>`<div class="src">wrote <b>${a.id}</b> · ${a.n}B</div>`).join('');
   const st=S[f.id];
-  const inv=st?`<div class="claim"><div class="c">stale — <b>${st.route}</b></div>
-    <div class="m">${st.stale_source} moved at ${st.source_moved_at}; this derived at ${st.derived_at}${
-      st.crossed?` · already crossed ${st.crossed}, so it is compensated, never re-fired`:''}</div></div>`:'';
+  const inv=st?`<div class="claim"><div class="c">stale${st.crossed?' — already crossed a boundary':''}</div>
+    <div class="m">${st.stale_source} moved at ${st.source_moved_at}; this derived at ${st.derived_at}.
+      ${st.crossed?`It sent to ${st.crossed}, so it can never be re-fired — the loop compensates instead.`
+        :`Whether it re-derives or escalates depends on the topology at the time; run <code>aiko redrive --dry-run</code> for the verdict.`}</div></div>`:'';
   d.innerHTML=`<div class="src" style="font-size:12.5px;color:var(--ink)">${f.id}</div>
     <div class="src">ordinal <b>${f.seq}</b></div>${inv}${ev||''}${cites}${wrote}`;
   draw();}
