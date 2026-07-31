@@ -196,8 +196,17 @@ if prior is None:
                "detail": "claim %s not staged" % cid}, sys.stdout)
     sys.exit(0)
 
-prior["state"] = "confirmed"
-prior["evidence"] = body["observation"]
+# A CONTRADICTION CANNOT BE UN-SAID. By the time a claim is contradicted its
+# dependent has fired — in the staffing case, the phone call was made. Flipping
+# the state back to "confirmed" on a late reply would leave the ledger asserting
+# the claim held, with no record that a boundary was crossed, which is the one
+# thing this system exists to refuse. The evidence is real and is recorded; the
+# contradiction stands beside it.
+if prior["state"] == "contradicted":
+    prior["late_evidence"] = body["observation"]
+else:
+    prior["state"] = "confirmed"
+    prior["evidence"] = body["observation"]
 json.dump({
     "schema": "neuron.decision/v1",
     "control": {"kind": "terminate", "result": "confirmed"},
@@ -390,5 +399,26 @@ case "$(artifact_bytes artifact/claims/c2)" in
   produced: $(artifact_bytes artifact/claims/c2)" ;;
 esac
 echo "  6. the declared acceptance is satisfied by the real limb"
+
+# --- 7. a contradiction cannot be un-said ---------------------------------
+# The adversarial edge: the worker replies AFTER the escalation call went out.
+# Recording that as a clean "confirmed" would erase the crossing from durable
+# state, and a later reader — or a redrive pass — would see a claim that held
+# and no evidence a call was ever made.
+scenario F
+fire_ok register r6 '{"id":"c5","statement":"w5 attends","refuted_by":"no reply","expect_by":1,"dependent":"reassign"}'
+fire_ok settle s8 '{"ordinal":4}' yes
+[ "$(sent_to outbox/claims/reassign)" = "1" ] || fail "setup: the dependent should have fired"
+fire_ok observe o2 '{"claim_id":"c5","observation":"replied after the call"}' yes
+final="$(artifact_bytes artifact/claims/c5)"
+case "$final" in
+    *'"state": "confirmed"'*) fail "LATE EVIDENCE ERASED THE CROSSING: a reply arriving after the escalation call flipped the claim to confirmed. The ledger now says it held, and nothing records that a boundary was crossed.
+  $final" ;;
+esac
+case "$final" in
+    *'"late_evidence"'*) : ;;
+    *) fail "late evidence was discarded entirely rather than recorded: $final" ;;
+esac
+echo "  7. late evidence is recorded without un-saying the contradiction"
 
 echo "claim-deadline gate: PASS"
