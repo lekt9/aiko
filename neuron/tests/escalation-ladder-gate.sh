@@ -55,10 +55,18 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 export HOME="$gate_root"
 cd "$gate_root"          # isolate cwd too — ledger.zig discovers <cwd>/.claude first
 
-node="$gate_root/node"
-state="$node/state"
-log="$state/substrate.log"
+# Each scenario gets its OWN substrate. The survivor hunt showed why: a gate that
+# tests one trajectory is blind to every conditional weakening that behaves the
+# same on that trajectory. `if confirmed and current >= TERMINAL` was
+# indistinguishable from the real check in the only state the gate ever entered.
+node=""; state=""; log=""
 pkg="$gate_root/pkg"
+
+scenario() {   # scenario <name> — a fresh substrate, so state cannot leak between them
+    node="$gate_root/$1"; state="$node/state"; log="$state/substrate.log"
+    "$binary" agent init "$node" ladder >/dev/null
+    "$binary" limb admit "$pkg" "$state" >/dev/null || fail "admission failed in scenario $1"
+}
 
 # --- journal facts ---------------------------------------------------------
 # Messages this worker actually received on the external boundary.
@@ -74,6 +82,48 @@ for line in open(sys.argv[1]):
              if m["to"] == "outbox/staffing/%s" % sys.argv[2])
 print(n)
 PY
+}
+
+# Decoded payloads of the messages a worker actually received, in order. The
+# journal hex-encodes a payload exactly as it does artifact bytes, so this
+# decodes rather than reads: a raw compare would never match anything.
+# survivor hunt found a mutation that pinned every rung's payload to
+# {"rung": 3, "via": "call"} — every worker skipped the follow-up rung, and the
+# gate could not see it because it only ever matched on the `to` address.
+payloads_for() {
+    python3 - "$log" "$1" <<'PY2'
+import json, sys
+for line in open(sys.argv[1]):
+    rec = json.loads(line)
+    if rec.get("op") != "commit":
+        continue
+    for m in rec.get("messages", []):
+        if m["to"] == "outbox/staffing/%s" % sys.argv[2]:
+            print(bytes.fromhex(m["payload"]).decode("utf-8", "replace"))
+PY2
+}
+
+# Every message must name the worker it was sent to. Kills a recipient rotation
+# that keeps the per-worker COUNTS at 1/2/3 while sending each notice to the
+# wrong person.
+assert_addressed() {   # assert_addressed <worker>
+    python3 - "$log" "$1" <<'PY2'
+import json, sys
+w = sys.argv[2]
+bad = []
+for line in open(sys.argv[1]):
+    rec = json.loads(line)
+    if rec.get("op") != "commit":
+        continue
+    for m in rec.get("messages", []):
+        if m["to"] == "outbox/staffing/%s" % w:
+            body = json.loads(bytes.fromhex(m["payload"]).decode("utf-8", "replace"))
+            if body.get("worker") != w:
+                bad.append((w, body.get("worker")))
+if bad:
+    print("FAIL: message addressed to %s names worker %s — recipient and content disagree" % bad[0])
+    sys.exit(1)
+PY2
 }
 
 artifact_bytes() {
@@ -271,10 +321,9 @@ json.dump({
 PY
 
 # --- admit -----------------------------------------------------------------
-"$binary" agent init "$node" ladder >/dev/null
-"$binary" limb admit "$pkg" "$state" >/dev/null || fail "the ladder package was refused admission"
-
-ROSTER="w1,w2,w3"
+# A mixed-case name is deliberate: it kills a `.lower()` in confirm.py, which
+# otherwise silently fails to match and re-messages a worker who did reply.
+ROSTER="w1,W2,w3"
 
 # Stage the roster as a pinned read, plus whatever durable state exists now.
 # The driver stages FACTS; the neuron makes the decision.
@@ -330,38 +379,92 @@ run() {  # run <neuron> <firing-suffix> [reply-worker]
     fi
 }
 
-# --- 1. fan-out is per worker ---------------------------------------------
+# ===========================================================================
+# A. MIXED — one replies at once, one after the follow-up, one never.
+# ===========================================================================
+scenario A
 run notify n1
-for w in w1 w2 w3; do
+for w in w1 W2 w3; do
     [ "$(sent_to $w)" = "1" ] || fail "after notify, $w received $(sent_to $w) messages, expected exactly 1"
+    assert_addressed "$w" || exit 1
 done
-echo "  notify: one individually addressed message per worker"
+echo "  A. notify: one message per worker, each naming its own recipient"
 
-# --- 2. a confirmed worker is never messaged again -------------------------
 run confirm c1 w1
 run escalate e1
-[ "$(sent_to w1)" = "1" ] || fail "w1 confirmed but was messaged again ($(sent_to w1) total) — this is the 31-of-35 defect"
-[ "$(sent_to w2)" = "2" ] || fail "w2 did not receive a follow-up (got $(sent_to w2))"
+[ "$(sent_to w1)" = "1" ] || fail "w1 confirmed but was messaged again ($(sent_to w1)) — the 31-of-35 defect"
+[ "$(sent_to W2)" = "2" ] || fail "W2 did not receive a follow-up (got $(sent_to W2))"
 [ "$(sent_to w3)" = "2" ] || fail "w3 did not receive a follow-up (got $(sent_to w3))"
-echo "  confirmed worker skipped from durable state; the silent two advanced"
 
-# --- 3. the ladder terminates ---------------------------------------------
-run confirm c2 w2
+# The rungs must be DISTINCT. A mutation that labelled every message rung 3
+# ("call") kept these counts at 1/2/3 while skipping the follow-up for everyone.
+p2="$(payloads_for w3 | sed -n 2p)"
+case "$p2" in *follow-up*) : ;; *) fail "w3's second message is not a follow-up rung: $p2" ;; esac
+echo "  A. confirmed worker skipped; the silent two advanced to a real follow-up"
+
+run confirm c2 W2
 run escalate e2
 [ "$(artifact_bytes artifact/staffing/rung/w3)" = "3" ] || fail "w3 did not reach the terminal rung"
-[ "$(sent_to w3)" = "3" ] || fail "w3 did not receive the terminal call (got $(sent_to w3))"
+p3="$(payloads_for w3 | sed -n 3p)"
+case "$p3" in *call*) : ;; *) fail "w3's third message is not the terminal call: $p3" ;; esac
 
-before_w1=$(sent_to w1); before_w2=$(sent_to w2); before_w3=$(sent_to w3)
-run escalate e3          # drive it again with nothing left to do
-[ "$(sent_to w3)" = "$before_w3" ] || fail "the ladder advanced PAST the terminal rung: w3 went $before_w3 -> $(sent_to w3). Every rung is a real call."
-[ "$(sent_to w1)" = "$before_w1" ] || fail "w1 messaged again on a settled ladder"
-[ "$(sent_to w2)" = "$before_w2" ] || fail "w2 messaged again on a settled ladder"
-echo "  terminal rung halts: a further due event puts nothing on the boundary"
+b1=$(sent_to w1); b2=$(sent_to W2); b3=$(sent_to w3)
+run escalate e3
+[ "$(sent_to w3)" = "$b3" ] || fail "advanced PAST terminal: w3 went $b3 -> $(sent_to w3)"
+[ "$(sent_to w1)" = "$b1" ] || fail "w1 messaged again on a settled ladder"
+[ "$(sent_to W2)" = "$b2" ] || fail "W2 messaged again on a settled ladder"
+[ "$(sent_to w1)" = "1" ] && [ "$(sent_to W2)" = "2" ] && [ "$(sent_to w3)" = "3" ] \
+    || fail "final counts wrong: w1=$(sent_to w1) W2=$(sent_to W2) w3=$(sent_to w3), expected 1/2/3"
+echo "  A. final ladder 1/2/3, distinct rungs, halts"
 
-# --- 4. exact per-worker counts -------------------------------------------
-[ "$(sent_to w1)" = "1" ] || fail "w1 final count $(sent_to w1), expected 1"
-[ "$(sent_to w2)" = "2" ] || fail "w2 final count $(sent_to w2), expected 2"
-[ "$(sent_to w3)" = "3" ] || fail "w3 final count $(sent_to w3), expected 3"
-echo "  final ladder: w1=1 (replied), w2=2 (replied after follow-up), w3=3 (called)"
+# ===========================================================================
+# B. NOBODY REPLIES — the production case, and the state the gate never
+#    entered before. `if confirmed and current >= TERMINAL` is identical to the
+#    real check whenever ANYONE has replied; only here does it diverge, and
+#    here it escalates every silent worker forever. Each rung is a real call.
+# ===========================================================================
+scenario B
+run notify b1
+for i in 1 2 3 4; do run escalate "b-due-$i"; done
+for w in w1 W2 w3; do
+    n="$(sent_to $w)"
+    [ "$n" = "3" ] || fail "SILENT SHIFT: $w received $n messages across four due events, expected exactly 3. The ladder does not terminate when nobody replies."
+    [ "$(artifact_bytes artifact/staffing/rung/$w)" = "3" ] \
+        || fail "$w rung is $(artifact_bytes artifact/staffing/rung/$w), expected 3"
+done
+echo "  B. nobody replies: every worker stops at exactly 3, four due events later"
+
+# ===========================================================================
+# C. A LATE JOINER — added to the roster after the others have been called.
+#    Kills two survivors at once: a per-worker rung defaulted to TERMINAL
+#    (the new worker is treated as already called and silently dropped), and a
+#    roster-GLOBAL terminal check (everyone frozen once anyone reaches 3).
+# ===========================================================================
+scenario C
+ROSTER="w1,W2"
+run notify c-n1
+for i in 1 2; do run escalate "c-due-$i"; done
+[ "$(sent_to w1)" = "3" ] || fail "setup: w1 should be at the terminal rung"
+ROSTER="w1,W2,late"          # the new worker has NO rung artifact yet
+run escalate c-due-3
+[ "$(sent_to late)" -ge "1" ] \
+    || fail "LATE JOINER DROPPED: 'late' joined the roster and received $(sent_to late) messages. A worker with no rung artifact must be contacted, not treated as already called."
+echo "  C. a worker who joins after the others were called is still contacted"
+
+# ===========================================================================
+# D. EVERYONE REPLIES — kills `len(confirmed) < len(crew) and w in confirmed`,
+#    which skips confirmed workers only while at least one is still silent.
+# ===========================================================================
+scenario D
+ROSTER="w1,W2,w3"
+run notify d-n1
+run confirm d-c1 w1
+run confirm d-c2 W2
+run confirm d-c3 w3
+d1=$(sent_to w1); d2=$(sent_to W2); d3=$(sent_to w3)
+run escalate d-due-1
+[ "$(sent_to w1)" = "$d1" ] && [ "$(sent_to W2)" = "$d2" ] && [ "$(sent_to w3)" = "$d3" ] \
+    || fail "ALL CONFIRMED yet the ladder messaged someone again: w1 $d1->$(sent_to w1), W2 $d2->$(sent_to W2), w3 $d3->$(sent_to w3)"
+echo "  D. when everyone has replied, a due event puts nothing on the boundary"
 
 echo "escalation-ladder gate: PASS"

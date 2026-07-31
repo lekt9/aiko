@@ -83,7 +83,7 @@ cat > "$pkg/SKILL.md" <<'DOC'
 name: gate/staffing-engine
 description: Turns a shift order plus a worker database into a role-assigned roster, by qualification and least-recently-worked rotation. Fires on an order stimulus. Refuses rather than under-fill.
 probe_input: crane:2,lash:1
-expect_contains: crane=ben,cal;lash=fay
+expect_contains: crane=ben,gus;lash=fay
 ---
 
 # gate/staffing-engine
@@ -186,12 +186,16 @@ PY
 "$binary" limb admit "$pkg" "$state" >/dev/null || fail "the staffing engine was refused admission"
 
 # ana worked most recently (5); ben least (1). dot and fay are lash-only.
+# gus TIES with ben on last_worked. Without a tie the tiebreak is dead code, and
+# a mutation putting hash() there is invisible — which is exactly how it survived
+# the first version of this gate.
 WORKERS='ana:crane:5
 ben:crane:1
 cal:crane:3
 dot:lash:2
 eve:crane|lash:4
-fay:lash:0'
+fay:lash:0
+gus:crane:1'
 
 plan() {  # plan <order-id> <order-spec>
     python3 - "$1" "$2" "$WORKERS" > "$gate_root/s.json" <<'PY'
@@ -206,7 +210,14 @@ json.dump({"schema": "neuron.stimulus/v1", "firing_id": "plan/%s" % oid,
            "permitted_reads": [r["id"] for r in reads], "messages": []}, sys.stdout)
 PY
     set +e
-    "$binary" limb run "$state" --package "$pkg" --neuron plan \
+    # PLAN_SEED varies CPython's string-hash randomisation for this firing.
+    # Comparing two firings under DIFFERENT seeds turns the determinism check
+    # from a coin flip into a proof: any ordering that depends on hash() must
+    # diverge, while a pure (last_worked, name) sort cannot. The earlier version
+    # compared two firings under whatever seeds they happened to get and caught
+    # a hash-based tiebreak only about half the time — a flaky gate, which is
+    # worse than a failing one.
+    PYTHONHASHSEED="${PLAN_SEED:-0}" "$binary" limb run "$state" --package "$pkg" --neuron plan \
         --stimulus "$gate_root/s.json" >"$gate_root/out.txt" 2>"$gate_root/err.txt"
     PLAN_RC=$?
     set -e
@@ -228,20 +239,52 @@ plan_refused() {
 }
 
 # --- 1. deterministic ------------------------------------------------------
-plan_ok o1 "crane:2,lash:1"
-plan_ok o2 "crane:2,lash:1"
+# CONSTRUCT the discriminating seed pair rather than guess one. ben and gus tie
+# on last_worked, so a hash-based tiebreak orders them by hash(name). Two
+# arbitrary seeds agree about half the time — picking constants and hoping is
+# how the first version of this check ended up flaky. Instead, search for one
+# seed that puts ben first and one that puts gus first: under THOSE two, any
+# hash-dependent ordering must diverge, while (last_worked, name) cannot.
+read -r SEED_A SEED_B <<<"$(python3 - <<'PY2'
+import subprocess, sys
+first = {}
+for seed in range(0, 400):
+    out = subprocess.run([sys.executable, "-c",
+        "p=[('ben',1),('gus',1)];p.sort(key=lambda w:(w[1],hash(w[0])));print(p[0][0])"],
+        env={"PYTHONHASHSEED": str(seed), "PATH": "/usr/bin:/bin"},
+        capture_output=True, text=True).stdout.strip()
+    first.setdefault(out, seed)
+    if len(first) == 2:
+        print(first["ben"], first["gus"]); sys.exit(0)
+sys.exit(1)
+PY2
+)" || fail "could not construct a seed pair that flips the tie — the determinism check would be vacuous"
+echo "  seeds $SEED_A / $SEED_B flip a hash-ordered tie in opposite directions"
+
+PLAN_SEED=$SEED_A plan_ok o1 "crane:2,lash:1"
+PLAN_SEED=$SEED_B plan_ok o2 "crane:2,lash:1"
 r1="$(artifact_bytes artifact/staffing/roster/o1)"
 r2="$(artifact_bytes artifact/staffing/roster/o2)"
 [ -n "$r1" ] || fail "the first order produced no roster"
-[ "$r1" = "$r2" ] || fail "NON-DETERMINISTIC: identical inputs produced '$r1' then '$r2'. This producer is on the recompute path; the graph would never reach a fixpoint."
-echo "  deterministic: identical inputs, identical roster ($r1)"
+[ "$r1" = "$r2" ] || fail "NON-DETERMINISTIC under two hash seeds: '$r1' then '$r2'. This producer is on the recompute path; the graph would never reach a fixpoint."
+# ben and gus TIE on last_worked, so the tiebreak is live: pin the exact result
+# rather than only self-consistency. Two runs agreeing is satisfied by any
+# stable-but-wrong order; this is satisfied only by (last_worked, name).
+[ "$r1" = "crane=ben,gus;lash=fay" ] \
+    || fail "roster is '$r1', expected exactly 'crane=ben,gus;lash=fay' — ben before gus is the NAME tiebreak on an equal last_worked"
+echo "  deterministic across hash seeds, and the tie breaks by name ($r1)"
 
 # --- 2. qualification ------------------------------------------------------
 crane_part="${r1%%;*}"                    # "crane=..."
+lash_part="${r1##*;}"                    # "lash=..."
 case "$crane_part" in
     *dot*|*fay*) fail "a lash-only worker was assigned to crane: $crane_part" ;;
 esac
-echo "  qualification: no lash-only worker appears under crane"
+# The second role is where `role in w[1] or assigned` mis-assigns, so check it.
+case "$lash_part" in
+    *ana*|*ben*|*cal*|*gus*) fail "a crane-only worker was assigned to lash: $lash_part" ;;
+esac
+echo "  qualification: holds in both directions, not just the first role"
 
 # --- 3. rotation is by least-recently-worked -------------------------------
 # ana worked most recently of the crane pool and must be EXCLUDED; ben worked
@@ -258,10 +301,20 @@ echo "  rotation: least-recently-worked chosen, most-recently-worked excluded"
 
 # --- 4. a shortfall refuses, and writes nothing ---------------------------
 # Only four workers are crane-qualified. Asking for five must fail closed.
-plan_refused o3 "crane:5"
+plan_refused o3 "crane:6"
 [ -z "$(artifact_bytes artifact/staffing/roster/o3)" ] \
     || fail "an unsatisfiable order produced a roster anyway: '$(artifact_bytes artifact/staffing/roster/o3)'. A short roster that looks complete gets notified."
-echo "  shortfall refuses and leaves no artifact"
+
+# The discriminating case: QUALIFIED is sufficient but AVAILABLE is not.
+# crane:4 consumes ben, gus, cal AND eve — and eve is the only crane worker who
+# is also lash-qualified. Three workers are lash-qualified (dot, eve, fay) but
+# only two remain FREE, so a guard that counts qualified-rather-than-available
+# sails past the check and then silently under-fills from a two-worker pool.
+# The previous version of this gate could not tell those two guards apart.
+plan_refused o4 "crane:4,lash:3"
+[ -z "$(artifact_bytes artifact/staffing/roster/o4)" ] \
+    || fail "SHORTFALL MISSED: lash has 3 qualified workers but only 2 free after crane took eve, and a roster was produced anyway: '$(artifact_bytes artifact/staffing/roster/o4)'"
+echo "  shortfall refuses on AVAILABLE, not merely qualified, and writes nothing"
 
 # --- 5. the output feeds the ladder ---------------------------------------
 # The ladder consumes a comma-separated worker list. Every name in the roster
