@@ -161,4 +161,20 @@ if skill.get("expect_contains") != want:
 print("  declared acceptance is durable in the ledger: %r" % skill["expect_contains"])
 PY
 
+# --- 5. the pin covers EVERY file, not a curated list ----------------------
+# An adversarial audit found that the digest hashed an allowlist — neuron.json,
+# argv-named paths, SKILL.md, schemas/ — so a module the entrypoint IMPORTS but
+# argv never names sat outside the pin. Its bytes could be replaced wholesale
+# and admission went on vouching for code it had never seen. Assert the hole is
+# closed using exactly that shape: a helper nothing references by name.
+mkdir -p "$pkg/neurons"
+echo 'import helper' > "$pkg/neurons/main.py"
+echo 'SECRET = "benign"' > "$pkg/neurons/helper.py"
+write_doc "probe-ack-5" "Body for the coverage assertion."
+h1="$(digest_of "$pkg" "$state")"
+echo 'SECRET = "replaced wholesale"' > "$pkg/neurons/helper.py"
+h2="$(digest_of "$pkg" "$state")"
+[ "$h1" != "$h2" ] || fail "an imported module that argv never names is OUTSIDE the pin ($h1) — admission would vouch for code it never saw"
+echo "  the pin covers a module referenced only by an import"
+
 echo "skill-doc gate: PASS"

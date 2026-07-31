@@ -102,50 +102,38 @@ pub fn computePackageDigest(allocator: Allocator, io: std.Io, package_dir: []con
     const manifest = try std.json.parseFromSliceLeaky(std.json.Value, a, manifest_bytes, .{});
     if (manifest != .object) return error.InvalidManifest;
 
+    // EVERY regular file under the package root, not a curated list.
+    //
+    // This used to hash an allowlist: `neuron.json`, the argv entries that
+    // looked like relative paths, `SKILL.md`, and everything under `schemas/`.
+    // An adversarial audit found the hole that shape necessarily leaves. A
+    // second module the entrypoint IMPORTS — `neurons/helper.py`, loaded by
+    // `neurons/main.py` — is named by no argv, so it was in none of those sets.
+    // Its bytes could be replaced wholesale and the digest never moved:
+    // admission went on vouching for code it had never seen. Demonstrated with
+    // a two-file package whose helper changed from a constant to anything at
+    // all, both admissions returning the identical digest.
+    //
+    // An allowlist is the wrong shape for this job. The property §30 needs is
+    // "code pinned to bytes that existed before the pin", and every path an
+    // allowlist omits is an unpinned byte. A package IS its directory, so the
+    // digest walks the whole thing; anything transient in there is a packaging
+    // fault, not a reason to weaken the pin.
     var entries: std.ArrayList([]const u8) = .empty;
-    try entries.append(a, try a.dupe(u8, "neuron.json"));
-    const neurons = manifest.object.get("neurons") orelse return error.InvalidManifest;
-    if (neurons != .array) return error.InvalidManifest;
-    for (neurons.array.items) |entry| {
-        if (entry != .object) continue;
-        const argv = entry.object.get("argv") orelse continue;
-        if (argv != .array) continue;
-        for (argv.array.items) |item| {
-            const part = switch (item) {
-                .string => |s| s,
-                else => continue,
-            };
-            if (part.len > 0 and part[0] != '/' and std.mem.indexOfScalar(u8, part, '/') != null) {
-                const abs = try std.fs.path.join(a, &.{ package_dir, part });
-                _ = cwd.statFile(io, abs, .{}) catch continue;
-                try entries.append(a, try a.dupe(u8, part));
-            }
-        }
-    }
-    // A package's SKILL.md declares what it is SUPPOSED to do. Leaving it out
-    // of the digest is what lets prose and code drift apart: the description
-    // could be edited to claim anything and the pin would never move, so
-    // admission would keep vouching for bytes the document no longer describes.
-    // Hashing it makes the claim part of the thing admitted — edit the intent
-    // and you have a different package, which must earn admission again.
-    const skill_path = try std.fs.path.join(a, &.{ package_dir, SKILL_DOC });
-    if (cwd.statFile(io, skill_path, .{})) |_| {
-        try entries.append(a, try a.dupe(u8, SKILL_DOC));
-    } else |_| {}
-
-    const schemas_path = try std.fs.path.join(a, &.{ package_dir, "schemas" });
     // `.iterate` is required to walk the handle: without it the fd carries no
     // read capability and `walker.next` fails `BADF` on Linux. macOS tolerates
-    // the omission, so every package carrying a `schemas/` directory admitted
-    // there and panicked here.
-    if (cwd.openDir(io, schemas_path, .{ .iterate = true })) |schemas_dir| {
-        defer schemas_dir.close(io);
-        var walker = try schemas_dir.walk(a);
-        defer walker.deinit();
-        while (try walker.next(io)) |entry| {
-            if (entry.kind == .file) try entries.append(a, try std.fmt.allocPrint(a, "schemas/{s}", .{entry.path}));
-        }
-    } else |_| {}
+    // the omission, so every package carrying a subdirectory admitted there and
+    // panicked here.
+    var pkg_dir = cwd.openDir(io, package_dir, .{ .iterate = true }) catch
+        return error.PackageIoError;
+    defer pkg_dir.close(io);
+    var walker = try pkg_dir.walk(a);
+    defer walker.deinit();
+    while (try walker.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        try entries.append(a, try a.dupe(u8, entry.path));
+    }
+    if (entries.items.len == 0) return error.InvalidManifest;
     std.mem.sort([]const u8, entries.items, {}, stringLess);
     var hasher = Sha256.init(.{});
     hasher.update("neuron.limb-package/v1\n");
