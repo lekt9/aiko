@@ -116,6 +116,9 @@ pub const Route = enum {
     reused,
     /// No admitted interface did, so one was derived, tested, and admitted.
     generated,
+    /// Nothing existed to discover, so a handler was WRITTEN inert from the
+    /// bounded transform catalogue, then tested and admitted like any other.
+    authored,
 
     pub fn name(self: Route) []const u8 {
         return @tagName(self);
@@ -340,6 +343,126 @@ fn searchAdmitted(
 /// Reuse first, then discovery. A generated adapter that admits and attaches
 /// but fails the gap on the real path is revoked and detached before returning
 /// — admission is never treated as success.
+/// Where an authored handler's bytes land before they are pinned.
+///
+/// They are written to disk FIRST and admitted afterwards, which is the whole
+/// reason authoring is allowed at all: admission pins bytes that existed before
+/// the pin. Generation and admission are separate steps, so an authored handler
+/// is evidence-bearing in exactly the way a discovered one is.
+pub const AUTHORED_DIR = ".aiko/authored";
+
+/// The bounded transform catalogue.
+///
+/// This is the load-bearing refusal of the whole authoring path, so it is worth
+/// stating plainly: a handler is chosen from transforms written AHEAD OF TIME,
+/// never synthesised from the gap's acceptance string.
+///
+/// The difference is not stylistic. A gap declares its acceptance as
+/// `expect_contains`, so a handler synthesised to satisfy it could simply print
+/// that string and pass — closing the gap while doing nothing. That is the
+/// fabrication every other refusal in this substrate exists to prevent, and
+/// authoring would be the one door left open.
+///
+/// So authoring is a bounded search over real transforms, exactly as
+/// `channelVariants` is a bounded search over real input shapes (§9 forbids
+/// inventing a contract from a name). Each entry computes something from its
+/// input. None of them reads the gap. A candidate still has to pass the
+/// battery and then satisfy the gap on the real path, so a transform that
+/// happens not to fit is simply not chosen.
+const Transform = struct {
+    id: []const u8,
+    /// A complete, self-contained script. It receives the probe input on argv
+    /// and writes its product to stdout.
+    body: []const u8,
+};
+
+const CATALOGUE = [_]Transform{
+    .{ .id = "identity", .body = "import sys\nsys.stdout.write(sys.argv[1] if len(sys.argv)>1 else '')\n" },
+    .{ .id = "upper", .body = "import sys\nsys.stdout.write((sys.argv[1] if len(sys.argv)>1 else '').upper())\n" },
+    .{ .id = "lower", .body = "import sys\nsys.stdout.write((sys.argv[1] if len(sys.argv)>1 else '').lower())\n" },
+    .{ .id = "trim", .body = "import sys\nsys.stdout.write((sys.argv[1] if len(sys.argv)>1 else '').strip())\n" },
+    .{ .id = "collapse-ws", .body = "import sys\nsys.stdout.write(' '.join((sys.argv[1] if len(sys.argv)>1 else '').split()))\n" },
+    .{ .id = "reverse", .body = "import sys\nsys.stdout.write((sys.argv[1] if len(sys.argv)>1 else '')[::-1])\n" },
+    .{ .id = "sha256", .body = "import sys,hashlib\nsys.stdout.write(hashlib.sha256((sys.argv[1] if len(sys.argv)>1 else '').encode()).hexdigest())\n" },
+    .{ .id = "json-compact", .body = "import sys,json\nsys.stdout.write(json.dumps(json.loads(sys.argv[1]),separators=(',',':')))\n" },
+};
+
+/// Write one catalogue transform to disk as an inert executable and return its
+/// path. Inert means exactly that: bytes on disk that nothing has admitted, so
+/// nothing may run them through the membrane until `admitCore` pins them.
+fn authorCandidate(
+    a: Allocator,
+    io: std.Io,
+    slug: []const u8,
+    t: Transform,
+) ![]const u8 {
+    const dir = try std.fmt.allocPrint(a, "{s}/{s}", .{ AUTHORED_DIR, slug });
+    std.Io.Dir.cwd().createDirPath(io, dir) catch {};
+
+    // The locator MUST be absolute: `membrane.zig:726` refuses a relative one
+    // with `InterfaceBoundaryUnusable`, because a manifest whose meaning
+    // depends on the caller's working directory is not pinned to anything. This
+    // Zig's std exposes no cwd accessor, so reach for libc the same way
+    // `mesh.zig` does.
+    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
+    if (std.c.getcwd(&cwd_buf, cwd_buf.len) == null) return Error.CapabilityGapUnresolved;
+    const cwd_path = std.mem.sliceTo(&cwd_buf, 0);
+    const path = try std.fmt.allocPrint(a, "{s}/{s}/{s}.py", .{ cwd_path, dir, t.id });
+
+    const script = try std.fmt.allocPrint(a, "#!/usr/bin/env python3\n{s}", .{t.body});
+    var file = try std.Io.Dir.cwd().createFile(io, path, .{});
+    defer file.close(io);
+    var wbuf: [4096]u8 = undefined;
+    var fw = file.writerStreaming(io, &wbuf);
+    try fw.interface.writeAll(script);
+    try fw.interface.flush();
+    // A process boundary is executed, so the authored bytes must carry the
+    // executable bit or the membrane cannot invoke what it just pinned.
+    file.setPermissions(io, .executable_file) catch {};
+    return path;
+}
+
+/// Close a gap by WRITING a handler when there was nothing to discover.
+///
+/// This is the join between the substrate's two existing halves. Self-wiring
+/// (discover a boundary that already declares a schema) and self-writing (write
+/// a limb inert, admit it by digest) were both witnessed and never connected:
+/// if nothing out there satisfied a gap, the loop retired it rather than
+/// authoring what would close it.
+///
+/// The order is unchanged from the discovered path — draft inert, run the
+/// battery, probe the real path — because an authored candidate earns
+/// admission the same way or not at all.
+fn authorHandler(
+    a: Allocator,
+    io: std.Io,
+    gap: *const CapabilityGap,
+    digest_out: *[64]u8,
+) ?[]u8 {
+    // Authoring produces a local executable, so it can only answer a gap whose
+    // boundary is a process. Anything else would be authoring a manifest for a
+    // boundary that does not exist — a pin over nothing.
+    if (gap.discovery_kind != .process) return null;
+
+    const slug = gap.slug();
+    for (CATALOGUE) |t| {
+        const path = authorCandidate(a, io, &slug, t) catch continue;
+        for (channelVariants(.process)) |channel| {
+            const draft = membrane.describe(a, io, path, .{
+                .kind = .process,
+                .mode = .read,
+                .input_channel = channel,
+            }) catch continue;
+            const parsed = membrane.parseManifest(a, draft) catch continue;
+            const checks = membrane_ops.runBattery(a, io, &parsed) catch continue;
+            if (!membrane_ops.batteryPassed(checks)) continue;
+            if (!satisfies(a, io, gap, &parsed, digest_out)) continue;
+            return draft;
+        }
+    }
+    return null;
+}
+
 pub fn resolveGap(
     a: Allocator,
     io: std.Io,
@@ -370,10 +493,10 @@ pub fn resolveGap(
         };
     }
 
-    // 2. Discover exactly the authorized target — never roam.
-    const candidate = membrane.discover(a, io, gap.discovery_target) catch
-        return Error.CapabilityGapUnresolved;
-    _ = candidate;
+    // 2. Discover exactly the authorized target — never roam. A target that
+    //    does not exist is not fatal any more: it is the case authoring exists
+    //    for, and it is handled after the draft loop.
+    const discovered = membrane.discover(a, io, gap.discovery_target) catch null;
 
     // 3. Derive the explicit interface schema. How a boundary takes its input
     //    is part of its contract and cannot be read off its name (§9 forbids
@@ -382,7 +505,8 @@ pub fn resolveGap(
     //    the one that both passes the battery and actually satisfies the gap.
     const variants = channelVariants(gap.discovery_kind);
     var chosen: ?[]u8 = null;
-    for (variants) |channel| {
+    var route: Route = .generated;
+    if (discovered != null) for (variants) |channel| {
         const draft = membrane.describe(a, io, gap.discovery_target, .{
             .kind = gap.discovery_kind,
             .mode = .read,
@@ -396,6 +520,15 @@ pub fn resolveGap(
         if (!satisfies(a, io, gap, &parsed, &result_digest)) continue;
         chosen = draft;
         break;
+    };
+
+    // 3b. Nothing to discover, or nothing discovered satisfied the gap. AUTHOR
+    //     one. This is the only path that creates a boundary which did not
+    //     exist anywhere; everything after it is identical, because an authored
+    //     handler earns admission exactly as a discovered one does.
+    if (chosen == null) {
+        chosen = authorHandler(a, io, gap, &result_digest);
+        if (chosen != null) route = .authored;
     }
     const draft = chosen orelse return Error.CapabilityGapUnresolved;
 
@@ -426,7 +559,7 @@ pub fn resolveGap(
 
     try recordPattern(a, substrate, gap, &hex, &result_digest, 1);
     return .{
-        .route = .generated,
+        .route = route,
         .interface_hex = hex,
         .verified = true,
         .successes = 1,

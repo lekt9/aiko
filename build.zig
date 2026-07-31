@@ -111,6 +111,7 @@ pub fn build(b: *std.Build) void {
     for ([_][]const u8{
         "neuron/tests/published-interface-gate.sh",
         "neuron/tests/redrive-gate.sh",
+        "neuron/tests/authored-gap-gate.sh",
         "tests/bridge-gate.sh",
     }) |witness| {
         const g = b.addSystemCommand(&.{ "bash", witness });

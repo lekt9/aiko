@@ -45,3 +45,4 @@ __pycache__/
 *.pdb
 *.rlib
 *.rmeta
+.aiko/
