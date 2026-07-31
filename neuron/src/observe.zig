@@ -255,9 +255,9 @@ fn handle(allocator: Allocator, io: std.Io, stream: std.Io.net.Stream, log_path:
                     "\"derived_at\":{d},\"source_moved_at\":{d},\"redrivable\":{}," ++
                     "\"crossed\":\"{s}\",\"from\":\"{s}\"}}",
                 .{
-                    r.artifact,      r.stale_source,    r.produced_by,
-                    r.derived_at,    r.source_moved_at, r.redrivable,
-                    r.crossed,       if (r.from_snapshot) "snapshot" else "journal",
+                    r.artifact,   r.stale_source,                                 r.produced_by,
+                    r.derived_at, r.source_moved_at,                              r.redrivable,
+                    r.crossed,    if (r.from_snapshot) "snapshot" else "journal",
                 },
             );
         }
