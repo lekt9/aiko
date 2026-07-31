@@ -113,6 +113,7 @@ pub fn build(b: *std.Build) void {
         "neuron/tests/redrive-gate.sh",
         "neuron/tests/authored-gap-gate.sh",
         "tests/bridge-gate.sh",
+        "tests/dispatch-gate.sh",
     }) |witness| {
         const g = b.addSystemCommand(&.{ "bash", witness });
         g.step.dependOn(b.getInstallStep());

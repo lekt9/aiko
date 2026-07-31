@@ -17,6 +17,7 @@ const neuron = @import("typed_neuron");
 const contract = @import("contract");
 
 const bridge = @import("bridge.zig");
+const mcp = @import("mcp.zig");
 
 pub fn main(init: std.process.Init) !void {
     const a = init.arena.allocator();
@@ -25,6 +26,11 @@ pub fn main(init: std.process.Init) !void {
     while (it.next()) |arg| try argv.append(a, arg);
     if (argv.items.len >= 2 and std.mem.eql(u8, argv.items[1], "bridge")) {
         return runBridge(init, a, argv.items[2..]);
+    }
+    // The MCP surface: one door onto the whole harness, which is what Hermes
+    // mounts. Protocol from contract, catalog and semantics from mcp.zig.
+    if (argv.items.len >= 2 and std.mem.eql(u8, argv.items[1], "mcp")) {
+        return mcp.serve(a, init.io, init.minimal.environ);
     }
 
     var buf: [4096]u8 = undefined;

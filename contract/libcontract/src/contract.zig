@@ -66,7 +66,7 @@ pub const payload_crypto = @import("payload_crypto.zig");
 // fans out automatically.
 pub const words = @import("words.zig");
 // MCP stdio server (warm process for agents). Re-export so main can do
-// `contract.mcp_server.runStdio(allocator, env, dispatch)`.
+// `contract.mcp_server.runStdio(allocator, env, tools, dispatch)`.
 pub const mcp_server = @import("mcp_server.zig");
 // Comptime pattern enforcement. The assertInvariants() call below is
 // evaluated at compile time inside contract.zig's own container, which
