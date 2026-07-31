@@ -119,6 +119,10 @@ pub fn build(b: *std.Build) void {
         "neuron/tests/claim-deadline-gate.sh",
         "tests/bridge-gate.sh",
         "tests/dispatch-gate.sh",
+        "neuron/tests/interface-morphogenesis-gate.sh",
+        "neuron/tests/meta-agent-gate.sh",
+        "neuron/tests/observe-live-gate.sh",
+        "neuron/tests/self-constructing-agent-gate.sh",
         "tests/tick-gate.sh",
     }) |witness| {
         const g = b.addSystemCommand(&.{ "bash", witness });

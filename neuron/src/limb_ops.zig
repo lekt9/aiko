@@ -63,10 +63,15 @@ pub const SkillDoc = struct {
             const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
             const key = std.mem.trim(u8, line[0..colon], " \t");
             const val = std.mem.trim(u8, line[colon + 1 ..], " \t\"");
-            if (std.mem.eql(u8, key, "name")) doc.name = val
-            else if (std.mem.eql(u8, key, "description")) doc.description = val
-            else if (std.mem.eql(u8, key, "probe_input")) doc.probe_input = val
-            else if (std.mem.eql(u8, key, "expect_contains")) doc.expect_contains = val;
+            if (std.mem.eql(u8, key, "name")) {
+                doc.name = val;
+            } else if (std.mem.eql(u8, key, "description")) {
+                doc.description = val;
+            } else if (std.mem.eql(u8, key, "probe_input")) {
+                doc.probe_input = val;
+            } else if (std.mem.eql(u8, key, "expect_contains")) {
+                doc.expect_contains = val;
+            }
         }
         if (doc.name.len == 0 or doc.description.len == 0)
             return SkillDocError.SkillDocMalformed;
