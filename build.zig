@@ -116,6 +116,7 @@ pub fn build(b: *std.Build) void {
         "tests/zig-doctrine-gate.sh",
         "neuron/tests/escalation-ladder-gate.sh",
         "neuron/tests/staffing-engine-gate.sh",
+        "neuron/tests/claim-deadline-gate.sh",
         "tests/bridge-gate.sh",
         "tests/dispatch-gate.sh",
         "tests/tick-gate.sh",
