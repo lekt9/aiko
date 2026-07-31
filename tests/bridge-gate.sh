@@ -36,8 +36,20 @@ root="$(mktemp -d "${TMPDIR:-/tmp}/aiko-bridge.XXXXXX")"
 trap 'rm -rf -- "$root"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-# The ledger resolves from HOME, which is the one POSIX identity contract reads.
+# Isolate BOTH identities the ledger is discovered from, not just HOME.
+#
+# `contract/libcontract/src/ledger.zig` resolves cwd-FIRST: `<cwd>/.claude/`
+# wins outright, and only if that directory is absent does it fall back to
+# `$HOME/.contracts/`. This gate used to run from the repo root and isolate HOME
+# alone, which worked only for as long as the repo root happened to have no
+# `.claude/` directory. The moment one appeared — installing any Claude Code
+# plugin creates one — every row went to the project ledger and the gate failed
+# claiming the bridge had declared nothing.
+#
+# So run from the sandbox itself. A gate that says it drives the public CLI from
+# an empty directory should not be standing in the source tree while it does so.
 export HOME="$root"
+cd "$root"
 mkdir -p "$root/.contracts"
 ledger="$root/.contracts/contracts.jsonl"
 

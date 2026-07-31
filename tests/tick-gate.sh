@@ -33,9 +33,14 @@ root="$(mktemp -d "${TMPDIR:-/tmp}/aiko-tick.XXXXXX")"
 trap 'rm -rf -- "$root"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# Isolate BOTH identities the ledger is discovered from — see the note in
+# `bridge-gate.sh`. `ledger.zig` resolves `<cwd>/.claude/` before `$HOME`, so a
+# gate that runs from the repo root silently starts writing to the project
+# ledger the moment a `.claude/` directory exists there.
 export HOME="$root"
 export PATH="$repo/zig-out/bin:$PATH"
 mkdir -p "$root/.contracts"
+cd "$root"
 ledger="$root/.contracts/contracts.jsonl"
 
 "$aiko" agent init "$root/n" a1 >/dev/null
