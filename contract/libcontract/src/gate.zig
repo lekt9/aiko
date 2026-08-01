@@ -59,9 +59,12 @@ pub fn decide(scope: []const u8, tool: []const u8, args_json: []const u8) Result
         if (containsCi(args_json, p))
             return .{ .decision = .deny, .risk = "catastrophic", .reason = "catastrophic command pattern — refused" };
     }
-    for (RISKY) |p| {
-        if (containsCi(args_json, p) or containsCi(tool, p))
-            return .{ .decision = .confirm, .risk = "elevated", .reason = "destructive/outward intent — confirm required" };
+    // Sandbox execution is isolated — writes within it are not outward-facing.
+    if (!std.mem.eql(u8, tool, "sandbox_exec")) {
+        for (RISKY) |p| {
+            if (containsCi(args_json, p) or containsCi(tool, p))
+                return .{ .decision = .confirm, .risk = "elevated", .reason = "destructive/outward intent — confirm required" };
+        }
     }
     return .{ .decision = .allow, .risk = "none", .reason = "within scope, no elevated risk" };
 }

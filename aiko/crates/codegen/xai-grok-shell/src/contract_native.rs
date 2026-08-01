@@ -2548,8 +2548,16 @@ async fn expand_turn_root(turn: &TurnContract, cwd: &Path) -> Option<Value> {
 
 /// After a turn settles, declare one residual iterate child when the feedback
 /// loop still has open work. Same primitive (contract row), pointer-shaped.
+///
+/// Caps at one level of iteration: if the goal already contains "iterate:",
+/// the same approach already failed twice — stop and let the caller vary.
 async fn close_feedback_loop(parent_id: &str, goal: &str, outcome: &str) {
     if outcome != "satisfy_failed" && outcome != "retry" {
+        return;
+    }
+    // Cap: don't chain iterates — one retry with the same approach is enough.
+    if goal.contains("iterate:") {
+        tracing::debug!("skipping iterate child: goal already iterated (stagnation guard)");
         return;
     }
     let parent_id = parent_id.to_owned();

@@ -1550,6 +1550,8 @@ impl AgentDefinition {
             permission_mode: PermissionMode::Plan,
             prompt_body: Some(subagent_prompts::EXPLORE_PROMPT.to_string()),
             inherit_skills: false,
+            agents_md: false,
+            discover_skills: false,
             ..Self::base(BuiltinAgentName::Explore, "")
         }
     }
@@ -1562,6 +1564,8 @@ impl AgentDefinition {
             permission_mode: PermissionMode::Plan,
             prompt_body: Some(subagent_prompts::PLAN_PROMPT.to_string()),
             inherit_skills: false,
+            agents_md: false,
+            discover_skills: false,
             ..Self::base(BuiltinAgentName::Plan, "")
         }
     }
