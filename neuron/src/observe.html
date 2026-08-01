@@ -65,7 +65,10 @@ footer{font-family:var(--mono);font-size:10.5px;color:var(--dim);line-height:1.7
 </div>
 <section class="panel">
   <div class="ph"><span class="pt">Derivation graph</span>
-    <span class="pn">x is the commit ordinal — every citation flows left to right, because a source must exist before it is cited.</span></div>
+    <span class="pn">x is the commit ordinal — every citation flows left to right, because a source must exist before it is cited.
+    A haloed node is <b style="color:var(--signal)">stale</b>; <b style="color:var(--stale)">red</b> means it already crossed
+    a boundary, so it is compensated and never re-fired. Which of the other cases applies depends on topology this
+    read-only view cannot see — <code>aiko redrive --dry-run</code> is the verdict.</span></div>
   <canvas id="cv" height="330"></canvas>
 </section>
 <div class="split">
@@ -101,12 +104,28 @@ function add(r){
 function stats(){
   $('n-f').textContent=F.length; $('n-a').textContent=Object.keys(A).length;
   $('n-e').textContent=E.length;
-  const last={}; Object.entries(A).forEach(([k,v])=>last[k]=v.seq);
-  let st=0;
-  F.forEach(f=>(f.w||[]).forEach(a=>{
-    (f.cites||[]).forEach(s=>{ if(s==="stimulus")return;
-      if(last[s]!==undefined && last[s]>f.seq && last[a.id]===f.seq) st++; });}));
-  $('n-s').textContent=st;
+  // Staleness is NOT recomputed here. It used to be — this function carried
+  // its own heuristic over cites/writes, which is a second implementation of
+  // the thing `redrive` acts on, free to disagree with it. A dashboard that
+  // derives its own answer is a claim about the substrate, not a read of it.
+  // `S` comes from /stale, which serves the substrate's own rows.
+  $('n-s').textContent=Object.keys(S).length;
+}
+
+// artifact -> the row redrive would act on. Keyed by produced_by so a firing
+// on the canvas can be marked with the case the loop would take.
+let S={};
+// A stale row is shown as stale, and — where the journal knows it — as having
+// already crossed a boundary. It is NOT shown as one of redrive's three cases:
+// that verdict depends on the topology, which this observer deliberately cannot
+// see (it never opens the substrate). Colouring by a guess would put a verdict
+// on screen that the loop may not agree with.
+const MARK=r=>r.crossed?'--stale':'--signal';
+function stale(){
+  return fetch('stale').then(r=>r.json()).then(j=>{
+    S={}; (j.stale||[]).forEach(r=>{ S[r.produced_by]=r; });
+    stats(); draw();
+  }).catch(()=>{});
 }
 const lane=id=>/\/goals\//.test(id)?-2:/result/.test(id)?-1:/verdict/.test(id)?1
   :/snapshots/.test(id)?2:/active$/.test(id)?3:/context/.test(id)?-3:(id.length%5)-2;
@@ -130,8 +149,13 @@ function draw(){
     g.fillStyle=css('--panel');g.strokeStyle=css('--dim');g.lineWidth=1.3;
     g.beginPath();g.rect(px-3.4,py-3.4,6.8,6.8);g.fill();g.stroke();});
   F.forEach(f=>{if(!(f.cites||[]).some(s=>s!=="stimulus"))return;
-    const px=x(f.seq),py=y(0);g.fillStyle=css('--live');
+    const px=x(f.seq),py=y(0),st=S[f.id];
+    g.fillStyle=css(st?MARK(st):'--live');
     g.beginPath();g.arc(px,py,sel===f.id?6:4.2,0,7);g.fill();
+    // A stale node wears a halo in the colour of the case the loop would take,
+    // so invalidation is visible as it happens rather than as a counter.
+    if(st){g.strokeStyle=css(MARK(st));g.lineWidth=1.6;g.globalAlpha=.65;
+      g.beginPath();g.arc(px,py,10,0,7);g.stroke();g.globalAlpha=1;}
     if(sel===f.id){g.strokeStyle=css('--signal');g.lineWidth=2;g.beginPath();g.arc(px,py,9,0,7);g.stroke();}});
 }
 function show(id){sel=id;const f=F.find(v=>v.id===id);const d=$('det');
@@ -139,11 +163,19 @@ function show(id){sel=id;const f=F.find(v=>v.id===id);const d=$('det');
   const ev=(f.ev||[]).map(x=>`<div class="claim"><div class="c">${x.c}</div><div class="m">${x.m}</div></div>`).join('');
   const cites=(f.cites||[]).filter(s=>s!=="stimulus").map(s=>`<div class="src">cites <b>${s}</b></div>`).join('');
   const wrote=(f.w||[]).map(a=>`<div class="src">wrote <b>${a.id}</b> · ${a.n}B</div>`).join('');
+  const st=S[f.id];
+  const inv=st?`<div class="claim"><div class="c">stale${st.crossed?' — already crossed a boundary':''}</div>
+    <div class="m">${st.stale_source} moved at ${st.source_moved_at}; this derived at ${st.derived_at}.
+      ${st.crossed?`It sent to ${st.crossed}, so it can never be re-fired — the loop compensates instead.`
+        :`Whether it re-derives or escalates depends on the topology at the time; run <code>aiko redrive --dry-run</code> for the verdict.`}</div></div>`:'';
   d.innerHTML=`<div class="src" style="font-size:12.5px;color:var(--ink)">${f.id}</div>
-    <div class="src">ordinal <b>${f.seq}</b></div>${ev||''}${cites}${wrote}`;
+    <div class="src">ordinal <b>${f.seq}</b></div>${inv}${ev||''}${cites}${wrote}`;
   draw();}
 addEventListener('resize',draw);
-fetch('graph').then(r=>r.json()).then(j=>{(j.firings||[]).forEach(add);}).catch(()=>{}).finally(()=>{
+fetch('graph').then(r=>r.json()).then(j=>{(j.firings||[]).forEach(add);}).then(stale).catch(()=>{}).finally(()=>{
+  // The tail shows firings as they commit; staleness is a projection over the
+  // whole journal, so it is re-read on a slow interval rather than streamed.
+  setInterval(stale,2000);
   const es=new EventSource('events');
   es.onopen=()=>{$('dot').className='dot on';$('conn').textContent='live · tailing journal';};
   es.onerror=()=>{$('dot').className='dot';$('conn').textContent='disconnected — retrying';};

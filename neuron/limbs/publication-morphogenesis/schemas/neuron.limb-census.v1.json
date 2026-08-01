@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.limb-census/v1",
+  "title": "Limb Census",
+  "description": "The node's admitted limbs, projected out of its `neuron.limb-admission/v1` records. This is what makes handler resolution generation from substrate state rather than a claim: a draft can only ever point at bytes this node already admitted by digest.",
+  "type": "object",
+  "required": ["limbs"],
+  "properties": {
+    "limbs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["digest", "neurons"],
+        "properties": {
+          "digest": {"type": "string", "minLength": 64, "maxLength": 64},
+          "package": {"type": "string"},
+          "version": {"type": "string"},
+          "revoked": {"type": "boolean"},
+          "neurons": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id"],
+              "properties": {
+                "id": {"type": "string", "minLength": 1},
+                "accepts": {"type": "array", "items": {"type": "string"}},
+                "emits": {"type": "array", "items": {"type": "string"}}
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

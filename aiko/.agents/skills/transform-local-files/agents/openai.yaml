@@ -1,4 +1,0 @@
-interface:
-  display_name: "Transform Local Files"
-  short_description: "Preview and apply reversible file edits"
-  default_prompt: "Use $transform-local-files to safely transform these files."

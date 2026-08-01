@@ -1,0 +1,86 @@
+{
+  "schema": "typed-neuron.limb-manifest/v1",
+  "package": "typed-neuron/publication-morphogenesis",
+  "version": "0.1.0",
+  "description": "Inbound interface morphogenesis: a typed publication gap goes in, a published interface that a real listener actually serves comes out — or nothing does. The counterpart to src/morphogenesis.zig's outbound loop, carrying its three structural refusals inbound: reuse is searched before generation, nothing is retained on compilation alone, and rankings are learned only from verified results. Every authority step (publish, attach, detach, revoke) stays a kernel verb; this package only drafts inert documents and judges real observations (§30).",
+  "neurons": [
+    {
+      "id": "reuse-searcher",
+      "accepts": ["neuron.publication-gap/v1"],
+      "emits": ["neuron.publication-plan/v1"],
+      "argv": ["python3", "neurons/reuse_searcher.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "publication-morphogenesis/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 2,
+          "max_writes": 1,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 131072,
+          "max_depth": 1
+        }
+      }
+    },
+    {
+      "id": "port-drafter",
+      "accepts": ["neuron.publication-gap/v1"],
+      "emits": ["neuron.published-interface/v1"],
+      "argv": ["python3", "neurons/port_drafter.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "publication-morphogenesis/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 3,
+          "max_writes": 2,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 262144,
+          "max_depth": 1
+        }
+      }
+    },
+    {
+      "id": "publication-judge",
+      "accepts": ["neuron.publication-probe/v1"],
+      "emits": ["neuron.publication-verdict/v1"],
+      "argv": ["python3", "neurons/publication_judge.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "publication-morphogenesis/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 3,
+          "max_writes": 2,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 131072,
+          "max_depth": 1
+        }
+      }
+    }
+  ],
+  "budgets": {
+    "deadline_ms_per_firing": 10000
+  },
+  "schemas": {
+    "PublicationGap": "neuron.publication-gap/v1",
+    "PortCensus": "neuron.port-census/v1",
+    "LimbCensus": "neuron.limb-census/v1",
+    "PublicationPlan": "neuron.publication-plan/v1",
+    "PublishedInterface": "neuron.published-interface/v1",
+    "PublicationDraftRecord": "neuron.publication-draft-record/v1",
+    "PublicationProbe": "neuron.publication-probe/v1",
+    "PublicationVerdict": "neuron.publication-verdict/v1",
+    "PublicationPattern": "neuron.publication-pattern/v1"
+  },
+  "witnesses": {
+    "python_tests": "python3 -c 'from neurons.reuse_searcher import fire; print(\"reuse_searcher ok\")' && python3 -c 'from neurons.port_drafter import fire; print(\"port_drafter ok\")' && python3 -c 'from neurons.publication_judge import fire; print(\"publication_judge ok\")'",
+    "conformance": "PYTHONDONTWRITEBYTECODE=1 python3 tests/conformance.py"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "example/greet",
+  "version": "1.0.0",
+  "need": "a caller hands this node a name and receives a typed greeting",
+  "route": "/greet",
+  "method": "POST",
+  "mode": "read",
+  "accepts": ["example.greet-request/v1"],
+  "emits": ["example.greeting/v1"],
+  "errors": ["example.greet-failed/v1"],
+  "callers": ["ip4:127.0.0.1"],
+  "idempotency": "keyed",
+  "firing_id_source": "caller_supplied",
+  "timeout_ms": 10000,
+  "max_request_bytes": 65536,
+  "max_concurrent": 1,
+  "expect_contains": "hello ada"
+}

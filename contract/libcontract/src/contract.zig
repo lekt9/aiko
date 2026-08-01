@@ -66,7 +66,7 @@ pub const payload_crypto = @import("payload_crypto.zig");
 // fans out automatically.
 pub const words = @import("words.zig");
 // MCP stdio server (warm process for agents). Re-export so main can do
-// `contract.mcp_server.runStdio(allocator, env, dispatch)`.
+// `contract.mcp_server.runStdio(allocator, env, tools, dispatch)`.
 pub const mcp_server = @import("mcp_server.zig");
 // Comptime pattern enforcement. The assertInvariants() call below is
 // evaluated at compile time inside contract.zig's own container, which
@@ -114,6 +114,19 @@ pub const shape = @import("shape.zig");
 // IS who/what/when/where/why/how; the declare chokepoint refuses a row
 // that cannot project, naming the unanswered interrogative.
 pub const w6h = @import("w6h.zig");
+
+/// The canonical Neuron adapter: validate a firing, hash it with imported
+/// `typed_neuron` semantics, and append it to the ledger as one transaction.
+///
+/// Re-exported because it was reachable only through the C ABI. A Zig consumer
+/// in this repository therefore had to marshal a struct out to C and back to
+/// arrive at a type both sides already agree on — `contract.neuron.FireRequest`
+/// IS `typed_neuron.FireRequest`. That round trip existed because of a missing
+/// export, not because of a boundary.
+///
+/// This re-export does not reverse the dependency: contract imports neuron,
+/// never the other way round.
+pub const neuron = @import("neuron.zig");
 
 /// Re-export so consumers of libcontract can verify chains without rewiring
 /// the build graph.

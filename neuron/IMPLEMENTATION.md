@@ -153,7 +153,14 @@ Complete source map:
 | `src/mcp.zig` | MCP stdio edge exposing bounded `neuron.info` and `neuron.fire` tools |
 | `src/interface.zig` | Normalize channel updates and provide scoped router/conversation Neurons |
 | `src/pump.zig` | Bounded event pumping, wait predicates, and work-factory dispatch |
-| `src/energy_router.zig` | Orphan experimental router prototype; formatted but not imported by the build |
+| `src/membrane.zig`, `src/membrane_ops.zig` | The universal interface membrane: `InterfaceManifest` validation, implementation pinning, read/command classification, the eight boundary kinds, the admission battery, and least-authority attachment |
+| `src/serve.zig` | The inbound direction: `neuron.published-interface/v1`, the `port` verbs, and the HTTP listener that serves an admitted contract |
+| `src/redrive.zig` | Invalidation-driven re-derivation. Classifies every stale row: re-derive, escalate to an agent, or emit a compensation gap for a firing that already crossed a boundary |
+| `src/morphogenesis.zig` | Capability-gap resolution — reuse, discover, or AUTHOR a handler from the bounded transform catalogue |
+| `src/limb_ops.zig` | Harness admission lifecycle, the journal reader, and `collectStale` — the one staleness projection that detection, action, and display all settle from |
+| `src/observe.zig` | Read-only live edge: tails the journal over HTTP without taking the substrate lock. Never streams artifact payloads |
+| `src/node.zig`, `src/swarm.zig`, `src/swarm_ops.zig` | Persistent swarm node, its `neuron.wire/v1` interface, and bundle lifecycle |
+| `src/energy_router.zig` | `EnergyRouterNeuron`, imported by `src/meta_agent.zig` and occupying the meta-agent router slot |
 | `src/tests.zig` | Behavioral conformance, integration, transport, and lifecycle witnesses |
 
 `Runtime.fire` records timeout failures, rejects invalid decisions before
@@ -280,6 +287,68 @@ Contract bookkeeping for an ordinary conversational turn remains best-effort,
 but a tool effect already governed by a canonical Neuron decision is not
 best-effort: it must cross the Contract membrane before dispatch.
 
+## Every package declares what it is for
+
+Admission requires a `SKILL.md` at the package root. Frontmatter is machine-read
+(`name`, `description`, `probe_input`, `expect_contains`); the prose body is
+for a reader. `readSkillDoc` runs *before* the digest is computed, so a package
+that cannot state its purpose is refused rather than pinned.
+
+| Refusal | When |
+|---|---|
+| `SkillDocMissing` | no `SKILL.md` at the package root |
+| `SkillDocMalformed` | no `---` frontmatter, or `name`/`description` empty |
+| `SkillDocUnfalsifiable` | `expect_contains` empty — nothing about the package could turn out to be false |
+
+Three properties, all asserted by `tests/skill-doc-gate.sh`:
+
+- **The document is inside the digest.** `computePackageDigest` hashes
+  `SKILL.md` alongside `neuron.json` and `schemas/`. Editing only the prose
+  changes the pin. This is the gate's falsifier — remove the allowlist entry
+  and the first assertion goes red.
+- **The acceptance is mandatory.** `expect_contains` is the package's
+  falsifiable claim, the same rule `morphogenesis.CapabilityGap.parse` already
+  applies to a transient gap, carried onto the durable package.
+- **The claim is durable.** The admission record carries a `skill` block, so
+  the ledger records what a package claimed when it was pinned.
+
+Bound: the prose body is cited by digest and **never re-interpreted on the
+recompute path**. A producer that re-reads prose and re-decides each pass is
+non-deterministic; `redrive.zig:234` refuses those for having no termination
+proof. An `expect_contains` a do-nothing handler could print defeats the whole
+mechanism — it would certify an implementation that does nothing.
+
+All 12 limb packages carry one. So do the fixture packages built inside
+`redrive-gate.sh` and `published-interface-gate.sh`: a fixture exempt from the
+rule would be a package admitted without a falsifiable claim.
+
+## Staffing pipeline nodes
+
+Two nodes of the operational workflow exist as admitted limbs with runnable
+witnesses. The packages are fixtures built inside their gates (synthetic
+workers, no customer data); the properties are the deliverable.
+
+| Node | Gate | Load-bearing assertion |
+|---|---|---|
+| `gate/staffing-engine` | `tests/staffing-engine-gate.sh` | a shortfall refuses and writes nothing |
+| `gate/staffing-ladder` | `tests/escalation-ladder-gate.sh` | the ladder terminates, and a confirmed worker is never messaged again |
+
+`staffing-engine` sits on the recompute path, so its assignment is a pure
+function of pinned reads — qualification, then `(last_worked, name)` as a total
+order. The gate fires twice over identical inputs and compares bytes. The
+realistic break is a `set` or a `hash()`-ordered sort: CPython randomises string
+hashing per process, so both are stable within a firing and differ across two.
+
+`escalation-ladder` crosses an external boundary at every rung, so it must halt.
+Rung advance is a compare-and-swap; `error.Conflict` is the substrate refusing
+to let two due events both advance one worker.
+
+Both gates assert per worker rather than in aggregate — a total of six messages
+is also what a ladder that messaged the wrong people six times produces.
+
+Not covered by either: OCR ingestion (Step 1), operator review UI, and any
+constraint solving richer than rotation.
+
 ## Generative limbs
 
 A limb is executable only after describe, write, admit, and attach. A source
@@ -291,6 +360,7 @@ Current status:
 |---|---|
 | Meta-Agent generated retry/verification limb | Conforming reference witness in `src/meta_agent.zig` |
 | `limbs/energy-router` | Reference generative limb package delivered (manifest + Python neurons + versioned schemas + harness execution via `neuron run --def`). Supports EBM routing, sub-EBM spawn, PackageOffer discovery, Usage/Settlement claims for paid mesh commons. Pure scorers (`scorer.py`, `energy.zig`) + early Zig `EnergyRouterNeuron` also present. Not yet wired into meta-agent router slot; full benchmark deltas and Zig build integration remain. |
+| `limbs/publication-morphogenesis` | Conforming. The inbound counterpart to `src/morphogenesis.zig`: a `neuron.publication-gap/v1` is searched against the node's live ports, a `neuron.published-interface/v1` document is generated from the admitted-limb census, and the loop is judged on a real HTTP probe across a real `neuron port http` listener. Adds no CLI verb — every authority step is an existing `neuron port publish\|attach\|detach\|revoke` call. Witnessed by `limbs/publication-morphogenesis/tests/conformance.py` |
 | `limbs/outbox-drainer` | Partial prototype; decision scripts and driver exist, but its manifest and conformance suite are missing |
 
 The energy-router package can be executed through the real harness and emits grounded `EnergyScore` artifacts (and spawns on `wants_sub_ebm`). It is the concrete reference for the structural-energy + paid-neuron-commons direction. It is not yet "the" production router inside the meta-agent, nor has it produced published settlement-metric wins against a baseline. The package + harness witness is the settled artifact.
@@ -311,6 +381,11 @@ Run the smallest gate that proves the claim being changed:
 | Standalone behavior, CLI, benchmark, Meta-Agent | `bash tests/runtime-gate.sh` |
 | Meta-Agent lifecycle only | `bash tests/meta-agent-gate.sh` |
 | Standalone agent entrypoint (plan Phase 1) | `bash tests/agent-entrypoint-gate.sh` |
+| Served inbound contract, end to end over HTTP | `bash tests/published-interface-gate.sh` |
+| Invalidation: re-derive, escalate, and never re-cross a boundary | `bash tests/redrive-gate.sh` |
+| Authoring a handler for a gap nothing can satisfy | `bash tests/authored-gap-gate.sh` |
+| Live observability edge (no substrate lock; payloads unreachable) | `bash tests/observe-live-gate.sh` |
+| Inbound interface morphogenesis limb (generates a published interface, verified over the listener) | `PYTHONDONTWRITEBYTECODE=1 python3 limbs/publication-morphogenesis/tests/conformance.py` |
 | Generated files and Neuron/Contract/Aiko boundary | `bash tests/check-production-neuron.sh` |
 | Wire generator drift only | `python3 tools/generate_wire_bindings.py --check` |
 
@@ -337,11 +412,14 @@ does not claim:
 - globally ordered peer messages;
 - automatic contract-native mesh formation or cross-machine topology convergence;
 - an admitted runtime Pattern Registry Neuron that consumes the document catalog;
-- the universal `InterfaceManifest` registry for arbitrary code, binaries,
-  stores, APIs, protocols, models, devices, humans, remote Neurons, and paid
-  resources (the standalone `neuron agent init|run|inspect|cancel|retire`
-  lifecycle is implemented and witnessed by `tests/agent-entrypoint-gate.sh`;
-  every `neuron interface ...` verb still fails closed as NotImplemented);
+- library/WASM and database interface kinds, and process *commands*, which fail
+  closed as `UnverifiableCommand` until a phase brings independent sensors. The
+  membrane itself is implemented: eight kinds (function, process, filesystem,
+  http, mcp, model, device, human), the full
+  `discover|describe|test|admit|attach|call|dispatch|detach|revoke|list`
+  lifecycle, and the inbound `port` direction. An earlier revision of this file
+  said every `neuron interface` verb still failed closed as NotImplemented;
+  that stopped being true at plan Phase 2 and was corrected by running them;
 - behavioral execution adapters, fixtures, or measured agent scores for the
   Agentic Organism prompt benchmark; its current gate validates the corpus and
   rubric only;

@@ -268,25 +268,58 @@ firing, so it dominates where artifacts are small and vanishes where they are
 large (0.0% on a limb node holding 33KB artifacts). Deployments that compact
 for space rather than for replay speed should measure their own ratio.
 
+## Settled 2026-07-31 — invalidation-driven re-derivation (R10)
+
+`neuron redrive <state_dir> [--dry-run] [--json]` acts on the staleness
+projection. Detection stays a read; this is the only verb allowed to act on it.
+
+The plan had two cases. The shipped feature has three, and the third is the
+reason the feature exists: `redrivable: false` **because the firing already
+sent to `outbox/`** is not a degraded case 1, it is a different obligation.
+Re-firing a "notify 35 workers" step after an amendment re-messages the 31 who
+did not change and still fails to tell the 4 who did. That path emits a typed
+`neuron.compensation-gap/v1` naming the superseded product, the new product,
+and the delta between the source version that crossed the boundary and the one
+that stands now — the content a compensating message actually needs — and
+crosses nothing.
+
+Case 1 needed no new identity machinery. `now_ms` is `0` and an agent's work
+identity is `sha256(goal ++ topology pin)`, so re-deriving against moved inputs
+lands on a new firing id for free (§28.1) and the superseded workflow stays in
+the journal as history. Nothing rewrites a record.
+
+Three things turned out to be load-bearing that the plan did not name:
+
+1. **The action record's identity must exclude the generation counter.**
+   Folding the pass number into the digest gave every pass a fresh record for
+   an unchanged world, so the loop wrote forever and never terminated. The
+   identity is the derivation edge plus what the re-derivation found; the
+   counter is content, not identity.
+2. **The determinism claim is read from the topology as it stands now, not as
+   it stood.** A boundary that was harmless at derivation time and has an
+   effector attached today must not be re-crossed, so an attached effector
+   routes to case 2 regardless of what the original firing did.
+3. **The bound is on re-firing, not on the counter.** A pass past
+   `MAX_GENERATIONS` still records what it handed over, and that record is
+   itself a generation — so the counter legitimately passes the ceiling while
+   re-firing has already stopped.
+
+Escalation needed no new machinery, as predicted: `initAgentCore` plus one goal
+artifact. The agent is opened, never run — resolving it is a judgement this
+command is not entitled to make.
+
+Reuse over rewrite: `telemetryStale` was split into `collectStale` (rows) and
+rendering, so detection and action decide from *the same* rows rather than from
+two implementations of "which derivation went stale".
+
+Witness: `tests/redrive-gate.sh`, proven to fail closed twice — removing the
+case-3 classification is caught by the dry-run classification assertion, and
+making the compensation path emit an outbox send is caught by the journal
+outbox count. `zig build test` PASS; `observability-retention`,
+`agent-entrypoint`, `universal-interface`, `conversation`, `meta-agent`,
+`self-constructing-agent`, and `swarm-package` gates PASS; both doc gates PASS.
+
 ## Remaining (not started)
-
-### R10. Invalidation-driven re-derivation
-
-Steps 1–2 and the retention gap are shipped above. Remaining:
-
-1. **Act on `redrivable: true`** — re-fire under a *new* firing id with a
-   generation bound. Safe only where the boundary is deterministic: a
-   non-deterministic producer re-derives a different answer, invalidates its
-   own dependents, and never reaches a fixpoint. Determinism is the
-   termination proof, not merely a safety preference.
-2. **Escalate `redrivable: false` to an agent** — an agent is three writes
-   (`initAgentCore`: manifest, snapshot 0000, active pointer), so any neuron
-   with the right write prefix can create one. No new machinery required.
-
-The shape: *not every neuron is a task; every neuron that cannot settle
-mechanically is.* The neuron is the unit of commitment, the agent the unit of
-resolution when commitment cannot be computed. `AcceptancePredicateRequired`
-already draws that line.
 
 ### R11. Multimodal grounding at the LLM edge
 

@@ -23,6 +23,7 @@
 
 const std = @import("std");
 const mesh_mod = @import("mesh.zig");
+const limb_ops = @import("limb_ops.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -217,6 +218,55 @@ fn handle(allocator: Allocator, io: std.Io, stream: std.Io.net.Stream, log_path:
     const path = routeOf(head);
 
     if (std.mem.eql(u8, path, "/events")) return stream_events(a, io, w, log_path);
+
+    // The derivation graph's INVALIDATION layer, served from exactly the rows
+    // `redrive` classifies. Recomputing staleness here with a second walk is
+    // how a dashboard ends up disagreeing with the loop it is supposed to show:
+    // the picture would be a claim about the substrate rather than a read of
+    // it. `collectStale` was factored out of the projection for this reason, so
+    // detection, action, and display all settle from one source.
+    if (std.mem.eql(u8, path, "/stale")) {
+        const read = try readAll(a, io, log_path, 0);
+        const rows = limb_ops.collectStale(a, read.bytes) catch &[_]limb_ops.StaleRow{};
+        var body: std.Io.Writer.Allocating = .init(a);
+        const b = &body.writer;
+        try b.writeAll("{\"stale\":[");
+        for (rows, 0..) |r, i| {
+            if (i != 0) try b.writeAll(",");
+            // FACTS ONLY. This deliberately does NOT report which of redrive's
+            // three cases a row will take.
+            //
+            // An earlier version did, deriving it from `redrivable` and
+            // `crossed`. That was a SECOND CLASSIFIER and it was wrong:
+            // redrive's `classify` also consults the TOPOLOGY — whether a hop
+            // of the producing chain claims determinism, whether an effector is
+            // attached now — so a row this endpoint called "rederive" is
+            // "escalate" the moment an interface is attached. Caught by testing
+            // the two against each other on a substrate that had one.
+            //
+            // The fix cannot be to call `classify` here: it needs a mutable
+            // Substrate, and this observer's first refusal is that it never
+            // opens one, so a live node keeps committing while it is watched.
+            // An observer that cannot see the topology must not pretend to
+            // classify it. It reports what the projection actually carries and
+            // leaves the verdict to the thing that can compute it.
+            try b.print(
+                "{{\"artifact\":\"{s}\",\"stale_source\":\"{s}\",\"produced_by\":\"{s}\"," ++
+                    "\"derived_at\":{d},\"source_moved_at\":{d},\"redrivable\":{}," ++
+                    "\"crossed\":\"{s}\",\"from\":\"{s}\"}}",
+                .{
+                    r.artifact,   r.stale_source,                                 r.produced_by,
+                    r.derived_at, r.source_moved_at,                              r.redrivable,
+                    r.crossed,    if (r.from_snapshot) "snapshot" else "journal",
+                },
+            );
+        }
+        try b.writeAll("]}");
+        const sbytes = body.writer.buffered();
+        try w.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", .{sbytes.len});
+        try w.writeAll(sbytes);
+        return w.flush();
+    }
 
     if (std.mem.eql(u8, path, "/graph")) {
         const read = try readAll(a, io, log_path, 0);

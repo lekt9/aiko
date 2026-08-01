@@ -14,10 +14,81 @@ const run_mod = @import("run.zig");
 const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
-const ADMISSION_SCHEMA = "neuron.limb-admission/v1";
-const ADMISSION_PREFIX = "artifact/limbs/admitted/";
-const REVOKED_PREFIX = "artifact/limbs/revoked/";
-const DETACHED_PREFIX = "artifact/limbs/detached/";
+pub const ADMISSION_SCHEMA = "neuron.limb-admission/v1";
+pub const ADMISSION_PREFIX = "artifact/limbs/admitted/";
+pub const REVOKED_PREFIX = "artifact/limbs/revoked/";
+pub const DETACHED_PREFIX = "artifact/limbs/detached/";
+
+/// Every package declares what it is supposed to do, in the same file shape a
+/// skill uses: YAML frontmatter that a machine reads, prose beneath it that a
+/// reader does.
+pub const SKILL_DOC = "SKILL.md";
+
+pub const SkillDocError = error{
+    SkillDocMissing,
+    SkillDocMalformed,
+    SkillDocUnfalsifiable,
+};
+
+/// The machine-read half of a package's SKILL.md.
+///
+/// `expect_contains` is the load-bearing field and the reason this type exists.
+/// `morphogenesis.CapabilityGap` already refuses a gap that declares no
+/// acceptance, because anything returning bytes would "satisfy" it. A package
+/// is the same object with a longer life: without a declared acceptance there
+/// is no statement that could turn out to be false, so "it works" degrades to
+/// "it ran". This carries that refusal from the transient gap onto the durable
+/// package.
+pub const SkillDoc = struct {
+    name: []const u8,
+    description: []const u8,
+    probe_input: []const u8,
+    expect_contains: []const u8,
+
+    /// Parse the frontmatter. The body is deliberately NOT returned: prose is
+    /// evidence to be cited by digest, never a decision procedure re-read on
+    /// the recompute path. A producer that re-interprets prose each pass is
+    /// non-deterministic, and `redrive` refuses those for having no
+    /// termination proof.
+    pub fn parse(bytes: []const u8) SkillDocError!SkillDoc {
+        if (!std.mem.startsWith(u8, bytes, "---\n")) return SkillDocError.SkillDocMalformed;
+        const rest = bytes["---\n".len..];
+        const end = std.mem.indexOf(u8, rest, "\n---") orelse
+            return SkillDocError.SkillDocMalformed;
+        const front = rest[0..end];
+
+        var doc: SkillDoc = .{ .name = "", .description = "", .probe_input = "", .expect_contains = "" };
+        var lines = std.mem.splitScalar(u8, front, '\n');
+        while (lines.next()) |line| {
+            const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+            const key = std.mem.trim(u8, line[0..colon], " \t");
+            const val = std.mem.trim(u8, line[colon + 1 ..], " \t\"");
+            if (std.mem.eql(u8, key, "name")) {
+                doc.name = val;
+            } else if (std.mem.eql(u8, key, "description")) {
+                doc.description = val;
+            } else if (std.mem.eql(u8, key, "probe_input")) {
+                doc.probe_input = val;
+            } else if (std.mem.eql(u8, key, "expect_contains")) {
+                doc.expect_contains = val;
+            }
+        }
+        if (doc.name.len == 0 or doc.description.len == 0)
+            return SkillDocError.SkillDocMalformed;
+        // The generalized refusal. See the doc comment on this type.
+        if (doc.expect_contains.len == 0) return SkillDocError.SkillDocUnfalsifiable;
+        return doc;
+    }
+};
+
+/// Read and validate a package's SKILL.md. Fails closed: a package that cannot
+/// say what it is for does not get admitted on the strength of compiling.
+pub fn readSkillDoc(a: Allocator, io: std.Io, package_dir: []const u8) !SkillDoc {
+    const path = try std.fs.path.join(a, &.{ package_dir, SKILL_DOC });
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 20)) catch
+        return SkillDocError.SkillDocMissing;
+    return SkillDoc.parse(bytes);
+}
 
 const admission_evidence = [_]types.Evidence{.{
     .claim = "manifest validated and package digest pinned by the harness admission boundary",
@@ -36,35 +107,38 @@ pub fn computePackageDigest(allocator: Allocator, io: std.Io, package_dir: []con
     const manifest = try std.json.parseFromSliceLeaky(std.json.Value, a, manifest_bytes, .{});
     if (manifest != .object) return error.InvalidManifest;
 
+    // EVERY regular file under the package root, not a curated list.
+    //
+    // This used to hash an allowlist: `neuron.json`, the argv entries that
+    // looked like relative paths, `SKILL.md`, and everything under `schemas/`.
+    // An adversarial audit found the hole that shape necessarily leaves. A
+    // second module the entrypoint IMPORTS — `neurons/helper.py`, loaded by
+    // `neurons/main.py` — is named by no argv, so it was in none of those sets.
+    // Its bytes could be replaced wholesale and the digest never moved:
+    // admission went on vouching for code it had never seen. Demonstrated with
+    // a two-file package whose helper changed from a constant to anything at
+    // all, both admissions returning the identical digest.
+    //
+    // An allowlist is the wrong shape for this job. The property §30 needs is
+    // "code pinned to bytes that existed before the pin", and every path an
+    // allowlist omits is an unpinned byte. A package IS its directory, so the
+    // digest walks the whole thing; anything transient in there is a packaging
+    // fault, not a reason to weaken the pin.
     var entries: std.ArrayList([]const u8) = .empty;
-    try entries.append(a, try a.dupe(u8, "neuron.json"));
-    const neurons = manifest.object.get("neurons") orelse return error.InvalidManifest;
-    if (neurons != .array) return error.InvalidManifest;
-    for (neurons.array.items) |entry| {
-        if (entry != .object) continue;
-        const argv = entry.object.get("argv") orelse continue;
-        if (argv != .array) continue;
-        for (argv.array.items) |item| {
-            const part = switch (item) {
-                .string => |s| s,
-                else => continue,
-            };
-            if (part.len > 0 and part[0] != '/' and std.mem.indexOfScalar(u8, part, '/') != null) {
-                const abs = try std.fs.path.join(a, &.{ package_dir, part });
-                _ = cwd.statFile(io, abs, .{}) catch continue;
-                try entries.append(a, try a.dupe(u8, part));
-            }
-        }
+    // `.iterate` is required to walk the handle: without it the fd carries no
+    // read capability and `walker.next` fails `BADF` on Linux. macOS tolerates
+    // the omission, so every package carrying a subdirectory admitted there and
+    // panicked here.
+    var pkg_dir = cwd.openDir(io, package_dir, .{ .iterate = true }) catch
+        return error.PackageIoError;
+    defer pkg_dir.close(io);
+    var walker = try pkg_dir.walk(a);
+    defer walker.deinit();
+    while (try walker.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        try entries.append(a, try a.dupe(u8, entry.path));
     }
-    const schemas_path = try std.fs.path.join(a, &.{ package_dir, "schemas" });
-    if (cwd.openDir(io, schemas_path, .{})) |schemas_dir| {
-        defer schemas_dir.close(io);
-        var walker = try schemas_dir.walk(a);
-        defer walker.deinit();
-        while (try walker.next(io)) |entry| {
-            if (entry.kind == .file) try entries.append(a, try std.fmt.allocPrint(a, "schemas/{s}", .{entry.path}));
-        }
-    } else |_| {}
+    if (entries.items.len == 0) return error.InvalidManifest;
     std.mem.sort([]const u8, entries.items, {}, stringLess);
     var hasher = Sha256.init(.{});
     hasher.update("neuron.limb-package/v1\n");
@@ -84,6 +158,12 @@ pub fn admit(allocator: Allocator, io: std.Io, package_dir: []const u8, state_di
     defer arena.deinit();
     const a = arena.allocator();
 
+    // Refuse before pinning, not after. A package that cannot state what it is
+    // supposed to do has nothing that could later be found false, so admitting
+    // it would vouch for bytes on the strength of their compiling — the one
+    // thing §30 says never earns retention.
+    const skill = try readSkillDoc(a, io, package_dir);
+
     const digest = try computePackageDigest(a, io, package_dir);
     var hex: [64]u8 = undefined;
     _ = try std.fmt.bufPrint(&hex, "{s}", .{std.fmt.bytesToHex(digest, .lower)});
@@ -95,9 +175,16 @@ pub fn admit(allocator: Allocator, io: std.Io, package_dir: []const u8, state_di
     const manifest_path = try std.fs.path.join(a, &.{ package_dir, "neuron.json" });
     const manifest_bytes = try std.Io.Dir.cwd().readFileAlloc(io, manifest_path, a, .limited(1 << 20));
     const manifest_str = try std.json.Stringify.valueAlloc(a, manifest_bytes, .{});
+    // The declared intent rides the admission row. A reader of the ledger can
+    // then ask what this package CLAIMED to do at the moment it was pinned,
+    // without trusting a file that may since have been edited — the digest
+    // covers SKILL.md, so a changed claim is a different package entirely.
+    const skill_name = try std.json.Stringify.valueAlloc(a, skill.name, .{});
+    const skill_desc = try std.json.Stringify.valueAlloc(a, skill.description, .{});
+    const skill_expect = try std.json.Stringify.valueAlloc(a, skill.expect_contains, .{});
     const record_bytes = try std.fmt.allocPrint(a,
-        \\{{"schema":"{s}","package":{s},"digest":"{s}"}}
-    , .{ ADMISSION_SCHEMA, manifest_str, &hex });
+        \\{{"schema":"{s}","package":{s},"digest":"{s}","skill":{{"name":{s},"description":{s},"expect_contains":{s}}}}}
+    , .{ ADMISSION_SCHEMA, manifest_str, &hex, skill_name, skill_desc, skill_expect });
 
     const firing_id = try std.fmt.allocPrint(a, "admission/{s}", .{&hex});
     const write_id = try std.fmt.allocPrint(a, ADMISSION_PREFIX ++ "{s}", .{&hex});
@@ -126,6 +213,38 @@ pub fn admit(allocator: Allocator, io: std.Io, package_dir: []const u8, state_di
 
 pub const AdmitResult = struct { digest: [64]u8, created: bool };
 
+/// The three checks that decide whether a limb package may run *at all*:
+/// admitted under this digest, not revoked, not detached. Factored out of
+/// `limbRun` because every caller that binds or dispatches a limb has to ask
+/// the same question of the same substrate — a second copy of this predicate
+/// is a second place for a revocation to be missed, and a revocation that is
+/// missed on one path is not a revocation.
+///
+/// Returns the package `neuron.json` as parsed from the *admission record*,
+/// not from disk. The admitted bytes are the pin; re-reading the directory
+/// would let an edited package answer for a digest it no longer has.
+pub fn liveAdmission(
+    a: Allocator,
+    substrate: *const substrate_mod.Substrate,
+    hex: []const u8,
+) !std.json.Value {
+    const admission_id = try std.fmt.allocPrint(a, ADMISSION_PREFIX ++ "{s}", .{hex});
+    const admission_artifact = substrate.artifacts.get(admission_id) orelse return error.LimbNotAdmitted;
+    if (!std.mem.eql(u8, admission_artifact.schema, ADMISSION_SCHEMA)) return error.LimbNotAdmitted;
+    const revoked_id = try std.fmt.allocPrint(a, REVOKED_PREFIX ++ "{s}", .{hex});
+    if (substrate.artifacts.contains(revoked_id)) return error.LimbRevoked;
+    const detached_id = try std.fmt.allocPrint(a, DETACHED_PREFIX ++ "{s}", .{hex});
+    if (substrate.artifacts.contains(detached_id)) return error.LimbDetached;
+
+    const admission = try std.json.parseFromSliceLeaky(std.json.Value, a, admission_artifact.bytes, .{});
+    if (admission != .object) return error.CorruptAdmission;
+    const package_field = admission.object.get("package") orelse return error.CorruptAdmission;
+    if (package_field != .string) return error.CorruptAdmission;
+    const manifest = try std.json.parseFromSliceLeaky(std.json.Value, a, package_field.string, .{});
+    if (manifest != .object) return error.InvalidManifest;
+    return manifest;
+}
+
 pub fn limbRun(
     allocator: Allocator,
     io: std.Io,
@@ -150,20 +269,7 @@ pub fn limbRun(
     var substrate = try substrate_mod.Substrate.initDir(a, io, std.Io.Dir.cwd(), state_dir);
     defer substrate.deinit();
 
-    const admission_id = try std.fmt.allocPrint(a, ADMISSION_PREFIX ++ "{s}", .{&hex});
-    const admission_artifact = substrate.artifacts.get(admission_id) orelse return error.LimbNotAdmitted;
-    if (!std.mem.eql(u8, admission_artifact.schema, ADMISSION_SCHEMA)) return error.LimbNotAdmitted;
-    const revoked_id = try std.fmt.allocPrint(a, REVOKED_PREFIX ++ "{s}", .{&hex});
-    if (substrate.artifacts.contains(revoked_id)) return error.LimbRevoked;
-    const detached_id = try std.fmt.allocPrint(a, DETACHED_PREFIX ++ "{s}", .{&hex});
-    if (substrate.artifacts.contains(detached_id)) return error.LimbDetached;
-
-    const admission = try std.json.parseFromSliceLeaky(std.json.Value, a, admission_artifact.bytes, .{});
-    if (admission != .object) return error.CorruptAdmission;
-    const package_field = admission.object.get("package") orelse return error.CorruptAdmission;
-    if (package_field != .string) return error.CorruptAdmission;
-    const manifest = try std.json.parseFromSliceLeaky(std.json.Value, a, package_field.string, .{});
-    if (manifest != .object) return error.InvalidManifest;
+    const manifest = try liveAdmission(a, &substrate, &hex);
     const resolved = try run_mod.resolveNeuronArgv(a, manifest, package_dir, neuron_id);
 
     const cwd = std.Io.Dir.cwd();
@@ -345,7 +451,7 @@ pub fn inspect(allocator: Allocator, io: std.Io, state_dir: []const u8, json_out
 /// the raw log rather than the replayed substrate because evidence citations
 /// are observability, not state: `validate` already consumed them, so replay
 /// deliberately drops them and only the log still holds the derivation edges.
-const TraceRecordJ = struct {
+pub const TraceRecordJ = struct {
     schema: []const u8 = "",
     op: []const u8 = "",
     firing_id: []const u8 = "",
@@ -355,6 +461,10 @@ const TraceRecordJ = struct {
     artifacts: []const struct {
         id: []const u8 = "",
         produced_by: []const u8 = "",
+        /// Hex-encoded content, as `journalCommit` wrote it. Only the
+        /// version-recovery projection reads it; the trace and staleness
+        /// projections need identities and ordinals, not payloads.
+        bytes: []const u8 = "",
     } = &.{},
     messages: []const struct { to: []const u8 = "" } = &.{},
     evidence: []const EvidenceView = &.{},
@@ -377,7 +487,7 @@ const EvidenceView = struct {
 /// Read the journal as a sequence of committed firings, newest last. Pure read:
 /// it opens the log directly and never takes the substrate's exclusive lock,
 /// so tracing a live node cannot block or be blocked by it.
-fn readJournal(allocator: Allocator, io: std.Io, state_dir: []const u8) ![]const u8 {
+pub fn readJournal(allocator: Allocator, io: std.Io, state_dir: []const u8) ![]const u8 {
     const log_path = try std.fmt.allocPrint(allocator, "{s}/substrate.log", .{state_dir});
     defer allocator.free(log_path);
     const file = try std.Io.Dir.cwd().openFile(io, log_path, .{});
@@ -481,13 +591,11 @@ pub fn telemetryTrace(allocator: Allocator, io: std.Io, state_dir: []const u8, j
 /// conservative direction, since re-driving a boundary-crossing firing repeats
 /// a real-world effect, and a wrong `true` would cause one.
 fn reportSnapshotStale(
-    w: *std.Io.Writer,
     a: Allocator,
+    rows: *std.ArrayList(StaleRow),
     rec: TraceRecordJ,
     last_write: std.StringHashMap(usize),
     firing_seq: std.StringHashMap(usize),
-    json_out: bool,
-    stale_count: *usize,
 ) !void {
     // A firing may cite many sources, so the lookup has to be firing → its
     // whole evidence set. Keeping one source per firing silently under-reports
@@ -502,37 +610,57 @@ fn reportSnapshotStale(
             if (std.mem.eql(u8, source, "stimulus")) continue;
             const moved = last_write.get(source) orelse continue;
             if (moved <= derived_at) continue;
-            stale_count.* += 1;
-            try emitStaleRow(w, artifact.id, source, artifact.produced_by, derived_at, moved, false, true, json_out);
+            try rows.append(a, .{
+                .artifact = artifact.id,
+                .stale_source = source,
+                .produced_by = artifact.produced_by,
+                .derived_at = derived_at,
+                .source_moved_at = moved,
+                .redrivable = false,
+                .from_snapshot = true,
+                .crossed = "",
+            });
         };
     }
 }
 
-/// One row, in whichever form the caller asked for. Shared so the commit-record
-/// and snapshot paths cannot drift into reporting the same fact differently.
-fn emitStaleRow(
-    w: *std.Io.Writer,
-    artifact_id: []const u8,
-    source: []const u8,
+/// One stale derivation, as `neuron.staleness/v1` describes it, plus the one
+/// fact the wire form deliberately compresses into a bool: *which* external
+/// address the producing firing crossed. A caller that only reports staleness
+/// needs the bool; a caller that must decide what to do about it needs the
+/// address, because "may not be re-fired" and "already told the world" are
+/// different obligations (R10 case 2 vs case 3).
+///
+/// Every slice borrows the arena the journal was parsed into.
+pub const StaleRow = struct {
+    artifact: []const u8,
+    stale_source: []const u8,
     produced_by: []const u8,
     derived_at: usize,
-    moved: usize,
+    source_moved_at: usize,
     redrivable: bool,
     from_snapshot: bool,
-    json_out: bool,
-) !void {
+    /// The `outbox/` address this firing sent to, or empty. Empty with
+    /// `redrivable == false` means the crossing is *unknown*, not absent —
+    /// which is what a folded firing degrades to (§28.4).
+    crossed: []const u8,
+};
+
+/// One row, in whichever form the caller asked for. Shared so the commit-record
+/// and snapshot paths cannot drift into reporting the same fact differently.
+fn emitStaleRow(w: *std.Io.Writer, row: StaleRow, json_out: bool) !void {
     if (json_out) {
         try w.writeAll("{\"schema\":\"neuron.staleness/v1\",\"artifact\":");
-        try std.json.Stringify.value(artifact_id, .{}, w);
+        try std.json.Stringify.value(row.artifact, .{}, w);
         try w.writeAll(",\"stale_source\":");
-        try std.json.Stringify.value(source, .{}, w);
+        try std.json.Stringify.value(row.stale_source, .{}, w);
         try w.writeAll(",\"produced_by\":");
-        try std.json.Stringify.value(produced_by, .{}, w);
+        try std.json.Stringify.value(row.produced_by, .{}, w);
         try w.print(",\"derived_at\":{},\"source_moved_at\":{},\"redrivable\":{},\"from\":\"{s}\"}}\n", .{
-            derived_at, moved, redrivable, if (from_snapshot) "snapshot" else "journal",
+            row.derived_at, row.source_moved_at, row.redrivable, if (row.from_snapshot) "snapshot" else "journal",
         });
     } else {
-        try w.print("{s: <50} {s: <50} {}\n", .{ artifact_id, source, redrivable });
+        try w.print("{s: <50} {s: <50} {}\n", .{ row.artifact, row.stale_source, row.redrivable });
     }
 }
 
@@ -556,6 +684,27 @@ pub fn telemetryStale(allocator: Allocator, io: std.Io, state_dir: []const u8, j
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const a = arena.allocator();
+
+    const rows = try collectStale(a, bytes);
+
+    var out_buffer: [4096]u8 = undefined;
+    var writer = std.Io.File.stdout().writerStreaming(io, &out_buffer);
+    const w = &writer.interface;
+    if (!json_out) try w.writeAll("stale_artifact                                     stale_source                                       redrivable\n");
+    for (rows) |row| try emitStaleRow(w, row, json_out);
+    if (!json_out) try w.print("\n{d} stale derivation(s)\n", .{rows.len});
+    try w.flush();
+}
+
+/// The staleness projection itself, separated from rendering so that the
+/// re-derivation loop (`redrive`) decides from exactly the rows the operator
+/// is shown. A second implementation of "which derivation went stale" would be
+/// a second place for detection and action to disagree, and the whole point of
+/// R10 is that they must not.
+///
+/// Rows borrow `a`; the caller owns the arena.
+pub fn collectStale(a: Allocator, bytes: []const u8) ![]const StaleRow {
+    var rows: std.ArrayList(StaleRow) = .empty;
 
     // Pass 1: the position at which each artifact id was last written.
     //
@@ -593,12 +742,6 @@ pub fn telemetryStale(allocator: Allocator, io: std.Io, state_dir: []const u8, j
     }
 
     // Pass 2: an artifact is stale when a source it cited moved after it.
-    var out_buffer: [4096]u8 = undefined;
-    var writer = std.Io.File.stdout().writerStreaming(io, &out_buffer);
-    const w = &writer.interface;
-    if (!json_out) try w.writeAll("stale_artifact                                     stale_source                                       redrivable\n");
-
-    var stale_count: usize = 0;
     index = 0;
     var pass2 = std.mem.splitScalar(u8, bytes, '\n');
     while (pass2.next()) |line| {
@@ -607,7 +750,7 @@ pub fn telemetryStale(allocator: Allocator, io: std.Io, state_dir: []const u8, j
             .ignore_unknown_fields = true,
         }) catch continue;
         if (std.mem.eql(u8, rec.op, "snapshot")) {
-            try reportSnapshotStale(w, a, rec, last_write, firing_seq, json_out, &stale_count);
+            try reportSnapshotStale(a, &rows, rec, last_write, firing_seq);
             // Advance past every ordinal the snapshot folded, exactly as pass 1
             // does. Without this, commits appended after a compaction restart
             // numbering at zero and collide with the folded firings, so a
@@ -625,9 +768,12 @@ pub fn telemetryStale(allocator: Allocator, io: std.Io, state_dir: []const u8, j
         // hand-offs) is confined to this substrate and re-derives safely, so
         // gating on `messages.len == 0` would be conservative to the point of
         // marking every agent firing undrivable.
-        var redrivable = true;
+        var crossed: []const u8 = "";
         for (rec.messages) |message| {
-            if (std.mem.startsWith(u8, message.to, "outbox/")) redrivable = false;
+            if (std.mem.startsWith(u8, message.to, "outbox/")) {
+                crossed = message.to;
+                break;
+            }
         }
         for (rec.artifacts) |artifact| {
             // Only the artifact as it exists *now*. A version that was later
@@ -641,14 +787,67 @@ pub fn telemetryStale(allocator: Allocator, io: std.Io, state_dir: []const u8, j
                     if (std.mem.eql(u8, source, "stimulus")) continue;
                     const moved = last_write.get(source) orelse continue;
                     if (moved <= position) continue;
-                    stale_count += 1;
-                    try emitStaleRow(w, artifact.id, source, rec.firing_id, position, moved, redrivable, false, json_out);
+                    try rows.append(a, .{
+                        .artifact = artifact.id,
+                        .stale_source = source,
+                        .produced_by = rec.firing_id,
+                        .derived_at = position,
+                        .source_moved_at = moved,
+                        .redrivable = crossed.len == 0,
+                        .from_snapshot = false,
+                        .crossed = crossed,
+                    });
                 }
             }
         }
     }
-    if (!json_out) try w.print("\n{d} stale derivation(s)\n", .{stale_count});
-    try w.flush();
+    return rows.items;
+}
+
+/// One version of one artifact, recovered from the journal.
+pub const ArtifactVersion = struct {
+    bytes: []const u8,
+    digest: types.Digest,
+    /// Commit ordinal of the write that produced it, on the same scale
+    /// `StaleRow.derived_at` and `source_moved_at` use.
+    at: usize,
+};
+
+/// The content an artifact held at commit ordinal `at` — the version a
+/// derivation recorded at that ordinal actually read.
+///
+/// This lives beside `collectStale` because it must walk ordinals by exactly
+/// the same rule; computing "position" a second time somewhere else is how the
+/// before-image and the staleness row end up disagreeing about which version
+/// moved. Returns null when the journal no longer carries the bytes — a
+/// compacted log holds final state only, so a superseded version is genuinely
+/// unrecoverable and must be reported missing rather than guessed at.
+pub fn artifactVersionAt(a: Allocator, bytes: []const u8, id: []const u8, at: usize) !?ArtifactVersion {
+    var found: ?ArtifactVersion = null;
+    var index: usize = 0;
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        const rec = std.json.parseFromSliceLeaky(TraceRecordJ, a, line, .{
+            .ignore_unknown_fields = true,
+        }) catch continue;
+        if (std.mem.eql(u8, rec.op, "snapshot")) {
+            for (rec.firings) |firing| index = @max(index, @as(usize, @intCast(firing.seq)) + 1);
+            continue;
+        }
+        if (!std.mem.eql(u8, rec.op, "commit")) continue;
+        const position = index;
+        index += 1;
+        if (position > at) break;
+        for (rec.artifacts) |artifact| {
+            if (!std.mem.eql(u8, artifact.id, id)) continue;
+            if (artifact.bytes.len % 2 != 0) continue;
+            const raw = try a.alloc(u8, artifact.bytes.len / 2);
+            _ = std.fmt.hexToBytes(raw, artifact.bytes) catch continue;
+            found = .{ .bytes = raw, .digest = types.digest(raw), .at = position };
+        }
+    }
+    return found;
 }
 
 /// Project committed firing records into a deterministic rollup for the

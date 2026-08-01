@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.emitted-client/v1",
+  "title": "Emitted Client (output)",
+  "description": "An inert generated client. It is written text only — the emitter never evaluates, imports, or executes it, and admitting it as an interface (or running it as a frontend build artifact) is an act the harness performs later, entirely outside this limb.",
+  "type": "object",
+  "required": ["format", "source", "source_manifest_id", "source_manifest_version", "source_manifest_digest", "generated_digest"],
+  "properties": {
+    "format": { "type": "string", "enum": ["ts", "js", "json"] },
+    "source": { "type": "string", "description": "The generated client text." },
+    "source_manifest_id": { "type": "string" },
+    "source_manifest_version": { "type": "string" },
+    "source_manifest_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Copied verbatim from the input published-manifest's manifest_digest. Also embedded inside `source` itself, so a caller reading only the generated file (not this wrapper) can still detect drift against a later server manifest."
+    },
+    "generated_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 hex digest of `source` itself, for the caller's own cache invalidation. Distinct from source_manifest_digest: this one changes if the emitter's template changes even when the contract does not."
+    }
+  },
+  "additionalProperties": false
+}

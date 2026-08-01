@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.publication-verdict/v1",
+  "title": "Publication Verdict",
+  "description": "Whether a published port actually served its gap on the real path. Publishing is not success and attaching is not success: an unverified verdict names the exact kernel calls that withdraw the port. The limb names them; the operator runs them, through the public CLI.",
+  "type": "object",
+  "required": ["gap", "interface", "agent", "verified", "action", "reason"],
+  "properties": {
+    "schema": {"const": "neuron.publication-verdict/v1"},
+    "gap": {"type": "string", "minLength": 1},
+    "interface": {"type": "string", "minLength": 64, "maxLength": 64},
+    "agent": {"type": "string", "minLength": 1},
+    "verified": {"type": "boolean"},
+    "action": {"type": "string", "enum": ["retain", "retire"]},
+    "retire_calls": {"type": "array", "items": {"type": "string"}, "description": "Empty when retained. Otherwise the `neuron port detach` and `neuron port revoke` invocations that withdraw the edge and the record."},
+    "reason": {"type": "string", "minLength": 1},
+    "probe": {
+      "type": "object",
+      "description": "The observation this verdict is grounded in, carried forward so the verdict is auditable without the probe artifact.",
+      "properties": {
+        "transport": {"const": "http-listener"},
+        "listener": {"type": "string"},
+        "url": {"type": "string"},
+        "method": {"type": "string"},
+        "status": {"type": "integer"},
+        "product_schema": {"type": "string"},
+        "neuron_status": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

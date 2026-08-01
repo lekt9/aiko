@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.publication-draft-record/v1",
+  "title": "Publication Draft Record",
+  "description": "The provenance of one drafted published interface: which gap, which admitted limb the handler was resolved to, and which other admitted limbs also covered the contract. Kept beside the draft so the choice of handler is auditable from durable state rather than re-derived.",
+  "type": "object",
+  "required": ["gap", "draft_artifact", "handler_digest", "handler_neuron", "authority"],
+  "properties": {
+    "schema": {"const": "neuron.publication-draft-record/v1"},
+    "gap": {"type": "string", "minLength": 1},
+    "plan_route": {"const": "generate"},
+    "draft_artifact": {"type": "string", "description": "The artifact id of the inert neuron.published-interface/v1 document."},
+    "handler_digest": {"type": "string", "minLength": 64, "maxLength": 64},
+    "handler_neuron": {"type": "string", "minLength": 1},
+    "handler_package": {"type": "string"},
+    "handler_candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "digest": {"type": "string"},
+          "neuron": {"type": "string"},
+          "package": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "mode": {"type": "string", "enum": ["read", "command"]},
+    "route": {"type": "string"},
+    "expect_contains": {"type": "string"},
+    "authority": {"type": "string", "description": "Always states that the document is inert: publishing it is `neuron port publish` and attaching it is `neuron port attach`, both kernel verbs."}
+  },
+  "additionalProperties": false
+}

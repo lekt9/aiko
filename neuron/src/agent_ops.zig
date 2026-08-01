@@ -348,14 +348,14 @@ pub fn initAgentCore(a: Allocator, substrate: *substrate_mod.Substrate, agent: [
 /// The pin is part of the work identity: the same goal through a different
 /// interface, or under a different acceptance predicate, is different work and
 /// gets its own workflow rather than replaying a stale result.
-const Hop = struct {
+pub const Hop = struct {
     manifest: membrane.Manifest,
     hex: []const u8,
     /// This hop's product. Filled in by `performWork`, in order.
     output: []const u8 = "",
 };
 
-const WorkPlan = struct {
+pub const WorkPlan = struct {
     /// The ordered chain that performs the work. Empty means the deterministic
     /// reference resolution; one hop is the single-boundary case; more is a
     /// pipeline where each hop's product is the next hop's input.
@@ -395,7 +395,13 @@ fn resolveRole(
     return .{ .manifest = manifest, .hex = hex };
 }
 
-fn resolveWorkPlan(
+/// Public because re-derivation has to ask the topology a question before it
+/// re-fires anything: *can this producer claim determinism?* A boundary that
+/// cannot re-derives a different answer, invalidates its own dependents, and
+/// never reaches a fixpoint — so determinism is R10's termination proof, not a
+/// safety preference. Resolution alone crosses nothing: `performWork` is the
+/// step that invokes, and it stays private.
+pub fn resolveWorkPlan(
     a: Allocator,
     io: std.Io,
     substrate: *substrate_mod.Substrate,
@@ -483,9 +489,8 @@ fn performWork(a: Allocator, io: std.Io, plan: *WorkPlan, goal: []const u8) !voi
     } else if (plan.acceptance) |*predicate| {
         // The reference path still honours an explicit predicate, judged
         // against the bytes it actually produced.
-        const resolved = try std.fmt.allocPrint(a, "resolve:{s}", .{goal});
-        const hex = std.fmt.bytesToHex(types.digest(resolved), .lower);
-        plan.judged_ok = predicate.holds(&hex);
+        const hex = try referenceProductHex(a, goal);
+        plan.judged_ok = predicate.holds(hex);
         if (!plan.judged_ok) plan.judgement = "acceptance predicate did not hold on the reference resolution";
     }
 }
@@ -493,6 +498,19 @@ fn performWork(a: Allocator, io: std.Io, plan: *WorkPlan, goal: []const u8) !voi
 pub fn workflowId(a: Allocator, agent: []const u8, goal: []const u8) ![]u8 {
     const digest_hex = std.fmt.bytesToHex(types.digest(goal), .lower);
     return std.fmt.allocPrint(a, "agent/{s}/goal/{s}", .{ agent, digest_hex[0..16] });
+}
+
+/// The deterministic reference profile's product for a goal, in one place.
+///
+/// The producer and the verifier both compute this — that pair is deliberate,
+/// because the verifier recomputing independently is what makes the comparison
+/// meaningful. What is NOT deliberate is a third copy in a consumer: this
+/// module owns the reference profile, so a caller outside it that re-derives
+/// the formula by hand keeps emitting the old digest the moment the profile
+/// changes, internally consistent and silently wrong.
+pub fn referenceProductHex(a: Allocator, goal: []const u8) ![]const u8 {
+    const resolved = try std.fmt.allocPrint(a, "resolve:{s}", .{goal});
+    return a.dupe(u8, &std.fmt.bytesToHex(types.digest(resolved), .lower));
 }
 
 /// Drive one typed goal to settlement through the composed stage network.
@@ -588,10 +606,10 @@ pub fn runGoalCore(
     // settled, is the boundary crossed.
     try performWork(a, io, &plan, goal);
 
-    const result_hex = if (plan.hops.len == 0) blk: {
-        const resolved = try std.fmt.allocPrint(a, "resolve:{s}", .{goal});
-        break :blk std.fmt.bytesToHex(types.digest(resolved), .lower);
-    } else std.fmt.bytesToHex(types.digest(plan.output), .lower);
+    const result_hex = if (plan.hops.len == 0)
+        (try referenceProductHex(a, goal))[0..64].*
+    else
+        std.fmt.bytesToHex(types.digest(plan.output), .lower);
 
     const goal_bytes = try std.json.Stringify.valueAlloc(a, .{
         .schema = GOAL_SCHEMA,

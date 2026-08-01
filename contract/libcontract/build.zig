@@ -84,6 +84,25 @@ pub fn build(b: *std.Build) void {
     });
     shim_contract_mod.addEmbedPath(b.path("data"));
     shim_mod.addImport("contract", shim_contract_mod);
+
+    // Export the aggregate root as an importable Zig module. Until now this
+    // build published only artifacts — libraries and executables — so a Zig
+    // consumer in this repository could reach contract ONLY through the C ABI,
+    // even though both sides are Zig and already share `typed_neuron` types
+    // (contract.FireRequest IS typed_neuron.FireRequest). Marshalling a struct
+    // through C and back to reach a type both ends already agree on is a
+    // conversion that exists solely because the module was never published.
+    //
+    // This does not reverse any dependency: contract continues to import
+    // neuron, never the other way round.
+    const public_mod = b.addModule("contract", .{
+        .root_source_file = b.path("src/contract.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    public_mod.addEmbedPath(b.path("data"));
+    public_mod.addImport("typed_neuron", typed_neuron);
     const shim = b.addExecutable(.{
         .name = "contract-lib-shim",
         .root_module = shim_mod,

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.client-emit-request/v1",
+  "title": "Client Emit Request",
+  "description": "Requests a typed client be emitted for a published manifest already staged as a digest-pinned read.",
+  "type": "object",
+  "required": ["manifest_ref_id", "format"],
+  "properties": {
+    "manifest_ref_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The read id of the neuron.published-manifest/v1 artifact to emit a client for."
+    },
+    "format": {
+      "type": "string",
+      "enum": ["ts", "js", "json"],
+      "description": "ts/js: a frontend-consumable module exporting the pinned contract and a request helper. json: the same contract as a plain data document, for callers generating their own bindings."
+    },
+    "client_name": {
+      "type": "string",
+      "description": "Optional identifier used to name the emitted export/artifact. Defaults to the manifest id."
+    }
+  },
+  "additionalProperties": false
+}

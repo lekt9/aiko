@@ -17,6 +17,8 @@ const membrane_ops = @import("membrane_ops.zig");
 const swarm_ops = @import("swarm_ops.zig");
 const neuron_mod = @import("neuron.zig");
 const caps_mod = @import("caps.zig");
+const serve_mod = @import("serve.zig");
+const redrive_mod = @import("redrive.zig");
 
 const usage =
     \\Typed Neuron — a fail-closed runtime for typed agent workflows
@@ -75,6 +77,13 @@ const usage =
     \\                         artifacts whose cited sources have since been
     \\                         rewritten, and whether each is safely redrivable
     \\                         (writes-only firings are; boundary crossings are not)
+    \\  neuron redrive <state_dir> [--dry-run] [--json]
+    \\                         act on the staleness projection: re-fire a
+    \\                         deterministic derivation under a new firing id,
+    \\                         open an agent for one that cannot settle
+    \\                         mechanically, and record a compensation gap for
+    \\                         one that already crossed an outbox — which is
+    \\                         never re-fired. Bounded by a generation counter
     \\  neuron telemetry project <state_dir> [--json]
     \\                         project firing records into a deterministic
     \\                         rollup (firing counts, effects, artifacts)
@@ -126,6 +135,24 @@ const usage =
     \\  neuron interface dispatch <node_dir> [--json]
     \\                         drain one outbox record: dispatch, independently
     \\                         reconcile, acknowledge, receipt
+    \\  neuron port publish <node_dir> <published.json> [--json]
+    \\                         admit a neuron.published-interface/v1 document:
+    \\                         the inbound direction. Outbound-only fields are
+    \\                         refused on presence, never ignored
+    \\  neuron port attach <node_dir> <agent> --published <digest>
+    \\         --handler <package_dir> [--json]
+    \\                         bind an admitted contract to an admitted limb at
+    \\                         /agents/<agent><bind.path>, under a grant derived
+    \\                         from (agent, manifest) alone
+    \\  neuron port detach <node_dir> <agent> --published <digest>
+    \\  neuron port revoke <node_dir> --published <digest>
+    \\                         stop the next request; detach precedes revoke
+    \\  neuron port list <node_dir> [--agent <id>] [--json]
+    \\  neuron port http <node_dir> --listen <ip:port> [--allow-public]
+    \\                         serve the live ports over HTTP. Loopback only
+    \\                         unless --allow-public. No artifact payload is
+    \\                         reachable: a response carries only the product of
+    \\                         the caller's own firing
     \\  neuron --version       print the build version
     \\  neuron --help          show this help
     \\
@@ -1053,6 +1080,41 @@ pub fn main(init: std.process.Init) !void {
         try writeStdout(init.io, line);
         return;
     }
+    // The inbound direction lives behind one registration function so that the
+    // published-interface work is a single edit here rather than six verbs
+    // interleaved with the outbound ones. `dispatch` returns false when argv is
+    // not a `port` invocation, so this cannot swallow another verb — and it is
+    // deliberately NOT called `serve`, because `neuron serve` already names the
+    // mesh daemon and quietly shadowing it would be worse than a new noun.
+    if (std.mem.eql(u8, args.items[1], serve_mod.VERB)) {
+        if (args.items.len < 3) {
+            try writeStderr(init.io, "error: usage: neuron port <publish|attach|detach|revoke|list|http> ...\n");
+            std.process.exit(2);
+        }
+        const handled = serve_mod.dispatch(allocator, init.io, args.items[1..]) catch |err| {
+            try failClosed(init.io, "port", err);
+        };
+        if (!handled) {
+            try writeStderr(init.io, "error: usage: neuron port <publish|attach|detach|revoke|list|http> ...\n");
+            std.process.exit(2);
+        }
+        return;
+    }
+    // Re-derivation lives behind one registration function for the same reason
+    // the inbound direction does: everything it needs is already in the
+    // journal, so the whole feature is one module and one edit here. `dispatch`
+    // returns false when argv is not a `redrive` invocation, so it can never
+    // swallow another verb.
+    if (std.mem.eql(u8, args.items[1], redrive_mod.VERB)) {
+        const handled = redrive_mod.dispatch(allocator, init.io, args.items[1..]) catch |err| {
+            try failClosed(init.io, "redrive", err);
+        };
+        if (!handled) {
+            try writeStderr(init.io, "error: usage: neuron redrive <state_dir> [--dry-run] [--json]\n");
+            std.process.exit(2);
+        }
+        return;
+    }
     if (std.mem.eql(u8, args.items[1], "demo") or std.mem.eql(u8, args.items[1], "check")) {
         const summary = try demo.run(allocator);
         var buffer: [512]u8 = undefined;
@@ -1070,7 +1132,9 @@ pub fn main(init: std.process.Init) !void {
 const interface_usage =
     \\error: usage: neuron interface <verb> ...
     \\  discover <target> [--json]
-    \\  describe <target> [--kind function|process|filesystem] [--id <id>]
+    \\  describe <target>
+    \\         [--kind function|process|filesystem|http|mcp|model|device|human]
+    \\         [--id <id>]
     \\           [--mode read|command] [--target-template <t>] [--output <file>]
     \\  test     <interface.json> [--json]
     \\  admit    <node_dir> <interface.json> [--json]

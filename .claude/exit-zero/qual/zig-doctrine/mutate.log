@@ -1,0 +1,1 @@
+FAIL: CLAUDE.md has no ```zig-doctrine block — the doctrine this gate guards was deleted or renamed, so nothing is being checked

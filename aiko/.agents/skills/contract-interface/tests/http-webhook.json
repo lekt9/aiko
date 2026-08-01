@@ -1,1 +1,0 @@
-{"id":"http-webhook","description":"Inbound HTTP webhook with API acknowledgement","triggers":["receive webhook"],"events":[{"id":"request.received","kind":"http.request"}],"effects":[{"id":"response.send","effect":"external_message","variants":["json","empty"],"requires_authority":true,"evidence":["http_status"]}],"runtime":{"argv":["/usr/bin/true"],"restart":"on-failure"}}

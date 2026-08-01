@@ -1,0 +1,35 @@
+{
+  "firing_id": "client-emitter-demo-001",
+  "receptor_schema": "neuron.client-emit-request/v1",
+  "now_ms": 0,
+  "permitted_reads": [
+    "client-emitter/example-manifest"
+  ],
+  "reads": [
+    {
+      "id": "client-emitter/example-manifest",
+      "schema": "neuron.published-manifest/v1",
+      "bytes": "{\"id\":\"agents/reference/echo\",\"version\":\"1.0.0\",\"accepts\":[\"echo.request/v1\"],\"emits\":[\"echo.response/v1\"],\"errors\":[\"echo.invalid/v1\"],\"manifest_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"transport\":\"http\",\"bind\":{\"path\":\"/agents/reference/echo\",\"method\":\"POST\"},\"node_address\":\"https://node.example:8443\"}"
+    }
+  ],
+  "messages": [
+    {
+      "to": "client-emitter/client-emitter",
+      "schema": "neuron.client-emit-request/v1",
+      "payload": "{\"manifest_ref_id\":\"client-emitter/example-manifest\",\"format\":\"ts\",\"client_name\":\"echo\"}",
+      "durable": false
+    }
+  ],
+  "caps": {
+    "allow_write": true,
+    "write_prefix": "client-emitter/",
+    "budget": {
+      "max_effects": 2,
+      "max_writes": 1,
+      "max_messages": 0,
+      "max_spawns": 0,
+      "max_bytes": 262144,
+      "max_depth": 1
+    }
+  }
+}

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Inspect Project"
-  short_description: "Inspect Git and project structure"
-  default_prompt: "Use $inspect-project to inspect this repository safely."

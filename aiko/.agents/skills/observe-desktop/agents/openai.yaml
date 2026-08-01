@@ -1,4 +1,0 @@
-interface:
-  display_name: "Observe Desktop"
-  short_description: "Inspect privacy-safe desktop application state"
-  default_prompt: "Use $observe-desktop to inspect the current desktop state."

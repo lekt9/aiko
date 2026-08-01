@@ -18,14 +18,34 @@ pub const DispatchFn = *const fn (
     args: std.json.Value,
 ) anyerror!ToolResult;
 
+/// Who this server says it is. Hardcoding it made the door announce
+/// "contract" while serving a host's own catalog — a name that no longer
+/// described what was behind it. Identity travels with the catalog.
+pub const ServerInfo = struct {
+    name: []const u8 = "contract",
+    title: []const u8 = "Contract",
+    version: []const u8 = "0.1.0",
+    description: []const u8 = "Native /contract MCP — declare/iterate/search/find_skills/symlink on the wallet ledger.",
+};
+
 pub const ToolSpec = struct {
     name: []const u8,
     description: []const u8,
     schema: []const u8,
 };
 
-/// MCP tool catalog — aligned with unbrowse contract-mcp-bridge.ts plus
-/// contract-and-find-skills (find_skills) and Truth Seek symlinks.
+/// The default catalog: contract's own verbs, aligned with unbrowse
+/// contract-mcp-bridge.ts plus contract-and-find-skills (find_skills) and
+/// Truth Seek symlinks.
+///
+/// It is a DEFAULT, not the catalog. This module's contract is that it owns the
+/// wire protocol and the host owns substrate dispatch — but the catalog was
+/// hardcoded here, which contradicted that: a host could supply its own tool
+/// semantics and could not supply its own tool list, so any host with verbs of
+/// its own had to either edit this file (putting foreign concerns into
+/// contract) or reimplement the JSON-RPC loop (a second protocol to drift).
+/// `runStdio` now takes the catalog for the same reason it already takes
+/// `dispatch`.
 pub const TOOLS = [_]ToolSpec{
     .{
         .name = "declare",
@@ -137,7 +157,7 @@ fn writeError(allocator: std.mem.Allocator, id: Value, code: i64, message: []con
     try writeLine(allocator, aw.writer.buffered());
 }
 
-fn writeInitialize(allocator: std.mem.Allocator, id: Value) !void {
+fn writeInitialize(allocator: std.mem.Allocator, id: Value, info: ServerInfo) !void {
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
     var s = std.json.Stringify{ .writer = &aw.writer };
@@ -161,20 +181,20 @@ fn writeInitialize(allocator: std.mem.Allocator, id: Value) !void {
     try s.objectField("serverInfo");
     try s.beginObject();
     try s.objectField("name");
-    try s.write("contract");
+    try s.write(info.name);
     try s.objectField("title");
-    try s.write("Contract");
+    try s.write(info.title);
     try s.objectField("version");
-    try s.write("0.1.0");
+    try s.write(info.version);
     try s.objectField("description");
-    try s.write("Native /contract MCP — declare/iterate/search/find_skills/symlink on the wallet ledger.");
+    try s.write(info.description);
     try s.endObject();
     try s.endObject();
     try s.endObject();
     try writeLine(allocator, aw.writer.buffered());
 }
 
-fn writeToolsList(allocator: std.mem.Allocator, arena: std.mem.Allocator, id: Value) !void {
+fn writeToolsList(allocator: std.mem.Allocator, arena: std.mem.Allocator, id: Value, tools: []const ToolSpec) !void {
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
     var s = std.json.Stringify{ .writer = &aw.writer };
@@ -187,7 +207,7 @@ fn writeToolsList(allocator: std.mem.Allocator, arena: std.mem.Allocator, id: Va
     try s.beginObject();
     try s.objectField("tools");
     try s.beginArray();
-    for (TOOLS) |t| {
+    for (tools) |t| {
         try s.beginObject();
         try s.objectField("name");
         try s.write(t.name);
@@ -231,8 +251,8 @@ fn writeToolResult(allocator: std.mem.Allocator, id: Value, result: ToolResult) 
     try writeLine(allocator, aw.writer.buffered());
 }
 
-fn specFor(name: []const u8) ?ToolSpec {
-    for (TOOLS) |t| {
+fn specFor(tools: []const ToolSpec, name: []const u8) ?ToolSpec {
+    for (tools) |t| {
         if (std.mem.eql(u8, t.name, name)) return t;
     }
     return null;
@@ -243,6 +263,7 @@ fn handleToolsCall(
     id: Value,
     params: Value,
     env: std.process.Environ,
+    tools: []const ToolSpec,
     dispatch: DispatchFn,
 ) !void {
     if (params != .object) {
@@ -258,7 +279,7 @@ fn handleToolsCall(
         return;
     }
     const tool_name = name_val.string;
-    if (specFor(tool_name) == null) {
+    if (specFor(tools, tool_name) == null) {
         try writeError(allocator, id, -32601, "Tool not found");
         return;
     }
@@ -290,7 +311,13 @@ fn readStdinLine(allocator: std.mem.Allocator) !?[]u8 {
 }
 
 /// Run the MCP stdio loop until stdin closes.
-pub fn runStdio(allocator: std.mem.Allocator, env: std.process.Environ, dispatch: DispatchFn) !void {
+pub fn runStdio(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    info: ServerInfo,
+    tools: []const ToolSpec,
+    dispatch: DispatchFn,
+) !void {
     var initialized = false;
 
     while (true) {
@@ -337,7 +364,7 @@ pub fn runStdio(allocator: std.mem.Allocator, env: std.process.Environ, dispatch
 
         if (std.mem.eql(u8, method, "initialize")) {
             initialized = true;
-            try writeInitialize(allocator, id);
+            try writeInitialize(allocator, id, info);
         } else if (std.mem.eql(u8, method, "notifications/initialized")) {
             // no response
         } else if (std.mem.eql(u8, method, "ping")) {
@@ -359,9 +386,9 @@ pub fn runStdio(allocator: std.mem.Allocator, env: std.process.Environ, dispatch
         } else if (!initialized) {
             if (id != .null) try writeError(allocator, id, -32002, "Server not initialized");
         } else if (std.mem.eql(u8, method, "tools/list")) {
-            try writeToolsList(allocator, arena, id);
+            try writeToolsList(allocator, arena, id, tools);
         } else if (std.mem.eql(u8, method, "tools/call")) {
-            try handleToolsCall(allocator, id, params, env, dispatch);
+            try handleToolsCall(allocator, id, params, env, tools, dispatch);
         } else {
             if (id != .null) try writeError(allocator, id, -32601, "Method not found");
         }

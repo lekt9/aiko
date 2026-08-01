@@ -24,6 +24,11 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            // `mesh.zig` reaches for `std.c.fcntl`/`socket` to put an accepted
+            // connection in non-blocking mode. macOS links libc implicitly, so
+            // this was invisible there; every other target must ask for it or
+            // the build fails at the first `std.c` reference.
+            .link_libc = true,
         }),
     });
     exe.root_module.addOptions("build_options", options);
@@ -43,6 +48,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/tests.zig"),
             .target = target,
             .optimize = optimize,
+            // Same reason as the executable: the mesh and tailnet tests reach
+            // `std.c` through the code under test.
+            .link_libc = true,
         }),
     });
     tests.root_module.addImport("typed_neuron", typed_neuron);
