@@ -1,0 +1,13 @@
+# Aiko SDK — Version Lock File
+#
+# Pinned registry versions for contract / neuron / limbs / aiko packages.
+# aiko= MUST match crates/codegen/xai-grok-pager-bin/Cargo.toml (single SSOT).
+# Paths: scripts/lib/aiko-env.sh (AIKO_BIN_DIR=$HOME/.local/bin, AIKO_HOME=$HOME/.aiko).
+# Edit, commit, push — then aiko-install --update on each machine.
+#
+# Format: package=version
+
+contract=0.1.0
+neuron=0.1.0
+aiko=0.2.103
+neuron-limbs=0.1.0
