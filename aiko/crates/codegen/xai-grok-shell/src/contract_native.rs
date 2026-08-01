@@ -5236,6 +5236,44 @@ pub async fn delegate_subagent_root(
     .flatten()
 }
 
+/// Build the walk JSON `graph_plan_analyze` expects from the dry-run Contract
+/// Skill plan already computed every turn (`skill_registry::dry_run`). This is
+/// what makes the chain-vs-graph verdict automatic and native: no separate
+/// `/graph` invocation constructs the walk, the turn's own admitted plan does.
+///
+/// `skill_plan.children` already carries `key`/`depends_on`/`plan` for every
+/// node in the composed connectome; this only renames `key` -> `id` and pins
+/// every node's status to `pending` (a dry-run plan has not executed yet), which
+/// is the shape `graph_plan.zig::analyze` parses.
+fn walk_json_from_skill_plan(skill_plan: &Value) -> Option<String> {
+    let children = skill_plan.get("children")?.as_array()?;
+    if children.is_empty() {
+        return None;
+    }
+    let nodes = children
+        .iter()
+        .filter_map(|child| {
+            let id = child.get("key").and_then(Value::as_str)?;
+            let plan = child.get("plan").and_then(Value::as_str).unwrap_or("");
+            let depends_on = child
+                .get("depends_on")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            Some(json!({
+                "id": id,
+                "plan": plan,
+                "depends_on": depends_on,
+                "status": "pending",
+            }))
+        })
+        .collect::<Vec<_>>();
+    if nodes.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&json!({ "nodes": nodes })).ok()
+}
+
 /// Analyze a walk JSON and return a chain-vs-graph verdict.
 ///
 /// The walk JSON comes from the Contract substrate's obligation tracker
@@ -5400,11 +5438,18 @@ async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
     let skill_plan = skill_registry::dry_run(&goal, cwd);
     let skill_catalog = skill_registry::catalog(cwd);
     let availability = json!({ "contract_skills": skill_catalog });
-    let (mut recommendation, proven, open_matches, muscle_rankings) = tokio::join!(
+    let graph_walk_json = walk_json_from_skill_plan(&skill_plan);
+    let (mut recommendation, proven, open_matches, muscle_rankings, graph_verdict) = tokio::join!(
         contract_recommendation(&goal, availability),
         contract_proven_route(&goal),
         matching_open_contracts(&goal),
         inspect_muscle_rankings(goal.clone()),
+        async {
+            match &graph_walk_json {
+                Some(walk) => graph_plan_analyze(walk).await,
+                None => None,
+            }
+        },
     );
     let proven = sanitize_proven_route(proven, &standing);
     let recalled = recall_matching_declarations(&goal);
@@ -5420,6 +5465,9 @@ async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
             );
         }
         route.insert("muscle_rankings".into(), muscle_rankings.clone());
+        if let Some(verdict) = &graph_verdict {
+            route.insert("graph_engineering_verdict".into(), verdict.clone());
+        }
     }
     let learning_family = proven.as_ref().and_then(|route| {
         let binary = route.get("binary")?.as_str()?;
@@ -5482,6 +5530,30 @@ async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
         sections.push(format!(
             "CONTRACT REFLEX DECISION (mechanical native policy):\n{}",
             serde_json::to_string(reflex).unwrap_or_default()
+        ));
+    }
+    if let Some(verdict) = &graph_verdict {
+        let kind = verdict.get("kind").and_then(Value::as_str).unwrap_or("chain");
+        let peak = verdict
+            .get("peak_parallelism")
+            .and_then(Value::as_u64)
+            .unwrap_or(1);
+        let directive = if kind == "graph" && peak > 1 {
+            "This turn's admitted plan is a genuine graph: independent_groups name nodes with \
+             disjoint dependencies. Fan them out (subagents/parallel tool calls) instead of \
+             running them one after another; do not ask the user to invoke /graph first -- \
+             this verdict is computed automatically every turn from the native Contract \
+             substrate (graph_plan.zig), not from a skill match."
+        } else {
+            "This turn's admitted plan is a chain (every ready node already depends on, or is \
+             blocked by, another): proceed sequentially. No fan-out is warranted by the graph \
+             engineering verdict."
+        };
+        sections.push(format!(
+            "CONTRACT GRAPH ENGINEERING VERDICT (native, automatic, computed by \
+             contract_graph_plan every turn -- supersedes manual /graph invocation):\n{}\n{}",
+            serde_json::to_string(verdict).unwrap_or_default(),
+            directive
         ));
     }
     if !recalled.is_empty() {
@@ -5956,6 +6028,47 @@ pub async fn ground_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn walk_json_from_skill_plan_renames_key_to_id_and_pins_pending() {
+        let skill_plan = json!({
+            "children": [
+                { "key": "n1", "plan": "do A", "depends_on": [] },
+                { "key": "n2", "plan": "do B", "depends_on": ["n1"] },
+            ]
+        });
+        let walk = walk_json_from_skill_plan(&skill_plan).expect("walk json");
+        let parsed: Value = serde_json::from_str(&walk).unwrap();
+        let nodes = parsed["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0]["id"], "n1");
+        assert_eq!(nodes[0]["status"], "pending");
+        assert_eq!(nodes[1]["depends_on"][0], "n1");
+    }
+
+    #[test]
+    fn walk_json_from_skill_plan_is_none_for_empty_children() {
+        let skill_plan = json!({ "children": [] });
+        assert!(walk_json_from_skill_plan(&skill_plan).is_none());
+        let no_children = json!({});
+        assert!(walk_json_from_skill_plan(&no_children).is_none());
+    }
+
+    /// End-to-end: the default meta-agent connectome (a real chain — each
+    /// step depends on the one before it) must be judged `chain` by the
+    /// native substrate, proving the turn-automatic wiring actually reaches
+    /// `contract_graph_plan` and gets a real verdict back, not a stub.
+    #[tokio::test]
+    #[ignore = "requires the pinned Contract native library on the ABI path"]
+    async fn native_graph_verdict_judges_default_connectome_as_chain() {
+        let skill_plan = skill_registry::dry_run("ship the fix", Path::new("/tmp/work"));
+        let walk = walk_json_from_skill_plan(&skill_plan).expect("default connectome has nodes");
+        let verdict = graph_plan_analyze(&walk)
+            .await
+            .expect("native graph_plan analysis must succeed with ABI >= 12");
+        assert_eq!(verdict["kind"], "chain");
+        assert!(verdict["obligation_count"].as_u64().unwrap() > 0);
+    }
 
     #[test]
     fn default_connectome_is_the_admitted_meta_agent_skill() {

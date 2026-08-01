@@ -29,7 +29,7 @@
     },
     {
       "key": "recall",
-      "plan": "Recall only context explicitly referenced by the observation.",
+      "plan": "Recall only context explicitly referenced by the observation of {{goal}}.",
       "worker": "host",
       "adapter": "aiko.meta.recall/v1",
       "depends_on": ["observe"],
@@ -71,7 +71,7 @@
     },
     {
       "key": "verify",
-      "plan": "Verify the routed work against the requested outcome.",
+      "plan": "Verify the routed work against the requested outcome of {{goal}}.",
       "worker": "aiko",
       "depends_on": ["act"],
       "can_parallel": false,

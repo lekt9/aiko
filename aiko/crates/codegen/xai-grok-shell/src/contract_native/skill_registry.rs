@@ -240,8 +240,14 @@ pub fn validate_manifest(manifest: &ContractSkillManifest, directory: &Path) -> 
     if !safe_version(&manifest.version) {
         return Err("version must be numeric semver".into());
     }
-    if manifest.triggers.is_empty() || manifest.triggers.len() > 64 {
-        return Err("triggers must contain 1..64 entries".into());
+    // A `core` skill is the always-on connectome: it is never keyword-routed
+    // by `rank`, so it legitimately has no triggers. Only a `matched` limb
+    // skill, which is only ever selected via trigger overlap, requires one.
+    if manifest.triggers.len() > 64 {
+        return Err("triggers must contain 0..64 entries".into());
+    }
+    if manifest.activation == SkillActivation::Matched && manifest.triggers.is_empty() {
+        return Err("matched skills must declare at least one trigger".into());
     }
     validate_schema(&manifest.input_schema, "input_schema")?;
     validate_schema(&manifest.output_schema, "output_schema")?;
