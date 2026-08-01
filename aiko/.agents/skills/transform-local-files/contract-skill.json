@@ -1,0 +1,104 @@
+{
+  "description": "Preview and apply explicitly scoped, reversible local file transformations.",
+  "examples": [
+    {
+      "expect": {
+        "held_effects": [
+          "local_reversible"
+        ],
+        "root_count": 1,
+        "selected": "transform-local-files"
+      },
+      "name": "default",
+      "prompt": "Transform files in this explicitly scoped fixture."
+    }
+  ],
+  "id": "transform-local-files",
+  "input_schema": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "nodes": [
+    {
+      "can_parallel": true,
+      "depends_on": [],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "scope",
+      "plan": "Resolve explicitly scoped non-sensitive files for {{goal}}.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    },
+    {
+      "can_parallel": false,
+      "depends_on": [
+        "scope"
+      ],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "preview",
+      "plan": "Prepare a reversible patch preview for {{goal}}.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    },
+    {
+      "can_parallel": false,
+      "depends_on": [
+        "preview"
+      ],
+      "effect": "local_reversible",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "apply",
+      "plan": "Apply the approved local file transformation for {{goal}}.",
+      "read_only": false,
+      "requires_authority": true,
+      "reversible": true,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    },
+    {
+      "can_parallel": false,
+      "depends_on": [
+        "apply"
+      ],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "verify",
+      "plan": "Verify the post-edit state and rollback metadata for {{goal}}.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    }
+  ],
+  "output_schema": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "platforms": [
+    "all"
+  ],
+  "schema_version": 1,
+  "triggers": [
+    "transform files",
+    "edit files",
+    "rewrite file",
+    "rename files"
+  ],
+  "version": "1.0.0"
+}

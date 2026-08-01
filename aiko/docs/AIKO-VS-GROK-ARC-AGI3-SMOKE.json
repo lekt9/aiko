@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-22T09:39:30Z",
+  "benchmark": "ARC-AGI-3 offline interactive harness comparison",
+  "fairness": {
+    "games": [
+      "ls20"
+    ],
+    "maxActionsPerGame": 1,
+    "oneModelCallPerAction": true,
+    "sameRawGridAndTransitionPrompt": true,
+    "sourceAndReplaysHiddenFromPrompt": true,
+    "scoring": "exact levels_completed from local arc_agi engine"
+  },
+  "versions": {
+    "aiko": "aiko 0.2.102 (8acf895)",
+    "grok": "grok 0.2.106 (bde89716f679) [stable]"
+  },
+  "summary": {
+    "aiko": {
+      "games": 1,
+      "levelsCompleted": 0,
+      "wins": 0,
+      "actions": 1,
+      "modelCalls": 1,
+      "durationMs": 131728.77,
+      "errors": 0
+    },
+    "grok": {
+      "games": 1,
+      "levelsCompleted": 0,
+      "wins": 0,
+      "actions": 0,
+      "modelCalls": 1,
+      "durationMs": 36562.15,
+      "errors": 1
+    }
+  },
+  "trials": [
+    {
+      "harness": "aiko",
+      "model": "mimo-v2.5",
+      "game": "ls20",
+      "levelsCompleted": 0,
+      "winLevels": 7,
+      "won": false,
+      "actions": 1,
+      "modelCalls": 1,
+      "durationMs": 131728.77,
+      "error": null,
+      "transitions": [
+        {
+          "step": 1,
+          "action": 4,
+          "x": null,
+          "y": null,
+          "beforeLevel": 0,
+          "afterLevel": 0,
+          "beforeState": "NOT_FINISHED",
+          "afterState": "NOT_FINISHED"
+        }
+      ],
+      "calls": [
+        {
+          "ok": true,
+          "durationMs": 131704.66,
+          "exitCode": 0,
+          "stopReason": "EndTurn",
+          "answer": "{\"action\":4,\"x\":null,\"y\":null,\"reason\":\"Moving right to approach the interactive element at the bottom, which appears to be the puzzle's focal point.\"}",
+          "action": {
+            "action": 4,
+            "x": null,
+            "y": null,
+            "reason": "Moving right to approach the interactive element at the bottom, which appears to be the puzzle's focal point."
+          },
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "harness": "grok",
+      "model": "grok-4.5",
+      "game": "ls20",
+      "levelsCompleted": 0,
+      "winLevels": 7,
+      "won": false,
+      "actions": 0,
+      "modelCalls": 1,
+      "durationMs": 36562.15,
+      "error": "Error: max turns reached\n",
+      "transitions": [],
+      "calls": [
+        {
+          "ok": false,
+          "durationMs": 36544.39,
+          "exitCode": 1,
+          "stopReason": "Cancelled",
+          "answer": "",
+          "action": null,
+          "stderr": "Error: max turns reached\n"
+        }
+      ]
+    }
+  ]
+}

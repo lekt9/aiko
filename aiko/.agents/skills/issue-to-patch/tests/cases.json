@@ -1,0 +1,14 @@
+[
+  {
+    "expect": {
+      "held_effects": [
+        "local_reversible",
+        "publish"
+      ],
+      "root_count": 1,
+      "selected": "issue-to-patch"
+    },
+    "name": "default",
+    "prompt": "Fix issue 123 and prepare a pull request."
+  }
+]

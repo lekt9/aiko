@@ -1,0 +1,4 @@
+interface:
+  display_name: "Issue to Patch"
+  short_description: "Turn repository issues into verified patches"
+  default_prompt: "Use $issue-to-patch to implement and verify this issue."

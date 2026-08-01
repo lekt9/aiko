@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "id": "arc-agi-3",
+  "version": "1.0.0",
+  "description": "Solve an unseen interactive grid by forming falsifiable mechanics hypotheses, probing them, and grounding reusable transitions in observed outcomes.",
+  "triggers": [
+    "solve arc agi 3",
+    "play arc",
+    "benchmark arc agi 3",
+    "clear interactive grid levels"
+  ],
+  "platforms": [
+    "all"
+  ],
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "nodes": [
+    {
+      "key": "perceive",
+      "plan": "Extract legal actions, objects, regions, targets, controls, and the current state identity for {{goal}}.",
+      "worker": "aiko",
+      "depends_on": [],
+      "can_parallel": false,
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "timeout_ms": 30000
+    },
+    {
+      "key": "structural",
+      "plan": "Propose actions from structural invariants whose pixel preconditions are present.",
+      "worker": "aiko",
+      "depends_on": [
+        "perceive"
+      ],
+      "can_parallel": true,
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "timeout_ms": 30000
+    },
+    {
+      "key": "causal",
+      "plan": "Recall grounded action-state transitions and propose the lowest-energy causal continuation.",
+      "worker": "aiko",
+      "depends_on": [
+        "perceive"
+      ],
+      "can_parallel": true,
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "timeout_ms": 30000
+    },
+    {
+      "key": "frontier",
+      "plan": "Propose an untried legal action at the perceptual or state-graph frontier.",
+      "worker": "aiko",
+      "depends_on": [
+        "perceive"
+      ],
+      "can_parallel": true,
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "timeout_ms": 30000
+    },
+    {
+      "key": "select",
+      "plan": "Deduplicate proposals, inhibit failed state-action pairs, and select the falsifiable action with minimum learned energy.",
+      "worker": "aiko",
+      "depends_on": [
+        "structural",
+        "causal",
+        "frontier"
+      ],
+      "can_parallel": false,
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "timeout_ms": 30000
+    },
+    {
+      "key": "act",
+      "plan": "Apply exactly the selected legal environment action for {{goal}}.",
+      "worker": "aiko",
+      "depends_on": [
+        "select"
+      ],
+      "can_parallel": false,
+      "read_only": false,
+      "requires_authority": false,
+      "reversible": true,
+      "effect": "local_write",
+      "evidence": [
+        "structured_result"
+      ],
+      "timeout_ms": 30000
+    },
+    {
+      "key": "observe",
+      "plan": "Measure the resulting transition; reward grounded progress, inhibit death or no-op loops, and preserve useful dynamics as muscle memory.",
+      "worker": "aiko",
+      "depends_on": [
+        "act"
+      ],
+      "can_parallel": false,
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "timeout_ms": 30000
+    }
+  ],
+  "examples": [
+    {
+      "name": "default",
+      "prompt": "Solve ARC AGI 3 using observable mechanics and grounded feedback.",
+      "expect": {
+        "selected": "arc-agi-3",
+        "root_count": 1,
+        "held_effects": []
+      }
+    }
+  ]
+}

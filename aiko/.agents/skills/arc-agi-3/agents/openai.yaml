@@ -1,0 +1,4 @@
+interface:
+  display_name: "ARC AGI 3"
+  short_description: "Solve unseen interactive grids via falsifiable mechanics hypotheses"
+  default_prompt: "Use $arc-agi-3 to solve this interactive grid with grounded, probed mechanics."

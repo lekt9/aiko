@@ -1,0 +1,4 @@
+interface:
+  display_name: "Control Local Media"
+  short_description: "Resolve and control local media safely"
+  default_prompt: "Use $control-local-media to play or open this local media."

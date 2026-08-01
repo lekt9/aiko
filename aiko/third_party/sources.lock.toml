@@ -1,0 +1,91 @@
+# Reviewed upstream source heads used for dependency audits and protocol
+# reference. Cargo.lock remains authoritative for packaged crate versions;
+# these revisions make the source review reproducible. GitHub is not consulted
+# by the running application.
+
+version = 1
+reviewed_at = "2026-07-21"
+
+[[source]]
+name = "rust-libp2p"
+repository = "https://github.com/libp2p/rust-libp2p.git"
+revision = "0f90c086a8df3c45f72368a0cb3a1c9c2f886c41"
+license = "MIT"
+usage = "cargo_dependency_primary_peer_transport"
+
+[[source]]
+name = "libp2p-specs"
+repository = "https://github.com/libp2p/specs.git"
+revision = "6b6203ee6f62938ce67efdb33498173f475851c0"
+license = "repository_documentation_terms_review_required_before_copying"
+usage = "protocol_reference_only"
+
+[[source]]
+name = "iroh"
+repository = "https://github.com/n0-computer/iroh.git"
+revision = "f2eb930dda3779c6d852b72f3712aacd6e573ab1"
+license = "MIT OR Apache-2.0"
+usage = "transport_spike_only"
+
+[[source]]
+name = "nix"
+repository = "https://github.com/NixOS/nix.git"
+revision = "aafac2b8d93e3d9ecf05cafb4c446f8ae97347b8"
+license = "LGPL-2.1-only"
+usage = "immutable_store_reference_only"
+
+[[source]]
+name = "rqbit"
+repository = "https://github.com/ikatson/rqbit.git"
+revision = "1fd0818e6efc1b48fd15b07fbc09ac8ad6e524cf"
+license = "Apache-2.0"
+usage = "piece_scheduling_reference_only"
+
+[[source]]
+name = "blake3"
+repository = "https://github.com/BLAKE3-team/BLAKE3.git"
+revision = "8aa5145039b972ba30e98e788752d37d14568824"
+license = "CC0-1.0 OR Apache-2.0"
+usage = "cargo_dependency_and_normative_vectors"
+
+[[source]]
+name = "curve25519-dalek"
+repository = "https://github.com/dalek-cryptography/curve25519-dalek.git"
+revision = "a3549477c43ff2ed747e6de0479cdb0e46db3685"
+license = "BSD-3-Clause"
+usage = "signature_reference_and_vectors"
+
+[[source]]
+name = "redb"
+repository = "https://github.com/cberner/redb.git"
+revision = "fe0141159c73cc304c360092f513b90caed6a732"
+license = "Apache-2.0 OR MIT"
+usage = "cargo_dependency_for_rebuildable_local_metadata"
+
+[[source]]
+name = "keyring-rs"
+repository = "https://github.com/open-source-cooperative/keyring-rs.git"
+revision = "17054f05971a4e8eabbcd5970ad37bcfa7e61048"
+license = "MIT OR Apache-2.0"
+usage = "cargo_dependency_for_native_macos_windows_publisher_secret_storage"
+
+[[source]]
+name = "tantivy"
+repository = "https://github.com/quickwit-oss/tantivy.git"
+revision = "31ca1a8ba290b425f871d2e2384592045ec01b8d"
+license = "MIT"
+usage = "cargo_dependency_local_and_replicated_metadata_index"
+
+[[source]]
+name = "rust-tuf"
+repository = "https://github.com/theupdateframework/rust-tuf.git"
+revision = "38bceb7668938b67373e2001cd16906f59b21f1e"
+license = "Apache-2.0 OR MIT"
+usage = "planned_bootstrap_and_release_metadata_dependency"
+
+[[source]]
+name = "transparency-dev-merkle"
+repository = "https://github.com/transparency-dev/merkle.git"
+revision = "98f61d9f215c39d9ac37093a1910194f0842ad1b"
+license = "Apache-2.0"
+usage = "transparency_reference_and_vectors_only"

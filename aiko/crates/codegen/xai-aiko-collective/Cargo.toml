@@ -1,0 +1,23 @@
+[package]
+name = "xai-aiko-collective"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+blake3 = { workspace = true }
+chrono = { workspace = true }
+libloading = "0.8"
+futures = { workspace = true }
+libp2p = { version = "0.56.0", default-features = false, features = ["autonat", "cbor", "ed25519", "identify", "kad", "macros", "mdns", "memory-connection-limits", "ping", "quic", "relay", "request-response", "tokio"] }
+keyring = "4.1.5"
+redb = "2.6"
+ring = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tantivy = "0.26.1"
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

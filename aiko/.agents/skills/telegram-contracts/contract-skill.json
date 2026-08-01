@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "id": "telegram-contracts",
+  "version": "1.1.0",
+  "description": "Route Telegram observations and authorized typed responses through Contract without provider branches in the core runtime.",
+  "platforms": ["all"],
+  "triggers": [
+    "telegram",
+    "telegram message",
+    "telegram voice",
+    "telegram reply",
+    "telegram callback",
+    "send via telegram"
+  ],
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "nodes": [
+    {
+      "key": "observe",
+      "plan": "Durably observe and normalize the Telegram event for {{goal}} without secrets or raw media.",
+      "worker": "aiko",
+      "depends_on": [],
+      "can_parallel": true,
+      "timeout_ms": 30000,
+      "effect": "read_only",
+      "reversible": false,
+      "read_only": true,
+      "requires_authority": false,
+      "evidence": ["structured_result"]
+    },
+    {
+      "key": "authorize",
+      "plan": "Resolve actor, conversation, capability, and effect authority for {{goal}}.",
+      "worker": "aiko",
+      "depends_on": ["observe"],
+      "can_parallel": true,
+      "timeout_ms": 30000,
+      "effect": "read_only",
+      "reversible": false,
+      "read_only": true,
+      "requires_authority": false,
+      "evidence": ["structured_result"]
+    },
+    {
+      "key": "prepare",
+      "plan": "Select a supported typed Telegram response and prepare bounded content or temporary media for {{goal}}.",
+      "worker": "aiko",
+      "depends_on": ["observe"],
+      "can_parallel": true,
+      "timeout_ms": 3600000,
+      "effect": "read_only",
+      "reversible": false,
+      "read_only": true,
+      "requires_authority": false,
+      "evidence": ["structured_result"]
+    },
+    {
+      "key": "respond",
+      "plan": "Execute the authorized Telegram text, voice, photo, document, edit, callback, or presence response for {{goal}}.",
+      "worker": "aiko",
+      "depends_on": ["authorize", "prepare"],
+      "can_parallel": false,
+      "timeout_ms": 120000,
+      "effect": "external_message",
+      "reversible": false,
+      "read_only": false,
+      "requires_authority": true,
+      "evidence": ["provider_ack", "message_id"]
+    },
+    {
+      "key": "settle",
+      "plan": "Evaluate provider evidence and settle or release the Telegram occurrence for {{goal}}.",
+      "worker": "aiko",
+      "depends_on": ["respond"],
+      "can_parallel": false,
+      "timeout_ms": 30000,
+      "effect": "read_only",
+      "reversible": false,
+      "read_only": true,
+      "requires_authority": false,
+      "evidence": ["structured_result"]
+    }
+  ],
+  "examples": [
+    {
+      "name": "typed-reply",
+      "prompt": "Reply to this Telegram voice message with a voice response.",
+      "expect": {
+        "selected": "telegram-contracts",
+        "root_count": 2,
+        "held_effects": ["external_message"]
+      }
+    }
+  ]
+}

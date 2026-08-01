@@ -1,0 +1,4 @@
+interface:
+  display_name: "Act on Web API"
+  short_description: "Resolve and execute indexed web API actions"
+  default_prompt: "Use $act-on-web-api to complete this web task through an API."

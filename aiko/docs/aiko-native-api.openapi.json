@@ -1,0 +1,776 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Aiko Native API",
+    "version": "1.0.0",
+    "description": "Authenticated, loopback-only frontend API. Read ~/.aiko/native/api.json to discover the active URL and bearer token."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:19420"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/v1/health": {
+      "get": {
+        "operationId": "getNativeHealth",
+        "responses": {
+          "200": {
+            "description": "Aiko and Contract runtime health",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/manifest": {
+      "get": {
+        "operationId": "getNativeManifest",
+        "responses": {
+          "200": {
+            "description": "Versioned interface and transport manifest"
+          }
+        }
+      }
+    },
+    "/v1/openapi.json": {
+      "get": {
+        "operationId": "getOpenApi",
+        "responses": {
+          "200": {
+            "description": "This OpenAPI document"
+          }
+        }
+      }
+    },
+    "/v1/contracts": {
+      "get": {
+        "operationId": "listContracts",
+        "responses": {
+          "200": {
+            "description": "Contract plans"
+          }
+        }
+      }
+    },
+    "/v1/contracts/scheduled": {
+      "get": {
+        "operationId": "listScheduledContracts",
+        "responses": {
+          "200": {
+            "description": "Durable task projection"
+          }
+        }
+      }
+    },
+    "/v1/contracts/{id}": {
+      "get": {
+        "operationId": "getContractHistory",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContractId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Append-only NDJSON ledger history"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/contracts/{id}/retry": {
+      "post": {
+        "operationId": "retryContract",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContractId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Occurrence released for retry"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/contracts/{id}/cancel": {
+      "post": {
+        "operationId": "cancelContract",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ContractId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Contract cancelled"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/v1/collective": {
+      "get": {
+        "operationId": "getCollectiveStatus",
+        "responses": {
+          "200": {
+            "description": "Local Collective participation, peer, and store status",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CollectiveResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collective/status": {
+      "get": {
+        "operationId": "getCollectiveStatusCompatibilityAlias",
+        "deprecated": true,
+        "responses": {
+          "200": { "description": "Compatibility alias for GET /v1/collective" }
+        }
+      }
+    },
+    "/v1/collective/audit": {
+      "get": {
+        "operationId": "getCollectivePublicationAudit",
+        "responses": {
+          "200": { "description": "Privacy-safe local publication decision history" }
+        }
+      }
+    },
+    "/v1/collective/objects": {
+      "get": {
+        "operationId": "listCollectiveObjects",
+        "responses": {
+          "200": { "description": "Rebuildable local metadata projections for Contract-admitted objects" }
+        }
+      }
+    },
+    "/v1/collective/equivocations": {
+      "get": {
+        "operationId": "listCollectiveIndexEquivocations",
+        "responses": {
+          "200": { "description": "Locally witnessed conflicting signed roots grouped by publisher and generation" }
+        }
+      }
+    },
+    "/v1/collective/query-local": {
+      "post": {
+        "operationId": "queryCollectiveLocally",
+        "description": "Ranks downloaded metadata locally; task text never leaves the loopback process.",
+        "responses": { "200": { "description": "Contract-ranked local results" }, "400": { "$ref": "#/components/responses/BadRequest" } }
+      }
+    },
+    "/v1/collective/discover": {
+      "post": {
+        "operationId": "discoverCollectiveContracts",
+        "description": "Sends only bounded structured public terms, replicates returned objects through Contract admission, then reranks locally.",
+        "responses": { "200": { "description": "Contract-ranked admitted results" }, "400": { "$ref": "#/components/responses/BadRequest" } }
+      }
+    },
+    "/v1/collective/review": {
+      "get": {
+        "operationId": "listCollectiveReviewQueue",
+        "responses": { "200": { "description": "Exact sanitized Contract-publishable candidates awaiting a local decision" } }
+      }
+    },
+    "/v1/collective/evidence-sharing": {
+      "put": {
+        "operationId": "setCollectiveEvidenceSharing",
+        "description": "Separately opts into or out of hourly privacy-bucketed public outcome attestations.",
+        "responses": { "200": { "description": "Updated local Collective settings" }, "400": { "$ref": "#/components/responses/BadRequest" } }
+      }
+    },
+    "/v1/collective/review/{object_id}/approve": {
+      "post": {
+        "operationId": "approveCollectiveReview",
+        "parameters": [{ "name": "object_id", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" } }],
+        "responses": { "200": { "description": "Candidate revalidated, signed, admitted, pinned, and optionally announced" }, "400": { "$ref": "#/components/responses/BadRequest" } }
+      }
+    },
+    "/v1/collective/review/{object_id}/reject": {
+      "post": {
+        "operationId": "rejectCollectiveReview",
+        "parameters": [{ "name": "object_id", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" } }],
+        "responses": { "200": { "description": "Candidate retained as private and removed from review" }, "400": { "$ref": "#/components/responses/BadRequest" } }
+      }
+    },
+    "/v1/collective/objects/{object_id}": {
+      "delete": {
+        "operationId": "eraseCollectiveObjectLocally",
+        "parameters": [{
+          "name": "object_id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" }
+        }],
+        "responses": {
+          "200": { "description": "Local verified blob, pin, and metadata projection erased" },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/v1/collective/objects/{object_id}/revoke": {
+      "post": {
+        "operationId": "revokeCollectiveObject",
+        "parameters": [{
+          "name": "object_id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" }
+        }],
+        "requestBody": {
+          "required": false,
+          "content": { "application/json": { "schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "reason": { "enum": ["superseded", "compromised", "invalid", "privacy", "publisher_request"] } }
+          } } }
+        },
+        "responses": {
+          "200": { "description": "Signed revocation created, Contract-admitted, pinned, and announced when participating" },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/v1/collective/participation": {
+      "put": {
+        "operationId": "setCollectiveParticipation",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["enabled"],
+                "properties": { "enabled": { "type": "boolean" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Participation changed; disabling synchronously stops networking" },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/v1/collective/publication-mode": {
+      "put": {
+        "operationId": "setCollectivePublicationMode",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["mode"],
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": ["disabled", "safe_public_shapes", "review_every_object"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Local publication policy changed" },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/v1/reflexes": {
+      "get": {
+        "operationId": "listContractReflexes",
+        "parameters": [{ "name": "context", "in": "query", "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Energy-ranked local reflexes and operator policy" } }
+      }
+    },
+    "/v1/reflexes/{capability}": {
+      "delete": {
+        "operationId": "deleteContractReflex",
+        "parameters": [{ "name": "capability", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Durable reflex tombstone appended" } }
+      }
+    },
+    "/v1/reflex-policy": {
+      "get": { "operationId": "getReflexPolicy", "responses": { "200": { "description": "Local reflex and sensor policy" } } },
+      "put": { "operationId": "updateReflexPolicy", "responses": { "200": { "description": "Atomically updated local policy" } } }
+    },
+    "/v1/activity": {
+      "get": { "operationId": "listActivityEvidence", "responses": { "200": { "description": "Privacy-safe retained activity events" } } },
+      "delete": { "operationId": "clearActivityEvidence", "responses": { "200": { "description": "Local activity evidence erased" } } }
+    },
+    "/v1/signals": {
+      "post": {
+        "operationId": "emitContractSignal",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignalInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signal accepted"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/v1/leaders": {
+      "get": {
+        "operationId": "listLeaders",
+        "responses": {
+          "200": {
+            "description": "Discovered Aiko leader processes"
+          }
+        }
+      }
+    },
+    "/v1/agent-mail": {
+      "get": {
+        "operationId": "connectAgentMail",
+        "summary": "Upgrade to an ACP JSON-RPC WebSocket",
+        "description": "Use subprotocol aiko.acp.v1. Desktop clients should send the bearer Authorization header. Browser-compatible clients may use the same token as the token query parameter. Text frames are forwarded unchanged to the selected Aiko leader.",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "WebSocket upgraded"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/agentmail/inboxes": {
+      "get": {
+        "operationId": "listAgentMailInboxes",
+        "summary": "List disposable email inboxes",
+        "responses": {
+          "200": {
+            "description": "Inbox list"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAgentMailInbox",
+        "summary": "Create a disposable email inbox ($2.00 via x402)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 120,
+                    "description": "Display name for the inbox"
+                  },
+                  "confirmPurchase": {
+                    "const": true,
+                    "description": "Explicit, per-request confirmation of the stated $2.00 purchase"
+                  }
+                },
+                "required": ["confirmPurchase"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Inbox created"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          }
+        }
+      }
+    },
+    "/v1/agentmail/threads": {
+      "get": {
+        "operationId": "listAgentMailThreads",
+        "summary": "List email threads across all inboxes",
+        "responses": {
+          "200": {
+            "description": "Thread list"
+          }
+        }
+      }
+    },
+    "/v1/agentmail/threads/{id}": {
+      "get": {
+        "operationId": "getAgentMailThread",
+        "summary": "Get a thread with all messages",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Thread detail"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/agentmail/wait-for-code": {
+      "post": {
+        "operationId": "waitForAgentMailCode",
+        "summary": "Poll for a verification code in new email",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WaitForCodeInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verification code found or timeout"
+          }
+        }
+      }
+    },
+    "/v1/captcha/solve": {
+      "post": {
+        "operationId": "solveCaptcha",
+        "summary": "Submit a CAPTCHA solve task ($0.01 via x402)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaptchaSolveInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Task submitted"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          }
+        }
+      }
+    },
+    "/v1/captcha/results/{task_id}": {
+      "get": {
+        "operationId": "getCaptchaResult",
+        "summary": "Poll for a CAPTCHA solve result",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "uint64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Task result"
+          }
+        }
+      }
+    },
+    "/v1/captcha/wait": {
+      "post": {
+        "operationId": "waitForCaptchaSolution",
+        "summary": "Block until a CAPTCHA solve completes",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "task_id": {
+                    "type": "integer",
+                    "format": "uint64"
+                  },
+                  "timeout": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 120
+                  },
+                  "poll": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 5
+                  }
+                },
+                "required": ["task_id"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "CAPTCHA solved"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "parameters": {
+      "ContractId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}$"
+        }
+      }
+    },
+    "schemas": {
+      "Health": {
+        "type": "object",
+        "required": [
+          "schema",
+          "status",
+          "version",
+          "pid",
+          "contractAvailable"
+        ],
+        "properties": {
+          "schema": {
+            "const": "aiko.native.v1"
+          },
+          "status": {
+            "const": "ok"
+          },
+          "version": {
+            "type": "string"
+          },
+          "pid": {
+            "type": "integer"
+          },
+          "contractAbi": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "contractAvailable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CollectiveResponse": {
+        "type": "object",
+        "required": ["schema", "collective"],
+        "properties": {
+          "schema": { "const": "aiko.native.v1" },
+          "collective": {
+            "type": "object",
+            "required": [
+              "available",
+              "participation_enabled",
+              "publication_mode",
+              "connected_peers",
+              "objects",
+              "quarantined",
+              "pinned",
+              "object_bytes"
+            ],
+            "properties": {
+              "available": { "type": "boolean" },
+              "participation_enabled": { "type": "boolean" },
+              "publication_mode": {
+                "type": "string",
+                "enum": ["disabled", "safe_public_shapes", "review_every_object"]
+              },
+              "connected_peers": { "type": "integer", "minimum": 0 },
+              "local_peer_id": { "type": ["string", "null"] },
+              "objects": { "type": "integer", "minimum": 0 },
+              "quarantined": { "type": "integer", "minimum": 0 },
+              "pinned": { "type": "integer", "minimum": 0 },
+              "object_bytes": { "type": "integer", "minimum": 0 },
+              "error": { "type": ["string", "null"] }
+            }
+          }
+        }
+      },
+      "SignalInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        }
+      },
+      "CaptchaSolveInput": {
+        "type": "object",
+        "required": [
+          "site_key",
+          "page_url",
+          "confirmPurchase"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["hcaptcha", "recaptcha_v2", "recaptcha_v3"],
+            "default": "hcaptcha"
+          },
+          "site_key": {
+            "type": "string",
+            "description": "hCaptcha or reCAPTCHA site key"
+          },
+          "page_url": {
+            "type": "string",
+            "description": "Page URL where the captcha appears"
+          },
+          "invisible": {
+            "type": "boolean",
+            "description": "Whether the captcha is invisible (hCaptcha only)"
+          },
+          "min_score": {
+            "type": "number",
+            "description": "Minimum score threshold (reCAPTCHA v3 only)"
+          },
+          "confirmPurchase": {
+            "const": true,
+            "description": "Explicit, per-request confirmation of the stated approximate $0.01 purchase"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WaitForCodeInput": {
+        "type": "object",
+        "properties": {
+          "timeout": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 120,
+            "description": "Maximum seconds to wait"
+          },
+          "poll": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 5,
+            "description": "Polling interval in seconds"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "const": "aiko.native.v1"
+          },
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Bearer token missing or invalid"
+      },
+      "BadRequest": {
+        "description": "Invalid request"
+      },
+      "NotFound": {
+        "description": "Resource not found"
+      },
+      "Conflict": {
+        "description": "Operation conflicts with current Contract state"
+      },
+      "PaymentRequired": {
+        "description": "x402 payment required — use `pay curl` or the x402 HTTP 402 flow"
+      }
+    }
+  }
+}

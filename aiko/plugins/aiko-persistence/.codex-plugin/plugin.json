@@ -1,0 +1,18 @@
+{
+  "name": "aiko-persistence",
+  "version": "0.1.0",
+  "description": "Witness-gated persistence for long, multi-step agent tasks.",
+  "author": {
+    "name": "Lewis"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Aiko Persistence",
+    "shortDescription": "Finish long tasks against real evidence.",
+    "longDescription": "Keeps long, multi-step work moving through plan, execute, verify, and adapt cycles until a runnable completion witness passes or a genuine blocker requires user input.",
+    "developerName": "Lewis",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": "Use Aiko Persistence to complete this long task against a runnable witness: <task>"
+  }
+}

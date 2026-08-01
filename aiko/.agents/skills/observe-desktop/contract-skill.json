@@ -1,0 +1,84 @@
+{
+  "description": "Observe privacy-safe application identity and explicitly requested desktop visuals.",
+  "examples": [
+    {
+      "expect": {
+        "held_effects": [],
+        "root_count": 1,
+        "selected": "observe-desktop"
+      },
+      "name": "default",
+      "prompt": "Observe desktop foreground application."
+    }
+  ],
+  "id": "observe-desktop",
+  "input_schema": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "nodes": [
+    {
+      "can_parallel": true,
+      "depends_on": [],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "applications",
+      "plan": "Observe privacy-safe foreground and running application identity for {{goal}}.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    },
+    {
+      "can_parallel": true,
+      "depends_on": [],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "visual",
+      "plan": "Prepare an explicitly requested desktop visual for {{goal}}.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    },
+    {
+      "can_parallel": false,
+      "depends_on": [
+        "applications",
+        "visual"
+      ],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "verify",
+      "plan": "Verify desktop evidence contains no title, content, keystroke, or credential payload.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    }
+  ],
+  "output_schema": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "platforms": [
+    "all"
+  ],
+  "schema_version": 1,
+  "triggers": [
+    "observe desktop",
+    "foreground application",
+    "running applications",
+    "take screenshot"
+  ],
+  "version": "1.0.0"
+}

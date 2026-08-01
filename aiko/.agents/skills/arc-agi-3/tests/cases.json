@@ -1,0 +1,11 @@
+[
+  {
+    "name": "default",
+    "prompt": "Solve ARC AGI 3 using observable mechanics and grounded feedback.",
+    "expect": {
+      "selected": "arc-agi-3",
+      "root_count": 1,
+      "held_effects": []
+    }
+  }
+]

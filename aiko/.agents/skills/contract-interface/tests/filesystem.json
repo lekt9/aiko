@@ -1,0 +1,1 @@
+{"id":"filesystem-fixture","description":"Filesystem fixture","triggers":["filesystem fixture"],"events":[{"id":"changes.observe","kind":"file.changed"}],"effects":[{"id":"report","effect":"local_reversible","variants":["json"],"requires_authority":false}]}

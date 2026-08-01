@@ -1,0 +1,13 @@
+[
+  {
+    "expect": {
+      "held_effects": [
+        "local_reversible"
+      ],
+      "root_count": 1,
+      "selected": "apply-standing-rule"
+    },
+    "name": "default",
+    "prompt": "Whenever tests fail, prepare a diagnostic summary."
+  }
+]

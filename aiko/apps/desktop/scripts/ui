@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""Contract-native UI retrieve CLI.
+
+Ledger action form (rankable by contract recommend):
+  ui.resolve {"pointer":"aiko:ui/<id>","id":"<id>"}
+
+Commands:
+  ui resolve <pointer|json|id>
+  ui get <id>
+  ui rank "<goal>"
+  ui list
+  ui catalog
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+
+def root() -> Path:
+    return Path(os.environ.get("AIKO_UI_ROOT", Path.home() / ".aiko" / "ui"))
+
+
+def usage() -> None:
+    print(
+        """ui — contract-native generative UI retrieve
+
+  ui resolve <pointer|json|id>   print component JSON
+  ui get <id>                    same as resolve aiko:ui/<id>
+  ui rank <goal>                 keyword-rank stored surfaces
+  ui list                        list index entries
+  ui catalog                     list catalog component types
+
+Ledger action:
+  ui.resolve {"pointer":"aiko:ui/<id>","id":"<id>"}
+""",
+        end="",
+    )
+
+
+def parse_id(arg: str) -> str:
+    arg = arg.strip()
+    if arg.startswith("aiko:ui/"):
+        return arg[len("aiko:ui/") :].split("/")[0].split("#")[0]
+    if arg.startswith("{"):
+        try:
+            obj = json.loads(arg)
+            if isinstance(obj.get("id"), str):
+                return obj["id"]
+            ptr = obj.get("pointer") or ""
+            if isinstance(ptr, str) and ptr.startswith("aiko:ui/"):
+                return ptr[len("aiko:ui/") :].split("/")[0]
+        except json.JSONDecodeError:
+            m = re.search(r'"id"\s*:\s*"([^"]+)"', arg)
+            if m:
+                return m.group(1)
+    return arg
+
+
+def cmd_resolve(arg: str) -> int:
+    uid = parse_id(arg)
+    if not uid:
+        print(f"ui: could not parse id from: {arg}", file=sys.stderr)
+        return 2
+    d = root() / "by-id" / uid
+    if not d.is_dir():
+        print(f"ui: not found: aiko:ui/{uid}", file=sys.stderr)
+        return 1
+
+    def load(name: str, default=None):
+        p = d / name
+        if not p.exists():
+            return default
+        return json.loads(p.read_text())
+
+    out = {
+        "pointer": f"aiko:ui/{uid}",
+        "meta": load("meta.json", {}),
+        "spec": load("spec.json", {}),
+        "state": load("state.json", {}),
+        "bindings": load("bindings.json", {}),
+    }
+    print(json.dumps(out, indent=2))
+    return 0
+
+
+def load_index() -> dict[str, dict]:
+    idx = root() / "index.jsonl"
+    latest: dict[str, dict] = {}
+    if not idx.exists():
+        return latest
+    for line in idx.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if "id" in e:
+            latest[e["id"]] = e
+    return latest
+
+
+def cmd_rank(goal: str) -> int:
+    query = goal.lower()
+    tokens = [t for t in re.split(r"[^a-z0-9]+", query) if len(t) > 1]
+    hits = []
+    for e in load_index().values():
+        hay = " ".join(
+            [
+                str(e.get("title") or ""),
+                str(e.get("plan") or ""),
+                " ".join(e.get("tags") or []),
+                str(e.get("route") or ""),
+                str(e.get("pointer") or ""),
+            ]
+        ).lower()
+        score = 0.05
+        for t in tokens:
+            if t in hay:
+                score += 0.42
+        if query and query in hay:
+            score += 0.35
+        score = min(score, 0.99)
+        if score > 0.1:
+            uid = e["id"]
+            hits.append(
+                {
+                    "id": uid,
+                    "title": e.get("title"),
+                    "pointer": e.get("pointer") or f"aiko:ui/{uid}",
+                    "score": round(score, 3),
+                    "plan": e.get("plan"),
+                    "contractId": e.get("contractId") or e.get("contract_id"),
+                    "action": f'ui.resolve {{"pointer":"aiko:ui/{uid}","id":"{uid}"}}',
+                }
+            )
+    hits.sort(key=lambda h: -h["score"])
+    print(json.dumps(hits[:12], indent=2))
+    return 0
+
+
+def cmd_list() -> int:
+    print(json.dumps(list(load_index().values()), indent=2))
+    return 0
+
+
+def cmd_catalog() -> int:
+    cat = root() / "catalog"
+    if not cat.is_dir():
+        return 0
+    for p in sorted(cat.glob("*.json")):
+        print(p.stem)
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    # Support argv0 = ui.resolve (symlink / recommended binary name)
+    prog = Path(argv[0]).name if argv else "ui"
+    args = argv[1:]
+
+    if prog == "ui.resolve":
+        payload = " ".join(args).strip()
+        if not payload:
+            usage()
+            return 2
+        return cmd_resolve(payload)
+
+    if not args or args[0] in ("-h", "--help", "help"):
+        usage()
+        return 0 if args else 2
+
+    cmd = args[0]
+    rest = args[1:]
+    if cmd == "resolve":
+        if not rest:
+            usage()
+            return 2
+        return cmd_resolve(" ".join(rest))
+    if cmd == "get":
+        if not rest:
+            usage()
+            return 2
+        return cmd_resolve(f"aiko:ui/{rest[0]}")
+    if cmd == "rank":
+        if not rest:
+            usage()
+            return 2
+        return cmd_rank(" ".join(rest))
+    if cmd == "list":
+        return cmd_list()
+    if cmd == "catalog":
+        return cmd_catalog()
+    # Bare JSON / pointer as first arg
+    if cmd.startswith("{") or cmd.startswith("aiko:ui/"):
+        return cmd_resolve(" ".join(args))
+    print(f"ui: unknown command: {cmd}", file=sys.stderr)
+    usage()
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

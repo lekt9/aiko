@@ -1,0 +1,33 @@
+#!/bin/sh
+out=
+inputs=
+
+for arg in "$@"; do
+  case "$arg" in
+    -out:*|/out:*|-OUT:*|/OUT:*)
+      out=${arg#*:}
+      ;;
+    -nologo|/nologo|-NOLOGO|/NOLOGO)
+      ;;
+    *)
+      if [ "$arg" != "$out" ]; then
+        inputs="$inputs
+$arg"
+      fi
+      ;;
+  esac
+done
+
+if [ -z "$out" ]; then
+  echo "llvm-lib compatibility wrapper: missing -out:" >&2
+  exit 2
+fi
+
+set --
+while IFS= read -r input; do
+  [ -n "$input" ] && set -- "$@" "$input"
+done <<EOF
+$inputs
+EOF
+
+exec /Users/lewis/bin/zig ar cq "$out" "$@"
