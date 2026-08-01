@@ -210,7 +210,7 @@ pub struct SabbathEvidence {
     pub chain_coherent: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LoopAction {
     /// Execute a tool call
     ExecuteTool {
@@ -755,15 +755,15 @@ mod tests {
     #[test]
     fn driver_is_disabled_by_default() {
         // Without AIKO_CONTRACT_LOOP set, the driver should report disabled
-        std::env::remove_var(LOOP_ENABLED_ENV);
+        unsafe { std::env::remove_var(LOOP_ENABLED_ENV) };
         assert!(!ContractLoopDriver::enabled());
     }
 
     #[test]
     fn driver_enabled_with_env() {
-        std::env::set_var(LOOP_ENABLED_ENV, "true");
+        unsafe { std::env::set_var(LOOP_ENABLED_ENV, "true") };
         assert!(ContractLoopDriver::enabled());
-        std::env::remove_var(LOOP_ENABLED_ENV);
+        unsafe { std::env::remove_var(LOOP_ENABLED_ENV) };
     }
 
     #[test]
