@@ -42,6 +42,27 @@ impl MvpAgent {
                                     ctx.parent_tool_snapshot =
                                         (!parent_tools.is_empty()).then_some(parent_tools);
                                 }
+                                // Fan-out authorization: if the parent has an active
+                                // Contract root, delegate an attenuated child root so
+                                // the subagent's own tool calls can bind against it
+                                // instead of failing closed with "no active Contract
+                                // root" (every subagent session otherwise starts with
+                                // no capability plan registered at all).
+                                if let Some(parent_root) =
+                                    crate::contract_native::active_root_for_session(&parent_sid)
+                                {
+                                    let plan = format!(
+                                        "Subagent '{}' ({}): {}",
+                                        request.id, request.subagent_type, request.description
+                                    );
+                                    ctx.contract_root = crate::contract_native::delegate_subagent_root(
+                                        &parent_root,
+                                        &plan,
+                                        16,
+                                        false,
+                                    )
+                                    .await;
+                                }
                                 crate::agent::subagent::handle_subagent_request(
                                     request,
                                     ctx,
@@ -591,6 +612,7 @@ impl MvpAgent {
             parent_terminal_backend: parent_terminal_backend.clone(),
             parent_notification_handle: parent_notification_handle.clone(),
             parent_scheduler_handle: parent_scheduler_handle.clone(),
+            contract_root: None,
         })
     }
 }

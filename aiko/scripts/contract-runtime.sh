@@ -6,11 +6,6 @@ DEFAULT_CONTRACT_REPO=$(CDPATH= cd -- "$AIKO_ROOT/.." && pwd)/contract
 CONTRACT_REPO=${AIKO_CONTRACT_REPO:-"$DEFAULT_CONTRACT_REPO"}
 CONTRACT_ROOT="$CONTRACT_REPO/libcontract"
 TYPED_NEURON_ROOT="$CONTRACT_REPO/../neuron"
-case "$(uname -s)" in
-    Darwin) CONTRACT_DYLIB="$CONTRACT_ROOT/zig-out/lib/libcontract.dylib" ;;
-    Linux) CONTRACT_DYLIB="$CONTRACT_ROOT/zig-out/lib/libcontract.so" ;;
-    *) CONTRACT_DYLIB="$CONTRACT_ROOT/zig-out/lib/libcontract.dylib" ;;
-esac
 AIKO_PROFILE=${AIKO_BUILD_PROFILE:-release}
 AIKO_TARGET_DIR=${AIKO_CARGO_TARGET_DIR:-"$AIKO_ROOT/target"}
 PACKAGE_ROOT="$AIKO_ROOT/target/aiko-package"
@@ -27,6 +22,9 @@ Commands:
   watch           Watch Contract sources, rebuild on edits, and keep dev-link active.
   sync            Copy the current Contract dylib into ~/.aiko/lib.
   package         Build Aiko + Contract and create a checksummed combined tarball.
+  cross-package   Cross-compile Aiko + Contract for a non-host target.
+                   Requires AIKO_CROSS_TARGET (Rust triple), AIKO_ZIG_TARGET,
+                   and AIKO_PLATFORM (e.g. linux-x86_64).
   install         Package, verify, and atomically install both runtime components.
 
 Environment:
@@ -38,6 +36,9 @@ Environment:
   CARGO_INCREMENTAL   Cargo incremental mode (default: 0 for reliable packages)
   AIKO_HOME           Runtime home (default: ~/.aiko)
   AIKO_BIN_DIR        Installed binary directory (default: ~/bin)
+  AIKO_CROSS_TARGET   Rust target triple for cross-compilation (e.g. aarch64-unknown-linux-gnu)
+  AIKO_ZIG_TARGET     Zig target for cross-compilation (e.g. aarch64-linux-gnu)
+  AIKO_PLATFORM       Platform name for cross-compilation (e.g. linux-aarch64)
 EOF
 }
 
@@ -57,8 +58,15 @@ require_contract() {
 
 build_contract() {
     require_contract
-    echo "Building Contract from $CONTRACT_ROOT"
-    (cd "$CONTRACT_ROOT" && zig build -Doptimize=ReleaseFast)
+    ZIG_TARGET_ARG=""
+    if [ -n "${AIKO_ZIG_TARGET:-}" ]; then
+        ZIG_TARGET_ARG="-Dtarget=$AIKO_ZIG_TARGET"
+        echo "Building Contract for $AIKO_ZIG_TARGET from $CONTRACT_ROOT"
+    else
+        echo "Building Contract from $CONTRACT_ROOT"
+    fi
+    (cd "$CONTRACT_ROOT" && zig build -Doptimize=ReleaseFast $ZIG_TARGET_ARG)
+    CONTRACT_DYLIB=$(contract_dylib)
     if [ ! -f "$CONTRACT_DYLIB" ]; then
         echo "Contract build did not produce $CONTRACT_DYLIB" >&2
         exit 1
@@ -66,12 +74,18 @@ build_contract() {
 }
 
 build_aiko_only() {
-    echo "Building Aiko with Cargo profile $AIKO_PROFILE"
+    CROSS_ARGS=""
+    if [ -n "${AIKO_CROSS_TARGET:-}" ]; then
+        CROSS_ARGS="--target $AIKO_CROSS_TARGET"
+        echo "Building Aiko for $AIKO_CROSS_TARGET with Cargo profile $AIKO_PROFILE"
+    else
+        echo "Building Aiko with Cargo profile $AIKO_PROFILE"
+    fi
     (
         cd "$AIKO_ROOT"
         CARGO_INCREMENTAL=${CARGO_INCREMENTAL:-0} \
             CARGO_TARGET_DIR="$AIKO_TARGET_DIR" \
-            cargo build --profile "$AIKO_PROFILE" -p xai-grok-pager-bin --bin aiko
+            cargo build --profile "$AIKO_PROFILE" -p xai-grok-pager-bin --bin aiko $CROSS_ARGS
     )
 }
 
@@ -84,7 +98,11 @@ profile_dir() {
 }
 
 aiko_binary() {
-    printf '%s/%s/aiko\n' "$AIKO_TARGET_DIR" "$(profile_dir)"
+    if [ -n "${AIKO_CROSS_TARGET:-}" ]; then
+        printf '%s/%s/%s/aiko\n' "$AIKO_TARGET_DIR" "$AIKO_CROSS_TARGET" "$(profile_dir)"
+    else
+        printf '%s/%s/aiko\n' "$AIKO_TARGET_DIR" "$(profile_dir)"
+    fi
 }
 
 runtime_lib_dir() {
@@ -147,6 +165,10 @@ sha256_file() {
 }
 
 platform_name() {
+    if [ -n "${AIKO_PLATFORM:-}" ]; then
+        printf '%s\n' "$AIKO_PLATFORM"
+        return
+    fi
     case "$(uname -s)" in
         Darwin) OS=macos ;;
         Linux) OS=linux ;;
@@ -158,6 +180,33 @@ platform_name() {
         *) echo "Unsupported packaging architecture: $(uname -m)" >&2; exit 1 ;;
     esac
     printf '%s-%s\n' "$OS" "$ARCH"
+}
+
+contract_lib_extension() {
+    case "${AIKO_PLATFORM:-$(uname -s)}" in
+        macos*|Darwin) printf '.dylib' ;;
+        linux*|Linux) printf '.so' ;;
+        windows*) printf '.dll' ;;
+        *) printf '.dylib' ;;
+    esac
+}
+
+contract_lib_basename() {
+    case "${AIKO_PLATFORM:-$(uname -s)}" in
+        windows*) printf 'contract' ;;
+        *) printf 'libcontract' ;;
+    esac
+}
+
+contract_dylib() {
+    printf '%s/zig-out/lib/%s%s\n' \
+        "$CONTRACT_ROOT" \
+        "$(contract_lib_basename)" \
+        "$(contract_lib_extension)"
+}
+
+package_lib_name() {
+    printf '%s%s\n' "$(contract_lib_basename)" "$(contract_lib_extension)"
 }
 
 package_runtime() {
@@ -179,9 +228,10 @@ package_runtime() {
     fi
     mkdir -p "$DEST/bin" "$DEST/lib" "$DEST/skills" "$DEST/sdk/registry/bin"
     install -m 755 "$BIN" "$DEST/bin/aiko"
-    install -m 755 "$CONTRACT_DYLIB" "$DEST/lib/libcontract.dylib"
-    if [ "$(uname -s)" = "Darwin" ]; then
-        codesign --force --sign - "$DEST/lib/libcontract.dylib"
+    LIB_NAME=$(package_lib_name)
+    install -m 755 "$CONTRACT_DYLIB" "$DEST/lib/$LIB_NAME"
+    if [ "$(uname -s)" = "Darwin" ] && [ "${AIKO_PLATFORM:-}" = macos* ] || [ -z "${AIKO_PLATFORM:-}" ] && [ "$(uname -s)" = "Darwin" ]; then
+        codesign --force --sign - "$DEST/lib/$LIB_NAME"
     fi
     install -m 755 "$AIKO_ROOT/scripts/install-aiko-package.sh" "$DEST/install.sh"
     # SDK registry — self-bootstrapping installer for contract + neuron + limbs
@@ -201,7 +251,7 @@ package_runtime() {
     done
 
     AIKO_SHA=$(sha256_file "$DEST/bin/aiko")
-    CONTRACT_SHA=$(sha256_file "$DEST/lib/libcontract.dylib")
+    CONTRACT_SHA=$(sha256_file "$DEST/lib/$LIB_NAME")
     AIKO_COMMIT=$(git -C "$AIKO_ROOT" rev-parse HEAD 2>/dev/null || printf unknown)
     if [ -n "$(git -C "$AIKO_ROOT" status --porcelain 2>/dev/null || true)" ]; then
         AIKO_DIRTY=true
@@ -241,6 +291,19 @@ package_runtime() {
     echo "Created package archive:   $ARCHIVE"
 }
 
+cross_package() {
+    if [ -z "${AIKO_CROSS_TARGET:-}" ] || [ -z "${AIKO_ZIG_TARGET:-}" ] || [ -z "${AIKO_PLATFORM:-}" ]; then
+        echo "cross-package requires AIKO_CROSS_TARGET (Rust triple)," >&2
+        echo "AIKO_ZIG_TARGET, and AIKO_PLATFORM to be set." >&2
+        echo "Example: AIKO_CROSS_TARGET=aarch64-unknown-linux-gnu \\" >&2
+        echo "         AIKO_ZIG_TARGET=aarch64-linux-gnu \\" >&2
+        echo "         AIKO_PLATFORM=linux-aarch64 \\" >&2
+        echo "         scripts/contract-runtime.sh cross-package" >&2
+        exit 1
+    fi
+    package_runtime
+}
+
 install_runtime() {
     package_runtime
     VERSION=$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
@@ -256,6 +319,7 @@ case "${1:-}" in
     watch) watch_contract ;;
     sync) sync_contract ;;
     package) package_runtime ;;
+    cross-package) cross_package ;;
     install) install_runtime ;;
     -h|--help|help) usage ;;
     "") package_runtime ;;

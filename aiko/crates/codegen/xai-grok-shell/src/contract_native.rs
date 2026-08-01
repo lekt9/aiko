@@ -24,6 +24,7 @@ use xai_grok_tools::notification::{ScheduledTaskFired, ToolNotificationHandle};
 mod activity_sensor;
 pub(crate) mod contract_events;
 mod contract_learning;
+pub mod contract_loop;
 pub mod membrane;
 mod neuron_bridge;
 mod reflex_policy;
@@ -120,6 +121,8 @@ type ListFn = unsafe extern "C" fn() -> *mut c_char;
 type CancelFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
 type RetryFn = unsafe extern "C" fn(*const c_char) -> i32;
 type FreeFn = unsafe extern "C" fn(*mut c_char);
+type DelegateChildFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
+type GraphPlanFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 
 struct NativeContract {
     _library: libloading::Library,
@@ -161,6 +164,8 @@ struct NativeContract {
     cancel: Option<CancelFn>,
     retry: Option<RetryFn>,
     list_scheduled: Option<ListFn>,
+    delegate_child: Option<DelegateChildFn>,
+    graph_plan: Option<GraphPlanFn>,
     free: FreeFn,
 }
 
@@ -391,6 +396,16 @@ impl NativeContract {
                     },
                     list_scheduled: if abi_version >= 3 {
                         Some(*library.get(b"contract_list_scheduled_json\0").ok()?)
+                    } else {
+                        None
+                    },
+                    delegate_child: if abi_version >= 12 {
+                        Some(*library.get(b"contract_delegate_child\0").ok()?)
+                    } else {
+                        None
+                    },
+                    graph_plan: if abi_version >= 12 {
+                        Some(*library.get(b"contract_graph_plan\0").ok()?)
                     } else {
                         None
                     },
@@ -5174,6 +5189,71 @@ pub fn should_emit_capability_diagnostic(session_id: &str, plan_present: bool) -
         .get_or_init(|| Mutex::new(BTreeSet::new()))
         .lock()
         .is_ok_and(|mut sessions| sessions.insert(session_id.to_owned()))
+}
+
+/// Read the Contract root currently bound to a session, without consuming it
+/// (unlike `take_turn_contract_root`, which is single-shot per prompt). Used
+/// by the subagent coordinator to find the parent's root before delegating a
+/// child root to a spawning subagent.
+pub fn active_root_for_session(session_id: &str) -> Option<String> {
+    active_capability_plans()
+        .lock()
+        .ok()?
+        .get(session_id)
+        .and_then(|plan| plan.root_id.clone())
+}
+
+/// Delegate a subagent Contract root from the parent session. This is the
+/// runtime primitive for graph fan-out: subagents receive an attenuated child
+/// root that allows `bind_active_tool_contract` to succeed within their caps.
+///
+/// Returns the child root_id (e.g. "contract:child:<hex>") or None if the
+/// Contract substrate doesn't support delegation (ABI < 12) or the call fails.
+pub async fn delegate_subagent_root(
+    parent_root: &str,
+    plan: &str,
+    max_effects: u32,
+    read_only: bool,
+) -> Option<String> {
+    let parent_root = parent_root.to_owned();
+    let plan = plan.to_owned();
+    let request = serde_json::json!({
+        "parent_root": parent_root,
+        "plan": plan,
+        "max_effects": max_effects,
+        "read_only": read_only,
+    })
+    .to_string();
+    tokio::task::spawn_blocking(move || {
+        let native = native_contract()?;
+        native.delegate_child.as_ref()?;
+        let c_request = std::ffi::CString::new(request).ok()?;
+        let ptr = unsafe { (native.delegate_child.as_ref().unwrap())(c_request.as_ptr()) };
+        native.take_string(ptr)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Analyze a walk JSON and return a chain-vs-graph verdict.
+///
+/// The walk JSON comes from the Contract substrate's obligation tracker
+/// (eventually from `obligation_fsm.walkOpen`). Returns None if the
+/// substrate doesn't support graph analysis (ABI < 12).
+pub async fn graph_plan_analyze(walk_json: &str) -> Option<serde_json::Value> {
+    let walk_json = walk_json.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let native = native_contract()?;
+        native.graph_plan.as_ref()?;
+        let c_walk = std::ffi::CString::new(walk_json).ok()?;
+        let ptr = unsafe { (native.graph_plan.as_ref().unwrap())(c_walk.as_ptr()) };
+        let raw = native.take_string(ptr)?;
+        serde_json::from_str(&raw).ok()
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 async fn contract_proven_route(goal: &str) -> Option<serde_json::Value> {

@@ -367,6 +367,9 @@ pub(crate) struct SubagentSpawnContext {
     /// `BlockingWaitGuard` on it for the blocking await so `queue_input` routes
     /// a prompt sent during the wait onto send-now; never for background spawns.
     pub parent_blocking_wait_depth: Arc<std::sync::atomic::AtomicUsize>,
+    /// Contract root delegated from the parent session (when parent has an active root).
+    /// Set by the parent before spawning; subagent uses it to authorize tool calls.
+    pub contract_root: Option<String>,
 }
 impl SubagentSpawnContext {
     /// Check if a subagent is enabled via the toggle config.

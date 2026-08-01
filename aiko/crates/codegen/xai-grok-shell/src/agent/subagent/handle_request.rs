@@ -1269,6 +1269,17 @@ pub(crate) async fn handle_subagent_request(
     let (prompt_tx, prompt_rx) = oneshot::channel();
     let prompt_text = task_prompt_text;
     let child_prompt_id = uuid::Uuid::now_v7().to_string();
+    // This dispatches straight to the child's `SessionCommand::Prompt` queue,
+    // bypassing the normal `acp_agent::prompt()` entry point that calls
+    // `ground_turn`/`store_turn_contract_root` for top-level turns. Without
+    // this, the child's first `handle_prompt` finds no pending root for its
+    // own prompt id and every subsequent tool call HOLDs with "no active
+    // Contract root". Seed it explicitly from the delegated child root (if
+    // the parent had an active root to delegate from).
+    crate::contract_native::store_turn_contract_root(
+        &child_prompt_id,
+        ctx.contract_root.as_deref(),
+    );
     let turn_started_at = chrono::Utc::now().to_rfc3339();
     let _ = child_handle
         .cmd_tx

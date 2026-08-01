@@ -27,6 +27,8 @@ const reflex = @import("reflex.zig");
 const skill_lifecycle = @import("skill_lifecycle.zig");
 const skill_execution = @import("skill_execution.zig");
 const workflow = @import("workflow.zig");
+const graph_plan = @import("graph_plan.zig");
+const obligation_fsm = @import("obligation_fsm.zig");
 
 const gpa = std.heap.c_allocator;
 pub const ABI_VERSION: u32 = neuron.ABI_VERSION;
@@ -2016,7 +2018,104 @@ test "agency C ABI validation is additive and fail-closed" {
     try std.testing.expectEqual(@as(u8, 0), contract_agency_validate("{}"));
 }
 
-test "trust C ABI distinguishes legacy malformed hold and promote" {
+/// Native graph-plan analysis: returns chain-vs-graph verdict from the
+/// open obligation walk. The caller passes walk JSON (from contract.walk)
+/// and receives a structured verdict.
+export fn contract_graph_plan(walk_json: [*:0]const u8) ?[*:0]u8 {
+    var ga = graph_plan.GraphPlan{ .allocator = gpa };
+    var verdict = ga.analyze(cstr(walk_json)) catch return null;
+    defer verdict.deinit(gpa);
+    const json = ga.toJson(&verdict) catch return null;
+    defer gpa.free(json);
+    return returned(json);
+}
+
+/// Delegate a subagent Contract root from a parent. The parent root authorizes
+/// a child with attenuated capabilities (max effects, read-only flag).
+/// Returns the child root_id (NUL-terminated) or null if delegation fails.
+///
+/// Request JSON:
+///   {"parent_root":"<id>","plan":"<scrubbed plan>","max_effects":16,"read_only":false}
+export fn contract_delegate_child(request_json: [*:0]const u8) ?[*:0]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, cstr(request_json), .{}) catch return null;
+    defer parsed.deinit();
+    if (parsed.value != .object) return null;
+    const object = parsed.value.object;
+    const parent_root = objectString(object, "parent_root") orelse return null;
+    const plan = objectString(object, "plan") orelse return null;
+    const max_effects_raw = objectInt(object, "max_effects") orelse 32;
+    const read_only = objectBool(object, "read_only") orelse false;
+    if (max_effects_raw < 0 or max_effects_raw > 256) return null;
+    const max_effects: u32 = @intCast(max_effects_raw);
+
+    // Derive a deterministic child root from the parent + plan hash.
+    // This ensures the same delegation request always produces the same child root.
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update("contract_delegate_child_v1|");
+    hasher.update(parent_root);
+    hasher.update("|");
+    hasher.update(plan);
+    hasher.update("|");
+    hasher.update(if (read_only) "ro" else "rw");
+    var child_digest: [32]u8 = undefined;
+    hasher.final(&child_digest);
+    const hex_chars = "0123456789abcdef";
+    var hex_buf: [64]u8 = undefined;
+    for (child_digest, 0..) |byte, i| {
+        hex_buf[i * 2] = hex_chars[byte >> 4];
+        hex_buf[i * 2 + 1] = hex_chars[byte & 0x0F];
+    }
+    const child_root = std.fmt.allocPrint(gpa, "contract:child:{s}", .{&hex_buf}) catch return null;
+    defer gpa.free(child_root);
+
+    // Declare the child as a contract row under the parent.
+    var max_buf: [8]u8 = undefined;
+    const max_str = std.fmt.bufPrint(&max_buf, "{d}", .{max_effects}) catch return null;
+    _ = contract.declare(gpa, extEnv(), plan, plan, .{
+        .parent_id = parent_root,
+        .extras = &.{
+            .{ .key = "delegated", .value = "true" },
+            .{ .key = "max_effects", .value = max_str },
+            .{ .key = "read_only", .value = if (read_only) "true" else "false" },
+        },
+    }) catch return null;
+
+    // Return the child root so the subagent can use it as its session root.
+    return returned(child_root);
+}
+
+test "graph_plan C ABI returns chain for empty walk" {
+    const result = contract_graph_plan("{\"nodes\":[]}") orelse return error.OutOfMemory;
+    defer contract_free(result);
+    const json = std.mem.span(result);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"chain\"") != null);
+}
+
+test "graph_plan C ABI returns graph for independent nodes" {
+    const input =
+        \\{"nodes":[
+        \\  {"id":"a","plan":"fix A","depends_on":[],"status":"pending"},
+        \\  {"id":"b","plan":"fix B","depends_on":[],"status":"pending"}
+        \\]}
+    ;
+    const result = contract_graph_plan(input) orelse return error.OutOfMemory;
+    defer contract_free(result);
+    const json = std.mem.span(result);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"graph\"") != null);
+}
+
+test "delegate_child returns deterministic child root" {
+    const result1 = contract_delegate_child(
+        \\{"parent_root":"contract:root:aa","plan":"do the thing","max_effects":8,"read_only":false}
+    ) orelse return error.OutOfMemory;
+    defer contract_free(result1);
+    const result2 = contract_delegate_child(
+        \\{"parent_root":"contract:root:aa","plan":"do the thing","max_effects":8,"read_only":false}
+    ) orelse return error.OutOfMemory;
+    defer contract_free(result2);
+    // Same inputs → same child root (deterministic).
+    try std.testing.expectEqualStrings(std.mem.span(result1), std.mem.span(result2));
+
     try std.testing.expectEqual(
         @as(i32, -1),
         contract_trust_evaluate(
