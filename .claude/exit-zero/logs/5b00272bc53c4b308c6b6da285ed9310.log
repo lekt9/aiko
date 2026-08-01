@@ -1,0 +1,5 @@
+  aiko/, unbrowse/, unbrowse-dev/ are absent and untracked
+  neuron + contract + aiko-doctor still build
+  wire bindings verify with the Rust host absent
+  the MCP door opens and still advertises all 8 verbs
+minimal-tree gate: PASS

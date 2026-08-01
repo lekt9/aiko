@@ -21,6 +21,7 @@ const keystore = @import("keystore.zig");
 const ledger = @import("ledger.zig");
 const activity_log = @import("activity_log.zig");
 const is_windows = builtin.os.tag == .windows;
+const is_apple = builtin.os.tag.isDarwin();
 
 extern fn _open(path: [*:0]const u8, flags: c_int, ...) c_int;
 extern fn _close(fd: c_int) c_int;
@@ -70,13 +71,20 @@ fn makeDir(path: [*:0]const u8, mode: c_uint) void {
     _ = if (is_windows) _mkdir(path) else std.c.mkdir(path, @as(std.c.mode_t, @intCast(mode)));
 }
 
-// libc arc4random_buf is the cleanest cross-Apple-platform CSPRNG and ships
-// in libSystem; Zig 0.16's std.posix.getrandom isn't wired on macOS targets.
+// macOS/iOS: arc4random_buf from libSystem.
+// Linux: getrandom(2) from <sys/random.h>.
+// Windows: rand_s from ucrt.
 extern fn arc4random_buf(buf: [*]u8, len: usize) void;
+extern fn getrandom(buf: [*]u8, len: usize, flags: c_uint) isize;
 extern fn rand_s(value: *c_uint) c_int;
 
 fn fillRandom(buffer: []u8) void {
-    if (!is_windows) return arc4random_buf(buffer.ptr, buffer.len);
+    if (is_apple) return arc4random_buf(buffer.ptr, buffer.len);
+    if (!is_windows) {
+        const n = getrandom(buffer.ptr, buffer.len, 0);
+        if (n < 0 or @as(usize, @intCast(n)) != buffer.len) @panic("getrandom failed");
+        return;
+    }
     var offset: usize = 0;
     while (offset < buffer.len) {
         var value: c_uint = 0;
