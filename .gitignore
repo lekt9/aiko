@@ -4,12 +4,23 @@ dist/
 build/
 target/
 zig-out/
+zig-out-*/
 zig-cache/
 .zig-cache/
 __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Build library/object leftovers outside zig-out/target
+*.dylib
+*.so
+*.dll
+*.pdb
+*.rlib
+*.rmeta
+*.a
+*.o
 
 # Benchmark & run artifacts
 **/benchmarks/harbor/
@@ -20,29 +31,22 @@ venv/
 **/traces/
 **/tmp/
 
-# Local agent/session state
+# Local agent / session / index state (never source of truth)
+.claude/
 .grok/
 .graff/
 .hallmark/
+.aiko/
+codedb.snapshot
+**/codedb.snapshot
+*.local.md
+*.local.json
+data/
+
+# OS noise
 .DS_Store
 
 # --- build outputs (untracked 2026-07-31) --------------------------------
-# 246MB of prebuilt macOS .dylib and Windows .dll/.pdb were committed here and
-# no Linux artifact was, which is why a fresh Linux clone had nothing to link
-# against. Build outputs are reproduced by `zig build` / `cargo build`; a
-# committed binary is a second source of truth that drifts from the source
-# beside it and shows up as a spurious diff on every build.
-zig-out/
-zig-out-*/
-.zig-cache/
-zig-cache/
-target/
-node_modules/
-__pycache__/
-*.pyc
-*.dylib
-*.dll
-*.pdb
-*.rlib
-*.rmeta
-.aiko/
+# Prebuilt binaries are host-specific; `zig build` / `cargo build` reproduce
+# them. A committed binary is a second source of truth that drifts and shows
+# up as a spurious diff on every build.
