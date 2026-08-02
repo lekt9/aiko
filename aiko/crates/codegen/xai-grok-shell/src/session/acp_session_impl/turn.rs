@@ -235,7 +235,24 @@ impl SessionActor {
         // dispatcher. Application primitives now consume the same typed route
         // that grounded the prompt; it is not merely advisory prompt text.
         let legacy_capability_route = crate::contract_native::take_capability_route(prompt_id);
-        let turn_contract_root = crate::contract_native::take_turn_contract_root(prompt_id);
+        // A real top-level turn (`acp_agent::prompt()`) and an explicitly
+        // delegated subagent spawn both seed `pending_contract_roots` for
+        // their own `prompt_id` before dispatch. Every OTHER `Prompt` source
+        // routed straight into this same session's queue — auto-wake
+        // (task/subagent completed), notification-drain, goal-summary,
+        // goal-classifier-nudge, scheduler-fired, plan-resume — never seeds
+        // one, so `take_turn_contract_root` legitimately misses here. Do NOT
+        // let that miss clobber the session's already-active root: without
+        // this fallback, `set_active_capability_plan` below would overwrite
+        // `root_id` with `None`, and the very next consequential tool call in
+        // this same session HOLDs with "no active Contract root" even though
+        // the conversation had a perfectly good root a moment earlier. Fall
+        // back to the session's current root so it stays sticky across
+        // continuation turns instead of silently evaporating.
+        let turn_contract_root = crate::contract_native::take_turn_contract_root(prompt_id)
+            .or_else(|| {
+                crate::contract_native::active_root_for_session(self.session_info.id.0.as_ref())
+            });
         let routing_goal = prompt_blocks
             .iter()
             .filter_map(|block| match block {

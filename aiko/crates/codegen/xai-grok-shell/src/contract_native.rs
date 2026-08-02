@@ -6070,6 +6070,65 @@ mod tests {
         assert!(verdict["obligation_count"].as_u64().unwrap() > 0);
     }
 
+    /// Regression for the "no active Contract root" bug: a synthetic/
+    /// continuation `Prompt` (auto-wake, notification-drain, goal-summary,
+    /// etc.) has no `pending_contract_roots` entry of its own, because only
+    /// the real top-level turn and an explicit subagent-spawn delegation
+    /// seed one. `turn.rs::handle_prompt` used to feed that miss straight
+    /// into `set_active_capability_plan`, clobbering the session's existing
+    /// root with `None` and dooming the next consequential tool call to
+    /// HOLD. The fix: fall back to `active_root_for_session` before calling
+    /// `set_active_capability_plan` again. This test proves the fallback
+    /// value itself keeps the root sticky across that second call.
+    #[test]
+    fn session_root_survives_a_synthetic_prompt_with_no_pending_root() {
+        let session_id = "test-session-sticky-root";
+        // Turn 1 (a real top-level prompt): a root was declared and bound.
+        set_active_capability_plan(
+            session_id,
+            "port files to external volume".to_owned(),
+            PathBuf::from("/tmp/work"),
+            None,
+            Some("deadbeef".to_owned()),
+        );
+        assert_eq!(
+            active_root_for_session(session_id).as_deref(),
+            Some("deadbeef"),
+            "turn 1 must bind the declared root"
+        );
+
+        // Turn 2 (e.g. a `task-completed-*` auto-wake): no prompt_id was ever
+        // registered in `pending_contract_roots`, so `take_turn_contract_root`
+        // legitimately returns `None`. The call site must resolve the
+        // fallback via `active_root_for_session` BEFORE re-calling
+        // `set_active_capability_plan` — exactly what `turn.rs::handle_prompt`
+        // now does.
+        let synthetic_turn_root =
+            take_turn_contract_root("task-completed-nonexistent")
+                .or_else(|| active_root_for_session(session_id));
+        assert_eq!(
+            synthetic_turn_root.as_deref(),
+            Some("deadbeef"),
+            "a synthetic continuation prompt must inherit the session's active root"
+        );
+        set_active_capability_plan(
+            session_id,
+            "auto-wake continuation".to_owned(),
+            PathBuf::from("/tmp/work"),
+            None,
+            synthetic_turn_root,
+        );
+
+        // The root must still be bound after the synthetic turn — the bug
+        // was that it silently became `None` here, so the very next
+        // consequential tool call HOLD'd with "no active Contract root".
+        assert_eq!(
+            active_root_for_session(session_id).as_deref(),
+            Some("deadbeef"),
+            "root must remain sticky across a synthetic continuation turn"
+        );
+    }
+
     #[test]
     fn default_connectome_is_the_admitted_meta_agent_skill() {
         let plan = skill_registry::plan("ship the fix", Path::new("/tmp/work"));
