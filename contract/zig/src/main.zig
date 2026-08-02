@@ -10,20 +10,12 @@ const builtin = @import("builtin");
 /// readlinks /proc/self/exe. Returns a slice into the caller-provided buf
 /// (no null terminator) or an error.
 fn selfExePathPortable(buf: []u8) ![]const u8 {
-    switch (builtin.os.tag) {
-        .macos => {
-            var size: u32 = @intCast(buf.len);
-            if (_NSGetExecutablePath(buf.ptr, &size) != 0) return error.SelfPathTooLong;
-            const len = std.mem.indexOfScalar(u8, buf, 0) orelse buf.len;
-            return buf[0..len];
-        },
-        .linux => {
-            const n = std.c.readlink("/proc/self/exe", buf.ptr, buf.len);
-            if (n <= 0) return error.SelfPathTooLong;
-            return buf[0..@intCast(n)];
-        },
-        else => return error.UnsupportedOS,
+    if (comptime builtin.os.tag == .linux) {
+        const n = std.c.readlink("/proc/self/exe", buf.ptr, buf.len);
+        if (n <= 0) return error.SelfPathTooLong;
+        return buf[0..@intCast(n)];
     }
+    return error.UnsupportedOS;
 }
 const contract = @import("contract");
 const client = @import("contract_client");
@@ -1934,7 +1926,13 @@ fn dispatchMcpTool(
 
 /// MCP stdio server — JSON-RPC 2.0 tools surface for agents (local transport).
 fn cmdMcp(allocator: std.mem.Allocator, env: std.process.Environ) !u8 {
-    try contract.mcp_server.runStdio(allocator, env, dispatchMcpTool);
+    try contract.mcp_server.runStdio(
+        allocator,
+        env,
+        .{},
+        &contract.mcp_server.TOOLS,
+        dispatchMcpTool,
+    );
     return 0;
 }
 
@@ -1972,10 +1970,7 @@ fn walletPermissionReject(allocator: std.mem.Allocator, env: std.process.Environ
 /// bootstrap/signing verbs dispatch outside this mutation preflight.
 fn binaryAttestReject(allocator: std.mem.Allocator, env: std.process.Environ) ?[]const u8 {
     var exe_buf: [4096]u8 = undefined;
-    var buf_size: u32 = exe_buf.len;
-    if (_NSGetExecutablePath(&exe_buf, &buf_size) != 0) return null;
-    const exe_len = std.mem.indexOfScalar(u8, &exe_buf, 0) orelse exe_buf.len;
-    const exe_path = exe_buf[0..exe_len];
+    const exe_path = selfExePathPortable(&exe_buf) catch return null;
     lineage_lib.verifyBinary(allocator, env, exe_path) catch |e| {
         substrateEvidence("binary-attest: REFUSED self-verify failed ({s})\n", .{@errorName(e)});
         return std.fmt.allocPrint(allocator, "binary self-attestation failed ({s})", .{@errorName(e)}) catch
@@ -5807,18 +5802,10 @@ fn cmdLayer(allocator: std.mem.Allocator, env: std.process.Environ, args: []cons
     return 1;
 }
 
-/// Resolve the absolute path of the currently-running binary. macOS uses
-/// `_NSGetExecutablePath`; we shim it via libc.
-extern fn _NSGetExecutablePath(buf: [*]u8, size: *u32) c_int;
-
 fn ownBinaryPath(allocator: std.mem.Allocator) ![]u8 {
     var buf: [4096]u8 = undefined;
-    var size: u32 = buf.len;
-    if (_NSGetExecutablePath(&buf, &size) != 0) return error.PathTooLong;
-    // size on success holds the strlen+1; trim the trailing NUL if present.
-    var end: usize = 0;
-    while (end < buf.len and buf[end] != 0) end += 1;
-    return try allocator.dupe(u8, buf[0..end]);
+    const path = try selfExePathPortable(&buf);
+    return try allocator.dupe(u8, path);
 }
 
 /// Compat verb: `sign-binary <path>` — signs `<path>` with the binary-signing
