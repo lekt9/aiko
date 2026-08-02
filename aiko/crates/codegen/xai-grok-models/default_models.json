@@ -28,10 +28,6 @@
       "supported_in_api": false,
       "hidden": false,
       "supports_reasoning_effort": true,
-      "reasoning_efforts": [
-        {"name": "medium", "label": "Medium"},
-        {"name": "high", "label": "High"}
-      ],
       "supports_backend_search": false
     }
   ]
