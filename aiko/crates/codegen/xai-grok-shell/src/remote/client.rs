@@ -666,11 +666,13 @@ struct ModelsResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EndpointAuth {
     ApiKey,
+    Codegraff,
     Session,
 }
 struct ListModelsEndpoint {
     url: String,
     auth: EndpointAuth,
+    inference_base_url: String,
 }
 /// The `/v1/models` URL [`fetch_models_blocking`] hits for this
 /// endpoints/auth shape. Doubles as the models disk-cache origin key: cached
@@ -692,16 +694,25 @@ impl ListModelsEndpoint {
             Self {
                 url: endpoints.resolve_models_list_url(),
                 auth: EndpointAuth::ApiKey,
+                inference_base_url: endpoints.resolve_inference_base_url(),
+            }
+        } else if fetch_auth == crate::agent::models::ModelFetchAuth::Codegraff {
+            Self {
+                url: xai_aiko_providers::CODEGRAFF_MODELS_URL.to_owned(),
+                auth: EndpointAuth::Codegraff,
+                inference_base_url: xai_aiko_providers::CODEGRAFF_API_BASE_URL.to_owned(),
             }
         } else if fetch_auth == crate::agent::models::ModelFetchAuth::ApiKey {
             Self {
                 url: format!("{}/models", endpoints.xai_api_base_url),
                 auth: EndpointAuth::ApiKey,
+                inference_base_url: endpoints.xai_api_base_url.clone(),
             }
         } else {
             Self {
                 url: endpoints.resolve_models_list_url(),
                 auth: EndpointAuth::Session,
+                inference_base_url: endpoints.resolve_inference_base_url(),
             }
         }
     }
@@ -719,7 +730,7 @@ pub(crate) fn fetch_models_blocking(
 ) -> Result<FetchModelsResult, BackendError> {
     let client = crate::http::shared_blocking_client();
     let source = ListModelsEndpoint::from_endpoints(endpoints, fetch_auth);
-    let inference_base_url = endpoints.resolve_inference_base_url();
+    let inference_base_url = source.inference_base_url.clone();
     tracing::info!("Fetching models from {}", source.url);
     let mut request = client.get(&source.url);
     match source.auth {
@@ -735,6 +746,14 @@ pub(crate) fn fetch_models_blocking(
                     )
                 })?;
             request = request.header("Authorization", format!("Bearer {}", api_key));
+        }
+        EndpointAuth::Codegraff => {
+            let api_key = xai_aiko_providers::codegraff_key().ok_or_else(|| {
+                BackendError::Auth(
+                    "No Codegraff credential. Run `graff provider login codegraff`.".into(),
+                )
+            })?;
+            request = request.header("Authorization", format!("Bearer {api_key}"));
         }
         EndpointAuth::Session => {
             let auth = auth.ok_or_else(|| {
@@ -1749,6 +1768,30 @@ mod tests {
             ep.resolve_models_list_url(),
             "https://proxy.grok.com/v1/models"
         );
+    }
+    #[test]
+    fn openrouter_is_only_the_aiko_fallback() {
+        let ep = endpoints(
+            crate::agent::config::CLI_CHAT_PROXY_BASE_URL_DEFAULT,
+            None,
+            None,
+        );
+        let primary = ListModelsEndpoint::from_endpoints(
+            &ep,
+            crate::agent::models::ModelFetchAuth::Codegraff,
+        );
+        assert_eq!(primary.url, xai_aiko_providers::CODEGRAFF_MODELS_URL);
+        assert_eq!(
+            primary.inference_base_url,
+            xai_aiko_providers::CODEGRAFF_API_BASE_URL
+        );
+        assert_eq!(primary.auth, EndpointAuth::Codegraff);
+        assert!(!primary.url.contains("openrouter.ai"));
+
+        let fallback =
+            ListModelsEndpoint::from_endpoints(&ep, crate::agent::models::ModelFetchAuth::Session);
+        assert_eq!(fallback.url, "https://aiko.theclarityproject.net/v1/models");
+        assert_eq!(fallback.auth, EndpointAuth::Session);
     }
     #[test]
     fn list_url_derived_from_base_url() {

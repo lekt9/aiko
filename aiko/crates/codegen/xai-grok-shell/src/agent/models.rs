@@ -21,6 +21,7 @@ use xai_grok_sampling_types::{ReasoningEffort, ReasoningEffortOption};
 /// Credential for `/v1/models` fetching.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ModelFetchAuth {
+    Codegraff,
     Session,
     ApiKey,
     Deployment,
@@ -28,7 +29,7 @@ pub(crate) enum ModelFetchAuth {
 }
 
 impl ModelFetchAuth {
-    /// custom_endpoint > session > deployment > API key.
+    /// custom endpoint > Codegraff login > Aiko session > deployment > API key.
     ///
     /// A `deployment_key` outranks an ambient `XAI_API_KEY` so a stray env key
     /// can't redirect model fetching from the deployment's entitlement-gated
@@ -36,6 +37,8 @@ impl ModelFetchAuth {
     pub(crate) fn resolve(endpoints: &config::EndpointsConfig, has_cached_session: bool) -> Self {
         if endpoints.has_custom_endpoint() {
             Self::CustomEndpoint
+        } else if xai_aiko_providers::codegraff_key().is_some() {
+            Self::Codegraff
         } else if has_cached_session {
             Self::Session
         } else if endpoints.deployment_key.is_some() {
@@ -49,6 +52,7 @@ impl ModelFetchAuth {
 
     fn cache_auth_method(&self) -> CacheAuthMethod {
         match self {
+            Self::Codegraff => CacheAuthMethod::Codegraff,
             Self::CustomEndpoint | Self::ApiKey => CacheAuthMethod::ApiKey,
             Self::Session => CacheAuthMethod::Session,
             Self::Deployment => CacheAuthMethod::Deployment,
@@ -59,6 +63,7 @@ impl ModelFetchAuth {
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 enum CacheAuthMethod {
+    Codegraff,
     Session,
     ApiKey,
     Deployment,
@@ -1463,9 +1468,28 @@ fn prefetch_models_blocking_gated(
     }
 
     let _timer = crate::instrumentation_timer!("startup.fetch_models_blocking");
-    match fetch_models_blocking(endpoints, auth, fetch_auth) {
+    let primary_result = fetch_models_blocking(endpoints, auth, fetch_auth);
+    let (fetch_result, effective_fetch_auth) = match primary_result {
+        Ok(result) if !result.models.is_empty() => (Ok(result), fetch_auth),
+        primary
+            if fetch_auth == ModelFetchAuth::Codegraff && auth.is_some() =>
+        {
+            tracing::warn!(
+                "Codegraff model catalog unavailable; falling back to the Aiko/Clarity catalog"
+            );
+            (
+                fetch_models_blocking(endpoints, auth, ModelFetchAuth::Session),
+                ModelFetchAuth::Session,
+            )
+        }
+        other => (other, fetch_auth),
+    };
+    match fetch_result {
         Ok(FetchModelsResult { models, etag }) if !models.is_empty() => {
-            let api_base_url_override = match fetch_auth {
+            let api_base_url_override = match effective_fetch_auth {
+                ModelFetchAuth::Codegraff => {
+                    Some(xai_aiko_providers::CODEGRAFF_API_BASE_URL.to_owned())
+                }
                 ModelFetchAuth::ApiKey => Some(endpoints.xai_api_base_url.clone()),
                 _ => None,
             };
@@ -1476,7 +1500,15 @@ fn prefetch_models_blocking_gated(
             // `resolve_model_list` (config.rs), not here. Don't re-add it.
 
             tracing::info!(count = map.len(), etag = ?etag, "Prefetched models");
-            cache.persist(&map, etag.as_deref(), cache_auth, &cache_origin);
+            let effective_cache_auth = effective_fetch_auth.cache_auth_method();
+            let effective_cache_origin =
+                crate::remote::models_list_url(endpoints, effective_fetch_auth);
+            cache.persist(
+                &map,
+                etag.as_deref(),
+                effective_cache_auth,
+                &effective_cache_origin,
+            );
             Some(map)
         }
         Ok(FetchModelsResult { .. }) => {
@@ -3116,6 +3148,16 @@ mod tests {
     use serial_test::serial;
     use xai_grok_test_support::EnvGuard;
 
+    fn isolate_codegraff_auth() -> [EnvGuard; 2] {
+        [
+            EnvGuard::unset("CODEGRAFF_API_KEY"),
+            EnvGuard::set(
+                "CODEGRAFF_AUTH_PATH",
+                "/definitely-not-present/aiko-codegraff-auth.json",
+            ),
+        ]
+    }
+
     #[test]
     #[serial]
     fn resolve_custom_endpoint_always_wins() {
@@ -3137,6 +3179,7 @@ mod tests {
     #[test]
     #[serial]
     fn resolve_cached_session_wins_over_api_key() {
+        let _codegraff = isolate_codegraff_auth();
         let _key = EnvGuard::set("XAI_API_KEY", "test-key");
         let endpoints = config::EndpointsConfig::default();
         assert_eq!(
@@ -3149,6 +3192,7 @@ mod tests {
     #[test]
     #[serial]
     fn resolve_api_key_used_when_no_session() {
+        let _codegraff = isolate_codegraff_auth();
         let _key = EnvGuard::set("XAI_API_KEY", "test-key");
         let endpoints = config::EndpointsConfig::default();
         assert_eq!(
@@ -3161,6 +3205,7 @@ mod tests {
     #[test]
     #[serial]
     fn resolve_falls_back_to_session_when_nothing_set() {
+        let _codegraff = isolate_codegraff_auth();
         let _unset = EnvGuard::unset("XAI_API_KEY");
         let _unset_legacy = EnvGuard::unset("GROK_CODE_XAI_API_KEY");
         let endpoints = config::EndpointsConfig::default();
@@ -3174,6 +3219,7 @@ mod tests {
     #[test]
     #[serial]
     fn resolve_deployment_key_when_no_session_or_api_key() {
+        let _codegraff = isolate_codegraff_auth();
         let _unset = EnvGuard::unset("XAI_API_KEY");
         let _unset_legacy = EnvGuard::unset("GROK_CODE_XAI_API_KEY");
         let endpoints = config::EndpointsConfig {
@@ -3190,6 +3236,7 @@ mod tests {
     #[test]
     #[serial]
     fn resolve_deployment_key_outranks_ambient_api_key() {
+        let _codegraff = isolate_codegraff_auth();
         let _key = EnvGuard::set("XAI_API_KEY", "stray-env-key");
         let endpoints = config::EndpointsConfig {
             deployment_key: Some("deploy-key".to_owned()),
@@ -3207,6 +3254,21 @@ mod tests {
         );
     }
 
+    #[test]
+    #[serial]
+    fn resolve_codegraff_wins_over_aiko_session() {
+        let _auth_path = EnvGuard::set(
+            "CODEGRAFF_AUTH_PATH",
+            "/definitely-not-present/aiko-codegraff-auth.json",
+        );
+        let _codegraff = EnvGuard::set("CODEGRAFF_API_KEY", "cg-test-key");
+        let endpoints = config::EndpointsConfig::default();
+        assert_eq!(
+            ModelFetchAuth::resolve(&endpoints, true),
+            ModelFetchAuth::Codegraff,
+        );
+    }
+
     // ── remote_fetch gate: resolve_prefetch_env_from_parts ───────────
 
     /// remote_fetch=false must return `None` against every re-arming shape at
@@ -3215,6 +3277,7 @@ mod tests {
     #[test]
     #[serial]
     fn prefetch_env_none_when_remote_fetch_disabled_despite_credentials() {
+        let _codegraff = isolate_codegraff_auth();
         let _key = EnvGuard::set("XAI_API_KEY", "stray-env-key");
         let endpoints = config::EndpointsConfig {
             deployment_key: Some("deploy-key".to_owned()),
@@ -3241,6 +3304,7 @@ mod tests {
     #[test]
     #[serial]
     fn prefetch_env_resolves_when_remote_fetch_enabled() {
+        let _codegraff = isolate_codegraff_auth();
         let _unset = EnvGuard::unset("XAI_API_KEY");
         let _unset_legacy = EnvGuard::unset("GROK_CODE_XAI_API_KEY");
         let endpoints = config::EndpointsConfig {

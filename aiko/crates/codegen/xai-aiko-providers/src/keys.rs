@@ -5,6 +5,71 @@ use crate::provider::{AuthStyle, CredentialSource, Provider, ProviderKind};
 use crate::spec::ProviderSpec;
 use crate::{builtin_specs, context_window_for};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+const CODEGRAFF_AUTH_PATH_ENV: &str = "CODEGRAFF_AUTH_PATH";
+
+fn nonempty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn read_json_bounded(path: &Path, max_bytes: u64) -> Option<serde_json::Value> {
+    let metadata = std::fs::metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > max_bytes {
+        return None;
+    }
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+fn simple_harness_key(path: &Path) -> Option<String> {
+    let value = read_json_bounded(path, 64 * 1024)?;
+    value
+        .get("api_key")
+        .and_then(serde_json::Value::as_str)
+        .filter(|key| !key.is_empty())
+        .map(str::to_owned)
+}
+
+fn forge_key(path: &Path) -> Option<String> {
+    let value = read_json_bounded(path, 256 * 1024)?;
+    value.as_array()?.iter().find_map(|entry| {
+        (entry.get("id").and_then(serde_json::Value::as_str) == Some("codegraff"))
+            .then(|| {
+                entry
+                    .get("auth_details")
+                    .and_then(|details| details.get("api_key"))
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|key| !key.is_empty())
+                    .map(str::to_owned)
+            })
+            .flatten()
+    })
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+/// Resolve the Codegraff bearer credential with upstream-compatible precedence:
+/// `CODEGRAFF_API_KEY`, then the device-login file, then Graff's credential store.
+///
+/// `CODEGRAFF_AUTH_PATH` is an authoritative override for the device-login file;
+/// it also gives tests and managed installs a way to isolate credential lookup.
+pub fn codegraff_key() -> Option<String> {
+    if let Some(key) = nonempty_env("CODEGRAFF_API_KEY") {
+        return Some(key);
+    }
+    if let Some(path) = std::env::var_os(CODEGRAFF_AUTH_PATH_ENV) {
+        return simple_harness_key(Path::new(&path));
+    }
+    let home = home_dir()?;
+    simple_harness_key(&home.join(".simple-harness-codegraff.json"))
+        .or_else(|| forge_key(&home.join("forge/.credentials.json")))
+}
 
 /// One optional API key per provider spec entry, read from the environment.
 /// Mirrors codegraff's `provider.zig:Keys`.
@@ -50,6 +115,13 @@ impl Keys {
             if !sources.contains_key(spec.id) {
                 sources.insert(spec.id.to_string(), CredentialSource::None);
             }
+        }
+
+        if values.get("codegraff").and_then(Option::as_ref).is_none()
+            && let Some(key) = codegraff_key()
+        {
+            values.insert("codegraff".to_string(), Some(key));
+            sources.insert("codegraff".to_string(), CredentialSource::Login);
         }
 
         Keys {
@@ -190,5 +262,17 @@ mod tests {
         let provider = keys.build(spec, "fake-token", "gpt-5.6-sol");
         assert_eq!(provider.kind, ProviderKind::Responses);
         assert_eq!(provider.account, ""); // no account set
+    }
+
+    #[test]
+    fn codegraff_device_login_file_is_loaded_without_exposing_the_key() {
+        let dir =
+            std::env::temp_dir().join(format!("aiko-codegraff-key-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let auth_path = dir.join("auth.json");
+        std::fs::write(&auth_path, r#"{"api_key":"cg_test"}"#).unwrap();
+        assert_eq!(simple_harness_key(&auth_path).as_deref(), Some("cg_test"));
+        let _ = std::fs::remove_file(auth_path);
+        let _ = std::fs::remove_dir(dir);
     }
 }

@@ -27,6 +27,7 @@ mod contract_learning;
 pub mod contract_loop;
 pub mod membrane;
 mod neuron_bridge;
+pub mod pair;
 mod reflex_policy;
 mod skill_registry;
 

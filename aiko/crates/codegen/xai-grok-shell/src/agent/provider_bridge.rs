@@ -66,7 +66,7 @@ mod tests {
             id: "codex".into(),
             kind: ProviderKind::Responses,
             auth: AuthStyle::Bearer,
-            url: "https://chatgpt.com/backend-api/codex/responses".into(),
+            url: "https://chatgpt.com/backend-api/codex".into(),
             api_key: "token".into(),
             model: "gpt-5.6-sol".into(),
             context: 270_000,
@@ -76,7 +76,7 @@ mod tests {
 
         let cfg = provider_to_sampler_config(&p);
         assert_eq!(cfg.api_key, Some("token".into()));
-        assert_eq!(cfg.base_url, "https://chatgpt.com/backend-api/codex/responses");
+        assert_eq!(cfg.base_url, "https://chatgpt.com/backend-api/codex");
         assert_eq!(cfg.model, "gpt-5.6-sol");
         assert_eq!(cfg.api_backend, ApiBackend::Responses);
         assert_eq!(cfg.context_window, 270_000);

@@ -9,7 +9,7 @@ use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::sync::Arc;
 use xai_grok_agent::prompt::skills::SkillsConfig;
-use xai_grok_sampler::{AuthScheme, SamplerConfig};
+use xai_grok_sampler::{AuthScheme, OriginClientInfo, SamplerConfig};
 use xai_grok_sampling_types::{
     CompactionAtTokens, CompactionsRemaining, REASONING_EFFORT_META_KEY,
     REASONING_EFFORTS_META_KEY, ReasoningEffort, ReasoningEffortOption,
@@ -48,6 +48,24 @@ pub fn default_agent_type() -> String {
 /// OAuth bearer token. Clients must never receive a Codegraff (or other
 /// provider) API key.
 pub const CLI_CHAT_PROXY_BASE_URL_DEFAULT: &str = "https://aiko.theclarityproject.net/v1";
+
+/// Whether `base_url` targets Codegraff's first-party inference gateway.
+pub fn is_codegraff_gateway_url(base_url: &str) -> bool {
+    base_url
+        .trim_end_matches('/')
+        .starts_with(xai_aiko_providers::CODEGRAFF_API_BASE_URL)
+}
+
+/// Resolve the default inference route. Explicit endpoint configuration wins;
+/// otherwise a Codegraff login is primary and the Aiko/Clarity session proxy is
+/// the compatibility fallback.
+pub fn resolve_primary_inference_base_url(endpoints: &EndpointsConfig) -> String {
+    if !endpoints.has_custom_endpoint() && xai_aiko_providers::codegraff_key().is_some() {
+        xai_aiko_providers::CODEGRAFF_API_BASE_URL.to_owned()
+    } else {
+        endpoints.resolve_inference_base_url()
+    }
+}
 /// Default base URL for the public xAI API.
 pub const XAI_API_BASE_URL_DEFAULT: &str = "https://api.x.ai/v1";
 /// Default base URL for the asset server (profile images, etc.).
@@ -3414,7 +3432,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
             let base_url = m
                 .base_url
                 .clone()
-                .unwrap_or_else(|| endpoints.resolve_inference_base_url());
+                .unwrap_or_else(|| resolve_primary_inference_base_url(endpoints));
             let config = ModelEntryConfig {
                 id: m.id,
                 model: m.model,
@@ -3920,7 +3938,7 @@ impl ModelEntry {
     /// Minimal fallback entry for an unknown model slug.
     pub fn fallback(slug: &str, endpoints: &EndpointsConfig) -> Self {
         let mut info = ModelInfo::fallback(slug);
-        info.base_url = endpoints.resolve_inference_base_url();
+        info.base_url = resolve_primary_inference_base_url(endpoints);
         Self {
             info,
             api_key: None,
@@ -4307,6 +4325,57 @@ pub struct ResolvedCredentials {
     pub base_url: String,
     pub auth_type: xai_chat_state::AuthType,
     pub auth_scheme: AuthScheme,
+    /// Provider-specific headers resolved at credential time (e.g.
+    /// `chatgpt-account-id` for Codex OAuth). Merged into the sampler's
+    /// `extra_headers` by `sampling_config_for_model`.
+    pub extra_headers: IndexMap<String, String>,
+}
+pub fn is_codex_chatgpt_url(base_url: &str) -> bool {
+    base_url
+        .trim_end_matches('/')
+        .starts_with("https://chatgpt.com/backend-api/codex")
+}
+
+const CODEX_COMPATIBILITY_VERSION_FALLBACK: &str = "0.146.0";
+
+fn parse_codex_cli_version(output: &str) -> Option<&str> {
+    output
+        .split_whitespace()
+        .find(|part| {
+            part.split('.').count() >= 3
+                && part
+                    .chars()
+                    .all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | '-'))
+        })
+}
+
+/// Report a current Codex protocol version to the ChatGPT backend.
+///
+/// New Codex models are gated on this header. Prefer an explicit override,
+/// then the locally installed official CLI so Aiko tracks upgrades without a
+/// release. The fallback is the minimum compatible version known at build time
+/// and keeps Aiko usable when the official CLI is not installed.
+fn codex_compatibility_version() -> &'static str {
+    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    VERSION
+        .get_or_init(|| {
+            std::env::var("CODEX_CLI_VERSION")
+                .ok()
+                .and_then(|version| parse_codex_cli_version(&version).map(str::to_owned))
+                .or_else(|| {
+                    std::process::Command::new("codex")
+                        .arg("--version")
+                        .output()
+                        .ok()
+                        .filter(|output| output.status.success())
+                        .and_then(|output| String::from_utf8(output.stdout).ok())
+                        .and_then(|output| {
+                            parse_codex_cli_version(&output).map(str::to_owned)
+                        })
+                })
+                .unwrap_or_else(|| CODEX_COMPATIBILITY_VERSION_FALLBACK.to_owned())
+        })
+        .as_str()
 }
 /// First usable BYOK credential: a non-empty (trimmed) api_key, else the first
 /// set, non-empty env_key value. Single source of truth for has_own_credentials,
@@ -4321,39 +4390,40 @@ pub(crate) fn first_own_credential(
         .or_else(|| env_key.and_then(EnvKeys::resolve_value))
 }
 /// Resolve credentials for a model.
-/// Priority: model api_key/env_key > session token > XAI_API_KEY > \
-///            OAuth (Codex Kimi etc.) > no-key.
+/// Priority: model api_key/env_key > provider OAuth > session token >
+/// XAI_API_KEY > no-key.
 ///
 /// When `env_key` lists multiple names, the first set non-empty value is used.
 pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> ResolvedCredentials {
     let info = model.info();
-    let (api_key, base_url, auth_type) = if let Some(key) = model.own_credential() {
+    let (api_key, base_url, auth_type, extra_headers) = if let Some(key) = model.own_credential() {
         (
             Some(key),
             info.base_url.clone(),
             xai_chat_state::AuthType::ApiKey,
+            IndexMap::new(),
         )
-    } else if let Some(key) = session_key {
-        (
-            Some(key.to_owned()),
-            info.base_url.clone(),
-            xai_chat_state::AuthType::SessionToken,
-        )
-    } else if let Ok(key) = crate::agent::auth_method::read_xai_api_key_env() {
-        let url = model
-            .api_base_url
-            .clone()
-            .unwrap_or_else(|| info.base_url.clone());
-        (Some(key), url, xai_chat_state::AuthType::ApiKey)
-    } else if info.base_url.contains("chatgpt.com/backend-api/codex") {
-        // Codex (ChatGPT) OAuth — reads ~/.codex/auth.json written by
-        // `aiko login codex` (or the official Codex CLI).
-        let home = crate::util::grok_home::grok_home();
+    } else if is_codex_chatgpt_url(&info.base_url) {
+        // Codex (ChatGPT) OAuth uses the same ~/.codex/auth.json as the
+        // official Codex CLI. Provider OAuth must win over an unrelated Aiko
+        // session token or XAI_API_KEY when this model is selected.
+        let home = dirs::home_dir().unwrap_or_else(crate::util::grok_home::grok_home);
         if let Some(codex_auth) = crate::auth::codex_oauth::load_codex_auth_fresh(&home) {
+            let mut codex_headers = IndexMap::new();
+            codex_headers.insert("originator".to_string(), "codex_cli_rs".to_string());
+            codex_headers.insert("session_id".to_string(), uuid::Uuid::new_v4().to_string());
+            codex_headers.insert(
+                "version".to_string(),
+                codex_compatibility_version().to_string(),
+            );
+            if let Some(ref account_id) = codex_auth.account_id {
+                codex_headers.insert("chatgpt-account-id".to_string(), account_id.clone());
+            }
             (
                 Some(codex_auth.access_token),
                 info.base_url.clone(),
-                xai_chat_state::AuthType::SessionToken, // OAuth → treated like session auth
+                xai_chat_state::AuthType::SessionToken,
+                codex_headers,
             )
         } else {
             tracing::warn!(
@@ -4364,8 +4434,47 @@ pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> Res
                 None,
                 info.base_url.clone(),
                 xai_chat_state::AuthType::ApiKey,
+                IndexMap::new(),
             )
         }
+    } else if is_codegraff_gateway_url(&info.base_url) {
+        if let Some(key) = xai_aiko_providers::codegraff_key() {
+            (
+                Some(key),
+                info.base_url.clone(),
+                xai_chat_state::AuthType::ApiKey,
+                IndexMap::new(),
+            )
+        } else if let Some(key) = session_key {
+            // Codegraff is primary. The Aiko/Clarity session gateway is the
+            // compatibility fallback (and may broker OpenRouter upstream).
+            (
+                Some(key.to_owned()),
+                CLI_CHAT_PROXY_BASE_URL_DEFAULT.to_owned(),
+                xai_chat_state::AuthType::SessionToken,
+                IndexMap::new(),
+            )
+        } else {
+            (
+                None,
+                info.base_url.clone(),
+                xai_chat_state::AuthType::ApiKey,
+                IndexMap::new(),
+            )
+        }
+    } else if let Some(key) = session_key {
+        (
+            Some(key.to_owned()),
+            info.base_url.clone(),
+            xai_chat_state::AuthType::SessionToken,
+            IndexMap::new(),
+        )
+    } else if let Ok(key) = crate::agent::auth_method::read_xai_api_key_env() {
+        let url = model
+            .api_base_url
+            .clone()
+            .unwrap_or_else(|| info.base_url.clone());
+        (Some(key), url, xai_chat_state::AuthType::ApiKey, IndexMap::new())
     } else {
         if let Some(ref env_keys) = model.env_key
             && !env_keys.is_empty()
@@ -4380,6 +4489,7 @@ pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> Res
             None,
             info.base_url.clone(),
             xai_chat_state::AuthType::ApiKey,
+            IndexMap::new(),
         )
     };
     let auth_scheme = info.auth_scheme;
@@ -4391,6 +4501,7 @@ pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> Res
         base_url,
         auth_type,
         auth_scheme,
+        extra_headers,
     }
 }
 /// `disable_api_key_auth` at the credential seam: swap a first-party xAI API
@@ -4539,8 +4650,8 @@ pub fn resolve_aux_model_sampling_config(
             return Some(sampler);
         }
     }
-    let xai_bearer = session_key
-        .map(|s| s.to_owned())
+    let xai_bearer = xai_aiko_providers::codegraff_key()
+        .or_else(|| session_key.map(|s| s.to_owned()))
         .or_else(|| crate::agent::auth_method::read_xai_api_key_env().ok())
         .or_else(|| endpoints.deployment_key.clone());
     if let Some(bearer) = xai_bearer {
@@ -4551,7 +4662,7 @@ pub fn resolve_aux_model_sampling_config(
                 model: catalog_entry
                     .map(|e| e.info.model)
                     .unwrap_or_else(|| model_id.to_owned()),
-                base_url: endpoints.resolve_inference_base_url(),
+                base_url: resolve_primary_inference_base_url(endpoints),
                 name: None,
                 description: None,
                 max_completion_tokens: None,
@@ -4672,11 +4783,23 @@ pub fn sampling_config_for_model(
     let temperature = info.temperature;
     let top_p = info.top_p;
     let mut extra_headers = info.extra_headers.clone();
+    // Merge credential-resolved headers (e.g. chatgpt-account-id, originator)
+    for (k, v) in credentials.extra_headers {
+        extra_headers.entry(k).or_insert(v);
+    }
     inject_url_derived_headers(
         &mut extra_headers,
         alpha_test_key.as_deref(),
         &credentials.base_url,
     );
+    // ChatGPT gates newer Codex models on the Codex-compatible User-Agent
+    // prefix as well as the legacy `version` header. Keep the sampler's own
+    // identity as the secondary product while advertising the locally installed Codex
+    // protocol version in the leading product token.
+    let origin_client = is_codex_chatgpt_url(&credentials.base_url).then(|| OriginClientInfo {
+        product: "codex_cli_rs".to_string(),
+        version: Some(codex_compatibility_version().to_string()),
+    });
     let api_backend = info.api_backend.clone();
     SamplerConfig {
         api_key: credentials.api_key,
@@ -4698,7 +4821,7 @@ pub fn sampling_config_for_model(
         client_identifier: None,
         deployment_id,
         user_id,
-        origin_client: None,
+        origin_client,
         attribution_callback: None,
         bearer_resolver: None,
         supports_backend_search: info.supports_backend_search,
@@ -4773,7 +4896,7 @@ fn resolve_hidden_default_web_search_sampling_config(
         info: ModelInfo {
             id: None,
             model: model_id.to_owned(),
-            base_url: endpoints.resolve_inference_base_url(),
+            base_url: resolve_primary_inference_base_url(endpoints),
             name: None,
             description: None,
             max_completion_tokens: None,
@@ -5520,6 +5643,7 @@ reasoning_effort = "low"
                 base_url: model.info().base_url.clone(),
                 auth_type: xai_chat_state::AuthType::ApiKey,
                 auth_scheme: AuthScheme::Bearer,
+                extra_headers: IndexMap::new(),
             },
             None,
             None,
@@ -5527,6 +5651,129 @@ reasoning_effort = "low"
             None,
         );
         assert_eq!(sampling_config.api_key, Some("fallback-key".to_string()));
+    }
+    #[test]
+    #[serial]
+    fn codegraff_credential_beats_aiko_session() {
+        let _auth_path = EnvGuard::set(
+            "CODEGRAFF_AUTH_PATH",
+            "/definitely-not-present/aiko-codegraff-auth.json",
+        );
+        let _codegraff = EnvGuard::set("CODEGRAFF_API_KEY", "cg-primary");
+        let model = test_model_entry(
+            "deepseek-v4-pro",
+            xai_aiko_providers::CODEGRAFF_API_BASE_URL,
+            None,
+            None,
+            None,
+        );
+        let credentials = resolve_credentials(&model, Some("clarity-fallback"));
+        assert_eq!(credentials.api_key.as_deref(), Some("cg-primary"));
+        assert_eq!(
+            credentials.base_url,
+            xai_aiko_providers::CODEGRAFF_API_BASE_URL
+        );
+        assert_eq!(credentials.auth_type, xai_chat_state::AuthType::ApiKey);
+    }
+    #[test]
+    #[serial]
+    fn missing_codegraff_credential_uses_aiko_session_fallback() {
+        let _codegraff = EnvGuard::unset("CODEGRAFF_API_KEY");
+        let _auth_path = EnvGuard::set(
+            "CODEGRAFF_AUTH_PATH",
+            "/definitely-not-present/aiko-codegraff-auth.json",
+        );
+        let model = test_model_entry(
+            "deepseek-v4-pro",
+            xai_aiko_providers::CODEGRAFF_API_BASE_URL,
+            None,
+            None,
+            None,
+        );
+        let credentials = resolve_credentials(&model, Some("clarity-fallback"));
+        assert_eq!(credentials.api_key.as_deref(), Some("clarity-fallback"));
+        assert_eq!(credentials.base_url, CLI_CHAT_PROXY_BASE_URL_DEFAULT);
+        assert_eq!(
+            credentials.auth_type,
+            xai_chat_state::AuthType::SessionToken
+        );
+    }
+    #[test]
+    fn sampling_config_merges_provider_oauth_headers_without_overwriting_model_headers() {
+        let mut model = test_model_entry("test-model", "https://test.api/v1", None, None, None);
+        model
+            .info
+            .extra_headers
+            .insert("originator".to_string(), "configured-origin".to_string());
+        let mut oauth_headers = IndexMap::new();
+        oauth_headers.insert("originator".to_string(), "codex_cli_rs".to_string());
+        oauth_headers.insert("chatgpt-account-id".to_string(), "acct-123".to_string());
+        let sampling_config = sampling_config_for_model(
+            &model,
+            ResolvedCredentials {
+                api_key: Some("oauth-token".to_string()),
+                base_url: model.info().base_url.clone(),
+                auth_type: xai_chat_state::AuthType::SessionToken,
+                auth_scheme: AuthScheme::Bearer,
+                extra_headers: oauth_headers,
+            },
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            sampling_config.extra_headers.get("originator").map(String::as_str),
+            Some("configured-origin")
+        );
+        assert_eq!(
+            sampling_config
+                .extra_headers
+                .get("chatgpt-account-id")
+                .map(String::as_str),
+            Some("acct-123")
+        );
+    }
+
+    #[test]
+    fn parses_official_codex_cli_version_for_compatibility_header() {
+        assert_eq!(parse_codex_cli_version("codex-cli 0.146.0\n"), Some("0.146.0"));
+        assert_eq!(parse_codex_cli_version("0.146.0"), Some("0.146.0"));
+        assert_eq!(parse_codex_cli_version("not-a-version"), None);
+    }
+    #[test]
+    fn codex_sampling_config_uses_codex_compatible_user_agent_prefix() {
+        let model = test_model_entry(
+            "gpt-5.6-sol",
+            "https://chatgpt.com/backend-api/codex",
+            None,
+            None,
+            None,
+        );
+        let sampling_config = sampling_config_for_model(
+            &model,
+            ResolvedCredentials {
+                api_key: Some("oauth-token".to_string()),
+                base_url: model.info().base_url.clone(),
+                auth_type: xai_chat_state::AuthType::SessionToken,
+                auth_scheme: AuthScheme::Bearer,
+                extra_headers: IndexMap::new(),
+            },
+            None,
+            None,
+            None,
+            None,
+        );
+        let origin = sampling_config
+            .origin_client
+            .as_ref()
+            .expect("ChatGPT Codex requests need a Codex-compatible User-Agent");
+        let user_agent = xai_grok_sampler::user_agent_string_for(origin);
+        assert!(user_agent.starts_with(&format!(
+            "codex_cli_rs/{compat}",
+            compat = codex_compatibility_version()
+        )));
+        assert!(user_agent.contains("grok-shell/"));
     }
     #[test]
     fn default_models_dual_endpoint_routing() {
@@ -5549,6 +5796,7 @@ reasoning_effort = "low"
                     .unwrap_or(entry.info().base_url.clone()),
                 auth_type: xai_chat_state::AuthType::ApiKey,
                 auth_scheme: AuthScheme::Bearer,
+                extra_headers: IndexMap::new(),
             };
             assert_eq!(
                 api_key_creds.base_url, endpoints.xai_api_base_url,
@@ -5834,6 +6082,7 @@ reasoning_effort = "low"
             base_url: base_url.to_string(),
             auth_type: xai_chat_state::AuthType::ApiKey,
             auth_scheme: Default::default(),
+            extra_headers: IndexMap::new(),
         }
     }
     /// `disable_api_key_auth` kill switch (Claude `forceLoginMethod` parity).

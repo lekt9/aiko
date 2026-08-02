@@ -68,3 +68,22 @@ pub fn default_session_summary_model() -> &'static str {
         .as_deref()
         .unwrap_or(&DEFAULTS.default)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_omits_unsupported_sampling_parameters() {
+        let defaults: serde_json::Value = serde_json::from_str(DEFAULT_MODELS_JSON).unwrap();
+        let codex = defaults["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|model| model["id"] == "codex")
+            .expect("embedded model catalog must contain codex");
+
+        assert!(codex.get("temperature").is_none());
+        assert!(codex.get("top_p").is_none());
+    }
+}

@@ -41,10 +41,18 @@ mod provider;
 mod router;
 mod spec;
 
-pub use keys::Keys;
+pub use keys::{Keys, codegraff_key};
 pub use provider::{AuthStyle, CredentialSource, Provider, ProviderKind};
 pub use router::{ProviderRouter, RouterError};
 pub use spec::ProviderSpec;
+
+/// OpenAI-compatible Codegraff gateway base used by Aiko's primary model path.
+pub const CODEGRAFF_API_BASE_URL: &str = "https://gateway.codegraff.com/v1";
+/// Codegraff's live model catalog.
+pub const CODEGRAFF_MODELS_URL: &str = "https://gateway.codegraff.com/v1/models";
+/// Fully-qualified chat-completions endpoint used by the provider abstraction.
+pub const CODEGRAFF_CHAT_COMPLETIONS_URL: &str =
+    "https://gateway.codegraff.com/v1/chat/completions";
 
 /// The built-in provider catalog — one entry per supported provider.
 /// Mirrors codegraff's `provider_specs` const array.
@@ -198,7 +206,7 @@ pub fn builtin_specs() -> &'static [ProviderSpec] {
             display_name: "Codex (ChatGPT)",
             kind: ProviderKind::Responses,
             auth: AuthStyle::Bearer,
-            url: "https://chatgpt.com/backend-api/codex/responses",
+            url: "https://chatgpt.com/backend-api/codex",
             env_key: "CODEX_DISABLED", // key comes from OAuth, not env
             default_model: "gpt-5.6-sol",
         },
@@ -466,7 +474,7 @@ mod tests {
             .find(|s| s.id == "codex")
             .expect("codex spec must exist");
         assert_eq!(codex_spec.kind, ProviderKind::Responses);
-        assert_eq!(codex_spec.url, "https://chatgpt.com/backend-api/codex/responses");
+        assert_eq!(codex_spec.url, "https://chatgpt.com/backend-api/codex");
     }
 
     #[test]
@@ -477,5 +485,15 @@ mod tests {
             .expect("xAI spec must exist");
         assert_eq!(xai_spec.kind, ProviderKind::OpenAi);
         assert_eq!(xai_spec.default_model, "grok-4.3");
+    }
+
+    #[test]
+    fn never_routes_directly_to_openrouter() {
+        assert!(
+            builtin_specs()
+                .iter()
+                .all(|spec| !spec.url.contains("openrouter.ai")),
+            "Aiko must never route directly to OpenRouter"
+        );
     }
 }

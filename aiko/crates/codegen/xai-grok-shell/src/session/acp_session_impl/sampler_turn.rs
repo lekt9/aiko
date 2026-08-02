@@ -46,6 +46,9 @@ struct SessionTokenAuthGate {
     /// BYOK status still refresh against cli-chat-proxy / `*.x.ai` without
     /// risking a session-token leak to a third-party BYOK endpoint.
     endpoint_is_first_party: bool,
+    /// Provider-specific OAuth (currently ChatGPT/Codex) owns its bearer and
+    /// refresh lifecycle. The Aiko session resolver must never replace it.
+    provider_uses_own_oauth: bool,
 }
 impl SessionTokenAuthGate {
     /// Single place `is_session_based` / `endpoint_is_first_party` are derived,
@@ -60,14 +63,16 @@ impl SessionTokenAuthGate {
                 .is_some_and(crate::agent::auth_method::is_session_based_method),
             model_byok,
             endpoint_is_first_party: crate::util::is_xai_api_url(base_url),
+            provider_uses_own_oauth: crate::agent::config::is_codex_chatgpt_url(base_url),
         }
     }
     fn active(self) -> bool {
-        crate::agent::auth_method::session_token_auth_gate(
-            self.is_session_based,
-            self.model_byok,
-            self.endpoint_is_first_party,
-        )
+        !self.provider_uses_own_oauth
+            && crate::agent::auth_method::session_token_auth_gate(
+                self.is_session_based,
+                self.model_byok,
+                self.endpoint_is_first_party,
+            )
     }
 }
 /// Run a tool call; on an auth-shaped failure, attempt recovery via

@@ -93,6 +93,27 @@ pub enum NativeCommand {
     },
 }
 
+/// Create or verify paired contracts — a work contract + a witness contract
+/// that mechanically re-runs the same check. Like `Promise.all([build, verify])`.
+#[derive(Debug, Clone, Subcommand)]
+pub enum ContractPairAction {
+    /// Create a linked pair (work + witness).
+    Create {
+        /// The goal description.
+        goal: String,
+        /// Shell command that exits 0 when the work is complete.
+        #[arg(long, short)]
+        check: String,
+    },
+    /// Verify both contracts in a pair.
+    Verify {
+        /// The work contract id.
+        work_id: String,
+    },
+    /// List all paired contracts.
+    List,
+}
+
 #[derive(Debug, Clone, Subcommand)]
 pub enum ContractSkillsCommand {
     /// List validated contract-native skill bundles.
@@ -293,6 +314,11 @@ pub enum Command {
         /// `devbox-login` is enabled (`arg(skip)` otherwise → always false).
         #[arg(skip)]
         devbox: bool,
+    },
+    /// Create or verify paired contracts (work + witness).
+    ContractPair {
+        #[command(subcommand)]
+        action: ContractPairAction,
     },
     /// Manage MCP server configurations
     Mcp(crate::mcp_cmd::McpArgs),

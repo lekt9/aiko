@@ -9,6 +9,7 @@ use crate::agent::config::Config as AgentConfig;
 /// Status for the `grok models` banner (display order ≠ sampling priority; see [`AuthStatus::resolve`]).
 #[derive(Debug, PartialEq, Eq)]
 pub enum AuthStatus {
+    Codegraff,
     ApiKey,
     /// Auth host from `grok_ws_origin` (scheme stripped).
     LoggedIn(String),
@@ -19,13 +20,16 @@ pub enum AuthStatus {
 }
 
 impl AuthStatus {
-    /// Banner status: env key → session → BYOK → deployment → none.
+    /// Banner status: Codegraff → env key → session → BYOK → deployment → none.
     ///
     /// Differs from sampling (`resolve_credentials`: BYOK → session → env) so a
     /// logged-in user sees the login host. BYOK uses
     /// [`crate::agent::auth_method::should_advertise_xai_api_key`] so
     /// `disable_api_key_auth` is honored.
     pub fn resolve(agent_config: &AgentConfig) -> Self {
+        if xai_aiko_providers::codegraff_key().is_some() {
+            return Self::Codegraff;
+        }
         if crate::agent::auth_method::has_xai_api_key_env() {
             return Self::ApiKey;
         }
@@ -107,7 +111,7 @@ mod tests {
     ///
     /// Uses `GROK_AUTH_PATH` (not `GROK_HOME`) so a OnceLock-cached real home
     /// with `auth.json` cannot leak into these tests.
-    fn isolate_auth_sources() -> (tempfile::TempDir, [EnvGuard; 7]) {
+    fn isolate_auth_sources() -> (tempfile::TempDir, [EnvGuard; 8]) {
         let dir = tempfile::tempdir().unwrap();
         let auth_path = dir.path().join("no-auth.json");
         let guards = [
@@ -118,6 +122,10 @@ mod tests {
             EnvGuard::unset("GROK_DEPLOYMENT_KEY"),
             EnvGuard::unset("GROK_WS_ORIGIN"),
             EnvGuard::unset("GROK_DISABLE_API_KEY_AUTH"),
+            EnvGuard::set(
+                "CODEGRAFF_AUTH_PATH",
+                dir.path().join("no-codegraff.json").to_str().unwrap(),
+            ),
         ];
         (dir, guards)
     }

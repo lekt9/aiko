@@ -2121,6 +2121,7 @@ impl From<ConversationRequest> for ChatCompletionRequest {
 impl From<&ConversationRequest> for rs::CreateResponse {
     fn from(req: &ConversationRequest) -> Self {
         let input = build_responses_input(req);
+        let instructions = build_responses_instructions(req);
         let tools = build_responses_tools(req);
 
         let tool_choice = req.tool_choice.as_ref().map(|tc| match tc {
@@ -2154,7 +2155,7 @@ impl From<&ConversationRequest> for rs::CreateResponse {
             conversation: None,
             include: None,
             input,
-            instructions: None,
+            instructions,
             max_output_tokens: req.max_output_tokens,
             max_tool_calls: None,
             metadata: None,
@@ -2186,8 +2187,9 @@ impl From<&ConversationRequest> for rs::CreateResponse {
 
 /// Build the [`rs::InputParam`] for a Responses API request.
 ///
-/// Conversion is a straight 1:1 map: each [`ConversationItem`] becomes its
-/// natural Responses-API input shape via [`conversation_item_to_input_items`].
+/// Each non-system [`ConversationItem`] becomes its natural Responses-API
+/// input shape via [`conversation_item_to_input_items`]. System items are
+/// emitted through the request's top-level `instructions` field instead.
 /// Reasoning items are top-level siblings (not bundled into the assistant),
 /// so they appear inline in the same order the model originally emitted —
 /// which is what lets the server-side prefix KV-cache hit on repeat turns.
@@ -2198,6 +2200,25 @@ fn build_responses_input(req: &ConversationRequest) -> rs::InputParam {
         .flat_map(conversation_item_to_input_items)
         .collect();
     rs::InputParam::Items(items)
+}
+
+/// Collect system items into the Responses API's top-level instructions.
+///
+/// The ChatGPT Codex Responses endpoint rejects `role: "system"` messages in
+/// `input`. Joining preserves the order and separation of multiple runtime
+/// system reminders while keeping them out of the conversational item stream.
+fn build_responses_instructions(req: &ConversationRequest) -> Option<String> {
+    let instructions = req
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ConversationItem::System(system) => Some(system.content.as_ref()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    (!instructions.is_empty()).then_some(instructions)
 }
 
 /// Walk a serialized Responses API request body and inject the
@@ -2238,12 +2259,9 @@ pub fn patch_reasoning_text_types(body: &mut serde_json::Value) {
 fn conversation_item_to_input_items(item: &ConversationItem) -> Vec<rs::InputItem> {
     match item {
         ConversationItem::System(s) => {
-            // System messages become an EasyMessage with system role
-            vec![rs::InputItem::EasyMessage(rs::EasyInputMessage {
-                r#type: rs::MessageType::Message,
-                role: rs::Role::System,
-                content: rs::EasyInputContent::Text(s.content.as_ref().to_owned()),
-            })]
+            // System messages are carried by CreateResponse::instructions.
+            let _ = s;
+            Vec::new()
         }
         ConversationItem::User(u) => {
             let content = content_parts_to_easy_input_content(&u.content);
@@ -3575,6 +3593,7 @@ mod tests {
     fn test_conversation_request_to_responses_api() {
         let req = ConversationRequest::from_items(vec![
             ConversationItem::system("System prompt"),
+            ConversationItem::system("Runtime reminder"),
             ConversationItem::user("User message"),
         ])
         .with_model("grok-3")
@@ -3583,11 +3602,22 @@ mod tests {
         let responses_req: rs::CreateResponse = (&req).into();
         assert_eq!(responses_req.model, Some("grok-3".to_string()));
         assert_eq!(responses_req.temperature, Some(0.7));
+        assert_eq!(
+            responses_req.instructions.as_deref(),
+            Some("System prompt\n\nRuntime reminder")
+        );
 
         let rs::InputParam::Items(items) = responses_req.input else {
             panic!("Expected Items input");
         };
-        assert_eq!(items.len(), 2);
+        assert_eq!(items.len(), 1);
+        assert_matches!(
+            &items[0],
+            rs::InputItem::EasyMessage(rs::EasyInputMessage {
+                role: rs::Role::User,
+                ..
+            })
+        );
     }
 
     #[test]

@@ -135,7 +135,7 @@ pub fn load_codex_auth_fresh(home: &std::path::Path) -> Option<CodexAuth> {
         let v: CodexAuthJson = serde_json::from_str(&data).ok()?;
         let rt = v.tokens.refresh_token.as_deref()?;
 
-        match do_refresh(home, rt) {
+        match do_refresh_off_runtime(home, rt) {
             Ok(new_auth) => Some(new_auth),
             Err(e) => {
                 tracing::warn!(error = %e, "codex token refresh failed, returning cached token");
@@ -155,7 +155,7 @@ pub fn refresh_codex_auth(home: &std::path::Path) -> Option<CodexAuth> {
     let v: CodexAuthJson = serde_json::from_str(&data).ok()?;
     let rt = v.tokens.refresh_token.as_deref()?;
 
-    match do_refresh(home, rt) {
+    match do_refresh_off_runtime(home, rt) {
         Ok(new) => Some(new),
         Err(e) => {
             tracing::warn!(error = %e, "codex force-refresh failed");
@@ -214,6 +214,35 @@ fn do_refresh(home: &std::path::Path, refresh_token: &str) -> anyhow::Result<Cod
         account_id: account,
         expires_at,
     })
+}
+
+/// Run the blocking OAuth client outside any ambient Tokio runtime.
+///
+/// Credential resolution is intentionally synchronous, but it also runs on
+/// the pager's current-thread Tokio worker. `reqwest::blocking` creates and
+/// drops its own runtime, which panics when dropped from inside another async
+/// runtime. A short-lived OS thread keeps that nested runtime outside Tokio
+/// while preserving the synchronous credential API.
+fn do_refresh_off_runtime(
+    home: &std::path::Path,
+    refresh_token: &str,
+) -> anyhow::Result<CodexAuth> {
+    let home = home.to_path_buf();
+    let refresh_token = refresh_token.to_string();
+    run_blocking_off_runtime(move || do_refresh(&home, &refresh_token))
+}
+
+fn run_blocking_off_runtime<T, F>(operation: F) -> anyhow::Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> anyhow::Result<T> + Send + 'static,
+{
+    if tokio::runtime::Handle::try_current().is_err() {
+        return operation();
+    }
+    std::thread::spawn(operation)
+        .join()
+        .map_err(|_| anyhow::anyhow!("codex token refresh worker panicked"))?
 }
 
 // ── Login flow ─────────────────────────────────────────────────────────────
@@ -676,5 +705,12 @@ mod tests {
         // 16 bytes → 22 base64url chars (no padding)
         assert_eq!(s.len(), 22);
         assert!(!s.contains('='));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn blocking_oauth_work_runs_outside_current_thread_runtime() {
+        let runtime_thread = std::thread::current().id();
+        let worker_thread = run_blocking_off_runtime(|| Ok(std::thread::current().id())).unwrap();
+        assert_ne!(worker_thread, runtime_thread);
     }
 }

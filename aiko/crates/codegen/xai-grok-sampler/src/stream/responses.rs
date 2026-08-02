@@ -4,6 +4,7 @@
 //! [`SamplingEvent`]s. Pure: no I/O, no shell coupling.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
@@ -78,6 +79,31 @@ pub(crate) fn responses_event_has_meaningful_content(event: &rs::ResponseStreamE
     }
 }
 
+/// Preserve text delivered only through streaming deltas.
+///
+/// ChatGPT's Codex endpoint can complete with an empty (or reasoning-only)
+/// `response.output` even though it streamed `response.output_text.delta`
+/// events. In that shape there is no assistant item for the ordinary fallback
+/// assignment to update, so create one instead of letting the retry layer
+/// misclassify a successful response as empty.
+fn apply_streamed_text_fallback(items: &mut Vec<ConversationItem>, text: String) {
+    if text.is_empty() {
+        return;
+    }
+
+    if let Some(ConversationItem::Assistant(assistant)) = items
+        .iter_mut()
+        .rev()
+        .find(|item| matches!(item, ConversationItem::Assistant(_)))
+    {
+        if assistant.content.is_empty() {
+            assistant.content = Arc::<str>::from(text);
+        }
+    } else {
+        items.push(ConversationItem::assistant(text));
+    }
+}
+
 /// Transform a raw Responses API event stream into a stream of
 /// [`SamplingEvent`]s.
 ///
@@ -120,6 +146,7 @@ pub fn stream_responses<'a>(
         let mut chunk_index: u64 = 0;
         let mut message_chunk_count: u64 = 0;
         let mut first_token_emitted = false;
+        let mut text_acc = String::new();
         let mut reasoning_acc = String::new();
         let mut last_content_chunk_at = Instant::now();
 
@@ -194,6 +221,7 @@ pub fn stream_responses<'a>(
                         chunk_timestamps.push(Instant::now());
                         chunk_index += 1;
                         message_chunk_count += 1;
+                        text_acc.push_str(&delta);
                         yield SamplingEvent::ChannelToken {
                             request_id: request_id.clone(),
                             channel: SamplingChannel::Text,
@@ -280,6 +308,9 @@ pub fn stream_responses<'a>(
 
                 ResponseStreamEvent::ResponseCompleted(completed_event) => {
                     final_response = Some(completed_event.response);
+                    // `response.completed` is terminal even when the backend
+                    // keeps the SSE connection open for reuse (as Codex does).
+                    should_break = true;
                 }
 
                 ResponseStreamEvent::ResponseIncomplete(incomplete_event) => {
@@ -462,6 +493,7 @@ pub fn stream_responses<'a>(
         // `summary` (the streaming deltas may have arrived out of band).
         // Splice policy lives in `inject_streaming_reasoning_fallback`.
         let mut items = xai_grok_sampling_types::response_to_conversation_items(response);
+        apply_streamed_text_fallback(&mut items, text_acc);
         xai_grok_sampling_types::inject_streaming_reasoning_fallback(&mut items, reasoning_acc);
 
         let has_tool_calls = items.iter().any(|i| match i {
@@ -524,6 +556,16 @@ mod tests {
 
     fn rid() -> RequestId {
         RequestId::from("resp-test")
+    }
+
+    #[test]
+    fn streamed_text_creates_assistant_when_terminal_output_has_none() {
+        let mut items = Vec::new();
+
+        apply_streamed_text_fallback(&mut items, "from deltas".to_string());
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].text_content(), "from deltas");
     }
 
     /// Build a minimal `rs_types::Response` for use in `ResponseCompleted`
@@ -653,9 +695,34 @@ mod tests {
         match events.last().unwrap() {
             SamplingEvent::Completed { response, .. } => {
                 assert_eq!(response.stop_reason, Some(StopReason::Stop));
+                assert_eq!(response.assistant_text(), "hello");
             }
             other => panic!("expected Completed, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn completed_event_terminates_before_trailing_stream_events() {
+        let failed = rs::ResponseStreamEvent::ResponseFailed(rs_types::ResponseFailedEvent {
+            response: failed_response_with_error("must not be consumed"),
+            sequence_number: 1,
+        });
+        let raw = stream::iter(vec![Ok(completed_event()), Ok(failed)]).boxed();
+        let events = collect(stream_responses(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+            None,
+        ))
+        .await;
+
+        assert!(matches!(events.last(), Some(SamplingEvent::Completed { .. })));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, SamplingEvent::Failed { .. }))
+        );
     }
 
     #[tokio::test]

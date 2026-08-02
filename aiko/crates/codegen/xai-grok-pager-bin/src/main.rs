@@ -32,8 +32,8 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use xai_grok_pager::app::{
-    AgentCmd, Command, HeadlessArgs, LeaderMgmtArgs, LeaderMgmtCommand, LeaderTargetArgs,
-    PagerArgs, join_early_prefetch, resolve_use_leader,
+    AgentCmd, Command, ContractPairAction, HeadlessArgs, LeaderMgmtArgs, LeaderMgmtCommand,
+    LeaderTargetArgs, PagerArgs, join_early_prefetch, resolve_use_leader,
 };
 use xai_grok_pager::app::{WorkspaceMgmtArgs, WorkspaceMgmtCommand, WorkspaceStartArgs};
 use xai_grok_pager::client_identity::PAGER_CLIENT_VERSION;
@@ -148,6 +148,45 @@ fn init_tracing_simple(app_entrypoint: &'static str) {
             },
         ),
     );
+}
+
+/// Dispatch for `aiko contract-pair` — paired contracts (work + witness).
+fn run_contract_pair(action: ContractPairAction) -> Result<()> {
+    match action {
+        ContractPairAction::Create { goal, check } => {
+            let pair = xai_grok_shell::contract_native::pair::create_pair(&goal, &check)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            println!("work:    {}", pair.work_id);
+            println!("witness: {}", pair.witness_id);
+            println!("goal:    {goal}");
+            println!("check:   {check}");
+            Ok(())
+        }
+        ContractPairAction::Verify { work_id } => {
+            let (work_ok, witness_ok, summary) =
+                xai_grok_shell::contract_native::pair::verify_pair(&work_id)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+            println!("{summary}");
+            if !work_ok || !witness_ok {
+                anyhow::bail!("pair verification failed — one or both checks did not pass");
+            }
+            println!("✓ pair verified — both work and witness satisfied");
+            Ok(())
+        }
+        ContractPairAction::List => {
+            let pairs = xai_grok_shell::contract_native::pair::list_pairs();
+            if pairs.is_empty() {
+                println!("no paired contracts found");
+                return Ok(());
+            }
+            println!("{:<10} {:<10} {}", "work", "witness", "goal");
+            println!("{}", "-".repeat(50));
+            for pair in pairs {
+                println!("{:<10} {:<10} {}", pair.work_id, pair.witness_id, pair.goal);
+            }
+            Ok(())
+        }
+    }
 }
 
 async fn run_contract_worker(once: bool, poll_seconds: u64) -> Result<()> {
@@ -2087,6 +2126,10 @@ async fn async_main() -> Result<()> {
                 init_tracing_simple("cli");
                 return xai_grok_pager::mcp_cmd::run(mcp_args).await;
             }
+            Command::ContractPair { action } => {
+                init_tracing_simple("cli");
+                return run_contract_pair(action);
+            }
             Command::Plugin(plugin_args) => {
                 init_tracing_simple("cli");
                 let _otel_guard = xai_grok_telemetry::otel_layer::otel_guard();
@@ -2188,7 +2231,9 @@ async fn async_main() -> Result<()> {
                 if let Some(ref provider_name) = provider {
                     match provider_name.as_str() {
                         "codex" => {
-                            let home = xai_grok_shell::util::grok_home::grok_home();
+                            let home = dirs::home_dir().ok_or_else(|| {
+                                anyhow::anyhow!("could not determine the home directory")
+                            })?;
                             xai_grok_shell::auth::codex_oauth::codex_login(&home).await?;
                             println!();
                             xai_grok_shell::instrumentation::finalize_and_exit(0);
