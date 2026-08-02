@@ -24,8 +24,14 @@ AIKO_BIN_DIR="${AIKO_BIN_DIR:-$HOME/.local/bin}"
 AIKO_LIB_DIR="${AIKO_LIB_DIR:-$AIKO_HOME/lib}"
 
 # Version manifest — the single source of truth for pinned versions
-# Update this file to bump versions across all machines
-MANIFEST_URL="$GITEA_URL/$GITEA_ORG/aiko-sdk/raw/branch/main/versions.lock"
+# Prefer monorepo-embedded lock, then aiko-sdk repo, then commons/aiko path.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOCAL_MANIFEST="$SCRIPT_DIR/../versions.lock"
+if [[ -f "$LOCAL_MANIFEST" ]]; then
+    MANIFEST_URL="file://$LOCAL_MANIFEST"
+else
+    MANIFEST_URL="${AIKO_MANIFEST_URL:-$GITEA_URL/$GITEA_ORG/commons/raw/branch/main/aiko/sdk/registry/versions.lock}"
+fi
 
 # Colors
 RED='\033[0;31m'
@@ -71,7 +77,11 @@ http_status() {
 # ─── Version management ────────────────────────────────────────────────────
 
 fetch_manifest() {
-    http_get "$MANIFEST_URL" "/tmp/aiko-versions.lock" 2>/dev/null
+    if [[ "$MANIFEST_URL" == file://* ]]; then
+        cp "${MANIFEST_URL#file://}" /tmp/aiko-versions.lock
+    else
+        http_get "$MANIFEST_URL" "/tmp/aiko-versions.lock" 2>/dev/null || true
+    fi
     if [[ ! -f /tmp/aiko-versions.lock ]] || [[ ! -s /tmp/aiko-versions.lock ]]; then
         err "Cannot fetch version manifest from $MANIFEST_URL"
         err "Check your Tailscale connection and GITEA_TOKEN"
@@ -131,6 +141,13 @@ install_contract() {
 
     local lib_ext="dylib"
     [[ "$(uname -s)" == "Linux" ]] && lib_ext="so"
+
+    # Dual-name so macOS-era tooling and Linux loaders both resolve.
+    if [[ -f "$AIKO_LIB_DIR/libcontract.so" && ! -e "$AIKO_LIB_DIR/libcontract.dylib" ]]; then
+        ln -sfn libcontract.so "$AIKO_LIB_DIR/libcontract.dylib"
+    elif [[ -f "$AIKO_LIB_DIR/libcontract.dylib" && ! -e "$AIKO_LIB_DIR/libcontract.so" && "$(uname -s)" == "Linux" ]]; then
+        ln -sfn libcontract.dylib "$AIKO_LIB_DIR/libcontract.so"
+    fi
 
     ok "libcontract v${version} installed → $AIKO_LIB_DIR/libcontract.${lib_ext}"
 }

@@ -15,14 +15,21 @@ GITEA_URL="${GITEA_URL:-http://100.124.140.92:3000}"
 GITEA_TOKEN="${GITEA_TOKEN:?GITEA_TOKEN must be set}"
 GITEA_ORG="Unbrowse"
 
-# Source repo roots (relative to this script)
+# Source repo roots (relative to this script).
+# Monorepo layout: commons/{aiko,contract,neuron}
+# Legacy layout:   sibling repos next to aiko/
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SDK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-REPOS_ROOT="$(cd "$SDK_ROOT/../../.." && pwd)"
-
-CONTRACT_DIR="$REPOS_ROOT/contract"
-NEURON_DIR="$REPOS_ROOT/neuron"
-AIKO_DIR="$REPOS_ROOT/aiko"
+AIKO_DIR="$(cd "$SDK_ROOT/../.." && pwd)"
+if [[ -d "$AIKO_DIR/../contract/libcontract" && -d "$AIKO_DIR/../neuron" ]]; then
+    REPOS_ROOT="$(cd "$AIKO_DIR/.." && pwd)"
+    CONTRACT_DIR="$REPOS_ROOT/contract"
+    NEURON_DIR="$REPOS_ROOT/neuron"
+else
+    REPOS_ROOT="$(cd "$AIKO_DIR/.." && pwd)"
+    CONTRACT_DIR="${AIKO_CONTRACT_REPO:-$REPOS_ROOT/contract}"
+    NEURON_DIR="${AIKO_NEURON_REPO:-$REPOS_ROOT/neuron}"
+fi
 
 # Colors
 RED='\033[0;31m'
@@ -163,6 +170,33 @@ publish_aiko() {
     local version="${1:-$(read_current_version aiko)}"
     local platform
     platform="$(detect_platform)"
+
+    # Prefer the combined package from scripts/contract-runtime.sh package when present.
+    local combined_dir="$AIKO_DIR/target/aiko-package/aiko-${version}-${platform}"
+    local combined_tgz="$AIKO_DIR/target/aiko-package/aiko-${version}-${platform}.tar.gz"
+    if [[ -x "$combined_dir/bin/aiko" ]]; then
+        info "Publishing aiko v${version} from existing combined package"
+        local pkg_name="aiko-${version}-${platform}.tar.gz"
+        local pkg_file="/tmp/${pkg_name}"
+        tar -czf "$pkg_file" -C "$combined_dir/bin" aiko
+        publish_generic "aiko" "$version" "$pkg_name" "$pkg_file"
+        rm -f "$pkg_file"
+
+        if [[ -f "$combined_dir/lib/libcontract.so" || -f "$combined_dir/lib/libcontract.dylib" ]]; then
+            local lib_ext=dylib
+            [[ -f "$combined_dir/lib/libcontract.so" ]] && lib_ext=so
+            local c_name="libcontract-${version}-${platform}.tar.gz"
+            local c_file="/tmp/${c_name}"
+            tar -czf "$c_file" -C "$combined_dir/lib" "libcontract.${lib_ext}"
+            publish_generic "contract" "$version" "$c_name" "$c_file"
+            rm -f "$c_file"
+        fi
+
+        if [[ -f "$combined_tgz" ]]; then
+            publish_generic "aiko-full" "$version" "aiko-${version}-${platform}.tar.gz" "$combined_tgz"
+        fi
+        return 0
+    fi
 
     info "Building aiko v${version}..."
     cd "$AIKO_DIR"
