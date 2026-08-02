@@ -129,6 +129,7 @@ fn writeAllStdout(bytes: []const u8) !void {
     }
 }
 
+/// NDJSON response (legacy / Claude-friendly).
 fn writeLine(allocator: std.mem.Allocator, line: []const u8) !void {
     var buf = try allocator.alloc(u8, line.len + 1);
     defer allocator.free(buf);
@@ -137,7 +138,24 @@ fn writeLine(allocator: std.mem.Allocator, line: []const u8) !void {
     try writeAllStdout(buf);
 }
 
-fn writeError(allocator: std.mem.Allocator, id: Value, code: i64, message: []const u8) !void {
+/// Content-Length framed response (MCP / LSP standard).
+fn writeContentLength(body: []const u8) !void {
+    var hdr_buf: [64]u8 = undefined;
+    const hdr = try std.fmt.bufPrint(&hdr_buf, "Content-Length: {d}\r\n\r\n", .{body.len});
+    try writeAllStdout(hdr);
+    try writeAllStdout(body);
+}
+
+/// Reply in the framing the client used on the last request.
+fn writeMessage(allocator: std.mem.Allocator, line: []const u8, content_length: bool) !void {
+    if (content_length) {
+        try writeContentLength(line);
+    } else {
+        try writeLine(allocator, line);
+    }
+}
+
+fn writeError(allocator: std.mem.Allocator, id: Value, code: i64, message: []const u8, content_length: bool) !void {
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
     var s = std.json.Stringify{ .writer = &aw.writer };
@@ -154,10 +172,10 @@ fn writeError(allocator: std.mem.Allocator, id: Value, code: i64, message: []con
     try s.write(message);
     try s.endObject();
     try s.endObject();
-    try writeLine(allocator, aw.writer.buffered());
+    try writeMessage(allocator, aw.writer.buffered(), content_length);
 }
 
-fn writeInitialize(allocator: std.mem.Allocator, id: Value, info: ServerInfo) !void {
+fn writeInitialize(allocator: std.mem.Allocator, id: Value, info: ServerInfo, content_length: bool) !void {
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
     var s = std.json.Stringify{ .writer = &aw.writer };
@@ -191,10 +209,10 @@ fn writeInitialize(allocator: std.mem.Allocator, id: Value, info: ServerInfo) !v
     try s.endObject();
     try s.endObject();
     try s.endObject();
-    try writeLine(allocator, aw.writer.buffered());
+    try writeMessage(allocator, aw.writer.buffered(), content_length);
 }
 
-fn writeToolsList(allocator: std.mem.Allocator, arena: std.mem.Allocator, id: Value, tools: []const ToolSpec) !void {
+fn writeToolsList(allocator: std.mem.Allocator, arena: std.mem.Allocator, id: Value, tools: []const ToolSpec, content_length: bool) !void {
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
     var s = std.json.Stringify{ .writer = &aw.writer };
@@ -221,10 +239,10 @@ fn writeToolsList(allocator: std.mem.Allocator, arena: std.mem.Allocator, id: Va
     try s.endArray();
     try s.endObject();
     try s.endObject();
-    try writeLine(allocator, aw.writer.buffered());
+    try writeMessage(allocator, aw.writer.buffered(), content_length);
 }
 
-fn writeToolResult(allocator: std.mem.Allocator, id: Value, result: ToolResult) !void {
+fn writeToolResult(allocator: std.mem.Allocator, id: Value, result: ToolResult, content_length: bool) !void {
     var aw: std.Io.Writer.Allocating = .init(allocator);
     defer aw.deinit();
     var s = std.json.Stringify{ .writer = &aw.writer };
@@ -248,7 +266,7 @@ fn writeToolResult(allocator: std.mem.Allocator, id: Value, result: ToolResult) 
     try s.write(result.is_error);
     try s.endObject();
     try s.endObject();
-    try writeLine(allocator, aw.writer.buffered());
+    try writeMessage(allocator, aw.writer.buffered(), content_length);
 }
 
 fn specFor(tools: []const ToolSpec, name: []const u8) ?ToolSpec {
@@ -265,33 +283,34 @@ fn handleToolsCall(
     env: std.process.Environ,
     tools: []const ToolSpec,
     dispatch: DispatchFn,
+    content_length: bool,
 ) !void {
     if (params != .object) {
-        try writeError(allocator, id, -32602, "Invalid params");
+        try writeError(allocator, id, -32602, "Invalid params", content_length);
         return;
     }
     const name_val = params.object.get("name") orelse {
-        try writeError(allocator, id, -32602, "Missing tool name");
+        try writeError(allocator, id, -32602, "Missing tool name", content_length);
         return;
     };
     if (name_val != .string) {
-        try writeError(allocator, id, -32602, "Tool name must be a string");
+        try writeError(allocator, id, -32602, "Tool name must be a string", content_length);
         return;
     }
     const tool_name = name_val.string;
     if (specFor(tools, tool_name) == null) {
-        try writeError(allocator, id, -32601, "Tool not found");
+        try writeError(allocator, id, -32601, "Tool not found", content_length);
         return;
     }
     const args_val = params.object.get("arguments") orelse Value{ .object = .empty };
     const output = dispatch(allocator, env, tool_name, args_val) catch |e| {
         const msg = try std.fmt.allocPrint(allocator, "dispatch error: {s}", .{@errorName(e)});
         defer allocator.free(msg);
-        try writeToolResult(allocator, id, .{ .text = msg, .is_error = true });
+        try writeToolResult(allocator, id, .{ .text = msg, .is_error = true }, content_length);
         return;
     };
     defer allocator.free(output.text);
-    try writeToolResult(allocator, id, output);
+    try writeToolResult(allocator, id, output, content_length);
 }
 
 fn readStdinLine(allocator: std.mem.Allocator) !?[]u8 {
@@ -310,6 +329,60 @@ fn readStdinLine(allocator: std.mem.Allocator) !?[]u8 {
     return try buf.toOwnedSlice(allocator);
 }
 
+/// Read one MCP message. Supports:
+///   · NDJSON (one JSON object per line) — historical Aiko/Claude path
+///   · Content-Length framing (MCP/LSP) — Grok and most SDK clients
+/// Sets `content_length_out` so replies can mirror the request framing.
+fn readStdinMessage(allocator: std.mem.Allocator, content_length_out: *bool) !?[]u8 {
+    const first = try readStdinLine(allocator) orelse return null;
+    const trimmed = std.mem.trim(u8, first, " \t\r\n");
+
+    // Content-Length: N\r\n ... \r\n\r\n <body>
+    if (std.mem.startsWith(u8, trimmed, "Content-Length:") or std.mem.startsWith(u8, trimmed, "content-length:")) {
+        content_length_out.* = true;
+        const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse {
+            allocator.free(first);
+            return error.InvalidFraming;
+        };
+        const len_str = std.mem.trim(u8, trimmed[colon + 1 ..], " \t");
+        const content_len = std.fmt.parseInt(usize, len_str, 10) catch {
+            allocator.free(first);
+            return error.InvalidFraming;
+        };
+        allocator.free(first);
+        // Consume remaining headers until blank line
+        while (true) {
+            const h = try readStdinLine(allocator) orelse return null;
+            const ht = std.mem.trim(u8, h, " \t\r\n");
+            const blank = ht.len == 0;
+            allocator.free(h);
+            if (blank) break;
+        }
+        if (content_len == 0) return try allocator.dupe(u8, "");
+        const body = try allocator.alloc(u8, content_len);
+        errdefer allocator.free(body);
+        var off: usize = 0;
+        while (off < content_len) {
+            const n = std.c.read(std.c.STDIN_FILENO, body[off..].ptr, content_len - off);
+            if (n <= 0) {
+                allocator.free(body);
+                return null;
+            }
+            off += @intCast(n);
+        }
+        return body;
+    }
+
+    content_length_out.* = false;
+    // NDJSON: the first line *is* the message. Transfer ownership of `first`
+    // only when we keep it; if trim changed length, re-dupe the trimmed view.
+    if (trimmed.len == first.len and trimmed.ptr == first.ptr) {
+        return first;
+    }
+    defer allocator.free(first);
+    return try allocator.dupe(u8, trimmed);
+}
+
 /// Run the MCP stdio loop until stdin closes.
 pub fn runStdio(
     allocator: std.mem.Allocator,
@@ -319,9 +392,16 @@ pub fn runStdio(
     dispatch: DispatchFn,
 ) !void {
     var initialized = false;
+    var reply_cl = false;
 
     while (true) {
-        const line_owned = try readStdinLine(allocator);
+        const line_owned = readStdinMessage(allocator, &reply_cl) catch |e| {
+            if (e == error.InvalidFraming) {
+                try writeError(allocator, .null, -32700, "Parse error", false);
+                continue;
+            }
+            return e;
+        };
         if (line_owned == null) break;
         defer allocator.free(line_owned.?);
         const trimmed = std.mem.trim(u8, line_owned.?, " \t\r\n");
@@ -332,31 +412,31 @@ pub fn runStdio(
         const arena = arena_state.allocator();
 
         const parsed = std.json.parseFromSliceLeaky(Value, arena, trimmed, .{ .allocate = .alloc_always }) catch {
-            try writeError(allocator, .null, -32700, "Parse error");
+            try writeError(allocator, .null, -32700, "Parse error", reply_cl);
             continue;
         };
 
         if (parsed != .object) {
-            try writeError(allocator, .null, -32600, "Invalid Request");
+            try writeError(allocator, .null, -32600, "Invalid Request", reply_cl);
             continue;
         }
 
         const jsonrpc = parsed.object.get("jsonrpc") orelse {
-            try writeError(allocator, .null, -32600, "Invalid Request");
+            try writeError(allocator, .null, -32600, "Invalid Request", reply_cl);
             continue;
         };
         if (jsonrpc != .string or !std.mem.eql(u8, jsonrpc.string, "2.0")) {
-            try writeError(allocator, .null, -32600, "Invalid Request");
+            try writeError(allocator, .null, -32600, "Invalid Request", reply_cl);
             continue;
         }
 
         const id = parsed.object.get("id") orelse .null;
         const method_val = parsed.object.get("method") orelse {
-            if (id != .null) try writeError(allocator, id, -32600, "Invalid Request");
+            if (id != .null) try writeError(allocator, id, -32600, "Invalid Request", reply_cl);
             continue;
         };
         if (method_val != .string) {
-            if (id != .null) try writeError(allocator, id, -32600, "Invalid Request");
+            if (id != .null) try writeError(allocator, id, -32600, "Invalid Request", reply_cl);
             continue;
         }
         const method = method_val.string;
@@ -364,7 +444,7 @@ pub fn runStdio(
 
         if (std.mem.eql(u8, method, "initialize")) {
             initialized = true;
-            try writeInitialize(allocator, id, info);
+            try writeInitialize(allocator, id, info, reply_cl);
         } else if (std.mem.eql(u8, method, "notifications/initialized")) {
             // no response
         } else if (std.mem.eql(u8, method, "ping")) {
@@ -381,16 +461,16 @@ pub fn runStdio(
                 try s.beginObject();
                 try s.endObject();
                 try s.endObject();
-                try writeLine(allocator, aw.writer.buffered());
+                try writeMessage(allocator, aw.writer.buffered(), reply_cl);
             }
         } else if (!initialized) {
-            if (id != .null) try writeError(allocator, id, -32002, "Server not initialized");
+            if (id != .null) try writeError(allocator, id, -32002, "Server not initialized", reply_cl);
         } else if (std.mem.eql(u8, method, "tools/list")) {
-            try writeToolsList(allocator, arena, id, tools);
+            try writeToolsList(allocator, arena, id, tools, reply_cl);
         } else if (std.mem.eql(u8, method, "tools/call")) {
-            try handleToolsCall(allocator, id, params, env, tools, dispatch);
+            try handleToolsCall(allocator, id, params, env, tools, dispatch, reply_cl);
         } else {
-            if (id != .null) try writeError(allocator, id, -32601, "Method not found");
+            if (id != .null) try writeError(allocator, id, -32601, "Method not found", reply_cl);
         }
     }
 }
