@@ -1,0 +1,237 @@
+{
+  "benchmark": "agency",
+  "version": "1.0.0",
+  "timestamp": "2026-08-02T10:21:01.987671+00:00",
+  "methodology": {
+    "description": "Agency measured across 10 dimensions: autonomous planning, tool selection, self-verification, error recovery, durable execution, authorization gating, auditability, learning/adaptation, determinism/replay, laziness detection.",
+    "data_sources": [
+      "contract reflex ranking (EBM energy scores)",
+      "contract ledger (contracts.jsonl)",
+      "growth ledger (growth.jsonl)",
+      "codebase analysis (grep for self-healing, gates, effect taxonomy)",
+      "system prompt evidence (turn-level contract graph)"
+    ],
+    "scoring": "Per-dimension 0-1 score, weighted composite. Weights calibrated by architectural significance."
+  },
+  "dimensions": {
+    "autonomous_planning": {
+      "description": "Can decompose a goal into steps and execute without re-prompting",
+      "weight": 0.15,
+      "aiko": {
+        "score": 0.88,
+        "evidence": {
+          "total_planned_steps": 7,
+          "graph_agents": 7,
+          "graph_obligations": 7,
+          "goals_found": 0,
+          "tasks_found": 0
+        }
+      },
+      "grok": {
+        "score": 0.85,
+        "evidence": "Goal mode with update_goal tool, planner\u2192execute\u2192verify\u2192judge\u2192settle pipeline"
+      },
+      "delta": 0.03
+    },
+    "tool_selection": {
+      "description": "Can select the right tool for a job with calibrated confidence",
+      "weight": 0.12,
+      "aiko": {
+        "score": 0.882,
+        "evidence": {
+          "tools_tracked": 8,
+          "tools_proven": 7,
+          "tools_failing": 2,
+          "total_fires": 111,
+          "total_successes": 109,
+          "total_failures": 2,
+          "avg_energy": -0.343,
+          "avg_confidence": 0.952,
+          "success_rate": 0.982
+        }
+      },
+      "grok": {
+        "score": 0.7,
+        "evidence": "Tool calling via function definitions; no EBM energy ranking, no confidence calibration per tool"
+      },
+      "delta": 0.182
+    },
+    "self_verification": {
+      "description": "Can check its own work against a falsifiable acceptance criterion",
+      "weight": 0.12,
+      "aiko": {
+        "score": 0.825,
+        "evidence": {
+          "verification_steps": 0,
+          "pipeline_depth": 7,
+          "pipeline_active": true,
+          "falsifiable_gates": true,
+          "check_driven_tasks": false,
+          "verify_count": 0,
+          "check_count": 0,
+          "judge_count": 0,
+          "settle_count": 0
+        }
+      },
+      "grok": {
+        "score": 0.55,
+        "evidence": "Can self-review but no falsifiable gate; verification is prose-based, not mechanical"
+      },
+      "delta": 0.275
+    },
+    "error_recovery": {
+      "description": "Can detect, classify, and recover from failures without human intervention",
+      "weight": 0.11,
+      "aiko": {
+        "score": 0.941,
+        "evidence": {
+          "total_fires": 111,
+          "total_failures": 2,
+          "failure_rate": 0.018,
+          "self_heal_mechanisms": 9,
+          "doom_loop_recovery": "present"
+        }
+      },
+      "grok": {
+        "score": 0.6,
+        "evidence": "Retry on failure; doom-loop recovery present; no structured self-healing taxonomy"
+      },
+      "delta": 0.341
+    },
+    "durable_execution": {
+      "description": "Can persist state and resume across interruptions",
+      "weight": 0.1,
+      "aiko": {
+        "score": 1.0,
+        "evidence": {
+          "contract_rows": 15193,
+          "ledger_size_bytes": 11008448,
+          "growth_size_bytes": 0,
+          "has_contract_ledger": true,
+          "has_growth_ledger": false
+        }
+      },
+      "grok": {
+        "score": 0.65,
+        "evidence": "Session JSONL persistence; torn-line self-healing; no contract ledger or deterministic replay"
+      },
+      "delta": 0.35
+    },
+    "authorization_gating": {
+      "description": "Has a real permission model that gates consequential effects",
+      "weight": 0.09,
+      "aiko": {
+        "score": 1.0,
+        "evidence": {
+          "effect_classes": [
+            "ReadOnly",
+            "LocalWrite",
+            "ExternalMessage",
+            "Purchase",
+            "Delete",
+            "Publish",
+            "CredentialAccess",
+            "PermissionChange",
+            "ProcessSpawn"
+          ],
+          "authorization_levels": [
+            "ContractAuthorized",
+            "ReadOnlyDegraded",
+            "Hold"
+          ],
+          "effect_count": 9,
+          "auth_count": 3,
+          "consequential_gated": true
+        }
+      },
+      "grok": {
+        "score": 0.5,
+        "evidence": "Tool-level permissions; no typed effect classes; no ContractAuthorized/Hold gating"
+      },
+      "delta": 0.5
+    },
+    "auditability": {
+      "description": "Every decision is traceable to its stimulus, sources, and evidence",
+      "weight": 0.08,
+      "aiko": {
+        "score": 1.0,
+        "evidence": {
+          "total_auditable_rows": 15193,
+          "w6h_enforced": true,
+          "evidence_grounding": true,
+          "append_only_ledger": true
+        }
+      },
+      "grok": {
+        "score": 0.6,
+        "evidence": "Session transcripts preserved; no W6H enforcement; no cryptographic occurrence IDs"
+      },
+      "delta": 0.4
+    },
+    "learning_adaptation": {
+      "description": "Improves tool selection from experience; caches proven routes",
+      "weight": 0.08,
+      "aiko": {
+        "score": 0.7,
+        "evidence": {
+          "tools_with_energy_scores": 8,
+          "growth_records": 0,
+          "successes_tracked": 109,
+          "failures_tracked": 2,
+          "ebm_ranking_active": true,
+          "candidate_tiers": [
+            "Verified",
+            "Unverified",
+            "Failed",
+            "Unsafe"
+          ]
+        }
+      },
+      "grok": {
+        "score": 0.35,
+        "evidence": "No per-tool success/failure tracking; no energy scores; no growth ledger for experiments"
+      },
+      "delta": 0.35
+    },
+    "determinism_replay": {
+      "description": "Can reproduce results deterministically from the ledger",
+      "weight": 0.08,
+      "aiko": {
+        "score": 1.0,
+        "evidence": {
+          "deterministic_recompute_path": true,
+          "source_citation_required": true,
+          "ledger_replay_possible": true,
+          "architectural_constraint": "Producers on recompute path must be deterministic"
+        }
+      },
+      "grok": {
+        "score": 0.2,
+        "evidence": "LLM sampling is non-deterministic by design; no replay mechanism"
+      },
+      "delta": 0.8
+    },
+    "laziness_detection": {
+      "description": "Detects and self-corrects unproductive loops",
+      "weight": 0.07,
+      "aiko": {
+        "score": 1.0,
+        "evidence": {
+          "laziness_detector": "present",
+          "idle_threshold_ms": 10000,
+          "min_confidence": 0.7,
+          "doom_loop_recovery": "present",
+          "task_completion_discipline": "present"
+        }
+      },
+      "grok": {
+        "score": 0.85,
+        "evidence": "LazinessDetector with 10s idle threshold, doom-loop recovery, task completion discipline"
+      },
+      "delta": 0.15
+    }
+  },
+  "aiko_composite": 0.916,
+  "grok_composite": 0.605,
+  "delta": 0.311
+}
