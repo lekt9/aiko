@@ -277,6 +277,56 @@ When you set `models_base_url`, Grok uses API key auth (`Authorization: Bearer`)
 
 ---
 
+## Codex (ChatGPT)
+
+Codex (OpenAI ChatGPT) is available as a built-in provider with its own OAuth login. Aiko reuses the official Codex CLI's OAuth app — if you have already run `codex login`, Aiko picks up the same `~/.codex/auth.json` credential.
+
+### Login
+
+```bash
+aiko login codex
+```
+
+This opens your browser to `auth.openai.com` (the official ChatGPT OAuth console). Once you authorize, the token is stored in `~/.codex/auth.json` — the same file the official Codex CLI reads, so logging in once works everywhere.
+
+### Select the Model
+
+```bash
+# In the TUI
+/model codex
+
+# Or from the CLI
+aiko -m codex
+```
+
+### Models Available
+
+| Model | Context |
+|-------|---------|
+| `gpt-5.6-sol` (default) | 270k tokens |
+| `gpt-5.6-luna` | 270k tokens |
+| `gpt-5.6-terra` | 270k tokens |
+| `gpt-5.5` | 270k tokens |
+
+Select a specific model by configuring an override:
+
+```toml
+[model.codex-gpt55]
+model = "gpt-5.5"
+base_url = "https://chatgpt.com/backend-api/codex/responses"
+name = "GPT-5.5 (Codex)"
+api_backend = "responses"
+context_window = 270000
+```
+
+### Troubleshooting
+
+**"codex model selected but not logged in"** — run `aiko login codex` first.
+
+**401 / expired token** — the token auto-refreshes near expiry. If you see a 401 during a turn, re-run `aiko login codex` to get a fresh token (refresh tokens issued by OpenAI are single-use; a concurrent sub-agent may have consumed it).
+
+---
+
 ## Web Search Model
 
 The `web_search` tool uses a separate model. Configure it with:

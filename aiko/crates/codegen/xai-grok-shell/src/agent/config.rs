@@ -3347,6 +3347,10 @@ struct DefaultModelJson {
     model: String,
     name: Option<String>,
     description: Option<String>,
+    /// Override the inference base URL for providers that don't use the
+    /// default xAI endpoint (e.g. Codex Responses API).
+    #[serde(default)]
+    base_url: Option<String>,
     context_window: Option<NonZeroU64>,
     temperature: Option<f32>,
     top_p: Option<f32>,
@@ -3398,11 +3402,16 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
             let context_window = m
                 .context_window
                 .unwrap_or_else(|| NonZeroU64::new(200_000).expect("200000 is non-zero"));
+            let base_url = m
+                .base_url
+                .clone()
+                .unwrap_or_else(|| endpoints.resolve_inference_base_url());
             let config = ModelEntryConfig {
                 id: m.id,
                 model: m.model,
-                base_url: endpoints.resolve_inference_base_url(),
-                api_base_url: Some(endpoints.xai_api_base_url.clone()),
+                base_url,
+                api_base_url: m.base_url.map(|_| String::new())
+                    .or(Some(endpoints.xai_api_base_url.clone())),
                 name: m.name,
                 description: m.description,
                 context_window,
@@ -4303,7 +4312,8 @@ pub(crate) fn first_own_credential(
         .or_else(|| env_key.and_then(EnvKeys::resolve_value))
 }
 /// Resolve credentials for a model.
-/// Priority: model api_key/env_key > session token > XAI_API_KEY.
+/// Priority: model api_key/env_key > session token > XAI_API_KEY > \
+///            OAuth (Codex Kimi etc.) > no-key.
 ///
 /// When `env_key` lists multiple names, the first set non-empty value is used.
 pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> ResolvedCredentials {
@@ -4326,6 +4336,27 @@ pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> Res
             .clone()
             .unwrap_or_else(|| info.base_url.clone());
         (Some(key), url, xai_chat_state::AuthType::ApiKey)
+    } else if info.base_url.contains("chatgpt.com/backend-api/codex") {
+        // Codex (ChatGPT) OAuth — reads ~/.codex/auth.json written by
+        // `aiko login codex` (or the official Codex CLI).
+        let home = crate::util::grok_home::grok_home();
+        if let Some(codex_auth) = crate::auth::codex_oauth::load_codex_auth_fresh(&home) {
+            (
+                Some(codex_auth.access_token),
+                info.base_url.clone(),
+                xai_chat_state::AuthType::SessionToken, // OAuth → treated like session auth
+            )
+        } else {
+            tracing::warn!(
+                model = % info.model,
+                "codex model selected but not logged in — run `aiko login codex`"
+            );
+            (
+                None,
+                info.base_url.clone(),
+                xai_chat_state::AuthType::ApiKey,
+            )
+        }
     } else {
         if let Some(ref env_keys) = model.env_key
             && !env_keys.is_empty()

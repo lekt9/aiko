@@ -1,4 +1,5 @@
 pub(crate) mod attribution;
+pub mod codex_oauth;
 mod config;
 pub mod credential_provider;
 #[path = "devbox_login_stub.rs"]

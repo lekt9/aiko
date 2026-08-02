@@ -13,6 +13,26 @@
       "top_p": 0.95,
       "api_backend": "chat_completions",
       "supported_in_api": false
+    },
+    {
+      "id": "codex",
+      "model": "gpt-5.6-sol",
+      "name": "Codex (ChatGPT)",
+      "description": "OpenAI Codex via ChatGPT Responses API. Login with `aiko login codex`.",
+      "base_url": "https://chatgpt.com/backend-api/codex/responses",
+      "context_window": 270000,
+      "temperature": 0.7,
+      "top_p": 0.95,
+      "api_backend": "responses",
+      "agent_type": "codex",
+      "supported_in_api": false,
+      "hidden": false,
+      "supports_reasoning_effort": true,
+      "reasoning_efforts": [
+        {"name": "medium", "label": "Medium"},
+        {"name": "high", "label": "High"}
+      ],
+      "supports_backend_search": false
     }
   ]
 }

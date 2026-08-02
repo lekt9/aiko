@@ -2177,6 +2177,7 @@ async fn async_main() -> Result<()> {
                 .await;
             }
             Command::Login {
+                provider,
                 legacy: _,
                 oauth,
                 device_auth,
@@ -2184,13 +2185,30 @@ async fn async_main() -> Result<()> {
             } => {
                 init_tracing_simple("cli");
                 let _otel_guard = xai_grok_telemetry::otel_layer::otel_guard();
-                let config = xai_grok_shell::config::load_effective_config_disk_only()
-                    .map_err(|e| anyhow::anyhow!("Failed to load config: {e}"))?;
-                let config = AgentConfig::new_from_toml_cfg(&config)
-                    .map_err(|e| anyhow::anyhow!("Failed to create agent config: {e}"))?;
-                xai_grok_shell::auth::run_cli_login(&config, oauth, device_auth, devbox).await?;
-                println!();
-                xai_grok_shell::instrumentation::finalize_and_exit(0);
+                if let Some(ref provider_name) = provider {
+                    match provider_name.as_str() {
+                        "codex" => {
+                            let home = xai_grok_shell::util::grok_home::grok_home();
+                            xai_grok_shell::auth::codex_oauth::codex_login(&home).await?;
+                            println!();
+                            xai_grok_shell::instrumentation::finalize_and_exit(0);
+                        }
+                        other => {
+                            anyhow::bail!(
+                                "unknown provider '{}' — did you mean 'codex'?",
+                                other
+                            );
+                        }
+                    }
+                } else {
+                    let config = xai_grok_shell::config::load_effective_config_disk_only()
+                        .map_err(|e| anyhow::anyhow!("Failed to load config: {e}"))?;
+                    let config = AgentConfig::new_from_toml_cfg(&config)
+                        .map_err(|e| anyhow::anyhow!("Failed to create agent config: {e}"))?;
+                    xai_grok_shell::auth::run_cli_login(&config, oauth, device_auth, devbox).await?;
+                    println!();
+                    xai_grok_shell::instrumentation::finalize_and_exit(0);
+                }
             }
             Command::Logout => {
                 init_tracing_simple("cli");

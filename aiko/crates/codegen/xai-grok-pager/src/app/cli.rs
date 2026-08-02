@@ -266,11 +266,18 @@ pub enum Command {
     Logout,
     /// Sign in or create an Aiko account
     Login {
+        /// Third-party provider to authenticate with (e.g. "codex" for ChatGPT).
+        /// Without this argument, the default xAI OAuth2 flow is used.
+        provider: Option<String>,
         /// Ignored (kept for backwards compatibility). OAuth2 is now the only auth method.
         #[arg(long, hide = true)]
         legacy: bool,
         /// Use Grok OAuth via auth.x.ai.
-        #[arg(long = "oauth", alias = "oidc", conflicts_with_all = ["device_auth"])]
+        #[arg(
+            long = "oauth",
+            alias = "oidc",
+            conflicts_with_all = ["device_auth"]
+        )]
         oauth: bool,
         /// Use device-code authentication for headless/remote environments.
         #[arg(
