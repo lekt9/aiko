@@ -3178,6 +3178,15 @@ pub fn resolve_model_list(
             }
         }
         resolved = prefetched;
+
+        // Always inject providers that ship with Aiko's bundled defaults
+        // but may be absent from the remote catalog (e.g. codex).
+        let bundled = default_model_entries(&cfg.endpoints);
+        if let Some((key, entry)) = bundled.into_iter().find(|(k, _)| k == "codex") {
+            if !resolved.contains_key(&key) {
+                resolved.insert(key, entry);
+            }
+        }
     }
     for (key, model_override) in &cfg.config_models {
         let had_base = resolved.contains_key(key);
