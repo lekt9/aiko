@@ -47,6 +47,52 @@ scripts/contract-runtime.sh package
 scripts/contract-runtime.sh install
 ```
 
+## Mechanical verification (mandatory)
+
+Every substantive task **must** register a Contract task with a machine-verifiable
+`--check` before shipping. A task is substantive if it changes code, adds a
+feature, fixes a bug, or touches the runtime — not for one-shot Q&A.
+
+### Pattern
+
+```bash
+# 1. Register the task with a check that proves the work is done
+contract task begin "<goal>" --check "<command that exits 0 when done>"
+
+# 2. Do the work
+
+# 3. After work completes, verify mechanically
+contract task verify <id>
+```
+
+### Check commands by task type
+
+| Task type | Example check |
+|-----------|---------------|
+| Code change | `cargo test -p <crate> -- <filter> 2>&1` |
+| Build | `scripts/contract-runtime.sh build-aiko 2>&1 \| grep "Created package"` |
+| CLI feature | `~/bin/aiko login <provider> 2>&1 \| grep "<expected output>"` |
+| Model catalog | `~/bin/aiko models 2>&1 \| grep -q "<model-name>"` |
+| Install | `~/bin/aiko --version 2>&1 \| grep -q "<version>"` |
+| Integration | `~/bin/aiko <command> 2>&1 \| timeout 5 grep -q "<expected>"` |
+
+### Auto-verify after install
+
+After `scripts/contract-runtime.sh install`, automatically run the version check
+and verify any open contract tasks:
+
+```bash
+~/bin/aiko --version 2>&1 | grep -q "$(git rev-parse --short HEAD)" || echo "version mismatch"
+contract task verify <id>
+```
+
+### Mechanical testing is not optional
+
+A compile check or `strings` dump is **not** verification. Run the actual binary
+with the actual command the user would type. If `aiko login codex` fails to bind
+or `aiko models` doesn't list codex, the work is not done — regardless of unit
+tests passing.
+
 ## Neuron/Contract Architecture Patterns
 
 The single primitive of the Aiko stack is the typed Neuron. One Neuron fires,
