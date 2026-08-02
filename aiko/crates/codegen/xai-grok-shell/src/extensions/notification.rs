@@ -394,6 +394,24 @@ pub enum SessionUpdate {
         /// `unverified`, `learning`, `learned`, or `unavailable`.
         learning_status: String,
     },
+    /// The native `contract_graph_plan` chain-vs-graph verdict, computed
+    /// automatically every turn from the admitted skill plan (see
+    /// `contract_native::graph_plan_analyze`). Surfaced so the TUI can prove
+    /// the graph-engineering pipeline is genuinely live, not silent —
+    /// otherwise the verdict only ever reaches the model as invisible
+    /// system-reminder text and `~/.aiko/context/last-context.md`.
+    GraphVerdict {
+        /// `"chain"` or `"graph"`.
+        kind: String,
+        /// Total pending obligations this turn's plan admits.
+        obligation_count: u64,
+        /// Widest fan-out this turn's plan supports right now.
+        peak_parallelism: u64,
+        /// Obligations with no unmet dependency (immediately runnable).
+        ready_count: u64,
+        /// Number of mutually independent obligation groups.
+        group_count: u64,
+    },
     /// A diff review request containing one or more file diffs for user review.
     DiffReview {
         /// The diff content to be reviewed.

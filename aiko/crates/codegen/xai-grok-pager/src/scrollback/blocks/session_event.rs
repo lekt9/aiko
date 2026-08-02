@@ -118,6 +118,21 @@ pub enum SessionEvent {
         reason_codes: Vec<String>,
         learning_status: String,
     },
+    /// The native chain-vs-graph verdict for this turn's admitted plan
+    /// (`contract_graph_plan`, computed automatically every turn). Proves
+    /// the graph-engineering-native pipeline is live, not silent.
+    GraphVerdict {
+        /// `"chain"` or `"graph"`.
+        kind: String,
+        /// Total pending obligations this turn's plan admits.
+        obligation_count: u64,
+        /// Widest fan-out this turn's plan supports right now.
+        peak_parallelism: u64,
+        /// Obligations with no unmet dependency (immediately runnable).
+        ready_count: u64,
+        /// Number of mutually independent obligation groups.
+        group_count: u64,
+    },
     /// The session's persisted model is no longer available after re-auth.
     /// Both IDs are empty when re-shown on blocked prompt attempts.
     ModelUnavailable {
@@ -274,6 +289,28 @@ impl SessionEvent {
                     ));
                 }
                 format!("Aiko route · {}", details.join(" · "))
+            }
+            SessionEvent::GraphVerdict {
+                kind,
+                obligation_count,
+                peak_parallelism,
+                ready_count,
+                group_count,
+            } => {
+                let noun = |n: u64| if n == 1 { "obligation" } else { "obligations" };
+                if kind == "graph" && *peak_parallelism > 1 {
+                    format!(
+                        "graph: FAN-OUT · {group_count} independent groups · {} {} · {ready_count} ready now",
+                        obligation_count,
+                        noun(*obligation_count)
+                    )
+                } else {
+                    format!(
+                        "graph: chain · {} {} · proceed sequentially",
+                        obligation_count,
+                        noun(*obligation_count)
+                    )
+                }
             }
             SessionEvent::ModelUnavailable {
                 new_model_id,
@@ -1562,6 +1599,51 @@ mod tests {
         assert_eq!(
             plain(&out.lines[0]),
             "Worked for 24s. 1 command and 2 subagents still running."
+        );
+    }
+
+    #[test]
+    fn graph_verdict_chain_message_reads_sequential() {
+        let event = SessionEvent::GraphVerdict {
+            kind: "chain".to_string(),
+            obligation_count: 3,
+            peak_parallelism: 1,
+            ready_count: 1,
+            group_count: 1,
+        };
+        assert_eq!(
+            event.message(),
+            "graph: chain · 3 obligations · proceed sequentially"
+        );
+    }
+
+    #[test]
+    fn graph_verdict_graph_message_reads_fan_out() {
+        let event = SessionEvent::GraphVerdict {
+            kind: "graph".to_string(),
+            obligation_count: 5,
+            peak_parallelism: 3,
+            ready_count: 3,
+            group_count: 3,
+        };
+        assert_eq!(
+            event.message(),
+            "graph: FAN-OUT · 3 independent groups · 5 obligations · 3 ready now"
+        );
+    }
+
+    #[test]
+    fn graph_verdict_single_obligation_uses_singular_noun() {
+        let event = SessionEvent::GraphVerdict {
+            kind: "chain".to_string(),
+            obligation_count: 1,
+            peak_parallelism: 1,
+            ready_count: 1,
+            group_count: 1,
+        };
+        assert_eq!(
+            event.message(),
+            "graph: chain · 1 obligation · proceed sequentially"
         );
     }
 }

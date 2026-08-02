@@ -315,6 +315,19 @@ impl SessionActor {
             ))
             .await;
         }
+        if let Some(verdict) = dynamic_capability_route
+            .as_ref()
+            .and_then(|route| route.get("graph_engineering_verdict"))
+        {
+            if crate::contract_native::should_emit_graph_verdict(
+                self.session_info.id.0.as_ref(),
+                verdict,
+            ) {
+                if let Some(update) = crate::contract_native::graph_verdict_notification(verdict) {
+                    self.send_xai_notification(update).await;
+                }
+            }
+        }
         let capability_route = dynamic_capability_route.or(legacy_capability_route);
         self.agent
             .borrow()

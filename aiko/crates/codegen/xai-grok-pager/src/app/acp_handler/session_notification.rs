@@ -649,6 +649,24 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
                 }));
             true
         }
+        XaiSessionUpdate::GraphVerdict {
+            kind,
+            obligation_count,
+            peak_parallelism,
+            ready_count,
+            group_count,
+        } => {
+            agent
+                .scrollback
+                .push_block(RenderBlock::session_event(SessionEvent::GraphVerdict {
+                    kind,
+                    obligation_count,
+                    peak_parallelism,
+                    ready_count,
+                    group_count,
+                }));
+            true
+        }
         XaiSessionUpdate::HookExecution {
             event_name,
             tool_name: _tool_name,

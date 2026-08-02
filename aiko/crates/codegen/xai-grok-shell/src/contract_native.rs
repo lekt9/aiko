@@ -5178,6 +5178,62 @@ pub fn capability_plan_notification(
     }
 }
 
+/// Convert the native `contract_graph_plan` verdict into the privacy-safe
+/// client event, mirroring [`capability_plan_notification`]. Returns `None`
+/// when there's nothing to show (no verdict this turn, or a trivial
+/// zero-obligation walk) — callers should simply skip emitting.
+pub fn graph_verdict_notification(
+    verdict: &Value,
+) -> Option<crate::extensions::notification::SessionUpdate> {
+    let obligation_count = verdict.get("obligation_count").and_then(Value::as_u64)?;
+    if obligation_count == 0 {
+        return None;
+    }
+    let kind = verdict
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("chain")
+        .to_owned();
+    let peak_parallelism = verdict
+        .get("peak_parallelism")
+        .and_then(Value::as_u64)
+        .unwrap_or(1);
+    let ready_count = verdict.get("ready_count").and_then(Value::as_u64).unwrap_or(0);
+    let group_count = verdict
+        .get("independent_groups")
+        .and_then(Value::as_array)
+        .map_or(0, |groups| groups.len() as u64);
+    Some(crate::extensions::notification::SessionUpdate::GraphVerdict {
+        kind,
+        obligation_count,
+        peak_parallelism,
+        ready_count,
+        group_count,
+    })
+}
+
+/// Whether the previously-emitted graph verdict for this session already
+/// matches this turn's verdict — de-dupes the "chain (1 obligation)" chip so
+/// it doesn't spam scrollback on every single-step turn while a real change
+/// (a new fan-out opportunity, a shrinking chain) still gets its own line.
+pub fn should_emit_graph_verdict(session_id: &str, verdict: &Value) -> bool {
+    static LAST_VERDICT: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    let fingerprint = format!(
+        "{}:{}:{}",
+        verdict.get("kind").and_then(Value::as_str).unwrap_or(""),
+        verdict.get("obligation_count").and_then(Value::as_u64).unwrap_or(0),
+        verdict.get("peak_parallelism").and_then(Value::as_u64).unwrap_or(0),
+    );
+    let Ok(mut sessions) = LAST_VERDICT.get_or_init(|| Mutex::new(HashMap::new())).lock() else {
+        return true;
+    };
+    if sessions.get(session_id) == Some(&fingerprint) {
+        return false;
+    }
+    sessions.insert(session_id.to_owned(), fingerprint);
+    true
+}
+
 /// Missing/incompatible Contract should be visible once, not repeated on
 /// every prompt in a degraded session.
 pub fn should_emit_capability_diagnostic(session_id: &str, plan_present: bool) -> bool {
@@ -6068,6 +6124,65 @@ mod tests {
             .expect("native graph_plan analysis must succeed with ABI >= 12");
         assert_eq!(verdict["kind"], "chain");
         assert!(verdict["obligation_count"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn graph_verdict_notification_builds_fan_out_chip_from_native_shape() {
+        let verdict = json!({
+            "kind": "graph",
+            "obligation_count": 5,
+            "peak_parallelism": 3,
+            "ready_count": 3,
+            "independent_groups": [["a"], ["b"], ["c"]],
+        });
+        let update = graph_verdict_notification(&verdict).expect("must build an update");
+        match update {
+            crate::extensions::notification::SessionUpdate::GraphVerdict {
+                kind,
+                obligation_count,
+                peak_parallelism,
+                ready_count,
+                group_count,
+            } => {
+                assert_eq!(kind, "graph");
+                assert_eq!(obligation_count, 5);
+                assert_eq!(peak_parallelism, 3);
+                assert_eq!(ready_count, 3);
+                assert_eq!(group_count, 3);
+            }
+            other => panic!("expected GraphVerdict, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_verdict_notification_is_none_for_zero_obligations() {
+        let verdict = json!({
+            "kind": "chain",
+            "obligation_count": 0,
+            "peak_parallelism": 0,
+            "ready_count": 0,
+            "independent_groups": [],
+        });
+        assert!(graph_verdict_notification(&verdict).is_none());
+    }
+
+    #[test]
+    fn should_emit_graph_verdict_dedupes_identical_consecutive_verdicts() {
+        let session_id = "test-session-graph-verdict-dedupe";
+        let verdict = json!({ "kind": "chain", "obligation_count": 1, "peak_parallelism": 1 });
+        assert!(
+            should_emit_graph_verdict(session_id, &verdict),
+            "first sighting must emit"
+        );
+        assert!(
+            !should_emit_graph_verdict(session_id, &verdict),
+            "identical repeat must not re-emit"
+        );
+        let changed = json!({ "kind": "graph", "obligation_count": 3, "peak_parallelism": 2 });
+        assert!(
+            should_emit_graph_verdict(session_id, &changed),
+            "a real change must emit again"
+        );
     }
 
     /// Regression for the "no active Contract root" bug: a synthetic/
