@@ -28,9 +28,9 @@
 //!
 //! # Provider routing (from codegraff providers.zig)
 //!
-//! 1. **First catalogued provider with a key wins** (spec order breaks ties).
-//! 2. **Direct keys beat the gateway**: pass 1 skips the codegraff gateway so a
-//!    user's own key isn't shadowed by a low gateway balance.
+//! 1. **Codegraff is primary** when its key and model are available.
+//! 2. **Direct providers are fallback routes** when Codegraff is unavailable or
+//!    does not serve the requested model.
 //! 3. **Catalogued models with no keyed provider fail with `MissingKey`** — they
 //!    don't silently route to the gateway (codegraff issue #294).
 //! 4. **Genuinely unknown models fall back**: `claude*` → Anthropic, everything
@@ -50,6 +50,18 @@ pub use spec::ProviderSpec;
 /// Mirrors codegraff's `provider_specs` const array.
 pub fn builtin_specs() -> &'static [ProviderSpec] {
     &[
+        // Aiko Cloudflare API proxy — forwards to Codegraff server-side.
+        // Clients authenticate with their Aiko OAuth access token and never
+        // receive or send the upstream CODEGRAFF_API_KEY.
+        ProviderSpec {
+            id: "codegraff",
+            display_name: "Codegraff",
+            kind: ProviderKind::OpenAi,
+            auth: AuthStyle::Bearer,
+            url: "https://aiko.theclarityproject.net/v1/chat/completions",
+            env_key: "AIKO_ACCESS_TOKEN",
+            default_model: "deepseek-v4-pro",
+        },
         // Anthropic — Messages API, x-api-key auth
         ProviderSpec {
             id: "anthropic",
@@ -59,16 +71,6 @@ pub fn builtin_specs() -> &'static [ProviderSpec] {
             url: "https://api.anthropic.com/v1/messages",
             env_key: "ANTHROPIC_API_KEY",
             default_model: "claude-opus-4-8",
-        },
-        // CodeGraff gateway — OpenAI-compatible, bearer auth
-        ProviderSpec {
-            id: "codegraff",
-            display_name: "Codegraff",
-            kind: ProviderKind::OpenAi,
-            auth: AuthStyle::Bearer,
-            url: "https://gateway.codegraff.com/v1/chat/completions",
-            env_key: "CODEGRAFF_API_KEY",
-            default_model: "deepseek-v4-pro",
         },
         // DeepSeek — OpenAI-compatible
         ProviderSpec {
@@ -414,6 +416,21 @@ mod tests {
         assert!(ids.contains(&"xai"), "xAI provider must exist");
         assert!(ids.contains(&"anthropic"), "Anthropic provider must exist");
         assert!(ids.contains(&"openai"), "OpenAI provider must exist");
+    }
+
+    #[test]
+    fn codegraff_uses_cloudflare_proxy() {
+        let spec = builtin_specs()
+            .iter()
+            .find(|spec| spec.id == "codegraff")
+            .expect("Codegraff provider spec");
+
+        assert_eq!(
+            spec.url,
+            "https://aiko.theclarityproject.net/v1/chat/completions"
+        );
+        assert_eq!(spec.env_key, "AIKO_ACCESS_TOKEN");
+        assert!(!spec.url.contains("gateway.codegraff.com"));
     }
 
     #[test]

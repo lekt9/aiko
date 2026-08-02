@@ -47,13 +47,12 @@ impl ProviderRouter {
     /// key wins (spec order breaks ties). Unknown claude* models go to
     /// Anthropic; any other unknown model goes to the codegraff gateway.
     ///
-    /// Two-pass routing (from codegraff issue #274): pass 1 skips the gateway
-    /// so direct keys win; pass 2 lets the gateway in as fallback.
+    /// Two-pass routing: Codegraff is the primary provider when it has a key
+    /// and serves the requested model. Direct providers are fallback routes.
     pub fn provider_for(&self, model: &str) -> Result<Provider, RouterError> {
-        // Two-pass: direct keys first, gateway as fallback
-        for allow_gateway in [false, true] {
+        // Two-pass: Codegraff first, direct providers as fallback.
+        for allow_gateway in [true, false] {
             for spec in builtin_specs() {
-                // Skip gateway on pass 1
                 let is_gateway = spec.id == "codegraff";
                 if is_gateway != allow_gateway {
                     continue;
@@ -281,9 +280,29 @@ mod tests {
     fn test_provider_for_grok() {
         let router = mock_router();
         let p = router.provider_for("grok-4.3").unwrap();
-        assert_eq!(p.id, "xai");
+        assert_eq!(p.id, "codegraff");
         assert_eq!(p.model, "grok-4.3");
         assert_eq!(p.kind, ProviderKind::OpenAi);
+    }
+
+    #[test]
+    fn codegraff_is_primary_for_shared_models() {
+        let router = mock_router();
+        for model in ["grok-4.3", "gpt-5.6", "claude-opus-4-8"] {
+            assert_eq!(router.provider_for(model).unwrap().id, "codegraff");
+        }
+    }
+
+    #[test]
+    fn codegraff_is_primary_and_direct_provider_is_fallback() {
+        let mut keys = Keys::from_env();
+        keys.set(
+            "xai",
+            "mock-key".to_string(),
+            crate::provider::CredentialSource::Session,
+        );
+        let router = ProviderRouter::new(keys);
+        assert_eq!(router.provider_for("grok-4.3").unwrap().id, "xai");
     }
 
     #[test]
@@ -313,9 +332,8 @@ mod tests {
     fn test_default_provider() {
         let router = mock_router();
         let p = router.default_provider().unwrap();
-        // anthropic is first in builtin_specs
-        assert_eq!(p.id, "anthropic");
-        assert_eq!(p.model, "claude-opus-4-8");
+        assert_eq!(p.id, "codegraff");
+        assert_eq!(p.model, "deepseek-v4-pro");
     }
 
     #[test]
