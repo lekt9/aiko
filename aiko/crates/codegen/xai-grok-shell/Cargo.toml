@@ -1,7 +1,7 @@
 [package]
 license = "Apache-2.0"
 name = "xai-grok-shell"
-version = "0.2.106"
+version = "0.2.107"
 edition.workspace = true
 
 [features]
@@ -132,6 +132,7 @@ xai-grok-sandbox = { path = "../xai-grok-sandbox", default-features = false }
 xai-chat-state = { path = "../xai-chat-state" }
 xai-grok-compaction = { path = "../../common/xai-grok-compaction" }
 xai-grok-sampler = { path = "../xai-grok-sampler" }
+xai-aiko-providers = { path = "../xai-aiko-providers" }
 xai-sqlite-journal = { workspace = true }
 xai-token-estimation = { workspace = true }
 xai-grok-sampling-types = { path = "../xai-grok-sampling-types" }
