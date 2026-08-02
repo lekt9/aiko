@@ -3,13 +3,28 @@ set -eu
 
 PACKAGE_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 AIKO_BINARY="$PACKAGE_ROOT/bin/aiko"
-CONTRACT_LIBRARY="$PACKAGE_ROOT/lib/libcontract.dylib"
 MANIFEST="$PACKAGE_ROOT/manifest.json"
 PACKAGED_SKILLS="$PACKAGE_ROOT/skills"
 
-if [ ! -x "$AIKO_BINARY" ] || [ ! -f "$CONTRACT_LIBRARY" ] || [ ! -f "$MANIFEST" ] || \
+# Package lib name is platform-native (.dylib / .so / .dll). Runtime install
+# keeps the same basename so Linux loaders that look for libcontract.so work.
+CONTRACT_LIBRARY=""
+for candidate in \
+    "$PACKAGE_ROOT/lib/libcontract.so" \
+    "$PACKAGE_ROOT/lib/libcontract.dylib" \
+    "$PACKAGE_ROOT/lib/contract.dll" \
+    "$PACKAGE_ROOT/lib/libcontract.dll"
+do
+    if [ -f "$candidate" ]; then
+        CONTRACT_LIBRARY=$candidate
+        break
+    fi
+done
+CONTRACT_LIB_BASENAME=$(basename "${CONTRACT_LIBRARY:-}")
+
+if [ ! -x "$AIKO_BINARY" ] || [ -z "$CONTRACT_LIBRARY" ] || [ ! -f "$MANIFEST" ] || \
    [ ! -d "$PACKAGED_SKILLS" ]; then
-    echo "Invalid Aiko package: expected bin/aiko, lib/libcontract.dylib, manifest.json, and skills/" >&2
+    echo "Invalid Aiko package: expected bin/aiko, lib/libcontract.{so,dylib}, manifest.json, and skills/" >&2
     exit 1
 fi
 
@@ -56,14 +71,25 @@ mkdir -p "$AIKO_BIN_DIR" "$AIKO_LIB_DIR"
 mkdir -p "$AIKO_HOME/skills" "$AIKO_HOME/sdk/registry/bin"
 
 BIN_TMP="$AIKO_BIN_DIR/.aiko.install.$$"
-LIB_TMP="$AIKO_LIB_DIR/.libcontract.dylib.install.$$"
+LIB_TMP="$AIKO_LIB_DIR/.${CONTRACT_LIB_BASENAME}.install.$$"
 trap 'rm -f "$BIN_TMP" "$LIB_TMP"' EXIT HUP INT TERM
 
 install -m 755 "$AIKO_BINARY" "$BIN_TMP"
 install -m 755 "$CONTRACT_LIBRARY" "$LIB_TMP"
 "$BIN_TMP" --version >/dev/null
 
-mv -f "$LIB_TMP" "$AIKO_LIB_DIR/libcontract.dylib"
+mv -f "$LIB_TMP" "$AIKO_LIB_DIR/$CONTRACT_LIB_BASENAME"
+# Keep a dual name so macOS-era tooling and Linux loaders both resolve.
+case "$CONTRACT_LIB_BASENAME" in
+    libcontract.so)
+        ln -sfn libcontract.so "$AIKO_LIB_DIR/libcontract.dylib"
+        ;;
+    libcontract.dylib)
+        if [ "$(uname -s)" = "Linux" ]; then
+            ln -sfn libcontract.dylib "$AIKO_LIB_DIR/libcontract.so"
+        fi
+        ;;
+esac
 mv -f "$BIN_TMP" "$AIKO_BIN_DIR/aiko"
 for SKILL_DIR in "$PACKAGED_SKILLS"/*; do
     if [ -f "$SKILL_DIR/SKILL.md" ] && [ -f "$SKILL_DIR/contract-skill.json" ]; then
@@ -85,7 +111,7 @@ fi
 trap - EXIT HUP INT TERM
 
 echo "Installed Aiko to $AIKO_BIN_DIR/aiko"
-echo "Installed Contract runtime to $AIKO_LIB_DIR/libcontract.dylib"
+echo "Installed Contract runtime to $AIKO_LIB_DIR/$CONTRACT_LIB_BASENAME"
 
 if [ "$(uname -s)" = "Darwin" ]; then
     LABEL="net.theclarityproject.aiko.contract-worker"
