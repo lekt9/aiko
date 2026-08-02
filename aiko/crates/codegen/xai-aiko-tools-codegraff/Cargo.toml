@@ -1,0 +1,17 @@
+[package]
+license = "Apache-2.0"
+edition.workspace = true
+name = "xai-aiko-tools-codegraff"
+version = "0.1.0"
+description = "Codegraff-ported tool primitives: faster read_file, verified edit_file, bounded write_file. Ported from justrach/codegraff (src/read_file.zig, src/edit_verify.zig)."
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

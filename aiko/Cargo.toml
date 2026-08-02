@@ -37,6 +37,8 @@ members = [
     "crates/codegen/xai-grok-pager-render",
     "crates/codegen/xai-grok-paths",
     "crates/codegen/xai-grok-plugin-marketplace",
+    "crates/codegen/xai-aiko-providers",
+    "crates/codegen/xai-aiko-tools-codegraff",
     "crates/codegen/xai-grok-sampler",
     "crates/codegen/xai-grok-sampling-types",
     "crates/codegen/xai-grok-sandbox",
