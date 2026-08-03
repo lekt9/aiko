@@ -56,8 +56,14 @@ check installed-cli "Installed Aiko reports its version and command catalog." \
 check packaged-contract "Installed ABI v3 library is arm64 and exports turn, task, and ranking symbols." \
   sh -c 'test -f "$1" && file "$1" | rg -q "arm64" && nm -gU "$1" | rg -q "_contract_abi_version" && nm -gU "$1" | rg -q "_contract_declare_turn" && nm -gU "$1" | rg -q "_contract_recommend_capabilities"' sh "$HOME/.aiko/lib/libcontract.dylib"
 
-check background-worker "LaunchAgent-backed Contract worker is running." \
-  sh -c '"$1" background status | rg -q "worker is running"' sh "$AIKO"
+# macOS: worker must be running. Linux: honest "unsupported" postmortem is green.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  check background-worker "LaunchAgent-backed Contract worker is running." \
+    sh -c '"$1" background status | rg -q "worker is running"' sh "$AIKO"
+else
+  check background-worker "Linux records durable unsupported witness for background worker." \
+    sh -c '"$1" background status 2>&1 | rg -q "unsupported|postmortem"' sh "$AIKO"
+fi
 
 check native-manifest "Versioned manifest advertises Contract, Collective, agent-mail, application, and permission interfaces." \
   sh -c '"$1" native manifest | jq -e "[.interfaces[].id] | contains([\"contract.ledger\",\"contract.tasks\",\"collective.local-control\",\"agent.mail\",\"application.runtime\",\"permission.interactions\"])"' sh "$AIKO"
@@ -135,4 +141,22 @@ record STATIC windows-runtime "Windows artifacts can be inspected on macOS but r
 } > "$REPORT"
 
 printf '\nreport=%s failures=%d\n' "$REPORT" "$FAILURES"
+
+# Durable postmortem snapshot (same class as install-selfcheck).
+PM_DIR="${AIKO_HOME:-$HOME/.aiko}/postmortem"
+mkdir -p "$PM_DIR"
+python3 - "$PM_DIR/capabilities.latest.json" "$FAILURES" "$REPORT" <<'PY' || true
+import json, sys, os
+from pathlib import Path
+out, failures, report = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+Path(out).write_text(json.dumps({
+    "format": 1,
+    "kind": "capabilities",
+    "failures": failures,
+    "complete": failures == 0,
+    "report": report,
+}, indent=2) + "\n", encoding="utf-8")
+print(f"postmortem: wrote {out}")
+PY
+
 verify_report

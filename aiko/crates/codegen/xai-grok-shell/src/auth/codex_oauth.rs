@@ -384,6 +384,25 @@ pub async fn codex_login(home: &std::path::Path) -> anyhow::Result<CodexAuth> {
             .collect::<String>()
     );
 
+    // Post-auth smoke contracts (soft) — auth.json write is not the fruit.
+    if std::env::var("AIKO_SKIP_LOGIN_SELFCHECK").ok().as_deref() != Some("1") {
+        let candidates = [
+            std::path::PathBuf::from("scripts/aiko-login-selfcheck.sh"),
+            dirs::home_dir()
+                .map(|h| h.join("work/commons/aiko/scripts/aiko-login-selfcheck.sh"))
+                .unwrap_or_default(),
+        ];
+        if let Some(script) = candidates.into_iter().find(|p| p.is_file()) {
+            eprintln!("  login-selfcheck: {} …", script.display());
+            let _ = std::process::Command::new("sh")
+                .arg(&script)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status();
+        }
+    }
+
     let expires_at = parse_expiry_from_id_token(id_token.as_deref());
     Ok(CodexAuth {
         access_token: access,

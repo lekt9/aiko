@@ -247,6 +247,52 @@ install_all() {
     echo ""
     info "Add to PATH: export PATH=\"$AIKO_BIN_DIR:\$PATH\""
     info "Verify: aiko --version && neuron --version"
+
+    # Default: durable self-check contracts for postmortem (same class as
+    # scripts/contract-runtime.sh install). Skip with AIKO_SKIP_SELFCHECK=1.
+    run_install_selfcheck
+}
+
+# Resolve and run aiko-install-selfcheck.sh when present.
+run_install_selfcheck() {
+    if [[ "${AIKO_SKIP_SELFCHECK:-0}" == "1" ]]; then
+        warn "Skipped install self-check (AIKO_SKIP_SELFCHECK=1)"
+        return 0
+    fi
+    local candidates=(
+        "$SCRIPT_DIR/../../../scripts/aiko-install-selfcheck.sh"
+        "$SCRIPT_DIR/../../scripts/aiko-install-selfcheck.sh"
+        "$AIKO_HOME/sdk/registry/selfcheck.sh"
+        "$(cd "$SCRIPT_DIR/../../.." 2>/dev/null && pwd)/scripts/aiko-install-selfcheck.sh"
+    )
+    # Also search monorepo aiko root next to sdk/registry
+    local monorepo
+    monorepo=$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd || true)
+    if [[ -n "$monorepo" ]]; then
+        candidates+=("$monorepo/scripts/aiko-install-selfcheck.sh")
+    fi
+    local sc=""
+    local c
+    for c in "${candidates[@]}"; do
+        if [[ -n "$c" && -f "$c" ]]; then
+            sc=$c
+            break
+        fi
+    done
+    if [[ -z "$sc" ]]; then
+        warn "Install self-check script not found; install not proven working"
+        return 0
+    fi
+    info "Running install self-check → postmortem contracts ($sc)"
+    if AIKO_BIN_DIR="$AIKO_BIN_DIR" AIKO_HOME="$AIKO_HOME" AIKO="$AIKO_BIN_DIR/aiko" \
+        bash "$sc"; then
+        ok "Install self-check contracts satisfied"
+        return 0
+    fi
+    err "Install self-check failed — binary may be present but not proven"
+    err "Re-run: AIKO_BIN_DIR=$AIKO_BIN_DIR bash $sc"
+    err "Skip (not recommended): AIKO_SKIP_SELFCHECK=1"
+    exit 1
 }
 
 # ─── Main ──────────────────────────────────────────────────────────────────

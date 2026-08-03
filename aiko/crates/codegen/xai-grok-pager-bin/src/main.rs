@@ -324,8 +324,53 @@ async fn run_contract_worker(once: bool, poll_seconds: u64) -> Result<()> {
 fn run_background_command(args: xai_grok_pager::app::cli::BackgroundArgs) -> Result<()> {
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = args;
-        anyhow::bail!("Aiko background service management currently requires macOS");
+        use xai_grok_pager::app::cli::BackgroundCommand;
+        // Honest, durable witness for postmortem: Linux has no LaunchAgent
+        // worker yet. Do not claim "running" or fail ambiguously — write a
+        // contract-shaped row and exit with a machine-readable status.
+        let cmd = args.command;
+        let status_word = "unsupported";
+        let home = dirs::home_dir().unwrap_or_default();
+        let ledger = home.join(".aiko/postmortem/background-worker.jsonl");
+        if let Some(parent) = ledger.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let line = format!(
+            "{{\"event\":\"contract.verified\",\"id\":\"background-worker\",\"status\":\"{status_word}\",\"platform\":\"{}\",\"goal\":\"durable Contract background worker\",\"check\":\"aiko background status\",\"critical\":0,\"ts\":\"{}\"}}\n",
+            std::env::consts::OS,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        );
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&ledger)
+            .and_then(|mut f| {
+                use std::io::Write;
+                f.write_all(line.as_bytes())
+            });
+        // JSON line on stdout for scripts; human line on stderr.
+        println!(
+            "{{\"status\":\"{status_word}\",\"platform\":\"{}\",\"postmortem\":\"{}\"}}",
+            std::env::consts::OS,
+            ledger.display()
+        );
+        eprintln!(
+            "Aiko background worker: unsupported on {} (recorded in {}).",
+            std::env::consts::OS,
+            ledger.display()
+        );
+        // Exit 0 for status/stop (honest answer), non-zero for start attempts.
+        match cmd {
+            BackgroundCommand::Status | BackgroundCommand::Stop => Ok(()),
+            BackgroundCommand::Start => anyhow::bail!(
+                "background worker start is unsupported on {}; see {}",
+                std::env::consts::OS,
+                ledger.display()
+            ),
+        }
     }
     #[cfg(target_os = "macos")]
     {

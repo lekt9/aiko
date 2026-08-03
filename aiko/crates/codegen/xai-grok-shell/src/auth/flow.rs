@@ -776,6 +776,33 @@ fn report_signed_in(auth: &GrokAuth) {
         Some(ref email) => eprintln!("✓ Signed in as {email}"),
         None => eprintln!("✓ Signed in"),
     }
+    // Post-auth smoke contracts for postmortem (soft). Proves models/auth
+    // surface after login — file write alone is not enough.
+    spawn_login_selfcheck();
+}
+
+/// Best-effort: run `scripts/aiko-login-selfcheck.sh` when present.
+fn spawn_login_selfcheck() {
+    if std::env::var("AIKO_SKIP_LOGIN_SELFCHECK").ok().as_deref() == Some("1") {
+        return;
+    }
+    let candidates = [
+        std::path::PathBuf::from("scripts/aiko-login-selfcheck.sh"),
+        dirs::home_dir()
+            .map(|h| h.join("work/commons/aiko/scripts/aiko-login-selfcheck.sh"))
+            .unwrap_or_default(),
+        crate::util::grok_home::grok_home().join("sdk/registry/aiko-login-selfcheck.sh"),
+    ];
+    let Some(script) = candidates.into_iter().find(|p| p.is_file()) else {
+        return;
+    };
+    eprintln!("  login-selfcheck: {} …", script.display());
+    let _ = std::process::Command::new("sh")
+        .arg(&script)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status();
 }
 
 /// CLI auth entrypoint. For GUI, use `run_auth_flow_with_stderr_bridge`.

@@ -76,22 +76,60 @@ contract task verify <id>
 | Install | `~/bin/aiko --version 2>&1 \| grep -q "<version>"` |
 | Integration | `~/bin/aiko <command> 2>&1 \| timeout 5 grep -q "<expected>"` |
 
-### Auto-verify after install
+### Auto-verify after install (default)
 
-After `scripts/contract-runtime.sh install`, automatically run the version check
-and verify any open contract tasks:
+`scripts/contract-runtime.sh install` (via package `install.sh`) **always** runs
+`scripts/aiko-install-selfcheck.sh` unless `AIKO_SKIP_SELFCHECK=1`. That script:
+
+1. Mirrors the installed binary into `~/.local/bin/aiko` when that dir is on `PATH`
+   (atomic replace — no "Text file busy" failure).
+2. Declares a **contract graph** of smoke obligations (version, help, contract lib,
+   PATH identity, models) and runs each check.
+3. Appends every declare/verify event to
+   `~/.aiko/postmortem/install-selfcheck.jsonl` and writes a snapshot to
+   `~/.aiko/postmortem/install-selfcheck.latest.json` (also copied to
+   `.claude/install-selfcheck.latest.json` when present) — postmortem evidence,
+   not a self-asserted "it works".
 
 ```bash
-~/bin/aiko --version 2>&1 | grep -q "$(git rev-parse --short HEAD)" || echo "version mismatch"
-contract task verify <id>
+# re-run the graph anytime
+AIKO_BIN_DIR=~/bin sh scripts/aiko-install-selfcheck.sh
+
+# soft-record (never fail install) / skip
+AIKO_SELFCHECK_SOFT=1 scripts/contract-runtime.sh install
+AIKO_SKIP_SELFCHECK=1  scripts/contract-runtime.sh install
 ```
+
+When the external `contract` CLI is available on this host, each smoke is also
+registered as `contract task begin` + `verify` so the durable task ledger matches
+the postmortem graph. `aiko contract-pair` falls back to a **native** local task
+store + `~/.aiko/postmortem/native-tasks.jsonl` when the external CLI is missing
+or the wrong arch.
+
+### Gap-closure postmortem suite (same class as install selfcheck)
+
+| Trigger | Script / hook | Ledger |
+|---------|---------------|--------|
+| Source `install` | `aiko-install-selfcheck.sh` | `postmortem/install-selfcheck.*` |
+| `aiko update` | `run_post_install_selfcheck` after activation | same |
+| Registry `aiko-install` | calls selfcheck at end of `install_all` | same |
+| `package` | `package-installable-witness.sh` | `postmortem/package-installable.*` |
+| `aiko login` / codex | `aiko-login-selfcheck.sh` (soft) | `postmortem/login-selfcheck.*` |
+| `aiko setup` | `aiko-setup-selfcheck.sh` (callable) | `postmortem/setup-selfcheck.*` |
+| MCP/plugin | `aiko-mcp-selfcheck.sh` | `postmortem/mcp-selfcheck.*` |
+| Headless doctor | `aiko-doctor-headless.sh` | `postmortem/doctor-headless.*` |
+| Full gap graph | `gap-closure-snapshot.sh` | `postmortem/gap-closure.latest.json` |
+| Linux background | honest `unsupported` JSON + jsonl | `postmortem/background-worker.jsonl` |
+
+Shared helpers live in `scripts/postmortem-contract.sh`.
 
 ### Mechanical testing is not optional
 
 A compile check or `strings` dump is **not** verification. Run the actual binary
 with the actual command the user would type. If `aiko login codex` fails to bind
 or `aiko models` doesn't list codex, the work is not done — regardless of unit
-tests passing.
+tests passing. The install self-check is the floor; task-level contracts are the
+ceiling for feature work.
 
 ## Neuron/Contract Architecture Patterns
 

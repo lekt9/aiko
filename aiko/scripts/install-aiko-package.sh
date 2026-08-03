@@ -113,6 +113,35 @@ trap - EXIT HUP INT TERM
 echo "Installed Aiko to $AIKO_BIN_DIR/aiko"
 echo "Installed Contract runtime to $AIKO_LIB_DIR/$CONTRACT_LIB_BASENAME"
 
+# Default: self-check that the install actually works, and write each smoke
+# as a contract node into the postmortem graph ledger (~/.aiko/postmortem/).
+# Skip with AIKO_SKIP_SELFCHECK=1. Soft-record (never fail install) with
+# AIKO_SELFCHECK_SOFT=1.
+SELFCHECK=""
+for candidate in \
+    "$PACKAGE_ROOT/selfcheck.sh" \
+    "$PACKAGE_ROOT/../scripts/aiko-install-selfcheck.sh" \
+    "$(CDPATH= cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd)/scripts/aiko-install-selfcheck.sh"
+do
+    if [ -n "$candidate" ] && [ -f "$candidate" ]; then
+        SELFCHECK=$candidate
+        break
+    fi
+done
+if [ -n "$SELFCHECK" ] && [ "${AIKO_SKIP_SELFCHECK:-0}" != "1" ]; then
+    AIKO_BIN_DIR="$AIKO_BIN_DIR" AIKO_HOME="$AIKO_HOME" AIKO="$AIKO_BIN_DIR/aiko" \
+        sh "$SELFCHECK" || {
+            echo "Install self-check failed — binary is in place but not proven working." >&2
+            echo "Re-run: AIKO_BIN_DIR=$AIKO_BIN_DIR sh $SELFCHECK" >&2
+            echo "Skip (not recommended): AIKO_SKIP_SELFCHECK=1" >&2
+            exit 1
+        }
+elif [ "${AIKO_SKIP_SELFCHECK:-0}" = "1" ]; then
+    echo "Skipped install self-check (AIKO_SKIP_SELFCHECK=1)"
+else
+    echo "Warning: install self-check script not found next to package; install not proven." >&2
+fi
+
 if [ "$(uname -s)" = "Darwin" ]; then
     LABEL="net.theclarityproject.aiko.contract-worker"
     LAUNCH_AGENTS="$HOME/Library/LaunchAgents"

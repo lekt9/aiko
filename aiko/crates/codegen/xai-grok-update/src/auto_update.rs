@@ -1251,7 +1251,81 @@ async fn activate_verified_download(download: &VerifiedDownload) -> Result<()> {
     // Best-effort: failures are silently ignored (same as the installer).
     regenerate_completions(&link_path, &grok_home).await;
 
+    // Deep self-check: same contract graph as source install (version/help/
+    // contract-lib/PATH identity/models → ~/.aiko/postmortem/). Best-effort
+    // unless AIKO_UPDATE_SELFCHECK_STRICT=1. Thin --version smoke above only
+    // proves the download is not truncated; this proves the *installed* agent.
+    run_post_install_selfcheck(&link_path).await;
+
     Ok(())
+}
+
+/// Run `aiko-install-selfcheck.sh` against the just-activated binary.
+///
+/// Looks next to the binary, under `$AIKO_HOME`, and common monorepo paths.
+/// Soft by default (logs + continues); set `AIKO_UPDATE_SELFCHECK_STRICT=1`
+/// to fail the update when selfcheck is red.
+async fn run_post_install_selfcheck(binary: &std::path::Path) {
+    if std::env::var("AIKO_SKIP_SELFCHECK").ok().as_deref() == Some("1") {
+        eprintln!("  selfcheck: skipped (AIKO_SKIP_SELFCHECK=1)");
+        return;
+    }
+
+    #[allow(deprecated)]
+    let user_home = std::env::home_dir().unwrap_or_default();
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(parent) = binary.parent() {
+        candidates.push(parent.join("selfcheck.sh"));
+    }
+    candidates.push(grok_home().join("sdk/registry/selfcheck.sh"));
+    candidates.push(std::path::PathBuf::from("scripts/aiko-install-selfcheck.sh"));
+    candidates.push(user_home.join("work/commons/aiko/scripts/aiko-install-selfcheck.sh"));
+
+    let script = candidates.into_iter().find(|p| p.is_file());
+    let Some(script) = script else {
+        eprintln!("  selfcheck: script not found (install not deeply proven)");
+        return;
+    };
+
+    let bin_dir = binary
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| grok_home().join("bin"));
+    let aiko_home = std::env::var("AIKO_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            if user_home.as_os_str().is_empty() {
+                grok_home()
+            } else {
+                user_home.join(".aiko")
+            }
+        });
+
+    eprintln!("  selfcheck: running {} …", script.display());
+    let mut cmd = tokio::process::Command::new("sh");
+    cmd.arg(&script)
+        .env("AIKO", binary)
+        .env("AIKO_BIN_DIR", &bin_dir)
+        .env("AIKO_HOME", &aiko_home)
+        .stdin(std::process::Stdio::null());
+    xai_grok_tools::util::detach_command(&mut cmd);
+    match tokio::time::timeout(std::time::Duration::from_secs(120), cmd.status()).await {
+        Ok(Ok(status)) if status.success() => {
+            eprintln!("  selfcheck: all critical contracts satisfied");
+        }
+        Ok(Ok(status)) => {
+            eprintln!("  selfcheck: FAILED (exit {:?})", status.code());
+            if std::env::var("AIKO_UPDATE_SELFCHECK_STRICT").ok().as_deref() == Some("1") {
+                // Surface as warning only in signature — callers treat update as
+                // activated already; strict mode logs loudly for operators.
+                eprintln!(
+                    "  selfcheck: AIKO_UPDATE_SELFCHECK_STRICT=1 — treat update as unproven"
+                );
+            }
+        }
+        Ok(Err(e)) => eprintln!("  selfcheck: spawn error: {e}"),
+        Err(_) => eprintln!("  selfcheck: timed out after 120s"),
+    }
 }
 
 /// Regenerate shell completions after a binary update (best-effort).

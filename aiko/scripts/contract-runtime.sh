@@ -234,6 +234,11 @@ package_runtime() {
         codesign --force --sign - "$DEST/lib/$LIB_NAME"
     fi
     install -m 755 "$AIKO_ROOT/scripts/install-aiko-package.sh" "$DEST/install.sh"
+    # Default post-install self-check: contract-shaped graph written to
+    # ~/.aiko/postmortem/ so a failed install is postmortem-able, not a claim.
+    if [ -f "$AIKO_ROOT/scripts/aiko-install-selfcheck.sh" ]; then
+        install -m 755 "$AIKO_ROOT/scripts/aiko-install-selfcheck.sh" "$DEST/selfcheck.sh"
+    fi
     # SDK registry — self-bootstrapping installer for contract + neuron + limbs
     if [ -d "$AIKO_ROOT/sdk/registry" ]; then
         cp -R "$AIKO_ROOT/sdk/registry/bin" "$DEST/sdk/registry/"
@@ -289,6 +294,14 @@ package_runtime() {
     (cd "$PACKAGE_ROOT" && tar -czf "$ARCHIVE" "$NAME")
     echo "Created package directory: $DEST"
     echo "Created package archive:   $ARCHIVE"
+    # Prove the package is installable without a second full cargo build.
+    if [ "${AIKO_SKIP_PACKAGE_WITNESS:-0}" != "1" ] && \
+       [ -x "$AIKO_ROOT/scripts/package-installable-witness.sh" ]; then
+        if ! "$AIKO_ROOT/scripts/package-installable-witness.sh" "$DEST"; then
+            echo "Package installable witness failed for $DEST" >&2
+            exit 1
+        fi
+    fi
 }
 
 cross_package() {

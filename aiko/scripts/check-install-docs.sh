@@ -45,7 +45,19 @@ need_grep "$ROOT/README.md" 'GITEA_TOKEN' 'registry token'
 need_grep "$ROOT/scripts/contract-runtime.sh" 'install' 'install command in script'
 need_grep "$ROOT/scripts/contract-runtime.sh" 'AIKO_BIN_DIR' 'AIKO_BIN_DIR env'
 need_grep "$ROOT/scripts/contract-runtime.sh" 'AIKO_HOME' 'AIKO_HOME env'
+need_grep "$ROOT/scripts/contract-runtime.sh" 'aiko-install-selfcheck|selfcheck\.sh' 'packages install selfcheck'
 need_grep "$ROOT/scripts/install-aiko-package.sh" 'AIKO_BIN_DIR' 'package installer AIKO_BIN_DIR'
+need_grep "$ROOT/scripts/install-aiko-package.sh" 'selfcheck|AIKO_SKIP_SELFCHECK' 'install runs selfcheck by default'
+need_file "$ROOT/scripts/aiko-install-selfcheck.sh"
+need_grep "$ROOT/scripts/aiko-install-selfcheck.sh" 'postmortem' 'selfcheck writes postmortem ledger'
+need_grep "$ROOT/scripts/aiko-install-selfcheck.sh" 'contract\.(declared|verified)' 'selfcheck writes contract-shaped events'
+need_file "$ROOT/scripts/postmortem-contract.sh"
+need_file "$ROOT/scripts/package-installable-witness.sh"
+need_file "$ROOT/scripts/aiko-login-selfcheck.sh"
+need_file "$ROOT/scripts/aiko-doctor-headless.sh"
+need_file "$ROOT/scripts/gap-closure-snapshot.sh"
+need_grep "$ROOT/sdk/registry/bin/aiko-install" 'selfcheck|SELFCHECK' 'registry installer runs selfcheck'
+need_grep "$ROOT/scripts/contract-runtime.sh" 'package-installable-witness' 'package path runs installable witness'
 need_grep "$ROOT/sdk/registry/setup.sh" 'GITEA_TOKEN' 'setup token'
 need_grep "$ROOT/sdk/registry/setup.sh" 'GITEA_URL' 'setup Gitea URL'
 
