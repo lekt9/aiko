@@ -271,8 +271,7 @@ impl SessionActor {
             };
             let _ =
                 crate::contract_native::settle_contract_prompt(&prompt_id, succeeded, detail).await;
-            let settled =
-                crate::contract_native::settle_turn_continuation(&prompt_id, succeeded);
+            let settled = crate::contract_native::settle_turn_continuation(&prompt_id, succeeded);
             if !settled {
                 tracing::warn!(
                     prompt_id,

@@ -473,20 +473,19 @@ impl TelegramBot {
         let session_id = conversation_session_id("telegram", chat_id);
         let resume = session_exists(&session_id);
         let mut command = Command::new(aiko);
-        command
-            .args([
-                "--cwd",
-                &cwd.to_string_lossy(),
-                "--no-auto-update",
-                "--verbatim",
-                "--no-subagents",
-                "--output-format",
-                "json",
-                "--json-schema",
-                RESPONSE_SCHEMA,
-                "--rules",
-                INTERFACE_RULES,
-            ]);
+        command.args([
+            "--cwd",
+            &cwd.to_string_lossy(),
+            "--no-auto-update",
+            "--verbatim",
+            "--no-subagents",
+            "--output-format",
+            "json",
+            "--json-schema",
+            RESPONSE_SCHEMA,
+            "--rules",
+            INTERFACE_RULES,
+        ]);
         if resume {
             command.args(["--resume", &session_id]);
         } else {

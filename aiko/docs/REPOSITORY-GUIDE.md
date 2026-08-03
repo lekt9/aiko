@@ -514,6 +514,7 @@ Common commands from the repository root:
 ```sh
 # Agent/TUI
 cargo run -p xai-grok-pager-bin
+scripts/contract-runtime.sh build-aiko-only
 cargo check --release -p xai-grok-shell -p xai-grok-pager -p xai-grok-pager-bin
 
 # Collective acceptance suite
@@ -533,6 +534,11 @@ npm --prefix apps/desktop run package:windows
 scripts/contract-runtime.sh build-aiko
 scripts/contract-runtime.sh install
 ```
+
+`build-aiko-only` builds the Rust binary without rebuilding Contract or
+refreshing a package. `build-aiko` builds both runtimes and emits the combined
+package, including admitted skills and the registry SDK, under
+`target/aiko-package/`.
 
 Finished deliverables live in:
 

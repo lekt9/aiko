@@ -3,7 +3,7 @@
     "version": "1.0.0",
     "private": true,
     "type": "module",
-    "description": "Aiko OpenAI-compatible proxy → Codegraff gateway (Cloudflare Worker)",
+    "description": "Aiko OpenAI-compatible proxy → Surplus Intelligence (Cloudflare Worker)",
     "scripts": {
         "test": "node --test worker.test.js",
         "dev": "wrangler dev",

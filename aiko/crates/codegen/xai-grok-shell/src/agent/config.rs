@@ -49,22 +49,23 @@ pub fn default_agent_type() -> String {
 /// provider) API key.
 pub const CLI_CHAT_PROXY_BASE_URL_DEFAULT: &str = "https://aiko.theclarityproject.net/v1";
 
-/// Whether `base_url` targets Codegraff's first-party inference gateway.
+/// Whether `base_url` targets the Surplus (multi-model gateway) inference host.
 pub fn is_codegraff_gateway_url(base_url: &str) -> bool {
-    base_url
-        .trim_end_matches('/')
-        .starts_with(xai_aiko_providers::CODEGRAFF_API_BASE_URL)
+    let base = base_url.trim_end_matches('/');
+    base.starts_with(xai_aiko_providers::SURPLUS_API_BASE_URL)
+        || base.starts_with(xai_aiko_providers::CODEGRAFF_API_BASE_URL)
+        || base.starts_with("https://gateway.codegraff.com/v1")
 }
 
-/// Resolve the default inference route. Explicit endpoint configuration wins;
-/// otherwise a Codegraff login is primary and the Aiko/Clarity session proxy is
-/// the compatibility fallback.
+/// Resolve the default inference route for catalog entries without an explicit
+/// `base_url`.
+///
+/// Explicit endpoint configuration wins. Otherwise the Aiko/Clarity session
+/// proxy is primary — that worker holds the Surplus upstream key server-side.
+/// Local Surplus BYOK is only stamped when model fetch resolves to the direct
+/// gateway path (no session).
 pub fn resolve_primary_inference_base_url(endpoints: &EndpointsConfig) -> String {
-    if !endpoints.has_custom_endpoint() && xai_aiko_providers::codegraff_key().is_some() {
-        xai_aiko_providers::CODEGRAFF_API_BASE_URL.to_owned()
-    } else {
-        endpoints.resolve_inference_base_url()
-    }
+    endpoints.resolve_inference_base_url()
 }
 /// Default base URL for the public xAI API.
 pub const XAI_API_BASE_URL_DEFAULT: &str = "https://api.x.ai/v1";
@@ -3437,7 +3438,9 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                 id: m.id,
                 model: m.model,
                 base_url,
-                api_base_url: m.base_url.map(|_| String::new())
+                api_base_url: m
+                    .base_url
+                    .map(|_| String::new())
                     .or(Some(endpoints.xai_api_base_url.clone())),
                 name: m.name,
                 description: m.description,
@@ -4339,14 +4342,12 @@ pub fn is_codex_chatgpt_url(base_url: &str) -> bool {
 const CODEX_COMPATIBILITY_VERSION_FALLBACK: &str = "0.146.0";
 
 fn parse_codex_cli_version(output: &str) -> Option<&str> {
-    output
-        .split_whitespace()
-        .find(|part| {
-            part.split('.').count() >= 3
-                && part
-                    .chars()
-                    .all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | '-'))
-        })
+    output.split_whitespace().find(|part| {
+        part.split('.').count() >= 3
+            && part
+                .chars()
+                .all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | '-'))
+    })
 }
 
 /// Report a current Codex protocol version to the ChatGPT backend.
@@ -4369,9 +4370,7 @@ fn codex_compatibility_version() -> &'static str {
                         .ok()
                         .filter(|output| output.status.success())
                         .and_then(|output| String::from_utf8(output.stdout).ok())
-                        .and_then(|output| {
-                            parse_codex_cli_version(&output).map(str::to_owned)
-                        })
+                        .and_then(|output| parse_codex_cli_version(&output).map(str::to_owned))
                 })
                 .unwrap_or_else(|| CODEX_COMPATIBILITY_VERSION_FALLBACK.to_owned())
         })
@@ -4438,16 +4437,18 @@ pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> Res
             )
         }
     } else if is_codegraff_gateway_url(&info.base_url) {
-        if let Some(key) = xai_aiko_providers::codegraff_key() {
+        // Model targets the multi-model gateway (Surplus; formerly Codegraff).
+        // Prefer SURPLUS_API_KEY; if missing, fall back to the Aiko session proxy.
+        if let Some(key) = xai_aiko_providers::surplus_key() {
             (
                 Some(key),
-                info.base_url.clone(),
+                // Always stamp the Surplus base so a stale catalog URL that still
+                // says gateway.codegraff.com is rewritten to the live gateway.
+                xai_aiko_providers::SURPLUS_API_BASE_URL.to_owned(),
                 xai_chat_state::AuthType::ApiKey,
                 IndexMap::new(),
             )
         } else if let Some(key) = session_key {
-            // Codegraff is primary. The Aiko/Clarity session gateway is the
-            // compatibility fallback (and may broker OpenRouter upstream).
             (
                 Some(key.to_owned()),
                 CLI_CHAT_PROXY_BASE_URL_DEFAULT.to_owned(),
@@ -4474,7 +4475,12 @@ pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> Res
             .api_base_url
             .clone()
             .unwrap_or_else(|| info.base_url.clone());
-        (Some(key), url, xai_chat_state::AuthType::ApiKey, IndexMap::new())
+        (
+            Some(key),
+            url,
+            xai_chat_state::AuthType::ApiKey,
+            IndexMap::new(),
+        )
     } else {
         if let Some(ref env_keys) = model.env_key
             && !env_keys.is_empty()
@@ -4650,10 +4656,26 @@ pub fn resolve_aux_model_sampling_config(
             return Some(sampler);
         }
     }
-    let xai_bearer = xai_aiko_providers::codegraff_key()
-        .or_else(|| session_key.map(|s| s.to_owned()))
-        .or_else(|| crate::agent::auth_method::read_xai_api_key_env().ok())
-        .or_else(|| endpoints.deployment_key.clone());
+    // Session JWT → Clarity proxy (Surplus is server-side on that worker).
+    // Local Surplus BYOK only when no session is available.
+    let (xai_bearer, base_url) = if let Some(session) = session_key.filter(|s| !s.trim().is_empty())
+    {
+        (
+            Some(session.to_owned()),
+            resolve_primary_inference_base_url(endpoints),
+        )
+    } else if let Some(key) = xai_aiko_providers::surplus_key() {
+        (
+            Some(key),
+            xai_aiko_providers::SURPLUS_API_BASE_URL.to_owned(),
+        )
+    } else if let Ok(key) = crate::agent::auth_method::read_xai_api_key_env() {
+        (Some(key), resolve_primary_inference_base_url(endpoints))
+    } else if let Some(key) = endpoints.deployment_key.clone() {
+        (Some(key), resolve_primary_inference_base_url(endpoints))
+    } else {
+        (None, resolve_primary_inference_base_url(endpoints))
+    };
     if let Some(bearer) = xai_bearer {
         let entry = ModelEntry {
             info: ModelInfo {
@@ -4662,7 +4684,7 @@ pub fn resolve_aux_model_sampling_config(
                 model: catalog_entry
                     .map(|e| e.info.model)
                     .unwrap_or_else(|| model_id.to_owned()),
-                base_url: resolve_primary_inference_base_url(endpoints),
+                base_url,
                 name: None,
                 description: None,
                 max_completion_tokens: None,
@@ -5654,38 +5676,99 @@ reasoning_effort = "low"
     }
     #[test]
     #[serial]
-    fn codegraff_credential_beats_aiko_session() {
+    fn surplus_gateway_model_uses_surplus_key() {
         let _auth_path = EnvGuard::set(
             "CODEGRAFF_AUTH_PATH",
             "/definitely-not-present/aiko-codegraff-auth.json",
         );
-        let _codegraff = EnvGuard::set("CODEGRAFF_API_KEY", "cg-primary");
+        let _surplus_path = EnvGuard::set(
+            "SURPLUS_AUTH_PATH",
+            "/definitely-not-present/aiko-surplus-auth.json",
+        );
+        let _codegraff = EnvGuard::unset("CODEGRAFF_API_KEY");
+        let _surplus = EnvGuard::set("SURPLUS_API_KEY", "inf_primary");
         let model = test_model_entry(
             "deepseek-v4-pro",
-            xai_aiko_providers::CODEGRAFF_API_BASE_URL,
+            xai_aiko_providers::SURPLUS_API_BASE_URL,
             None,
             None,
             None,
         );
         let credentials = resolve_credentials(&model, Some("clarity-fallback"));
-        assert_eq!(credentials.api_key.as_deref(), Some("cg-primary"));
+        assert_eq!(credentials.api_key.as_deref(), Some("inf_primary"));
         assert_eq!(
             credentials.base_url,
-            xai_aiko_providers::CODEGRAFF_API_BASE_URL
+            xai_aiko_providers::SURPLUS_API_BASE_URL
         );
         assert_eq!(credentials.auth_type, xai_chat_state::AuthType::ApiKey);
     }
+
     #[test]
     #[serial]
-    fn missing_codegraff_credential_uses_aiko_session_fallback() {
-        let _codegraff = EnvGuard::unset("CODEGRAFF_API_KEY");
+    fn proxy_model_prefers_aiko_session_when_no_surplus_key() {
+        // Catalog points at the Clarity proxy and no Surplus key is present.
         let _auth_path = EnvGuard::set(
             "CODEGRAFF_AUTH_PATH",
             "/definitely-not-present/aiko-codegraff-auth.json",
         );
+        let _surplus_path = EnvGuard::set(
+            "SURPLUS_AUTH_PATH",
+            "/definitely-not-present/aiko-surplus-auth.json",
+        );
+        let _codegraff = EnvGuard::unset("CODEGRAFF_API_KEY");
+        let _surplus = EnvGuard::unset("SURPLUS_API_KEY");
         let model = test_model_entry(
             "deepseek-v4-pro",
-            xai_aiko_providers::CODEGRAFF_API_BASE_URL,
+            CLI_CHAT_PROXY_BASE_URL_DEFAULT,
+            None,
+            None,
+            None,
+        );
+        let credentials = resolve_credentials(&model, Some("aiko-session-jwt"));
+        assert_eq!(credentials.api_key.as_deref(), Some("aiko-session-jwt"));
+        assert_eq!(credentials.base_url, CLI_CHAT_PROXY_BASE_URL_DEFAULT);
+        assert_eq!(
+            credentials.auth_type,
+            xai_chat_state::AuthType::SessionToken
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn primary_inference_url_is_proxy_even_with_local_surplus_key() {
+        let _auth_path = EnvGuard::set(
+            "CODEGRAFF_AUTH_PATH",
+            "/definitely-not-present/aiko-codegraff-auth.json",
+        );
+        let _surplus_path = EnvGuard::set(
+            "SURPLUS_AUTH_PATH",
+            "/definitely-not-present/aiko-surplus-auth.json",
+        );
+        let _codegraff = EnvGuard::unset("CODEGRAFF_API_KEY");
+        let _surplus = EnvGuard::set("SURPLUS_API_KEY", "inf_present");
+        let endpoints = EndpointsConfig::default();
+        assert_eq!(
+            resolve_primary_inference_base_url(&endpoints),
+            CLI_CHAT_PROXY_BASE_URL_DEFAULT,
+            "default models stay on the Aiko session proxy; Surplus is upstream of that worker",
+        );
+    }
+    #[test]
+    #[serial]
+    fn missing_surplus_credential_uses_aiko_session_fallback() {
+        let _codegraff = EnvGuard::unset("CODEGRAFF_API_KEY");
+        let _surplus = EnvGuard::unset("SURPLUS_API_KEY");
+        let _auth_path = EnvGuard::set(
+            "CODEGRAFF_AUTH_PATH",
+            "/definitely-not-present/aiko-codegraff-auth.json",
+        );
+        let _surplus_path = EnvGuard::set(
+            "SURPLUS_AUTH_PATH",
+            "/definitely-not-present/aiko-surplus-auth.json",
+        );
+        let model = test_model_entry(
+            "deepseek-v4-pro",
+            xai_aiko_providers::SURPLUS_API_BASE_URL,
             None,
             None,
             None,
@@ -5723,7 +5806,10 @@ reasoning_effort = "low"
             None,
         );
         assert_eq!(
-            sampling_config.extra_headers.get("originator").map(String::as_str),
+            sampling_config
+                .extra_headers
+                .get("originator")
+                .map(String::as_str),
             Some("configured-origin")
         );
         assert_eq!(
@@ -5737,7 +5823,10 @@ reasoning_effort = "low"
 
     #[test]
     fn parses_official_codex_cli_version_for_compatibility_header() {
-        assert_eq!(parse_codex_cli_version("codex-cli 0.146.0\n"), Some("0.146.0"));
+        assert_eq!(
+            parse_codex_cli_version("codex-cli 0.146.0\n"),
+            Some("0.146.0")
+        );
         assert_eq!(parse_codex_cli_version("0.146.0"), Some("0.146.0"));
         assert_eq!(parse_codex_cli_version("not-a-version"), None);
     }

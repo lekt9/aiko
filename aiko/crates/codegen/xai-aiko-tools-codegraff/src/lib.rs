@@ -23,7 +23,7 @@ pub mod write_file;
 // Re-exports
 pub use edit_file::{EditResult, EditVerifier, Verdict, WriteLock};
 pub use read_file::{ReadFileResult, ReadOptions, graff_read_file};
-pub use write_file::{graff_write_file, WriteFileResult};
+pub use write_file::{WriteFileResult, graff_write_file};
 
 /// Max bytes for a whole-file read. Larger files get a preview.
 /// Mirrors codegraff's `read_file.max_bytes`.
@@ -56,15 +56,11 @@ pub fn is_binary_ext(path: &str) -> bool {
 }
 
 const BINARY_EXTS: &[&str] = &[
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tiff", ".tif",
-    ".mp3", ".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv",
-    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-    ".exe", ".dll", ".so", ".dylib", ".wasm",
-    ".o", ".a", ".lib", ".class",
-    ".ttf", ".otf", ".woff", ".woff2",
-    ".db", ".sqlite", ".sqlite3",
-    ".bin", ".dat",
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tiff", ".tif", ".mp3", ".mp4",
+    ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z",
+    ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".exe", ".dll", ".so",
+    ".dylib", ".wasm", ".o", ".a", ".lib", ".class", ".ttf", ".otf", ".woff", ".woff2", ".db",
+    ".sqlite", ".sqlite3", ".bin", ".dat",
 ];
 
 #[cfg(test)]

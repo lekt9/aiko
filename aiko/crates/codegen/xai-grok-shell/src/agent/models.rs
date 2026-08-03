@@ -29,7 +29,12 @@ pub(crate) enum ModelFetchAuth {
 }
 
 impl ModelFetchAuth {
-    /// custom endpoint > Codegraff login > Aiko session > deployment > API key.
+    /// custom endpoint > Aiko session (Clarity proxy → Surplus upstream) >
+    /// local Surplus/Codegraff BYOK > deployment > API key.
+    ///
+    /// The primary multi-model path is the Aiko session proxy. Surplus lives
+    /// server-side on that worker (`SURPLUS_API_KEY`); clients must not bypass
+    /// the proxy just because a local Surplus key file exists.
     ///
     /// A `deployment_key` outranks an ambient `XAI_API_KEY` so a stray env key
     /// can't redirect model fetching from the deployment's entitlement-gated
@@ -37,10 +42,11 @@ impl ModelFetchAuth {
     pub(crate) fn resolve(endpoints: &config::EndpointsConfig, has_cached_session: bool) -> Self {
         if endpoints.has_custom_endpoint() {
             Self::CustomEndpoint
-        } else if xai_aiko_providers::codegraff_key().is_some() {
-            Self::Codegraff
         } else if has_cached_session {
             Self::Session
+        } else if xai_aiko_providers::surplus_key().is_some() {
+            // Historical enum name for the multi-model BYOK gateway path.
+            Self::Codegraff
         } else if endpoints.deployment_key.is_some() {
             Self::Deployment
         } else if crate::agent::auth_method::has_xai_api_key_env() {
@@ -1471,15 +1477,28 @@ fn prefetch_models_blocking_gated(
     let primary_result = fetch_models_blocking(endpoints, auth, fetch_auth);
     let (fetch_result, effective_fetch_auth) = match primary_result {
         Ok(result) if !result.models.is_empty() => (Ok(result), fetch_auth),
-        primary
-            if fetch_auth == ModelFetchAuth::Codegraff && auth.is_some() =>
-        {
+        // Surplus is primary. If its catalog is empty/unavailable and an Aiko
+        // session exists, fall through to the Clarity proxy catalog.
+        _primary if fetch_auth == ModelFetchAuth::Codegraff && auth.is_some() => {
             tracing::warn!(
-                "Codegraff model catalog unavailable; falling back to the Aiko/Clarity catalog"
+                "Surplus model catalog unavailable; falling back to the Aiko/Clarity catalog"
             );
             (
                 fetch_models_blocking(endpoints, auth, ModelFetchAuth::Session),
                 ModelFetchAuth::Session,
+            )
+        }
+        // Inverse: session catalog failed but a Surplus key is available.
+        _primary
+            if fetch_auth == ModelFetchAuth::Session
+                && xai_aiko_providers::surplus_key().is_some() =>
+        {
+            tracing::warn!(
+                "Aiko/Clarity model catalog unavailable; falling back to Surplus catalog"
+            );
+            (
+                fetch_models_blocking(endpoints, auth, ModelFetchAuth::Codegraff),
+                ModelFetchAuth::Codegraff,
             )
         }
         other => (other, fetch_auth),
@@ -3148,12 +3167,17 @@ mod tests {
     use serial_test::serial;
     use xai_grok_test_support::EnvGuard;
 
-    fn isolate_codegraff_auth() -> [EnvGuard; 2] {
+    fn isolate_codegraff_auth() -> [EnvGuard; 4] {
         [
             EnvGuard::unset("CODEGRAFF_API_KEY"),
+            EnvGuard::unset("SURPLUS_API_KEY"),
             EnvGuard::set(
                 "CODEGRAFF_AUTH_PATH",
                 "/definitely-not-present/aiko-codegraff-auth.json",
+            ),
+            EnvGuard::set(
+                "SURPLUS_AUTH_PATH",
+                "/definitely-not-present/aiko-surplus-auth.json",
             ),
         ]
     }
@@ -3256,16 +3280,43 @@ mod tests {
 
     #[test]
     #[serial]
-    fn resolve_codegraff_wins_over_aiko_session() {
+    fn resolve_aiko_session_wins_over_local_surplus_key() {
         let _auth_path = EnvGuard::set(
             "CODEGRAFF_AUTH_PATH",
             "/definitely-not-present/aiko-codegraff-auth.json",
         );
-        let _codegraff = EnvGuard::set("CODEGRAFF_API_KEY", "cg-test-key");
+        let _surplus_path = EnvGuard::set(
+            "SURPLUS_AUTH_PATH",
+            "/definitely-not-present/aiko-surplus-auth.json",
+        );
+        let _codegraff = EnvGuard::unset("CODEGRAFF_API_KEY");
+        let _surplus = EnvGuard::set("SURPLUS_API_KEY", "inf_test-key");
         let endpoints = config::EndpointsConfig::default();
         assert_eq!(
             ModelFetchAuth::resolve(&endpoints, true),
+            ModelFetchAuth::Session,
+            "session uses the Clarity proxy (Surplus is server-side); local key must not bypass",
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_surplus_when_no_session() {
+        let _auth_path = EnvGuard::set(
+            "CODEGRAFF_AUTH_PATH",
+            "/definitely-not-present/aiko-codegraff-auth.json",
+        );
+        let _surplus_path = EnvGuard::set(
+            "SURPLUS_AUTH_PATH",
+            "/definitely-not-present/aiko-surplus-auth.json",
+        );
+        let _codegraff = EnvGuard::unset("CODEGRAFF_API_KEY");
+        let _surplus = EnvGuard::set("SURPLUS_API_KEY", "inf_test-key");
+        let endpoints = config::EndpointsConfig::default();
+        assert_eq!(
+            ModelFetchAuth::resolve(&endpoints, false),
             ModelFetchAuth::Codegraff,
+            "local Surplus BYOK is the no-session path only",
         );
     }
 

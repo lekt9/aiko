@@ -9,6 +9,7 @@ and the right place to make each kind of change.
 | Document | Purpose |
 |---|---|
 | [Visual repository guide](REPOSITORY-GUIDE.md) | Repo-wide architecture, diagrams, ownership, code map, state, builds, and debugging |
+| [Internal development](../CONTRIBUTING.md#internal-development) | Toolchain prerequisites, inner-loop commands, focused tests, formatting, and Contract task verification |
 | [Photon / positron → Contract → EBM](PHOTON-POSITRON-CONTRACT-EBM.md) | Faithful physics map of the substrate: ledger as field, claim×check collisions, EBM as energy of verified work (canon in `Unbrowse/contract`) |
 | [Photon / positron gaps](PHOTON-POSITRON-GAPS.md) | Gap register: built chamber vs depth/wiring/scale/containment/truth; priority 1–5 (canon in `Unbrowse/contract`) |
 | [Photon / positron runtime](PHOTON-POSITRON-RUNTIME.md) | Waves, daemon-as-clock-hand, preempt; product plan [`plan3.md`](../plan3.md) |

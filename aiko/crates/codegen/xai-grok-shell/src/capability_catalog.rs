@@ -638,30 +638,33 @@ pub fn discover_external_registry_snapshots(tools: &[ToolDefinition]) -> Vec<Cat
                    output_schema: Value,
                    requires: Vec<String>| {
         let available = tool.is_some();
-        by_provider.entry(provider.to_owned()).or_default().push(CapabilityDescriptor {
-            schema_version: 1,
-            id: id.into(),
-            capability_version: semantic_version(&[
-                id.as_bytes(),
-                serde_json::to_string(&input_schema)
-                    .unwrap_or_default()
-                    .as_bytes(),
-                b"external-registry-v1",
-            ]),
-            provider: provider.into(),
-            tool: tool.cloned().unwrap_or_else(|| "unavailable".into()),
-            action: action.into(),
-            description: bounded_description(description),
-            input_schema: object_or_empty(input_schema),
-            output_schema: object_or_empty(output_schema),
-            requires,
-            permission: Permission::Network,
-            effects: vec![Effect::NetworkRead],
-            // These adapters are governed discovery receptors by design:
-            // they search and traverse metadata, nothing else.
-            roles: vec![CellRole::Receptor],
-            available,
-        });
+        by_provider
+            .entry(provider.to_owned())
+            .or_default()
+            .push(CapabilityDescriptor {
+                schema_version: 1,
+                id: id.into(),
+                capability_version: semantic_version(&[
+                    id.as_bytes(),
+                    serde_json::to_string(&input_schema)
+                        .unwrap_or_default()
+                        .as_bytes(),
+                    b"external-registry-v1",
+                ]),
+                provider: provider.into(),
+                tool: tool.cloned().unwrap_or_else(|| "unavailable".into()),
+                action: action.into(),
+                description: bounded_description(description),
+                input_schema: object_or_empty(input_schema),
+                output_schema: object_or_empty(output_schema),
+                requires,
+                permission: Permission::Network,
+                effects: vec![Effect::NetworkRead],
+                // These adapters are governed discovery receptors by design:
+                // they search and traverse metadata, nothing else.
+                roles: vec![CellRole::Receptor],
+                available,
+            });
     };
     // Contract requires `id` to be namespaced by its provider, exactly as the
     // quarantined-artifact adapter below does.

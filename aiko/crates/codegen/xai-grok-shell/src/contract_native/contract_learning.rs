@@ -213,12 +213,7 @@ pub(super) fn render_context(goal: &str, cwd: &Path) -> Option<String> {
 ///
 /// This is the minimal fix for Break 2 and Break 3 from
 /// `docs/self-growing-limb-wiring-gaps.md`.
-pub(super) fn deliberate_bypass_gap(
-    gap_id: &str,
-    actual_tools: &[&str],
-    goal: &str,
-    cwd: &Path,
-) {
+pub(super) fn deliberate_bypass_gap(gap_id: &str, actual_tools: &[&str], goal: &str, cwd: &Path) {
     // ── 1. Demote any limb proposed for this gap ──────────────────────
     if let Some(store_path) = growth_store_path() {
         let state = load_growth(&store_path);
@@ -287,11 +282,12 @@ pub(super) fn deliberate_bypass_gap_for_goal(goal: &str, cwd: &Path) {
         }
         // Check if this gap is relevant to the current goal — either the
         // gap was opened for a similar goal, or the project matches.
-        if !state
-            .proposals
-            .values()
-            .any(|p| p.gap_id == *gap_id && p.hypothesis.split_whitespace().any(|w| query.contains(&w.to_ascii_lowercase())))
-        {
+        if !state.proposals.values().any(|p| {
+            p.gap_id == *gap_id
+                && p.hypothesis
+                    .split_whitespace()
+                    .any(|w| query.contains(&w.to_ascii_lowercase()))
+        }) {
             continue;
         }
         deliberate_bypass_gap(gap_id, &[], goal, cwd);
@@ -1859,19 +1855,18 @@ mod contract_learning_tests {
                 .collect::<Vec<_>>(),
             vec!["receptor", "executor", "sensor"]
         );
-        assert!(
-            proposal
-                .cells
-                .iter()
-                .all(|cell| cell.binding.is_some())
-        );
+        assert!(proposal.cells.iter().all(|cell| cell.binding.is_some()));
         assert_eq!(
             proposal
                 .cells
                 .iter()
                 .map(|cell| cell.depends_on.clone())
                 .collect::<Vec<_>>(),
-            vec![Vec::<String>::new(), vec!["receptor".into()], vec!["executor".into()]]
+            vec![
+                Vec::<String>::new(),
+                vec!["receptor".into()],
+                vec!["executor".into()]
+            ]
         );
         assert!(!proposal.rollback.is_empty());
         let far = SemanticRelation {

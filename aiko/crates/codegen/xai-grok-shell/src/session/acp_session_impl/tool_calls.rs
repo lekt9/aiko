@@ -6,8 +6,8 @@
 //! `impl SessionActor` block retains access to the actor's private fields and
 //! the parent module's private helpers.
 use super::*;
-use futures::StreamExt;
 use crate::contract_native::contract_events;
+use futures::StreamExt;
 /// Whether a tool name is an MCP `create_pull_request` (qualified
 /// `server__create_pull_request` or bare).
 fn is_mcp_create_pull_request(tool_name: &str) -> bool {

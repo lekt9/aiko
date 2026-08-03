@@ -748,9 +748,10 @@ pub(crate) fn fetch_models_blocking(
             request = request.header("Authorization", format!("Bearer {}", api_key));
         }
         EndpointAuth::Codegraff => {
-            let api_key = xai_aiko_providers::codegraff_key().ok_or_else(|| {
+            let api_key = xai_aiko_providers::surplus_key().ok_or_else(|| {
                 BackendError::Auth(
-                    "No Codegraff credential. Run `graff provider login codegraff`.".into(),
+                    "No Surplus credential. Set SURPLUS_API_KEY or write ~/.aiko/surplus-auth.json."
+                        .into(),
                 )
             })?;
             request = request.header("Authorization", format!("Bearer {api_key}"));

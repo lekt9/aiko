@@ -93,9 +93,7 @@ pub fn create_pair(goal: &str, check: &str) -> Result<ContractPair, String> {
         .map_err(|e| format!("failed to run contract: {e}"))?;
 
     if code != 0 {
-        return Err(format!(
-            "work contract failed (exit {code}): {stderr}"
-        ));
+        return Err(format!("work contract failed (exit {code}): {stderr}"));
     }
 
     let work_id = extract_task_id(&stdout)
@@ -105,14 +103,11 @@ pub fn create_pair(goal: &str, check: &str) -> Result<ContractPair, String> {
 
     // 2. Create the witness contract with the same check
     let witness_goal = format!("witness: {goal}");
-    let (wstdout, wstderr, wcode) =
-        contract(&["task", "begin", &witness_goal, "--check", check])
-            .map_err(|e| format!("failed to run contract witness: {e}"))?;
+    let (wstdout, wstderr, wcode) = contract(&["task", "begin", &witness_goal, "--check", check])
+        .map_err(|e| format!("failed to run contract witness: {e}"))?;
 
     if wcode != 0 {
-        return Err(format!(
-            "witness contract failed (exit {wcode}): {wstderr}"
-        ));
+        return Err(format!("witness contract failed (exit {wcode}): {wstderr}"));
     }
 
     let witness_id = extract_task_id(&wstdout)

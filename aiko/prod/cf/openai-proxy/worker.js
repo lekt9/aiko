@@ -2,11 +2,11 @@
  * Aiko OpenAI-Compatible Chat Proxy — Cloudflare Worker (authenticated)
  *
  * Authenticated gateway that validates Aiko bearer tokens (JWT), extracts
- * user identity, and forwards requests to Codegraff's OpenAI-compatible API.
- * Unauthenticated requests are rejected with 401.
+ * user identity, and forwards requests to Surplus Intelligence's OpenAI-
+ * compatible API. Unauthenticated requests are rejected with 401.
  *
  * Architecture (per docs/aiko-provider-gateway.md):
- *   Client → [Bearer token] → this worker → [CODEGRAFF_API_KEY] → Codegraff
+ *   Client → [Bearer Aiko JWT] → this worker → [SURPLUS_API_KEY] → Surplus
  *
  * Token validation: decodes the JWT (base64url), checks issuer + expiration,
  * and extracts the user identity from `sub` / `principalId` claims.
@@ -16,7 +16,9 @@
  *       Today the issuer's OIDC discovery document lacks `jwks_uri`.
  *
  * Environment (set via `wrangler secret put`):
- *   CODEGRAFF_API_KEY — server-side upstream API key (required)
+ *   SURPLUS_API_KEY   — server-side upstream API key (required; preferred)
+ *   CODEGRAFF_API_KEY — legacy alias for SURPLUS_API_KEY (still accepted)
+ *   TARGET_URL        — upstream base (default https://api.surplusintelligence.ai)
  *   ISSUER_URL        — OAuth issuer base URL
  *                        (defaults to https://aiko.theclarityproject.net)
  */
@@ -188,16 +190,27 @@ class AuthError extends Error {
 // Upstream forwarding
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/** Default multi-model upstream (Surplus Intelligence). Path `/v1/...` is appended. */
+const DEFAULT_UPSTREAM = 'https://api.surplusintelligence.ai';
+
 function resolveUpstream(env) {
-    return (env.TARGET_URL || 'https://gateway.codegraff.com').replace(/\/+$/, '');
+    return (env.TARGET_URL || DEFAULT_UPSTREAM).replace(/\/+$/, '');
+}
+
+/**
+ * Server-held upstream bearer. Prefer SURPLUS_API_KEY; accept legacy
+ * CODEGRAFF_API_KEY so existing Cloudflare secrets keep working during cutover.
+ */
+function upstreamApiKey(env) {
+    return env.SURPLUS_API_KEY || env.CODEGRAFF_API_KEY || '';
 }
 
 /**
  * Build upstream headers.
  *
- * Always uses CODEGRAFF_API_KEY as the upstream bearer — the client's token
- * never reaches Codegraff. Passes user identity as x-aiko-user-id for usage
- * tracking.
+ * Always uses the server-held Surplus (or legacy) key as the upstream bearer —
+ * the client's Aiko JWT never reaches Surplus. Passes user identity as
+ * x-aiko-user-id for usage tracking.
  */
 const HOP_BY_HOP_HEADERS = new Set([
     'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
@@ -218,8 +231,8 @@ function upstreamHeaders(request, env, user) {
         h.set(name, value);
     }
 
-    // Server-side Codegraff key (required)
-    h.set('Authorization', `Bearer ${env.CODEGRAFF_API_KEY}`);
+    // Server-side Surplus key (required)
+    h.set('Authorization', `Bearer ${upstreamApiKey(env)}`);
 
     // User identity for usage tracking
     if (user.userId) {
@@ -235,8 +248,8 @@ function upstreamHeaders(request, env, user) {
 async function forward(request, env, path, user) {
     const base = resolveUpstream(env);
     const url = `${base}${path}`;
-    if (!env.CODEGRAFF_API_KEY) {
-        return err(503, 'Proxy is not configured: CODEGRAFF_API_KEY is missing');
+    if (!upstreamApiKey(env)) {
+        return err(503, 'Proxy is not configured: SURPLUS_API_KEY is missing');
     }
     const headers = upstreamHeaders(request, env, user);
 
@@ -300,6 +313,8 @@ export default {
                 ok: true,
                 service: 'aiko-openai-proxy',
                 auth: 'required',
+                upstream: resolveUpstream(env),
+                upstream_key_configured: Boolean(upstreamApiKey(env)),
                 time: Math.floor(Date.now() / 1000),
             });
         }

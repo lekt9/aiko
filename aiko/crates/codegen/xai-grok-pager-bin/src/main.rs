@@ -2239,10 +2239,7 @@ async fn async_main() -> Result<()> {
                             xai_grok_shell::instrumentation::finalize_and_exit(0);
                         }
                         other => {
-                            anyhow::bail!(
-                                "unknown provider '{}' — did you mean 'codex'?",
-                                other
-                            );
+                            anyhow::bail!("unknown provider '{}' — did you mean 'codex'?", other);
                         }
                     }
                 } else {
@@ -2250,7 +2247,8 @@ async fn async_main() -> Result<()> {
                         .map_err(|e| anyhow::anyhow!("Failed to load config: {e}"))?;
                     let config = AgentConfig::new_from_toml_cfg(&config)
                         .map_err(|e| anyhow::anyhow!("Failed to create agent config: {e}"))?;
-                    xai_grok_shell::auth::run_cli_login(&config, oauth, device_auth, devbox).await?;
+                    xai_grok_shell::auth::run_cli_login(&config, oauth, device_auth, devbox)
+                        .await?;
                     println!();
                     xai_grok_shell::instrumentation::finalize_and_exit(0);
                 }

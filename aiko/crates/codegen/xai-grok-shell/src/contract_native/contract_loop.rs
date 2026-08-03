@@ -157,7 +157,10 @@ pub enum FillAction {
     /// Execute a generic iteration (retry wave record)
     Iterate { child_id: String, wave: u32 },
     /// Unknown fill — surface to agent
-    Unknown { child_id: String, action_result: String },
+    Unknown {
+        child_id: String,
+        action_result: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -293,9 +296,12 @@ impl ContractLoopDriver {
 
     /// Whether the ContractLoopDriver is enabled.
     pub fn enabled() -> bool {
-        std::env::var(LOOP_ENABLED_ENV)
-            .ok()
-            .is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes"))
+        std::env::var(LOOP_ENABLED_ENV).ok().is_some_and(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "on" | "yes"
+            )
+        })
     }
 
     // ── Event Parsing ──────────────────────────────────────────────
@@ -360,7 +366,11 @@ impl ContractLoopDriver {
                         let b_match = b.binary.to_ascii_lowercase().contains(&hint_lower);
                         b_match.cmp(&a_match)
                     })
-                    .then_with(|| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal))
+                    .then_with(|| {
+                        b.confidence
+                            .partial_cmp(&a.confidence)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
             })
             .cloned()
     }
@@ -382,16 +392,14 @@ impl ContractLoopDriver {
                         child_id: fill.via_contract.clone(),
                     }
                 }
-                "iterate" => {
-                    FillAction::Iterate {
-                        child_id: fill.via_contract.clone(),
-                        wave: fill.wave,
-                    }
-                }
+                "iterate" => FillAction::Iterate {
+                    child_id: fill.via_contract.clone(),
+                    wave: fill.wave,
+                },
                 _ => FillAction::Unknown {
                     child_id: fill.via_contract.clone(),
                     action_result: fill.action_result.clone(),
-                }
+                },
             }
         } else {
             // Child not yet resolved — surface as unknown
@@ -484,12 +492,7 @@ impl ContractLoopDriver {
     ///
     /// After a tool call completes, this updates the child's outcome
     /// and processes resulting events.
-    pub fn feed_tool_result(
-        &mut self,
-        child_id: &str,
-        success: bool,
-        output: &str,
-    ) {
+    pub fn feed_tool_result(&mut self, child_id: &str, success: bool, output: &str) {
         if let Some(child) = self.children.get_mut(child_id) {
             if success {
                 child.outcome = "satisfied".into();
@@ -521,17 +524,24 @@ impl ContractLoopDriver {
 
     /// Record a child declaration from the event stream.
     pub fn record_child_declared(&mut self, child_id: String, action: String) {
-        self.children.entry(child_id.clone()).or_insert(ChildOutcome {
-            child_id,
-            action,
-            outcome: "pending".into(),
-            satisfied: false,
-            cache_snapshot: None,
-        });
+        self.children
+            .entry(child_id.clone())
+            .or_insert(ChildOutcome {
+                child_id,
+                action,
+                outcome: "pending".into(),
+                satisfied: false,
+                cache_snapshot: None,
+            });
     }
 
     /// Record a child resolution (break_above or satisfied).
-    pub fn record_child_resolved(&mut self, child_id: &str, outcome: &str, snapshot: Option<String>) {
+    pub fn record_child_resolved(
+        &mut self,
+        child_id: &str,
+        outcome: &str,
+        snapshot: Option<String>,
+    ) {
         if let Some(child) = self.children.get_mut(child_id) {
             child.outcome = outcome.to_string();
             child.satisfied = outcome.contains("resolved") || outcome.contains("satisfied");
@@ -595,9 +605,7 @@ impl ContractLoopDriver {
                     ..
                 } => {
                     // Only track children of our contract
-                    if parent_id.as_deref() == Some(&self.contract_id)
-                        || id == &self.contract_id
-                    {
+                    if parent_id.as_deref() == Some(&self.contract_id) || id == &self.contract_id {
                         let action_str = pointer_type
                             .clone()
                             .unwrap_or_else(|| action.clone().unwrap_or_default());
@@ -644,21 +652,13 @@ impl ContractLoopDriver {
                     ..
                 } => {
                     if let Some(result) = action_result {
-                        self.record_child_resolved(
-                            &source_id,
-                            &result,
-                            None,
-                        );
+                        self.record_child_resolved(&source_id, &result, None);
                     }
                 }
                 ContractEvent::Satisfied { id, .. } => {
                     self.record_child_resolved(&id, "satisfied", None);
                 }
-                ContractEvent::CacheResolved {
-                    id,
-                    snapshot,
-                    ..
-                } => {
+                ContractEvent::CacheResolved { id, snapshot, .. } => {
                     if let Some(snap) = &snapshot {
                         if let Some(child) = self.children.get_mut(id.as_str()) {
                             child.cache_snapshot = Some(snap.clone());
@@ -845,7 +845,13 @@ mod tests {
         let event = parse_event_line(line);
         assert!(event.is_some());
         match event.unwrap() {
-            ContractEvent::Declared { id, pointer_type, parent_id, layer, .. } => {
+            ContractEvent::Declared {
+                id,
+                pointer_type,
+                parent_id,
+                layer,
+                ..
+            } => {
                 assert_eq!(id, "885a9fae");
                 assert_eq!(pointer_type, Some("cli".into()));
                 assert_eq!(parent_id, Some("fc38956b".into()));

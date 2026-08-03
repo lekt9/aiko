@@ -78,16 +78,10 @@ pub fn graff_write_file<P: AsRef<Path>>(
     let mut tmp_path = path.to_path_buf();
     tmp_path.set_file_name(format!(
         ".{}.tmp",
-        path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("file")
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("file")
     ));
     if let Some(parent) = path.parent() {
-        tmp_path = parent.join(
-            tmp_path
-                .file_name()
-                .unwrap_or(std::ffi::OsStr::new(".tmp")),
-        );
+        tmp_path = parent.join(tmp_path.file_name().unwrap_or(std::ffi::OsStr::new(".tmp")));
     }
 
     {

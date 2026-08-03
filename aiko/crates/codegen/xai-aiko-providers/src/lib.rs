@@ -26,44 +26,59 @@
 //! | `OpenAi`    | Chat Completions API      | OpenAI, xAI (Grok), DeepSeek |
 //! | `Responses` | Codex Responses API       | Codex (ChatGPT)            |
 //!
-//! # Provider routing (from codegraff providers.zig)
+//! # Provider routing
 //!
-//! 1. **Codegraff is primary** when its key and model are available.
-//! 2. **Direct providers are fallback routes** when Codegraff is unavailable or
+//! 1. **Surplus is primary** when `SURPLUS_API_KEY` (or legacy Codegraff key)
+//!    is available and the model is served.
+//! 2. **Direct providers are fallback routes** when Surplus is unavailable or
 //!    does not serve the requested model.
-//! 3. **Catalogued models with no keyed provider fail with `MissingKey`** — they
-//!    don't silently route to the gateway (codegraff issue #294).
+//! 3. **Catalogued models with no keyed provider fail with `MissingKey`**.
 //! 4. **Genuinely unknown models fall back**: `claude*` → Anthropic, everything
-//!    else → codegraff gateway.
+//!    else → Surplus gateway.
 
 mod keys;
 mod provider;
 mod router;
 mod spec;
 
-pub use keys::{Keys, codegraff_key};
+pub use keys::{Keys, codegraff_key, surplus_key};
 pub use provider::{AuthStyle, CredentialSource, Provider, ProviderKind};
 pub use router::{ProviderRouter, RouterError};
 pub use spec::ProviderSpec;
 
-/// OpenAI-compatible Codegraff gateway base used by Aiko's primary model path.
-pub const CODEGRAFF_API_BASE_URL: &str = "https://gateway.codegraff.com/v1";
-/// Codegraff's live model catalog.
-pub const CODEGRAFF_MODELS_URL: &str = "https://gateway.codegraff.com/v1/models";
-/// Fully-qualified chat-completions endpoint used by the provider abstraction.
-pub const CODEGRAFF_CHAT_COMPLETIONS_URL: &str =
-    "https://gateway.codegraff.com/v1/chat/completions";
+/// OpenAI-compatible Surplus Intelligence gateway (primary multi-model path).
+pub const SURPLUS_API_BASE_URL: &str = "https://api.surplusintelligence.ai/v1";
+/// Surplus live model catalog.
+pub const SURPLUS_MODELS_URL: &str = "https://api.surplusintelligence.ai/v1/models";
+/// Fully-qualified chat-completions endpoint.
+pub const SURPLUS_CHAT_COMPLETIONS_URL: &str =
+    "https://api.surplusintelligence.ai/v1/chat/completions";
+
+/// Back-compat aliases — the gateway role formerly held by Codegraff.
+pub const CODEGRAFF_API_BASE_URL: &str = SURPLUS_API_BASE_URL;
+/// Back-compat alias for [`SURPLUS_MODELS_URL`].
+pub const CODEGRAFF_MODELS_URL: &str = SURPLUS_MODELS_URL;
+/// Back-compat alias for [`SURPLUS_CHAT_COMPLETIONS_URL`].
+pub const CODEGRAFF_CHAT_COMPLETIONS_URL: &str = SURPLUS_CHAT_COMPLETIONS_URL;
 
 /// The built-in provider catalog — one entry per supported provider.
 /// Mirrors codegraff's `provider_specs` const array.
 pub fn builtin_specs() -> &'static [ProviderSpec] {
     &[
-        // Aiko Cloudflare API proxy — forwards to Codegraff server-side.
-        // Clients authenticate with their Aiko OAuth access token and never
-        // receive or send the upstream CODEGRAFF_API_KEY.
+        // Surplus Intelligence — primary multi-model OpenAI-compatible gateway.
+        ProviderSpec {
+            id: "surplus",
+            display_name: "Surplus Intelligence",
+            kind: ProviderKind::OpenAi,
+            auth: AuthStyle::Bearer,
+            url: SURPLUS_CHAT_COMPLETIONS_URL,
+            env_key: "SURPLUS_API_KEY",
+            default_model: "deepseek-v4-pro",
+        },
+        // Aiko Cloudflare API proxy — session JWT path (server holds upstream key).
         ProviderSpec {
             id: "codegraff",
-            display_name: "Codegraff",
+            display_name: "Aiko Session Proxy",
             kind: ProviderKind::OpenAi,
             auth: AuthStyle::Bearer,
             url: "https://aiko.theclarityproject.net/v1/chat/completions",
@@ -246,7 +261,7 @@ pub fn context_window_for(provider_id: &str, model: &str) -> u64 {
         }
     }
     // DeepSeek
-    if provider_id == "deepseek" || provider_id == "codegraff" {
+    if provider_id == "deepseek" || provider_id == "surplus" || provider_id == "codegraff" {
         match model {
             "deepseek-v4-pro" | "deepseek-v4-flash" => return 1_000_000,
             _ => {}
@@ -293,7 +308,20 @@ pub fn context_window_for(provider_id: &str, model: &str) -> u64 {
 /// models fall through to the gateway fallback (codegraff issue #294).
 pub fn is_known_model(_provider_id: &str, model: &str) -> bool {
     // Check if a model appears in any provider's context table
-    let providers = ["codex", "openai", "anthropic", "xai", "deepseek", "codegraff", "kimi", "minimax", "zai", "xiaomi", "fugu"];
+    let providers = [
+        "codex",
+        "openai",
+        "anthropic",
+        "xai",
+        "deepseek",
+        "surplus",
+        "codegraff",
+        "kimi",
+        "minimax",
+        "zai",
+        "xiaomi",
+        "fugu",
+    ];
     for pid in &providers {
         let ctx = context_window_for(pid, model);
         // If the context window is not the default 32_000, it's a known model
@@ -302,23 +330,41 @@ pub fn is_known_model(_provider_id: &str, model: &str) -> bool {
         }
     }
     // Also check common aliases
-    matches!(model,
-        | "claude-opus-4-8" | "claude-opus-4.8"
-        | "claude-sonnet-4-6" | "claude-sonnet-4.6"
+    matches!(model, |"claude-opus-4-8"| "claude-opus-4.8"
+        | "claude-sonnet-4-6"
+        | "claude-sonnet-4.6"
         | "claude-haiku-4-5"
-        | "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
-        | "gpt-5.5" | "gpt-5.5-codex" | "gpt-5.4" | "gpt-5.4-mini"
-        | "gpt-5.3-codex" | "gpt-5.2" | "gpt-5-codex"
-        | "deepseek-v4-pro" | "deepseek-v4-flash"
-        | "grok-4.3" | "grok-build"
-        | "mimo-v2.5-pro" | "mimo-v2.5"
-        | "glm-5.2" | "glm-5" | "glm-4.7" | "glm-4.5"
-        | "kimi-k2.7" | "kimi-k2.6" | "kimi-k2-thinking" | "kimi-k2.5" | "k3"
-        | "MiniMax-M3" | "minimax-m3"
+        | "gpt-5.6"
+        | "gpt-5.6-sol"
+        | "gpt-5.6-terra"
+        | "gpt-5.6-luna"
+        | "gpt-5.5"
+        | "gpt-5.5-codex"
+        | "gpt-5.4"
+        | "gpt-5.4-mini"
+        | "gpt-5.3-codex"
+        | "gpt-5.2"
+        | "gpt-5-codex"
+        | "deepseek-v4-pro"
+        | "deepseek-v4-flash"
+        | "grok-4.3"
+        | "grok-build"
+        | "mimo-v2.5-pro"
+        | "mimo-v2.5"
+        | "glm-5.2"
+        | "glm-5"
+        | "glm-4.7"
+        | "glm-4.5"
+        | "kimi-k2.7"
+        | "kimi-k2.6"
+        | "kimi-k2-thinking"
+        | "kimi-k2.5"
+        | "k3"
+        | "MiniMax-M3"
+        | "minimax-m3"
         | "fugu-ultra"
         | "kimi-latest"
-        | "lmstudio"
-    )
+        | "lmstudio")
 }
 
 /// Whether a model is catalogued under any provider.
@@ -331,38 +377,58 @@ pub fn model_in_catalog(model: &str) -> bool {
 /// (e.g., gpt-5.6-sol must only match under codex).
 pub fn provider_model_in_catalog(provider_id: &str, model: &str) -> bool {
     match provider_id {
-        "codex" => matches!(model,
-            "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
-            | "gpt-5.5-codex" | "gpt-5.4" | "gpt-5.4-mini"
-            | "gpt-5.3-codex" | "gpt-5.2" | "gpt-5-codex"
+        "codex" => matches!(
+            model,
+            "gpt-5.6-sol"
+                | "gpt-5.6-terra"
+                | "gpt-5.6-luna"
+                | "gpt-5.5-codex"
+                | "gpt-5.4"
+                | "gpt-5.4-mini"
+                | "gpt-5.3-codex"
+                | "gpt-5.2"
+                | "gpt-5-codex"
         ),
-        "openai" => matches!(model,
-            "gpt-5.6" | "gpt-5.5" | "gpt-5.4" | "gpt-5.4-mini"
-            | "gpt-5.2"
+        "openai" => matches!(
+            model,
+            "gpt-5.6" | "gpt-5.5" | "gpt-5.4" | "gpt-5.4-mini" | "gpt-5.2"
         ),
-        "anthropic" => matches!(model,
-            "claude-opus-4-8" | "claude-opus-4.8"
-            | "claude-sonnet-4-6" | "claude-sonnet-4.6"
-            | "claude-haiku-4-5"
+        "anthropic" => matches!(
+            model,
+            "claude-opus-4-8"
+                | "claude-opus-4.8"
+                | "claude-sonnet-4-6"
+                | "claude-sonnet-4.6"
+                | "claude-haiku-4-5"
         ),
         "xai" => matches!(model, "grok-4.3" | "grok-build"),
         "deepseek" => matches!(model, "deepseek-v4-pro" | "deepseek-v4-flash"),
-        "kimi" => matches!(model,
-            "kimi-k2.7" | "kimi-k2.6" | "kimi-k2-thinking"
-            | "kimi-k2.5" | "k3" | "kimi-latest"
+        "kimi" => matches!(
+            model,
+            "kimi-k2.7" | "kimi-k2.6" | "kimi-k2-thinking" | "kimi-k2.5" | "k3" | "kimi-latest"
         ),
         "minimax" => matches!(model, "MiniMax-M3" | "minimax-m3"),
         "xiaomi" => matches!(model, "mimo-v2.5-pro" | "mimo-v2.5"),
         "zai" => matches!(model, "glm-5.2" | "glm-5" | "glm-4.7" | "glm-4.5"),
         "fugu" => matches!(model, "fugu-ultra"),
         "moonshot" => matches!(model, "kimi-latest"),
-        "codegraff" => matches!(model,
-            "deepseek-v4-pro" | "deepseek-v4-flash"
-            | "gpt-5.6" | "gpt-5.5" | "gpt-5.4"
-            | "claude-opus-4-8" | "claude-sonnet-4-6"
-            | "grok-4.3" | "grok-build"
-            | "mimo-v2.5-pro" | "glm-5.2"
-            | "kimi-k2.7" | "MiniMax-M3" | "fugu-ultra"
+        // Surplus is the multi-model gateway (replaces Codegraff for this role).
+        "surplus" | "codegraff" => matches!(
+            model,
+            "deepseek-v4-pro"
+                | "deepseek-v4-flash"
+                | "gpt-5.6"
+                | "gpt-5.5"
+                | "gpt-5.4"
+                | "claude-opus-4-8"
+                | "claude-sonnet-4-6"
+                | "grok-4.3"
+                | "grok-build"
+                | "mimo-v2.5-pro"
+                | "glm-5.2"
+                | "kimi-k2.7"
+                | "MiniMax-M3"
+                | "fugu-ultra"
         ),
         // Local providers only match their known model prefixes
         "mlx" => model.starts_with("mlx-community/"),
@@ -387,7 +453,7 @@ pub fn provider_default_model<'a>(provider_id: &str, fallback: &'a str) -> &'a s
         "xiaomi" => "mimo-v2.5-pro",
         "fugu" => "fugu-ultra",
         "moonshot" => "kimi-latest",
-        "codegraff" => "deepseek-v4-pro",
+        "surplus" | "codegraff" => "deepseek-v4-pro",
         _ => fallback,
     }
 }
@@ -427,11 +493,23 @@ mod tests {
     }
 
     #[test]
-    fn codegraff_uses_cloudflare_proxy() {
+    fn surplus_is_primary_gateway() {
+        let spec = builtin_specs()
+            .iter()
+            .find(|spec| spec.id == "surplus")
+            .expect("Surplus provider spec");
+
+        assert_eq!(spec.url, SURPLUS_CHAT_COMPLETIONS_URL);
+        assert_eq!(spec.env_key, "SURPLUS_API_KEY");
+        assert!(spec.url.contains("surplusintelligence.ai"));
+    }
+
+    #[test]
+    fn codegraff_id_is_session_proxy() {
         let spec = builtin_specs()
             .iter()
             .find(|spec| spec.id == "codegraff")
-            .expect("Codegraff provider spec");
+            .expect("session proxy provider spec");
 
         assert_eq!(
             spec.url,

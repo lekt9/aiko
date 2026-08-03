@@ -1,7 +1,9 @@
 //! Bridge between `xai-aiko-providers` and `xai-grok-sampler` types.
 //! Free conversion functions (orphan rule prevents `impl From` across crates).
 
-use xai_aiko_providers::{AuthStyle, CredentialSource, Provider, ProviderKind, ProviderRouter, RouterError};
+use xai_aiko_providers::{
+    AuthStyle, CredentialSource, Provider, ProviderKind, ProviderRouter, RouterError,
+};
 use xai_grok_sampler::SamplerConfig;
 use xai_grok_sampling_types::ApiBackend;
 

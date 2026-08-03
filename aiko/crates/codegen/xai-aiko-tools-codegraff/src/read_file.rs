@@ -14,7 +14,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
-use crate::{is_binary_ext, READ_MAX_BYTES, PREVIEW_BYTES, STREAM_BUF_SIZE};
+use crate::{PREVIEW_BYTES, READ_MAX_BYTES, STREAM_BUF_SIZE, is_binary_ext};
 
 /// The result of a graff-style read_file operation.
 #[derive(Debug)]
@@ -126,7 +126,13 @@ pub fn graff_read_file<P: AsRef<Path>>(
 
     // Line-window mode
     if options.start_line.is_some() || options.end_line.is_some() {
-        return read_window(&mut file, size, options.start_line, options.end_line, max_bytes);
+        return read_window(
+            &mut file,
+            size,
+            options.start_line,
+            options.end_line,
+            max_bytes,
+        );
     }
 
     // Whole-file mode: large files get a preview
@@ -310,10 +316,8 @@ mod tests {
 
         // Line window should work even on large files
         let line_count = content.lines().count();
-        let opts = ReadOptions::new().with_lines(
-            Some((line_count - 1) as i64),
-            Some(line_count as i64),
-        );
+        let opts =
+            ReadOptions::new().with_lines(Some((line_count - 1) as i64), Some(line_count as i64));
         let result = graff_read_file(&path, &opts).unwrap();
         match result {
             ReadFileResult::Text(text) => assert_eq!(text, "target\nlast\n"),

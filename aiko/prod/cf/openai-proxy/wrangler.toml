@@ -7,7 +7,7 @@ compatibility_date = "2025-01-01"
 enabled = true
 head_sampling_rate = 1
 
-# Placeholder — set via `wrangler secret put TARGET_URL`
-# The worker defaults to https://gateway.codegraff.com if unset
+# Upstream multi-model gateway (Surplus). Override with secret/var if needed.
+# API key: `wrangler secret put SURPLUS_API_KEY`
 [vars]
-# TARGET_URL = "https://gateway.codegraff.com"
+TARGET_URL = "https://api.surplusintelligence.ai"

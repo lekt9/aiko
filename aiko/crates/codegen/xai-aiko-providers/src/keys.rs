@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 const CODEGRAFF_AUTH_PATH_ENV: &str = "CODEGRAFF_AUTH_PATH";
+const SURPLUS_AUTH_PATH_ENV: &str = "SURPLUS_AUTH_PATH";
 
 fn nonempty_env(name: &str) -> Option<String> {
     std::env::var(name)
@@ -54,12 +55,26 @@ fn home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// Resolve the Codegraff bearer credential with upstream-compatible precedence:
-/// `CODEGRAFF_API_KEY`, then the device-login file, then Graff's credential store.
+/// Resolve the Surplus Intelligence bearer credential.
 ///
-/// `CODEGRAFF_AUTH_PATH` is an authoritative override for the device-login file;
-/// it also gives tests and managed installs a way to isolate credential lookup.
-pub fn codegraff_key() -> Option<String> {
+/// Precedence: `SURPLUS_API_KEY`, then `SURPLUS_AUTH_PATH` / `~/.aiko/surplus-auth.json`,
+/// then legacy Codegraff locations (env / device-login / forge) so existing
+/// installs keep working while the gateway is Surplus.
+pub fn surplus_key() -> Option<String> {
+    if let Some(key) = nonempty_env("SURPLUS_API_KEY") {
+        return Some(key);
+    }
+    if let Some(path) = std::env::var_os(SURPLUS_AUTH_PATH_ENV) {
+        if let Some(key) = simple_harness_key(Path::new(&path)) {
+            return Some(key);
+        }
+    }
+    if let Some(home) = home_dir() {
+        if let Some(key) = simple_harness_key(&home.join(".aiko/surplus-auth.json")) {
+            return Some(key);
+        }
+    }
+    // Legacy Codegraff credential locations (transitional).
     if let Some(key) = nonempty_env("CODEGRAFF_API_KEY") {
         return Some(key);
     }
@@ -69,6 +84,11 @@ pub fn codegraff_key() -> Option<String> {
     let home = home_dir()?;
     simple_harness_key(&home.join(".simple-harness-codegraff.json"))
         .or_else(|| forge_key(&home.join("forge/.credentials.json")))
+}
+
+/// Back-compat alias: the multi-model gateway credential is Surplus now.
+pub fn codegraff_key() -> Option<String> {
+    surplus_key()
 }
 
 /// One optional API key per provider spec entry, read from the environment.
@@ -117,11 +137,17 @@ impl Keys {
             }
         }
 
-        if values.get("codegraff").and_then(Option::as_ref).is_none()
-            && let Some(key) = codegraff_key()
+        // Surplus is the multi-model OpenAI-compatible gateway (replaces Codegraff).
+        if values.get("surplus").and_then(Option::as_ref).is_none()
+            && let Some(key) = surplus_key()
         {
-            values.insert("codegraff".to_string(), Some(key));
-            sources.insert("codegraff".to_string(), CredentialSource::Login);
+            values.insert("surplus".to_string(), Some(key.clone()));
+            sources.insert("surplus".to_string(), CredentialSource::Login);
+            // Keep the legacy id populated so older router fixtures still resolve.
+            if values.get("codegraff").and_then(Option::as_ref).is_none() {
+                values.insert("codegraff".to_string(), Some(key));
+                sources.insert("codegraff".to_string(), CredentialSource::Login);
+            }
         }
 
         Keys {
@@ -146,20 +172,13 @@ impl Keys {
 
     /// Set the API key for a provider (e.g. from OAuth flow).
     pub fn set(&mut self, provider_id: &str, value: String, source: CredentialSource) {
-        self.values
-            .insert(provider_id.to_string(), Some(value));
-        self.sources
-            .insert(provider_id.to_string(), source);
+        self.values.insert(provider_id.to_string(), Some(value));
+        self.sources.insert(provider_id.to_string(), source);
     }
 
     /// Build a resolved Provider from a spec, key, and model.
     /// Mirrors codegraff's `Keys.build()`.
-    pub fn build(
-        &self,
-        spec: &ProviderSpec,
-        key: &str,
-        model: &str,
-    ) -> Provider {
+    pub fn build(&self, spec: &ProviderSpec, key: &str, model: &str) -> Provider {
         let is_codex = spec.id == "codex";
         let is_kimi_anthropic = spec.id == "kimi" && crate::kimi_protocol_is_anthropic(model);
 
@@ -210,6 +229,18 @@ impl Keys {
     }
 }
 
+impl Keys {
+    /// Empty key set (no providers keyed). Useful for unit tests that must not
+    /// pick up machine-local `SURPLUS_API_KEY` / auth files.
+    pub fn empty() -> Self {
+        Self {
+            values: HashMap::new(),
+            sources: HashMap::new(),
+            codex_account: String::new(),
+        }
+    }
+}
+
 impl Default for Keys {
     fn default() -> Self {
         Self::from_env()
@@ -231,7 +262,11 @@ mod tests {
     #[test]
     fn test_keys_set_and_get() {
         let mut keys = Keys::from_env();
-        keys.set("test-provider", "test-key".to_string(), CredentialSource::Session);
+        keys.set(
+            "test-provider",
+            "test-key".to_string(),
+            CredentialSource::Session,
+        );
         assert_eq!(keys.get("test-provider"), Some("test-key"));
         assert_eq!(keys.source("test-provider"), CredentialSource::Session);
     }

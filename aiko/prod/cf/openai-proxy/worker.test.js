@@ -2,7 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from './worker.js';
 
-const env = { CODEGRAFF_API_KEY: 'upstream-secret', ISSUER_URL: 'https://aiko.theclarityproject.net' };
+const env = {
+    SURPLUS_API_KEY: 'upstream-secret',
+    ISSUER_URL: 'https://aiko.theclarityproject.net',
+    TARGET_URL: 'https://api.surplusintelligence.ai',
+};
 
 function token(payload = {}) {
     const enc = value => Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -34,7 +38,7 @@ test('forwards every /v1 route, method, query, SDK headers, and response metadat
         },
     }), env);
 
-    assert.equal(seen.url, 'https://gateway.codegraff.com/v1/uploads/u_1/parts?purpose=batch');
+    assert.equal(seen.url, 'https://api.surplusintelligence.ai/v1/uploads/u_1/parts?purpose=batch');
     assert.equal(seen.init.headers.get('authorization'), 'Bearer upstream-secret');
     assert.equal(seen.init.headers.get('x-aiko-user-id'), 'user-1');
     assert.equal(seen.init.headers.get('x-aiko-team-id'), 'team-1');
@@ -53,7 +57,7 @@ test('normalizes Azure-style /openai/v1 without losing the endpoint', async t =>
     let seenUrl;
     globalThis.fetch = async url => { seenUrl = url; return new Response('{}'); };
     await worker.fetch(request('/openai/v1/responses/r_1?include=output'), env);
-    assert.equal(seenUrl, 'https://gateway.codegraff.com/v1/responses/r_1?include=output');
+    assert.equal(seenUrl, 'https://api.surplusintelligence.ai/v1/responses/r_1?include=output');
 });
 
 test('passes SSE through byte-for-byte and retains event headers', async t => {

@@ -1469,7 +1469,10 @@ model: test-model
         // A real skill, and a SKILL.md buried in VCS/build-cache metadata.
         write_skill_md(&skills.join("real"), "real");
         write_skill_md(&skills.join(".git").join("objects").join("ab"), "ghost");
-        write_skill_md(&skills.join(".zig-cache").join("o").join("deadbeef"), "cached");
+        write_skill_md(
+            &skills.join(".zig-cache").join("o").join("deadbeef"),
+            "cached",
+        );
 
         let mut paths = Vec::new();
         walk_for_skill_md(&skills, &mut paths, 0);
@@ -1489,7 +1492,10 @@ model: test-model
         let repo = tmp.path().join("repo");
         write_skill_md(&repo, "contract"); // the repo itself is a skill
         write_skill_md(&repo.join(".git").join("objects").join("ff"), "git-ghost");
-        write_skill_md(&repo.join("libcontract").join(".zig-cache").join("o"), "zig-ghost");
+        write_skill_md(
+            &repo.join("libcontract").join(".zig-cache").join("o"),
+            "zig-ghost",
+        );
         write_skill_md(&repo.join("nested"), "nested-real"); // legitimate nested skill
 
         let skills = tmp.path().join("skills");
@@ -1509,7 +1515,9 @@ model: test-model
             "a legitimate nested skill must still load through the symlink: {strs:?}"
         );
         assert!(
-            !strs.iter().any(|p| p.contains(".git") || p.contains(".zig-cache")),
+            !strs
+                .iter()
+                .any(|p| p.contains(".git") || p.contains(".zig-cache")),
             "repo metadata must never be walked: {strs:?}"
         );
     }

@@ -150,7 +150,11 @@ impl EditVerifier {
         // Old string should be gone from after, minus copies inside new
         let old_in_after = after.matches(old).count();
         let old_in_new = new.matches(old).count();
-        let allowed_old = if !new.is_empty() { old_in_new * sites } else { 0 };
+        let allowed_old = if !new.is_empty() {
+            old_in_new * sites
+        } else {
+            0
+        };
         if old_in_after > allowed_old {
             return Verdict::StaleOld;
         }
@@ -233,7 +237,11 @@ impl EditVerifier {
         let actual_replacements = if replace_all { occurrences } else { 1 };
         let message = match &verdict {
             Verdict::Ok => {
-                format!("replaced {} occurrence(s) in {}", actual_replacements, path.display())
+                format!(
+                    "replaced {} occurrence(s) in {}",
+                    actual_replacements,
+                    path.display()
+                )
             }
             Verdict::Unchanged => {
                 format!(
@@ -271,7 +279,11 @@ fn read_file_bounded(path: &Path, cap: usize) -> std::io::Result<String> {
     if metadata.len() > cap as u64 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
-            format!("file too large for edit ({} > {} bytes)", metadata.len(), cap),
+            format!(
+                "file too large for edit ({} > {} bytes)",
+                metadata.len(),
+                cap
+            ),
         ));
     }
     let mut file = fs::File::open(path)?;
@@ -327,7 +339,13 @@ mod tests {
     #[test]
     fn test_verify_companion_missing_new() {
         assert_eq!(
-            EditVerifier::verify_companion("hello world", "hello world x", "expected", "hello", "new"),
+            EditVerifier::verify_companion(
+                "hello world",
+                "hello world x",
+                "expected",
+                "hello",
+                "new"
+            ),
             Verdict::MissingNew
         );
     }
@@ -347,9 +365,7 @@ mod tests {
         fs::write(&path, "hello world hello").unwrap();
 
         let verifier = EditVerifier::new();
-        let result = verifier
-            .edit_file(&path, "hello", "hi", false)
-            .unwrap();
+        let result = verifier.edit_file(&path, "hello", "hi", false).unwrap();
 
         assert!(result.ok);
         assert_eq!(result.replacements, 1);
@@ -365,9 +381,7 @@ mod tests {
         fs::write(&path, "hello world hello").unwrap();
 
         let verifier = EditVerifier::new();
-        let result = verifier
-            .edit_file(&path, "hello", "hi", true)
-            .unwrap();
+        let result = verifier.edit_file(&path, "hello", "hi", true).unwrap();
 
         assert!(result.ok);
         assert_eq!(result.replacements, 2);
@@ -383,9 +397,7 @@ mod tests {
         fs::write(&path, "hello world").unwrap();
 
         let verifier = EditVerifier::new();
-        let result = verifier
-            .edit_file(&path, "xyz", "abc", false)
-            .unwrap();
+        let result = verifier.edit_file(&path, "xyz", "abc", false).unwrap();
 
         assert!(!result.ok);
         assert_eq!(result.verdict, Verdict::MissingNew);

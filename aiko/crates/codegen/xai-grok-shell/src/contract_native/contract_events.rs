@@ -9,8 +9,8 @@
 
 const ENV_VAR: &str = "AIKO_NEURON_EVENTS";
 const PREFIX: &str = "\u{27d0}"; // U+27D0 LOZENGE — stable anchor, never in tool output
-const CHECK: &str = "\u{2713}";   // ✓
-const CROSS: &str = "\u{2717}";   // ✗
+const CHECK: &str = "\u{2713}"; // ✓
+const CROSS: &str = "\u{2717}"; // ✗
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Variant {
@@ -78,5 +78,7 @@ pub(super) fn format_step_event(
         return None;
     }
     let verdict = if completed { CHECK } else { CROSS };
-    Some(format!("{PREFIX} step:{step_from}\u{2192}{step_to} {verdict}\n"))
+    Some(format!(
+        "{PREFIX} step:{step_from}\u{2192}{step_to} {verdict}\n"
+    ))
 }

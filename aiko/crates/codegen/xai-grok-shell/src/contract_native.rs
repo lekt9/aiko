@@ -5199,18 +5199,23 @@ pub fn graph_verdict_notification(
         .get("peak_parallelism")
         .and_then(Value::as_u64)
         .unwrap_or(1);
-    let ready_count = verdict.get("ready_count").and_then(Value::as_u64).unwrap_or(0);
+    let ready_count = verdict
+        .get("ready_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     let group_count = verdict
         .get("independent_groups")
         .and_then(Value::as_array)
         .map_or(0, |groups| groups.len() as u64);
-    Some(crate::extensions::notification::SessionUpdate::GraphVerdict {
-        kind,
-        obligation_count,
-        peak_parallelism,
-        ready_count,
-        group_count,
-    })
+    Some(
+        crate::extensions::notification::SessionUpdate::GraphVerdict {
+            kind,
+            obligation_count,
+            peak_parallelism,
+            ready_count,
+            group_count,
+        },
+    )
 }
 
 /// Whether the previously-emitted graph verdict for this session already
@@ -5222,10 +5227,19 @@ pub fn should_emit_graph_verdict(session_id: &str, verdict: &Value) -> bool {
     let fingerprint = format!(
         "{}:{}:{}",
         verdict.get("kind").and_then(Value::as_str).unwrap_or(""),
-        verdict.get("obligation_count").and_then(Value::as_u64).unwrap_or(0),
-        verdict.get("peak_parallelism").and_then(Value::as_u64).unwrap_or(0),
+        verdict
+            .get("obligation_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        verdict
+            .get("peak_parallelism")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
     );
-    let Ok(mut sessions) = LAST_VERDICT.get_or_init(|| Mutex::new(HashMap::new())).lock() else {
+    let Ok(mut sessions) = LAST_VERDICT
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    else {
         return true;
     };
     if sessions.get(session_id) == Some(&fingerprint) {
@@ -5590,7 +5604,10 @@ async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
         ));
     }
     if let Some(verdict) = &graph_verdict {
-        let kind = verdict.get("kind").and_then(Value::as_str).unwrap_or("chain");
+        let kind = verdict
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("chain");
         let peak = verdict
             .get("peak_parallelism")
             .and_then(Value::as_u64)
@@ -6219,9 +6236,8 @@ mod tests {
         // fallback via `active_root_for_session` BEFORE re-calling
         // `set_active_capability_plan` — exactly what `turn.rs::handle_prompt`
         // now does.
-        let synthetic_turn_root =
-            take_turn_contract_root("task-completed-nonexistent")
-                .or_else(|| active_root_for_session(session_id));
+        let synthetic_turn_root = take_turn_contract_root("task-completed-nonexistent")
+            .or_else(|| active_root_for_session(session_id));
         assert_eq!(
             synthetic_turn_root.as_deref(),
             Some("deadbeef"),

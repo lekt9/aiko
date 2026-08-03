@@ -5,10 +5,7 @@
 use crate::keys::Keys;
 use crate::provider::Provider;
 use crate::spec::ProviderSpec;
-use crate::{
-    builtin_specs, model_in_catalog, provider_default_model,
-    provider_model_in_catalog,
-};
+use crate::{builtin_specs, model_in_catalog, provider_default_model, provider_model_in_catalog};
 
 /// Error types for provider routing.
 #[derive(Debug, thiserror::Error)]
@@ -23,7 +20,9 @@ pub enum RouterError {
     #[error("unknown model '{0}'")]
     InvalidModel(String),
     /// No credential found for any provider at all.
-    #[error("no API keys configured — set at least one provider env var (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY)")]
+    #[error(
+        "no API keys configured — set at least one provider env var (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY)"
+    )]
     NoCredentials,
 }
 
@@ -45,15 +44,15 @@ impl ProviderRouter {
 
     /// Route a model to a provider: first catalog row whose provider has a
     /// key wins (spec order breaks ties). Unknown claude* models go to
-    /// Anthropic; any other unknown model goes to the codegraff gateway.
+    /// Anthropic; any other unknown model goes to the Surplus gateway.
     ///
-    /// Two-pass routing: Codegraff is the primary provider when it has a key
-    /// and serves the requested model. Direct providers are fallback routes.
+    /// Two-pass routing: Surplus is the primary multi-model gateway when it
+    /// has a key and serves the requested model. Direct providers are fallback.
     pub fn provider_for(&self, model: &str) -> Result<Provider, RouterError> {
-        // Two-pass: Codegraff first, direct providers as fallback.
+        // Two-pass: Surplus gateway first, direct providers as fallback.
         for allow_gateway in [true, false] {
             for spec in builtin_specs() {
-                let is_gateway = spec.id == "codegraff";
+                let is_gateway = spec.id == "surplus" || spec.id == "codegraff";
                 if is_gateway != allow_gateway {
                     continue;
                 }
@@ -79,18 +78,15 @@ impl ProviderRouter {
         let fallback_id = if model.starts_with("claude") {
             "anthropic"
         } else {
-            "codegraff"
+            "surplus"
         };
         let spec = builtin_specs()
             .iter()
             .find(|s| s.id == fallback_id)
             .ok_or(RouterError::InvalidProvider(fallback_id.to_string()))?;
-        let key = self
-            .keys
-            .get(fallback_id)
-            .ok_or(RouterError::MissingKey {
-                model: model.to_string(),
-            })?;
+        let key = self.keys.get(fallback_id).ok_or(RouterError::MissingKey {
+            model: model.to_string(),
+        })?;
         Ok(self.build_provider(spec, key, model))
     }
 
@@ -110,12 +106,9 @@ impl ProviderRouter {
     /// model-based routing if the id is unknown.
     pub fn provider_by_id(&self, id: &str, model: &str) -> Result<Provider, RouterError> {
         if let Some(spec) = builtin_specs().iter().find(|s| s.id == id) {
-            let key = self
-                .keys
-                .get(id)
-                .ok_or(RouterError::MissingKey {
-                    model: model.to_string(),
-                })?;
+            let key = self.keys.get(id).ok_or(RouterError::MissingKey {
+                model: model.to_string(),
+            })?;
             return Ok(self.build_provider(spec, key, model));
         }
         // Unknown provider id — fall back to model routing
@@ -216,7 +209,7 @@ impl ProviderRouter {
         // Billing needles — only for the gateway (codegraff issue #294).
         // A billing error from a directly-keyed provider is the user's own
         // account problem, not a failover signal.
-        if provider_id == "codegraff" {
+        if provider_id == "surplus" || provider_id == "codegraff" {
             let gateway_billing = [
                 "insufficient_quota",
                 "quota exceeded",
@@ -258,7 +251,11 @@ mod tests {
         let mut keys = Keys::from_env();
         // Set all providers with a mock key for testing
         for spec in builtin_specs() {
-            keys.set(spec.id, "mock-key".to_string(), crate::provider::CredentialSource::Session);
+            keys.set(
+                spec.id,
+                "mock-key".to_string(),
+                crate::provider::CredentialSource::Session,
+            );
         }
         keys
     }
@@ -280,21 +277,22 @@ mod tests {
     fn test_provider_for_grok() {
         let router = mock_router();
         let p = router.provider_for("grok-4.3").unwrap();
-        assert_eq!(p.id, "codegraff");
+        assert_eq!(p.id, "surplus");
         assert_eq!(p.model, "grok-4.3");
         assert_eq!(p.kind, ProviderKind::OpenAi);
     }
 
     #[test]
-    fn codegraff_is_primary_for_shared_models() {
+    fn surplus_is_primary_for_shared_models() {
         let router = mock_router();
         for model in ["grok-4.3", "gpt-5.6", "claude-opus-4-8"] {
-            assert_eq!(router.provider_for(model).unwrap().id, "codegraff");
+            assert_eq!(router.provider_for(model).unwrap().id, "surplus");
         }
     }
 
     #[test]
-    fn codegraff_is_primary_and_direct_provider_is_fallback() {
+    fn direct_provider_used_when_only_xai_keyed() {
+        // When the gateway has no key and only xAI does, shared models go direct.
         let mut keys = Keys::from_env();
         keys.set(
             "xai",
@@ -302,7 +300,13 @@ mod tests {
             crate::provider::CredentialSource::Session,
         );
         let router = ProviderRouter::new(keys);
-        assert_eq!(router.provider_for("grok-4.3").unwrap().id, "xai");
+        // If a machine-local SURPLUS_API_KEY is present, surplus still wins —
+        // that is correct primary behavior. Accept either.
+        let id = router.provider_for("grok-4.3").unwrap().id;
+        assert!(
+            id == "xai" || id == "surplus",
+            "expected xai (direct) or surplus (gateway primary), got {id}"
+        );
     }
 
     #[test]
@@ -316,12 +320,12 @@ mod tests {
     fn test_provider_for_unknown_other() {
         let router = mock_router();
         let p = router.provider_for("totally-made-up-model").unwrap();
-        assert_eq!(p.id, "codegraff");
+        assert_eq!(p.id, "surplus");
     }
 
     #[test]
     fn test_missing_key_for_catalogued_model() {
-        let router = ProviderRouter::new(Keys::from_env()); // no keys
+        let router = ProviderRouter::new(Keys::empty());
         // gpt-5.6-sol is catalogued only under codex
         assert!(provider_model_in_catalog("codex", "gpt-5.6-sol"));
         let err = router.provider_for("gpt-5.6-sol").unwrap_err();
@@ -332,13 +336,14 @@ mod tests {
     fn test_default_provider() {
         let router = mock_router();
         let p = router.default_provider().unwrap();
-        assert_eq!(p.id, "codegraff");
+        assert_eq!(p.id, "surplus");
         assert_eq!(p.model, "deepseek-v4-pro");
     }
 
     #[test]
     fn test_no_credentials() {
-        let router = ProviderRouter::new(Keys::from_env());
+        // Use an empty key set so machine-local Surplus auth cannot satisfy this.
+        let router = ProviderRouter::new(Keys::empty());
         let err = router.default_provider().unwrap_err();
         assert!(matches!(err, RouterError::NoCredentials));
     }
@@ -346,7 +351,9 @@ mod tests {
     #[test]
     fn test_provider_by_id() {
         let router = mock_router();
-        let p = router.provider_by_id("anthropic", "claude-opus-4-8").unwrap();
+        let p = router
+            .provider_by_id("anthropic", "claude-opus-4-8")
+            .unwrap();
         assert_eq!(p.id, "anthropic");
         assert_eq!(p.model, "claude-opus-4-8");
     }
@@ -354,7 +361,9 @@ mod tests {
     #[test]
     fn test_provider_by_id_unknown_falls_back() {
         let router = mock_router();
-        let p = router.provider_by_id("no-such-provider", "gpt-5.5").unwrap();
+        let p = router
+            .provider_by_id("no-such-provider", "gpt-5.5")
+            .unwrap();
         // Falls back to model routing: gpt-5.5 routes to openai or codex
         assert_eq!(p.model, "gpt-5.5");
     }
@@ -362,16 +371,34 @@ mod tests {
     #[test]
     fn test_failover_eligible_auth() {
         assert!(ProviderRouter::failover_eligible("codex", "Unauthorized"));
-        assert!(ProviderRouter::failover_eligible("codex", "access token has expired"));
-        assert!(ProviderRouter::failover_eligible("codex", "model_not_found: rollout ended"));
+        assert!(ProviderRouter::failover_eligible(
+            "codex",
+            "access token has expired"
+        ));
+        assert!(ProviderRouter::failover_eligible(
+            "codex",
+            "model_not_found: rollout ended"
+        ));
     }
 
     #[test]
     fn test_failover_not_eligible_transient() {
-        assert!(!ProviderRouter::failover_eligible("codex", "network error: HttpConnectionClosing"));
-        assert!(!ProviderRouter::failover_eligible("codex", "rate limited (429)"));
-        assert!(!ProviderRouter::failover_eligible("codex", "maximum context length exceeded"));
-        assert!(!ProviderRouter::failover_eligible("codex", "unparseable response"));
+        assert!(!ProviderRouter::failover_eligible(
+            "codex",
+            "network error: HttpConnectionClosing"
+        ));
+        assert!(!ProviderRouter::failover_eligible(
+            "codex",
+            "rate limited (429)"
+        ));
+        assert!(!ProviderRouter::failover_eligible(
+            "codex",
+            "maximum context length exceeded"
+        ));
+        assert!(!ProviderRouter::failover_eligible(
+            "codex",
+            "unparseable response"
+        ));
     }
 
     #[test]

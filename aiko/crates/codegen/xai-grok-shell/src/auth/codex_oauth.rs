@@ -12,13 +12,13 @@
 
 use std::path::PathBuf;
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::net::TcpListener;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpListener;
 
 // ── Constants (exact mirror of codegraff/src/oauth.zig) ────────────────────
 
@@ -169,7 +169,9 @@ pub fn refresh_codex_auth(home: &std::path::Path) -> Option<CodexAuth> {
 fn do_refresh(home: &std::path::Path, refresh_token: &str) -> anyhow::Result<CodexAuth> {
     let body = format!(
         "grant_type=refresh_token&client_id={}&refresh_token={}&scope={}",
-        CODEX_CLIENT_ID, refresh_token, urlencoding::encode(OAUTH_SCOPE)
+        CODEX_CLIENT_ID,
+        refresh_token,
+        urlencoding::encode(OAUTH_SCOPE)
     );
 
     let client = reqwest::blocking::Client::builder()
@@ -186,7 +188,11 @@ fn do_refresh(home: &std::path::Path, refresh_token: &str) -> anyhow::Result<Cod
     let body_text = resp.text()?;
 
     if !status.is_success() {
-        anyhow::bail!("codex token refresh HTTP {}: {}", status.as_u16(), body_text);
+        anyhow::bail!(
+            "codex token refresh HTTP {}: {}",
+            status.as_u16(),
+            body_text
+        );
     }
 
     let resp: serde_json::Value = serde_json::from_str(&body_text)?;
@@ -196,17 +202,24 @@ fn do_refresh(home: &std::path::Path, refresh_token: &str) -> anyhow::Result<Cod
         .ok_or_else(|| anyhow::anyhow!("no access_token in refresh response"))?
         .to_string();
 
-    let id_token = resp.get("id_token").and_then(|v| v.as_str()).map(String::from);
+    let id_token = resp
+        .get("id_token")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let new_refresh = resp
         .get("refresh_token")
         .and_then(|v| v.as_str())
         .map(String::from)
         .or_else(|| Some(refresh_token.to_string()));
-    let account = id_token
-        .as_deref()
-        .and_then(extract_account_from_id_token);
+    let account = id_token.as_deref().and_then(extract_account_from_id_token);
 
-    write_auth_json(home, &id_token, &access, new_refresh.as_deref(), account.as_deref())?;
+    write_auth_json(
+        home,
+        &id_token,
+        &access,
+        new_refresh.as_deref(),
+        account.as_deref(),
+    )?;
 
     let expires_at = parse_expiry_from_id_token(id_token.as_deref());
     Ok(CodexAuth {
@@ -269,8 +282,7 @@ pub async fn codex_login(home: &std::path::Path) -> anyhow::Result<CodexAuth> {
         "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&\
          code_challenge={}&code_challenge_method=S256&state={}&\
          id_token_add_organizations=true&codex_cli_simplified_flow=true",
-        OAUTH_AUTHORIZE_URL, CODEX_CLIENT_ID, redirect_enc,
-        scope_enc, challenge_enc, state_enc,
+        OAUTH_AUTHORIZE_URL, CODEX_CLIENT_ID, redirect_enc, scope_enc, challenge_enc, state_enc,
     );
 
     // 4. Bind the callback port BEFORE opening the browser (mirrors codegraff)
@@ -305,7 +317,9 @@ pub async fn codex_login(home: &std::path::Path) -> anyhow::Result<CodexAuth> {
     let body = format!(
         "grant_type=authorization_code&client_id={}&code={}&\
          redirect_uri={}&code_verifier={}",
-        CODEX_CLIENT_ID, code_enc, urlencoding::encode(CODEX_REDIRECT_URI),
+        CODEX_CLIENT_ID,
+        code_enc,
+        urlencoding::encode(CODEX_REDIRECT_URI),
         urlencoding::encode(&verifier),
     );
 
@@ -327,8 +341,8 @@ pub async fn codex_login(home: &std::path::Path) -> anyhow::Result<CodexAuth> {
         anyhow::bail!("token exchange HTTP {}: {}", status.as_u16(), body_text);
     }
 
-    let v: serde_json::Value = serde_json::from_str(&body_text)
-        .map_err(|e| anyhow::anyhow!("bad token response: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body_text).map_err(|e| anyhow::anyhow!("bad token response: {e}"))?;
 
     if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
         let desc = v
@@ -345,17 +359,29 @@ pub async fn codex_login(home: &std::path::Path) -> anyhow::Result<CodexAuth> {
         .to_string();
 
     let id_token = v.get("id_token").and_then(|v| v.as_str()).map(String::from);
-    let refresh = v.get("refresh_token").and_then(|v| v.as_str()).map(String::from);
-    let account = id_token
-        .as_deref()
-        .and_then(extract_account_from_id_token);
+    let refresh = v
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let account = id_token.as_deref().and_then(extract_account_from_id_token);
 
     // 7. Write ~/.codex/auth.json (Codex CLI-compatible format)
-    write_auth_json(home, &id_token, &access, refresh.as_deref(), account.as_deref())?;
+    write_auth_json(
+        home,
+        &id_token,
+        &access,
+        refresh.as_deref(),
+        account.as_deref(),
+    )?;
 
     eprintln!(
         "✓ logged into Codex (account {}) — wrote ~/.codex/auth.json",
-        account.as_deref().unwrap_or("unknown").chars().take(8).collect::<String>()
+        account
+            .as_deref()
+            .unwrap_or("unknown")
+            .chars()
+            .take(8)
+            .collect::<String>()
     );
 
     let expires_at = parse_expiry_from_id_token(id_token.as_deref());
@@ -642,14 +668,7 @@ mod tests {
         assert_eq!(auth.account_id.as_deref(), Some("acc-123"));
 
         // Write without account_id (user logged in with personal account)
-        write_auth_json(
-            home,
-            &Some("id2".to_string()),
-            "access2",
-            None,
-            None,
-        )
-        .unwrap();
+        write_auth_json(home, &Some("id2".to_string()), "access2", None, None).unwrap();
 
         let auth2 = load_codex_auth(home).unwrap();
         assert_eq!(auth2.access_token, "access2");
@@ -696,7 +715,10 @@ mod tests {
         let exp = parse_expiry_from_id_token(Some(&token)).unwrap();
         let now = chrono::Utc::now();
         assert!(exp > now, "expiry should be in the future");
-        assert!(exp < now + chrono::Duration::seconds(3700), "expiry should be ~1h from now");
+        assert!(
+            exp < now + chrono::Duration::seconds(3700),
+            "expiry should be ~1h from now"
+        );
     }
 
     #[test]

@@ -84,8 +84,8 @@ action, evaluator, governor, and development. Governed workflows can bind:
 - atomic, reversible topology-development proposals.
 
 Aiko’s ordinary turn bridge remains non-blocking: it declares the user’s goal
-and records a terminal result through ABI v2. Advanced typed envelopes and
-trust policy are additive, so existing ledgers and turns remain compatible.
+and records a terminal result through Contract ABI 12. Advanced typed envelopes
+and trust policy are additive, so existing ledgers and turns remain compatible.
 Contract’s causal event stream is local and redacted; the standalone Contract
 CLI can inspect it with `events`, `watch`, and `explain` without requesting
 wallet or Keychain access.
@@ -168,8 +168,11 @@ Requirements:
 # Build everything (contract dylib + aiko binary + SDK package)
 scripts/contract-runtime.sh build-aiko
 
-# Just the aiko binary (no contract rebuild)
+# Run the Aiko binary in the development profile (no Contract rebuild/package)
 cargo run -p xai-grok-pager-bin
+
+# Build just the Aiko binary with the selected release profile
+scripts/contract-runtime.sh build-aiko-only
 
 # Package for distribution (includes SDK)
 scripts/contract-runtime.sh package
@@ -189,7 +192,9 @@ native runtime library and shipped in the same package as Aiko:
 ```text
 aiko-<version>-<platform>/
 ├── bin/aiko
-├── lib/libcontract.dylib
+├── lib/libcontract.dylib          # libcontract.so or contract.dll off macOS
+├── skills/                        # admitted Contract-native skills
+├── sdk/registry/                  # neuron/limb registry bootstrap tools
 ├── manifest.json
 └── install.sh
 ```
@@ -232,7 +237,7 @@ without copying it into this repository or rebuilding Aiko.
 
 The installed background worker also exposes an authenticated, loopback-only
 API for Swift, Electron, and local web frontends. It keeps ACP as the
-full-duplex agent-mail protocol and Contract ABI v3 as the ledger/task
+full-duplex agent-mail protocol and Contract ABI 12 as the ledger/task
 authority.
 
 ```sh
