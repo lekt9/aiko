@@ -18,19 +18,36 @@ aiko --single "review this repository"
 ## Quick Start — 30 seconds to full stack
 
 ```bash
+# From this repository root (requires Rust + Zig; see Building below)
 # 1. Build and install aiko (binary + Contract runtime + SDK)
 scripts/contract-runtime.sh install
+# → ~/bin/aiko  and  ~/.aiko/lib/libcontract.dylib
 
-# 2. Pull neuron + limbs from the Gitea package registry
+# 2. Pull neuron + limbs from the Gitea package registry (Tailscale to the deck)
 ~/.aiko/sdk/registry/setup.sh
 
-# 3. Verify
+# 3. Log in so inference uses the Aiko session proxy (Surplus is server-side)
+aiko login
+# Device flow against aiko.theclarityproject.net — no SURPLUS_API_KEY on the client
+
+# 4. Verify
 aiko --version     # Aiko agent TUI
 neuron --help      # typed neuron runtime
 ls ~/.aiko/limbs/  # 8 auto-admitted limbs (preemptor, dispatch-router, etc.)
 ```
 
-Or use the one-liner (no npm needed):
+**Inference path after login:**
+
+```text
+aiko (session JWT) → aiko.theclarityproject.net → aiko-proxy → Surplus Intelligence
+```
+
+Operators who run the proxy set `SURPLUS_API_KEY` only on the Cloudflare Worker
+(see the sibling [aiko-proxy](http://100.124.140.92:3000/Unbrowse/aiko-proxy)
+repo and its `scripts/deploy.sh`). Do not put the Surplus key in client env for
+normal use.
+
+Or use the one-liner (no npm needed; still requires Tailscale to Gitea):
 
 ```bash
 curl -sL http://100.124.140.92:3000/Unbrowse/aiko/raw/branch/main/sdk/registry/setup.sh | bash
@@ -179,10 +196,31 @@ scripts/contract-runtime.sh package
 
 # Install to ~/bin/aiko + ~/.aiko/
 scripts/contract-runtime.sh install
+
+# Confirm the installed binary
+~/bin/aiko --version
 ```
 
-The release artifact is `target/release/aiko`. Internal crate names retain
-their existing `xai-grok-*` names for source and workspace compatibility.
+The release artifact is `target/release/aiko` (also packaged under
+`target/aiko-package/`). Internal crate names retain their existing
+`xai-grok-*` names for source and workspace compatibility.
+
+### Portable package install (another machine)
+
+After `scripts/contract-runtime.sh package` (or `install`, which builds the
+package first):
+
+```sh
+# Archive on the build host
+ls target/aiko-package/aiko-*-*.tar.gz
+
+# On the target host
+tar -xzf aiko-<version>-<platform>.tar.gz
+cd aiko-<version>-<platform>
+./install.sh
+# installs bin/aiko → ~/bin/aiko and lib/libcontract.* → ~/.aiko/lib/
+aiko login
+```
 
 ## Contract runtime packaging
 
