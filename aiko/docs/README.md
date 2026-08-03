@@ -34,6 +34,9 @@ and the right place to make each kind of change.
 
 ## Fast routes
 
+- To **install** Aiko (source, package, login, proxy), start with
+  [Installation](../README.md#installation) and the docs witness
+  `bash scripts/check-install-docs.sh`.
 - To understand a prompt from keypress to model response, read
   [Turn lifecycle](REPOSITORY-GUIDE.md#turn-lifecycle).
 - To understand how contracts spread between Aikos, read

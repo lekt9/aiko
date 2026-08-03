@@ -99,7 +99,7 @@ aiko/
 | `apps/aiko-gigs` | Evidence-gated templates for finding, bidding on, fulfilling, and settling freelance gigs. It is a documented workflow collection, not part of the core runtime or desktop bundle. Human approval gates bidding and delivery. |
 | `plugins/aiko-persistence` | Codex plugin for witness-gated persistence of long multi-step tasks. Its Python helper is plugin infrastructure rather than the Aiko agent loop. |
 | `spikes/iroh-transport` | Reproducible three-node Iroh comparison. The recorded decision keeps rust-libp2p in production because Aiko also needs Kademlia, mDNS, peer exchange, and request/response behavior. |
-| `prod/cf/openai-proxy` | Optional Cloudflare provider/proxy adapter. It is deployable infrastructure, not required by local Aiko or the Collective protocol. |
+| `prod/cf/openai-proxy` | Optional Cloudflare OpenAI-compat adapter (Surplus upstream). Production session path is the sibling `aiko-proxy` Worker behind `aiko.theclarityproject.net`. Not required for a pure local binary build. |
 | `prod/mc/cli-chat-proxy-types` | Shared wire types for an optional CLI chat proxy integration. |
 | `.agents`, `.claude`, `.hallmark` | Local agent/skill and design-workflow metadata. These guide development tools and are not shipped as runtime architecture. |
 | `.agent-grid`, `traces` | Local coordination/diagnostic artifacts. Do not treat them as product state or stable APIs. |
@@ -531,8 +531,13 @@ npm --prefix apps/desktop run tauri -- build --bundles app,dmg
 npm --prefix apps/desktop run package:windows
 
 # Combined CLI + Contract package/install
+# Requires sibling ../contract and ../neuron (or AIKO_CONTRACT_REPO).
+# See README.md → Installation for PATH, login, and registry bootstrap.
 scripts/contract-runtime.sh build-aiko
 scripts/contract-runtime.sh install
+export PATH="$HOME/bin:$PATH"
+aiko --version
+# Docs witness: bash scripts/check-install-docs.sh
 ```
 
 `build-aiko-only` builds the Rust binary without rebuilding Contract or

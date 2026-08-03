@@ -15,48 +15,118 @@ aiko "fix the failing test"
 aiko --single "review this repository"
 ```
 
-## Quick Start — 30 seconds to full stack
+## Installation
+
+There are two install paths. They install **different things**:
+
+| Path | Installs | Needs |
+|------|----------|--------|
+| **From source** (`scripts/contract-runtime.sh install`) | `aiko` binary + Contract dylib + packaged skills/SDK | Rust, Zig, sibling `contract` + `neuron` checkouts |
+| **Registry bootstrap** (`sdk/registry/setup.sh`) | Contract dylib + `neuron` CLI + limbs only (**not** the `aiko` binary) | Tailscale to Gitea, `GITEA_TOKEN` |
+
+Most developers: **from source**, then login. Registry setup is optional for
+neuron/limbs if you already have them via the package.
+
+### Prerequisites (from source)
+
+- **Rust** — pin is `rust-toolchain.toml` (currently 1.92.0)
+- **Zig 0.16.0+** — builds Contract (`libcontract`) and the neuron binary
+- **Sibling repos** (default layout under the monorepo parent):
+  - `../contract` — or set `AIKO_CONTRACT_REPO`
+  - `../neuron` — sibling of Contract (typed_neuron package)
+- Shell `PATH` includes **`~/bin`** (where `install` places `aiko`)
 
 ```bash
-# From this repository root (requires Rust + Zig; see Building below)
-# 1. Build and install aiko (binary + Contract runtime + SDK)
-scripts/contract-runtime.sh install
-# → ~/bin/aiko  and  ~/.aiko/lib/libcontract.dylib
-
-# 2. Pull neuron + limbs from the Gitea package registry (Tailscale to the deck)
-~/.aiko/sdk/registry/setup.sh
-
-# 3. Log in so inference uses the Aiko session proxy (Surplus is server-side)
-aiko login
-# Device flow against aiko.theclarityproject.net — no SURPLUS_API_KEY on the client
-
-# 4. Verify
-aiko --version     # Aiko agent TUI
-neuron --help      # typed neuron runtime
-ls ~/.aiko/limbs/  # 8 auto-admitted limbs (preemptor, dispatch-router, etc.)
+# monorepo layout expected by defaults
+# <parent>/
+#   aiko/          # this repo
+#   contract/
+#   neuron/
+export PATH="$HOME/bin:$PATH"
 ```
 
-**Inference path after login:**
+### From source (recommended for this tree)
+
+```bash
+cd /path/to/aiko   # this repository root
+
+# Build Contract + Aiko, package, atomically install
+scripts/contract-runtime.sh install
+# → ${AIKO_BIN_DIR:-~/bin}/aiko
+# → ${AIKO_HOME:-~/.aiko}/lib/libcontract.dylib
+
+# Optional: neuron CLI + generative limbs from Gitea package registry
+export GITEA_TOKEN=…   # Unbrowse org token; setup prompts if unset
+bash sdk/registry/setup.sh
+# → ~/.local/bin/neuron  (default AIKO_BIN_DIR for setup.sh)
+# → ~/.aiko/lib/  and  ~/.aiko/limbs/
+
+# Session login — inference uses the public Aiko proxy (no client Surplus key)
+aiko login
+
+# Verify
+aiko --version
+command -v neuron >/dev/null && neuron --help
+ls ~/.aiko/limbs/ 2>/dev/null || true
+```
+
+Docs witness (agents / CI): `bash scripts/check-install-docs.sh`
+
+### Portable package (another machine)
+
+On a machine that already built the package:
+
+```bash
+scripts/contract-runtime.sh package   # or install (builds package first)
+ls target/aiko-package/aiko-*-*.tar.gz
+```
+
+On the target host:
+
+```bash
+tar -xzf aiko-<version>-<platform>.tar.gz
+cd aiko-<version>-<platform>
+./install.sh
+# verifies SHA-256 from manifest.json, then:
+#   bin/aiko → ~/bin/aiko
+#   lib/libcontract.* → ~/.aiko/lib/
+export PATH="$HOME/bin:$PATH"
+aiko --version
+aiko login
+```
+
+Override install locations with `AIKO_BIN_DIR` and `AIKO_HOME`.
+
+### Registry-only bootstrap (neuron stack, not the agent TUI)
+
+Does **not** install `~/bin/aiko`. Use after you already have an `aiko` binary,
+or only need Contract + neuron + limbs:
+
+```bash
+export GITEA_TOKEN=…
+# Still needs Tailscale reachability to the Gitea host
+curl -sL http://100.124.140.92:3000/Unbrowse/aiko/raw/branch/main/sdk/registry/setup.sh | bash
+# or, from a checkout:
+bash sdk/registry/setup.sh
+```
+
+### First login and inference path
 
 ```text
-aiko (session JWT) → aiko.theclarityproject.net → aiko-proxy → Surplus Intelligence
+aiko (session JWT)
+  → https://aiko.theclarityproject.net   # aiko-openai-compat
+    → aiko-proxy                         # injects server-side SURPLUS_API_KEY
+      → https://api.surplusintelligence.ai/v1/*
 ```
 
-Operators who run the proxy set `SURPLUS_API_KEY` only on the Cloudflare Worker
-(see the sibling [aiko-proxy](http://100.124.140.92:3000/Unbrowse/aiko-proxy)
-repo and its `scripts/deploy.sh`). Do not put the Surplus key in client env for
-normal use.
+- **Clients:** run `aiko login`. Do **not** set `SURPLUS_API_KEY` for normal use.
+- **Operators** of the proxy: put `SURPLUS_API_KEY` only on the Cloudflare Worker
+  ([aiko-proxy](http://100.124.140.92:3000/Unbrowse/aiko-proxy),
+  `bash scripts/deploy.sh`).
 
-Or use the one-liner (no npm needed; still requires Tailscale to Gitea):
-
-```bash
-curl -sL http://100.124.140.92:3000/Unbrowse/aiko/raw/branch/main/sdk/registry/setup.sh | bash
-```
-
-**What you get:** Aiko agent TUI with Contract-native turn lifecycle + a
-typed neuron runtime (fire pure `Stimulus → Decision` neurons) + 8 generative
-limbs that self-observe, preempt redundant work, route stimuli by energy, and
-auto-generate new limbs for missing capabilities.
+**What a full install gives you:** Aiko agent TUI with Contract-native turn
+lifecycle + typed neuron runtime + generative limbs that self-observe, preempt
+redundant work, route by energy, and can author new limbs for gaps.
 
 **One agent, one repo.** Aiko ships with Contract (libcontract.dylib),
 the neuron runtime, and 8 generative limbs — all pulled from the Gitea
@@ -173,13 +243,11 @@ neuron telemetry project .state     # firing stats
 
 ## Building
 
-Requirements:
+Requirements are the same as [Installation → Prerequisites](#prerequisites-from-source).
+Additional:
 
-- Rust (the repository pins its toolchain in `rust-toolchain.toml`)
-- Zig 0.16.0+ (for the Contract runtime and neuron binary)
-- DotSlash for the hermetic tools under `bin/`
-- Contract's `libcontract.dylib` installed at `~/.aiko/lib/` (or selected with
-  `AIKO_CONTRACT_LIBRARY`)
+- DotSlash for hermetic tools under `bin/`
+- Optional: `AIKO_CONTRACT_LIBRARY` to point at a non-default Contract dylib
 
 ```sh
 # Build everything (contract dylib + aiko binary + SDK package)
@@ -191,36 +259,27 @@ cargo run -p xai-grok-pager-bin
 # Build just the Aiko binary with the selected release profile
 scripts/contract-runtime.sh build-aiko-only
 
-# Package for distribution (includes SDK)
+# Package for distribution (includes SDK) → target/aiko-package/
 scripts/contract-runtime.sh package
 
-# Install to ~/bin/aiko + ~/.aiko/
+# Package + atomic install → ~/bin/aiko and ~/.aiko/lib/
 scripts/contract-runtime.sh install
-
-# Confirm the installed binary
+export PATH="$HOME/bin:$PATH"
 ~/bin/aiko --version
 ```
+
+Environment overrides used by the packaging scripts:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `AIKO_CONTRACT_REPO` | `../contract` | Contract source tree |
+| `AIKO_BUILD_PROFILE` | `release` | Cargo profile |
+| `AIKO_HOME` | `~/.aiko` | Runtime home (lib, skills, limbs) |
+| `AIKO_BIN_DIR` | `~/bin` | Where `install` places `aiko` |
 
 The release artifact is `target/release/aiko` (also packaged under
 `target/aiko-package/`). Internal crate names retain their existing
 `xai-grok-*` names for source and workspace compatibility.
-
-### Portable package install (another machine)
-
-After `scripts/contract-runtime.sh package` (or `install`, which builds the
-package first):
-
-```sh
-# Archive on the build host
-ls target/aiko-package/aiko-*-*.tar.gz
-
-# On the target host
-tar -xzf aiko-<version>-<platform>.tar.gz
-cd aiko-<version>-<platform>
-./install.sh
-# installs bin/aiko → ~/bin/aiko and lib/libcontract.* → ~/.aiko/lib/
-aiko login
-```
 
 ## Contract runtime packaging
 
