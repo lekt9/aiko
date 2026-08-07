@@ -1,0 +1,10 @@
+{
+  "name": "cell",
+  "version": "0.1.0",
+  "description": "cell \u2014 fractal harness: DAG in YAML that composes programs (exec/python/http) behind one membrane. Fixed primitives (session/auth/request/cas) + author (gap->cell) + seedance nested skills. Builder builds itself; evidence grounding is a cell.",
+  "author": {
+    "name": "lekt9"
+  },
+  "skills": "./skills/",
+  "commands": "./commands/"
+}

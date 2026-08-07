@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(cell/**)",
+      "Bash(python cell/run.py *)",
+      "Bash(zig build -C cell *)"
+    ]
+  }
+}

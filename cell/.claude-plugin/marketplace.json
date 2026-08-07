@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "cell",
+  "description": "cell \u2014 fractal harness as a composable standard for harnesses that compose from YAML (fractal, nested skills).",
+  "owner": {
+    "name": "lekt9"
+  },
+  "plugins": [
+    {
+      "name": "cell",
+      "description": "cell \u2014 fractal harness (skill contains skills, author writes cells on the fly)",
+      "category": "workflow",
+      "source": "./",
+      "homepage": "https://github.com/lekt9/cell"
+    }
+  ]
+}
