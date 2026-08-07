@@ -1,2 +1,15 @@
 out/
 .cell-cas/
+web/.next/
+web/data/
+web/node_modules/
+web/tsconfig.tsbuildinfo
+web/next-env.d.ts
+*.tsbuildinfo
+# Generated / draft cell artifacts (keep schemas tracked only when promoted)
+design.md
+haulio*.yaml
+haulio-inputs.json
+haulio/
+schemas/haulage-*.json
+web/
