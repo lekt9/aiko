@@ -103,6 +103,28 @@ Zig is only the runtime: `zig build && ./zig-out/bin/cell build <root>`
 
 ---
 
+## Nested skills (skill contains skills)
+
+Every `*.cell.yaml` is a Cell — so a skill **contains skills** by wiring sub-skills as organelles. Example:
+
+```yaml
+# skills/seedance-bundle.cell.yaml
+organelles:
+  - { name: seedance, cell: ../patterns/video/seedance.cell.yaml }  # seedance itself wires fal-generate + poll
+wiring:
+  - { from: membrane.prompt, to: seedance.prompt }
+  - { from: seedance.video_url, to: membrane.video_url }
+```
+
+Need a capability you don't have yet? Don't write one-off Python — declare a gap and author a cell:
+
+```yaml
+organelles:
+  - { name: author, cell: ../primitives/author.cell.yaml }  # gap -> cell (bounded search, never reads expect_contains)
+```
+
+See `primitives/author.cell.yaml` (seedance, http-wrap, echo) and `patterns/video/seedance*.cell.yaml` for realistic Seedance 2 videos.
+
 ## Documentation map
 
 | Doc | What |

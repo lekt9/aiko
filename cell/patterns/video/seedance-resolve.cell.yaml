@@ -1,0 +1,16 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: seedance-resolve
+  description: resolve seedance params — duration, aspect, model pin
+spec:
+  membrane:
+    inputs:
+      prompt: { schema: string }
+    outputs:
+      model: { schema: string }
+      params: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/seedance_resolve.py

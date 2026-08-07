@@ -1,0 +1,22 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: seedance-bundle
+  description: skill that contains skills — seedance video as a distributable composite skill
+  version: 0.1.0
+spec:
+  membrane:
+    inputs:
+      prompt: { schema: string }
+    outputs:
+      video_url: { schema: string }
+    caps:
+      allow_net: ["queue.fal.run", "fal.run", "api.fal.ai"]
+  organelles:
+    - name: seedance
+      cell: ../patterns/video/seedance.cell.yaml
+  wiring:
+    - from: membrane.prompt
+      to: seedance.prompt
+    - from: seedance.video_url
+      to: membrane.video_url

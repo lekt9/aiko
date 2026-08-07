@@ -1,0 +1,16 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: author
+  description: primitive — writes a new cell from a gap spec (bounded transforms, never reads the gap)
+spec:
+  membrane:
+    inputs:
+      gap: { schema: object }
+    outputs:
+      cell: { schema: object }
+      cell_yaml: { schema: string }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/author.py

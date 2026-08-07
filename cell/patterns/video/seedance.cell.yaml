@@ -1,0 +1,43 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: seedance-realistic
+  description: realistic video via seedance 2 — nested skill demo (skill contains a skill)
+spec:
+  membrane:
+    inputs:
+      prompt: { schema: string }
+      duration: { schema: string, required: false }
+      aspect: { schema: string, required: false }
+    outputs:
+      video_url: { schema: string }
+      status: { schema: string }
+      request_id: { schema: string }
+    caps:
+      allow_net: ["queue.fal.run", "fal.run", "api.fal.ai"]
+  organelles:
+    - name: resolve
+      cell: ./seedance-resolve.cell.yaml
+    - name: gen
+      cell: ../../primitives/fal-generate.cell.yaml
+    - name: poll
+      cell: ./poll.cell.yaml
+  wiring:
+    - from: membrane.prompt
+      to: resolve.prompt
+    - from: resolve.model
+      to: gen.model
+    - from: resolve.params
+      to: gen.params
+    - from: membrane.prompt
+      to: gen.prompt
+    - from: gen.request_id
+      to: poll.request_id
+    - from: gen.model
+      to: poll.model
+    - from: poll.video_url
+      to: membrane.video_url
+    - from: poll.status
+      to: membrane.status
+    - from: gen.request_id
+      to: membrane.request_id

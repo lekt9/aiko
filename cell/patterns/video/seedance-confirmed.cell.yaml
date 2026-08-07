@@ -1,0 +1,38 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: seedance-confirmed
+  description: seedance 2 with confirmation cell — evidence grounding as composition
+spec:
+  membrane:
+    inputs:
+      prompt: { schema: string }
+    outputs:
+      video_url: { schema: string }
+      confirmed: { schema: boolean }
+    caps:
+      allow_net: ["queue.fal.run", "fal.run", "api.fal.ai"]
+  organelles:
+    - name: video
+      cell: ./seedance.cell.yaml
+    - name: claim
+      cell: ./wrap.cell.yaml
+    - name: evidence
+      cell: ./wrap.cell.yaml
+    - name: confirm
+      cell: ../confirm/confirm.cell.yaml
+  wiring:
+    - from: membrane.prompt
+      to: video.prompt
+    - from: video.video_url
+      to: claim.video_url
+    - from: video.video_url
+      to: evidence.video_url
+    - from: claim.obj
+      to: confirm.claim
+    - from: evidence.obj
+      to: confirm.evidence
+    - from: video.video_url
+      to: membrane.video_url
+    - from: confirm.confirmed
+      to: membrane.confirmed

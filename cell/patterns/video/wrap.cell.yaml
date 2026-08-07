@@ -1,0 +1,17 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: wrap
+  description: adapter — video_url string -> claim/evidence object
+spec:
+  membrane:
+    inputs:
+      video_url: { schema: string }
+    outputs:
+      obj: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    code: |
+      def run(inputs, ctx):
+          return {"obj": {"data": inputs.get("video_url"), "source": "seedance", "fetched_at": "now"}}
