@@ -214,6 +214,24 @@ See `primitives/README.md` for full primitive catalog and `patterns/api-reveng/`
 
 ---
 
+## Input nodes are cells (no special source type)
+
+An input node **is a cell**. Polling, webhook/event, hook, or CAS hash moving — all the same membrane, different `run:` inside. Wire whichever you need:
+
+```yaml
+# Any of these can be the source; parent just sees typed inputs
+organelles:
+  - { name: in,   cell: ./poll.cell.yaml }      # cursor? -> item + next_cursor  (timer/queue poll)
+  - { name: work, cell: ./rank.cell.yaml }
+# or: in.cell: ./webhook.cell.yaml  (webhook -> event, POST lands as inputs/webhook.json)
+# or: in.cell: ./hook.cell.yaml     (file -> change, PostToolUse on Write|Edit)
+# or: in.cell: ./cas-read.cell.yaml (key -> data, content hash moved in .cell-cas/)
+wiring:
+  - { from: in.item, to: work.order }
+```
+
+Each emits a `manifest: {source, digest}` alongside `item`. The Merkle (`out/manifest.json` `in:<port>` digests) is what `patterns/reactive-cell/check` compares — poll moved it, webhook moved it, hook moved it → `changed[]` → `system/redrive` says `stale` vs `ALREADY_SENT`. See `patterns/input-sources/` for all four runnable sources and `patterns/input-sources/harness.cell.yaml` for one harness that swaps them by rewiring, not by new `source:` syntax. `primitives/session` holds stateful inputs (cookies/base_url) across such firings.
+
 ## 6. Patterns — the five layers as wiring, not spec
 
 Patterns are **examples**, not spec. Each maps one rung of Prompt -> Context -> Harness -> Loop -> Graph into ordinary cells you can `run`. Every pattern is an ordinary `*.cell.yaml`; when the model outgrows it, delete the organelle, not the spec.

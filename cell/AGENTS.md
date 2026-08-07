@@ -66,7 +66,7 @@ cell/
 | Write a new cell | `SPEC.md` + `example/*.cell.yaml` |
 | Add a leaf (exec/python/http) | `SKILL.md` Writing a leaf + `helpers.py` |
 | Wire a composite (incl. session->auth->request) | `SPEC.md §5` + `patterns/api-reveng/api-reveng.cell.yaml` |
-| Wire a DAG | `SPEC.md §2.3` + `example/pipeline.cell.yaml` |
+| Wire a DAG (incl. poll/webhook/hook) | `SPEC.md` Input nodes + `patterns/input-sources/` |
 | Debug a firing | `docs/constraints.md` + `python run.py check` |
 | Extend helpers / add HMAC/OAuth | `helpers.py` or `primitives/neurons/request.py` (keep thin) |
 | Try a native pattern | `patterns/README.md` + `patterns/*-cell/*.cell.yaml` |

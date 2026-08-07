@@ -110,6 +110,22 @@ spec:
 - `cellInline:` for ad-hoc children (no file needed).
 - See `example/` for a live pipeline (exec -> python) and `example/echo-http.cell.yaml` for an http leaf.
 
+## Input nodes are cells — polling, webhook, hook, CAS are just membranes
+
+No `source:` type. Wire whichever source you need as the upstream organelle — the parent just sees `inputs.*.json`:
+
+- **Poll** (`patterns/input-sources/poll.cell.yaml`): `cursor? -> item + next_cursor` — timer / queue `GET ?cursor=`
+- **Webhook** (`patterns/input-sources/webhook.cell.yaml`): `webhook -> event` — POST lands as `inputs/webhook.json`
+- **Hook** (`patterns/input-sources/hook.cell.yaml`): `file -> change` — `PostToolUse` on `Write|Edit`
+- **CAS** (`patterns/input-sources/cas-read.cell.yaml`): `key -> data` — content hash moved in `.cell-cas/`
+
+```yaml
+organelles: [{name: in, cell: ./poll.cell.yaml}, {name: work, cell: ./rank.cell.yaml}]
+wiring: [{from: in.item, to: work.order}]
+```
+
+Swap by rewiring, not new syntax. See `patterns/input-sources/harness.cell.yaml` (one harness, four interchangeable sources) and `primitives/session` for stateful inputs (cookies/base_url).
+
 ## Helpers — thin and editable (bitter lesson)
 
 `helpers.py` is ~150 lines: `read_input`, `write_output`, `validate`, `http_request`, `render_template`. It is **agent-editable**.

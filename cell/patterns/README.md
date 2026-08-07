@@ -9,6 +9,7 @@ Each folder is a runnable `*.cell.yaml` that implements one rung of the Prompt -
 | **Harness** | `system/` + `docs/` | `caps`/`policy`/`out/`/`skills/`, builder that builds itself. |
 | **Loop** | `loop-cell/` | `python` loop inside a leaf (`for _ in range(max): ... if done: break`) — no spec syntax, raw Python bounded `for`. |
 | **Graph** | `graph-cell/` | Router -> parallel workers -> reduce -> human approval. Pipeline, router, fan-out->reduce, orchestrator-workers — all via `wiring:` |
+| **Input** | `input-sources/` | `poll` / `webhook` / `hook` / `cas-read` — input nodes are cells, Merkle identifies moves. |
 | **Video** | `video/` | `prompt -> fal-generate -> poll -> cas` (mock without `FAL_KEY`). |
 | **Reactive** | `reactive-cell/` | `check` (manifests → changed) → `system/redrive` (→ stale vs compensation). Merkle identifies changes, organelle causes the reaction — not spec. |
 | **Primitives demo** | `api-reveng/` | Fixed stdlib demo — `session -> auth -> request -> extract` using `primitives/` (add HMAC/OAuth to `request.py`). |

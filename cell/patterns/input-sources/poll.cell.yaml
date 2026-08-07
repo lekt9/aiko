@@ -1,0 +1,16 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: poll-input
+  description: input as cell — polling source (e.g. fal queue, RSS, dispatch inbox)
+spec:
+  membrane:
+    inputs:
+      cursor: { schema: string, required: false }
+    outputs:
+      item: { schema: object }
+      next_cursor: { schema: string }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/poll.py

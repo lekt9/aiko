@@ -1,0 +1,17 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: input-route
+  description: routes source kind to the right input cell — wiring is the choice
+spec:
+  membrane:
+    inputs:
+      source: { schema: string }
+      payload: { schema: object, required: false }
+    outputs:
+      item: { schema: object }
+      manifest: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/route.py

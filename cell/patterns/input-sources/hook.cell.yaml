@@ -1,0 +1,15 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: hook-input
+  description: input as cell — hook source (file write fires the cell)
+spec:
+  membrane:
+    inputs:
+      file: { schema: object }
+    outputs:
+      change: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/hook.py

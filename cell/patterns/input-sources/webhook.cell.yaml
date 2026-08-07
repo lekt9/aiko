@@ -1,0 +1,15 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: webhook-input
+  description: input as cell — webhook/event source (HTTP POST lands as inputs/webhook.json)
+spec:
+  membrane:
+    inputs:
+      webhook: { schema: object }
+    outputs:
+      event: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/webhook.py

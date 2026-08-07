@@ -1,0 +1,15 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: cas-input
+  description: input as cell — CAS read (content hash moved)
+spec:
+  membrane:
+    inputs:
+      key: { schema: string }
+    outputs:
+      data: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/cas_read.py

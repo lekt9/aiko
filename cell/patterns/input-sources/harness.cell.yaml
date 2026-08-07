@@ -1,0 +1,26 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: input-harness
+  description: harness — any input node is a cell; pick one source and wire it (demo of interchangeability)
+spec:
+  membrane:
+    inputs:
+      source: { schema: string }
+      payload: { schema: object, required: false }
+    outputs:
+      item: { schema: object }
+      manifest: { schema: object }
+    caps: {}
+  organelles:
+    - name: route
+      cell: ./route.cell.yaml
+  wiring:
+    - from: membrane.source
+      to: route.source
+    - from: membrane.payload
+      to: route.payload
+    - from: route.item
+      to: membrane.item
+    - from: route.manifest
+      to: membrane.manifest

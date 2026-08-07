@@ -45,6 +45,8 @@ Fixed **primitives** (`primitives/session`, `auth`, `request`, `cas`) give froze
 
 Every firing writes `out/manifest.json` (cell hash, input/output digests, evidence, produced_by) — the Merkle. Large blobs go via `primitives/cas` (`.cell-cas/`). See SPEC §5.
 
+Input nodes are cells — poll (`cursor -> item`), webhook (`webhook -> event`), hook (`file -> change`), or CAS (`key -> data`) are just membranes (see `patterns/input-sources/`). The same Merkle (`out/manifest.json`) identifies when any source moved.
+
 Builder is itself a cell (`system/builder.cell.yaml` = parse | validate | emit) — the harness builds itself. See SPEC §3.
 
 ---
