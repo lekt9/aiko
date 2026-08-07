@@ -50,3 +50,4 @@ data/
 # Prebuilt binaries are host-specific; `zig build` / `cargo build` reproduce
 # them. A committed binary is a second source of truth that drifts and shows
 # up as a spurious diff on every build.
+cell/
