@@ -84,7 +84,8 @@ install -m 755 "$CONTRACT_LIBRARY" "$LIB_TMP"
 # package still installs, but verified before it is moved into place.
 if [ -x "$CONTRACT_CLI_BINARY" ]; then
     install -m 755 "$CONTRACT_CLI_BINARY" "$CLI_TMP"
-    "$CLI_TMP" --help >/dev/null 2>&1 || {
+    # Verify via MCP handshake (basename-sensitive: --help fails when CLI_TMP is dot-prefixed)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"witness","version":"1"}}}' | "$CLI_TMP" mcp 2>/dev/null | grep -q '"serverInfo"' || {
         echo "Packaged contract CLI did not run; refusing to install it" >&2
         exit 1
     }
