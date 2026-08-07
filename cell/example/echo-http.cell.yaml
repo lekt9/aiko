@@ -1,0 +1,23 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: echo-http
+  description: echo roster via http — leaf is an API request
+spec:
+  membrane:
+    inputs:
+      roster: { schema: ../schemas/roster.v1.json }
+    outputs:
+      result: { schema: ../schemas/roster.v1.json }
+    caps:
+      allow_net: ["postman-echo.com", "httpbin.org"]
+  run:
+    kind: http
+    http:
+      method: POST
+      url: https://postman-echo.com/post
+      headers: { Content-Type: "application/json" }
+      body: "{{inputs.roster}}"
+      timeout_ms: 8000
+  policy:
+    determinism: best_effort

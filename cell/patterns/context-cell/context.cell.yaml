@@ -1,0 +1,32 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: context
+  description: context pattern — retrieve + curate + answer composed
+spec:
+  membrane:
+    inputs:
+      query: { schema: string }
+    outputs:
+      answer: { schema: string }
+    caps: {}
+  organelles:
+    - name: retrieve
+      cell: ./retrieve.cell.yaml
+    - name: curate
+      cell: ./curate.cell.yaml
+    - name: answer
+      cell: ./answer.cell.yaml
+  wiring:
+    - from: membrane.query
+      to: retrieve.query
+    - from: membrane.query
+      to: curate.query
+    - from: membrane.query
+      to: answer.query
+    - from: retrieve.hits
+      to: answer.ctx
+    - from: curate.allowed_tools
+      to: answer.tools
+    - from: answer.answer
+      to: membrane.answer

@@ -1,0 +1,16 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: cas
+  description: primitive — content-addressed store (write-if-absent, dedup)
+spec:
+  membrane:
+    inputs:
+      data: { schema: object }
+    outputs:
+      key: { schema: string }
+      deduped: { schema: boolean }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/cas.py

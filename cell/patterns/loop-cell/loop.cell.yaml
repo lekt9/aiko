@@ -1,0 +1,29 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: support-loop
+  description: loop pattern — python loop inside a leaf (no policy syntax)
+spec:
+  membrane:
+    inputs:
+      ticket: { schema: object }
+      capacity: { schema: object }
+    outputs:
+      verdict: { schema: string }
+      result: { schema: object }
+      iterations: { schema: integer }
+    caps: {}
+  organelles:
+    - name: iterate
+      cell: ./iterate.cell.yaml
+  wiring:
+    - from: membrane.ticket
+      to: iterate.ticket
+    - from: membrane.capacity
+      to: iterate.capacity
+    - from: iterate.verdict
+      to: membrane.verdict
+    - from: iterate.result
+      to: membrane.result
+    - from: iterate.iterations
+      to: membrane.iterations

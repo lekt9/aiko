@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "response.v1",
+  "type": "object",
+  "properties": {
+    "status": {"type": "integer"},
+    "headers": {"type": "object"},
+    "body": {"type": ["object","array","string","number","null"]},
+    "cookies": {"type": "object"},
+    "url": {"type": "string"}
+  }
+}

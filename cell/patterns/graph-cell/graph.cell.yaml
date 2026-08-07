@@ -1,0 +1,38 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: graph
+  description: graph pattern — router -> parallel workers -> reduce -> human approval
+spec:
+  membrane:
+    inputs:
+      query: { schema: string }
+    outputs:
+      approved: { schema: object }
+    caps: {}
+  organelles:
+    - name: router
+      cell: ./router.cell.yaml
+    - name: worker-a
+      cell: ./worker-a.cell.yaml
+    - name: worker-b
+      cell: ./worker-b.cell.yaml
+    - name: reduce
+      cell: ./reduce.cell.yaml
+    - name: approval
+      cell: ./approval.cell.yaml
+  wiring:
+    - from: membrane.query
+      to: router.query
+    - from: membrane.query
+      to: worker-a.query
+    - from: membrane.query
+      to: worker-b.query
+    - from: worker-a.draft
+      to: reduce.a
+    - from: worker-b.draft
+      to: reduce.b
+    - from: reduce.merged
+      to: approval.merged
+    - from: approval.approved
+      to: membrane.approved

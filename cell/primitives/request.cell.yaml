@@ -1,0 +1,17 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: request
+  description: primitive — merges session auth into an HTTP call
+spec:
+  membrane:
+    inputs:
+      session: { schema: schemas/session.v1.json }
+      method: { schema: string, required: false }
+      url: { schema: string }
+    outputs:
+      response: { schema: schemas/response.v1.json }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/request.py

@@ -1,0 +1,18 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: iterate
+  description: loop iteration in Python
+spec:
+  membrane:
+    inputs:
+      ticket: { schema: object }
+      capacity: { schema: object }
+    outputs:
+      verdict: { schema: string }
+      result: { schema: object }
+      iterations: { schema: integer }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/iterate.py

@@ -1,0 +1,15 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: classify
+  description: prompt pattern — wording lives in a leaf
+spec:
+  membrane:
+    inputs:
+      ticket: { schema: ../schemas/ticket.v1.json }
+    outputs:
+      label: { schema: string }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/classify.py

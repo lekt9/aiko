@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "roster.v1",
+  "type": "object",
+  "required": ["order_id","assigned"],
+  "properties": {
+    "order_id": {"type":"string"},
+    "assigned": {"type":"array","items":{"type":"string"}}
+  }
+}

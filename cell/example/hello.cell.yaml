@@ -1,0 +1,16 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: hello
+  description: minimal leaf — inline python
+spec:
+  membrane:
+    inputs: {}
+    outputs:
+      greeting: { schema: string }
+    caps: {}
+  run:
+    kind: python
+    code: |
+      def run(inputs, ctx):
+          return {"greeting": "hello world"}

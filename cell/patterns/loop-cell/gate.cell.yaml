@@ -1,0 +1,16 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: gate
+  description: escalate-only-if capacity < 80%
+spec:
+  membrane:
+    inputs:
+      capacity: { schema: object }
+      verdict: { schema: string }
+    outputs:
+      verdict: { schema: string }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/gate.py

@@ -1,0 +1,15 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: parse
+  description: parse a .cell.yaml root into data
+spec:
+  membrane:
+    inputs:
+      root: { schema: string }
+    outputs:
+      data: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/parse.py

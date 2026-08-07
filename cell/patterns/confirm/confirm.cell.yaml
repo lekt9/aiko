@@ -1,0 +1,17 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: confirm
+  description: confirmation cell — encouraged grounding step for external effects (not substrate)
+spec:
+  membrane:
+    inputs:
+      claim: { schema: object }
+      evidence: { schema: object }
+    outputs:
+      confirmed: { schema: boolean }
+      diff: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/confirm.py

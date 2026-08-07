@@ -1,0 +1,16 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: auth
+  description: primitive — enriches a session with auth (login / token)
+spec:
+  membrane:
+    inputs:
+      session: { schema: schemas/session.v1.json }
+      credentials: { schema: object }
+    outputs:
+      session: { schema: schemas/session.v1.json }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/auth.py

@@ -1,0 +1,15 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: validate
+  description: validate a parsed cell against the spec
+spec:
+  membrane:
+    inputs:
+      data: { schema: object }
+    outputs:
+      data: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/validate.py

@@ -1,0 +1,15 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: extract
+  description: extract typed data from a response
+spec:
+  membrane:
+    inputs:
+      response: { schema: ../../primitives/schemas/response.v1.json }
+    outputs:
+      data: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/extract.py

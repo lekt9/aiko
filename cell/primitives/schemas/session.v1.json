@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "session.v1",
+  "type": "object",
+  "required": ["base_url"],
+  "properties": {
+    "base_url": {"type": "string", "format": "uri"},
+    "headers": {"type": "object", "additionalProperties": {"type": "string"}},
+    "cookies": {"type": "object", "additionalProperties": {"type": "string"}},
+    "id": {"type": "string"}
+  }
+}

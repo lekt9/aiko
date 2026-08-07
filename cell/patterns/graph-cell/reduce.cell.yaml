@@ -1,0 +1,16 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: reduce
+  description: fan-in — merge drafts
+spec:
+  membrane:
+    inputs:
+      a: { schema: object }
+      b: { schema: object }
+    outputs:
+      merged: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/reduce.py

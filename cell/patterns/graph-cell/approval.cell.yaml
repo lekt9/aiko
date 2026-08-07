@@ -1,0 +1,15 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: approval
+  description: human approval gate (kind http — replace with real review endpoint)
+spec:
+  membrane:
+    inputs:
+      merged: { schema: object }
+    outputs:
+      approved: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/approval.py

@@ -1,0 +1,8 @@
+{
+  "order": {
+    "id": "ord-001",
+    "items": [
+      {"sku": "widget", "qty": 2}
+    ]
+  }
+}

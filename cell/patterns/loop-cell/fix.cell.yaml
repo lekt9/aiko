@@ -1,0 +1,16 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: fix
+  description: offer a fix for a diagnosis
+spec:
+  membrane:
+    inputs:
+      diagnosis: { schema: object }
+    outputs:
+      verdict: { schema: string }
+      result: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/fix.py

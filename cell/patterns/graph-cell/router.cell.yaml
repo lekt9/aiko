@@ -1,0 +1,15 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: router
+  description: graph router — deterministic branch
+spec:
+  membrane:
+    inputs:
+      query: { schema: string }
+    outputs:
+      branch: { schema: string }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/router.py

@@ -1,0 +1,15 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: retrieve
+  description: context pattern — retrieval organelle (query -> hits)
+spec:
+  membrane:
+    inputs:
+      query: { schema: string }
+    outputs:
+      hits: { schema: array }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/retrieve.py

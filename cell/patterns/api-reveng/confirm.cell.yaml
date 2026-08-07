@@ -1,0 +1,47 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: api-confirm
+  description: api-reveng grounding — request -> confirm (independent read-back) -> extract
+spec:
+  membrane:
+    inputs:
+      base_url: { schema: string }
+      credentials: { schema: object }
+      path: { schema: string }
+    outputs:
+      data: { schema: object }
+      confirmed: { schema: boolean }
+    caps: {}
+  organelles:
+    - name: session
+      cell: ../../primitives/session.cell.yaml
+    - name: auth
+      cell: ../../primitives/auth.cell.yaml
+    - name: fetch
+      cell: ../../primitives/request.cell.yaml
+    - name: confirm
+      cell: ../confirm/confirm.cell.yaml
+    - name: extract
+      cell: ./extract.cell.yaml
+  wiring:
+    - from: membrane.base_url
+      to: session.base_url
+    - from: session.session
+      to: auth.session
+    - from: membrane.credentials
+      to: auth.credentials
+    - from: auth.session
+      to: fetch.session
+    - from: membrane.path
+      to: fetch.url
+    - from: fetch.response
+      to: extract.response
+    - from: fetch.response
+      to: confirm.evidence
+    - from: extract.data
+      to: confirm.claim
+    - from: extract.data
+      to: membrane.data
+    - from: confirm.confirmed
+      to: membrane.confirmed

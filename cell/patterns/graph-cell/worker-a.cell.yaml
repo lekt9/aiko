@@ -1,0 +1,15 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: worker-a
+  description: worker A (hardware)
+spec:
+  membrane:
+    inputs:
+      query: { schema: string }
+    outputs:
+      draft: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/worker_a.py

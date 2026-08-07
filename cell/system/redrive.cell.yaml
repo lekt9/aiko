@@ -1,0 +1,17 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: redrive
+  description: organelle — reads manifests and emits stale vs compensation
+spec:
+  membrane:
+    inputs:
+      manifests: { schema: object }
+      prior: { schema: object, required: false }
+    outputs:
+      stale: { schema: array }
+      compensation: { schema: array }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/redrive.py

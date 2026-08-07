@@ -1,0 +1,17 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: answer
+  description: context pattern — answer using retrieved context
+spec:
+  membrane:
+    inputs:
+      ctx: { schema: array }
+      tools: { schema: array }
+      query: { schema: string }
+    outputs:
+      answer: { schema: string }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/answer.py

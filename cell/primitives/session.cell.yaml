@@ -1,0 +1,15 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: session
+  description: primitive — holds HTTP session state (cookies, headers, base_url)
+spec:
+  membrane:
+    inputs:
+      base_url: { schema: string }
+    outputs:
+      session: { schema: schemas/session.v1.json }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/session.py

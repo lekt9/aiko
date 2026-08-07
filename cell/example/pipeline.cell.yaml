@@ -1,0 +1,24 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: pipeline
+  description: qualify (exec) then rank (python) — two kinds, one membrane
+spec:
+  membrane:
+    inputs:
+      order: { schema: ../schemas/order.v1.json }
+    outputs:
+      roster: { schema: ../schemas/roster.v1.json }
+    caps: {}
+  organelles:
+    - name: qualify
+      cell: ./qualify-exec.cell.yaml
+    - name: rank
+      cell: ./rank-python.cell.yaml
+  wiring:
+    - from: membrane.order
+      to: qualify.order
+    - from: qualify.qualified
+      to: rank.qualified
+    - from: rank.roster
+      to: membrane.roster

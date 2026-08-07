@@ -1,0 +1,34 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: builder
+  description: the cell that builds cells — parse | validate | emit
+spec:
+  membrane:
+    inputs:
+      root: { schema: string }
+    outputs:
+      canonical: { schema: string }
+      digest: { schema: string }
+      organelle_count: { schema: integer }
+    caps: {}
+  organelles:
+    - name: parse
+      cell: ./parse.cell.yaml
+    - name: validate
+      cell: ./validate.cell.yaml
+    - name: emit
+      cell: ./emit.cell.yaml
+  wiring:
+    - from: membrane.root
+      to: parse.root
+    - from: parse.data
+      to: validate.data
+    - from: validate.data
+      to: emit.data
+    - from: emit.canonical
+      to: membrane.canonical
+    - from: emit.digest
+      to: membrane.digest
+    - from: emit.organelle_count
+      to: membrane.organelle_count

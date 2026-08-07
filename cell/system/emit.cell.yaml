@@ -1,0 +1,17 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: emit
+  description: DAG-check and emit canonical JSON plus digest
+spec:
+  membrane:
+    inputs:
+      data: { schema: object }
+    outputs:
+      canonical: { schema: string }
+      digest: { schema: string }
+      organelle_count: { schema: integer }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/emit.py

@@ -1,0 +1,16 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: qualify-exec
+  description: qualify candidates — exec leaf
+spec:
+  membrane:
+    inputs:
+      order: { schema: ../schemas/order.v1.json }
+    outputs:
+      qualified: { schema: ../schemas/candidates.v1.json }
+    caps: {}
+  run:
+    kind: exec
+    command: ["python3", "neurons/qualify.exec.py"]
+    timeout_ms: 5000

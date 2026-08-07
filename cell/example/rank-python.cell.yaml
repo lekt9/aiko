@@ -1,0 +1,17 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: rank-python
+  description: rank deterministically — python leaf
+spec:
+  membrane:
+    inputs:
+      qualified: { schema: ../schemas/candidates.v1.json }
+    outputs:
+      roster: { schema: ../schemas/roster.v1.json }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/rank.py
+  policy:
+    determinism: required

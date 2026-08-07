@@ -1,0 +1,15 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: curate
+  description: context pattern — tool curation (minimal viable set)
+spec:
+  membrane:
+    inputs:
+      query: { schema: string }
+    outputs:
+      allowed_tools: { schema: array }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/curate.py

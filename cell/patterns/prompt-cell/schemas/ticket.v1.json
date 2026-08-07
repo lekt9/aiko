@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"ticket.v1","type":"object","required":["text"],"properties":{"text":{"type":"string"},"id":{"type":"string"}}}
