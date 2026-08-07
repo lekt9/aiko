@@ -20,6 +20,7 @@ CONTRACT_CLI_ROOT="$CONTRACT_REPO/zig"
 TYPED_NEURON_ROOT="$CONTRACT_REPO/../neuron"
 AIKO_PROFILE=${AIKO_BUILD_PROFILE:-release}
 AIKO_TARGET_DIR=${AIKO_CARGO_TARGET_DIR:-"$AIKO_ROOT/target"}
+AIKO_CONTRACT_BGE=${AIKO_CONTRACT_BGE:-true}
 PACKAGE_ROOT="$AIKO_ROOT/target/aiko-package"
 
 usage() {
@@ -83,7 +84,8 @@ build_contract() {
     else
         echo "Building Contract from $CONTRACT_ROOT"
     fi
-    (cd "$CONTRACT_ROOT" && zig build -Doptimize=ReleaseFast $ZIG_TARGET_ARG)
+    BGE_ARG="-Dbge=$AIKO_CONTRACT_BGE"
+    (cd "$CONTRACT_ROOT" && zig build -Doptimize=ReleaseFast $ZIG_TARGET_ARG $BGE_ARG)
     CONTRACT_DYLIB=$(contract_dylib)
     if [ ! -f "$CONTRACT_DYLIB" ]; then
         echo "Contract build did not produce $CONTRACT_DYLIB" >&2
