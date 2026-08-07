@@ -21,9 +21,6 @@ This file maps that doctrine onto `cell`.
 | Redrive | `system/redrive.cell.yaml` (organelle, not spec) | manifests + prior -> stale vs ALREADY_SENT |
 | Memory | Git history + distilled `skills/` (shared cells) + `.cell-cas/` (CAS) | Skills amortize exploration |
 
-## Discovery
-
-`cell` is at `~/.agents/skills/cell` (see `install-skill.sh`) and cross-referenced from `~/.agents/skills/harness-engineering/references/10-cell-fractal-harness.md` — so `/skill:harness-engineering` routes to it when task is fractal/composable.
 
 ## How we apply the workflow
 
