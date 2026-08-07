@@ -6,5 +6,6 @@
     "name": "lekt9"
   },
   "skills": "./skills/",
-  "commands": "./commands/"
+  "commands": "./commands/",
+  "hooks": "./hooks/hooks.json"
 }

@@ -78,6 +78,9 @@ Borrowed from Browser Use's *Bitter Lesson of Agent Harnesses* (don't wrap the a
 
 ---
 
+
+> Discover more: `/skill:find-skills` → `npx skills find <query>` or https://skills.sh/. `cell` composes with any discovered skill as an `exec`/`http` leaf.
+
 ## Quick start
 
 ```sh

@@ -1,6 +1,6 @@
 ---
 name: cell
-description: Fractal harness — Cell = membrane + (run | organelles+wiring). DAG in YAML that composes programs (exec/python/http) behind one membrane. Fixed primitives (session/auth/request) for API wiring. Use when building or running a harness, writing a cell, or extending helpers.
+description: Fractal harness — Cell = membrane + (run | organelles+wiring). DAG in YAML that composes programs (exec/python/http) behind one membrane. Fixed primitives (session/auth/request) for API wiring. Use for any harness, workflow, agent harness, DAG, YAML harness, composing programs, API reverse-engineering, building or running a harness, writing a cell, or extending helpers. Trigger whenever the user mentions harness, workflow, DAG, pipeline, agent loop, graph, or wants to wire programs or APIs together — even if they do not say "cell".
 ---
 
 # Cell — agent skill
@@ -141,6 +141,11 @@ Every `run` emits `out/manifest.json`; parent hash covers children + wiring. Sam
 - Schemas, DAG, caps, and determinism are enforced — see `docs/constraints.md`.
 - Fail-closed: first violated port or cap aborts the firing and names it.
 - `policy.determinism: required` leaves are double-fired in `check` — byte mismatch fails. Models belong at edges with `best_effort`.
+
+
+## Discover related skills
+
+If this harness needs capabilities not covered here (e.g., frontend polish, testing, deployment), use `/skill:find-skills` — `npx skills find <query>` or browse https://skills.sh/ — to locate complementary skills. `cell` composes with them: wire any discovered skill's tool as an `exec` or `http` leaf behind the same membrane.
 
 ## Where to look
 
