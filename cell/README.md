@@ -104,6 +104,16 @@ python run.py run patterns/api-reveng/confirm.cell.yaml --inputs '{"base_url":"h
 
 Zig is only the runtime: `zig build && ./zig-out/bin/cell build <root>`
 
+## Build and verify
+
+```sh
+zig build        # -> zig-out/bin/cell (Zig mirror, validates DAG)
+zig build test   # python test suite (tests/test_cell.py)
+zig build gate   # 10 witnesses — the acceptance criterion (empty dir, CLI, durable state)
+```
+
+Gates prove the thing works by failing when you delete it. See `tests/gates/` for each witness + falsifier. `tests/gate.sh` aggregates all 10.
+
 ---
 
 ## Nested skills (skill contains skills)

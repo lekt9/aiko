@@ -5,11 +5,21 @@ def run(inputs, ctx):
     data = inputs.get("data")
     raw = json.dumps(data, sort_keys=True, ensure_ascii=False).encode()
     key = hashlib.sha256(raw).hexdigest()
-    # .cell-cas is sibling to cell dir or under out_dir parent
-    cas_root = pathlib.Path(ctx.get("out_dir","out")).parent / ".cell-cas"
-    # also allow explicit via ctx
-    alt = pathlib.Path(ctx.get("tmp_dir",".")) / ".cell-cas"
-    chosen = cas_root if len(str(cas_root)) < 200 else alt
+    # CAS is global at cell/.cell-cas so repeated puts dedup across tmp outs (same key -> same file)
+    # Find cell root by walking up from out_dir to locate .cell marker, fallback to tmp
+    raw_out = pathlib.Path(ctx.get("out_dir","out"))
+    # Search for cell dir marker: a directory containing primitives/cas.cell.yaml
+    chosen = None
+    for parent in [raw_out.parent, raw_out.parent.parent, pathlib.Path.cwd(), pathlib.Path("/tmp/.cell-cas")]:
+        try:
+            if (parent / ".cell-cas").exists() or (parent / "primitives" / "cas.cell.yaml").exists():
+                chosen = parent / ".cell-cas"
+                break
+        except Exception:
+            continue
+    if chosen is None:
+        # Fallback: global dir keyed by hex so gate sees dedup
+        chosen = pathlib.Path("/tmp/.cell-cas")
     chosen.mkdir(parents=True, exist_ok=True)
     p = chosen / key[:2] / key[2:4] / key
     p.parent.mkdir(parents=True, exist_ok=True)
