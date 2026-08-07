@@ -1,0 +1,30 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: video-generate
+  description: prompt + optional params -> fal job (mock if no key)
+spec:
+  membrane:
+    inputs:
+      prompt: { schema: string }
+      model: { schema: string, required: false }
+      params: { schema: object, required: false }
+    outputs:
+      request_id: { schema: string }
+      status: { schema: string }
+    caps:
+      allow_net: ["queue.fal.run", "fal.run", "api.fal.ai"]
+  organelles:
+    - name: gen
+      cell: ../../primitives/fal-generate.cell.yaml
+  wiring:
+    - from: membrane.prompt
+      to: gen.prompt
+    - from: membrane.model
+      to: gen.model
+    - from: membrane.params
+      to: gen.params
+    - from: gen.request_id
+      to: membrane.request_id
+    - from: gen.status
+      to: membrane.status

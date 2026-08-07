@@ -1,0 +1,20 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: fal-generate
+  description: primitive — submit fal video generation job (Ve0, Kling, MiniMax, etc)
+spec:
+  membrane:
+    inputs:
+      prompt: { schema: string }
+      model: { schema: string, required: false }
+      params: { schema: object, required: false }
+    outputs:
+      request_id: { schema: string }
+      status: { schema: string }
+      response: { schema: object }
+    caps:
+      allow_net: ["queue.fal.run", "fal.run", "api.fal.ai"]
+  run:
+    kind: python
+    entry: neurons/fal_generate.py

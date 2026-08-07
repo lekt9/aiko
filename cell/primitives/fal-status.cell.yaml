@@ -1,0 +1,19 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: fal-status
+  description: primitive — poll fal queue for video status/result
+spec:
+  membrane:
+    inputs:
+      request_id: { schema: string }
+      model: { schema: string, required: false }
+    outputs:
+      status: { schema: string }
+      video_url: { schema: string, required: false }
+      response: { schema: object }
+    caps:
+      allow_net: ["queue.fal.run", "fal.run", "api.fal.ai"]
+  run:
+    kind: python
+    entry: neurons/fal_status.py

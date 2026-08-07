@@ -1,0 +1,18 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: video-poll
+  description: poll fal job until completed (python loop as pattern, not spec)
+spec:
+  membrane:
+    inputs:
+      request_id: { schema: string }
+      model: { schema: string, required: false }
+    outputs:
+      video_url: { schema: string }
+      status: { schema: string }
+    caps:
+      allow_net: ["queue.fal.run", "fal.run", "api.fal.ai"]
+  run:
+    kind: python
+    entry: neurons/poll.py

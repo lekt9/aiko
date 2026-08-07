@@ -3,11 +3,13 @@
   "title": "cas.v1",
   "type": "object",
   "properties": {
-    "key": {
-      "type": "string"
-    },
-    "deduped": {
-      "type": "boolean"
+    "data": {
+      "type": [
+        "object",
+        "array",
+        "string",
+        "number"
+      ]
     }
   }
 }

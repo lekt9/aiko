@@ -9,6 +9,7 @@ Each folder is a runnable `*.cell.yaml` that implements one rung of the Prompt -
 | **Harness** | `system/` + `docs/` | `caps`/`policy`/`out/`/`skills/`, builder that builds itself. |
 | **Loop** | `loop-cell/` | `python` loop inside a leaf (`for _ in range(max): ... if done: break`) — no spec syntax, raw Python bounded `for`. |
 | **Graph** | `graph-cell/` | Router -> parallel workers -> reduce -> human approval. Pipeline, router, fan-out->reduce, orchestrator-workers — all via `wiring:` |
+| **Video** | `video/` | `prompt -> fal-generate -> poll -> cas` (mock without `FAL_KEY`). |
 | **Primitives demo** | `api-reveng/` | Fixed stdlib demo — `session -> auth -> request -> extract` using `primitives/` (add HMAC/OAuth to `request.py`). |
 
 ```sh

@@ -1,0 +1,43 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: video-harness
+  description: video harness — prompt -> fal -> poll -> cas (merkle covers every firing, confirmation optional)
+spec:
+  membrane:
+    inputs:
+      prompt: { schema: string }
+      model: { schema: string, required: false }
+      params: { schema: object, required: false }
+    outputs:
+      video_url: { schema: string }
+      key: { schema: string }
+      deduped: { schema: boolean }
+    caps:
+      allow_net: ["queue.fal.run", "fal.run", "api.fal.ai"]
+  organelles:
+    - name: generate
+      cell: ./generate.cell.yaml
+    - name: poll
+      cell: ./poll.cell.yaml
+    - name: cache
+      cell: ../../primitives/cas.cell.yaml
+  wiring:
+    - from: membrane.prompt
+      to: generate.prompt
+    - from: membrane.model
+      to: generate.model
+    - from: membrane.params
+      to: generate.params
+    - from: generate.request_id
+      to: poll.request_id
+    - from: membrane.model
+      to: poll.model
+    - from: poll.video_url
+      to: cache.data
+    - from: poll.video_url
+      to: membrane.video_url
+    - from: cache.key
+      to: membrane.key
+    - from: cache.deduped
+      to: membrane.deduped

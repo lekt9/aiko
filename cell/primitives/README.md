@@ -8,6 +8,8 @@ They are part of the spec the way `string` is: **frozen I/O, ordinary implementa
 |---|---|---|
 | `session` | `base_url (+headers?) -> session` | Holds session state (cookies, headers). One per api-rev-eng run. |
 | `auth` | `session + credentials -> session` | Login / token exchange, enriches session with `Authorization` or cookie. Fail-closed. |
+| `fal-generate` | `prompt + model? + params? -> request_id + status + response` | Submit fal video job (mock if no `FAL_KEY`). |
+| `fal-status` | `request_id + model? -> status + video_url + response` | Poll queue.fal.run |
 | `request` | `session + method? + url (+headers,+body?) -> response` | Merges session auth into raw HTTP call. Thin — add HMAC/OAuth to `request.py` and rerun. |
 
 Schemas: `schemas/session.v1.json`, `schemas/response.v1.json`.
