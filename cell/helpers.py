@@ -93,6 +93,54 @@ def render_template(obj, inputs: dict, env=None):
         return [render_template(v, inputs, env) for v in obj]
     return obj
 
+def infer_render(schema: dict) -> dict:
+    """One schema -> one default json-render view. Override via port.render when present."""
+    if not isinstance(schema, dict):
+        return {"type": "raw", "schema": schema}
+    t = schema.get("type")
+    if t == "array":
+        item = schema.get("items", {})
+        # array of objects -> table, else list
+        if isinstance(item, dict) and item.get("type") == "object":
+            cols = list((item.get("properties") or {}).keys())[:8]
+            return {"type": "table", "columns": [{"key": c} for c in cols] or [{"key": "value"}]}
+        return {"type": "list", "item": item}
+    if t == "object":
+        req = schema.get("required") or list((schema.get("properties") or {}).keys())[:4]
+        return {"type": "form", "fields": [{"key": k, "required": k in (schema.get("required") or [])} for k in (schema.get("properties") or {}).keys()]}
+    if t in ("string","integer","number","boolean"):
+        return {"type": "field", "fieldType": t}
+    # fallback: form over properties if present
+    if "properties" in schema:
+        return {"type": "form", "fields": [{"key": k} for k in schema["properties"].keys()]}
+    return {"type": "raw", "schema": schema}
+
+def render_for_port(schema_path: str, data=None, explicit_render=None):
+    """Resolve port.render: explicit > inferred from schema. Returns json-render spec."""
+    if explicit_render is not None:
+        # explicit_render can be path (json file) or inline object
+        if isinstance(explicit_render, str) and explicit_render.endswith(".json"):
+            try:
+                return json.loads(pathlib.Path(explicit_render).read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        if isinstance(explicit_render, dict):
+            return explicit_render
+        if isinstance(explicit_render, str):
+            try:
+                return json.loads(explicit_render)
+            except Exception:
+                return {"type": "raw", "value": explicit_render}
+    # infer
+    if schema_path and schema_path != "string":
+        p = pathlib.Path(schema_path)
+        if p.exists():
+            try:
+                return infer_render(json.loads(p.read_text(encoding="utf-8")))
+            except Exception:
+                pass
+    return {"type": "raw"}
+
 def _get_path(root: dict, dotted: str):
     cur: object = root
     for part in dotted.split("."):

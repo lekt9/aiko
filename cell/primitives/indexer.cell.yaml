@@ -1,0 +1,16 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: indexer
+  description: primitive — indexes out/**/manifest.json into a queryable store (file-backed, CAS deduped)
+spec:
+  membrane:
+    inputs:
+      root: { schema: string }
+    outputs:
+      index: { schema: object }
+      count: { schema: integer }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/indexer.py

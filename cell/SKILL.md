@@ -84,6 +84,8 @@ run:
     headers: { Authorization: "Bearer {{env.API_TOKEN}}" }
     body: { order: "{{inputs.order}}", candidates: "{{inputs.qualified}}" }
 ```
+For `render`, add `membrane.inputs.<port>.render` / `outputs.<port>.render` (json-render spec or path) — one schema → one default view (`array`→table, `object`→form), explicit `render` overrides. See `SPEC.md §2.1` and `helpers.py` `infer_render`/`render_for_port`. Generative UI: `patterns/dashboard/`.
+
 For `http`, set `membrane.caps.allow_net: ["api.example.com"]` or the request is refused. See `SPEC.md §2.2` for full shape and `helpers.py` for `render_template`.
 
 ## Composing

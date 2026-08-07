@@ -1,0 +1,17 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: dashboard-render
+  description: generative UI — schema + data -> json-render view (render from membrane.render, inferred otherwise)
+spec:
+  membrane:
+    inputs:
+      schema: { schema: object }
+      data: { schema: object }
+      render: { schema: object, required: false }
+    outputs:
+      view: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/render.py

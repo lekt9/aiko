@@ -42,9 +42,9 @@ spec:
 ```yaml
 membrane:
   inputs:
-    <port>: { schema: <path-or-uri>, required: true|false }  # default true
+    <port>: { schema: <path-or-uri>, required: true|false, render: <json-render.json|inline-object>? }  # default true; render optional
   outputs:
-    <port>: { schema: <path-or-uri> }
+    <port>: { schema: <path-or-uri>, render: <json-render.json|inline-object>? }
   caps:
     allow_write: ["out/**"]   # glob allowlist, default []
     allow_net: []             # host allowlist for http leaves, default [] (no net)
@@ -52,6 +52,8 @@ membrane:
 ```
 
 * Ports are typed by JSON Schema draft 2020-12. Runtime validates inputs before firing, outputs after.
+* `render` is the **visual membrane** — an optional [json-render.dev](https://json-render.dev) spec attached to the port's schema. One schema → one default view (type: `array` → table, `object` with `required` → form, etc), overridden by `render` when present.
+* A Notion block is just a `Cell = membrane + (run|organelles+wiring)` whose `<port>.render` decides the block's UI. The dashboard is the DAG; the generative UI is the membrane's render.
 * Caps are an allowlist. No ambient authority. Uncapped effect is refused before it runs.
 * Every firing gets a scratch `inputs/` + `outputs/` + `out/` directory. Leaves read only `inputs/<port>.json`.
 
@@ -265,6 +267,7 @@ No `loop` in policy — loops are patterns (python loops), not spec. No ledger, 
 * Schemas: `schemas/<name>.v1.json` · `primitives/schemas/*.v1.json`
 * Leaf code: `neurons/<name>.py` · `primitives/neurons/*.py`
 * Build output: `.cell-canonical/<name>.cell.json` (committed for pinning)
+* Render: `<port>.render` is optional json-render spec on the port. Omit it and the UI is inferred from `schema`.
 * Patterns: `patterns/<name>-cell/` (runnable demos, not spec)
 * Primitives: `primitives/*.cell.yaml` (frozen membranes, blessed wiring)
 

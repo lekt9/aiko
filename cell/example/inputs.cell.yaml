@@ -1,0 +1,19 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: inputs-demo
+  description: schema → render inference (array/object -> table/form, no explicit render)
+spec:
+  membrane:
+    inputs:
+      order: { schema: ../schemas/order.v1.json }
+    outputs:
+      summary: { schema: ../schemas/roster.v1.json }
+    caps: {}
+  run:
+    kind: python
+    code: |
+      def run(inputs, ctx):
+          order = inputs.get("order", {})
+          items = order.get("items", [])
+          return {"summary": {"order_id": order.get("id",""), "assigned": [f"{x['sku']} x{x['qty']}" for x in items]}}

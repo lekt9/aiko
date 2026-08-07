@@ -43,7 +43,7 @@ That file *is* a Cell — use it as an organelle in another Cell. Three leaf kin
 
 Fixed **primitives** (`primitives/session`, `auth`, `request`, `cas`) give frozen membranes for API reverse-engineering — session holds state, auth enriches it, request merges auth into HTTP, cas dedups. See `primitives/README.md` + `patterns/api-reveng/`.
 
-Every firing writes `out/manifest.json` (cell hash, input/output digests, evidence, produced_by) — the Merkle. Large blobs go via `primitives/cas` (`.cell-cas/`). See SPEC §5.
+Every firing writes `out/manifest.json` and `helpers.infer_render(schema)` gives the default json-render view — override per-port via `render:` in the membrane (see `example/hello.cell.yaml` banner, `patterns/dashboard/`). (cell hash, input/output digests, evidence, produced_by) — the Merkle. Large blobs go via `primitives/cas` (`.cell-cas/`). See SPEC §5.
 
 Input nodes are cells — poll (`cursor -> item`), webhook (`webhook -> event`), hook (`file -> change`), or CAS (`key -> data`) are just membranes (see `patterns/input-sources/`). The same Merkle (`out/manifest.json`) identifies when any source moved.
 

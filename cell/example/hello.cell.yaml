@@ -2,12 +2,12 @@ apiVersion: cell/v0
 kind: Cell
 metadata:
   name: hello
-  description: minimal leaf — inline python
+  description: minimal leaf — inline python (explicit render as banner)
 spec:
   membrane:
     inputs: {}
     outputs:
-      greeting: { schema: string }
+      greeting: { schema: string, render: { type: banner, title: "Greeting" } }
     caps: {}
   run:
     kind: python

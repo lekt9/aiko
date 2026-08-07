@@ -1,0 +1,23 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: dashboard
+  description: generative dashboard — blocks are cells; membrane.render is the store's view, reactive via manifest
+spec:
+  membrane:
+    inputs:
+      schemas: { schema: object }
+      payloads: { schema: object }
+    outputs:
+      page: { schema: object }
+    caps: {}
+  organelles:
+    - name: render
+      cell: ./render.cell.yaml
+  wiring:
+    - from: membrane.schemas
+      to: render.schema
+    - from: membrane.payloads
+      to: render.data
+    - from: render.view
+      to: membrane.page
