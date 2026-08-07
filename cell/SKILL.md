@@ -146,6 +146,16 @@ Each is a `*.cell.yaml` you can `build` and `run`. A prompt is a `python` leaf; 
 
 > Build for deletion: every pattern is an ordinary cell. When the model outgrows it, delete the organelle, not the spec.
 
+## Generative UI — membrane.render is json-render (catalog + registry + spec)
+
+Each `membrane.<port>.render` is a [json-render](https://json-render.dev) view. Installed skills `core`/`react`/`shadcn`:
+
+- **core**: `defineCatalog` / `defineSchema` → `components: {Card: {props: z.object({title:z.string()}), slots:["default"]}}` + `actions: {submit:{params: z.object({formId:z.string()})}}` → `catalog.prompt()` for `streamText`.
+- **react + shadcn**: `defineRegistry(catalog, {components: {Card: shadcnComponents.Card}})` → `<Renderer spec={spec} registry={registry} />` in `StateProvider`/`VisibilityProvider`/`ActionProvider`. Use `@json-render/shadcn` for 36 pre-built components (pick, don't spread).
+- `patterns/dashboard/` is the thin `schema+data->view` wiring; the full Quick-Start (catalog → registry → API route → render with `useUIStream`) lives in `~/.agents/skills/core|react|shadcn/SKILL.md` — consult those when authoring views.
+
+Registry lives in `cell/web` (`@json-render/react` + `@json-render/shadcn` + tailwind). New schema → new catalog entry → new render cell, same digest.
+
 ## Evidence grounding — confirmation cell (encouraged, not required)
 
 `patterns/confirm/confirm.cell.yaml` (`claim + evidence -> confirmed + diff`) is the encouraged organelle where external effects matter: after `primitives/request`, read back `GET` and compare digests. Not substrate — compose it where it matters (`patterns/api-reveng/confirm.cell.yaml` wraps `api-reveng` with confirmation).

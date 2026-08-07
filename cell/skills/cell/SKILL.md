@@ -84,6 +84,8 @@ run:
     headers: { Authorization: "Bearer {{env.API_TOKEN}}" }
     body: { order: "{{inputs.order}}", candidates: "{{inputs.qualified}}" }
 ```
+For `render`, add `membrane.inputs.<port>.render` / `outputs.<port>.render` (json-render spec or path) — one schema → one default view (`array`→table, `object`→form), explicit `render` overrides. See `SPEC.md §2.1` and `helpers.py` `infer_render`/`render_for_port`. Generative UI: `patterns/dashboard/`.
+
 For `http`, set `membrane.caps.allow_net: ["api.example.com"]` or the request is refused. See `SPEC.md §2.2` for full shape and `helpers.py` for `render_template`.
 
 ## Composing
@@ -110,6 +112,22 @@ spec:
 - `cellInline:` for ad-hoc children (no file needed).
 - See `example/` for a live pipeline (exec -> python) and `example/echo-http.cell.yaml` for an http leaf.
 
+## Input nodes are cells — polling, webhook, hook, CAS are just membranes
+
+No `source:` type. Wire whichever source you need as the upstream organelle — the parent just sees `inputs.*.json`:
+
+- **Poll** (`patterns/input-sources/poll.cell.yaml`): `cursor? -> item + next_cursor` — timer / queue `GET ?cursor=`
+- **Webhook** (`patterns/input-sources/webhook.cell.yaml`): `webhook -> event` — POST lands as `inputs/webhook.json`
+- **Hook** (`patterns/input-sources/hook.cell.yaml`): `file -> change` — `PostToolUse` on `Write|Edit`
+- **CAS** (`patterns/input-sources/cas-read.cell.yaml`): `key -> data` — content hash moved in `.cell-cas/`
+
+```yaml
+organelles: [{name: in, cell: ./poll.cell.yaml}, {name: work, cell: ./rank.cell.yaml}]
+wiring: [{from: in.item, to: work.order}]
+```
+
+Swap by rewiring, not new syntax. See `patterns/input-sources/harness.cell.yaml` (one harness, four interchangeable sources) and `primitives/session` for stateful inputs (cookies/base_url).
+
 ## Helpers — thin and editable (bitter lesson)
 
 `helpers.py` is ~150 lines: `read_input`, `write_output`, `validate`, `http_request`, `render_template`. It is **agent-editable**.
@@ -127,6 +145,16 @@ Each is a `*.cell.yaml` you can `build` and `run`. A prompt is a `python` leaf; 
 - `patterns/api-reveng/` — `session -> auth -> request -> extract` demo using primitives
 
 > Build for deletion: every pattern is an ordinary cell. When the model outgrows it, delete the organelle, not the spec.
+
+## Generative UI — membrane.render is json-render (catalog + registry + spec)
+
+Each `membrane.<port>.render` is a [json-render](https://json-render.dev) view. Installed skills `core`/`react`/`shadcn`:
+
+- **core**: `defineCatalog` / `defineSchema` → `components: {Card: {props: z.object({title:z.string()}), slots:["default"]}}` + `actions: {submit:{params: z.object({formId:z.string()})}}` → `catalog.prompt()` for `streamText`.
+- **react + shadcn**: `defineRegistry(catalog, {components: {Card: shadcnComponents.Card}})` → `<Renderer spec={spec} registry={registry} />` in `StateProvider`/`VisibilityProvider`/`ActionProvider`. Use `@json-render/shadcn` for 36 pre-built components (pick, don't spread).
+- `patterns/dashboard/` is the thin `schema+data->view` wiring; the full Quick-Start (catalog → registry → API route → render with `useUIStream`) lives in `~/.agents/skills/core|react|shadcn/SKILL.md` — consult those when authoring views.
+
+Registry lives in `cell/web` (`@json-render/react` + `@json-render/shadcn` + tailwind). New schema → new catalog entry → new render cell, same digest.
 
 ## Evidence grounding — confirmation cell (encouraged, not required)
 

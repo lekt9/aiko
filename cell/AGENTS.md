@@ -55,6 +55,7 @@ cell/
 | What agents see, when (progressive disclosure) | `docs/context.md` |
 | Enforced guardrails + one-rule-per-mistake | `docs/constraints.md` |
 | Skills lifecycle (distill, vote, PII gate) | `docs/skills.md` |
+| Generative UI (json-render) | `patterns/dashboard/` — `membrane.render` + `core`/`react`/`shadcn` skills | catalog → registry → spec → Renderer |
 | Native patterns (prompt/context/loop/graph) | `patterns/<name>-cell/` + `SPEC.md §6` |
 | Builder internals | `system/builder.cell.yaml` + `system/neurons/` |
 | Runtime | `run.py` + `helpers.py` |
