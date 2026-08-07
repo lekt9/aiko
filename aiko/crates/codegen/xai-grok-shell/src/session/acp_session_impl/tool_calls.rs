@@ -406,6 +406,15 @@ impl SessionActor {
         if approved.iter().any(|p| p.tool_name == "search_tool") {
             self.retry_auth_required_servers().await;
         }
+        // SECOND READER of `is_read_only`. The first is the Contract gate at
+        // `bind_active_tool_contract` below; this one decides which paths get a
+        // per-file mutex for the batch. Anything classified read-only is also
+        // excluded from write-collision locking — so widening the
+        // classification (per-tool overrides, MCP `readOnlyHint`) relaxes
+        // locking as well as authorization. A server that mis-declares
+        // `readOnlyHint: true` AND passes a `file_path`/`path`/`target_file`
+        // argument loses its lock, and two such calls in one batch can
+        // interleave. Change the classification only with both readers in view.
         let write_paths: std::collections::HashSet<String> = approved
             .iter()
             .filter(|prepared| !prepared.is_read_only)
@@ -1381,29 +1390,20 @@ impl SessionActor {
                 "[exit_plan_mode] cursor SwitchMode(agent) with empty plan — skipping intercept"
             );
         }
+        // Ask the registry what this tool is, rather than re-deriving it from a
+        // hand-maintained `ToolKind` list. The list drifted from
+        // `ToolKind::is_read_only` (it omitted `SearchTool`, so `search_tool` —
+        // pure MCP tool *discovery* — counted as a consequential effect) and it
+        // discarded per-tool overrides and MCP `readOnlyHint` annotations
+        // entirely. Everything it misclassified as consequential then HOLDs at
+        // `bind_active_tool_contract` on any turn without a Contract root,
+        // which reads to the user as "the agent refuses to do anything".
+        // An unknown name stays conservative: unregistered means unclassified.
         let is_read_only = self
             .agent
             .borrow()
             .tool_bridge()
-            .tool_kind(&call.function.name)
-            .map(|k| {
-                use xai_grok_tools::types::tool::ToolKind;
-                matches!(
-                    k,
-                    ToolKind::Read
-                        | ToolKind::Search
-                        | ToolKind::Lsp
-                        | ToolKind::ListDir
-                        | ToolKind::List
-                        | ToolKind::MemorySearch
-                        | ToolKind::MemoryGet
-                        | ToolKind::WebSearch
-                        | ToolKind::WebFetch
-                        | ToolKind::EnterPlan
-                        | ToolKind::ExitPlan
-                        | ToolKind::AskUser
-                )
-            })
+            .tool_is_read_only(&call.function.name)
             .unwrap_or(false);
         let prepared = PreparedToolCall {
             call_id: call.id.clone(),

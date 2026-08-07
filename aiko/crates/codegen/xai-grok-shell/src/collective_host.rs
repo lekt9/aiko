@@ -460,6 +460,19 @@ fn library_candidates() -> Vec<PathBuf> {
                 .join(name),
         );
     }
+    // contract-core fallback
+    if let Some(home) = dirs::home_dir() {
+        for name in library_names() {
+            paths.push(home.join("Unbrowse/contract-core/libcontract/zig-out/lib").join(name));
+        }
+    }
+    for name in library_names() {
+        paths.push(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../../contract-core/libcontract/zig-out/lib")
+                .join(name),
+        );
+    }
     paths
 }
 

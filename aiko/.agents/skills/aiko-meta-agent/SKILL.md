@@ -9,9 +9,12 @@ Observe the exact stimulus, recall only explicitly referenced context, and route
 through admitted typed skills. Keep effects inside declared capabilities and
 hold consequential work when authority or evidence is absent.
 
-Grow a generative limb when repeated evidence shows a capability gap. Verify
-the result against the requested outcome, judge it honestly, and settle only
-with terminal evidence.
+Grow a generative limb when repeated evidence shows a capability gap. Route
+growth through the provider-neutral generator skill; never add a provider
+branch to this core. Keep generated code inert until it earns admission by
+digest, and retire or roll back by ledger event — never by silent deletion.
+Verify the result against the requested outcome, judge it honestly, and settle
+only with terminal evidence.
 
 ## Mechanical verification (contract-native)
 

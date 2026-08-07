@@ -1273,6 +1273,20 @@ pub fn load_mcp_server_configs_with_project(
             .map(|(name, config)| (name, (config, MCP_SCOPE_USER)))
             .collect();
 
+    // The rebrand moved the home from `~/.grok` to `~/.aiko`, but `grok_home()`
+    // only adopts the legacy directory when the preferred one has NO identity
+    // file. A user who has `~/.aiko/config.toml` AND servers still declared in
+    // `~/.grok/config.toml` therefore lost every one of them silently: nothing
+    // reads the legacy file, `mcp list` prints `[]`, and the agent starts with
+    // no servers while the user is looking at the config that declares them.
+    // Read the legacy home as a lower-precedence user-tier source so those
+    // definitions keep working; the active home always wins on a name clash.
+    for (name, config) in legacy_home_mcp_servers() {
+        servers
+            .entry(name)
+            .or_insert((config, MCP_SCOPE_USER));
+    }
+
     // find_project_configs is repo-root-first, so nearer files overwrite.
     for config_path in crate::config::find_project_configs(cwd) {
         if let Ok(root) = crate::config::load_config_file(&config_path) {
@@ -1309,6 +1323,45 @@ pub fn disabled_mcp_server_names(cwd: &std::path::Path) -> std::collections::Has
 
 fn config_path() -> PathBuf {
     crate::util::grok_home::grok_home().join("config.toml")
+}
+
+/// The pre-rebrand user config (`~/.grok/config.toml`) when it is a *different*
+/// file from the active home's config. `None` once the active home already is
+/// `~/.grok`, so the file is never parsed twice.
+pub fn legacy_home_config_path() -> Option<PathBuf> {
+    let active = crate::util::grok_home::grok_home();
+    let legacy = dirs::home_dir()?.join(".grok");
+    if active == legacy {
+        return None;
+    }
+    let path = legacy.join("config.toml");
+    path.is_file().then_some(path)
+}
+
+/// How many servers the legacy home currently contributes, for diagnostics that
+/// need to attribute them to the right file.
+pub fn legacy_home_mcp_server_count() -> usize {
+    legacy_home_mcp_servers().len()
+}
+
+/// `[mcp_servers.*]` still declared in the pre-rebrand home. Empty unless that
+/// file exists and is distinct from the active home's config.
+fn legacy_home_mcp_servers() -> IndexMap<String, McpServerConfig> {
+    let Some(path) = legacy_home_config_path() else {
+        return IndexMap::new();
+    };
+    let Ok(root) = crate::config::load_config_file(&path) else {
+        return IndexMap::new();
+    };
+    let servers = parse_mcp_servers_from_toml(&root);
+    if !servers.is_empty() {
+        tracing::info!(
+            path = %path.display(),
+            count = servers.len(),
+            "loaded MCP servers from the legacy home; move them to the active config to silence this",
+        );
+    }
+    servers
 }
 
 /// Path to the user-level config file (`~/.grok/config.toml`).

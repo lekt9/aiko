@@ -34,15 +34,20 @@ token subject, records usage against that user, and then selects an upstream
 provider from its server-side model registry. Do not trust `x-userid` or other
 client-supplied identity headers for accounting.
 
-For Codegraff, keep `CODEGRAFF_API_KEY` only on the server and forward an
-OpenAI-compatible request to:
+Upstream priority on the Aiko Cloudflare worker is **Codegraff first**, Surplus
+as failover. Keep both keys only on the server:
 
 ```text
+# primary
 POST https://gateway.codegraff.com/v1/chat/completions
 Authorization: Bearer ${CODEGRAFF_API_KEY}
+
+# failover (retryable 429/5xx or connection failure)
+POST https://api.surplusintelligence.ai/v1/chat/completions
+Authorization: Bearer ${SURPLUS_API_KEY}
 ```
 
-`deepseek-v4-pro` is Aiko's client-side fallback and should also be the first
+`deepseek-v4-pro` is Aiko's client-side default and should also be the first
 or explicitly selected default in the server model catalog.
 
 The models response may be a standard OpenAI list. Aiko also understands the

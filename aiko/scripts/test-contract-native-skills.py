@@ -93,6 +93,15 @@ def reject(manifest: dict, directory: Path) -> str | None:
             dependency, output = source.split(".", 1)
             if dependency not in graph[key] or not output:
                 return "input-binding-dependency"
+        for list_field in ("writes", "capabilities", "research"):
+            value = node.get(list_field, [])
+            if not isinstance(value, list) or not all(
+                isinstance(scope, str) for scope in value
+            ):
+                return f"node-{list_field}"
+        witness = node.get("witness")
+        if witness is not None and not isinstance(witness, str):
+            return "node-witness"
     visiting, visited = set(), set()
     def walk(key: str) -> bool:
         if key in visited:

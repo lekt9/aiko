@@ -32,7 +32,7 @@ pub(crate) struct Authorization {
 }
 
 #[derive(Debug, Error)]
-enum BridgeError {
+pub(crate) enum BridgeError {
     #[error("Aiko runtime discovery was not found. Start Aiko and try again.")]
     DiscoveryMissing,
     #[error("Aiko runtime discovery could not be read: {0}")]
@@ -79,7 +79,7 @@ fn discovery_path() -> Result<PathBuf, BridgeError> {
         .ok_or(BridgeError::DiscoveryMissing)
 }
 
-fn read_discovery() -> Result<Discovery, BridgeError> {
+pub(crate) fn read_discovery() -> Result<Discovery, BridgeError> {
     let path = discovery_path()?;
     let raw = std::fs::read_to_string(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {

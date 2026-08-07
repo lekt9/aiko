@@ -50,16 +50,16 @@ assert manifest["composition"] == {
 }
 nodes = manifest["nodes"]
 assert [node["key"] for node in nodes] == [
-    "observe", "recall", "route", "deliberate", "verify", "learn", "settle"
+    "observe", "recall", "route", "act", "verify", "judge", "settle"
 ]
 assert len(nodes) == 7
-for key in ("deliberate", "learn"):
+for key in ("act",):
     node = next(node for node in nodes if node["key"] == key)
     assert node["effect"] == "local_reversible" and node["reversible"] is True
 assert all(
     node["effect"] == "read_only"
     for node in nodes
-    if node["key"] not in {"deliberate", "learn"}
+    if node["key"] not in {"act"}
 )
 host_nodes = [node for node in nodes if node["worker"] == "host"]
 assert host_nodes and all(node.get("adapter") for node in host_nodes)

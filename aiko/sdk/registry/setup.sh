@@ -69,6 +69,12 @@ download_and_extract() {
 # ─── Install ───
 echo -e "\n${C}Installing packages for ${PLATFORM}...${N}"
 download_and_extract "contract" "$CONTRACT_VER" "libcontract-${CONTRACT_VER}-${PLATFORM}.tar.gz" "$AIKO_LIB_DIR" "libcontract.dylib"
+# Contract is two halves and both are needed: the dylib above is what Aiko
+# dlopens, and this is the `contract` CLI — the stdio MCP server behind
+# [mcp_servers.aiko] and the `contract task begin/verify` front end. Fetching
+# only the library left an install where the documented workflow had no binary
+# to run. Same version pin, so the pair cannot drift.
+download_and_extract "contract" "$CONTRACT_VER" "contract-${CONTRACT_VER}-${PLATFORM}.tar.gz" "$AIKO_BIN_DIR" "contract"
 download_and_extract "neuron" "$NEURON_VER" "neuron-${NEURON_VER}-${PLATFORM}.tar.gz" "$AIKO_BIN_DIR" "neuron"
 download_and_extract "neuron-limbs" "$LIMBS_VER" "limbs.tar.gz" "$AIKO_HOME"
 

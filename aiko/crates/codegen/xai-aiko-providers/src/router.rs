@@ -44,15 +44,18 @@ impl ProviderRouter {
 
     /// Route a model to a provider: first catalog row whose provider has a
     /// key wins (spec order breaks ties). Unknown claude* models go to
-    /// Anthropic; any other unknown model goes to the Surplus gateway.
+    /// Anthropic; any other unknown model goes to the Codegraff session proxy
+    /// (or Surplus if that is the only gateway keyed).
     ///
-    /// Two-pass routing: Surplus is the primary multi-model gateway when it
-    /// has a key and serves the requested model. Direct providers are fallback.
+    /// Two-pass routing: Codegraff (then Surplus) is the primary multi-model
+    /// gateway path when keyed and the model is served. Direct providers are
+    /// fallback.
     pub fn provider_for(&self, model: &str) -> Result<Provider, RouterError> {
-        // Two-pass: Surplus gateway first, direct providers as fallback.
+        // Two-pass: gateways first (codegraff before surplus in spec order),
+        // direct providers as fallback.
         for allow_gateway in [true, false] {
             for spec in builtin_specs() {
-                let is_gateway = spec.id == "surplus" || spec.id == "codegraff";
+                let is_gateway = spec.id == "codegraff" || spec.id == "surplus";
                 if is_gateway != allow_gateway {
                     continue;
                 }
@@ -77,6 +80,8 @@ impl ProviderRouter {
         // Genuinely unknown model — fall back to heuristics
         let fallback_id = if model.starts_with("claude") {
             "anthropic"
+        } else if self.keys.get("codegraff").is_some() {
+            "codegraff"
         } else {
             "surplus"
         };
@@ -277,36 +282,44 @@ mod tests {
     fn test_provider_for_grok() {
         let router = mock_router();
         let p = router.provider_for("grok-4.3").unwrap();
-        assert_eq!(p.id, "surplus");
+        // Codegraff (session proxy) is primary for shared multi-model routes.
+        assert_eq!(p.id, "codegraff");
         assert_eq!(p.model, "grok-4.3");
         assert_eq!(p.kind, ProviderKind::OpenAi);
     }
 
     #[test]
-    fn surplus_is_primary_for_shared_models() {
+    fn codegraff_is_primary_for_shared_models() {
         let router = mock_router();
         for model in ["grok-4.3", "gpt-5.6", "claude-opus-4-8"] {
-            assert_eq!(router.provider_for(model).unwrap().id, "surplus");
+            assert_eq!(router.provider_for(model).unwrap().id, "codegraff");
         }
+    }
+
+    #[test]
+    fn surplus_used_when_only_surplus_gateway_keyed() {
+        let mut keys = Keys::empty();
+        keys.set(
+            "surplus",
+            "mock-key".to_string(),
+            crate::provider::CredentialSource::Session,
+        );
+        let router = ProviderRouter::new(keys);
+        assert_eq!(router.provider_for("grok-4.3").unwrap().id, "surplus");
     }
 
     #[test]
     fn direct_provider_used_when_only_xai_keyed() {
         // When the gateway has no key and only xAI does, shared models go direct.
-        let mut keys = Keys::from_env();
+        let mut keys = Keys::empty();
         keys.set(
             "xai",
             "mock-key".to_string(),
             crate::provider::CredentialSource::Session,
         );
         let router = ProviderRouter::new(keys);
-        // If a machine-local SURPLUS_API_KEY is present, surplus still wins —
-        // that is correct primary behavior. Accept either.
         let id = router.provider_for("grok-4.3").unwrap().id;
-        assert!(
-            id == "xai" || id == "surplus",
-            "expected xai (direct) or surplus (gateway primary), got {id}"
-        );
+        assert_eq!(id, "xai", "expected xai (direct) when no gateway keyed, got {id}");
     }
 
     #[test]
@@ -320,7 +333,7 @@ mod tests {
     fn test_provider_for_unknown_other() {
         let router = mock_router();
         let p = router.provider_for("totally-made-up-model").unwrap();
-        assert_eq!(p.id, "surplus");
+        assert_eq!(p.id, "codegraff");
     }
 
     #[test]
@@ -336,7 +349,7 @@ mod tests {
     fn test_default_provider() {
         let router = mock_router();
         let p = router.default_provider().unwrap();
-        assert_eq!(p.id, "surplus");
+        assert_eq!(p.id, "codegraff");
         assert_eq!(p.model, "deepseek-v4-pro");
     }
 

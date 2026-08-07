@@ -7,7 +7,20 @@ compatibility_date = "2025-01-01"
 enabled = true
 head_sampling_rate = 1
 
-# Upstream multi-model gateway (Surplus). Override with secret/var if needed.
-# API key: `wrangler secret put SURPLUS_API_KEY`
+# Upstream multi-model gateways. Codegraff is primary; Surplus is failover.
+# Keys: `wrangler secret put CODEGRAFF_API_KEY` and/or `SURPLUS_API_KEY`
 [vars]
+CODEGRAFF_URL = "https://gateway.codegraff.com"
 TARGET_URL = "https://api.surplusintelligence.ai"
+
+# Difficulty routing (off unless HARD_ROUTING is set). When on, a hard
+# chat/completions request whose model is in EASY_MODELS is rewritten to
+# HARD_MODEL. Only escalates FROM the easy models, so an explicit strong-model
+# call is never touched. Callers can force it with `x-aiko-difficulty: hard|easy`.
+#   HARD_ROUTING = "1"                 # enable
+#   EASY_MODELS  = "deepseek-v4-flash" # comma list eligible for escalation
+#   HARD_MODEL   = "deepseek-v4-pro"   # works today (gateway serves it)
+#                                      # → set to "kimi-k3" once the gateway allowlists that slug
+# HARD_ROUTING = "1"
+# EASY_MODELS = "deepseek-v4-flash"
+# HARD_MODEL = "deepseek-v4-pro"

@@ -2,9 +2,21 @@
 set -eu
 
 AIKO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-DEFAULT_CONTRACT_REPO=$(CDPATH= cd -- "$AIKO_ROOT/.." && pwd)/contract
+DEFAULT_CONTRACT_REPO=""
+for _candidate in "$HOME/Unbrowse/contract-core" "$(CDPATH= cd -- "$AIKO_ROOT/.." && pwd)/contract-core" "$(CDPATH= cd -- "$AIKO_ROOT/.." && pwd)/contract"; do
+    if [ -f "$_candidate/libcontract/build.zig" ]; then
+        DEFAULT_CONTRACT_REPO="$_candidate"
+        break
+    fi
+done
+if [ -z "$DEFAULT_CONTRACT_REPO" ]; then
+    DEFAULT_CONTRACT_REPO="$HOME/Unbrowse/contract-core"
+fi
 CONTRACT_REPO=${AIKO_CONTRACT_REPO:-"$DEFAULT_CONTRACT_REPO"}
 CONTRACT_ROOT="$CONTRACT_REPO/libcontract"
+# The CLI/MCP-server half of the Contract runtime, built and shipped with the
+# dylib rather than assumed to be already on the operator's PATH.
+CONTRACT_CLI_ROOT="$CONTRACT_REPO/zig"
 TYPED_NEURON_ROOT="$CONTRACT_REPO/../neuron"
 AIKO_PROFILE=${AIKO_BUILD_PROFILE:-release}
 AIKO_TARGET_DIR=${AIKO_CARGO_TARGET_DIR:-"$AIKO_ROOT/target"}
@@ -28,8 +40,8 @@ Commands:
   install         Package, verify, and atomically install both runtime components.
 
 Environment:
-  AIKO_CONTRACT_REPO  Contract repository (default: ../contract)
-                      Its sibling ../neuron supplies the typed_neuron package.
+  AIKO_CONTRACT_REPO  Contract repository (default: ~/Unbrowse/contract-core, then ../contract-core, then ../contract)
+                      Legacy sibling layout requires ../neuron; contract-core does not.
   AIKO_BUILD_PROFILE  Cargo profile (default: release)
   AIKO_CARGO_TARGET_DIR
                       Cargo target directory (default: ./target)
@@ -48,10 +60,16 @@ require_contract() {
         echo "Set AIKO_CONTRACT_REPO to the Contract repository." >&2
         exit 1
     fi
+    # contract-core bundles contract + CLI in one repo (no sibling neuron).
+    # Legacy sibling layout requires ../neuron; contract-core does not.
+    if [ -f "$CONTRACT_REPO/libcontract/build.zig" ] && [ -f "$CONTRACT_REPO/zig/build.zig" ]; then
+        return 0
+    fi
     if [ ! -f "$TYPED_NEURON_ROOT/build.zig.zon" ] ||
        [ ! -f "$TYPED_NEURON_ROOT/src/wire.zig" ]; then
         echo "Typed Neuron package not found at $TYPED_NEURON_ROOT" >&2
         echo "Contract source builds require sibling contract/ and neuron/ repositories." >&2
+        echo "For contract-core, ensure AIKO_CONTRACT_REPO points to a checkout with libcontract/ and zig/." >&2
         exit 1
     fi
 }
@@ -69,6 +87,37 @@ build_contract() {
     CONTRACT_DYLIB=$(contract_dylib)
     if [ ! -f "$CONTRACT_DYLIB" ]; then
         echo "Contract build did not produce $CONTRACT_DYLIB" >&2
+        exit 1
+    fi
+    build_contract_cli
+}
+
+# The `contract` CLI is part of the runtime, not an optional extra: it is the
+# stdio MCP server behind `[mcp_servers.aiko]`, and `contract task begin/verify`
+# is how work gets registered and proven. Shipping the dylib without it left a
+# package whose own documented workflow could not run — the binary simply was
+# not there. Built from the same source tree and optimisation level as the
+# dylib so the pair cannot drift apart in a release.
+build_contract_cli() {
+    CONTRACT_CLI=""
+    if [ -d "$CONTRACT_CLI_ROOT" ]; then
+        (cd "$CONTRACT_CLI_ROOT" && zig build -Doptimize=ReleaseFast $ZIG_TARGET_ARG)
+        for CANDIDATE in "$CONTRACT_CLI_ROOT/zig-out/bin/contract-zig" \
+                         "$CONTRACT_CLI_ROOT/zig-out/bin/contract"; do
+            if [ -x "$CANDIDATE" ]; then
+                CONTRACT_CLI="$CANDIDATE"
+                break
+            fi
+        done
+    fi
+    # Fall back to the signed artifact committed alongside the sources, so a
+    # tree without the CLI build still packages a working `contract`.
+    if [ -z "$CONTRACT_CLI" ] && [ -x "$CONTRACT_REPO/scripts/contract" ]; then
+        CONTRACT_CLI="$CONTRACT_REPO/scripts/contract"
+        echo "Using the committed Contract CLI at $CONTRACT_CLI"
+    fi
+    if [ -z "$CONTRACT_CLI" ]; then
+        echo "No Contract CLI found: built none and $CONTRACT_REPO/scripts/contract is absent" >&2
         exit 1
     fi
 }
@@ -228,6 +277,7 @@ package_runtime() {
     fi
     mkdir -p "$DEST/bin" "$DEST/lib" "$DEST/skills" "$DEST/sdk/registry/bin"
     install -m 755 "$BIN" "$DEST/bin/aiko"
+    install -m 755 "$CONTRACT_CLI" "$DEST/bin/contract"
     LIB_NAME=$(package_lib_name)
     install -m 755 "$CONTRACT_DYLIB" "$DEST/lib/$LIB_NAME"
     if [ "$(uname -s)" = "Darwin" ] && [ "${AIKO_PLATFORM:-}" = macos* ] || [ -z "${AIKO_PLATFORM:-}" ] && [ "$(uname -s)" = "Darwin" ]; then
@@ -257,6 +307,7 @@ package_runtime() {
 
     AIKO_SHA=$(sha256_file "$DEST/bin/aiko")
     CONTRACT_SHA=$(sha256_file "$DEST/lib/$LIB_NAME")
+    CONTRACT_CLI_SHA=$(sha256_file "$DEST/bin/contract")
     AIKO_COMMIT=$(git -C "$AIKO_ROOT" rev-parse HEAD 2>/dev/null || printf unknown)
     if [ -n "$(git -C "$AIKO_ROOT" status --porcelain 2>/dev/null || true)" ]; then
         AIKO_DIRTY=true
@@ -281,6 +332,7 @@ package_runtime() {
         printf '  "aiko_commit": "%s",\n' "$AIKO_COMMIT"
         printf '  "aiko_dirty": %s,\n' "$AIKO_DIRTY"
         printf '  "contract_sha256": "%s",\n' "$CONTRACT_SHA"
+        printf '  "contract_cli_sha256": "%s",\n' "$CONTRACT_CLI_SHA"
         printf '  "contract_commit": "%s",\n' "$CONTRACT_COMMIT"
         printf '  "contract_dirty": %s,\n' "$CONTRACT_DIRTY"
         printf '  "built_at": "%s"\n' "$BUILT_AT"

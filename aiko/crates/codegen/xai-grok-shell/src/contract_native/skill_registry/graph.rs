@@ -73,6 +73,10 @@ fn render_node(goal: &str, ranked: &RankedContractSkill, node: &SkillNode) -> Va
         "script": node.script,
         "script_digest": script_digest,
         "evidence": node.evidence,
+        "writes": node.writes,
+        "capabilities": node.capabilities,
+        "research": node.research,
+        "witness": node.witness,
         "activation": ranked.skill.manifest.activation,
         "admission": ranked.skill.admission,
     })
@@ -168,6 +172,152 @@ fn compose_ports(selected: &[RankedContractSkill], children: &mut [Value]) {
     }
 }
 
+/// jesus-graph discovery-as-data, ported to the planner: `capabilities` and
+/// `research` requests declared on rendered children become explicit,
+/// deduplicated discovery nodes that produce one durable artifact each.
+/// Consumers gain a real dependency edge and an input binding to the artifact,
+/// so the lookup is visible to Kahn ordering instead of hidden in a prompt.
+/// Discovery never installs anything (`auto_install: false`); the executor
+/// validates the artifact against `aiko.discovery/v1` at settlement, and an
+/// invalid or missing artifact keeps the node unsettled — reopening it exactly
+/// like a red witness.
+pub const DISCOVERY_SCHEMA: &str = "aiko.discovery/v1";
+
+fn discovery_slug(query: &str) -> String {
+    let mut slug = String::new();
+    let mut last_dash = true;
+    for c in query.chars().flat_map(char::to_lowercase) {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c);
+            last_dash = false;
+        } else if !last_dash {
+            slug.push('-');
+            last_dash = true;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    slug.chars().take(48).collect()
+}
+
+fn inject_discovery_nodes(children: &mut Vec<Value>, max_nodes: usize) {
+    // (kind, slug) -> (query, consumer keys), first-seen order, deduplicated.
+    let mut order: Vec<(String, String)> = Vec::new();
+    let mut specs: BTreeMap<(String, String), (String, Vec<String>)> = BTreeMap::new();
+    for child in children.iter() {
+        let Some(child_key) = child.get("key").and_then(Value::as_str) else {
+            continue;
+        };
+        for (field, kind) in [("capabilities", "skill"), ("research", "research")] {
+            let Some(queries) = child.get(field).and_then(Value::as_array) else {
+                continue;
+            };
+            for query in queries.iter().filter_map(Value::as_str) {
+                let slug = discovery_slug(query);
+                if slug.is_empty() {
+                    continue;
+                }
+                let dedup = (kind.to_string(), slug);
+                let spec = specs
+                    .entry(dedup.clone())
+                    .or_insert_with(|| (query.to_string(), Vec::new()));
+                if !spec.1.iter().any(|consumer| consumer == child_key) {
+                    spec.1.push(child_key.to_string());
+                }
+                if !order.contains(&dedup) {
+                    order.push(dedup);
+                }
+            }
+        }
+    }
+    if order.is_empty() {
+        return;
+    }
+
+    // Fail-closed budget: discovery nodes count against the same graph-node
+    // ceiling as admitted limbs. Requests past the budget stay declared on
+    // their consumers (visible gaps) but get no generated node this pass.
+    let budget = max_nodes.saturating_sub(children.len());
+    let mut used_keys: BTreeSet<String> = children
+        .iter()
+        .filter_map(|child| child.get("key").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    let mut generated: Vec<Value> = Vec::new();
+    for (kind, slug) in order.into_iter().take(budget) {
+        let Some((query, consumers)) = specs.get(&(kind.clone(), slug.clone())) else {
+            continue;
+        };
+        let mut key = format!("discover-{}-{}", kind, slug);
+        let mut suffix = 2usize;
+        while used_keys.contains(&key) {
+            key = format!("discover-{}-{}-{}", kind, slug, suffix);
+            suffix += 1;
+        }
+        used_keys.insert(key.clone());
+        let artifact = format!("state/discovery/{}-{}.json", kind, slug);
+        generated.push(json!({
+            "key": key,
+            "plan": match kind.as_str() {
+                "skill" => format!(
+                    "Discover an admitted skill for '{}' and write the verdict to {} per {}. \
+                     Inspect installed skills first; never install anything.",
+                    query, artifact, DISCOVERY_SCHEMA,
+                ),
+                _ => format!(
+                    "Research '{}' from current primary sources and write findings to {} per {}. \
+                     Keep inference distinct from findings.",
+                    query, artifact, DISCOVERY_SCHEMA,
+                ),
+            },
+            "action": "skill:aiko-meta-agent@1.0.0:aiko",
+            "depends_on": [],
+            "input_bindings": {},
+            "requires_authorization": false,
+            "authorization": "approved",
+            "effect_scope": "local_reversible",
+            "read_only": false,
+            "reversible": true,
+            "timeout_ms": 120000,
+            "skill_id": "aiko-discovery",
+            "skill_version": "1.0.0",
+            "worker": "aiko",
+            "adapter": null,
+            "script": null,
+            "script_digest": null,
+            "evidence": ["artifact"],
+            "writes": [artifact],
+            "capabilities": [],
+            "research": [],
+            "witness": null,
+            "discovery": {
+                "kind": kind,
+                "query": query,
+                "artifact": artifact,
+                "schema": DISCOVERY_SCHEMA,
+                "auto_install": false,
+            },
+            "activation": "generated",
+            "admission": "generated",
+        }));
+        // Consumers gain a real dependency edge and an artifact input binding.
+        for consumer_key in consumers {
+            let Some(child) = children.iter_mut().find(|child| {
+                child.get("key").and_then(Value::as_str) == Some(consumer_key.as_str())
+            }) else {
+                continue;
+            };
+            append_dependency(child, &key);
+            append_binding(
+                child,
+                format!("discovery_{}", slug.replace('-', "_")),
+                format!("{}.artifact", key),
+            );
+        }
+    }
+    children.extend(generated);
+}
+
 pub fn plan(goal: &str, cwd: &Path) -> ContractSkillPlan {
     plan_bounded(goal, cwd, MAX_GRAPH_NODES)
 }
@@ -222,6 +372,7 @@ pub fn plan_bounded(goal: &str, cwd: &Path, max_nodes: usize) -> ContractSkillPl
         })
         .collect::<Vec<_>>();
     compose_ports(&selected, &mut children);
+    inject_discovery_nodes(&mut children, max_nodes.min(MAX_GRAPH_NODES));
     ContractSkillPlan {
         schema_version: 2,
         core_admitted: true,
@@ -390,6 +541,129 @@ mod tests {
                 .any(|dependency| dependency == "build-and-test-project--verify")
         );
         assert!(core_guidance().contains("Grow a generative limb"));
+    }
+
+    fn write_discovery_limb(root: &Path) {
+        let directory = root.join(".aiko/skills/test-discovery-limb");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("contract-skill.json"),
+            r#"{
+              "schema_version": 1,
+              "id": "test-discovery-limb",
+              "version": "1.0.0",
+              "description": "Limb that declares capability and research gaps.",
+              "platforms": ["all"],
+              "triggers": ["xyzzy discovery"],
+              "activation": "matched",
+              "input_schema": {"type": "object"},
+              "output_schema": {"type": "object"},
+              "nodes": [
+                {
+                  "key": "build",
+                  "plan": "Build the thing for {{goal}}.",
+                  "worker": "aiko",
+                  "depends_on": [],
+                  "can_parallel": false,
+                  "timeout_ms": 120000,
+                  "effect": "local_reversible",
+                  "reversible": true,
+                  "read_only": false,
+                  "requires_authority": false,
+                  "evidence": ["result"],
+                  "writes": ["src/"],
+                  "capabilities": ["SwiftUI accessibility", "SwiftUI accessibility"],
+                  "research": ["current ARC scoring"]
+                }
+              ],
+              "examples": []
+            }"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn declared_gaps_generate_deduplicated_discovery_nodes_with_real_edges() {
+        let temporary = tempfile::tempdir().unwrap();
+        write_discovery_limb(temporary.path());
+        let planned = plan("xyzzy discovery for the demo", temporary.path());
+        assert!(planned.core_admitted);
+
+        // One discovery node per unique (kind, query) — the doubled capability
+        // request collapses into a single generated node.
+        let discoveries = planned
+            .children
+            .iter()
+            .filter(|child| {
+                child
+                    .get("discovery")
+                    .and_then(Value::as_object)
+                    .is_some()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(discoveries.len(), 2);
+
+        let skill_node = discoveries
+            .iter()
+            .find(|child| child["discovery"]["kind"] == "skill")
+            .unwrap();
+        let skill_key = skill_node["key"].as_str().unwrap();
+        assert!(skill_key.starts_with("discover-skill-"));
+        assert_eq!(skill_node["worker"], "aiko");
+        assert_eq!(skill_node["effect_scope"], "local_reversible");
+        assert_eq!(skill_node["evidence"], json!(["artifact"]));
+        assert_eq!(skill_node["discovery"]["schema"], DISCOVERY_SCHEMA);
+        assert_eq!(skill_node["discovery"]["auto_install"], false);
+        let artifact = skill_node["discovery"]["artifact"].as_str().unwrap();
+        assert!(skill_node["writes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|scope| scope == artifact));
+
+        let research_node = discoveries
+            .iter()
+            .find(|child| child["discovery"]["kind"] == "research")
+            .unwrap();
+        let research_key = research_node["key"].as_str().unwrap();
+        assert!(research_key.starts_with("discover-research-"));
+
+        // The consumer gains a real dependency edge and an artifact binding —
+        // the lookup is visible to Kahn ordering, not hidden in a prompt.
+        let consumer = planned
+            .children
+            .iter()
+            .find(|child| child["key"] == "test-discovery-limb--build")
+            .unwrap();
+        let dependencies = consumer["depends_on"].as_array().unwrap();
+        assert!(dependencies.iter().any(|dependency| dependency == skill_key));
+        assert!(dependencies
+            .iter()
+            .any(|dependency| dependency == research_key));
+        let bindings = consumer["input_bindings"].as_object().unwrap();
+        assert!(bindings
+            .values()
+            .any(|source| source == &format!("{skill_key}.artifact")));
+        assert!(bindings
+            .values()
+            .any(|source| source == &format!("{research_key}.artifact")));
+    }
+
+    #[test]
+    fn discovery_generation_respects_the_graph_node_budget() {
+        let temporary = tempfile::tempdir().unwrap();
+        write_discovery_limb(temporary.path());
+        // Core is 7 nodes, the limb is 1, so a budget of 9 leaves room for
+        // exactly one of the two requested discoveries.
+        let planned = plan_bounded("xyzzy discovery for the demo", temporary.path(), 9);
+        assert!(planned.core_admitted);
+        assert!(planned.children.len() <= 9);
+        let discoveries = planned
+            .children
+            .iter()
+            .filter(|child| child.get("discovery").and_then(Value::as_object).is_some())
+            .count();
+        assert_eq!(discoveries, 1);
     }
 
     /// The pinned phase-two witness runs this alone because Contract discovers

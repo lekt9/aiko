@@ -491,7 +491,7 @@ provenance.
 
 ```mermaid
 flowchart LR
-    ContractSrc[../contract/libcontract]
+    ContractSrc[~/Unbrowse/contract-core · libcontract<br/>fallback ../contract/libcontract]
     Zig[Zig full shared library]
     Rust[Rust release aiko]
     Web[React production bundle]

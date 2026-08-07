@@ -4,31 +4,21 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview",
+    "frontend:dev": "BACKEND_URL=${AIKO_BACKEND_URL:-http://127.0.0.1:8000} npm --prefix ../frontend/frontend run dev",
+    "frontend:build": "npm --prefix ../frontend/frontend run build",
     "runtime:prepare": "node scripts/prepare-runtime.mjs",
     "package:windows": "node scripts/package-windows.mjs",
-    "tauri": "tauri"
-  },
-  "dependencies": {
-    "@fontsource-variable/roboto-mono": "^5.2.8",
-    "@json-render/core": "^0.19.0",
-    "@json-render/react": "^0.19.0",
-    "@tauri-apps/api": "^2.8.0",
-    "@tauri-apps/plugin-dialog": "^2.4.0",
-    "lucide-react": "^0.468.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "zod": "^4.4.3"
+    "test:links": "node scripts/link-click-test.mjs",
+    "tauri": "tauri",
+    "with-env": "node scripts/with-env.mjs",
+    "installer:prep": "node scripts/with-env.mjs -- zsh ../../scripts/prep-installer.sh",
+    "installer:check": "node scripts/with-env.mjs -- zsh ../../scripts/prep-installer.sh --check",
+    "installer:notarize": "node scripts/with-env.mjs -- zsh ../../scripts/prep-installer.sh --notarize",
+    "env:check": "node scripts/with-env.mjs -- zsh -c 'echo APPLE_ID=${#APPLE_ID} chars APPLE_TEAM_ID=${#APPLE_TEAM_ID} chars APPLE_PASSWORD=${#APPLE_PASSWORD} chars AIKO_TOKEN=${#AIKO_TOKEN} chars SURPLUS_API_KEY=${#SURPLUS_API_KEY} chars'"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.8.0",
     "@types/node": "^22.10.2",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^4.3.4",
-    "typescript": "~5.7.2",
-    "vite": "^6.0.5"
+    "playwright": "^1.62.1"
   }
 }

@@ -88,6 +88,11 @@ impl ToolKind {
             | ToolKind::WebFetch
             | ToolKind::EnterPlan
             | ToolKind::ExitPlan
+            // Tool *discovery*: it searches the catalog and returns schemas.
+            // Nothing is invoked, so classifying it as a mutating effect only
+            // gates the lookup that has to happen before any MCP tool can be
+            // called at all. `UseTool`, which actually invokes, stays below.
+            | ToolKind::SearchTool
             | ToolKind::AskUser => true,
             ToolKind::Edit
             | ToolKind::Delete
@@ -105,7 +110,6 @@ impl ToolKind {
             | ToolKind::ImageToVideo
             | ToolKind::ReferenceToVideo
             | ToolKind::DeployApp
-            | ToolKind::SearchTool
             | ToolKind::UseTool
             | ToolKind::Monitor
             | ToolKind::GoalUpdate
@@ -255,6 +259,9 @@ mod tests {
         assert!(ToolKind::Read.is_read_only());
         assert!(ToolKind::Search.is_read_only());
         assert!(ToolKind::List.is_read_only());
+        // Discovery reads the catalog; invocation is `UseTool`.
+        assert!(ToolKind::SearchTool.is_read_only());
+        assert!(!ToolKind::UseTool.is_read_only());
         assert!(!ToolKind::Edit.is_read_only());
         assert!(!ToolKind::Execute.is_read_only());
         assert!(!ToolKind::Delete.is_read_only());

@@ -8,6 +8,45 @@ const neuron = @import("../neuron.zig");
 pub const CLAIM_SCHEMA = "contract.neuron-skill-node.claim/v1";
 pub const CLAIM_RESULT_SCHEMA = "contract.neuron-skill-node.claim-result/v1";
 
+/// The kernel sandbox profile a claimed node's executor must run under.
+///
+/// This used to be `if (node.read_only) "read-only" else "strict"` — a function
+/// of one boolean that ignored the node's declared `effect_scope` entirely.
+/// Both of those profiles deny the network, so a node declared
+/// `local_reversible` (the acting node of every skill graph — the one whose
+/// whole job is to change something) was handed a network-denied sandbox and
+/// could not run installs, fetches, or any API-backed step. The node kept its
+/// authority on paper and lost it in the kernel, which surfaces as an
+/// orchestration that plans work and then completes none of it.
+///
+/// The scope a node declared is the scope it gets:
+///   - `read_only`                       → `read-only`  (no writes, no network)
+///   - `local_reversible` / `local_write` → `workspace` (workspace writes, no network)
+///   - anything reaching outside this machine (`external_message`, `publish`,
+///     `account_mutation`, `permission_change`, `network_*`) → `devbox`, which
+///     permits the egress those effects are by definition made of.
+/// An unrecognised scope keeps the old conservative `strict`.
+fn sandboxProfile(node: anytype) []const u8 {
+    if (node.read_only or std.mem.eql(u8, node.effect_scope, "read_only")) {
+        return "read-only";
+    }
+    if (std.mem.eql(u8, node.effect_scope, "local_reversible") or
+        std.mem.eql(u8, node.effect_scope, "local_write"))
+    {
+        return "workspace";
+    }
+    if (std.mem.eql(u8, node.effect_scope, "external_message") or
+        std.mem.eql(u8, node.effect_scope, "publish") or
+        std.mem.eql(u8, node.effect_scope, "account_mutation") or
+        std.mem.eql(u8, node.effect_scope, "permission_change") or
+        std.mem.eql(u8, node.effect_scope, "network_read") or
+        std.mem.eql(u8, node.effect_scope, "network_mutation"))
+    {
+        return "devbox";
+    }
+    return "strict";
+}
+
 const ClaimRequest = struct {
     schema: []const u8,
     root_id: []const u8,
@@ -185,7 +224,7 @@ pub fn claimJson(
                 if (node.read_only) "true" else "false",
                 if (node.reversible) "true" else "false",
                 node.timeout_ms,
-                if (node.read_only) "read-only" else "strict",
+                sandboxProfile(node),
             },
         ) catch return common.Error.OutOfMemory;
         try common.appendInputs(&out, allocator, env, node, nodes, states);

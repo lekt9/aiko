@@ -15,10 +15,14 @@ fn bundled_contract_library<R: Runtime>(app: &AppHandle<R>) -> Option<std::path:
     const NAMES: &[&str] = &["libcontract.dylib"];
     #[cfg(all(unix, not(target_os = "macos")))]
     const NAMES: &[&str] = &["libcontract.so"];
-    let directory = app.path().resource_dir().ok()?.join("contract");
-    NAMES
+    let resource_dir = app.path().resource_dir().ok()?;
+    // "contract/" is the mapped location (tauri.conf.json resources map);
+    // "resources/contract/" is where an unmapped glob lands. Accept either so
+    // a packaging change degrades to the fallback search, not silent absence.
+    let resource_dir = &resource_dir;
+    ["contract", "resources/contract"]
         .iter()
-        .map(|name| directory.join(name))
+        .flat_map(|dir| NAMES.iter().map(move |name| resource_dir.join(dir).join(name)))
         .find(|path| path.is_file())
 }
 

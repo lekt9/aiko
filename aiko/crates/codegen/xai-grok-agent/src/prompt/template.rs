@@ -127,6 +127,7 @@ mod tests {
             "memory_enabled": false,
             "is_non_interactive": false,
             "system_prompt_label": crate::prompt::context::DEFAULT_SYSTEM_PROMPT_LABEL,
+            "model_id": "deepseek-v4-pro",
         })
     }
 
@@ -381,6 +382,21 @@ mod tests {
         assert!(
             prompt.contains("user_query"),
             "Must reference user_query tag"
+        );
+        assert!(
+            prompt.contains("<model_identity>") && prompt.contains("deepseek-v4-pro"),
+            "Must inject active model slug so the model does not invent another identity"
+        );
+    }
+
+    #[test]
+    fn test_base_template_omits_model_identity_when_slug_empty() {
+        let mut p = default_placeholders();
+        p["model_id"] = serde_json::json!("");
+        let prompt = render_base(&default_renderer(), &p);
+        assert!(
+            !prompt.contains("<model_identity>"),
+            "empty model_id must not invent an identity block"
         );
     }
 

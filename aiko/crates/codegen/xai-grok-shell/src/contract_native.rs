@@ -212,6 +212,19 @@ impl NativeContract {
                     .join(name),
             );
         }
+        // contract-core fallback (~/Unbrowse/contract-core and sibling ../contract-core)
+        if let Some(home) = dirs::home_dir() {
+            for name in Self::library_names() {
+                paths.push(home.join("Unbrowse/contract-core/libcontract/zig-out/lib").join(name));
+            }
+        }
+        for name in Self::library_names() {
+            paths.push(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../../../contract-core/libcontract/zig-out/lib")
+                    .join(name),
+            );
+        }
         paths
     }
 
@@ -1740,6 +1753,143 @@ async fn execute_neuron_skill_node(
     )
 }
 
+/// Run a node's declared witness command (jesus-graph `witness`): bounded
+/// shell, claim cwd, node timeout clamped to [5s, 120s]. Ok carries the
+/// stdout tail for evidence; Err is the human-readable rejection reason.
+async fn run_node_witness(witness: &str, cwd: &Path, timeout_ms: u64) -> Result<String, String> {
+    let timeout = Duration::from_millis(timeout_ms.clamp(5_000, 120_000));
+    let child = Command::new("sh")
+        .arg("-c")
+        .arg(witness)
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("witness could not start: {error}"))?;
+    let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Ok(result) => result.map_err(|error| format!("witness could not complete: {error}"))?,
+        Err(_) => return Err(format!("witness timed out after {}s", timeout.as_secs())),
+    };
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout)
+            .chars()
+            .take(500)
+            .collect());
+    }
+    let tail = String::from_utf8_lossy(&output.stderr);
+    let tail: String = tail.chars().rev().take(500).collect::<String>().chars().rev().collect();
+    Err(format!(
+        "witness exited {}: {}",
+        output.status.code().unwrap_or(-1),
+        tail
+    ))
+}
+
+/// Validate a generated discovery node's artifact at settlement — the port of
+/// jesus-graph `validate_discovery_artifact`. The artifact is the durable
+/// hand-off between the discovery and its consumer; anything unreadable,
+/// schema-foreign, or status-invalid keeps the node unsettled.
+fn validate_discovery_artifact(cwd: &Path, discovery: &Value) -> Result<(), String> {
+    let artifact = discovery
+        .get("artifact")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "discovery node lacks an artifact path".to_string())?;
+    let relative = Path::new(artifact);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err("discovery artifact must stay inside the claim cwd".into());
+    }
+    let raw = std::fs::read_to_string(cwd.join(relative))
+        .map_err(|error| format!("discovery artifact unreadable: {error}"))?;
+    let data: Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("discovery artifact is not JSON: {error}"))?;
+    let object = data
+        .as_object()
+        .ok_or_else(|| "discovery artifact must be a JSON object".to_string())?;
+    let schema = discovery
+        .get("schema")
+        .and_then(Value::as_str)
+        .unwrap_or(skill_registry::DISCOVERY_SCHEMA);
+    if object.get("schema").and_then(Value::as_str) != Some(schema) {
+        return Err(format!("discovery artifact schema must be {schema}"));
+    }
+    let query = discovery.get("query").and_then(Value::as_str).unwrap_or("");
+    if object.get("query").and_then(Value::as_str) != Some(query) {
+        return Err("discovery artifact query does not match the generated node".into());
+    }
+    let status = object
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "discovery artifact lacks a status".to_string())?;
+    match discovery.get("kind").and_then(Value::as_str).unwrap_or("") {
+        "skill" => match status {
+            "bound" => {
+                let candidates = object
+                    .get("candidates")
+                    .and_then(Value::as_array)
+                    .filter(|candidates| !candidates.is_empty())
+                    .ok_or_else(|| "bound skill discovery needs candidates".to_string())?;
+                if !candidates.iter().any(|candidate| {
+                    candidate
+                        .get("installed")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                }) {
+                    return Err("bound skill discovery needs an installed candidate".into());
+                }
+            }
+            "candidate" => {
+                object
+                    .get("candidates")
+                    .and_then(Value::as_array)
+                    .filter(|candidates| !candidates.is_empty())
+                    .ok_or_else(|| "candidate skill discovery needs candidates".to_string())?;
+            }
+            "unavailable" => {}
+            other => return Err(format!("unknown skill discovery status: {other}")),
+        },
+        "research" => match status {
+            "answered" | "partial" => {
+                object
+                    .get("findings")
+                    .and_then(Value::as_array)
+                    .filter(|findings| !findings.is_empty())
+                    .ok_or_else(|| "research discovery needs findings".to_string())?;
+            }
+            "unavailable" => {}
+            other => return Err(format!("unknown research discovery status: {other}")),
+        },
+        other => return Err(format!("unknown discovery kind: {other}")),
+    }
+    Ok(())
+}
+
+/// jesus-graph's wheel at settlement: a node that declares a runnable witness
+/// settles only while that witness exits 0; a generated discovery node settles
+/// only while its artifact validates. Returns the rejection reason when red.
+async fn settlement_rejection(
+    plan_index: &HashMap<String, Value>,
+    node: &NeuronSkillNodeOccurrence,
+    cwd: &Path,
+) -> Option<String> {
+    let child = plan_index.get(&node.key)?;
+    if let Some(witness) = child
+        .get("witness")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|witness| !witness.is_empty())
+    {
+        return run_node_witness(witness, cwd, node.timeout_ms).await.err();
+    }
+    if let Some(discovery) = child.get("discovery") {
+        return validate_discovery_artifact(cwd, discovery).err();
+    }
+    None
+}
+
 fn graph_terminal_verdict(terminal: Option<Value>) -> ContractGraphVerdict {
     let settlement = terminal.as_ref().and_then(|value| value.get("settlement"));
     let completed = settlement
@@ -1787,6 +1937,22 @@ pub async fn execute_claim_neuron_graph(
             retryable: true,
             evidence: "Contract rejected Meta-Agent graph materialization".into(),
         });
+    };
+    // Index the admitted plan by child key so settlement can consult each
+    // node's declared witness / discovery contract (jesus-graph wheel).
+    let plan_index: HashMap<String, Value> = {
+        let plan = skill_registry::plan_bounded(
+            &claim.prompt,
+            &cwd,
+            DEFAULT_CONTRACT_MAX_CHILDREN as usize,
+        );
+        plan.children
+            .into_iter()
+            .filter_map(|child| {
+                let key = child.get("key").and_then(Value::as_str).map(str::to_string);
+                key.map(|key| (key, child))
+            })
+            .collect()
     };
     let mut waiting_passes = 0usize;
     for _ in 0..64 {
@@ -1852,7 +2018,30 @@ pub async fn execute_claim_neuron_graph(
                     )
                 }))
                 .await;
-                for (node, fired) in results {
+                for (node, mut fired) in results {
+                    // jesus-graph wheel: a satisfied node with a declared
+                    // witness (or discovery artifact) settles only while that
+                    // check is green. Red reopens the node as a bounded retry —
+                    // never let the producer's own word settle it.
+                    if fired.verdict.outcome == "satisfied" {
+                        if let Some(reason) =
+                            settlement_rejection(&plan_index, &node, &cwd).await
+                        {
+                            fired.verdict.outcome = "retry";
+                            fired.verdict.evidence = json!({
+                                "witness": "red",
+                                "reason": privacy_safe_detail(&reason),
+                            });
+                            fired.verdict.detail =
+                                format!("settlement witness red: {}", privacy_safe_detail(&reason));
+                            fired.decision = skill_node_decision(
+                                &node,
+                                fired.verdict.outcome,
+                                &fired.verdict.evidence,
+                                fired.decided_at_ms,
+                            );
+                        }
+                    }
                     let Some(decision) = fired.decision else {
                         return Some(ContractGraphVerdict {
                             completed: false,
@@ -2408,13 +2597,24 @@ fn goal_from_blocks(blocks: &[acp::ContentBlock]) -> Option<String> {
 /// Strip desktop/session guide appends and system-reminder chrome so ledger
 /// plans and recommend queries stay goal-shaped (not multi-kb registry dumps).
 fn clean_goal(raw: &str) -> String {
-    let mut goal = raw;
-    // Desktop used to append "---\n## Generative UI …" into the user prompt.
+    // System reminders are injected chrome that can appear ANYWHERE in a
+    // prompt — including before the user's first word. Truncating from the
+    // first one (as this did) threw away the actual request whenever a client
+    // led with a reminder, leaving an empty goal. An empty goal means
+    // `goal_from_blocks` -> None -> `declare_turn` -> None -> the turn has no
+    // Contract root -> `bind_active_tool_contract` HOLDs every consequential
+    // tool for the whole turn. The observed symptom is an agent that refuses
+    // to run anything, blaming a missing root, for a prompt that differs from
+    // a working one only by a leading reminder. So excise the reminder spans
+    // and keep the text around them.
+    let without_reminders = strip_spans(raw, "<system-reminder>", "</system-reminder>");
+    let mut goal = without_reminders.as_str();
+    // The desktop's "---\n## Generative UI …" registry dump really is a
+    // trailing append, so for those a truncation is the correct shape.
     const CUTS: &[&str] = &[
         "\n---\n## Generative UI",
         "\n---\n## Generative UI registry",
         "\n\n---\n## Generative UI",
-        "<system-reminder>",
         "\n## Generative UI (durable json-render)",
         "\n## Generative UI registry (json-render",
     ];
@@ -2424,6 +2624,24 @@ fn clean_goal(raw: &str) -> String {
         }
     }
     goal.trim().to_string()
+}
+
+/// Remove every `open …close` span, keeping the text on both sides. An
+/// unterminated final `open` takes the rest of the input with it — chrome that
+/// was cut off mid-write is still chrome, not goal.
+fn strip_spans(raw: &str, open: &str, close: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(start) = rest.find(open) {
+        out.push_str(&rest[..start]);
+        let after_open = &rest[start + open.len()..];
+        match after_open.find(close) {
+            Some(end) => rest = &after_open[end + close.len()..],
+            None => return out.trim().to_string(),
+        }
+    }
+    out.push_str(rest);
+    out.trim().to_string()
 }
 
 /// Register a prompt in the canonical local ledger. This is deliberately
@@ -5331,10 +5549,16 @@ fn walk_json_from_skill_plan(skill_plan: &Value) -> Option<String> {
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
+            let writes = child
+                .get("writes")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
             Some(json!({
                 "id": id,
                 "plan": plan,
                 "depends_on": depends_on,
+                "writes": writes,
                 "status": "pending",
             }))
         })
@@ -5612,17 +5836,31 @@ async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
             .get("peak_parallelism")
             .and_then(Value::as_u64)
             .unwrap_or(1);
-        let directive = if kind == "graph" && peak > 1 {
+        let collision_count = verdict
+            .get("write_collisions")
+            .and_then(Value::as_array)
+            .map_or(0, |collisions| collisions.len());
+        let mut directive = if kind == "graph" && peak > 1 {
             "This turn's admitted plan is a genuine graph: independent_groups name nodes with \
              disjoint dependencies. Fan them out (subagents/parallel tool calls) instead of \
              running them one after another; do not ask the user to invoke /graph first -- \
              this verdict is computed automatically every turn from the native Contract \
-             substrate (graph_plan.zig), not from a skill match."
+             substrate (graph_plan.zig), not from a skill match. The `waves` array is the \
+             executable Kahn frontier: same-wave nodes may run together, in wave order."
+            .to_owned()
         } else {
             "This turn's admitted plan is a chain (every ready node already depends on, or is \
              blocked by, another): proceed sequentially. No fan-out is warranted by the graph \
              engineering verdict."
+                .to_owned()
         };
+        if collision_count > 0 {
+            directive.push_str(
+                " WRITE COLLISIONS: `write_collisions` names node pairs whose declared write \
+                 scopes overlap -- isolate them (separate worktrees) and reconcile at fan-in \
+                 before the downstream wave runs.",
+            );
+        }
         sections.push(format!(
             "CONTRACT GRAPH ENGINEERING VERDICT (native, automatic, computed by \
              contract_graph_plan every turn -- supersedes manual /graph invocation):\n{}\n{}",
@@ -5918,11 +6156,31 @@ fn ground_neuron_node_execution(
     contract_id: &str,
     effect_scope: &str,
 ) -> Option<GroundedTurn> {
+    // Every `None` below ends the turn at `acp_agent`'s "Contract continuation
+    // was not ready" error — the node process starts, refuses to run a single
+    // step, and exits with nothing to show. Name which precondition failed, or
+    // the operator is left staring at a graph whose nodes all died silently.
     if !valid_node_digest(execution_id) || !valid_contract_id(contract_id) {
+        tracing::warn!(
+            execution_id_valid = valid_node_digest(execution_id),
+            contract_id_valid = valid_contract_id(contract_id),
+            "neuron node execution rejected: malformed execution or contract identity",
+        );
         return None;
     }
-    let normalized_input = goal_from_blocks(blocks)?;
-    let effect = node_effect_class(effect_scope)?;
+    let Some(normalized_input) = goal_from_blocks(blocks) else {
+        tracing::warn!(
+            "neuron node execution rejected: prompt carried no goal text after cleaning",
+        );
+        return None;
+    };
+    let Some(effect) = node_effect_class(effect_scope) else {
+        tracing::warn!(
+            effect_scope,
+            "neuron node execution rejected: unknown AIKO_NEURON_EFFECT_SCOPE",
+        );
+        return None;
+    };
     let deadline_unix_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
@@ -5976,8 +6234,17 @@ pub async fn ground_turn(
 ) -> GroundedTurn {
     if let Ok(execution_id) = std::env::var("AIKO_NEURON_NODE_EXECUTION") {
         let contract_id = std::env::var("AIKO_CONTRACT_ID").unwrap_or_default();
-        let effect_scope =
-            std::env::var("AIKO_NEURON_EFFECT_SCOPE").unwrap_or_else(|_| "read_only".to_owned());
+        // The graph executor always sets this alongside the execution id. If it
+        // is missing, we are a node execution whose declared authority did not
+        // survive the spawn — falling back to `read_only` silently strips an
+        // acting node of the very effects it was leased for, so say so.
+        let effect_scope = std::env::var("AIKO_NEURON_EFFECT_SCOPE").unwrap_or_else(|_| {
+            tracing::warn!(
+                %execution_id,
+                "node execution has no AIKO_NEURON_EFFECT_SCOPE; degrading to read_only",
+            );
+            "read_only".to_owned()
+        });
         return ground_neuron_node_execution(blocks, &execution_id, &contract_id, &effect_scope)
             .unwrap_or(GroundedTurn {
                 prompt: blocks.to_vec(),
@@ -6102,6 +6369,51 @@ pub async fn ground_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A leading system reminder used to truncate the goal to nothing, which
+    /// cost the turn its Contract root and HOLD'd every consequential tool.
+    /// Reproduced end-to-end: two prompts differing only by a leading
+    /// reminder, one running `echo` and one refused with
+    /// "no active Contract root".
+    #[test]
+    fn a_leading_system_reminder_does_not_erase_the_goal() {
+        let goal = clean_goal(
+            "<system-reminder>injected context</system-reminder>\nfix the parser bug",
+        );
+        assert_eq!(goal, "fix the parser bug");
+        // Trailing and interleaved reminders keep the text around them too.
+        assert_eq!(
+            clean_goal("fix the parser bug<system-reminder>note</system-reminder>"),
+            "fix the parser bug"
+        );
+        assert_eq!(
+            clean_goal("fix the <system-reminder>note</system-reminder>parser bug"),
+            "fix the parser bug"
+        );
+        // A prompt that is ONLY chrome still has no goal — that is honest.
+        assert!(clean_goal("<system-reminder>only chrome</system-reminder>").is_empty());
+        // An unterminated reminder is chrome cut off mid-write, not goal.
+        assert_eq!(
+            clean_goal("real goal<system-reminder>truncated..."),
+            "real goal"
+        );
+        // The desktop's trailing registry dump is still a truncation.
+        assert_eq!(
+            clean_goal("ship the thing\n---\n## Generative UI registry blah"),
+            "ship the thing"
+        );
+    }
+
+    #[test]
+    fn goal_from_blocks_survives_a_reminder_first_prompt() {
+        let blocks = vec![
+            acp::ContentBlock::Text(acp::TextContent::new(
+                "<system-reminder>ambient</system-reminder>".to_string(),
+            )),
+            acp::ContentBlock::Text(acp::TextContent::new("run the tests".to_string())),
+        ];
+        assert_eq!(goal_from_blocks(&blocks).as_deref(), Some("run the tests"));
+    }
 
     #[test]
     fn walk_json_from_skill_plan_renames_key_to_id_and_pins_pending() {
@@ -6259,6 +6571,170 @@ mod tests {
             Some("deadbeef"),
             "root must remain sticky across a synthetic continuation turn"
         );
+    }
+
+    #[test]
+    fn discovery_artifact_validation_enforces_the_schema_at_settlement() {
+        let temporary = tempfile::tempdir().unwrap();
+        let discovery = json!({
+            "kind": "skill",
+            "query": "SwiftUI accessibility",
+            "artifact": "state/discovery/skill-swiftui-accessibility.json",
+            "schema": skill_registry::DISCOVERY_SCHEMA,
+            "auto_install": false,
+        });
+        let write = |body: &str| {
+            let path = temporary
+                .path()
+                .join("state/discovery/skill-swiftui-accessibility.json");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, body).unwrap();
+        };
+
+        // Missing artifact reopens the node.
+        assert!(validate_discovery_artifact(temporary.path(), &discovery).is_err());
+
+        // Schema drift reopens the node.
+        write(r#"{"schema":"other/v9","query":"SwiftUI accessibility","status":"unavailable"}"#);
+        assert!(validate_discovery_artifact(temporary.path(), &discovery).is_err());
+
+        // A bound claim without an installed candidate is not settlement.
+        write(&json!({
+            "schema": skill_registry::DISCOVERY_SCHEMA,
+            "query": "SwiftUI accessibility",
+            "status": "bound",
+            "candidates": [{"name": "some-skill", "installed": false}],
+        })
+        .to_string());
+        assert!(validate_discovery_artifact(temporary.path(), &discovery).is_err());
+
+        // Bound with an installed candidate settles.
+        write(&json!({
+            "schema": skill_registry::DISCOVERY_SCHEMA,
+            "query": "SwiftUI accessibility",
+            "status": "bound",
+            "candidates": [{"name": "ios-accessibility", "installed": true}],
+        })
+        .to_string());
+        assert!(validate_discovery_artifact(temporary.path(), &discovery).is_ok());
+
+        // Research needs findings unless honestly unavailable.
+        let research = json!({
+            "kind": "research",
+            "query": "current ARC scoring",
+            "artifact": "state/discovery/research-current-arc-scoring.json",
+            "schema": skill_registry::DISCOVERY_SCHEMA,
+            "auto_install": false,
+        });
+        let research_path = temporary
+            .path()
+            .join("state/discovery/research-current-arc-scoring.json");
+        std::fs::write(
+            &research_path,
+            json!({
+                "schema": skill_registry::DISCOVERY_SCHEMA,
+                "query": "current ARC scoring",
+                "status": "answered",
+                "findings": [],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert!(validate_discovery_artifact(temporary.path(), &research).is_err());
+        std::fs::write(
+            &research_path,
+            json!({
+                "schema": skill_registry::DISCOVERY_SCHEMA,
+                "query": "current ARC scoring",
+                "status": "answered",
+                "findings": ["RHAE weights online levels"],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert!(validate_discovery_artifact(temporary.path(), &research).is_ok());
+
+        // Path escape is refused before any read.
+        let escape = json!({
+            "kind": "skill",
+            "query": "x",
+            "artifact": "../outside.json",
+            "schema": skill_registry::DISCOVERY_SCHEMA,
+        });
+        assert!(validate_discovery_artifact(temporary.path(), &escape).is_err());
+    }
+
+    fn witness_node_occurrence(key: &str) -> NeuronSkillNodeOccurrence {
+        NeuronSkillNodeOccurrence {
+            execution_id: "exec-test".into(),
+            attempt: 0,
+            node_id: "node-test".into(),
+            key: key.into(),
+            plan: "prove the gate".into(),
+            action: "skill:aiko-meta-agent@1.0.0:aiko".into(),
+            worker: "aiko".into(),
+            adapter: None,
+            script: None,
+            script_digest: None,
+            effect_scope: "local_reversible".into(),
+            read_only: false,
+            reversible: true,
+            timeout_ms: 10_000,
+            sandbox: "inherit".into(),
+            skill_id: "aiko-meta-agent".into(),
+            skill_version: "1.0.0".into(),
+            inputs: json!({}),
+            evidence_requirements: vec!["artifact".into()],
+        }
+    }
+
+    #[tokio::test]
+    async fn settlement_gate_reopens_red_witnesses_and_passes_green() {
+        let temporary = tempfile::tempdir().unwrap();
+        let node = witness_node_occurrence("limb--node");
+        let index = |witness: Value| {
+            HashMap::from([(
+                "limb--node".to_string(),
+                json!({"key": "limb--node", "witness": witness}),
+            )])
+        };
+
+        // Green witness: no rejection, settlement proceeds.
+        let green = index(json!("exit 0"));
+        assert!(settlement_rejection(&green, &node, temporary.path())
+            .await
+            .is_none());
+
+        // Red witness: rejection carries the reason, the node reopens.
+        let red = index(json!("echo boom >&2; exit 3"));
+        let reason = settlement_rejection(&red, &node, temporary.path())
+            .await
+            .expect("red witness must reject settlement");
+        assert!(reason.contains("exited 3"), "unexpected reason: {reason}");
+        assert!(reason.contains("boom"), "stderr tail missing: {reason}");
+
+        // Missing witness command means nothing to gate on.
+        let none_declared = index(Value::Null);
+        assert!(settlement_rejection(&none_declared, &node, temporary.path())
+            .await
+            .is_none());
+
+        // A discovery node settles only when its artifact validates.
+        let discovery_index = HashMap::from([(
+            "limb--node".to_string(),
+            json!({
+                "key": "limb--node",
+                "discovery": {
+                    "kind": "research",
+                    "query": "q",
+                    "artifact": "state/discovery/research-q.json",
+                    "schema": skill_registry::DISCOVERY_SCHEMA,
+                }
+            }),
+        )]);
+        assert!(settlement_rejection(&discovery_index, &node, temporary.path())
+            .await
+            .is_some());
     }
 
     #[test]

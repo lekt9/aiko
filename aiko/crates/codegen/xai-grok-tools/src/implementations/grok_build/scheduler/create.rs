@@ -74,6 +74,19 @@ fn contract_library_candidates() -> Vec<std::path::PathBuf> {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../../../contract/libcontract/zig-out/lib/libcontract.dylib"),
     );
+    // contract-core fallbacks
+    if let Some(home) = dirs::home_dir() {
+        paths.push(home.join("Unbrowse/contract-core/libcontract/zig-out/lib/libcontract.dylib"));
+        paths.push(home.join("Unbrowse/contract-core/libcontract/zig-out/lib/libcontract.so"));
+    }
+    paths.push(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../../contract-core/libcontract/zig-out/lib/libcontract.dylib"),
+    );
+    paths.push(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../../contract-core/libcontract/zig-out/lib/libcontract.so"),
+    );
     paths
 }
 

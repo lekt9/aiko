@@ -148,6 +148,11 @@ pub struct PromptContext {
     /// Not the UI picker name. Defaults to [`DEFAULT_SYSTEM_PROMPT_LABEL`].
     #[serde(default = "default_system_prompt_label")]
     pub system_prompt_label: String,
+    /// Active model slug for this session (e.g. `deepseek-v4-pro`).
+    /// Injected into the system prompt so the model reports its real identity
+    /// instead of inventing another vendor's name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub model_id: String,
 }
 /// Default identity on trim-tool-descriptions (`You are Aiko released by Actr.ai`).
 pub const DEFAULT_SYSTEM_PROMPT_LABEL: &str = "Aiko";
@@ -192,6 +197,7 @@ impl Default for PromptContext {
             current_date: None,
             is_non_interactive: false,
             system_prompt_label: default_system_prompt_label(),
+            model_id: String::new(),
         }
     }
 }
@@ -245,7 +251,7 @@ impl PromptContext {
             .unwrap_or(""), "working_directory" : self.working_directory.as_deref()
             .unwrap_or(""), "current_date" : self.current_date.as_deref().unwrap_or(""),
             "is_non_interactive" : self.is_non_interactive, "system_prompt_label" : self
-            .system_prompt_label.as_str(), }
+            .system_prompt_label.as_str(), "model_id" : self.model_id.as_str(), }
         )
     }
     /// Render the full system prompt via `ToolBridge`.
@@ -322,6 +328,7 @@ mod tests {
             current_date: None,
             is_non_interactive: false,
             system_prompt_label: default_system_prompt_label(),
+            model_id: String::new(),
         }
     }
     #[test]
@@ -447,6 +454,7 @@ mod tests {
         ctx.memory_enabled = true;
         ctx.role_instructions = Some("test role".into());
         ctx.persona_instructions = Some("test persona".into());
+        ctx.model_id = "deepseek-v4-pro".into();
         let p = ctx.placeholders();
         assert_eq!(p["os_name"], "linux");
         assert_eq!(p["shell_path"], "/bin/bash");
@@ -455,6 +463,7 @@ mod tests {
         assert_eq!(p["memory_enabled"], true);
         assert_eq!(p["role_instructions"], "test role");
         assert_eq!(p["persona_instructions"], "test persona");
+        assert_eq!(p["model_id"], "deepseek-v4-pro");
     }
     #[test]
     fn test_placeholders_user_info_defaults_to_empty() {
@@ -607,6 +616,7 @@ mod tests {
             current_date: None,
             is_non_interactive: false,
             system_prompt_label: default_system_prompt_label(),
+            model_id: String::new(),
         }
     }
     #[test]

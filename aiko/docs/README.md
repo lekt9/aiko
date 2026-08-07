@@ -1,8 +1,18 @@
 # Aiko documentation map
 
-Start with the [visual repository guide](REPOSITORY-GUIDE.md). It explains the
-whole tree, runtime boundaries, data flows, persistent state, build outputs,
+**Read [the goal](GOAL.md) first.** Zero setup, one-shot prompts, native tooling,
+Unbrowse for integration — nothing for the user to install. It is the north star
+every change is judged against.
+
+Then start with the [visual repository guide](REPOSITORY-GUIDE.md). It explains
+the whole tree, runtime boundaries, data flows, persistent state, build outputs,
 and the right place to make each kind of change.
+
+## Product goal
+
+| Document | Purpose |
+|---|---|
+| [The goal](GOAL.md) | North star: zero setup, one-shot prompts, internal tooling, Unbrowse integration, no user-installed skills/MCPs — and how it decides scope |
 
 ## Architecture and operations
 

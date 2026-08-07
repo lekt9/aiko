@@ -83,6 +83,8 @@ pub struct AgentBuilder {
     memory_workspace_path: Option<String>,
     is_non_interactive: bool,
     system_prompt_label: String,
+    /// Active model slug injected into the system prompt (identity truth).
+    model_id: String,
     session_env: Option<Arc<HashMap<String, String>>>,
     state_path: Option<PathBuf>,
     memory_backend: Option<Arc<dyn xai_grok_tools::types::memory_backend::MemoryBackend>>,
@@ -211,6 +213,7 @@ impl AgentBuilder {
             memory_workspace_path: None,
             is_non_interactive: false,
             system_prompt_label: crate::prompt::context::DEFAULT_SYSTEM_PROMPT_LABEL.to_string(),
+            model_id: String::new(),
             session_env: None,
             state_path: None,
             memory_backend: None,
@@ -352,6 +355,11 @@ impl AgentBuilder {
     }
     pub fn with_system_prompt_label(mut self, label: impl Into<String>) -> Self {
         self.system_prompt_label = label.into();
+        self
+    }
+    /// Set the active model slug so the system prompt can state identity truthfully.
+    pub fn with_model_id(mut self, model_id: impl Into<String>) -> Self {
+        self.model_id = model_id.into();
         self
     }
     pub fn with_reminder_policy(mut self, policy: ReminderPolicy) -> Self {
@@ -1159,6 +1167,7 @@ impl AgentBuilder {
             ),
             is_non_interactive: self.is_non_interactive,
             system_prompt_label: self.system_prompt_label,
+            model_id: self.model_id,
         };
         let system_prompt = prompt_context
             .render(&tool_bridge)

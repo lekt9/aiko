@@ -3,6 +3,7 @@ set -eu
 
 PACKAGE_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 AIKO_BINARY="$PACKAGE_ROOT/bin/aiko"
+CONTRACT_CLI_BINARY="$PACKAGE_ROOT/bin/contract"
 MANIFEST="$PACKAGE_ROOT/manifest.json"
 PACKAGED_SKILLS="$PACKAGE_ROOT/skills"
 
@@ -72,11 +73,22 @@ mkdir -p "$AIKO_HOME/skills" "$AIKO_HOME/sdk/registry/bin"
 
 BIN_TMP="$AIKO_BIN_DIR/.aiko.install.$$"
 LIB_TMP="$AIKO_LIB_DIR/.${CONTRACT_LIB_BASENAME}.install.$$"
-trap 'rm -f "$BIN_TMP" "$LIB_TMP"' EXIT HUP INT TERM
+CLI_TMP="$AIKO_BIN_DIR/.contract.install.$$"
+trap 'rm -f "$BIN_TMP" "$LIB_TMP" "$CLI_TMP"' EXIT HUP INT TERM
 
 install -m 755 "$AIKO_BINARY" "$BIN_TMP"
 install -m 755 "$CONTRACT_LIBRARY" "$LIB_TMP"
 "$BIN_TMP" --version >/dev/null
+# The Contract CLI ships in the same package (it is the stdio MCP server and
+# the `contract task` front end). Optional on the *input* side so an older
+# package still installs, but verified before it is moved into place.
+if [ -x "$CONTRACT_CLI_BINARY" ]; then
+    install -m 755 "$CONTRACT_CLI_BINARY" "$CLI_TMP"
+    "$CLI_TMP" --help >/dev/null 2>&1 || {
+        echo "Packaged contract CLI did not run; refusing to install it" >&2
+        exit 1
+    }
+fi
 
 mv -f "$LIB_TMP" "$AIKO_LIB_DIR/$CONTRACT_LIB_BASENAME"
 # Keep a dual name so macOS-era tooling and Linux loaders both resolve.
@@ -91,6 +103,9 @@ case "$CONTRACT_LIB_BASENAME" in
         ;;
 esac
 mv -f "$BIN_TMP" "$AIKO_BIN_DIR/aiko"
+if [ -f "$CLI_TMP" ]; then
+    mv -f "$CLI_TMP" "$AIKO_BIN_DIR/contract"
+fi
 for SKILL_DIR in "$PACKAGED_SKILLS"/*; do
     if [ -f "$SKILL_DIR/SKILL.md" ] && [ -f "$SKILL_DIR/contract-skill.json" ]; then
         SKILL_NAME=$(basename "$SKILL_DIR")
@@ -112,6 +127,9 @@ trap - EXIT HUP INT TERM
 
 echo "Installed Aiko to $AIKO_BIN_DIR/aiko"
 echo "Installed Contract runtime to $AIKO_LIB_DIR/$CONTRACT_LIB_BASENAME"
+if [ -x "$AIKO_BIN_DIR/contract" ]; then
+    echo "Installed Contract CLI to $AIKO_BIN_DIR/contract"
+fi
 
 # Default: self-check that the install actually works, and write each smoke
 # as a contract node into the postmortem graph ledger (~/.aiko/postmortem/).
@@ -142,7 +160,23 @@ else
     echo "Warning: install self-check script not found next to package; install not proven." >&2
 fi
 
-if [ "$(uname -s)" = "Darwin" ]; then
+# The launchd agent is machine-global: one label, one plist, pointed at
+# whatever prefix installed last. An install into a NON-default prefix (a test
+# run, a staging tree, a second checkout) therefore silently hijacks the real
+# worker and repoints it at a directory that may be deleted minutes later —
+# observed, not hypothetical. Register the agent only for a default-prefix
+# install, and let anyone opt out explicitly.
+SKIP_WORKER=0
+if [ "${AIKO_SKIP_WORKER:-0}" = "1" ]; then
+    SKIP_WORKER=1
+    echo "Skipped Contract worker registration (AIKO_SKIP_WORKER=1)"
+elif [ "$AIKO_BIN_DIR" != "$HOME/bin" ] || [ "$AIKO_HOME" != "$HOME/.aiko" ]; then
+    SKIP_WORKER=1
+    echo "Skipped Contract worker registration: non-default prefix" \
+         "(bin=$AIKO_BIN_DIR home=$AIKO_HOME) would hijack the machine-global agent." >&2
+fi
+
+if [ "$(uname -s)" = "Darwin" ] && [ "$SKIP_WORKER" = "0" ]; then
     LABEL="net.theclarityproject.aiko.contract-worker"
     LAUNCH_AGENTS="$HOME/Library/LaunchAgents"
     PLIST="$LAUNCH_AGENTS/$LABEL.plist"

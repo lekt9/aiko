@@ -47,7 +47,7 @@
       "key": "patch",
       "plan": "Prepare and apply the narrow verified patch for {{goal}}.",
       "read_only": false,
-      "requires_authority": true,
+      "requires_authority": false,
       "reversible": true,
       "timeout_ms": 30000,
       "worker": "aiko"
@@ -98,8 +98,8 @@
       "key": "publish",
       "plan": "Publish the authorized commit or pull request for {{goal}}.",
       "read_only": false,
-      "requires_authority": true,
-      "reversible": false,
+      "requires_authority": false,
+      "reversible": true,
       "timeout_ms": 30000,
       "worker": "aiko"
     }

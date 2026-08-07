@@ -85,14 +85,14 @@ const Decl = struct { plan: []const u8, action: []const u8, duration_ms: ?f64 };
 //     only unseen plans and appends them, so the steady state is ONE query
 //     embed per call. Local file, local floats — no portability contract.
 
-pub const RECENT_CANDIDATES: usize = 512;
+pub const RECENT_CANDIDATES: usize = 128;
 /// Cold-cache warmup budget: at most this many NEW embeds per call. Rows
 /// without a cached vector yet simply sit out this call's centroids and get
 /// picked up by a later one — every call is interactive, warmup converges
 /// across calls instead of hanging the first caller for minutes. Sized to
 /// the measured ReleaseFast bge forward (~0.6 s each): 16 ≈ a 10 s worst
 /// case on an interactive path; the resolver tick warms in bigger strides.
-pub const MAX_NEW_EMBEDS_PER_CALL: usize = 16;
+pub const MAX_NEW_EMBEDS_PER_CALL: usize = 4;
 
 /// A sealed payload (legacy encrypted plan/action bytes) is base64 noise to
 /// the embedder and ciphertext garbage as a returned example — never a

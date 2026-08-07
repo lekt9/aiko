@@ -67,7 +67,15 @@ try_contract_pair() {
         return 0
     fi
     _pair_out=$(contract task begin "$_pair_goal" --check "$_pair_check" 2>&1) || true
-    _pair_id=$(printf '%s\n' "$_pair_out" | sed -n -E 's/^open:[[:space:]]*//p; t; s/^Task registered:[[:space:]]*//p' | head -1)
+    # Extract the NEW task id from `contract task begin` output. That CLI prints
+    # the new id as a bare hex line first, then lists pre-existing open tasks as
+    # "open: <id> — <goal>". Older CLIs print "Task registered: <id>". Never fall
+    # back to an "open:" line — that is an OLD task and pairing with it would
+    # record false ledger evidence. (Also: no `t;` — BSD sed misparses `t` on a
+    # `;`-separated one-liner as a label and errors.)
+    _pair_id=$(printf '%s\n' "$_pair_out" | sed -n -E \
+        -e 's/^[[:space:]]*([0-9a-f]{8})[[:space:]]*$/\1/p' \
+        -e 's/^Task registered:[[:space:]]*([0-9a-f]{8}).*/\1/p' | head -1)
     if [ -n "${_pair_id:-}" ]; then
         append_event "{\"event\":\"contract.external_begin\",\"run_id\":\"$RUN_ID\",\"goal\":$(printf '"%s"' "$(json_escape "$_pair_goal")"),\"task_id\":\"$_pair_id\",\"check\":$(printf '"%s"' "$(json_escape "$_pair_check")"),\"ts\":\"$TS_UTC\"}"
         if contract task verify "$_pair_id" >/dev/null 2>&1; then

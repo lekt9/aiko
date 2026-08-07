@@ -8,8 +8,8 @@ use super::neuron_bridge::{generated_skill_artifact, generated_skill_is_active};
 mod graph;
 
 pub use graph::{
-    ContractSkillPlan, ResolvedScript, catalog, core_guidance, dry_run, plan, plan_bounded,
-    resolve_input_bindings, resolve_script,
+    ContractSkillPlan, DISCOVERY_SCHEMA, ResolvedScript, catalog, core_guidance, dry_run, plan,
+    plan_bounded, resolve_input_bindings, resolve_script,
 };
 
 const MANIFEST_NAME: &str = "contract-skill.json";
@@ -97,6 +97,24 @@ pub struct SkillNode {
     pub requires_authority: bool,
     #[serde(default)]
     pub evidence: Vec<String>,
+    /// Declared write footprint (jesus-graph `writes`): scopes this node may
+    /// mutate. The graph verdict intersects these across nodes to surface
+    /// collisions before fan-out; empty means the node writes nothing.
+    #[serde(default)]
+    pub writes: Vec<String>,
+    /// Capability gaps this node needs discovered before it can run
+    /// (jesus-graph `capabilities`): each becomes a generated discovery node.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    /// Research questions this node needs answered from primary sources
+    /// (jesus-graph `research`): each becomes a generated discovery node.
+    #[serde(default)]
+    pub research: Vec<String>,
+    /// Runnable witness command (jesus-graph `witness`): when declared, the
+    /// node settles only while this command exits 0. A red witness fails the
+    /// settlement so the next walk reopens the node.
+    #[serde(default)]
+    pub witness: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

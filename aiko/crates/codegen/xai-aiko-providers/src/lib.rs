@@ -28,13 +28,15 @@
 //!
 //! # Provider routing
 //!
-//! 1. **Surplus is primary** when `SURPLUS_API_KEY` (or legacy Codegraff key)
-//!    is available and the model is served.
-//! 2. **Direct providers are fallback routes** when Surplus is unavailable or
-//!    does not serve the requested model.
-//! 3. **Catalogued models with no keyed provider fail with `MissingKey`**.
-//! 4. **Genuinely unknown models fall back**: `claude*` → Anthropic, everything
-//!    else → Surplus gateway.
+//! 1. **Codegraff (session proxy) is primary** when `AIKO_ACCESS_TOKEN` is
+//!    available and the model is served.
+//! 2. **Surplus is secondary** when `SURPLUS_API_KEY` is available and the
+//!    model is served (or when Codegraff is not keyed).
+//! 3. **Direct providers are fallback routes** when neither gateway serves
+//!    the requested model / has a key.
+//! 4. **Catalogued models with no keyed provider fail with `MissingKey`**.
+//! 5. **Genuinely unknown models fall back**: `claude*` → Anthropic, everything
+//!    else → Codegraff session proxy (or Surplus if only that is keyed).
 
 mod keys;
 mod provider;
@@ -65,17 +67,8 @@ pub const CODEGRAFF_CHAT_COMPLETIONS_URL: &str = SURPLUS_CHAT_COMPLETIONS_URL;
 /// Mirrors codegraff's `provider_specs` const array.
 pub fn builtin_specs() -> &'static [ProviderSpec] {
     &[
-        // Surplus Intelligence — primary multi-model OpenAI-compatible gateway.
-        ProviderSpec {
-            id: "surplus",
-            display_name: "Surplus Intelligence",
-            kind: ProviderKind::OpenAi,
-            auth: AuthStyle::Bearer,
-            url: SURPLUS_CHAT_COMPLETIONS_URL,
-            env_key: "SURPLUS_API_KEY",
-            default_model: "deepseek-v4-pro",
-        },
-        // Aiko Cloudflare API proxy — session JWT path (server holds upstream key).
+        // Aiko Cloudflare API proxy — session JWT path (server holds upstream
+        // keys; CF worker prefers Codegraff then Surplus). Primary when keyed.
         ProviderSpec {
             id: "codegraff",
             display_name: "Aiko Session Proxy",
@@ -83,6 +76,16 @@ pub fn builtin_specs() -> &'static [ProviderSpec] {
             auth: AuthStyle::Bearer,
             url: "https://aiko.theclarityproject.net/v1/chat/completions",
             env_key: "AIKO_ACCESS_TOKEN",
+            default_model: "deepseek-v4-pro",
+        },
+        // Surplus Intelligence — secondary multi-model OpenAI-compatible gateway.
+        ProviderSpec {
+            id: "surplus",
+            display_name: "Surplus Intelligence",
+            kind: ProviderKind::OpenAi,
+            auth: AuthStyle::Bearer,
+            url: SURPLUS_CHAT_COMPLETIONS_URL,
+            env_key: "SURPLUS_API_KEY",
             default_model: "deepseek-v4-pro",
         },
         // Anthropic — Messages API, x-api-key auth
@@ -493,7 +496,19 @@ mod tests {
     }
 
     #[test]
-    fn surplus_is_primary_gateway() {
+    fn codegraff_is_first_gateway_in_catalog() {
+        let ids: Vec<&str> = builtin_specs().iter().map(|s| s.id).collect();
+        let codegraff = ids.iter().position(|id| *id == "codegraff");
+        let surplus = ids.iter().position(|id| *id == "surplus");
+        assert!(codegraff.is_some() && surplus.is_some());
+        assert!(
+            codegraff.unwrap() < surplus.unwrap(),
+            "codegraff must precede surplus so session-proxy wins when both are keyed"
+        );
+    }
+
+    #[test]
+    fn surplus_is_secondary_gateway() {
         let spec = builtin_specs()
             .iter()
             .find(|spec| spec.id == "surplus")
@@ -516,6 +531,8 @@ mod tests {
             "https://aiko.theclarityproject.net/v1/chat/completions"
         );
         assert_eq!(spec.env_key, "AIKO_ACCESS_TOKEN");
+        // Client talks to the Aiko session proxy; the CF worker hops to
+        // gateway.codegraff.com server-side.
         assert!(!spec.url.contains("gateway.codegraff.com"));
     }
 

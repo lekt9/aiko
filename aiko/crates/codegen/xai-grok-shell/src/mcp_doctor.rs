@@ -11,6 +11,15 @@ use crate::auth::GrokComConfig;
 use crate::session::managed_mcp;
 use crate::session::mcp_servers;
 
+/// `~`-relative rendering of a path under the user's home, so a diagnostic can
+/// name the file it read without leaking the full home directory.
+fn display_home_path(path: &Path) -> String {
+    dirs::home_dir()
+        .and_then(|home| path.strip_prefix(home).ok())
+        .map(|rest| format!("~/{}", rest.display()))
+        .unwrap_or_else(|| path.display().to_string())
+}
+
 // ── Report types ────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -147,19 +156,36 @@ fn discover_servers(cwd: &Path) -> (Vec<ConfigSourceStatus>, Vec<DiscoveredServe
 
     let mut sources = Vec::new();
 
+    // Report the file that was actually read. Hardcoding `~/.grok/config.toml`
+    // here told users their config had been found while the loader was reading
+    // `~/.aiko/config.toml` — the exact confusion this diagnostic exists to end.
     let grok_home = xai_grok_tools::util::grok_home::grok_home();
     let user_config = grok_home.join("config.toml");
+    let user_config_label = display_home_path(&user_config);
+    let legacy_count = crate::util::config::legacy_home_mcp_server_count();
     if user_config.is_file() {
         sources.push(ConfigSourceStatus {
-            path: "~/.grok/config.toml".to_string(),
+            path: user_config_label,
             status: ConfigSourceState::Found {
-                server_count: config_count,
+                server_count: config_count.saturating_sub(legacy_count),
             },
         });
     } else {
         sources.push(ConfigSourceStatus {
-            path: "~/.grok/config.toml".to_string(),
+            path: user_config_label,
             status: ConfigSourceState::NotFound,
+        });
+    }
+
+    // The pre-rebrand home is a real source again (see
+    // `util::config::mcp::legacy_home_mcp_servers`), so name it rather than
+    // leaving its servers attributed to the active config.
+    if let Some(legacy) = crate::util::config::legacy_home_config_path() {
+        sources.push(ConfigSourceStatus {
+            path: format!("{} (legacy home)", display_home_path(&legacy)),
+            status: ConfigSourceState::Found {
+                server_count: legacy_count,
+            },
         });
     }
 

@@ -428,7 +428,7 @@ pub fn readAllShared(allocator: std.mem.Allocator, env: std.process.Environ) ![]
 }
 
 /// Slurp the entire resolved ledger file. Returns an owned []u8 (empty when
-/// the file doesn't exist). 16 MiB cap is way above the largest ledger ever
+/// the file doesn't exist). 1 GiB cap is way above the largest ledger ever
 /// observed (the global ledger is ~3 MB after months of use).
 pub fn readAll(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
     const path = try resolvePath(allocator, env);
@@ -456,7 +456,7 @@ pub fn readAll(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
         const n = readFd(fd, &chunk);
         if (n <= 0) break;
         try out.appendSlice(allocator, chunk[0..@intCast(n)]);
-        if (out.items.len > 16 * 1024 * 1024) return error.LedgerTooLarge;
+        if (out.items.len > 1024 * 1024 * 1024) return error.LedgerTooLarge;
     }
     return try out.toOwnedSlice(allocator);
 }
@@ -516,7 +516,7 @@ pub fn forEachLine(
 // ────────── compaction — homeostasis for the append-only store ──────────
 //
 // The resolver exhales exhaust rows (`iterated`, cache probes, guards) at
-// a rate that eventually pushes the store past readAll's 16 MiB cap and
+// a rate that eventually pushes the store past readAll's 1 GiB cap and
 // every read verb starts failing (observed 2026-07-18: 78k rows, 43 MB,
 // 51k of them `iterated` + 19k orphaned `ebm_proto`). Compaction is the
 // counter-breath: exhaust rows whose contract is already terminal — plus
@@ -524,9 +524,9 @@ pub fn forEachLine(
 // nothing is destroyed), and the store keeps the truth skeleton: declared /
 // terminal events / containment edges, and FULL history for still-open ids.
 
-/// Compact when the store crosses this. Below readAll's 16 MiB hard cap so
+/// Compact when the store crosses this. Below readAll's 1 GiB hard cap so
 /// reads never break before housekeeping kicks in.
-pub const COMPACT_THRESHOLD: u64 = 12 * 1024 * 1024;
+pub const COMPACT_THRESHOLD: u64 = 32 * 1024 * 1024;
 
 /// Uncapped slurp — compaction must be able to read a store that is
 /// already too big for the capped readAll. Private on purpose.
@@ -577,9 +577,17 @@ fn isExhaustEvent(ev: []const u8) bool {
     return std.mem.eql(u8, ev, "iterated") or
         std.mem.eql(u8, ev, "cache_check") or
         std.mem.eql(u8, ev, "cache_resolved") or
+        std.mem.eql(u8, ev, "cache_invalidated") or
         std.mem.eql(u8, ev, "evidence") or
         std.mem.eql(u8, ev, "guard") or
-        std.mem.eql(u8, ev, "triggered");
+        std.mem.eql(u8, ev, "triggered") or
+        std.mem.eql(u8, ev, "muscle_observed") or
+        std.mem.eql(u8, ev, "neuron_fired") or
+        std.mem.eql(u8, ev, "neuron_effect_settled") or
+        std.mem.eql(u8, ev, "neuron_skill_graph_admitted") or
+        std.mem.eql(u8, ev, "pattern") or
+        std.mem.eql(u8, ev, "offload_surface") or
+        std.mem.eql(u8, ev, "state_surface");
 }
 
 /// Rows nothing reads at all — fossils of deleted modules (ebm_store).
@@ -637,9 +645,8 @@ pub fn compactIfOversized(allocator: std.mem.Allocator, env: std.process.Environ
     while (it2.next()) |line| {
         if (line.len == 0) continue;
         const ev = fieldString(line, "event") orelse "";
-        const id = fieldString(line, "id") orelse "";
-        const to_archive = isFossilEvent(ev) or
-            (isExhaustEvent(ev) and terminal_ids.contains(id));
+        // id retained for display only - GC now unconditional on exhaust, no per-id gate
+        const to_archive = isFossilEvent(ev) or isExhaustEvent(ev); // unconditional: iterated/muscle/neuron/evidence are exhaust regardless of id (transient ids never become terminal)
         const dst = if (to_archive) &arch else &keep;
         try dst.appendSlice(allocator, line);
         try dst.append(allocator, '\n');

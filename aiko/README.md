@@ -15,6 +15,37 @@ aiko "fix the failing test"
 aiko --single "review this repository"
 ```
 
+## The goal — zero setup, one shot, nothing to install
+
+Aiko optimizes for one thing: **you describe what you want, in one prompt, and
+it happens** — with nothing to configure and nothing to bolt on first. The whole
+design is bent toward that outcome, and features are judged against it.
+
+- **Zero setup.** Opening Aiko is enough. It stands up its own runtime, adopts or
+  starts whatever it needs, and degrades honestly when something is missing — it
+  never hands you a checklist before it will work. There is no config file to
+  edit, no key to paste, no service to run on the side.
+- **One-shot prompts.** A task is a sentence, not a session. You state the goal
+  and Aiko carries it through — plan, act, verify — without a wizard, a scaffold,
+  or a second round of questions to get started.
+- **Internal tooling, not a plugin bag.** The capabilities are *native* to Aiko.
+  You do **not** install a skill or stand up an MCP server to give it a new
+  power — that is the exact ceremony this product refuses. Tooling ships inside
+  the agent; the user never assembles it.
+- **Integration is [Unbrowse](https://github.com/Unbrowse), not bespoke wiring.**
+  When Aiko needs to reach into another system or site, it acts through Unbrowse —
+  the action engine of the internet — rather than a hand-written integration or a
+  per-service connector the user has to install. One mechanism reaches everything.
+
+The test for any change: does it move Aiko toward *prompt in, result out, nothing
+installed* — or does it add a step the user has to perform first? If it adds a
+step, it is working against the goal. (This is the north star; the from-source
+developer install below is for building the harness itself, not the user path —
+the user path is meant to be: open it, prompt it, done.)
+
+See [docs/GOAL.md](docs/GOAL.md) for the canonical statement and how it decides
+scope.
+
 ## Installation
 
 There are two install paths. They install **different things**:
@@ -32,8 +63,8 @@ neuron/limbs if you already have them via the package.
 - **Rust** — pin is `rust-toolchain.toml` (currently 1.92.0)
 - **Zig 0.16.0+** — builds Contract (`libcontract`) and the neuron binary
 - **Sibling repos** (default layout under the monorepo parent):
-  - `../contract` — or set `AIKO_CONTRACT_REPO`
-  - `../neuron` — sibling of Contract (typed_neuron package)
+  - `~/Unbrowse/contract-core` — or `../contract-core` — or set `AIKO_CONTRACT_REPO` (fallback `../contract` for legacy)
+  - `contract-core` bundles `libcontract` + `zig` CLI (no separate `neuron` checkout required; legacy `../contract` + `../neuron` still accepted)
 - Shell `PATH` includes **`~/bin`** (where `install` places `aiko`)
 
 ```bash
@@ -116,7 +147,8 @@ bash sdk/registry/setup.sh
 aiko (session JWT)
   → https://aiko.theclarityproject.net   # aiko-openai-compat
     → aiko-proxy                         # injects server-side SURPLUS_API_KEY
-      → https://api.surplusintelligence.ai/v1/*
+      → gateway.codegraff.com/v1/* (primary)
+      → api.surplusintelligence.ai/v1/* (failover)
 ```
 
 - **Clients:** run `aiko login`. Do **not** set `SURPLUS_API_KEY` for normal use.

@@ -1,4 +1,5 @@
 pub mod client;
+pub mod serp;
 mod tool;
 mod types;
 

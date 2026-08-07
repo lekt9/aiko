@@ -53,6 +53,31 @@ fn contract_library() -> PathBuf {
     if let Some(path) = std::env::var_os("AIKO_COLLECTIVE_TEST_LIBRARY") {
         return path.into();
     }
+    for rel in ["../../../../contract/libcontract", "../../../../contract-core/libcontract"] {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
+        #[cfg(target_os = "macos")]
+        {
+            let p = root.join("zig-out/lib/libcontract.dylib");
+            if p.is_file() { return p; }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let p = root.join("zig-out/bin/contract.dll");
+            if p.is_file() { return p; }
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            let p = root.join("zig-out/lib/libcontract.so");
+            if p.is_file() { return p; }
+        }
+    }
+    // fallback to home Unbrowse
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        let p = home.join("Unbrowse/contract-core/libcontract/zig-out/lib/libcontract.dylib");
+        if p.is_file() { return p; }
+        let p = home.join("Unbrowse/contract-core/libcontract/zig-out/lib/libcontract.so");
+        if p.is_file() { return p; }
+    }
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../contract/libcontract");
     #[cfg(target_os = "macos")]
     return root.join("zig-out/lib/libcontract.dylib");

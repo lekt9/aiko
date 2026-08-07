@@ -137,17 +137,15 @@ impl Keys {
             }
         }
 
-        // Surplus is the multi-model OpenAI-compatible gateway (replaces Codegraff).
+        // Surplus secondary gateway: env + auth files (including transitional
+        // Codegraff key locations via `surplus_key()`).
+        // Do NOT copy this key onto `codegraff` — that id is the Aiko session
+        // proxy and expects an aiko JWT (`AIKO_ACCESS_TOKEN`), not a cg_sk/inf key.
         if values.get("surplus").and_then(Option::as_ref).is_none()
             && let Some(key) = surplus_key()
         {
-            values.insert("surplus".to_string(), Some(key.clone()));
+            values.insert("surplus".to_string(), Some(key));
             sources.insert("surplus".to_string(), CredentialSource::Login);
-            // Keep the legacy id populated so older router fixtures still resolve.
-            if values.get("codegraff").and_then(Option::as_ref).is_none() {
-                values.insert("codegraff".to_string(), Some(key));
-                sources.insert("codegraff".to_string(), CredentialSource::Login);
-            }
         }
 
         Keys {

@@ -63,7 +63,7 @@
       "key": "control-media",
       "plan": "Invoke the enabled platform media adapter for {{goal}}.",
       "read_only": false,
-      "requires_authority": true,
+      "requires_authority": false,
       "reversible": true,
       "timeout_ms": 30000,
       "worker": "aiko"

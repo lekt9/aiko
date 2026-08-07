@@ -123,6 +123,16 @@ impl ToolBridge {
         self.registry.get_tool_metadata(tool_name).map(|m| m.kind())
     }
 
+    /// Whether a registered tool only reads, by its own registered metadata —
+    /// `None` for unknown names. This is the authoritative answer: it honours
+    /// per-tool overrides and MCP `readOnlyHint` annotations, which a
+    /// caller-side match on [`ToolKind`] silently discards.
+    pub fn tool_is_read_only(&self, tool_name: &str) -> Option<bool> {
+        self.registry
+            .get_tool_metadata(tool_name)
+            .map(|m| m.is_read_only())
+    }
+
     /// Get only built-in tool definitions (exclude MCP tools).
     pub async fn tool_definitions_builtins_only(&self) -> Vec<ToolDefinition> {
         self.registry.tool_definitions_builtins_only()

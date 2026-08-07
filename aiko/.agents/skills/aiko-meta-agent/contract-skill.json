@@ -3,15 +3,23 @@
   "id": "aiko-meta-agent",
   "version": "1.0.0",
   "description": "The embedded Contract-native meta-agent connectome.",
-  "platforms": ["all"],
+  "platforms": [
+    "all"
+  ],
   "triggers": [],
   "activation": "core",
   "composition": {
     "attach_children_at": "route",
     "join_children_at": "verify"
   },
-  "input_schema": {"type": "object", "additionalProperties": true},
-  "output_schema": {"type": "object", "additionalProperties": true},
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": true
+  },
   "nodes": [
     {
       "key": "observe",
@@ -25,91 +33,141 @@
       "reversible": false,
       "read_only": true,
       "requires_authority": false,
-      "evidence": ["stimulus_digest", "context_references"]
+      "evidence": [
+        "stimulus_digest",
+        "context_references"
+      ],
+      "input_bindings": {}
     },
     {
       "key": "recall",
       "plan": "Recall only context explicitly referenced by the observation of {{goal}}.",
       "worker": "host",
       "adapter": "aiko.meta.recall/v1",
-      "depends_on": ["observe"],
-      "input_bindings": {"context_references": "observe.context_references"},
+      "depends_on": [
+        "observe"
+      ],
+      "input_bindings": {
+        "context_references": "observe.context_references"
+      },
       "can_parallel": false,
       "timeout_ms": 30000,
       "effect": "read_only",
       "reversible": false,
       "read_only": true,
       "requires_authority": false,
-      "evidence": ["artifact_digests"]
+      "evidence": [
+        "artifact_digests"
+      ]
     },
     {
       "key": "route",
       "plan": "Project the admitted skill route for {{goal}}.",
       "worker": "host",
       "adapter": "aiko.meta.route/v1",
-      "depends_on": ["recall"],
+      "depends_on": [
+        "recall"
+      ],
       "can_parallel": false,
       "timeout_ms": 30000,
       "effect": "read_only",
       "reversible": false,
       "read_only": true,
       "requires_authority": false,
-      "evidence": ["selected_skill_refs", "route_reason"]
+      "evidence": [
+        "selected_skill_refs",
+        "route_reason"
+      ],
+      "input_bindings": {}
     },
     {
       "key": "act",
       "plan": "Execute the smallest reversible action that advances {{goal}}.",
       "worker": "aiko",
-      "depends_on": ["route"],
+      "depends_on": [
+        "route"
+      ],
       "can_parallel": false,
       "timeout_ms": 120000,
       "effect": "local_reversible",
       "reversible": true,
       "read_only": false,
       "requires_authority": false,
-      "evidence": ["action_result"]
+      "evidence": [
+        "action_result"
+      ],
+      "input_bindings": {}
     },
     {
       "key": "verify",
       "plan": "Verify the routed work against the requested outcome of {{goal}}.",
       "worker": "aiko",
-      "depends_on": ["act"],
+      "depends_on": [
+        "act"
+      ],
       "can_parallel": false,
       "timeout_ms": 120000,
       "effect": "read_only",
       "reversible": false,
       "read_only": true,
       "requires_authority": false,
-      "evidence": ["verification"]
+      "evidence": [
+        "verification"
+      ],
+      "input_bindings": {}
     },
     {
       "key": "judge",
       "plan": "Judge whether the verified evidence genuinely satisfies {{goal}}.",
       "worker": "aiko",
-      "depends_on": ["verify"],
+      "depends_on": [
+        "verify"
+      ],
       "can_parallel": false,
       "timeout_ms": 30000,
       "effect": "read_only",
       "reversible": false,
       "read_only": true,
       "requires_authority": false,
-      "evidence": ["verdict"]
+      "evidence": [
+        "verdict"
+      ],
+      "input_bindings": {}
     },
     {
       "key": "settle",
       "plan": "Settle the terminal verdict for {{goal}}.",
       "worker": "host",
       "adapter": "aiko.meta.settle/v1",
-      "depends_on": ["judge"],
-      "input_bindings": {"verdict": "judge.verdict"},
+      "depends_on": [
+        "judge"
+      ],
+      "input_bindings": {
+        "verdict": "judge.verdict"
+      },
       "can_parallel": false,
       "timeout_ms": 30000,
       "effect": "read_only",
       "reversible": false,
       "read_only": true,
       "requires_authority": false,
-      "evidence": ["settlement"]
+      "evidence": [
+        "settlement"
+      ]
     }
   ],
-  "examples": []
+  "examples": [
+    {
+      "name": "compose-existing-limbs",
+      "prompt": "Inspect this project repository and run its tests.",
+      "expect": {
+        "core": "aiko-meta-agent",
+        "attached": [
+          "inspect-project",
+          "build-and-test-project"
+        ],
+        "opaque_agent_nodes": 0
+      }
+    }
+  ]
 }

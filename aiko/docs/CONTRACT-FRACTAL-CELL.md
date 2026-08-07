@@ -14,7 +14,7 @@ hashes from the sibling `typed_neuron` Zig package; it does not maintain a
 parallel Neuron core.
 
 ```text
-observe → recall → route → deliberate ──────────→ verify → learn → settle
+observe → recall → route → act ─────────────────→ verify → judge → settle
                     │                              ↑
                     └→ admitted task limb(s) ──────┘
 ```

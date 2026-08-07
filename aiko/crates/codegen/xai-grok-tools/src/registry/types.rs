@@ -305,6 +305,13 @@ pub struct SessionContext {
 struct DefaultToolMetadata {
     kind: ToolKind,
     description: String,
+    /// The registering tool's own `is_read_only()` answer, captured at
+    /// registration. Dynamic tools (MCP) all report `ToolKind::Other`, whose
+    /// kind-level default is "mutating" — so deriving read-only-ness from the
+    /// kind alone marks every MCP tool consequential regardless of what the
+    /// server said. Preserving the tool's answer keeps a server's
+    /// `annotations.readOnlyHint` meaningful downstream.
+    read_only: bool,
 }
 #[async_trait::async_trait]
 impl ToolMetadata for DefaultToolMetadata {
@@ -316,6 +323,9 @@ impl ToolMetadata for DefaultToolMetadata {
     }
     fn description_template(&self) -> &str {
         &self.description
+    }
+    fn is_read_only(&self) -> bool {
+        self.read_only
     }
 }
 /// Drain a `ToolStream<TypedToolOutput>` to the terminal result's `value`.
@@ -1681,6 +1691,7 @@ impl FinalizedToolset {
         }
         let description = tool.description_template().to_string();
         let kind = tool.kind();
+        let read_only = tool.is_read_only();
         let registry_id = xai_tool_runtime::Tool::id(&tool).as_str().to_owned();
         let input_schema = input_schema_override.unwrap_or_else(generate_schema::<T::Args>);
         let definition = ToolDefinition::function(&name, Some(&description), input_schema.clone());
@@ -1693,6 +1704,7 @@ impl FinalizedToolset {
             metadata: Arc::new(DefaultToolMetadata {
                 kind,
                 description: description.clone(),
+                read_only,
             }),
             output_converter: Arc::new(|value| {
                 serde_json::from_value::<ToolOutput>(value.clone()).or_else(|_| match value {

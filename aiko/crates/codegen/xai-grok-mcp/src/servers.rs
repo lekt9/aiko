@@ -1193,6 +1193,10 @@ pub struct McpTool {
     mcp_state: Arc<Mutex<McpState>>,
     schema: serde_json::Value,
     meta: Option<serde_json::Value>,
+    /// The server's `annotations.readOnlyHint` for this tool, when it declared
+    /// one. `None` means the server said nothing, which is NOT the same as
+    /// "mutates": consumers decide how to treat an unannotated tool.
+    read_only_hint: Option<bool>,
 }
 
 /// Data needed to register an MCP tool via `register_erased()`.
@@ -1232,7 +1236,19 @@ impl McpTool {
             mcp_state,
             schema,
             meta,
+            read_only_hint: None,
         }
+    }
+
+    /// Record the server's `annotations.readOnlyHint` for this tool.
+    pub fn with_read_only_hint(mut self, read_only_hint: Option<bool>) -> Self {
+        self.read_only_hint = read_only_hint;
+        self
+    }
+
+    /// The server's declared read-only hint, if any.
+    pub fn read_only_hint(&self) -> Option<bool> {
+        self.read_only_hint
     }
 
     /// Convert into the data needed for `ToolBridge::register_erased()`.
@@ -1328,6 +1344,15 @@ impl ToolMetadata for McpErasedTool {
 
     fn description_template(&self) -> &str {
         &self.tool.description
+    }
+
+    /// An MCP tool's kind is always `Other`, whose kind-level default is
+    /// "mutating". Honour the server's own `readOnlyHint` when it declared one
+    /// so a genuinely read-only tool (search, lookup, outline) is not treated
+    /// as a consequential effect. An unannotated tool keeps the conservative
+    /// default — the hint can only ever relax a claim the server made itself.
+    fn is_read_only(&self) -> bool {
+        self.tool.read_only_hint.unwrap_or(false)
     }
 }
 
@@ -3832,6 +3857,10 @@ impl McpClient {
                         .or_insert_with(|| serde_json::json!({}));
                 }
 
+                let read_only_hint = tool
+                    .annotations
+                    .as_ref()
+                    .and_then(|annotations| annotations.read_only_hint);
                 let mcp_tool = McpTool {
                     name,
                     description,
@@ -3839,6 +3868,7 @@ impl McpClient {
                     mcp_state: Arc::clone(&mcp_state),
                     schema,
                     meta,
+                    read_only_hint,
                 };
                 // Invalid tools (bad names) return None and are skipped
                 mcp_tool.into_registration()
@@ -5261,6 +5291,32 @@ mod tests {
     /// the server name). Regression test for a bug where `McpErasedTool::id()`
     /// returned the unqualified name, causing the second registration to
     /// silently overwrite the first in the `LocalRegistry`.
+    #[test]
+    fn read_only_hint_decides_whether_an_mcp_tool_is_an_effect() {
+        let state = || Arc::new(Mutex::new(McpState::new(vec![])));
+        let tool = |hint| {
+            McpErasedTool {
+                tool: McpTool::new(
+                    "search".to_string(),
+                    "Search the index".to_string(),
+                    "codedb".to_string(),
+                    state(),
+                    serde_json::json!({"type": "object"}),
+                    None,
+                )
+                .with_read_only_hint(hint),
+            }
+        };
+        // The kind is always `Other`, whose kind-level default is "mutating" —
+        // so without the hint every MCP tool, including pure lookups, counts as
+        // a consequential effect and is gated as one.
+        assert_eq!(ToolMetadata::kind(&tool(Some(true))), ToolKind::Other);
+        assert!(ToolMetadata::is_read_only(&tool(Some(true))));
+        assert!(!ToolMetadata::is_read_only(&tool(Some(false))));
+        // Silence is not a read-only claim; unannotated stays conservative.
+        assert!(!ToolMetadata::is_read_only(&tool(None)));
+    }
+
     #[test]
     fn test_mcp_erased_tool_id_is_qualified() {
         use xai_tool_runtime::Tool;
