@@ -1,0 +1,35 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: reactive
+  description: pattern — merkle manifests identify changes and cause a reaction (redrive as organelle, not spec)
+spec:
+  membrane:
+    inputs:
+      current: { schema: object }
+      prior: { schema: object }
+    outputs:
+      stale: { schema: array }
+      compensation: { schema: array }
+      changed: { schema: array }
+    caps: {}
+  organelles:
+    - name: check
+      cell: ./check.cell.yaml
+    - name: redrive
+      cell: ../../system/redrive.cell.yaml
+  wiring:
+    - from: membrane.current
+      to: check.current
+    - from: membrane.prior
+      to: check.prior
+    - from: membrane.current
+      to: redrive.manifests
+    - from: membrane.prior
+      to: redrive.prior
+    - from: check.changed
+      to: membrane.changed
+    - from: redrive.stale
+      to: membrane.stale
+    - from: redrive.compensation
+      to: membrane.compensation

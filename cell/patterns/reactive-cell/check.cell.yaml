@@ -1,0 +1,17 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: reactive-check
+  description: pattern — compare two manifests and emit changed ports (merkle diff, not scheduler)
+spec:
+  membrane:
+    inputs:
+      current: { schema: object }
+      prior: { schema: object }
+    outputs:
+      changed: { schema: array }
+      diff: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/check.py

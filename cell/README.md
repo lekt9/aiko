@@ -138,6 +138,10 @@ organelles:
 
 See `primitives/author.cell.yaml` (seedance, http-wrap, echo) and `patterns/video/seedance*.cell.yaml` for realistic Seedance 2 videos.
 
+## Reactive (merkle → reaction, pattern not spec)
+
+Every `run` emits `out/manifest.json` — parent hash covers children + wiring. `patterns/reactive-cell/check` diffs two manifests (changed ports), `system/redrive` splits into `stale` (refire) vs `compensation` (ALREADY_SENT, never re-fire). Wire them as `patterns/reactive-cell/reactive.cell.yaml`. No `watch:` in spec — composition, not scheduler.
+
 ## Documentation map
 
 | Doc | What |

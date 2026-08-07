@@ -19,6 +19,7 @@ This file maps that doctrine onto `cell`.
 | Long-running | `run.py` fires in topo order, work dirs per leaf | Caps + DAG give handoff |
 | Evidence | `patterns/confirm/` (encouraged confirmation cell) | `patterns/api-reveng/confirm.cell.yaml` |
 | Redrive | `system/redrive.cell.yaml` (organelle, not spec) | manifests + prior -> stale vs ALREADY_SENT |
+| Reactive | `patterns/reactive-cell/` (merkle diff → redrive) | Manifest identifies changes, organelle reacts — not spec |
 | Memory | Git history + distilled `skills/` (shared cells) + `.cell-cas/` (CAS) | Skills amortize exploration |
 
 
