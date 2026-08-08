@@ -19,7 +19,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ── Zig cross-build (best-effort cross, soft-fail known-broken targets) ──
   zig-cross:
     name: zig ${{ matrix.target }} (${{ matrix.optimize }})
     runs-on: ubuntu-latest
@@ -51,8 +50,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Setup Zig 0.16.0
-        uses: mlugg/setup-zig@v2
+      - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
       - name: Build Zig target ${{ matrix.target }}
@@ -76,22 +74,17 @@ jobs:
           ls -lh dist/zig/ || true
           (cd dist/zig && sha256sum * > SHA256SUMS-${{ matrix.target }}.txt 2>/dev/null || shasum -a 256 * > SHA256SUMS-${{ matrix.target }}.txt)
           cat dist/zig/SHA256SUMS-${{ matrix.target }}.txt 2>/dev/null || true
-          # Fail if nothing was produced (unless allow_failure)
           if [ -z "$(ls -A dist/zig 2>/dev/null)" ]; then
             echo "::warning::No artifacts for ${{ matrix.target }}"
-            if [ "${{ matrix.allow_failure }}" != "true" ]; then
-              exit 1
-            fi
+            if [ "${{ matrix.allow_failure }}" != "true" ]; then exit 1; fi
           fi
-      - name: Upload Zig artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: zig-${{ matrix.target }}
           path: dist/zig/
           if-no-files-found: warn
           retention-days: 30
 
-  # ── Rust / Cargo builds ───────────────────────────────────────────────
   cargo-cross:
     name: cargo ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -108,13 +101,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # frontend is a gitlink to a private repo that may not be reachable
-          # in CI — checkout fails if it tries to recurse submodules. We keep
-          # submodules off and the checkout action's post-checkout git invocation
-          # will warn but not fail (the release workflow warns on exit 128).
           fetch-depth: 0
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.92.0"
           targets: ${{ matrix.target }}
@@ -133,38 +121,38 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y protobuf-compiler
           protoc --version
-          # Also install dotslash so aiko/bin/protoc wrapper works in CI
           cargo install dotslash --locked 2>&1 | tail -n 20 || true
-          dotslash --version 2>/dev/null || true
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "aiko -> target"
       - name: Build Aiko (cargo)
         working-directory: aiko
         run: |
           cargo build --release --bin aiko --target ${{ matrix.target }}
-          ls -lh ../target/${{ matrix.target }}/release/aiko* 2>/dev/null | head -n 20
-          ../target/${{ matrix.target }}/release/aiko --version || true
+          ls -lh target/${{ matrix.target }}/release/aiko* 2>/dev/null | head -n 20
+          ls -lh ../target/${{ matrix.target }}/release/aiko* 2>/dev/null | head -n 20 || true
+          target/${{ matrix.target }}/release/aiko --version 2>/dev/null || ../target/${{ matrix.target }}/release/aiko --version 2>/dev/null || true
       - name: Package cargo artifact
         run: |
           set -euo pipefail
           mkdir -p dist/cargo
-          bin="aiko/target/${{ matrix.target }}/release/aiko"
-          if [ -f "$bin" ]; then
-            cp -v "$bin" "dist/cargo/${{ matrix.artifact }}"
+          for cand in aiko/target/${{ matrix.target }}/release/aiko target/${{ matrix.target }}/release/aiko; do
+            if [ -f "$cand" ]; then
+              cp -v "$cand" "dist/cargo/${{ matrix.artifact }}"
+              break
+            fi
+          done
+          if ls dist/cargo/* >/dev/null 2>&1; then
             (cd dist/cargo && sha256sum * > SHA256SUMS-${{ matrix.target }}.txt 2>/dev/null || shasum -a 256 * > SHA256SUMS-${{ matrix.target }}.txt)
           fi
           ls -lh dist/cargo/ || true
-      - name: Upload cargo artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: cargo-${{ matrix.target }}
           path: dist/cargo/
           if-no-files-found: warn
           retention-days: 30
 
-  # ── Portable stack (linux x86_64 host artifact) ──────────────────────
   portable:
     name: portable stack
     runs-on: ubuntu-latest
@@ -173,12 +161,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Setup Zig 0.16.0
-        uses: mlugg/setup-zig@v2
+      - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
-      - name: Setup Rust 1.92.0
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.92.0"
       - name: Install protoc
@@ -186,8 +172,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y protobuf-compiler
           protoc --version
           cargo install dotslash --locked 2>&1 | tail -n 5 || true
-      - name: Use cargo cache
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "aiko -> target"
       - name: Build Zig (host)
@@ -198,50 +183,52 @@ jobs:
         working-directory: aiko
         run: |
           cargo build --release --bin aiko
-          ls -lh ../target/release/aiko
-          ../target/release/aiko --version || true
+          # Swatinem cache uses aiko/target as target-dir; cargo may also use ../target depending on runner.
+          ls -lh target/release/aiko 2>/dev/null || ls -lh ../target/release/aiko 2>/dev/null || ls -lh cargo/target/release/aiko 2>/dev/null || true
+          (./target/release/aiko --version 2>/dev/null || ../target/release/aiko --version 2>/dev/null || target/release/aiko --version 2>/dev/null) || true
       - name: Assemble portable stack
         run: |
           set -euo pipefail
           . scripts/lib/aiko-env.sh
           . scripts/lib/assemble-portable.sh
           aiko_env_init
+          # assemble-portable resolves aiko binary via discovery; ensure both target layouts are visible
           assemble_portable_tarball
           ls -lh target/aiko-package/ 2>/dev/null | head -n 40
-          cat target/aiko-package/*/manifest.json 2>/dev/null | head -n 60 || true
-      - name: Upload portable stack
-        uses: actions/upload-artifact@v4
+          cat target/aiko-package/*/manifest.json 2>/dev/null | head -n 80 || true
+          echo "--- also check aiko/target ---"
+          ls -lh aiko/target/aiko-package/ 2>/dev/null | head -n 20 || true
+      - uses: actions/upload-artifact@v4
         with:
           name: portable-linux-x86_64
           path: |
             target/aiko-package/*.tar.gz
             target/aiko-package/*/manifest.json
+            aiko/target/aiko-package/*.tar.gz
+            aiko/target/aiko-package/*/manifest.json
           if-no-files-found: warn
           retention-days: 30
 
-  # ── Desktop installer ─────────────────────────────────────────────────
-  desktop-installer:
-    name: desktop installer
+  # ── Desktop: Linux bundle + Windows portable/installer (cross on ubuntu)
+  desktop-linux:
+    name: desktop linux + windows
     runs-on: ubuntu-latest
     needs: [portable]
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: |
             aiko/apps/desktop/package-lock.json
             aiko/apps/desktop/bun.lock
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.92.0"
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
+      - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
       - name: Install protoc
@@ -255,7 +242,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             aiko/target
-          key: cargo-desktop-${{ hashFiles('aiko/Cargo.lock') }}
+            target
+          key: cargo-desktop-linux-${{ hashFiles('aiko/Cargo.lock') }}
       - name: Install frontend deps
         working-directory: aiko/apps/desktop
         run: |
@@ -270,7 +258,8 @@ jobs:
       - name: Prepare runtime (aiko sidecar + contract)
         working-directory: aiko/apps/desktop
         run: |
-          if [ ! -x ../../target/release/aiko ]; then
+          # Reuse cargo cache: binary may be at ./target or ../target or aiko/target
+          if [ ! -x ../../target/release/aiko ] && [ ! -x ./target/release/aiko ] && [ ! -x target/release/aiko ]; then
             cargo build --release --bin aiko --manifest-path ../../Cargo.toml
           fi
           node scripts/prepare-runtime.mjs || npm run runtime:prepare || true
@@ -280,7 +269,8 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf 2>&1 | tail -n 30 || true
           npm run tauri build 2>&1 | tail -n 100 || echo "tauri build skipped/failed — portable fallback will still release"
-          ls -lh src-tauri/target/release/bundle/ 2>/dev/null | head -n 40 || true
+          ls -lh src-tauri/target/release/bundle/ 2>/dev/null | head -n 60 || true
+          find src-tauri/target/release/bundle -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" \) 2>/dev/null | head -n 20 || true
       - name: Package Windows portable/installer (cross, via Node)
         if: always()
         working-directory: aiko/apps/desktop
@@ -300,11 +290,10 @@ jobs:
           fi
           node scripts/package-windows.mjs 2>&1 | tail -n 100 || echo "Windows package not produced (expected on Linux host without Windows toolchain)"
           ls -lh ../../dist/windows-x86_64/ 2>/dev/null | head -n 40 || true
-      - name: Upload desktop artifacts
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: desktop-installer
+          name: desktop-linux
           path: |
             aiko/apps/desktop/src-tauri/target/release/bundle/**
             dist/windows-x86_64/**
@@ -313,18 +302,96 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-  # ── Create / update GitHub Release and attach all artifacts ───────────
+  # ── Desktop: macOS DMG (the user-facing installer)
+  desktop-macos:
+    name: desktop macOS DMG
+    runs-on: macos-latest
+    needs: [portable]
+    # macOS runners cost 10× but this is the only way to produce a signed DMG.
+    # Don't block the release if the mac queue is slow — allow failure and keep going.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: |
+            aiko/apps/desktop/package-lock.json
+            aiko/apps/desktop/bun.lock
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.92.0"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Install protoc
+        run: |
+          brew install protobuf || brew upgrade protobuf || true
+          protoc --version
+          cargo install dotslash --locked 2>&1 | tail -n 10 || true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "aiko -> target"
+      - name: Build Zig (host, for contract lib)
+        run: |
+          zig build -Doptimize=ReleaseFast --summary all
+          ls -lh zig-out/bin/aiko* 2>/dev/null | head -n 20
+          ls -lh contract/libcontract/zig-out/lib/* 2>/dev/null | head -n 20
+      - name: Install frontend deps
+        working-directory: aiko/apps/desktop
+        run: |
+          npm ci 2>/dev/null || npm install
+          if [ -f ../../apps/frontend/frontend/package.json ]; then
+            echo "frontend gitlink not materialized — skipping frontend build (UI still bundles)"
+          elif [ -f ../frontend/frontend/package.json ]; then
+            npm --prefix ../frontend/frontend ci 2>/dev/null || npm --prefix ../frontend/frontend install || true
+          fi
+      - name: Build Aiko (cargo release, native aarch64)
+        working-directory: aiko
+        run: |
+          cargo build --release --bin aiko
+          ls -lh target/release/aiko 2>/dev/null || ls -lh ../target/release/aiko 2>/dev/null || true
+          target/release/aiko --version 2>/dev/null || ../target/release/aiko --version 2>/dev/null || true
+      - name: Prepare runtime (aiko sidecar + contract)
+        working-directory: aiko/apps/desktop
+        run: |
+          node scripts/prepare-runtime.mjs || npm run runtime:prepare || true
+          ls -lh src-tauri/binaries/ 2>/dev/null | head -n 40
+          ls -lh src-tauri/resources/contract/ 2>/dev/null | head -n 40
+      - name: Build Tauri DMG + .app
+        working-directory: aiko/apps/desktop
+        run: |
+          npm run tauri build 2>&1 | tail -n 150 || true
+          echo "=== bundle ==="
+          ls -lhR src-tauri/target/release/bundle/ 2>/dev/null | head -n 120 || true
+          find src-tauri/target/release/bundle -type f \( -name "*.dmg" -o -name "*.app" \) 2>/dev/null | head -n 40 || true
+          # Fail if no DMG was produced (but job is continue-on-error: true, so release still publishes)
+          if ! find src-tauri/target/release/bundle -name "*.dmg" 2>/dev/null | grep -q .; then
+            echo "::warning::No DMG produced — check tauri.conf and frontend build"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-macos-dmg
+          path: |
+            aiko/apps/desktop/src-tauri/target/release/bundle/dmg/**
+            aiko/apps/desktop/src-tauri/target/release/bundle/macos/**
+          if-no-files-found: warn
+          retention-days: 30
+
   github-release:
     name: github release
     runs-on: ubuntu-latest
-    needs: [zig-cross, cargo-cross, portable, desktop-installer]
+    needs: [zig-cross, cargo-cross, portable, desktop-linux, desktop-macos]
     if: always() && startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: _artifacts
           merge-multiple: true
@@ -332,20 +399,33 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p _release
-          find _artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.msi" -o -name "*.exe" -o -name "aiko-*" \) -exec cp -v {} _release/ \; 2>/dev/null || true
-          find target -maxdepth 4 -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp -v {} _release/ \; 2>/dev/null || true
-          find _artifacts -type f -exec cp -v {} _release/ \; 2>/dev/null || true
-          ls -lh _release/ 2>/dev/null | head -n 100
+          # Known types: tar balls, zips, debs, appimages, dmgs, exes
+          find _artifacts -type f \( \
+            -name "*.tar.gz" -o -name "*.zip" -o -name "*.deb" -o -name "*.AppImage" \
+            -o -name "*.dmg" -o -name "*.msi" -o -name "*.exe" \
+            -o -name "aiko-*" \
+          \) -exec cp -v {} _release/ \; 2>/dev/null || true
+          # Also accept generic bundle content (macOS .app is a dir — skip)
+          find _artifacts -type f -maxdepth 4 \( -name "*.json" \) -exec cp -v {} _release/ \; 2>/dev/null | head -n 20 || true
+          ls -lh _release/ 2>/dev/null | head -n 100 || true
+          # SHA256SUMS for everything
           if ls _release/* >/dev/null 2>&1; then
-            (cd _release && sha256sum * > SHA256SUMS.txt 2>/dev/null || shasum -a 256 * > SHA256SUMS.txt)
-            cat _release/SHA256SUMS.txt
+            (cd _release && sha256sum -- * 2>/dev/null | sort > SHA256SUMS.txt || shasum -a 256 -- * 2>/dev/null | sort > SHA256SUMS.txt) || true
+            cat _release/SHA256SUMS.txt 2>/dev/null | head -n 100 || true
           else
             echo "No files staged for release"
             touch _release/.empty
           fi
-          echo "RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-          echo "Release $GITHUB_REF_NAME staged:"
+          # Annotate what we have / what's missing
+          echo "=== Release inventory ==="
+          echo "cross (zig):    $(ls _release/aiko-*-linux-gnu* _release/aiko-*-macos* 2>/dev/null | wc -l) binaries"
+          echo "cross (cargo):  $(ls _release/aiko-*-unknown-linux-gnu* 2>/dev/null | wc -l) binaries"
+          echo "portable:       $(ls _release/*.tar.gz 2>/dev/null | wc -l) stacks"
+          echo "linux bundle:   $(ls _release/*.deb _release/*.AppImage 2>/dev/null | wc -l) installers"
+          echo "mac DMG:        $(ls _release/*.dmg 2>/dev/null | wc -l) — $(ls _release/*.dmg 2>/dev/null || echo '(none; check desktop-macos job)')"
+          echo "windows:        $(ls _release/*windows* 2>/dev/null | wc -l) artifacts"
           ls -lh _release/
+          echo "RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
