@@ -1,0 +1,80 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  zig-test:
+    name: zig test + gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: zig build test
+        run: zig build test --summary all
+      - name: zig build gate
+        run: zig build gate --summary all
+
+  cargo-check:
+    name: cargo check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.92.0"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "aiko -> target"
+      - name: cargo check
+        working-directory: aiko
+        run: cargo check --all-targets --workspace
+
+  smoke-cross:
+    name: smoke zig cross (x86_64-linux-gnu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: cross compile smoke
+        run: zig build -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseFast --summary all
+
+  portable-smoke:
+    name: portable package smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.92.0"
+      - name: Build zig host
+        run: zig build -Doptimize=ReleaseFast --summary all
+      - name: Build cargo aiko
+        working-directory: aiko
+        run: cargo build --release --bin aiko
+      - name: Assemble portable stack
+        run: |
+          . scripts/lib/aiko-env.sh
+          . scripts/lib/assemble-portable.sh
+          aiko_env_init
+          assemble_portable_tarball
+          ls -lh target/aiko-package/
+          cat target/aiko-package/*/manifest.json
+      - name: Verify installer
+        run: |
+          pkg=$(ls -d target/aiko-package/aiko-*-linux-* 2>/dev/null | head -1)
+          echo "pkg=$pkg"
+          test -x "$pkg/bin/aiko"
+          test -f "$pkg/lib/libcontract.so" -o -f "$pkg/lib/libcontract.dylib"
+          test -f "$pkg/manifest.json"
+          bash "$pkg/install.sh" --help 2>&1 | head || true
