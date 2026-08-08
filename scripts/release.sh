@@ -49,6 +49,11 @@ assert_sync(){
     err "Cannot read versions: VERSION=$v cargo=$c lock=$l"
     return 1
   fi
+  _nested_l=$(grep '^aiko=' "$ROOT/aiko/sdk/registry/versions.lock" 2>/dev/null | cut -d= -f2 || true)
+  if [[ -n "$_nested_l" && "$_nested_l" != "$v" ]]; then
+    err "Nested lock drift: aiko/sdk/registry/versions.lock aiko=$_nested_l != VERSION $v"
+    return 1
+  fi
   if [[ "$v" != "$c" || "$v" != "$l" ]]; then
     err "Version drift: VERSION=$v cargo=$c lock=$l"
     err "  Fix with: ./scripts/release.sh <version>"
@@ -83,12 +88,15 @@ bump_files(){
       sed -i -E "s/^version = \".*\"/version = \"$new\"/" "$f"
     fi
   done
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    sed -i '' "s/^aiko=.*/aiko=$new/" "$LOCK_FILE"
-  else
-    sed -i "s/^aiko=.*/aiko=$new/" "$LOCK_FILE"
-  fi
-  ok "Bumped VERSION, 4× Cargo.toml, versions.lock → $new"
+  for _lock in "$LOCK_FILE" "$ROOT/aiko/sdk/registry/versions.lock"; do
+    [ -f "$_lock" ] || continue
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      sed -i '' "s/^aiko=.*/aiko=$new/" "$_lock"
+    else
+      sed -i "s/^aiko=.*/aiko=$new/" "$_lock"
+    fi
+  done
+  ok "Bumped VERSION, 4× Cargo.toml, versions.lock (both) → $new"
 }
 
 do_release(){
@@ -141,7 +149,7 @@ except ImportError:
   fi
 
   # Stage
-  git -C "$ROOT" add VERSION sdk/registry/versions.lock "${CARGO_FILES[@]#$ROOT/}"
+  git -C "$ROOT" add VERSION sdk/registry/versions.lock aiko/sdk/registry/versions.lock "${CARGO_FILES[@]#$ROOT/}"
   # Cargo.lock may have changed
   git -C "$ROOT" add aiko/Cargo.lock 2>/dev/null || true
 
