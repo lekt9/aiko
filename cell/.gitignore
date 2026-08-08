@@ -12,4 +12,3 @@ haulio*.yaml
 haulio-inputs.json
 haulio/
 schemas/haulage-*.json
-web/
