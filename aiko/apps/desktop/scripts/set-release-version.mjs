@@ -57,7 +57,7 @@ setJsonVersion(tauriPath);
 replaceVersion(cargoPath, /(\[package\][\s\S]*?^version\s*=\s*")[^"]+(")/m, "Cargo package");
 replaceVersion(
   cargoLockPath,
-  /(\[\[package\]\]\nname = "aiko-desktop"\nversion = ")[^"]+(")/,
+  /(\[\[package\]\]\r?\nname = "aiko-desktop"\r?\nversion = ")[^"]+(")/,
   "Cargo.lock package",
 );
 

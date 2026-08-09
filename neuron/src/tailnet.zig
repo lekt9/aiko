@@ -443,7 +443,7 @@ const ConnectionTask = struct {
         defer task.stream.close(task.io);
         _ = mesh_mod.serveConnectionBounded(
             task.node,
-            task.stream.socket.handle,
+            task.stream,
             task.io,
             task.now_ms,
             task.deadline_ms,

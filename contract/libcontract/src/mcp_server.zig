@@ -5,6 +5,22 @@
 //! server owns the wire protocol only; main.zig owns substrate dispatch.
 
 const std = @import("std");
+const builtin = @import("builtin");
+const is_windows = builtin.os.tag == .windows;
+
+extern fn _read(fd: c_int, buffer: [*]u8, count: c_uint) c_int;
+extern fn _write(fd: c_int, buffer: [*]const u8, count: c_uint) c_int;
+extern fn _setmode(fd: c_int, mode: c_int) c_int;
+
+fn readStdin(bytes: []u8) isize {
+    if (is_windows) return @intCast(_read(0, bytes.ptr, @intCast(bytes.len)));
+    return std.c.read(std.c.STDIN_FILENO, bytes.ptr, bytes.len);
+}
+
+fn writeStdout(bytes: []const u8) isize {
+    if (is_windows) return @intCast(_write(1, bytes.ptr, @intCast(bytes.len)));
+    return std.c.write(std.c.STDOUT_FILENO, bytes.ptr, bytes.len);
+}
 
 pub const ToolResult = struct {
     text: []const u8,
@@ -123,7 +139,7 @@ const PROTOCOL = "2024-11-05";
 fn writeAllStdout(bytes: []const u8) !void {
     var off: usize = 0;
     while (off < bytes.len) {
-        const n = std.c.write(std.c.STDOUT_FILENO, bytes[off..].ptr, bytes.len - off);
+        const n = writeStdout(bytes[off..]);
         if (n <= 0) return error.WriteFailed;
         off += @intCast(n);
     }
@@ -318,7 +334,7 @@ fn readStdinLine(allocator: std.mem.Allocator) !?[]u8 {
     errdefer buf.deinit(allocator);
     var chunk: [1]u8 = undefined;
     while (true) {
-        const n = std.c.read(std.c.STDIN_FILENO, &chunk, 1);
+        const n = readStdin(&chunk);
         if (n <= 0) {
             if (buf.items.len == 0) return null;
             return try buf.toOwnedSlice(allocator);
@@ -363,7 +379,7 @@ fn readStdinMessage(allocator: std.mem.Allocator, content_length_out: *bool) !?[
         errdefer allocator.free(body);
         var off: usize = 0;
         while (off < content_len) {
-            const n = std.c.read(std.c.STDIN_FILENO, body[off..].ptr, content_len - off);
+            const n = readStdin(body[off..]);
             if (n <= 0) {
                 allocator.free(body);
                 return null;
@@ -391,6 +407,14 @@ pub fn runStdio(
     tools: []const ToolSpec,
     dispatch: DispatchFn,
 ) !void {
+    // The Windows CRT defaults stdio to text mode, which rewrites CRLF and
+    // would make Content-Length count bytes that the server never receives.
+    if (is_windows) {
+        const binary_mode = 0x8000;
+        if (_setmode(0, binary_mode) == -1 or _setmode(1, binary_mode) == -1)
+            return error.StdioModeFailed;
+    }
+
     var initialized = false;
     var reply_cl = false;
 

@@ -853,8 +853,49 @@ fn readFrameBounded(allocator: Allocator, fd: posix.fd_t, io: std.Io, deadline_m
 /// framed response for each admitted payload (the tailnet daemon supplies
 /// its ceiling-attributed variant) and MUST be safe under the caller's
 /// concurrency model. Errors end the connection: a committed effect stays
-/// committed, an unanswered frame commits nothing new (§20, §27).
+/// committed, an unanswered frame commits nothing new (§20, §27). Windows
+/// preserves the protocol but remains unbounded until std.Io exposes WSAPoll.
 pub fn serveConnectionBounded(
+    node: *Node,
+    stream: net.Stream,
+    io: std.Io,
+    now_ms: u64,
+    deadline_ms: u64,
+    ctx: anytype,
+    comptime respond: fn (@TypeOf(ctx), *Node, []const u8, u64) anyerror![]u8,
+) !usize {
+    if (builtin.os.tag == .windows) {
+        // Zig 0.16 does not expose WSAPoll through std.posix. Preserve the
+        // one-frame/one-answer protocol with the native stream interfaces;
+        // Windows remains on the documented unbounded transport path until
+        // the Io backend grows deadline support.
+        var read_buffer: [4096]u8 = undefined;
+        var write_buffer: [4096]u8 = undefined;
+        var reader = stream.reader(io, &read_buffer);
+        var writer = stream.writer(io, &write_buffer);
+        var admitted: usize = 0;
+        while (true) {
+            const bytes = try readFrame(node.allocator, &reader.interface) orelse break;
+            defer node.allocator.free(bytes);
+            const response = try respond(ctx, node, bytes, now_ms);
+            defer node.allocator.free(response);
+            admitted += 1;
+            writeFrame(&writer.interface, response) catch return admitted;
+        }
+        return admitted;
+    }
+    return serveConnectionBoundedPosix(
+        node,
+        stream.socket.handle,
+        io,
+        now_ms,
+        deadline_ms,
+        ctx,
+        respond,
+    );
+}
+
+fn serveConnectionBoundedPosix(
     node: *Node,
     fd: posix.fd_t,
     io: std.Io,
@@ -883,6 +924,7 @@ pub fn serveConnectionBounded(
         std.mem.writeInt(u32, frame[0..4], @intCast(response.len), .big);
         @memcpy(frame[4..], response);
         admitted += 1;
+        // A response failure cannot roll back the commit; end this connection.
         writeAllBounded(fd, io, frame, deadline_ms) catch return admitted;
     }
     return admitted;
