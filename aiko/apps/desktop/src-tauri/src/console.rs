@@ -327,7 +327,7 @@ where
                 }
             }
         }
-    });
+    })
 }
 
 fn finish(job: &Arc<std::sync::Mutex<Job>>, code: Option<i32>, note: Option<String>) {
