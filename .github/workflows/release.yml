@@ -70,6 +70,11 @@ jobs:
           if [ -f zig-out/bin/aiko.exe ]; then
             cp zig-out/bin/aiko.exe dist/zig/${{ matrix.artifact }}
           fi
+          if [ -f neuron/zig-out/bin/neuron ]; then
+            cp neuron/zig-out/bin/neuron dist/zig/neuron-${{ matrix.target }}
+          elif [ -f neuron/zig-out/bin/neuron.exe ]; then
+            cp neuron/zig-out/bin/neuron.exe dist/zig/neuron-${{ matrix.target }}.exe
+          fi
           find contract/libcontract/zig-out -type f \( -name "*.so" -o -name "*.dylib" -o -name "*.dll" -o -name "*.a" \) -exec cp -v {} dist/zig/ \; 2>/dev/null || true
           ls -lh dist/zig/ || true
           (cd dist/zig && sha256sum * > SHA256SUMS-${{ matrix.target }}.txt 2>/dev/null || shasum -a 256 * > SHA256SUMS-${{ matrix.target }}.txt)
@@ -121,10 +126,10 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y protobuf-compiler
           protoc --version
-          cargo install dotslash --locked 2>&1 | tail -n 20 || true
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "aiko -> target"
+          shared-key: cargo-${{ matrix.target }}
       - name: Build Aiko (cargo)
         working-directory: aiko
         run: |
@@ -153,50 +158,42 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  # Fan in the already-built host artifacts. Recompiling Cargo and Zig here
+  # duplicated the two longest upstream jobs without changing their bytes.
   portable:
     name: portable stack
     runs-on: ubuntu-latest
-    needs: [zig-cross]
+    needs: [zig-cross, cargo-cross]
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: mlugg/setup-zig@v2
+      - name: Download prebuilt Linux Cargo CLI
+        uses: actions/download-artifact@v4
         with:
-          version: 0.16.0
-      - uses: dtolnay/rust-toolchain@stable
+          name: cargo-x86_64-unknown-linux-gnu
+          path: dist/cargo-host
+      - name: Download prebuilt Linux Zig runtime
+        uses: actions/download-artifact@v4
         with:
-          toolchain: "1.92.0"
-      - name: Install protoc
-        run: |
-          sudo apt-get update && sudo apt-get install -y protobuf-compiler
-          protoc --version
-          cargo install dotslash --locked 2>&1 | tail -n 5 || true
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "aiko -> target"
-      - name: Build Zig (host)
-        run: |
-          zig build -Doptimize=ReleaseFast --summary all
-          ls -lh zig-out/bin/aiko* contract/libcontract/zig-out/lib/* 2>/dev/null | head -n 30
-      - name: Build Aiko (cargo release)
-        working-directory: aiko
-        run: |
-          cargo build --release --bin aiko
-          # Swatinem cache uses aiko/target as target-dir; cargo may also use ../target depending on runner.
-          ls -lh target/release/aiko 2>/dev/null || ls -lh ../target/release/aiko 2>/dev/null || ls -lh cargo/target/release/aiko 2>/dev/null || true
-          (./target/release/aiko --version 2>/dev/null || ../target/release/aiko --version 2>/dev/null || target/release/aiko --version 2>/dev/null) || true
+          name: zig-x86_64-linux-gnu
+          path: dist/zig-host
       - name: Assemble portable stack
         run: |
           set -euo pipefail
           . scripts/lib/aiko-env.sh
           . scripts/lib/assemble-portable.sh
           aiko_env_init
-          # cargo with workspaces "aiko -> target" still writes to aiko/target when cwd=aiko
-          for cand in aiko/target/release/aiko target/release/aiko aiko/aiko/target/release/aiko; do
-            if [ -x "$cand" ]; then export AIKO_PORTABLE_AIKO_BIN="$cand"; echo "AIKO_PORTABLE_AIKO_BIN=$cand"; break; fi
-          done
-          ls -lh "${AIKO_PORTABLE_AIKO_BIN:-missing}" 2>/dev/null || true
+          AIKO_PORTABLE_AIKO_BIN="$GITHUB_WORKSPACE/dist/cargo-host/aiko-x86_64-unknown-linux-gnu"
+          test -s "$AIKO_PORTABLE_AIKO_BIN" || { echo "Prebuilt Cargo CLI is missing or empty" >&2; exit 1; }
+          chmod +x "$AIKO_PORTABLE_AIKO_BIN"
+          export AIKO_PORTABLE_AIKO_BIN
+          AIKO_PORTABLE_CONTRACT_LIB=$(find "$GITHUB_WORKSPACE/dist/zig-host" -maxdepth 1 -type f -name 'libcontract.so' -print -quit)
+          test -s "$AIKO_PORTABLE_CONTRACT_LIB" || { echo "Prebuilt full Contract library is missing or empty" >&2; exit 1; }
+          export AIKO_PORTABLE_CONTRACT_LIB
+          AIKO_PORTABLE_NEURON_BIN="$GITHUB_WORKSPACE/dist/zig-host/neuron-x86_64-linux-gnu"
+          if test -s "$AIKO_PORTABLE_NEURON_BIN"; then chmod +x "$AIKO_PORTABLE_NEURON_BIN"; export AIKO_PORTABLE_NEURON_BIN; else unset AIKO_PORTABLE_NEURON_BIN; fi
+          ls -lh "$AIKO_PORTABLE_AIKO_BIN" "$AIKO_PORTABLE_CONTRACT_LIB"
           assemble_portable_tarball
           ls -lh target/aiko-package/ 2>/dev/null | head -n 40
           cat target/aiko-package/*/manifest.json 2>/dev/null | head -n 80 || true
@@ -227,17 +224,25 @@ jobs:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: aiko/apps/desktop/package-lock.json
-      - name: Set and verify desktop release version
-        env:
-          AIKO_RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
-          AIKO_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
-        run: node aiko/apps/desktop/scripts/set-release-version.mjs
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.92.0"
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
+      # Cache before version synchronization: the setter edits both lockfiles,
+      # while their dependency graph remains identical between releases.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            aiko -> target
+            aiko/apps/desktop/src-tauri -> target
+          shared-key: desktop-${{ runner.os }}
+      - name: Set and verify desktop release version
+        env:
+          AIKO_RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          AIKO_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
+        run: node aiko/apps/desktop/scripts/set-release-version.mjs
       - name: Install native build dependencies
         run: |
           sudo apt-get update
@@ -289,17 +294,25 @@ jobs:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: aiko/apps/desktop/package-lock.json
-      - name: Set and verify desktop release version
-        env:
-          AIKO_RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
-          AIKO_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
-        run: node aiko/apps/desktop/scripts/set-release-version.mjs
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.92.0"
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
+      # Cache before version synchronization: the setter edits both lockfiles,
+      # while their dependency graph remains identical between releases.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            aiko -> target
+            aiko/apps/desktop/src-tauri -> target
+          shared-key: desktop-${{ runner.os }}
+      - name: Set and verify desktop release version
+        env:
+          AIKO_RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          AIKO_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
+        run: node aiko/apps/desktop/scripts/set-release-version.mjs
       - name: Install protoc
         run: brew install protobuf
       - name: Install frontend dependencies
@@ -370,17 +383,25 @@ jobs:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: aiko/apps/desktop/package-lock.json
-      - name: Set and verify desktop release version
-        env:
-          AIKO_RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
-          AIKO_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
-        run: node aiko/apps/desktop/scripts/set-release-version.mjs
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.92.0"
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
+      # Cache before version synchronization: the setter edits both lockfiles,
+      # while their dependency graph remains identical between releases.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            aiko -> target
+            aiko/apps/desktop/src-tauri -> target
+          shared-key: desktop-${{ runner.os }}
+      - name: Set and verify desktop release version
+        env:
+          AIKO_RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          AIKO_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
+        run: node aiko/apps/desktop/scripts/set-release-version.mjs
       - name: Install protoc
         shell: pwsh
         run: |
