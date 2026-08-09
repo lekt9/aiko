@@ -1,14 +1,62 @@
 ---
 name: cell
-description: Fractal harness — Cell = membrane + (run | organelles+wiring). DAG in YAML that composes programs (exec/python/http) behind one membrane. Fixed primitives (session/auth/request) for API wiring. Use for any harness, workflow, agent harness, DAG, YAML harness, composing programs, API reverse-engineering, building or running a harness, writing a cell, or extending helpers. Trigger whenever the user mentions harness, workflow, DAG, pipeline, agent loop, graph, or wants to wire programs or APIs together — even if they do not say "cell".
+description: Super meta harness — Cell = membrane + (run | organelles+wiring). Spawns harnesses (DAGs in YAML composing exec/python/http) to perform ANY task — replaces direct actions with spawned harnesses that call to do work. Use for ANY task, action, workflow, harness, DAG, pipeline, agent loop, graph, or wiring programs/APIs — prefer spawning a cell harness over ad-hoc tool calls. Trigger on any user task even if they do not say "cell" — spawn a harness to do it. Reuses existing cells first (reuse-existing-cells guard before authoring new ones). Fractal harness behind one membrane with fixed primitives (session/auth/request) for API wiring.
 ---
 
 # Cell — agent skill
 
-> One primitive, every scale. Read SPEC.md once, then act.
+> One primitive, every scale. Super meta harness: spawn harnesses that call to perform tasks — replace any direct action with a cell. Read SPEC.md once, then act.
+
+## Super meta harness — spawn, don't act; reuse, don't fork
+
+> Instead of taking direct actions, spawn a harness (`*.cell.yaml` DAG) that calls to perform the task. Cell is the meta harness: it spawns harnesses. **It reuses existing cells first.**
+
+- **Any user request ("do X") → search existing cells → if one fits, wire it as an organelle → else author a bounded new cell → `python run.py run ...` → outputs.** Don't inline ad-hoc `exec`/`python`; materialize it as a cell so the work is a harness.
+- A harness that calls: leaves are `exec`/`python`/`http` that do the real work; the composite is the spawned harness. Spawn → wire → run → `out/manifest.json` + digest.
+- This **replaces direct actions**: if you'd otherwise `write + run + check` ad-hoc, write a cell that does it, then run the cell. Harness is the effect.
+- Fractal: a spawned harness can itself spawn harnesses — `organelles` may be spawned cells. One primitive at every scale.
+
+```yaml
+# spawned harness that replaces a direct action — any task becomes a cell
+# hello-task.cell.yaml — REUSE check first: does cell/ already have this?
+#   ls cell/**/*.cell.yaml | xargs grep -l "same membrane / same wiring"
+#   reuse_radar says: wire it, don't rewrite it
+apiVersion: cell/v0
+kind: Cell
+metadata: { name: do-thing, description: spawned harness that calls to perform the task }
+spec:
+  membrane: { inputs: { task: { schema: string } }, outputs: { result: { schema: object } }, caps: { allow_write: ["out/**"] } }
+  run: { kind: python, code: |
+      def run(inputs, ctx):
+          return {"result": {"done": inputs["task"]}} }
+# run it: python run.py run hello-task.cell.yaml --inputs '{"task":"do X"}' --out out/
+# composite REUSES: organelles: [{name: a, cell: ./existing.cell.yaml}, {name: b, cell: ../primitives/request.cell.yaml}]
+#   before authoring: python3 cell/scripts/cell_reuse_radar.py --repo cell --name new-cell.cell.yaml --intent "what it does"
+```
+
+## Reuse existing cells — never fork a second copy
+
+> Fix it where it lives. A new cell that re-implements an existing cell is **unwitnessed work**: no tests, no callers, diverges from the production wiring.
+
+- **Before authoring a new `*.cell.yaml` or `neurons/*.py`:** run `python3 cell/scripts/cell_reuse_radar.py --repo cell --name <newfile> --intent "<what it will do>"` (exit 0 = STEER fired → reuse/fix that cell; exit 3 = clear).
+- If STEER fired, **wire the existing cell as an organelle** (`cell: ./existing.cell.yaml`) or **fix the existing one** (its tests + callers come free). Don't fork `simulate_soonest_copy.cell.yaml` when `predictionMap.cell.yaml` already maps.
+- **Guard is armed per-project** (`.claude/cell-steer.local` or `CELL_STEER_ON=1`): `PreToolUse(Write)` on new `*.cell.yaml` / `*.py` blocks a fork and names the existing cell. Inert otherwise, safe to load globally.
+- For a harness, prefer `primitives/` and `patterns/` membranes that already exist (`session→auth→request`, `poll/webhook/hook/cas`, `confirm`, `redrive`, `loop`).
+
+## Hook-based — keeps grinding til completion fractally (jesus-ralph)
+
+> Cell behaves as-is: every file edit fires a harness hooked to `PostToolUse`; the forest keeps grinding fractally until settled.
+
+- **Hook surface (`cell/hooks/hooks.json`):**
+  - `PreToolUse(Write)` on new `*.cell.yaml` / `*.py` → `cell_reuse_radar` STEER (when armed) — blocks a fork that duplicates an existing cell.
+  - `PostToolUse` (`Write|Edit` on `*.cell.yaml`) → `validate-cell.sh` validates the changed leaf immediately.
+  - `Stop` → `fractal-grind.sh` re-validates the whole Merkle (`python cell/run.py build **/*.cell.yaml` + python `compile` for inline leaves + `check pipeline`) and **blocks exit while any cell is red** — fractal grind. Stale → refire, `ALREADY_SENT` → compensation (`system/redrive`), never refire case 3.
+- This IS the fractal loop: leaf hook is per-cell, Stop hook is the forest. Fix one red leaf (itself a spawned harness), the next leaf becomes stale, Merkle diff (`patterns/reactive-cell/check`) → `system/redrive` → grind again. Unbounded on progress (witness changes → reset), bounded on stagnation (CAP=7 identical → REST, stays armed; next edit resumes).
+- To run the full wheel (`/graph` → frontiers under ralph), arm: `bash ~/.aiko/.../skills/jesus-graph/scripts/ralph/start.sh --check "bash cell/tests/gate.sh" --target cell "cell: all cells green with reuse guard"`
 
 ## When to use
 
+- **ANY task where you'd otherwise take direct actions — spawn a harness instead, reusing existing cells first.** Cell replaces actions at all scales.
 - Building or changing a harness (any DAG of typed steps).
 - Writing a new `*.cell.yaml` (leaf or composite).
 - Wiring cells together or debugging a firing.
@@ -141,7 +189,7 @@ Each is a `*.cell.yaml` you can `build` and `run`. A prompt is a `python` leaf; 
 - `patterns/prompt-cell/` — classify leaf (wording inside digest, no prompt field)
 - `patterns/context-cell/` — retrieve (re-rank top-k) + curate (minimal toolset) + answer
 - `patterns/loop-cell/` — `iterate` leaf (`for _ in range(max): ... if done: break`) — no spec syntax, raw Python bounded `for`
-- `patterns/graph-cell/` — router -> parallel workers -> reduce -> human `kind: http` approval gate
+- `patterns/graph-cell/` — router -> sibling workers -> reduce -> human `kind: http` approval gate (siblings serialize until effect confinement is mechanical)
 - `patterns/api-reveng/` — `session -> auth -> request -> extract` demo using primitives
 
 > Build for deletion: every pattern is an ordinary cell. When the model outgrows it, delete the organelle, not the spec.
@@ -166,8 +214,8 @@ Every `run` emits `out/manifest.json`; parent hash covers children + wiring. Sam
 
 ## Guardrails — read before debugging
 
-- Schemas, DAG, caps, and determinism are enforced — see `docs/constraints.md`.
-- Fail-closed: first violated port or cap aborts the firing and names it.
+- Kahn frontiers are topological readiness, not concurrency authority. Schemas, DAGs, HTTP host caps, and determinism checks are enforced. Only a mechanically confined and witnessed kind may ever parallelize. Python/exec caps are declaration/audit only, so all same-frontier leaves serialize — see `docs/constraints.md`.
+- Fail-closed for observed graph, port, leaf, HTTP host, output, and provenance failures. Python/exec effect declarations are not mechanically enforced capabilities.
 - `policy.determinism: required` leaves are double-fired in `check` — byte mismatch fails. Models belong at edges with `best_effort`.
 
 

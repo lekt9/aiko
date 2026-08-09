@@ -96,6 +96,26 @@ compiles; its test build exhausts a 16 GB machine, so including it would produce
 a build step that cannot be verified on the hardware it runs on. An unverifiable
 step is worse than an absent one.
 
+### Graph planning is one surface, not another scheduler
+
+Contract owns deterministic, fail-closed graph analysis: Kahn waves, the ready
+frontier, write collisions, cycles, unknown dependencies, grounding gaps and
+gating gaps. Aiko exposes that verdict without reimplementing it:
+
+```sh
+./zig-out/bin/aiko-doctor graph-plan walk.json   # stable JSON on stdout
+```
+
+Cell executes typed deterministic frontiers. Neuron independently projects the
+committed citation/production graph and live stream, but does not guess effect
+safety from topology it cannot see. The Rust host has a source path that loads the same `contract_graph_plan` ABI
+for advisory dry-run diagnostics; those diagnostics are not a durable admitted
+walk and never authorize launch or fan-out. No layer adds a side scheduler or a
+second durable ledger. `tests/graph-engineering-gate.sh` runs the real Contract
+ABI witness, Cell gate, standalone Neuron live gate, direction checks, and the
+compiled Rust admission membrane against the installed Contract ABI. The live
+ACP client surface remains a separate integration boundary.
+
 ---
 
 ## Reactive: what actually makes it event-driven

@@ -499,6 +499,23 @@ fn expandGraphJson(request_json: [*:0]const u8) !?[*:0]u8 {
 
     var ids: [muscle.MAX_PARALLEL]?[]u8 = [_]?[]u8{null} ** muscle.MAX_PARALLEL;
     defer for (ids[0..child_values.len]) |maybe_id| if (maybe_id) |id| gpa.free(id);
+    // Expansion is append-only, so a later validation/allocation failure must
+    // terminalize every child already declared rather than leak runnable rows.
+    var graph_returned = false;
+    defer if (!graph_returned) {
+        for (ids[0..child_values.len]) |maybe_id| {
+            if (maybe_id) |id| {
+                contract.markDied(
+                    gpa,
+                    extEnv(),
+                    id,
+                    .apoptosed,
+                    null,
+                    "native graph expansion aborted before response",
+                ) catch {};
+            }
+        }
+    };
     var dependencies = [_][muscle.MAX_PARALLEL]usize{[_]usize{0} ** muscle.MAX_PARALLEL} ** muscle.MAX_PARALLEL;
     var dependency_counts = [_]usize{0} ** muscle.MAX_PARALLEL;
     var nodes: [muscle.MAX_PARALLEL + 1]muscle.Node = undefined;
@@ -679,7 +696,9 @@ fn expandGraphJson(request_json: [*:0]const u8) !?[*:0]u8 {
         try out.append(gpa, ']');
     }
     try out.appendSlice(gpa, "]}");
-    return returned(out.items);
+    const response = returned(out.items);
+    graph_returned = response != null;
+    return response;
 }
 
 export fn contract_expand_json(request_json: [*:0]const u8) ?[*:0]u8 {
@@ -1431,6 +1450,64 @@ export fn contract_renew_execution_json(request_json: [*:0]const u8) c_int {
     return 0;
 }
 
+/// Terminalize every direct child of a graph root and then the root. This is
+/// the observable rollback path for a host that did not receive a complete
+/// expansion response; any unreadable row or failed terminal write is failure.
+export fn contract_abandon_graph(root: [*:0]const u8) c_int {
+    const root_id = cstr(root);
+    if (!validContractId(root_id)) return 1;
+    const body = ledger.readAll(gpa, extEnv()) catch return 1;
+    defer gpa.free(body);
+    var child_ids: [muscle.MAX_NODES]?[]u8 = [_]?[]u8{null} ** muscle.MAX_NODES;
+    defer for (child_ids) |maybe_id| if (maybe_id) |id| gpa.free(id);
+    var count: usize = 0;
+    var lines = std.mem.tokenizeScalar(u8, body, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        var parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch return 1;
+        defer parsed.deinit();
+        if (parsed.value != .object) return 1;
+        const object = parsed.value.object;
+        if (!std.mem.eql(u8, objectString(object, "event") orelse continue, "declared")) continue;
+        const parent_id = objectString(object, "parent_id") orelse continue;
+        if (!std.mem.eql(u8, parent_id, root_id)) continue;
+        const id = objectString(object, "id") orelse return 1;
+        if (!validContractId(id) or count == child_ids.len) return 1;
+        var duplicate = false;
+        for (child_ids[0..count]) |existing| {
+            if (std.mem.eql(u8, existing.?, id)) duplicate = true;
+        }
+        if (!duplicate) {
+            child_ids[count] = gpa.dupe(u8, id) catch return 1;
+            count += 1;
+        }
+    }
+    var complete = true;
+    for (child_ids[0..count]) |maybe_id| {
+        contract.markDied(
+            gpa,
+            extEnv(),
+            maybe_id.?,
+            .apoptosed,
+            null,
+            "Aiko abandoned native graph admission",
+        ) catch {
+            complete = false;
+        };
+    }
+    contract.markDied(
+        gpa,
+        extEnv(),
+        root_id,
+        .apoptosed,
+        null,
+        "Aiko abandoned native graph admission",
+    ) catch {
+        complete = false;
+    };
+    return if (complete) 0 else 1;
+}
+
 /// Cancel a durable contract by appending an explicit terminal death row.
 export fn contract_cancel(id: [*:0]const u8, reason: ?[*:0]const u8) c_int {
     const detail = if (reason) |value| cstr(value) else "cancelled by Aiko operator";
@@ -1985,7 +2062,7 @@ test "C ABI compiles internal systems and rejects invalid specifications" {
 }
 
 test "native ABI version is pinned for independently-built Aiko" {
-    try std.testing.expectEqual(@as(u32, 12), contract_abi_version());
+    try std.testing.expectEqual(@as(u32, 13), contract_abi_version());
 }
 
 test "turn context rejects disconnected and over-budget descendants" {
@@ -2102,6 +2179,74 @@ test "graph_plan C ABI returns graph for independent nodes" {
     defer contract_free(result);
     const json = std.mem.span(result);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"kind\":\"graph\"") != null);
+}
+
+test "graph_plan C ABI emits waves collisions and tiers" {
+    const input =
+        \\{"nodes":[
+        \\ {"id":"f","plan":"fanout-c","depends_on":["c"],"status":"pending"},
+        \\ {"id":"a","plan":"root","depends_on":[],"status":"pending","writes":["src/"]},
+        \\ {"id":"e","plan":"fanout-b","depends_on":["c"],"status":"pending"},
+        \\ {"id":"b","plan":"left","depends_on":["a"],"status":"pending","writes":["src/ui.ts"]},
+        \\ {"id":"d","plan":"fanout-a","depends_on":["c"],"status":"pending"},
+        \\ {"id":"c","plan":"right","depends_on":["a"],"status":"pending","writes":["docs/"]}
+        \\]}
+    ;
+    const result = contract_graph_plan(input) orelse return error.OutOfMemory;
+    defer contract_free(result);
+    const json = std.mem.span(result);
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, json, .{});
+    defer parsed.deinit();
+    const object = parsed.value.object;
+    const waves = object.get("waves").?.array.items;
+    try std.testing.expectEqual(@as(usize, 3), waves.len);
+    try std.testing.expectEqualStrings("a", waves[0].array.items[0].string);
+    try std.testing.expectEqualStrings("b", waves[1].array.items[0].string);
+    try std.testing.expectEqualStrings("c", waves[1].array.items[1].string);
+    try std.testing.expectEqual(@as(usize, 1), object.get("write_collisions").?.array.items.len);
+    try std.testing.expectEqual(@as(usize, 6), object.get("model_tiers").?.array.items.len);
+    try std.testing.expectEqual(@as(usize, 0), object.get("cycles").?.array.items.len);
+    try std.testing.expectEqualStrings("chain", object.get("kind").?.string);
+}
+
+test "graph_plan C ABI refuses unknown statuses" {
+    try std.testing.expect(contract_graph_plan(
+        \\{"nodes":[{"id":"a","depends_on":[],"status":"pendng"},{"id":"b","depends_on":["a"],"status":"pending"}]}
+    ) == null);
+    try std.testing.expect(contract_graph_plan(
+        \\{"nodes":[{"id":"a","depends_on":[],"status":"future"}]}
+    ) == null);
+}
+
+test "graph_plan C ABI conservatively reports broad glob collisions" {
+    const input =
+        \\{"nodes":[
+        \\ {"id":"b","depends_on":[],"status":"pending","writes":["**/foo.*"]},
+        \\ {"id":"a","depends_on":[],"status":"pending","writes":["**/*.zig"]}
+        \\]}
+    ;
+    const result = contract_graph_plan(input) orelse return error.OutOfMemory;
+    defer contract_free(result);
+    const json = std.mem.span(result);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"write_collisions\":[{\"a\":\"a\",\"b\":\"b\",\"shared\":[\"**/*.zig <-> **/foo.*\"]}]") != null);
+}
+
+test "graph_plan C ABI reports invalid dependency graphs without frontiers" {
+    const cycle_result = contract_graph_plan(
+        \\{"nodes":[{"id":"a","depends_on":["b"],"status":"pending"},{"id":"b","depends_on":["a"],"status":"pending"}]}
+    ) orelse return error.OutOfMemory;
+    defer contract_free(cycle_result);
+    const cycle_json = std.mem.span(cycle_result);
+    try std.testing.expect(std.mem.indexOf(u8, cycle_json, "\"waves\":[]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cycle_json, "\"cycle_list\":[\"a\",\"b\"]") != null);
+
+    const unknown_result = contract_graph_plan(
+        \\{"nodes":[{"id":"a","depends_on":["missing"],"status":"pending"}]}
+    ) orelse return error.OutOfMemory;
+    defer contract_free(unknown_result);
+    const unknown_json = std.mem.span(unknown_result);
+    try std.testing.expect(std.mem.indexOf(u8, unknown_json, "\"unknown_dependencies\":[{\"node\":\"a\",\"dependency\":\"missing\"}]") != null);
+    try std.testing.expect(contract_graph_plan("{\"nodes\":{}}") == null);
 }
 
 test "delegate_child returns deterministic child root" {

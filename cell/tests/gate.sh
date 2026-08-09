@@ -2,7 +2,7 @@
 set -euo pipefail
 CELL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 GATES_DIR="$CELL_DIR/tests/gates"
-echo "cell gates — 10 witnesses (empty dir, public CLI, durable state)"
+echo "cell gates — public CLI and durable-state witnesses"
 echo "================================================================"
 fails=0
 passes=0
@@ -26,4 +26,4 @@ if [ $fails -ne 0 ]; then
   echo "GATE FAIL — acceptance criterion not met"
   exit 1
 fi
-echo "GATE PASS — all 10 witnessed"
+echo "GATE PASS — all $total witnessed"

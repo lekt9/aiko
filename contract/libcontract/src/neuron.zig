@@ -12,7 +12,7 @@ pub const FIRE_SCHEMA = core.FIRE_SCHEMA;
 pub const RESULT_SCHEMA = core.RESULT_SCHEMA;
 pub const EFFECT_SETTLE_SCHEMA = "neuron.effect-settle/v1";
 pub const EFFECT_SETTLE_RESULT_SCHEMA = "neuron.effect-settle-result/v1";
-pub const ABI_VERSION: u32 = 12;
+pub const ABI_VERSION: u32 = 13;
 
 pub const Error = core.Error || error{
     FiringConflict,

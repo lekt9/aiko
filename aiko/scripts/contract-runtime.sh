@@ -20,7 +20,6 @@ CONTRACT_CLI_ROOT="$CONTRACT_REPO/zig"
 TYPED_NEURON_ROOT="$CONTRACT_REPO/../neuron"
 AIKO_PROFILE=${AIKO_BUILD_PROFILE:-release}
 AIKO_TARGET_DIR=${AIKO_CARGO_TARGET_DIR:-"$AIKO_ROOT/target"}
-AIKO_CONTRACT_BGE=${AIKO_CONTRACT_BGE:-false}
 PACKAGE_ROOT="$AIKO_ROOT/target/aiko-package"
 
 usage() {
@@ -84,8 +83,7 @@ build_contract() {
     else
         echo "Building Contract from $CONTRACT_ROOT"
     fi
-    BGE_ARG="-Dbge=$AIKO_CONTRACT_BGE"
-    (cd "$CONTRACT_ROOT" && zig build -Doptimize=ReleaseFast $ZIG_TARGET_ARG $BGE_ARG)
+    (cd "$CONTRACT_ROOT" && zig build -Doptimize=ReleaseFast $ZIG_TARGET_ARG)
     CONTRACT_DYLIB=$(contract_dylib)
     if [ ! -f "$CONTRACT_DYLIB" ]; then
         echo "Contract build did not produce $CONTRACT_DYLIB" >&2
@@ -328,7 +326,7 @@ package_runtime() {
         printf '  "format": 1,\n'
         printf '  "version": "%s",\n' "$VERSION"
         printf '  "platform": "%s",\n' "$PLATFORM"
-        printf '  "contract_abi": 12,\n'
+        printf '  "contract_abi": 13,\n'
         printf '  "application_runtime": "aiko-native-cdp-v1",\n'
         printf '  "aiko_sha256": "%s",\n' "$AIKO_SHA"
         printf '  "aiko_commit": "%s",\n' "$AIKO_COMMIT"

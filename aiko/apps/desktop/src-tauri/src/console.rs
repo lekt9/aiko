@@ -27,6 +27,9 @@ use crate::webhost::HostState;
 
 const OUTPUT_CAP: usize = 128 * 1024;
 const JOB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+const CLI_CANCELLATION_SUPPORTED: bool = cfg!(unix);
+const CANCELLATION_NOT_IMPLEMENTED: &str =
+    "job cancellation is not implemented on this platform; the process tree is still running";
 
 pub struct Verb {
     pub id: &'static str,
@@ -97,6 +100,8 @@ pub struct JobSnapshot {
     output: String,
     done: bool,
     exit_code: Option<i32>,
+    cancelled: bool,
+    timed_out: bool,
 }
 
 struct Job {
@@ -104,6 +109,9 @@ struct Job {
     output: String,
     done: bool,
     exit_code: Option<i32>,
+    cancel_requested: bool,
+    cancelled: bool,
+    timed_out: bool,
 }
 
 #[derive(Default)]
@@ -234,6 +242,9 @@ pub async fn cli_run(
         output: String::new(),
         done: false,
         exit_code: None,
+        cancel_requested: false,
+        cancelled: false,
+        timed_out: false,
     }));
     if let Ok(mut map) = jobs.map.lock() {
         map.insert(id, job.clone());
@@ -245,6 +256,7 @@ pub async fn cli_run(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    configure_process_tree(&mut command);
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -252,6 +264,8 @@ pub async fn cli_run(
                 &job,
                 Some(-1),
                 Some(format!("could not start {}: {error}", state.aiko_bin)),
+                false,
+                false,
             );
             return snapshot_response(id, &job);
         }
@@ -266,29 +280,13 @@ pub async fn cli_run(
         .take()
         .map(|stderr| append_lines(stderr, job.clone()));
     let job_for_wait = job.clone();
-    tokio::spawn(async move {
-        let (code, note) = match tokio::time::timeout(JOB_TIMEOUT, child.wait()).await {
-            Ok(Ok(status)) => (status.code(), None),
-            Ok(Err(error)) => (Some(-1), Some(error.to_string())),
-            Err(_) => {
-                let _ = child.kill().await;
-                (
-                    Some(-1),
-                    Some(format!("timed out after {}s", JOB_TIMEOUT.as_secs())),
-                )
-            }
-        };
-        // A process may exit before the independent pipe readers have drained.
-        // Publishing done earlier makes the UI stop polling and silently loses
-        // the final lines — exactly the output a failing command needs most.
-        if let Some(task) = stdout_task {
-            let _ = task.await;
-        }
-        if let Some(task) = stderr_task {
-            let _ = task.await;
-        }
-        finish(&job_for_wait, code, note);
-    });
+    tokio::spawn(monitor_child(
+        child,
+        job_for_wait,
+        stdout_task,
+        stderr_task,
+        JOB_TIMEOUT,
+    ));
 
     snapshot_response(id, &job)
 }
@@ -313,6 +311,151 @@ pub async fn cli_job(
     }
 }
 
+pub async fn cli_job_cancel(
+    State(state): State<Arc<HostState>>,
+    headers: HeaderMap,
+    Path(id): Path<u64>,
+) -> Response {
+    if !is_local_request(&headers) {
+        return forbidden();
+    }
+    // Until Windows jobs are assigned to a kill-on-close Job Object, accepting
+    // this request could kill only the immediate child and falsely settle a
+    // still-running process tree. Refuse before even looking up (and therefore
+    // before mutating) the job.
+    if !CLI_CANCELLATION_SUPPORTED {
+        return (StatusCode::NOT_IMPLEMENTED, CANCELLATION_NOT_IMPLEMENTED).into_response();
+    }
+    let job = state
+        .jobs
+        .map
+        .lock()
+        .ok()
+        .and_then(|map| map.get(&id).cloned());
+    match job {
+        Some(job) => {
+            if let Ok(mut value) = job.lock() {
+                if !value.done {
+                    value.cancel_requested = true;
+                }
+            }
+            snapshot_response(id, &job)
+        }
+        None => (StatusCode::NOT_FOUND, "no such job").into_response(),
+    }
+}
+
+#[cfg(unix)]
+fn configure_process_tree(command: &mut tokio::process::Command) {
+    // Give each job its own process group before spawn. Cancellation must reach
+    // descendants which inherited our pipes; killing only the shell leaves the
+    // readers open and makes a cancellation snapshot impossible to settle.
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_process_tree(_command: &mut tokio::process::Command) {}
+
+#[cfg(unix)]
+async fn terminate_process_tree(
+    child: &mut tokio::process::Child,
+    process_group: Option<u32>,
+) -> std::io::Result<()> {
+    if let Some(pid) = process_group {
+        // process_group(0) makes the child's PID its PGID. Keep that ID even
+        // after the immediate child exits: pipe-inheriting descendants can
+        // outlive it and are still members of the group we must terminate.
+        let result = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+        if result != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                return Err(error);
+            }
+        }
+    }
+    match child.try_wait()? {
+        Some(_) => Ok(()),
+        None => child.wait().await.map(|_| ()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn terminate_process_tree(
+    child: &mut tokio::process::Child,
+    _process_group: Option<u32>,
+) -> std::io::Result<()> {
+    // Keep non-Unix targets compiling and preserve their existing immediate-
+    // child behavior. Windows process-tree cancellation requires a Job Object.
+    child.kill().await?;
+    child.wait().await.map(|_| ())
+}
+
+async fn monitor_child(
+    mut child: tokio::process::Child,
+    job: Arc<std::sync::Mutex<Job>>,
+    stdout_task: Option<tokio::task::JoinHandle<()>>,
+    stderr_task: Option<tokio::task::JoinHandle<()>>,
+    timeout: std::time::Duration,
+) {
+    let started = tokio::time::Instant::now();
+    let process_group = child.id();
+    let mut exited = None;
+    let (code, note, cancelled, timed_out) = loop {
+        let cancel_requested = job.lock().is_ok_and(|job| job.cancel_requested);
+        if cancel_requested {
+            let (note, cancelled) = match terminate_process_tree(&mut child, process_group).await {
+                Ok(()) => ("cancelled by user".to_string(), true),
+                Err(error) => (format!("cancellation failed: {error}"), false),
+            };
+            break (Some(-1), Some(note), cancelled, false);
+        }
+        if started.elapsed() >= timeout {
+            let termination = terminate_process_tree(&mut child, process_group)
+                .await
+                .err();
+            let note = termination.map_or_else(
+                || format!("timed out after {}s", timeout.as_secs()),
+                |error| {
+                    format!(
+                        "timed out after {}s; termination failed: {error}",
+                        timeout.as_secs()
+                    )
+                },
+            );
+            break (Some(-1), Some(note), false, true);
+        }
+        if exited.is_none() {
+            match child.try_wait() {
+                Ok(Some(status)) => exited = Some((status.code(), None)),
+                Ok(None) => {}
+                Err(error) => exited = Some((Some(-1), Some(error.to_string()))),
+            }
+        }
+        let stdout_done = stdout_task
+            .as_ref()
+            .is_none_or(tokio::task::JoinHandle::is_finished);
+        let stderr_done = stderr_task
+            .as_ref()
+            .is_none_or(tokio::task::JoinHandle::is_finished);
+        if stdout_done && stderr_done {
+            if let Some((code, note)) = exited.take() {
+                break (code, note, false, false);
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+    // A process may exit before the independent pipe readers have drained.
+    // Publishing done earlier makes the UI stop polling and silently loses
+    // the final lines — exactly the output a failing command needs most.
+    if let Some(task) = stdout_task {
+        let _ = task.await;
+    }
+    if let Some(task) = stderr_task {
+        let _ = task.await;
+    }
+    finish(&job, code, note, cancelled, timed_out);
+}
+
 fn append_lines<R>(reader: R, job: Arc<std::sync::Mutex<Job>>) -> tokio::task::JoinHandle<()>
 where
     R: tokio::io::AsyncRead + Send + Unpin + 'static,
@@ -330,7 +473,13 @@ where
     })
 }
 
-fn finish(job: &Arc<std::sync::Mutex<Job>>, code: Option<i32>, note: Option<String>) {
+fn finish(
+    job: &Arc<std::sync::Mutex<Job>>,
+    code: Option<i32>,
+    note: Option<String>,
+    cancelled: bool,
+    timed_out: bool,
+) {
     if let Ok(mut job) = job.lock() {
         if let Some(note) = note {
             job.output.push_str(&note);
@@ -338,6 +487,8 @@ fn finish(job: &Arc<std::sync::Mutex<Job>>, code: Option<i32>, note: Option<Stri
         }
         job.done = true;
         job.exit_code = code;
+        job.cancelled = cancelled;
+        job.timed_out = timed_out;
     }
 }
 
@@ -349,6 +500,8 @@ fn snapshot_response(id: u64, job: &Arc<std::sync::Mutex<Job>>) -> Response {
             output: job.output.clone(),
             done: job.done,
             exit_code: job.exit_code,
+            cancelled: job.cancelled,
+            timed_out: job.timed_out,
         })
         .into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -610,6 +763,91 @@ mod tests {
         let accounts = auth_accounts(foreign_only);
         assert_eq!(accounts.len(), 1);
         assert!(!is_aiko_signed_in(&accounts));
+    }
+
+    #[test]
+    fn cancellation_availability_matches_the_compiled_process_tree_implementation() {
+        assert_eq!(CLI_CANCELLATION_SUPPORTED, cfg!(unix));
+        if !cfg!(unix) {
+            assert!(CANCELLATION_NOT_IMPLEMENTED.contains("not implemented"));
+            assert!(CANCELLATION_NOT_IMPLEMENTED.contains("process tree"));
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancellation_kills_pipe_inheriting_process_group_before_settlement() {
+        let job = Arc::new(std::sync::Mutex::new(Job {
+            verb: "test".to_string(),
+            output: String::new(),
+            done: false,
+            exit_code: None,
+            cancel_requested: false,
+            cancelled: false,
+            timed_out: false,
+        }));
+        let mut command = tokio::process::Command::new("/bin/sh");
+        command
+            .args(["-c", "sleep 600 & echo $!"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        configure_process_tree(&mut command);
+        let mut child = command.spawn().expect("spawn shell process group");
+        let stdout_task = child
+            .stdout
+            .take()
+            .map(|out| append_lines(out, job.clone()));
+        let stderr_task = child
+            .stderr
+            .take()
+            .map(|out| append_lines(out, job.clone()));
+        let monitor = tokio::spawn(monitor_child(
+            child,
+            job.clone(),
+            stdout_task,
+            stderr_task,
+            std::time::Duration::from_secs(5),
+        ));
+
+        let descendant_pid = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if let Some(pid) = job
+                    .lock()
+                    .ok()
+                    .and_then(|value| value.output.lines().next()?.parse::<i32>().ok())
+                {
+                    break pid;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("descendant advertised its PID");
+        job.lock().unwrap().cancel_requested = true;
+        tokio::time::timeout(std::time::Duration::from_secs(2), monitor)
+            .await
+            .expect("pipe readers closed after group termination")
+            .expect("monitor task completed");
+
+        let snapshot = job.lock().unwrap();
+        assert!(snapshot.done);
+        assert!(snapshot.cancelled);
+        assert!(!snapshot.timed_out);
+        drop(snapshot);
+        let gone = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if unsafe { libc::kill(descendant_pid, 0) } != 0 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert!(
+            gone.is_ok(),
+            "pipe-inheriting descendant {descendant_pid} survived cancellation"
+        );
     }
 
     #[test]

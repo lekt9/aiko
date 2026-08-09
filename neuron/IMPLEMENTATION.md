@@ -369,6 +369,30 @@ The outbox drainer likewise must not be used as the production guarantee.
 Production Aiko external effects currently use Contract's canonical effect
 outbox and ABI settlement path.
 
+## Reactive provenance projection
+
+`neuron telemetry serve <state_dir>` exposes the standalone derivation graph at
+`GET /graph` and as firing records on `GET /events`. Each firing carries the
+existing committed facts (`id`, ordinal, writes, sends, evidence, and citations)
+plus typed `edges`:
+
+- `cites`: evidence source artifact → consuming firing;
+- `produces`: firing → written artifact.
+
+The edge list is deliberately redundant with the committed row. That makes the
+surface directly consumable as a graph without inventing a second provenance
+walker, while allowing the live stream and compacted snapshot paths to share
+exactly the same projection. Artifact sizes and schemas remain visible, but
+payload bytes never cross the observer boundary.
+
+This is a **reactive provenance graph**, not a runtime topology plan. The
+observer reads `substrate.log` without opening the substrate, so it cannot see
+which interfaces or effectors are attached now and cannot truthfully report
+readiness, determinism, effect safety, or a redrive route. `/stale` likewise
+reports only the invalidation facts computed by `collectStale`; the topology-
+dependent verdict remains the responsibility of `redrive`. The module imports
+no Contract code, preserving the standalone Neuron dependency boundary.
+
 ## Test and witness matrix
 
 Run the smallest gate that proves the claim being changed:

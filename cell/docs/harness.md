@@ -10,13 +10,13 @@ This file maps that doctrine onto `cell`.
 |---|---|---|
 | Project setup | `AGENTS.md` (router) + `docs/` (system of record) | AGENTS points, docs holds — 50–200 lines vs focused docs |
 | Context | Progressive disclosure: AGENTS -> docs/ -> SPEC.md -> system/neurons/DESIGN_NOTES | See `docs/context.md` |
-| Constraints | Schema validation, DAG cycle refusal, caps allowlist | See `docs/constraints.md` |
+| Constraints | Schema validation, DAG cycle refusal, HTTP host allowlist; other caps are declaration/audit only | See `docs/constraints.md` |
 | Eval & feedback | `python run.py check` + `tests/` + fixture-driven cases | See `tests/README.md` |
 | Primitives | `primitives/session·auth·request·cas` (frozen membranes) | `primitives/README.md` + `patterns/api-reveng/` + `out/manifest.json` (merkle) |
 | Patterns | `patterns/prompt·context·loop·graph` (examples, not spec) | `patterns/README.md` + `SPEC.md §6` |
 | Loop | `patterns/loop-cell/` — `python` loop inside a leaf (no spec syntax) | Bounded `for` in `neurons/iterate.py` |
 | Graph | `wiring:` + typed `schemas/` + `reduce`/`router`/`approval` | `patterns/graph-cell/` |
-| Long-running | `run.py` fires in topo order, work dirs per leaf | Caps + DAG give handoff |
+| Long-running | `run.py` treats Kahn frontiers as topological readiness and fires them serially in lexical order, with work dirs per leaf | DAG + typed ports give handoff; Only a mechanically confined and witnessed kind may ever parallelize; Python/exec caps are audit metadata |
 | Evidence | `patterns/confirm/` (encouraged confirmation cell) | `patterns/api-reveng/confirm.cell.yaml` |
 | Redrive | `system/redrive.cell.yaml` (organelle, not spec) | manifests + prior -> stale vs ALREADY_SENT |
 | Reactive | `patterns/reactive-cell/` (merkle diff → redrive) | Manifest identifies changes, organelle reacts — not spec |

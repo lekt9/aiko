@@ -107,6 +107,30 @@ fn writeEvent(
         try std.json.Stringify.value(item.method, .{}, w);
         try w.writeAll("}");
     }
+    // These are provenance edges, not runtime-topology edges. Both ends come
+    // directly from the committed row: evidence sources point into the firing,
+    // and its writes point out. The observer cannot see attached effectors,
+    // determinism declarations, or readiness, so it must not add those verdicts.
+    try w.writeAll("],\"edges\":[");
+    var edge_count: usize = 0;
+    for (evidence) |item| for (item.sources) |source| {
+        if (edge_count != 0) try w.writeAll(",");
+        edge_count += 1;
+        try w.writeAll("{\"source\":");
+        try std.json.Stringify.value(source, .{}, w);
+        try w.writeAll(",\"target\":");
+        try std.json.Stringify.value(id, .{}, w);
+        try w.writeAll(",\"kind\":\"cites\"}");
+    };
+    for (artifacts) |artifact| {
+        if (edge_count != 0) try w.writeAll(",");
+        edge_count += 1;
+        try w.writeAll("{\"source\":");
+        try std.json.Stringify.value(id, .{}, w);
+        try w.writeAll(",\"target\":");
+        try std.json.Stringify.value(artifact.id, .{}, w);
+        try w.writeAll(",\"kind\":\"produces\"}");
+    }
     try w.writeAll("]}");
 }
 

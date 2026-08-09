@@ -34,7 +34,7 @@ router, cache — is an inhabitant of this one type. The three traditional layer
 | `xai-grok-pager` | TUI, prompts, modals, rendering |
 | `xai-grok-shell` | Agent runtime, Contract-native turn bridge |
 | `xai-grok-tools` | Terminal, file, search, and other tools |
-| `xai-grok-shell/src/contract_native/` | Neuron bridge (ABI 12), skill registry, membrane |
+| `xai-grok-shell/src/contract_native/` | Neuron bridge (ABI 13), skill registry, membrane |
 | `xai-grok-mcp` | MCP client |
 | `xai-aiko-collective` | Peer mesh store, libp2p transport |
 

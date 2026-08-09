@@ -54,7 +54,15 @@ python3 -c '
 import json, sys
 d = json.loads(sys.argv[1])
 assert d["firings"], "bootstrap carried no firings"
-' "$boot" || fail "bootstrap malformed or empty"
+for firing in d["firings"]:
+    edges = {(e["source"], e["target"], e["kind"]) for e in firing["edges"]}
+    expected = {(source, firing["id"], "cites") for source in firing["cites"]}
+    expected |= {(firing["id"], artifact["id"], "produces") for artifact in firing["w"]}
+    assert edges == expected, (firing["id"], edges, expected)
+    # Telemetry has journal provenance, not mutable runtime topology. A graph
+    # projection that reports readiness or an effect verdict would be guessing.
+    assert not ({"ready", "route", "deterministic", "effect_safe"} & firing.keys()), firing
+' "$boot" || fail "bootstrap malformed or provenance edges disagree with committed facts"
 
 # --- 2. a live tail, driven by another process ----------------------------
 curl -sN --max-time 10 "http://127.0.0.1:$port/events" >"$gate_root/sse.txt" &
@@ -127,6 +135,15 @@ import json, sys
 d = json.load(sys.stdin)
 print(sum(1 for f in d["firings"] for c in f["cites"] if c != "stimulus"))')"
 [ "$cited" -gt 0 ] || fail "citations did not survive the fold on the observability edge"
+curl -s "http://127.0.0.1:$port/graph" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+for firing in d["firings"]:
+    edges = {(e["source"], e["target"], e["kind"]) for e in firing["edges"]}
+    expected = {(source, firing["id"], "cites") for source in firing["cites"]}
+    expected |= {(firing["id"], artifact["id"], "produces") for artifact in firing["w"]}
+    assert edges == expected, (firing["id"], edges, expected)
+' || fail "provenance edges did not survive compaction faithfully"
 # Redaction must hold on the folded path too, not only on commit records.
 body="$(curl -s "http://127.0.0.1:$port/graph")"
 case "$body" in

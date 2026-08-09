@@ -2313,7 +2313,12 @@ impl acp::Agent for MvpAgent {
             &continuation_identity,
             &conversation,
         )
-        .await;
+        .await
+        .map_err(|reason| {
+            acp::Error::internal_error().data(format!(
+                "Native Contract graph admission failed; Aiko did not start the worker: {reason}"
+            ))
+        })?;
         let continuation = grounded.continuation.as_ref().ok_or_else(|| {
             acp::Error::internal_error().data(
                 "Contract continuation was not ready; refusing to start the reasoning worker",

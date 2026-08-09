@@ -25,7 +25,9 @@ def run(inputs, ctx):
     if isinstance(prior_sent, (list, set)):
         prior_sent = set(prior_sent)
         for s in stale[:]:
-            if s.get("digest") in prior_sent or s.get("to") in prior_sent:
+            # A changed derivation compensates if either the superseded product
+            # or the newly observed product is durably known to have crossed.
+            if s.get("digest") in prior_sent or s.get("to") in prior_sent or s.get("from") in prior_sent:
                 stale.remove(s)
-                compensation.append({**s, "reason": "ALREADY_SENT"})
+                compensation.append({**s, "reason": "ALREADY_SENT", "action": "diff_superseded_product"})
     return {"stale": stale, "compensation": compensation}

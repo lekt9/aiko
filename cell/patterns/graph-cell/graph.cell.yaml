@@ -2,7 +2,7 @@ apiVersion: cell/v0
 kind: Cell
 metadata:
   name: graph
-  description: graph pattern — router -> parallel workers -> reduce -> human approval
+  description: graph pattern — router -> topologically independent workers (serialized by the current runtime) -> reduce -> human approval
 spec:
   membrane:
     inputs:

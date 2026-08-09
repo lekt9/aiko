@@ -66,5 +66,11 @@ def run(inputs, ctx):
     tree = resolve_organelles(root_p, data)
     topo_check(tree)
     canonical = json.dumps(data, sort_keys=True, ensure_ascii=False, indent=2)
-    digest = hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",",":")).encode()).hexdigest()[:16]
+    # Build identity pins descendant declarations and executable bytes, not their paths.
+    import importlib.util
+    runtime_path = pathlib.Path(__file__).resolve().parents[2] / "run.py"
+    module_spec = importlib.util.spec_from_file_location("cell_runtime_emit", runtime_path)
+    runtime = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(runtime)
+    digest = runtime._cell_definition_digest(root_p, data)
     return {"canonical": canonical, "digest": digest, "organelle_count": len(tree["children"])}

@@ -37,7 +37,7 @@ const MAX_SKILL_ARTIFACT_FILES: usize = 256;
 pub(super) const NEURON_FIRE_ABI_VERSION: u32 = 12;
 pub(super) const SKILL_LIFECYCLE_ABI_VERSION: u32 = 8;
 pub(super) const SKILL_EXECUTION_ABI_VERSION: u32 = 12;
-pub(super) const CONTRACT_ABI_VERSION: u32 = SKILL_EXECUTION_ABI_VERSION;
+pub(super) const CONTRACT_ABI_VERSION: u32 = 13;
 
 #[derive(Debug, Clone)]
 pub(super) struct ToolEffectAdmission {
@@ -891,6 +891,15 @@ mod tests {
             changed.stimulus.payload_digest,
             request.stimulus.payload_digest
         );
+    }
+
+    #[test]
+    #[ignore = "run by graph-engineering-gate.sh against the built Contract dylib"]
+    fn native_graph_abi13_loads_observable_abandonment() {
+        let native = NativeContract::load().expect("load Contract ABI 13 library");
+        assert_eq!(native.abi_version, CONTRACT_ABI_VERSION);
+        assert!(native.expand_graph.is_some());
+        assert!(native.abandon_graph.is_some());
     }
 
     /// Contract discovers its ledger from process CWD, so the pinned witness

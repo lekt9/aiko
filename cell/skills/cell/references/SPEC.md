@@ -52,7 +52,7 @@ membrane:
 ```
 
 * Ports are typed by JSON Schema draft 2020-12. Runtime validates inputs before firing, outputs after.
-* Caps are an allowlist. No ambient authority. Uncapped effect is refused before it runs.
+* Caps declare intended authority for admission and audit. Today only `http` `allow_net` is mechanically checked; Python and exec leaves are not sandboxed, so their `allow_write`, `allow_spawn`, and network declarations do not confine ambient host authority.
 * Every firing gets a scratch `inputs/` + `outputs/` + `out/` directory. Leaves read only `inputs/<port>.json`.
 
 ### 2.2 `run` — one membrane, three executors
@@ -130,7 +130,7 @@ Rules:
 * Every membrane input wired to >=1 organelle input (or `unused: true`).
 * Every membrane output wired from exactly one organelle output.
 * Fan-out `one->many` allowed. Fan-in requires an explicit `reduce` organelle — no implicit merge.
-* An organelle sees only its wired inputs and its own caps.
+* An organelle receives only its wired input values and its own caps declaration. Python and exec code can still reach ambient host resources; do not treat that declaration as confinement.
 
 ---
 
@@ -147,9 +147,9 @@ python run.py run system/builder.cell.yaml --inputs '{"root":"system/builder.cel
 ```
 
 * `build` delegates to `system/builder.cell.yaml` (parse | validate | emit). No second code path — the builder is a DAG like any other.
-* `run` topologically sorts organelles, fires leaves in order, validates outputs, propagates via wiring. Composites delegate — they have no code.
+* `run` uses deterministic Kahn frontiers as topological readiness and fires every frontier member serially in lexical order. Only a mechanically confined and witnessed kind may ever parallelize. Python/exec `caps` are audit metadata and do not mechanically establish effect freedom. Composites delegate — they have no code.
 * `check` = `run` + schema validation + double-fire determinism check (see §4).
-* Fail-closed: first leaf failure aborts the firing and names the violated port or cap.
+* Fail-closed for observed graph, port, leaf, HTTP network-cap, and output failures. Python/exec effect declarations are audit metadata, not mechanically enforced capabilities.
 
 Zig is only the runtime: `zig build && ./zig-out/bin/cell build ...` same semantics, no second builder.
 
@@ -256,5 +256,5 @@ No `loop` in policy — loops are patterns (python loops), not spec. No ledger, 
 
 * Imperative steps. Edges are typed ports.
 * A prompt harness. Prompts are `kind: python` leaves — no special field.
-* Infra. `caps` scopes effects; it doesn't provision them.
+* Infra. `caps` declares intended effects; except for HTTP host checks, it neither confines nor provisions them.
 * A second orchestrator. Loops and graphs are wiring + Python, not scheduler syntax.

@@ -15,6 +15,7 @@
 const std = @import("std");
 const neuron = @import("typed_neuron");
 const contract = @import("contract");
+const contract_graph_analyzer = @import("contract_graph_analyzer");
 
 const bridge = @import("bridge.zig");
 const mcp = @import("mcp.zig");
@@ -24,6 +25,9 @@ pub fn main(init: std.process.Init) !void {
     var it = try std.process.Args.Iterator.initAllocator(init.minimal.args, a);
     var argv: std.ArrayList([]const u8) = .empty;
     while (it.next()) |arg| try argv.append(a, arg);
+    if (argv.items.len >= 2 and std.mem.eql(u8, argv.items[1], "graph-plan")) {
+        return runGraphPlan(init, a, argv.items[2..]);
+    }
     if (argv.items.len >= 2 and std.mem.eql(u8, argv.items[1], "bridge")) {
         return runBridge(init, a, argv.items[2..]);
     }
@@ -61,6 +65,46 @@ pub fn main(init: std.process.Init) !void {
             try out.print("  {s}\n", .{e.name});
         }
     }
+    try out.flush();
+}
+
+
+/// `aiko-doctor graph-plan <walk.json>`
+///
+/// Project a declared walk through Contract's analyzer and print its stable JSON
+/// verdict. This is deliberately an observer, not another scheduler: Contract
+/// owns Kahn frontiers and collision/refusal semantics; Cell and hosts consume
+/// those frontiers through their own already-witnessed execution surfaces.
+fn runGraphPlan(init: std.process.Init, a: std.mem.Allocator, rest: []const []const u8) !void {
+    var buf: [4096]u8 = undefined;
+    var w = std.Io.File.stdout().writerStreaming(init.io, &buf);
+    const out = &w.interface;
+
+    if (rest.len != 1) {
+        try out.print("usage: aiko-doctor graph-plan <walk.json>\n", .{});
+        try out.flush();
+        std.process.exit(2);
+    }
+    const walk_json = std.Io.Dir.cwd().readFileAlloc(
+        init.io,
+        rest[0],
+        a,
+        .limited(16 << 20),
+    ) catch {
+        try out.print("{{\"error\":\"walk_unreadable\"}}\n", .{});
+        try out.flush();
+        std.process.exit(1);
+    };
+
+    var analyzer = contract_graph_analyzer.GraphPlan{ .allocator = a };
+    var verdict = analyzer.analyze(walk_json) catch {
+        try out.print("{{\"error\":\"invalid_walk\"}}\n", .{});
+        try out.flush();
+        std.process.exit(1);
+    };
+    defer verdict.deinit(a);
+    const result = try analyzer.toJson(&verdict);
+    try out.print("{s}\n", .{result});
     try out.flush();
 }
 

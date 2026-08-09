@@ -14,7 +14,7 @@ python run.py check example/pipeline.cell.yaml --inputs example/inputs.json
 
 Single primitive: a leaf `run` (one of `exec` · `python` · `http`) and a composite `organelles + wiring` share the same `membrane` (`inputs`/`outputs`/`caps`). Any Cell can be an organelle in another Cell — fractal by construction. See `docs/architecture.md`.
 
-Execution is a DAG in YAML that composes programs: `build` delegates to `system/builder.cell.yaml` (parse | validate | emit), `run` topologically sorts and fires leaves, `check` adds schema + determinism validation. Fail-closed on first violated port or cap.
+Execution is a DAG in YAML that composes programs: `build` delegates to `system/builder.cell.yaml` (parse | validate | emit), `run` builds topological Kahn frontiers and fires every sibling serially in lexical order, and `check` adds schema + determinism validation. Only a mechanically confined and witnessed kind may ever parallelize. Python/exec caps are audit metadata, not confinement; only HTTP target hosts are mechanically checked against `allow_net`. Fail closed on the first graph, port, leaf, HTTP-host, output, or provenance failure observed by the runtime.
 
 ## Directory
 

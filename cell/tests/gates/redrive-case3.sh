@@ -28,4 +28,13 @@ comp3=$(cat "$tmp/out3/compensation.json")
 stale3=$(cat "$tmp/out3/stale.json")
 if ! echo "$comp3" | grep -q "ALREADY_SENT"; then echo "FAIL redrive-case3: ALREADY_SENT not in compensation: $comp3"; exit 1; fi
 if echo "$stale3" | grep -q "def123"; then echo "FAIL redrive-case3: ALREADY_SENT should not be stale: $stale3"; exit 1; fi
-echo "PASS redrive-case3: new->stale, changed->stale, ALREADY_SENT->compensation"
+# A changed product compensates when its superseded (old) digest crossed the boundary.
+cat > "$tmp/in4.json" << 'JSON'
+{"manifests": {"a": "new123abc456abc1"}, "prior": {"a": "old123abc456abc1"}, "prior_sent": ["old123abc456abc1"]}
+JSON
+python3 "$CELL/run.py" run "$CELL/system/redrive.cell.yaml" --inputs "$tmp/in4.json" --out "$tmp/out4" > /dev/null
+comp4=$(cat "$tmp/out4/compensation.json")
+stale4=$(cat "$tmp/out4/stale.json")
+if ! echo "$comp4" | grep -q "diff_superseded_product"; then echo "FAIL redrive-case3: superseded sent product lacks compensation action: $comp4"; exit 1; fi
+if echo "$stale4" | grep -q "new123"; then echo "FAIL redrive-case3: changed ALREADY_SENT product should never refire: $stale4"; exit 1; fi
+echo "PASS redrive-case3: new->stale, changed->stale, ALREADY_SENT->wireable compensation"

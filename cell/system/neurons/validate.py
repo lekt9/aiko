@@ -58,8 +58,15 @@ def run(inputs, ctx):
     data = inputs.get("data")
     if data is None:
         raise ValueError("validate: missing inputs.data")
-    path = data.get("_source_path","<root>")
-    errs = validate_cell(data, path)
+    path = data.get("_source_path", "<root>")
+    clean = {k: v for k, v in data.items() if k != "_source_path"}
+    # The public builder and runner share the complete typed-graph validator.
+    import importlib.util, pathlib
+    runtime_path = pathlib.Path(__file__).resolve().parents[2] / "run.py"
+    module_spec = importlib.util.spec_from_file_location("cell_runtime", runtime_path)
+    runtime = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(runtime)
+    errs = runtime.validate_graph(pathlib.Path(path), clean)
     if errs:
         raise ValueError("\n".join(errs))
     return {"data": data}

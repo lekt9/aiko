@@ -57,9 +57,20 @@ await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
 let browser;
 try {
-  const executablePath = process.env.AIKO_CHROME
-    ?? execFileSync('sh', ['-c', 'command -v google-chrome || command -v chromium || command -v chromium-browser'], { encoding: 'utf8' }).trim();
-  browser = await chromium.launch({ executablePath });
+  let executablePath = process.env.AIKO_CHROME;
+  if (!executablePath) {
+    try {
+      executablePath = execFileSync(
+        'sh',
+        ['-c', 'command -v google-chrome || command -v chromium || command -v chromium-browser'],
+        { encoding: 'utf8' },
+      ).trim();
+    } catch {
+      // Playwright's pinned browser is the reproducible CI fallback; a system
+      // browser is an optional override, not a prerequisite for the witness.
+    }
+  }
+  browser = await chromium.launch(executablePath ? { executablePath } : {});
   const page = await browser.newPage();
   await page.goto(`${origin}/console`, { waitUntil: 'domcontentloaded' });
   if ((await page.title()) !== 'Aiko Console') throw new Error('console title missing');

@@ -8,7 +8,7 @@ Each folder is a runnable `*.cell.yaml` that implements one rung of the Prompt -
 | **Context** | `context-cell/` | `retrieve` (query->hits, re-rank top-k) + `curate` (all_tools->allowed_tools) + `answer` (ctx+tools+query->answer). Wiring is context. |
 | **Harness** | `system/` + `docs/` | `caps`/`policy`/`out/`/`skills/`, builder that builds itself. |
 | **Loop** | `loop-cell/` | `python` loop inside a leaf (`for _ in range(max): ... if done: break`) — no spec syntax, raw Python bounded `for`. |
-| **Graph** | `graph-cell/` | Router -> parallel workers -> reduce -> human approval. Pipeline, router, fan-out->reduce, orchestrator-workers — all via `wiring:` |
+| **Graph** | `graph-cell/` | Router -> topologically independent workers (serialized by the current runtime) -> reduce -> human approval. Pipeline, router, fan-out->reduce, orchestrator-workers — all via `wiring:` |
 | **Input** | `input-sources/` | `poll` / `webhook` / `hook` / `cas-read` — input nodes are cells, Merkle identifies moves. |
 | **Video** | `video/` | `prompt -> fal-generate -> poll -> cas` (mock without `FAL_KEY`). |
 | **Reactive** | `reactive-cell/` | `check` (manifests → changed) → `system/redrive` (→ stale vs compensation). Merkle identifies changes, organelle causes the reaction — not spec. |

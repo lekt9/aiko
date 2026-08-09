@@ -54,7 +54,7 @@ membrane:
 * Ports are typed by JSON Schema draft 2020-12. Runtime validates inputs before firing, outputs after.
 * `render` is the **visual membrane** — an optional [json-render.dev](https://json-render.dev) spec attached to the port's schema. One schema → one default view (type: `array` → table, `object` with `required` → form, etc), overridden by `render` when present.
 * A Notion block is just a `Cell = membrane + (run|organelles+wiring)` whose `<port>.render` decides the block's UI. The dashboard is the DAG; the generative UI is the membrane's render.
-* Caps are an allowlist. No ambient authority. Uncapped effect is refused before it runs.
+* Caps declare intended authority for admission and audit. Today only `http` `allow_net` is mechanically checked; Python and exec leaves are not sandboxed, so their `allow_write`, `allow_spawn`, and network declarations do not confine ambient host authority.
 * Every firing gets a scratch `inputs/` + `outputs/` + `out/` directory. Leaves read only `inputs/<port>.json`.
 
 ### 2.2 `run` — one membrane, three executors
@@ -128,11 +128,12 @@ wiring:
 
 Rules:
 
-* DAG only. Cycles are refused at `cell build`.
-* Every membrane input wired to >=1 organelle input (or `unused: true`).
-* Every membrane output wired from exactly one organelle output.
-* Fan-out `one->many` allowed. Fan-in requires an explicit `reduce` organelle — no implicit merge.
-* An organelle sees only its wired inputs and its own caps.
+* DAG only. Cycles and recursive cell inclusion are refused at `cell build` and again before `run`.
+* Wiring endpoints are strict `<node>.<port>` references. Sources may only be membrane inputs or declared organelle outputs; targets may only be declared organelle inputs or membrane outputs. Unknown nodes, unknown ports, reversed directions, and undeclared runtime inputs/outputs are refused.
+* Every required membrane input is wired to >=1 organelle input (or explicitly `unused: true`). Optional membrane inputs may be unwired. Every required organelle input has exactly one source.
+* Every membrane output is wired from exactly one source.
+* Fan-out `one->many` is allowed. Fan-in requires an explicit `reduce` organelle — no implicit merge.
+* An organelle receives only its wired input values and its own caps declaration. Python and exec code can still reach ambient host resources; do not treat that declaration as confinement.
 
 ---
 
@@ -149,9 +150,9 @@ python run.py run system/builder.cell.yaml --inputs '{"root":"system/builder.cel
 ```
 
 * `build` delegates to `system/builder.cell.yaml` (parse | validate | emit). No second code path — the builder is a DAG like any other.
-* `run` topologically sorts organelles, fires leaves in order, validates outputs, propagates via wiring. Composites delegate — they have no code.
+* `run` uses deterministic Kahn frontiers and fires every member of a frontier serially in lexical node order. In particular, Python siblings never run concurrently: their lack of effects is not mechanically established by `caps`. This conservative boundary remains until executor confinement is portable and witnessed. Composites delegate — they have no code.
 * `check` = `run` + schema validation + double-fire determinism check (see §4).
-* Fail-closed: first leaf failure aborts the firing and names the violated port or cap.
+* Fail-closed for graph, port, leaf, HTTP network-cap, output, and provenance-write failures: the first observed failure aborts the firing and names the violation. Python/exec effect declarations are audit metadata, not mechanically enforced capabilities. A result without its manifest is never success.
 
 Zig is only the runtime: `zig build && ./zig-out/bin/cell build ...` same semantics, no second builder.
 
@@ -189,9 +190,9 @@ They are part of the spec in the way `string` is: frozen I/O, ordinary implement
 
 Schemas: `primitives/schemas/session.v1.json`, `response.v1.json`. Implementations: `primitives/neurons/*.py` (plain `def run(inputs, ctx)`), kept small and rewriteable — if a target API needs HMAC signing or OAuth, add one function to `request.py` and rerun (same self-heal as `helpers.py`).
 
-Every `run` and `run_composite` emits `out/manifest.json` — `{cell, inputs{port->digest}, outputs{port->digest}, evidence[{port,digest}], produced_by}`. Parent digest hashes child digests + wiring: that's the Merkle. Re-running with same inputs produces same manifest (cache hit). Large blobs go via `primitives/cas` (`.cell-cas/`), not manifests.
+Every `run` and `run_composite` atomically emits `out/manifest.json` — `{cell, inputs{port->digest}, outputs{port->digest}, evidence[{port,digest}], children{name->{cell,digest,produced_by}}, produced_by, digest}`. `cell` pins the canonical declaration, executable entry bytes, and all descendant definition digests; the parent manifest pins canonical child manifests plus wiring. This is the Merkle provenance root. Re-running the same deterministic graph with the same inputs produces the same manifest. Large blobs go via `primitives/cas` (`.cell-cas/`), not manifests.
 
-`system/redrive` is an **organelle**, not substrate: feed it `manifests + prior` -> `{stale[], compensation[]}`. Stale means refire; `ALREADY_SENT` means diff, never refire (case 3). Evidence grounding is a **confirmation cell** (`patterns/confirm/confirm.cell.yaml`: `claim + evidence -> confirmed + diff`), encouraged where external effects matter, not enforced in substrate.
+`system/redrive` is an **organelle**, not substrate: feed its declared membrane `manifests + prior + prior_sent?` -> `{stale[], compensation[]}`. `prior_sent` is the durable digest set read back from the effect boundary. Stale means refire; a stale digest already present in `prior_sent` becomes an `ALREADY_SENT` compensation obligation and is removed from `stale` — case 3 is wireable and is never re-fired. Evidence grounding is a **confirmation cell** (`patterns/confirm/confirm.cell.yaml`: `claim + evidence -> confirmed + diff`), encouraged where external effects matter, not enforced in substrate.
 
 Primitives compose natively:
 
@@ -277,5 +278,5 @@ No `loop` in policy — loops are patterns (python loops), not spec. No ledger, 
 
 * Imperative steps. Edges are typed ports.
 * A prompt harness. Prompts are `kind: python` leaves — no special field.
-* Infra. `caps` scopes effects; it doesn't provision them.
+* Infra. `caps` declares intended effects; except for HTTP host checks, it neither confines nor provisions them.
 * A second orchestrator. Loops and graphs are wiring + Python, not scheduler syntax.

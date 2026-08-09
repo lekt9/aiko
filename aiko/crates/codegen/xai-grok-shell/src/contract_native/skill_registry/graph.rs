@@ -594,12 +594,7 @@ mod tests {
         let discoveries = planned
             .children
             .iter()
-            .filter(|child| {
-                child
-                    .get("discovery")
-                    .and_then(Value::as_object)
-                    .is_some()
-            })
+            .filter(|child| child.get("discovery").and_then(Value::as_object).is_some())
             .collect::<Vec<_>>();
         assert_eq!(discoveries.len(), 2);
 
@@ -615,11 +610,13 @@ mod tests {
         assert_eq!(skill_node["discovery"]["schema"], DISCOVERY_SCHEMA);
         assert_eq!(skill_node["discovery"]["auto_install"], false);
         let artifact = skill_node["discovery"]["artifact"].as_str().unwrap();
-        assert!(skill_node["writes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|scope| scope == artifact));
+        assert!(
+            skill_node["writes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|scope| scope == artifact)
+        );
 
         let research_node = discoveries
             .iter()
@@ -636,17 +633,27 @@ mod tests {
             .find(|child| child["key"] == "test-discovery-limb--build")
             .unwrap();
         let dependencies = consumer["depends_on"].as_array().unwrap();
-        assert!(dependencies.iter().any(|dependency| dependency == skill_key));
-        assert!(dependencies
-            .iter()
-            .any(|dependency| dependency == research_key));
+        assert!(
+            dependencies
+                .iter()
+                .any(|dependency| dependency == skill_key)
+        );
+        assert!(
+            dependencies
+                .iter()
+                .any(|dependency| dependency == research_key)
+        );
         let bindings = consumer["input_bindings"].as_object().unwrap();
-        assert!(bindings
-            .values()
-            .any(|source| source == &format!("{skill_key}.artifact")));
-        assert!(bindings
-            .values()
-            .any(|source| source == &format!("{research_key}.artifact")));
+        assert!(
+            bindings
+                .values()
+                .any(|source| source == &format!("{skill_key}.artifact"))
+        );
+        assert!(
+            bindings
+                .values()
+                .any(|source| source == &format!("{research_key}.artifact"))
+        );
     }
 
     #[test]

@@ -35,7 +35,7 @@ cell/
 
 ## Execution
 
-`run.py build <root>` delegates to `system/builder.cell.yaml` — no second code path. `run` fires leaves depth-first in topo order; composites delegate, they have no code. `check` = `run` + schema validation + double-fire determinism. Fail-closed: first violated port or cap aborts the firing.
+`run.py build <root>` delegates to `system/builder.cell.yaml` — no second code path. `run` builds topological Kahn frontiers and fires every sibling serially in lexical order; composites delegate, they have no code. Only a mechanically confined and witnessed kind may ever parallelize. Python/exec caps are audit metadata, not confinement; only HTTP target hosts are mechanically checked against `allow_net`. `check` = `run` + schema validation + double-fire determinism. Fail closed on the first graph, port, leaf, HTTP-host, output, or provenance failure observed by the runtime.
 
 Zig is only the runtime: `zig build && ./zig-out/bin/cell build <root>` — same semantics, validation only.
 
@@ -47,4 +47,4 @@ Biology's fractal unit — membrane, organelles, mitosis. Tissue *is* cells, org
 
 - Imperative steps. Edges are typed ports.
 - A prompt harness. Prompts are `python` leaves if you want them.
-- Infra. `caps` scopes effects; it doesn't provision them.
+- Infra. `caps` declares intended effects; except for HTTP host checks, it neither confines nor provisions them.

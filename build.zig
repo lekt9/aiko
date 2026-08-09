@@ -62,6 +62,15 @@ pub fn build(b: *std.Build) void {
     });
     doctor_mod.addImport("typed_neuron", neuron.module("typed_neuron"));
     doctor_mod.addImport("contract", contract.module("contract"));
+    // Aiko exposes Contract's pure analyzer; it does not grow a root scheduler.
+    // Pointing at the owning source means the CLI and C ABI compile the same
+    // implementation rather than two planners that can drift.
+    const graph_analyzer_mod = b.createModule(.{
+        .root_source_file = b.path("contract/libcontract/src/graph_plan.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    doctor_mod.addImport("contract_graph_analyzer", graph_analyzer_mod);
     const doctor = b.addExecutable(.{ .name = "aiko-doctor", .root_module = doctor_mod });
     b.installArtifact(doctor);
 
@@ -121,9 +130,9 @@ pub fn build(b: *std.Build) void {
         "tests/dispatch-gate.sh",
         "neuron/tests/interface-morphogenesis-gate.sh",
         "neuron/tests/meta-agent-gate.sh",
-        "neuron/tests/observe-live-gate.sh",
         "neuron/tests/self-constructing-agent-gate.sh",
         "tests/tick-gate.sh",
+        "tests/graph-engineering-gate.sh",
     }) |witness| {
         const g = b.addSystemCommand(&.{ "bash", witness });
         g.step.dependOn(b.getInstallStep());

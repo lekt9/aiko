@@ -29,7 +29,7 @@ Run commands from the repository root:
 cargo run -p xai-grok-pager-bin
 scripts/contract-runtime.sh build-aiko-only
 
-# Build/package the Aiko binary, Contract ABI 12 runtime, skills, and SDK
+# Build/package the Aiko binary, Contract ABI 13 runtime, skills, and SDK
 scripts/contract-runtime.sh build-aiko
 
 # Start with the narrowest relevant test

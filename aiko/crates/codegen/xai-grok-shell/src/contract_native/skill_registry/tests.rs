@@ -212,7 +212,7 @@ fn native_node_execution_runs_the_meta_agent_fixed_point_without_opaque_agent() 
         }
     }
 
-    let native = NativeContract::load().expect("load Contract ABI 12");
+    let native = NativeContract::load().expect("load Contract ABI 13");
     assert_eq!(native.abi_version, 12);
     assert!(native.skill_node_claim.is_some());
     assert!(native.skill_node_settle.is_some());

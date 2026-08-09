@@ -8,6 +8,7 @@ spec:
     inputs:
       manifests: { schema: object }
       prior: { schema: object, required: false }
+      prior_sent: { schema: array, required: false }
     outputs:
       stale: { schema: array }
       compensation: { schema: array }

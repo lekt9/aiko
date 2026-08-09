@@ -149,6 +149,10 @@ pub async fn serve(
             "/cli/jobs/{id}",
             axum::routing::get(crate::console::cli_job),
         )
+        .route(
+            "/cli/jobs/{id}/cancel",
+            axum::routing::post(crate::console::cli_job_cancel),
+        )
         .fallback(static_file)
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -481,15 +485,26 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("index.html"), "<html>aiko spa</html>").unwrap();
         std::fs::write(dir.path().join("app.js"), "console.log(1)").unwrap();
+        let fake_cli = dir.path().join("fake-aiko");
+        std::fs::write(
+            &fake_cli,
+            r#"#!/bin/sh
+if [ "$1" = login ]; then echo 'Visit https://aiko.example/device'; echo 'User code: TEST-CODE'; sleep 30; else echo "$@"; fi
+"#,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake_cli, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
         let addr = serve(
             Some(dir.path().to_path_buf()),
             "127.0.0.1:0".parse().unwrap(),
             // A port that must not be listening: the proxy has to fail closed
             // with 502, never fabricate a body.
             "http://127.0.0.1:1".to_string(),
-            // The CLI job runner execs argv directly; echo makes that visible
-            // without needing a real aiko binary in the test environment.
-            "/bin/echo".to_string(),
+            fake_cli.to_string_lossy().into_owned(),
         )
         .await
         .expect("bind ephemeral port");
@@ -609,6 +624,48 @@ mod tests {
         }
         assert!(done, "job never completed");
         assert!(output.contains("version"), "echoed argv missing: {output}");
+
+        // Long-running fixed jobs have a real stop path; cancellation kills the
+        // child and settles only after the process has exited.
+        let login: serde_json::Value = client
+            .post(format!("{base}/cli/run"))
+            .json(&serde_json::json!({"verb": "login"}))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let login_id = login["id"].as_u64().unwrap();
+        let cancel = client
+            .post(format!("{base}/cli/jobs/{login_id}/cancel"))
+            .send()
+            .await
+            .expect("POST cancel");
+        assert_eq!(cancel.status(), 200);
+        let mut cancelled = false;
+        for _ in 0..50 {
+            let job: serde_json::Value = client
+                .get(format!("{base}/cli/jobs/{login_id}"))
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            if job["done"].as_bool().unwrap_or(false) {
+                cancelled = job["cancelled"].as_bool().unwrap_or(false);
+                assert!(
+                    job["output"]
+                        .as_str()
+                        .unwrap_or("")
+                        .contains("cancelled by user")
+                );
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(cancelled, "cancelled job never settled");
 
         // Unknown verbs are refused: the catalog is the whole surface.
         let unknown = client

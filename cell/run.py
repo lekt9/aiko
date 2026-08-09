@@ -27,17 +27,78 @@ def _write_cas(cas_dir: pathlib.Path, data: bytes) -> str:
         p.write_bytes(data)
     return h
 
-def _manifest_entry(cell_path: pathlib.Path, inputs: dict, outputs: dict, wiring: list) -> dict:
-    # thin merkle: hash of canonical cell + input digests + output digests
-    def _h(v): return _cas_hash(json.dumps(v, sort_keys=True, ensure_ascii=False).encode())[:16]
-    return {
-        "cell": _h({"path": str(cell_path), "wiring": wiring}),
-        "cell_path": str(cell_path),
-        "inputs": {k: _h(v) for k,v in inputs.items()},
-        "outputs": {k: _h(v) for k,v in outputs.items()},
-        "evidence": [{"port": k, "digest": _h(v)} for k,v in inputs.items()],
-        "produced_by": _h({"inputs": inputs, "wiring": wiring}),
+def _canonical_bytes(value: object) -> bytes:
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+def _digest(value: object) -> str:
+    return _cas_hash(_canonical_bytes(value))
+
+def _atomic_json(path: pathlib.Path, value: object) -> None:
+    """A firing without its provenance is a failed firing, never a success."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(value, sort_keys=True, ensure_ascii=False, indent=2) + "\n"
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+def _code_sources(cell_path: pathlib.Path, data: dict) -> dict[str, str]:
+    run = (data.get("spec") or {}).get("run") or {}
+    refs: list[str] = []
+    if run.get("kind") == "python" and isinstance(run.get("entry"), str):
+        refs.append(run["entry"])
+    if run.get("kind", "exec") == "exec" and isinstance(run.get("command"), list):
+        refs.extend(x for x in run["command"] if isinstance(x, str))
+    sources: dict[str, str] = {}
+    for ref in refs:
+        p = pathlib.Path(ref)
+        if not p.is_absolute():
+            p = cell_path.resolve().parent / p
+        if p.is_file():
+            sources[ref] = _cas_hash(p.read_bytes())
+    return sources
+
+def _cell_definition_digest(cell_path: pathlib.Path, data: dict, stack: set[str] | None = None) -> str:
+    """Pin declaration, executable bytes, and all descendant definitions."""
+    stack = set() if stack is None else set(stack)
+    key = str(cell_path.resolve()) if cell_path.exists() else f"inline:{id(data)}"
+    if key in stack:
+        raise ValueError(f"recursive cell inclusion at {cell_path}")
+    stack.add(key)
+    clean = {k: v for k, v in data.items() if k != "_source_path"}
+    children: list[dict] = []
+    for org in ((clean.get("spec") or {}).get("organelles") or []):
+        name = org["name"]
+        if "cell" in org:
+            child_path = (cell_path.parent / org["cell"]).resolve()
+            child_data = load_cell(child_path)
+        else:
+            child_path = cell_path
+            child_data = org["cellInline"]
+        children.append({"name": name, "digest": _cell_definition_digest(child_path, child_data, stack)})
+    return _digest({"definition": clean, "code": _code_sources(cell_path, clean), "children": children})
+
+def _manifest_entry(cell_path: pathlib.Path, data: dict, inputs: dict, outputs: dict,
+                    wiring: list, children: dict[str, dict] | None = None) -> dict:
+    child_refs = {
+        name: {k: manifest[k] for k in ("cell", "digest", "produced_by") if k in manifest}
+        for name, manifest in sorted((children or {}).items())
     }
+    cell = _cell_definition_digest(cell_path, data)
+    inputs_h = {k: _digest(v) for k, v in sorted(inputs.items())}
+    outputs_h = {k: _digest(v) for k, v in sorted(outputs.items())}
+    base = {
+        "cell": cell,
+        "cell_path": str(cell_path),
+        "inputs": inputs_h,
+        "outputs": outputs_h,
+        "evidence": [{"port": k, "digest": inputs_h[k]} for k in sorted(inputs_h)],
+        "children": child_refs,
+        "produced_by": _digest({"cell": cell, "inputs": inputs_h, "wiring": wiring, "children": child_refs}),
+    }
+    return {**base, "digest": _digest(base)}
 def load_cell(path: pathlib.Path) -> dict:
     text = path.read_text(encoding="utf-8")
     if path.suffix in (".yaml", ".yml") or ".cell.yaml" in path.name or "{{" in text[:200]:
@@ -71,6 +132,19 @@ def validate_cell(data: dict, path: str = "<root>") -> list[str]:
     membrane = spec.get("membrane")
     if not isinstance(membrane, dict):
         errs.append(f"{path}: spec.membrane is required")
+    else:
+        for direction in ("inputs", "outputs"):
+            ports = membrane.get(direction, {})
+            if not isinstance(ports, dict):
+                errs.append(f"{path}: membrane.{direction} must be a mapping")
+                continue
+            for port, declaration in ports.items():
+                if not re.fullmatch(r"[A-Za-z0-9_-]+", str(port)):
+                    errs.append(f"{path}: invalid {direction} port name {port!r}")
+                if not isinstance(declaration, dict) or "schema" not in declaration:
+                    errs.append(f"{path}: membrane.{direction}.{port} requires schema")
+        if "caps" in membrane and not isinstance(membrane.get("caps"), dict):
+            errs.append(f"{path}: membrane.caps must be a mapping")
     has_run = "run" in spec
     has_orgs = "organelles" in spec
     if has_run == has_orgs:
@@ -105,6 +179,112 @@ def validate_cell(data: dict, path: str = "<root>") -> list[str]:
                 if not isinstance(w_, dict) or "from" not in w_ or "to" not in w_:
                     errs.append(f"{path}: wiring[{i}] requires from/to")
     return errs
+def _port_map(data: dict, direction: str) -> dict:
+    value = (((data.get("spec") or {}).get("membrane") or {}).get(direction) or {})
+    return value if isinstance(value, dict) else {}
+
+def validate_graph(root_path: pathlib.Path, data: dict, stack: set[str] | None = None) -> list[str]:
+    """Validate the complete typed graph. Runtime never guesses a port or edge."""
+    errs = validate_cell(data, str(root_path))
+    if errs or "organelles" not in (data.get("spec") or {}):
+        return errs
+    stack = set() if stack is None else set(stack)
+    key = str(root_path.resolve()) if root_path.exists() else f"inline:{id(data)}"
+    if key in stack:
+        return errs + [f"{root_path}: recursive cell inclusion"]
+    stack.add(key)
+    spec = data["spec"]
+    org_data: dict[str, tuple[pathlib.Path, dict]] = {}
+    for i, org in enumerate(spec.get("organelles") or []):
+        if not isinstance(org, dict) or not isinstance(org.get("name"), str) or not org["name"]:
+            errs.append(f"{root_path}: organelles[{i}] requires a non-empty name")
+            continue
+        name = org["name"]
+        if ("cell" in org) == ("cellInline" in org):
+            errs.append(f"{root_path}: organelle {name!r} requires exactly one of cell|cellInline")
+            continue
+        try:
+            if "cell" in org:
+                if not isinstance(org["cell"], str):
+                    raise TypeError("cell must be a path string")
+                child_path = (root_path.parent / org["cell"]).resolve()
+                child_data = load_cell(child_path)
+            else:
+                child_path = root_path
+                child_data = org["cellInline"]
+                if not isinstance(child_data, dict):
+                    raise TypeError("cellInline must be a mapping")
+            org_data[name] = (child_path, child_data)
+            errs.extend(validate_graph(child_path, child_data, stack))
+        except Exception as exc:
+            errs.append(f"{root_path}: organelle {name!r}: {exc}")
+    root_in, root_out = _port_map(data, "inputs"), _port_map(data, "outputs")
+    incoming: dict[str, int] = {}
+    root_uses: dict[str, int] = {}
+    for i, edge in enumerate(spec.get("wiring") or []):
+        if not isinstance(edge, dict) or not isinstance(edge.get("from"), str) or not isinstance(edge.get("to"), str):
+            continue  # shape error already reported by validate_cell
+        src, dst = edge["from"], edge["to"]
+        if src.count(".") != 1 or dst.count(".") != 1:
+            errs.append(f"{root_path}: wiring[{i}] endpoints must be <node>.<port>: {src!r} -> {dst!r}")
+            continue
+        sn, sp = src.split(".", 1); dn, dp = dst.split(".", 1)
+        if sn == "membrane":
+            if sp not in root_in:
+                errs.append(f"{root_path}: wiring[{i}] unknown membrane input {sp!r}")
+            else:
+                root_uses[sp] = root_uses.get(sp, 0) + 1
+        elif sn not in org_data:
+            errs.append(f"{root_path}: wiring[{i}] unknown source organelle {sn!r}")
+        elif sp not in _port_map(org_data[sn][1], "outputs"):
+            errs.append(f"{root_path}: wiring[{i}] unknown output port {src!r}")
+        if dn == "membrane":
+            if dp not in root_out:
+                errs.append(f"{root_path}: wiring[{i}] unknown membrane output {dp!r}")
+        elif dn not in org_data:
+            errs.append(f"{root_path}: wiring[{i}] unknown target organelle {dn!r}")
+        elif dp not in _port_map(org_data[dn][1], "inputs"):
+            errs.append(f"{root_path}: wiring[{i}] unknown input port {dst!r}")
+        incoming[dst] = incoming.get(dst, 0) + 1
+    for port, decl in root_in.items():
+        required = not isinstance(decl, dict) or decl.get("required", True) is not False
+        unused = isinstance(decl, dict) and decl.get("unused") is True
+        if required and not unused and root_uses.get(port, 0) == 0:
+            errs.append(f"{root_path}: required membrane input {port!r} is not wired")
+    for port in root_out:
+        n = incoming.get(f"membrane.{port}", 0)
+        if n != 1:
+            errs.append(f"{root_path}: membrane output {port!r} requires exactly one producer, got {n}")
+    for name, (_, child) in org_data.items():
+        for port, decl in _port_map(child, "inputs").items():
+            n = incoming.get(f"{name}.{port}", 0)
+            required = not isinstance(decl, dict) or decl.get("required", True) is not False
+            if required and n != 1:
+                errs.append(f"{root_path}: required input {name}.{port} requires exactly one source, got {n}")
+            elif not required and n > 1:
+                errs.append(f"{root_path}: optional input {name}.{port} has fan-in {n}; use an explicit reducer")
+    # Kahn validation is based only on valid child-to-child data edges.
+    indeg = {n: 0 for n in org_data}; adj = {n: [] for n in org_data}
+    for edge in spec.get("wiring") or []:
+        if not isinstance(edge, dict): continue
+        src, dst = edge.get("from", ""), edge.get("to", "")
+        if isinstance(src, str) and isinstance(dst, str) and "." in src and "." in dst:
+            sn, dn = src.split(".", 1)[0], dst.split(".", 1)[0]
+            if sn in org_data and dn in org_data:
+                adj[sn].append(dn); indeg[dn] += 1
+    frontier = sorted(n for n, degree in indeg.items() if degree == 0); seen_count = 0
+    while frontier:
+        current, frontier = frontier, []
+        seen_count += len(current)
+        for name in current:
+            for nxt in sorted(adj[name]):
+                indeg[nxt] -= 1
+                if indeg[nxt] == 0: frontier.append(nxt)
+        frontier.sort()
+    if seen_count != len(org_data):
+        errs.append(f"{root_path}: cycle detected in wiring")
+    return errs
+
 def resolve_organelles(root_path: pathlib.Path, data: dict, depth: int = 0, seen: set[str] | None = None) -> dict:
     if seen is None:
         seen = set()
@@ -212,12 +392,11 @@ def fire_leaf(data: dict, inputs: dict, workdir: pathlib.Path, cell_file: pathli
         url = render(url_tmpl, inputs)
         headers = render(headers_tmpl, inputs) if isinstance(headers_tmpl, dict) else {}
         body = render(body_tmpl, inputs) if body_tmpl is not None else None
-        if allow_net is not None and allow_net != []:
-            from urllib.parse import urlparse
-            host = urlparse(str(url)).hostname or ""
-            allowed = any(host == h or host.endswith("." + h) for h in allow_net)
-            if not allowed:
-                raise PermissionError(f"net denied: {host!r} not in allow_net {allow_net}")
+        from urllib.parse import urlparse
+        host = urlparse(str(url)).hostname or ""
+        allowed = any(host == h or host.endswith("." + h) for h in allow_net)
+        if not allowed:
+            raise PermissionError(f"net denied: {host!r} not in allow_net {allow_net}")
         resp = helpers.http_request(str(method), str(url), headers=dict(headers) if isinstance(headers, dict) else {}, body=body, timeout_ms=http_spec.get("timeout_ms", 10000))
         if len(outputs_spec) == 1:
             port = next(iter(outputs_spec))
@@ -248,124 +427,133 @@ def fire_leaf(data: dict, inputs: dict, workdir: pathlib.Path, cell_file: pathli
             return out
     else:
         raise ValueError(f"unknown run.kind {kind!r}")
+def _declared_inputs(data: dict, inputs: dict, where: str) -> None:
+    ports = _port_map(data, "inputs")
+    extra = sorted(set(inputs) - set(ports))
+    if extra:
+        raise ValueError(f"{where}: undeclared input ports: {', '.join(extra)}")
+    missing = []
+    for port, decl in ports.items():
+        required = not isinstance(decl, dict) or decl.get("required", True) is not False
+        if required and port not in inputs:
+            missing.append(port)
+    if missing:
+        raise ValueError(f"{where}: missing required input ports: {', '.join(missing)}")
+
+def _declared_outputs(data: dict, outputs: dict, where: str) -> None:
+    ports = _port_map(data, "outputs")
+    missing, extra = sorted(set(ports) - set(outputs)), sorted(set(outputs) - set(ports))
+    if missing or extra:
+        raise ValueError(f"{where}: output port mismatch; missing={missing}, undeclared={extra}")
+
+def _validate_port_values(data: dict, values: dict, direction: str, cell_path: pathlib.Path) -> None:
+    import helpers  # type: ignore
+    primitive_types = {
+        "string": str, "object": dict, "array": list, "integer": int,
+        "number": (int, float), "boolean": bool, "null": type(None),
+    }
+    for port, value in values.items():
+        declaration = _port_map(data, direction).get(port) or {}
+        schema = declaration.get("schema") if isinstance(declaration, dict) else declaration
+        if schema in primitive_types:
+            expected = primitive_types[schema]
+            # bool is an int in Python but is not a JSON integer/number here.
+            valid = isinstance(value, expected) and not (schema in ("integer", "number") and isinstance(value, bool))
+            if not valid:
+                raise TypeError(f"{cell_path}: {direction} port {port!r} expected {schema}, got {type(value).__name__}")
+        elif schema:
+            resolved = schema
+            if isinstance(schema, str) and not pathlib.Path(schema).is_absolute():
+                resolved = str((cell_path.resolve().parent / schema).resolve())
+            helpers.validate(value, resolved)
+
 def run_composite(root_path: pathlib.Path, inputs: dict, out_base: pathlib.Path) -> dict:
     data = load_cell(root_path)
+    errs = validate_graph(root_path, data)
+    if errs:
+        raise ValueError("\n".join(errs))
+    _declared_inputs(data, inputs, str(root_path))
     spec = data["spec"]
     orgs: list[dict] = spec.get("organelles", []) or []
     wiring: list[dict] = spec.get("wiring", []) or []
     org_map: dict[str, tuple[pathlib.Path, dict]] = {}
-    for o in orgs:
-        name = o["name"]
-        if "cell" in o:
-            p = (root_path.parent / o["cell"]).resolve()
-            org_map[name] = (p, load_cell(p))
+    for org in orgs:
+        name = org["name"]
+        if "cell" in org:
+            path = (root_path.parent / org["cell"]).resolve()
+            org_map[name] = (path, load_cell(path))
         else:
-            inline_name = f"<inline:{name}>"
-            org_map[name] = (pathlib.Path(inline_name), o["cellInline"])
-    indeg: dict[str, int] = {o["name"]: 0 for o in orgs}
-    adj: dict[str, list[str]] = {o["name"]: [] for o in orgs}
-    membrane_out_source: dict[str, str] = {}
-    for w_ in wiring:
-        src = w_["from"]
-        dst = w_["to"]
-        if src.startswith("membrane.") and dst.startswith("membrane."):
-            continue
-        if src.startswith("membrane."):
-            continue
-        if dst.startswith("membrane."):
-            port = dst.split(".", 1)[1]
-            org_name = src.split(".")[0]
-            membrane_out_source[port] = org_name
-            continue
-        s_org = src.split(".")[0]
-        d_org = dst.split(".")[0]
-        if s_org in adj and d_org in indeg:
-            adj[s_org].append(d_org)
-            indeg[d_org] += 1
-    queue = [n for n, d in indeg.items() if d == 0]
-    order: list[str] = []
-    while queue:
-        n = queue.pop(0)
-        order.append(n)
-        for nb in adj.get(n, []):
-            indeg[nb] -= 1
-            if indeg[nb] == 0:
-                queue.append(nb)
-    if len(order) != len(orgs):
-        raise ValueError("cycle detected in wiring (or missing edge)")
+            # Inline code resolves relative to its containing cell.
+            org_map[name] = (root_path, org["cellInline"])
+    indeg = {name: 0 for name in org_map}; adj = {name: [] for name in org_map}
+    for edge in wiring:
+        sn, dn = edge["from"].split(".", 1)[0], edge["to"].split(".", 1)[0]
+        if sn in org_map and dn in org_map:
+            adj[sn].append(dn); indeg[dn] += 1
+    frontiers: list[list[str]] = []
+    frontier = sorted(name for name, degree in indeg.items() if degree == 0)
+    while frontier:
+        frontiers.append(frontier)
+        nxt: list[str] = []
+        for name in frontier:
+            for target in sorted(adj[name]):
+                indeg[target] -= 1
+                if indeg[target] == 0: nxt.append(target)
+        frontier = sorted(nxt)
+    if sum(map(len, frontiers)) != len(org_map):
+        raise ValueError(f"{root_path}: cycle detected in wiring")
     produced: dict[str, dict] = {}
-    available: dict[str, object] = dict(inputs)
-    def resolve_input(dst: str) -> object:
-        for w_ in wiring:
-            if w_["to"] == dst:
-                src = w_["from"]
-                if src.startswith("membrane."):
-                    port = src.split(".", 1)[1]
-                    if port not in available:
-                        raise KeyError(f"membrane input {port!r} not provided")
-                    return available[port]
-                else:
-                    s_org, s_port = src.split(".", 1)
-                    if s_org not in produced or s_port not in produced[s_org]:
-                        raise KeyError(f"unavailable {src!r} for {dst!r} (order {order})")
-                    return produced[s_org][s_port]
-        raise KeyError(f"no wiring for {dst!r}")
-    for name in order:
-        cell_path, cell_data = org_map[name]
-        membrane_in = (cell_data.get("spec", {}).get("membrane", {}).get("inputs") or {})
-        leaf_inputs: dict = {}
-        for port, spec_ in membrane_in.items():
-            is_required = True
-            if isinstance(spec_, dict):
-                is_required = spec_.get("required", True) is not False
-            try:
-                leaf_inputs[port] = resolve_input(f"{name}.{port}")
-            except KeyError as e:
-                if not is_required:
-                    continue
-                raise
-        is_leaf = "run" in cell_data.get("spec", {})
-        if is_leaf:
-            workdir = out_base / f"_work_{name}"
-            if workdir.exists():
-                shutil.rmtree(workdir)
-            workdir.mkdir(parents=True, exist_ok=True)
-            out = fire_leaf(cell_data, leaf_inputs, workdir, cell_path)
-            produced[name] = out
+    child_manifests: dict[str, dict] = {}
+    def inputs_for(name: str) -> dict:
+        child = org_map[name][1]; values: dict = {}
+        for port, decl in _port_map(child, "inputs").items():
+            matches = [edge["from"] for edge in wiring if edge["to"] == f"{name}.{port}"]
+            if not matches:
+                continue
+            src = matches[0]
+            if src.startswith("membrane."):
+                values[port] = inputs[src.split(".", 1)[1]]
+            else:
+                source_name, source_port = src.split(".", 1)
+                values[port] = produced[source_name][source_port]
+        _declared_inputs(child, values, name)
+        return values
+    def fire_one(name: str, leaf_inputs: dict) -> tuple[str, dict, dict]:
+        cell_path, child = org_map[name]
+        _validate_port_values(child, leaf_inputs, "inputs", cell_path)
+        workdir = out_base / f"_work_{name}"
+        if workdir.exists(): shutil.rmtree(workdir)
+        workdir.mkdir(parents=True, exist_ok=True)
+        if "run" in (child.get("spec") or {}):
+            result = fire_leaf(child, leaf_inputs, workdir, cell_path)
+            _declared_outputs(child, result, name)
+            _validate_port_values(child, result, "outputs", cell_path)
+            manifest = _manifest_entry(cell_path, child, leaf_inputs, result, [])
+            _atomic_json(workdir / "manifest.json", manifest)
         else:
-            sub_out = out_base / f"_work_{name}"
-            if sub_out.exists():
-                shutil.rmtree(sub_out)
-            sub_out.mkdir(parents=True, exist_ok=True)
-            out = run_composite(cell_path, leaf_inputs, sub_out)
-            produced[name] = out
-    membrane_out = (data["spec"].get("membrane", {}).get("outputs") or {})
+            result = run_composite(cell_path, leaf_inputs, workdir)
+            manifest = json.loads((workdir / "manifest.json").read_text(encoding="utf-8"))
+        return name, result, manifest
+    for current in frontiers:
+        prepared = {name: inputs_for(name) for name in current}
+        # Python and exec leaves run with ambient host authority. A caps declaration is
+        # audit metadata, not confinement, so no leaf is mechanically effect-free.
+        # Keep each Kahn frontier lexical and serial until an executor sandbox proves it safe.
+        for name in sorted(current):
+            _, result, manifest = fire_one(name, prepared[name])
+            produced[name] = result; child_manifests[name] = manifest
     final: dict = {}
-    for port in membrane_out:
-        src_org = membrane_out_source.get(port)
-        if src_org is None:
-            for w_ in wiring:
-                if w_["to"] == f"membrane.{port}":
-                    src = w_["from"]
-                    if src.startswith("membrane."):
-                        final[port] = available[src.split(".", 1)[1]]
-                    else:
-                        s_org, s_port = src.split(".", 1)
-                        final[port] = produced[s_org][s_port]
-                    break
-            continue
-        for w_ in wiring:
-            if w_["to"] == f"membrane.{port}" and w_["from"].startswith(src_org + "."):
-                s_port = w_["from"].split(".", 1)[1]
-                final[port] = produced[src_org][s_port]
-                break
-    # Merkle DAG: emit manifest for this composite (1)
-    try:
-        manifest = _manifest_entry(root_path, inputs, final, wiring)
-        (out_base / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        # also write leaf manifests already emitted per workdir; this one covers the composite
-    except Exception:
-        pass
+    for port in _port_map(data, "outputs"):
+        src = next(edge["from"] for edge in wiring if edge["to"] == f"membrane.{port}")
+        if src.startswith("membrane."):
+            final[port] = inputs[src.split(".", 1)[1]]
+        else:
+            source_name, source_port = src.split(".", 1)
+            final[port] = produced[source_name][source_port]
+    _declared_outputs(data, final, str(root_path))
+    _validate_port_values(data, final, "outputs", root_path)
+    manifest = _manifest_entry(root_path, data, inputs, final, wiring, child_manifests)
+    _atomic_json(out_base / "manifest.json", manifest)
     return final
 def cmd_build(root: str) -> int:
     builder = pathlib.Path(__file__).parent / "system" / "builder.cell.yaml"
@@ -401,7 +589,7 @@ def cmd_build(root: str) -> int:
 def cmd_run(root: str, inputs_path: str | None, out: str | None) -> int:
     path = pathlib.Path(root).resolve()
     data = load_cell(path)
-    errs = validate_cell(data, str(path))
+    errs = validate_graph(path, data)
     if errs:
         for e in errs:
             print(f"error: {e}", file=sys.stderr)
@@ -416,6 +604,12 @@ def cmd_run(root: str, inputs_path: str | None, out: str | None) -> int:
                 inputs = raw["inputs"]
             else:
                 inputs = raw if isinstance(raw, dict) else {"value": raw}
+    try:
+        _declared_inputs(data, inputs, str(path))
+        _validate_port_values(data, inputs, "inputs", path)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     out_base = pathlib.Path(out) if out else pathlib.Path("out")
     out_base.mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -439,21 +633,16 @@ def cmd_run(root: str, inputs_path: str | None, out: str | None) -> int:
         if is_leaf:
             tmp = pathlib.Path(tempfile.mkdtemp(prefix="cell_leaf_"))
             result = fire_leaf(data, inputs, tmp, path)
-            for port, schema in (data.get("spec", {}).get("membrane", {}).get("outputs", {}) or {}).items():
-                if port not in result:
-                    print(f"error: leaf missing output {port!r}", file=sys.stderr)
-                    return 1
+            _declared_outputs(data, result, str(path))
+            _validate_port_values(data, result, "outputs", path)
             for k, v in result.items():
-                (out_base / f"{k}.json").write_text(json.dumps(v, ensure_ascii=False, indent=2), encoding="utf-8")
-            try:
-                (out_base / "manifest.json").write_text(json.dumps(_manifest_entry(path, inputs, result, []), indent=2), encoding="utf-8")
-            except Exception:
-                pass
+                _atomic_json(out_base / f"{k}.json", v)
+            _atomic_json(out_base / "manifest.json", _manifest_entry(path, data, inputs, result, []))
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
             result = run_composite(path, inputs, out_base)
             for k, v in result.items():
-                (out_base / f"{k}.json").write_text(json.dumps(v, ensure_ascii=False, indent=2), encoding="utf-8")
+                _atomic_json(out_base / f"{k}.json", v)
             print(json.dumps(result, ensure_ascii=False, indent=2))
     except Exception as e:
         import traceback
@@ -462,11 +651,32 @@ def cmd_run(root: str, inputs_path: str | None, out: str | None) -> int:
         return 1
     return 0
 def cmd_check(root: str, inputs_path: str | None) -> int:
-    rc = cmd_run(root, inputs_path, out=None)
-    if rc != 0:
-        return rc
-    print("check: ok", file=sys.stderr)
-    return 0
+    path = pathlib.Path(root).resolve()
+    data = load_cell(path)
+    policy = (data.get("spec") or {}).get("policy") or {}
+    required = policy.get("determinism") == "required" or "organelles" in (data.get("spec") or {})
+    first = pathlib.Path(tempfile.mkdtemp(prefix="cell_check_a_"))
+    second = pathlib.Path(tempfile.mkdtemp(prefix="cell_check_b_"))
+    try:
+        rc = cmd_run(root, inputs_path, str(first))
+        if rc != 0 or not required:
+            return rc
+        rc = cmd_run(root, inputs_path, str(second))
+        if rc != 0:
+            return rc
+        outputs = _port_map(data, "outputs")
+        mismatched = [port for port in outputs if (first / f"{port}.json").read_bytes() != (second / f"{port}.json").read_bytes()]
+        if mismatched:
+            print(f"error: determinism required but outputs changed: {mismatched}", file=sys.stderr)
+            return 1
+        if (first / "manifest.json").read_bytes() != (second / "manifest.json").read_bytes():
+            print("error: determinism required but provenance manifest changed", file=sys.stderr)
+            return 1
+        print("check: ok", file=sys.stderr)
+        return 0
+    finally:
+        shutil.rmtree(first, ignore_errors=True)
+        shutil.rmtree(second, ignore_errors=True)
 def main() -> None:
     ap = argparse.ArgumentParser(prog="cell")
     sub = ap.add_subparsers(dest="cmd")

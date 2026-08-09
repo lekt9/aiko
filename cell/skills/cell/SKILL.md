@@ -141,7 +141,7 @@ Each is a `*.cell.yaml` you can `build` and `run`. A prompt is a `python` leaf; 
 - `patterns/prompt-cell/` — classify leaf (wording inside digest, no prompt field)
 - `patterns/context-cell/` — retrieve (re-rank top-k) + curate (minimal toolset) + answer
 - `patterns/loop-cell/` — `iterate` leaf (`for _ in range(max): ... if done: break`) — no spec syntax, raw Python bounded `for`
-- `patterns/graph-cell/` — router -> parallel workers -> reduce -> human `kind: http` approval gate
+- `patterns/graph-cell/` — router -> sibling workers -> reduce -> human `kind: http` approval gate (siblings serialize until effect confinement is mechanical)
 - `patterns/api-reveng/` — `session -> auth -> request -> extract` demo using primitives
 
 > Build for deletion: every pattern is an ordinary cell. When the model outgrows it, delete the organelle, not the spec.
@@ -166,8 +166,8 @@ Every `run` emits `out/manifest.json`; parent hash covers children + wiring. Sam
 
 ## Guardrails — read before debugging
 
-- Schemas, DAG, caps, and determinism are enforced — see `docs/constraints.md`.
-- Fail-closed: first violated port or cap aborts the firing and names it.
+- Kahn frontiers are topological readiness, not concurrency authority. Schemas, DAGs, HTTP host caps, and determinism checks are enforced. Only a mechanically confined and witnessed kind may ever parallelize. Python/exec caps are declaration/audit only, so all same-frontier leaves serialize — see `docs/constraints.md`.
+- Fail-closed for observed graph, port, leaf, HTTP host, output, and provenance failures. Python/exec effect declarations are not mechanically enforced capabilities.
 - `policy.determinism: required` leaves are double-fired in `check` — byte mismatch fails. Models belong at edges with `best_effort`.
 
 

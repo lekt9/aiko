@@ -203,7 +203,7 @@ action, evaluator, governor, and development. Governed workflows can bind:
 - atomic, reversible topology-development proposals.
 
 Aiko’s ordinary turn bridge remains non-blocking: it declares the user’s goal
-and records a terminal result through Contract ABI 12. Advanced typed envelopes
+and records a terminal result through Contract ABI 13. Advanced typed envelopes
 and trust policy are additive, so existing ledgers and turns remain compatible.
 Contract’s causal event stream is local and redacted; the standalone Contract
 CLI can inspect it with `events`, `watch`, and `explain` without requesting
@@ -211,7 +211,7 @@ wallet or Keychain access.
 
 ## Canonical Neuron execution
 
-Contract ABI 12 is the durable interpreter for Aiko's typed Skill nodes. Its
+Contract ABI 13 is the durable interpreter for Aiko's typed Skill nodes. Its
 pure `Neuron` types, validation, and identities come from the sibling
 `typed_neuron` Zig package; Aiko consumes mechanically generated Rust transport
 types rather than maintaining a second wire contract.
@@ -366,7 +366,7 @@ without copying it into this repository or rebuilding Aiko.
 
 The installed background worker also exposes an authenticated, loopback-only
 API for Swift, Electron, and local web frontends. It keeps ACP as the
-full-duplex agent-mail protocol and Contract ABI 12 as the ledger/task
+full-duplex agent-mail protocol and Contract ABI 13 as the ledger/task
 authority.
 
 ```sh

@@ -120,6 +120,7 @@ type RenewExecutionFn = unsafe extern "C" fn(*const c_char) -> i32;
 type GetFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 type ListFn = unsafe extern "C" fn() -> *mut c_char;
 type CancelFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
+type AbandonGraphFn = unsafe extern "C" fn(*const c_char) -> i32;
 type RetryFn = unsafe extern "C" fn(*const c_char) -> i32;
 type FreeFn = unsafe extern "C" fn(*mut c_char);
 type DelegateChildFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
@@ -163,6 +164,7 @@ struct NativeContract {
     get: GetFn,
     list: ListFn,
     cancel: Option<CancelFn>,
+    abandon_graph: Option<AbandonGraphFn>,
     retry: Option<RetryFn>,
     list_scheduled: Option<ListFn>,
     delegate_child: Option<DelegateChildFn>,
@@ -400,6 +402,11 @@ impl NativeContract {
                     list: *library.get(b"contract_list\0").ok()?,
                     cancel: if abi_version >= 3 {
                         Some(*library.get(b"contract_cancel\0").ok()?)
+                    } else {
+                        None
+                    },
+                    abandon_graph: if abi_version >= 13 {
+                        Some(*library.get(b"contract_abandon_graph\0").ok()?)
                     } else {
                         None
                     },
@@ -756,6 +763,16 @@ impl NativeContract {
             return false;
         };
         unsafe { cancel(id.as_ptr(), c"cancelled by user".as_ptr()) == 0 }
+    }
+
+    fn abandon_graph(&self, root_id: &str) -> bool {
+        let Some(abandon) = self.abandon_graph else {
+            return false;
+        };
+        let Ok(root_id) = CString::new(root_id) else {
+            return false;
+        };
+        unsafe { abandon(root_id.as_ptr()) == 0 }
     }
 
     fn retry(&self, id: &str) -> bool {
@@ -2644,10 +2661,11 @@ fn strip_spans(raw: &str, open: &str, close: &str) -> String {
     out.trim().to_string()
 }
 
-/// Register a prompt in the canonical local ledger. This is deliberately
-/// best-effort: ledger bookkeeping must never prevent Aiko from doing the work.
+/// Register a prompt in the canonical local ledger. Normal Aiko turns treat
+/// this admission as mandatory: without a durable row there is no work identity.
 pub async fn declare_turn(blocks: &[acp::ContentBlock], cwd: &Path) -> Option<TurnContract> {
-    let goal = goal_from_blocks(blocks)?;
+    let goal =
+        goal_from_blocks(blocks).unwrap_or_else(|| "[non-text interaction occurrence]".to_owned());
     // A stateless worker is executing a child that was already materialized by
     // its parent. Adopt that canonical identity rather than declaring a second,
     // disconnected turn row for the same work.
@@ -2708,7 +2726,6 @@ pub async fn declare_turn(blocks: &[acp::ContentBlock], cwd: &Path) -> Option<Tu
         native
             .declare_context(&request)
             .and_then(|value| value.get("id")?.as_str().map(str::to_owned))
-            .or_else(|| native.declare(&goal_for_declare, &cwd))
     })
     .await
     .ok()
@@ -2737,7 +2754,7 @@ fn bounded_env_u32(name: &str, default: u32, maximum: u32) -> u32 {
         .min(maximum)
 }
 
-async fn expand_turn_root(turn: &TurnContract, cwd: &Path) -> Option<Value> {
+async fn expand_turn_root(turn: &TurnContract, cwd: &Path) -> Option<(Value, u32)> {
     let depth = bounded_env_u32("AIKO_CONTRACT_DEPTH", 0, 16);
     let max_depth = bounded_env_u32("AIKO_CONTRACT_MAX_DEPTH", DEFAULT_CONTRACT_MAX_DEPTH, 16);
     if depth >= max_depth {
@@ -2774,10 +2791,93 @@ async fn expand_turn_root(turn: &TurnContract, cwd: &Path) -> Option<Value> {
         "max_concurrency": max_concurrency,
         "execution_model": "typed_neuron_skill_graph",
     });
-    tokio::task::spawn_blocking(move || native_contract()?.expand_graph(&request))
-        .await
-        .ok()
-        .flatten()
+    tokio::task::spawn_blocking(move || {
+        let native = native_contract()?;
+        Some((native.expand_graph(&request)?, native.abi_version))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[derive(Deserialize)]
+struct AdmittedTurnGraphChild {
+    key: String,
+    id: String,
+    held: bool,
+}
+
+#[derive(Deserialize)]
+struct AdmittedTurnGraph {
+    abi_version: u32,
+    root_id: String,
+    graph_digest: String,
+    children: Vec<AdmittedTurnGraphChild>,
+    waves: Vec<Vec<String>>,
+}
+
+fn validate_admitted_turn_graph(
+    turn: &TurnContract,
+    graph: &Value,
+    loaded_abi_version: u32,
+) -> Result<(), String> {
+    let admitted: AdmittedTurnGraph = serde_json::from_value(graph.clone())
+        .map_err(|_| "Contract returned a malformed native execution graph")?;
+    if admitted.abi_version != loaded_abi_version || admitted.root_id != turn.id {
+        return Err("Contract returned a mismatched graph ABI or root identity".into());
+    }
+    if admitted.graph_digest.len() != 64
+        || !admitted
+            .graph_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("Contract returned an invalid native graph digest".into());
+    }
+    if admitted.children.is_empty() || admitted.waves.is_empty() {
+        return Err("Contract returned a native graph with no runnable nodes".into());
+    }
+    let mut child_ids = BTreeSet::new();
+    let mut child_keys = BTreeSet::new();
+    for child in &admitted.children {
+        if child.key.trim().is_empty()
+            || !valid_contract_id(&child.id)
+            || !child_keys.insert(child.key.as_str())
+            || !child_ids.insert(child.id.as_str())
+        {
+            return Err("Contract returned duplicate or invalid native graph children".into());
+        }
+        if child.held {
+            return Err(format!(
+                "Contract held native graph node {} pending authority",
+                child.key
+            ));
+        }
+    }
+    let mut scheduled = BTreeSet::new();
+    for wave in &admitted.waves {
+        if wave.is_empty() {
+            return Err("Contract returned an empty native graph wave".into());
+        }
+        for id in wave {
+            if !child_ids.contains(id.as_str()) || !scheduled.insert(id.as_str()) {
+                return Err("Contract returned an unknown or duplicate wave node".into());
+            }
+        }
+    }
+    if scheduled != child_ids {
+        return Err("Contract omitted a native graph child from its runnable waves".into());
+    }
+    Ok(())
+}
+
+async fn abandon_turn_graph(root_id: &str) -> bool {
+    let root_id = root_id.to_owned();
+    tokio::task::spawn_blocking(move || {
+        native_contract().is_some_and(|contract| contract.abandon_graph(&root_id))
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// After a turn settles, declare one residual iterate child when the feedback
@@ -5525,16 +5625,13 @@ pub async fn delegate_subagent_root(
     .flatten()
 }
 
-/// Build the walk JSON `graph_plan_analyze` expects from the dry-run Contract
-/// Skill plan already computed every turn (`skill_registry::dry_run`). This is
-/// what makes the chain-vs-graph verdict automatic and native: no separate
-/// `/graph` invocation constructs the walk, the turn's own admitted plan does.
+/// Adapt the ephemeral `skill_registry::dry_run` shape for Contract's pure
+/// graph analyzer. The result is diagnostic input only: it is neither an open
+/// durable walk nor evidence that any node was admitted or authorized to run.
 ///
-/// `skill_plan.children` already carries `key`/`depends_on`/`plan` for every
-/// node in the composed connectome; this only renames `key` -> `id` and pins
-/// every node's status to `pending` (a dry-run plan has not executed yet), which
-/// is the shape `graph_plan.zig::analyze` parses.
-fn walk_json_from_skill_plan(skill_plan: &Value) -> Option<String> {
+/// Preserve the declarations the analyzer can judge so missing grounding and
+/// witnesses remain visible instead of being erased by the adapter.
+fn advisory_walk_json_from_skill_plan(skill_plan: &Value) -> Option<String> {
     let children = skill_plan.get("children")?.as_array()?;
     if children.is_empty() {
         return None;
@@ -5554,11 +5651,22 @@ fn walk_json_from_skill_plan(skill_plan: &Value) -> Option<String> {
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
+            let witness = child
+                .get("witness")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let invoke_skills = child
+                .get("skill_id")
+                .and_then(Value::as_str)
+                .map(|skill| json!([skill]))
+                .unwrap_or_else(|| json!([]));
             Some(json!({
                 "id": id,
                 "plan": plan,
                 "depends_on": depends_on,
                 "writes": writes,
+                "invoke_skills": invoke_skills,
+                "witness": witness,
                 "status": "pending",
             }))
         })
@@ -5566,7 +5674,47 @@ fn walk_json_from_skill_plan(skill_plan: &Value) -> Option<String> {
     if nodes.is_empty() {
         return None;
     }
-    serde_json::to_string(&json!({ "nodes": nodes })).ok()
+    serde_json::to_string(&json!({
+        "analysis_source": "skill_registry_dry_run",
+        "durable_walk": false,
+        "nodes": nodes,
+    }))
+    .ok()
+}
+
+/// Render dry-run analysis without upgrading an observer verdict into launch
+/// authority. Even a clean-looking graph lacks the admitted durable walk and
+/// effect authorization required to launch work.
+fn format_advisory_graph_analysis(verdict: &Value) -> String {
+    let blockers = [
+        "write_collisions",
+        "cycle_list",
+        "unknown_dependencies",
+        "ungrounded",
+        "ungated",
+    ]
+    .into_iter()
+    .filter(|field| {
+        verdict
+            .get(field)
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty())
+    })
+    .collect::<Vec<_>>();
+    let diagnostic = if blockers.is_empty() {
+        "The analyzer reported no structural gaps, but that does not establish admission or effect safety."
+            .to_owned()
+    } else {
+        format!(
+            "Launch blockers reported by the analyzer: {}.",
+            blockers.join(", ")
+        )
+    };
+    format!(
+        "CONTRACT GRAPH ANALYSIS (ADVISORY DRY-RUN; NOT LAUNCH AUTHORITY):\n{}\nThis was synthesized from skill_registry::dry_run, not read from an admitted durable Contract walk. It must not schedule work or issue a fan-out launch directive. {} Launch requires a separately admitted durable walk plus grounding, witness, collision, cycle, and effect-authorization policy.",
+        serde_json::to_string(verdict).unwrap_or_default(),
+        diagnostic,
+    )
 }
 
 /// Analyze a walk JSON and return a chain-vs-graph verdict.
@@ -5733,7 +5881,7 @@ async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
     let skill_plan = skill_registry::dry_run(&goal, cwd);
     let skill_catalog = skill_registry::catalog(cwd);
     let availability = json!({ "contract_skills": skill_catalog });
-    let graph_walk_json = walk_json_from_skill_plan(&skill_plan);
+    let graph_walk_json = advisory_walk_json_from_skill_plan(&skill_plan);
     let (mut recommendation, proven, open_matches, muscle_rankings, graph_verdict) = tokio::join!(
         contract_recommendation(&goal, availability),
         contract_proven_route(&goal),
@@ -5828,45 +5976,7 @@ async fn build_context(goal: &str, cwd: &Path) -> BuiltContext {
         ));
     }
     if let Some(verdict) = &graph_verdict {
-        let kind = verdict
-            .get("kind")
-            .and_then(Value::as_str)
-            .unwrap_or("chain");
-        let peak = verdict
-            .get("peak_parallelism")
-            .and_then(Value::as_u64)
-            .unwrap_or(1);
-        let collision_count = verdict
-            .get("write_collisions")
-            .and_then(Value::as_array)
-            .map_or(0, |collisions| collisions.len());
-        let mut directive = if kind == "graph" && peak > 1 {
-            "This turn's admitted plan is a genuine graph: independent_groups name nodes with \
-             disjoint dependencies. Fan them out (subagents/parallel tool calls) instead of \
-             running them one after another; do not ask the user to invoke /graph first -- \
-             this verdict is computed automatically every turn from the native Contract \
-             substrate (graph_plan.zig), not from a skill match. The `waves` array is the \
-             executable Kahn frontier: same-wave nodes may run together, in wave order."
-            .to_owned()
-        } else {
-            "This turn's admitted plan is a chain (every ready node already depends on, or is \
-             blocked by, another): proceed sequentially. No fan-out is warranted by the graph \
-             engineering verdict."
-                .to_owned()
-        };
-        if collision_count > 0 {
-            directive.push_str(
-                " WRITE COLLISIONS: `write_collisions` names node pairs whose declared write \
-                 scopes overlap -- isolate them (separate worktrees) and reconcile at fan-in \
-                 before the downstream wave runs.",
-            );
-        }
-        sections.push(format!(
-            "CONTRACT GRAPH ENGINEERING VERDICT (native, automatic, computed by \
-             contract_graph_plan every turn -- supersedes manual /graph invocation):\n{}\n{}",
-            serde_json::to_string(verdict).unwrap_or_default(),
-            directive
-        ));
+        sections.push(format_advisory_graph_analysis(verdict));
     }
     if !recalled.is_empty() {
         sections.push(format!(
@@ -6222,61 +6332,58 @@ fn ground_neuron_node_execution(
     })
 }
 
-/// Register the original user request, retrieve a local Contract recommendation,
-/// and append a bounded machine-context block before the prompt reaches the model.
-/// Raw file contents, hidden files, credentials, and secret-shaped values are
-/// excluded. Set `AIKO_MACHINE_CONTEXT=off` for a fully ungrounded turn.
+/// Admit the original request and its native execution graph before the model,
+/// then append a bounded local context projection. Raw file contents, hidden
+/// files, credentials, and secret-shaped values are excluded. Setting
+/// `AIKO_MACHINE_CONTEXT=off` disables only that projection; Contract graph
+/// admission remains mandatory.
 pub async fn ground_turn(
     blocks: &[acp::ContentBlock],
     cwd: &Path,
     identity_scope: &str,
     conversation: &[ConversationItem],
-) -> GroundedTurn {
+) -> Result<GroundedTurn, String> {
+    if blocks.is_empty() {
+        return Err("Aiko refused an empty turn before Contract admission".into());
+    }
     if let Ok(execution_id) = std::env::var("AIKO_NEURON_NODE_EXECUTION") {
         let contract_id = std::env::var("AIKO_CONTRACT_ID").unwrap_or_default();
-        // The graph executor always sets this alongside the execution id. If it
-        // is missing, we are a node execution whose declared authority did not
-        // survive the spawn — falling back to `read_only` silently strips an
-        // acting node of the very effects it was leased for, so say so.
-        let effect_scope = std::env::var("AIKO_NEURON_EFFECT_SCOPE").unwrap_or_else(|_| {
-            tracing::warn!(
-                %execution_id,
-                "node execution has no AIKO_NEURON_EFFECT_SCOPE; degrading to read_only",
-            );
-            "read_only".to_owned()
-        });
+        // A leased node must retain the effect scope admitted with its graph.
+        // Guessing `read_only` here would execute a different node than Contract leased.
+        let effect_scope = std::env::var("AIKO_NEURON_EFFECT_SCOPE").map_err(|_| {
+            format!(
+                "Aiko refused Neuron node {execution_id}: admitted effect scope was not preserved"
+            )
+        })?;
         return ground_neuron_node_execution(blocks, &execution_id, &contract_id, &effect_scope)
-            .unwrap_or(GroundedTurn {
-                prompt: blocks.to_vec(),
-                contract: None,
-                capability_route: None,
-                continuation: None,
+            .ok_or_else(|| {
+                format!(
+                    "Aiko refused Neuron node {execution_id}: its admitted graph identity was invalid"
+                )
             });
     }
-    warm_router_background(4);
-    let mut contract = declare_turn(blocks, cwd).await;
-    if contract.is_none() && goal_from_blocks(blocks).is_some() {
-        static HOOK_WARNING_EMITTED: AtomicBool = AtomicBool::new(false);
-        if !HOOK_WARNING_EMITTED.swap(true, Ordering::Relaxed) {
-            tracing::warn!(
-                "Aiko's default Contract pre-turn hook could not register this process; \
-                 continuing without ledger registration"
-            );
-        }
-    }
-    let reflex_graph = if let Some(turn) = &contract {
-        expand_turn_root(turn, cwd).await
-    } else {
-        None
+    // Native graph admission is the entry membrane, not optional context. Aiko
+    // does not start a reasoning worker and retrofit a graph after effects begin.
+    let mut contract = declare_turn(blocks, cwd)
+        .await
+        .ok_or_else(|| "Aiko could not admit this turn to the native Contract ledger".to_owned())?;
+    let Some((reflex_graph, loaded_abi_version)) = expand_turn_root(&contract, cwd).await else {
+        let cleaned = abandon_turn_graph(&contract.id).await;
+        return Err(if cleaned {
+            "Aiko could not materialize the admitted native execution graph".into()
+        } else {
+            "Aiko could not materialize the native graph or terminalize its root".into()
+        });
     };
-    if blocks.is_empty() {
-        return GroundedTurn {
-            prompt: blocks.to_vec(),
-            contract,
-            capability_route: None,
-            continuation: None,
-        };
+    if let Err(error) = validate_admitted_turn_graph(&contract, &reflex_graph, loaded_abi_version) {
+        let cleaned = abandon_turn_graph(&contract.id).await;
+        return Err(if cleaned {
+            error
+        } else {
+            format!("{error}; Contract cleanup was incomplete")
+        });
     }
+    warm_router_background(4);
     let goal =
         goal_from_blocks(blocks).unwrap_or_else(|| "[non-text interaction occurrence]".into());
     let machine_context_enabled = context_enabled();
@@ -6289,7 +6396,7 @@ pub async fn ground_turn(
             feedback: TurnFeedback {
                 ts: chrono_ish_now(),
                 goal: clean_goal(&goal),
-                contract_id: contract.as_ref().map(|turn| turn.id.clone()),
+                contract_id: Some(contract.id.clone()),
                 proven_binary: None,
                 proven_score: None,
                 proven_example: None,
@@ -6302,46 +6409,47 @@ pub async fn ground_turn(
         }
     };
     let recent_interactions = project_recent_interactions(conversation);
-    let continuation = build_turn_continuation(
+    let continuation = match build_turn_continuation(
         &goal,
         identity_scope,
-        contract.as_ref(),
+        Some(&contract),
         &built,
         recent_interactions,
-    )
-    .map_err(|error| {
-        tracing::warn!(?error, "Contract continuation resolution failed");
-        error
-    })
-    .ok();
+    ) {
+        Ok(continuation) => continuation,
+        Err(error) => {
+            tracing::warn!(?error, "Contract continuation resolution failed");
+            let cleaned = abandon_turn_graph(&contract.id).await;
+            let cleanup = if cleaned {
+                ""
+            } else {
+                "; Contract cleanup was incomplete"
+            };
+            return Err(format!(
+                "Aiko could not resolve the admitted Contract continuation: {error:?}{cleanup}"
+            ));
+        }
+    };
     // Observation, recall/prerequisite preparation, and future-obligation
     // detection were performed by the deterministic pre-turn context build.
     // Settle those leaf contracts from that host evidence before model work.
-    settle_prepared_reflex_children(reflex_graph.as_ref()).await;
-    if let Some(turn) = contract.as_mut() {
-        turn.learning_family = built.learning_family.clone();
-    }
+    settle_prepared_reflex_children(Some(&reflex_graph)).await;
+    contract.learning_family = built.learning_family.clone();
     if machine_context_enabled && !built.text.is_empty() {
         persist_last_context(&built.text);
     }
-    // Stamp the open turn contract id onto the latest feedback card when known.
-    if let Some(tc) = &contract {
-        let mut card = built.feedback.clone();
-        card.contract_id = Some(tc.id.clone());
-        append_turn_feedback(card);
-    }
-    let graph_context = reflex_graph
-        .as_ref()
-        .and_then(|graph| serde_json::to_string(graph).ok())
+    // Stamp the admitted turn contract id onto the latest feedback card.
+    let mut card = built.feedback.clone();
+    card.contract_id = Some(contract.id.clone());
+    append_turn_feedback(card);
+    let graph_context = serde_json::to_string(&reflex_graph)
         .map(|graph| format!("\nNative contract graph: {graph}\n"))
         .unwrap_or_default();
     let meta_agent_context = format!(
         "\nADMITTED META-AGENT SKILL:\n{}\n",
         skill_registry::core_guidance()
     );
-    let continuation_context = continuation
-        .as_ref()
-        .and_then(|continuation| serde_json::to_string(continuation).ok())
+    let continuation_context = serde_json::to_string(&continuation)
         .map(|continuation| format!("\nCONTRACT CONTINUATION:\n{continuation}\n"))
         .unwrap_or_default();
     let grounding = format!(
@@ -6358,12 +6466,12 @@ pub async fn ground_turn(
     );
     let mut prompt = blocks.to_vec();
     prompt.push(acp::ContentBlock::Text(acp::TextContent::new(grounding)));
-    GroundedTurn {
+    Ok(GroundedTurn {
         prompt,
-        contract,
+        contract: Some(contract),
         capability_route: built.capability_route,
-        continuation,
-    }
+        continuation: Some(continuation),
+    })
 }
 
 #[cfg(test)]
@@ -6375,6 +6483,38 @@ mod tests {
     /// Reproduced end-to-end: two prompts differing only by a leading
     /// reminder, one running `echo` and one refused with
     /// "no active Contract root".
+    #[test]
+    fn normal_turn_requires_a_complete_matching_native_graph() {
+        let turn = TurnContract {
+            id: "deadbeef".into(),
+            goal: "do the work".into(),
+            learning_family: None,
+        };
+        let digest = "a".repeat(64);
+        let admitted = json!({
+            "abi_version": 14,
+            "root_id": "deadbeef",
+            "graph_digest": digest,
+            "children": [
+                {"key": "observe", "id": "cafebabe", "held": false},
+                {"key": "act", "id": "feedface", "held": false},
+            ],
+            "waves": [["cafebabe"], ["feedface"]],
+        });
+        assert!(validate_admitted_turn_graph(&turn, &admitted, 14).is_ok());
+        for malformed in [
+            json!(null),
+            json!({"abi_version": 13, "root_id": "deadbeef", "graph_digest": "a".repeat(64), "children": [{"key": "act", "id": "cafebabe", "held": false}], "waves": [["cafebabe"]]}),
+            json!({"abi_version": 14, "root_id": "badc0ffe", "graph_digest": "a".repeat(64), "children": [{"key": "act", "id": "cafebabe", "held": false}], "waves": [["cafebabe"]]}),
+            json!({"abi_version": 14, "root_id": "deadbeef", "graph_digest": "short", "children": [{"key": "act", "id": "cafebabe", "held": false}], "waves": [["cafebabe"]]}),
+            json!({"abi_version": 14, "root_id": "deadbeef", "graph_digest": "a".repeat(64), "children": [{"key": "act", "id": "cafebabe", "held": true}], "waves": []}),
+            json!({"abi_version": 14, "root_id": "deadbeef", "graph_digest": "a".repeat(64), "children": [{"key": "act", "id": "cafebabe", "held": false}], "waves": []}),
+            json!({"abi_version": 14, "root_id": "deadbeef", "graph_digest": "a".repeat(64), "children": [{"key": "act", "id": "cafebabe", "held": false}], "waves": [["badc0ffe"]]}),
+        ] {
+            assert!(validate_admitted_turn_graph(&turn, &malformed, 14).is_err());
+        }
+    }
+
     #[test]
     fn a_leading_system_reminder_does_not_erase_the_goal() {
         let goal = clean_goal(
@@ -6416,28 +6556,88 @@ mod tests {
     }
 
     #[test]
-    fn walk_json_from_skill_plan_renames_key_to_id_and_pins_pending() {
+    fn advisory_walk_from_skill_plan_preserves_grounding_and_witness() {
         let skill_plan = json!({
             "children": [
-                { "key": "n1", "plan": "do A", "depends_on": [] },
+                {
+                    "key": "n1", "plan": "do A", "depends_on": [],
+                    "skill_id": "grounded-skill", "witness": "test -s result"
+                },
                 { "key": "n2", "plan": "do B", "depends_on": ["n1"] },
             ]
         });
-        let walk = walk_json_from_skill_plan(&skill_plan).expect("walk json");
+        let walk = advisory_walk_json_from_skill_plan(&skill_plan).expect("walk json");
         let parsed: Value = serde_json::from_str(&walk).unwrap();
         let nodes = parsed["nodes"].as_array().unwrap();
+        assert_eq!(parsed["analysis_source"], "skill_registry_dry_run");
+        assert_eq!(parsed["durable_walk"], false);
         assert_eq!(nodes.len(), 2);
         assert_eq!(nodes[0]["id"], "n1");
         assert_eq!(nodes[0]["status"], "pending");
+        assert_eq!(nodes[0]["invoke_skills"][0], "grounded-skill");
+        assert_eq!(nodes[0]["witness"], "test -s result");
         assert_eq!(nodes[1]["depends_on"][0], "n1");
+        assert_eq!(nodes[1]["invoke_skills"], json!([]));
+        assert_eq!(nodes[1]["witness"], "");
     }
 
     #[test]
-    fn walk_json_from_skill_plan_is_none_for_empty_children() {
+    fn advisory_walk_from_skill_plan_is_none_for_empty_children() {
         let skill_plan = json!({ "children": [] });
-        assert!(walk_json_from_skill_plan(&skill_plan).is_none());
+        assert!(advisory_walk_json_from_skill_plan(&skill_plan).is_none());
         let no_children = json!({});
-        assert!(walk_json_from_skill_plan(&no_children).is_none());
+        assert!(advisory_walk_json_from_skill_plan(&no_children).is_none());
+    }
+
+    #[test]
+    fn dry_run_graph_analysis_never_issues_launch_directives() {
+        let cases = [
+            json!({
+                "kind": "graph", "peak_parallelism": 2,
+                "write_collisions": [], "cycle_list": [],
+                "unknown_dependencies": [], "ungrounded": [], "ungated": []
+            }),
+            json!({
+                "kind": "graph", "peak_parallelism": 2,
+                "write_collisions": [{"a":"a", "b":"b", "shared":["out"]}],
+                "cycle_list": ["cyclic"],
+                "unknown_dependencies": [{"node":"a", "dependency":"missing"}],
+                "ungrounded": ["a"], "ungated": ["b"]
+            }),
+        ];
+        for verdict in cases {
+            let output = format_advisory_graph_analysis(&verdict);
+            assert!(output.contains("ADVISORY DRY-RUN; NOT LAUNCH AUTHORITY"));
+            assert!(output.contains("not read from an admitted durable Contract walk"));
+            assert!(!output.contains("Fan them out"));
+            assert!(!output.contains("same-wave nodes may run"));
+            assert!(!output.contains("executable Kahn frontier"));
+        }
+    }
+
+    #[test]
+    fn advisory_analysis_names_every_structural_launch_blocker() {
+        let verdict = json!({
+            "kind": "graph",
+            "write_collisions": [{}],
+            "cycle_list": ["a"],
+            "unknown_dependencies": [{}],
+            "ungrounded": ["a"],
+            "ungated": ["b"]
+        });
+        let output = format_advisory_graph_analysis(&verdict);
+        for blocker in [
+            "write_collisions",
+            "cycle_list",
+            "unknown_dependencies",
+            "ungrounded",
+            "ungated",
+        ] {
+            assert!(
+                output.contains(blocker),
+                "missing blocker {blocker}: {output}"
+            );
+        }
     }
 
     /// End-to-end: the default meta-agent connectome (a real chain — each
@@ -6448,7 +6648,8 @@ mod tests {
     #[ignore = "requires the pinned Contract native library on the ABI path"]
     async fn native_graph_verdict_judges_default_connectome_as_chain() {
         let skill_plan = skill_registry::dry_run("ship the fix", Path::new("/tmp/work"));
-        let walk = walk_json_from_skill_plan(&skill_plan).expect("default connectome has nodes");
+        let walk =
+            advisory_walk_json_from_skill_plan(&skill_plan).expect("default connectome has nodes");
         let verdict = graph_plan_analyze(&walk)
             .await
             .expect("native graph_plan analysis must succeed with ABI >= 12");
