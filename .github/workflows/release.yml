@@ -8,7 +8,7 @@ on:
     inputs:
       version:
         description: "Version to release (e.g. 0.2.114, without v)"
-        required: false
+        required: true
         type: string
 
 permissions:
@@ -213,11 +213,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-  # ── Desktop: Linux bundle + Windows portable/installer (cross on ubuntu)
+  # Desktop installers are built natively. Each job normalizes versioned Tauri
+  # output to a stable name so /releases/latest/download URLs do not change.
   desktop-linux:
-    name: desktop linux + windows
+    name: desktop Linux installers
     runs-on: ubuntu-latest
-    needs: [portable]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -226,94 +226,60 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: |
-            aiko/apps/desktop/package-lock.json
-            aiko/apps/desktop/bun.lock
+          cache-dependency-path: aiko/apps/desktop/package-lock.json
+      - name: Set and verify desktop release version
+        env:
+          AIKO_RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          AIKO_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
+        run: node aiko/apps/desktop/scripts/set-release-version.mjs
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.92.0"
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
-      - name: Install protoc
+      - name: Install native build dependencies
         run: |
-          sudo apt-get update && sudo apt-get install -y protobuf-compiler
-          protoc --version
-          cargo install dotslash --locked 2>&1 | tail -n 5 || true
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            aiko/target
-            target
-          key: cargo-desktop-linux-${{ hashFiles('aiko/Cargo.lock') }}
-      - name: Install frontend deps
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Install frontend dependencies
         working-directory: aiko/apps/desktop
         run: |
-          npm ci 2>/dev/null || npm install
-          if [ -f ../frontend/frontend/package.json ]; then
-            npm --prefix ../frontend/frontend ci 2>/dev/null || npm --prefix ../frontend/frontend install || true
-          fi
-      - name: Build Zig host (for bundled contract lib)
+          npm ci
+          npm run frontend:ensure
+          npm --prefix ../frontend/frontend ci
+      - name: Build runtime and contract
         run: |
           zig build -Doptimize=ReleaseFast --summary all
-          ls -lh contract/libcontract/zig-out/lib/ 2>/dev/null | head -n 20
-      - name: Prepare runtime (aiko sidecar + contract)
+          cargo build --release --bin aiko --manifest-path aiko/Cargo.toml
+      - name: Prepare runtime
         working-directory: aiko/apps/desktop
-        run: |
-          # Reuse cargo cache: binary may be at ./target or ../target or aiko/target
-          if [ ! -x ../../target/release/aiko ] && [ ! -x ./target/release/aiko ] && [ ! -x target/release/aiko ]; then
-            cargo build --release --bin aiko --manifest-path ../../Cargo.toml
-          fi
-          node scripts/prepare-runtime.mjs || npm run runtime:prepare || true
-          ls -lh src-tauri/binaries/ src-tauri/resources/contract/ 2>/dev/null | head -n 40
-      - name: Build Tauri bundle (Linux)
+        run: node scripts/prepare-runtime.mjs
+      - name: Build Linux bundles
         working-directory: aiko/apps/desktop
+        run: npm run tauri build -- --bundles appimage,deb
+      - name: Normalize Linux assets
+        shell: bash
         run: |
-          sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf 2>&1 | tail -n 30 || true
-          npm run tauri build -- --bundles appimage --bundles deb 2>&1 | tail -n 150 || npm run tauri build 2>&1 | tail -n 150 || echo "tauri build failed — portable fallback will still release"
-          ls -lh src-tauri/target/release/bundle/ 2>/dev/null | head -n 60 || true
-          find src-tauri/target/release/bundle -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" \) 2>/dev/null | head -n 20 || true
-      - name: Package Windows portable/installer (cross, via Node)
-        if: always()
-        working-directory: aiko/apps/desktop
-        run: |
-          set -e
-          if [ -f ../../contract/libcontract/zig-out-windows/bin/contract.dll ] || [ -f ../../contract/libcontract/zig-out/lib/contract.dll ]; then
-            echo "Windows contract DLL present"
-          else
-            echo "No Windows DLL yet — attempting zig cross for windows-gnu"
-            (cd ../../.. && zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe --summary all 2>&1 | tail -n 30) || echo "zig windows cross had errors (known, allowlisted)"
-            mkdir -p ../../contract/libcontract/zig-out-windows/bin || true
-            find ../../contract/libcontract/zig-out -name "*.dll" -exec cp -v {} ../../contract/libcontract/zig-out-windows/bin/contract.dll \; 2>/dev/null || true
-          fi
-          if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-            rustup target add x86_64-pc-windows-msvc 2>/dev/null || true
-            (cd ../.. && cargo build --release --bin aiko --target x86_64-pc-windows-msvc 2>&1 | tail -n 30) || true
-          fi
-          node scripts/package-windows.mjs 2>&1 | tail -n 100 || echo "Windows package not produced (expected on Linux host without Windows toolchain)"
-          ls -lh ../../dist/windows-x86_64/ 2>/dev/null | head -n 40 || true
+          set -euo pipefail
+          mkdir -p release-assets
+          mapfile -t appimages < <(find aiko/target aiko/apps/desktop/src-tauri/target -type f -name '*.AppImage' 2>/dev/null | sort)
+          mapfile -t debs < <(find aiko/target aiko/apps/desktop/src-tauri/target -type f -name '*.deb' 2>/dev/null | sort)
+          test "${#appimages[@]}" -gt 0 || { echo 'Expected an AppImage, but Tauri produced none' >&2; exit 1; }
+          test "${#debs[@]}" -gt 0 || { echo 'Expected a deb, but Tauri produced none' >&2; exit 1; }
+          cp "${appimages[0]}" release-assets/Aiko-Linux-x86_64.AppImage
+          cp "${debs[0]}" release-assets/Aiko-Linux-x86_64.deb
+          test -s release-assets/Aiko-Linux-x86_64.AppImage
+          test -s release-assets/Aiko-Linux-x86_64.deb
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: desktop-linux
-          path: |
-            aiko/apps/desktop/src-tauri/target/release/bundle/**
-            dist/windows-x86_64/**
-            aiko/dist/**
-            dist/**
-          if-no-files-found: warn
-          retention-days: 30
+          name: release-linux
+          path: release-assets/*
+          if-no-files-found: error
 
-  # ── Desktop: macOS DMG (the user-facing installer)
   desktop-macos:
-    name: desktop macOS DMG
+    name: desktop macOS installer
     runs-on: macos-latest
-    needs: [portable]
-    # macOS runners cost 10× but this is the only way to produce a signed DMG.
-    # Don't block the release if the mac queue is slow — allow failure and keep going.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -322,9 +288,12 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: |
-            aiko/apps/desktop/package-lock.json
-            aiko/apps/desktop/bun.lock
+          cache-dependency-path: aiko/apps/desktop/package-lock.json
+      - name: Set and verify desktop release version
+        env:
+          AIKO_RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          AIKO_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
+        run: node aiko/apps/desktop/scripts/set-release-version.mjs
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.92.0"
@@ -332,66 +301,66 @@ jobs:
         with:
           version: 0.16.0
       - name: Install protoc
+        run: brew install protobuf
+      - name: Install frontend dependencies
+        working-directory: aiko/apps/desktop
         run: |
-          brew install protobuf || brew upgrade protobuf || true
-          protoc --version
-          cargo install dotslash --locked 2>&1 | tail -n 10 || true
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "aiko -> target"
-      - name: Build Zig (host, for contract lib)
+          npm ci
+          npm run frontend:ensure
+          npm --prefix ../frontend/frontend ci
+      - name: Build runtime and contract
         run: |
           zig build -Doptimize=ReleaseFast --summary all
-          ls -lh zig-out/bin/aiko* 2>/dev/null | head -n 20
-          ls -lh contract/libcontract/zig-out/lib/* 2>/dev/null | head -n 20
-      - name: Install frontend deps
+          cargo build --release --bin aiko --manifest-path aiko/Cargo.toml
+      - name: Prepare runtime
         working-directory: aiko/apps/desktop
-        run: |
-          npm ci 2>/dev/null || npm install
-          if [ -f ../../apps/frontend/frontend/package.json ]; then
-            echo "frontend gitlink not materialized — skipping frontend build (UI still bundles)"
-          elif [ -f ../frontend/frontend/package.json ]; then
-            npm --prefix ../frontend/frontend ci 2>/dev/null || npm --prefix ../frontend/frontend install || true
-          fi
-      - name: Build Aiko (cargo release, native aarch64)
-        working-directory: aiko
-        run: |
-          cargo build --release --bin aiko
-          ls -lh target/release/aiko 2>/dev/null || ls -lh ../target/release/aiko 2>/dev/null || true
-          target/release/aiko --version 2>/dev/null || ../target/release/aiko --version 2>/dev/null || true
-      - name: Prepare runtime (aiko sidecar + contract)
+        run: node scripts/prepare-runtime.mjs
+      - name: Build macOS DMG
         working-directory: aiko/apps/desktop
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          node scripts/prepare-runtime.mjs || npm run runtime:prepare || true
-          ls -lh src-tauri/binaries/ 2>/dev/null | head -n 40
-          ls -lh src-tauri/resources/contract/ 2>/dev/null | head -n 40
-      - name: Build Tauri DMG + .app
-        working-directory: aiko/apps/desktop
+          set -euo pipefail
+          validate_group() {
+            local label="$1"; shift
+            local present=0
+            for name in "$@"; do
+              test -n "${!name:-}" && present=$((present + 1))
+            done
+            if test "$present" -ne 0 && test "$present" -ne "$#"; then
+              echo "$label secrets must be configured all-or-none" >&2
+              exit 1
+            fi
+            if test "$present" -eq 0; then
+              for name in "$@"; do unset "$name"; done
+            fi
+          }
+          validate_group "Apple certificate" APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY
+          validate_group "Apple notarization" APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+          npm run tauri build -- --bundles dmg
+      - name: Normalize macOS asset
+        shell: bash
         run: |
-          npm run tauri build -- --bundles dmg --bundles app 2>&1 | tail -n 200 || npm run tauri build 2>&1 | tail -n 200 || true
-          echo "=== bundle ==="
-          ls -lhR src-tauri/target/release/bundle/ 2>/dev/null | head -n 120 || true
-          find src-tauri/target/release/bundle -type f \( -name "*.dmg" -o -name "*.app" \) 2>/dev/null | head -n 40 || true
-          # Fail if no DMG was produced (but job is continue-on-error: true, so release still publishes)
-          if ! find src-tauri/target/release/bundle -name "*.dmg" 2>/dev/null | grep -q .; then
-            echo "::warning::No DMG produced — check tauri.conf and frontend build"
-          fi
+          set -euo pipefail
+          mkdir -p release-assets
+          dmg=$(find aiko/target aiko/apps/desktop/src-tauri/target -type f -name '*.dmg' 2>/dev/null | sort | head -n 1)
+          test -n "$dmg" || { echo 'Expected a DMG, but Tauri produced none' >&2; exit 1; }
+          cp "$dmg" release-assets/Aiko-macOS.dmg
+          test -s release-assets/Aiko-macOS.dmg
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: desktop-macos-dmg
-          path: |
-            aiko/apps/desktop/src-tauri/target/release/bundle/dmg/**
-            aiko/apps/desktop/src-tauri/target/release/bundle/macos/**
-          if-no-files-found: warn
-          retention-days: 30
+          name: release-macos
+          path: release-assets/*
+          if-no-files-found: error
 
-  # ── Desktop: Windows native installer (MSI + NSIS) + Node portable fallback
   desktop-windows:
-    name: desktop windows MSI/NSIS
+    name: desktop Windows installers
     runs-on: windows-latest
-    needs: [portable]
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -400,133 +369,162 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: |
-            aiko/apps/desktop/package-lock.json
-            aiko/apps/desktop/bun.lock
+          cache-dependency-path: aiko/apps/desktop/package-lock.json
+      - name: Set and verify desktop release version
+        env:
+          AIKO_RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          AIKO_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
+        run: node aiko/apps/desktop/scripts/set-release-version.mjs
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.92.0"
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
-      - name: Install protoc (windows)
+      - name: Install protoc
         shell: pwsh
         run: |
-          choco install protoc --yes 2>$null || echo "choco protoc install skipped"
+          choco install protoc --yes
           protoc --version
-          cargo install dotslash --locked 2>$null | Select-Object -Last 10
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "aiko -> target"
-      - name: Build Zig (host, for contract lib)
+      - name: Install frontend dependencies
+        working-directory: aiko/apps/desktop
+        shell: pwsh
+        run: |
+          npm ci
+          npm run frontend:ensure
+          npm --prefix ../frontend/frontend ci
+      - name: Build runtime and contract
+        shell: pwsh
         run: |
           zig build -Doptimize=ReleaseFast --summary all
-          ls zig-out/bin/ 2>$null; ls contract/libcontract/zig-out/lib/ 2>$null; echo done
-        shell: pwsh
-      - name: Install frontend deps
-        working-directory: aiko/apps/desktop
-        run: |
-          npm ci 2>$null; if ($LASTEXITCODE -ne 0) { npm install }
-        shell: pwsh
-      - name: Build Aiko (cargo release, windows native)
-        working-directory: aiko
-        shell: pwsh
-        run: |
-          cargo build --release --bin aiko
-          cargo build --release --bin aiko-desktop --manifest-path apps/desktop/src-tauri/Cargo.toml 2>$null; echo "aiko-desktop build done"
-          ls target/release/aiko.exe 2>$null; ls aiko/target/release/aiko.exe 2>$null; echo "cargo aiko done"
-      - name: Prepare runtime (aiko sidecar + contract for windows)
+          cargo build --release --bin aiko --manifest-path aiko/Cargo.toml
+      - name: Prepare runtime
         working-directory: aiko/apps/desktop
         shell: pwsh
         run: |
           $env:TAURI_ENV_TARGET_TRIPLE = "x86_64-pc-windows-msvc"
           node scripts/prepare-runtime.mjs
-          if ($LASTEXITCODE -ne 0) { npm run runtime:prepare 2>$null; echo "fallback prepare tried" }
-          ls src-tauri/binaries/ 2>$null; ls src-tauri/resources/contract/ 2>$null
-      - name: Build Tauri Windows MSI/NSIS
+      - name: Build Windows MSI and NSIS installers
         working-directory: aiko/apps/desktop
         shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          npm run tauri build -- --bundles msi --bundles nsis 2>&1 | Select-Object -Last 200
-          if ($LASTEXITCODE -ne 0) { npm run tauri build 2>&1 | Select-Object -Last 200; echo "tauri fallback build" }
-          echo "=== bundle ==="
-          Get-ChildItem -Recurse src-tauri/target/release/bundle 2>$null | Select-Object -First 120 | Format-List
-          Get-ChildItem -Recurse -Filter "*.msi" src-tauri/target/release/bundle 2>$null | Select-Object FullName
-          Get-ChildItem -Recurse -Filter "*.exe" src-tauri/target/release/bundle 2>$null | Select-Object FullName
-          if (-not (Get-ChildItem -Filter "*.msi" -Recurse src-tauri/target/release/bundle 2>$null)) { echo "::warning::No MSI produced" }
-      - name: Package Windows portable/installer (Node zips, also on windows)
-        if: always()
+          $keyPresent = -not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)
+          $passwordPresent = -not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)
+          if ($keyPresent -ne $passwordPresent) { throw "Tauri updater signing key and password must be configured together" }
+          if (-not $keyPresent) {
+            Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
+            Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+          }
+          npm run tauri build -- --bundles msi,nsis
+      - name: Build portable and script installer archives
         working-directory: aiko/apps/desktop
         shell: pwsh
+        run: node scripts/package-windows.mjs
+      - name: Normalize Windows assets
+        shell: pwsh
         run: |
-          node scripts/package-windows.mjs 2>&1 | Select-Object -Last 100
-          if ($LASTEXITCODE -ne 0) { echo "Windows Node package not produced" }
-          Get-ChildItem ../../dist/windows-x86_64 2>$null | Format-List
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          $msi = Get-ChildItem -Recurse -File aiko/target,aiko/apps/desktop/src-tauri/target -Filter *.msi -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -First 1
+          $setup = Get-ChildItem -Recurse -File aiko/target,aiko/apps/desktop/src-tauri/target -Filter *.exe -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '[\\/]bundle[\\/]nsis[\\/]' } | Sort-Object FullName | Select-Object -First 1
+          if (-not $msi) { throw "Expected an MSI, but Tauri produced none" }
+          if (-not $setup) { throw "Expected an NSIS setup executable, but Tauri produced none" }
+          Copy-Item $msi.FullName release-assets/Aiko-Windows-x86_64.msi
+          Copy-Item $setup.FullName release-assets/Aiko-Windows-x86_64-Setup.exe
+          Copy-Item aiko/dist/windows-x86_64/Aiko-Windows-x86_64-Portable.zip release-assets/
+          Copy-Item aiko/dist/windows-x86_64/Aiko-Windows-x86_64-Installer.zip release-assets/
+          $expected = @(
+            'Aiko-Windows-x86_64.msi',
+            'Aiko-Windows-x86_64-Setup.exe',
+            'Aiko-Windows-x86_64-Portable.zip',
+            'Aiko-Windows-x86_64-Installer.zip'
+          )
+          foreach ($name in $expected) {
+            $asset = Join-Path release-assets $name
+            if (-not (Test-Path $asset) -or (Get-Item $asset).Length -eq 0) { throw "Missing or empty release asset: $name" }
+          }
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: desktop-windows
-          path: |
-            aiko/apps/desktop/src-tauri/target/release/bundle/msi/**
-            aiko/apps/desktop/src-tauri/target/release/bundle/nsis/**
-            aiko/apps/desktop/src-tauri/target/release/bundle/**/*.msi
-            aiko/apps/desktop/src-tauri/target/release/bundle/**/*.exe
-            dist/windows-x86_64/**
-            aiko/dist/**
-            dist/**
-          if-no-files-found: warn
-          retention-days: 30
+          name: release-windows
+          path: release-assets/*
+          if-no-files-found: error
 
   github-release:
     name: github release
     runs-on: ubuntu-latest
     needs: [zig-cross, cargo-cross, portable, desktop-linux, desktop-macos, desktop-windows]
-    if: always() && startsWith(github.ref, 'refs/tags/v')
+    if: always() && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
     steps:
-      - uses: actions/checkout@v4
+      - name: Download required desktop assets
+        uses: actions/download-artifact@v4
         with:
-          fetch-depth: 0
-      - uses: actions/download-artifact@v4
-        with:
-          path: _artifacts
+          pattern: release-*
+          path: release-assets
           merge-multiple: true
-      - name: Stage release files
+      - name: Download optional Zig CLI assets
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: zig-*
+          path: legacy-assets/zig
+          merge-multiple: true
+      - name: Download optional Cargo CLI assets
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cargo-*
+          path: legacy-assets/cargo
+          merge-multiple: true
+      - name: Download optional portable CLI assets
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: portable-*
+          path: legacy-assets/portable
+          merge-multiple: true
+      - name: Stage, verify, and checksum release assets
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p _release
-          # Known types: tar balls, zips, debs, appimages, dmgs, exes
-          find _artifacts -type f \( \
-            -name "*.tar.gz" -o -name "*.zip" -o -name "*.deb" -o -name "*.AppImage" \
-            -o -name "*.dmg" -o -name "*.msi" -o -name "*.exe" \
-            -o -name "aiko-*" \
-          \) -exec cp -v {} _release/ \; 2>/dev/null || true
-          # Also accept generic bundle content (macOS .app is a dir — skip)
-          find _artifacts -type f -maxdepth 4 \( -name "*.json" \) -exec cp -v {} _release/ \; 2>/dev/null | head -n 20 || true
-          ls -lh _release/ 2>/dev/null | head -n 100 || true
-          # SHA256SUMS for everything
-          if ls _release/* >/dev/null 2>&1; then
-            (cd _release && sha256sum -- * 2>/dev/null | sort > SHA256SUMS.txt || shasum -a 256 -- * 2>/dev/null | sort > SHA256SUMS.txt) || true
-            cat _release/SHA256SUMS.txt 2>/dev/null | head -n 100 || true
-          else
-            echo "No files staged for release"
-            touch _release/.empty
-          fi
-          # Annotate what we have / what's missing
-          echo "=== Release inventory ==="
-          echo "cross (zig):    $(ls _release/aiko-*-linux-gnu* _release/aiko-*-macos* 2>/dev/null | wc -l) binaries"
-          echo "cross (cargo):  $(ls _release/aiko-*-unknown-linux-gnu* 2>/dev/null | wc -l) binaries"
-          echo "portable:       $(ls _release/*.tar.gz 2>/dev/null | wc -l) stacks"
-          echo "linux bundle:   $(ls _release/*.deb _release/*.AppImage 2>/dev/null | wc -l) installers"
-          echo "mac DMG:        $(ls _release/*.dmg 2>/dev/null | wc -l) — $(ls _release/*.dmg 2>/dev/null || echo '(none; check desktop-macos job)')"
-          echo "windows:        $(ls _release/*windows* 2>/dev/null | wc -l) artifacts"
-          ls -lh _release/
-          echo "RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+          mkdir -p release-assets
+          while IFS= read -r -d '' source; do
+            name=$(basename "$source")
+            case "$name" in
+              aiko-*|*.tar.gz|manifest.json|SHA256SUMS-*.txt)
+                destination="release-assets/$name"
+                if test -e "$destination" && ! cmp -s "$source" "$destination"; then
+                  echo "Conflicting legacy release assets named $name" >&2
+                  exit 1
+                fi
+                cp "$source" "$destination"
+                ;;
+            esac
+          done < <(find legacy-assets -type f -print0 2>/dev/null || true)
+          expected=(
+            Aiko-Linux-x86_64.AppImage
+            Aiko-Linux-x86_64.deb
+            Aiko-macOS.dmg
+            Aiko-Windows-x86_64.msi
+            Aiko-Windows-x86_64-Setup.exe
+            Aiko-Windows-x86_64-Portable.zip
+            Aiko-Windows-x86_64-Installer.zip
+          )
+          for name in "${expected[@]}"; do
+            test -s "release-assets/$name" || { echo "Missing or empty required desktop asset: $name" >&2; exit 1; }
+          done
+          mapfile -t files < <(find release-assets -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\n' | sort)
+          test "${#files[@]}" -ge "${#expected[@]}"
+          (cd release-assets && sha256sum -- "${files[@]}" > SHA256SUMS.txt)
+          cat release-assets/SHA256SUMS.txt
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            _release/*
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          files: release-assets/*
           generate_release_notes: true
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

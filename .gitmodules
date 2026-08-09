@@ -1,0 +1,3 @@
+[submodule "aiko/apps/frontend"]
+	path = aiko/apps/frontend
+	url = https://github.com/Simpleyyt/ai-manus.git

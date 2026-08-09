@@ -7,14 +7,14 @@
 //! - `/native/*` — reverse proxy to the daemon in `~/.aiko/native/api.json`,
 //!   bearer token injected server-side so the browser never holds it.
 //!
-//! Both refuse any request whose Host is not loopback. The tunnel forwards
-//! with its public hostname in Host, so the public website gets the UI and the
-//! Manus API but never the raw daemon or the CLI — unless the operator sets
-//! AIKO_EXPOSE_NATIVE=1, which is their outward-facing decision to make.
+//! Both require a loopback Host and, when a browser sends Origin, its exact
+//! matching HTTP origin. The tunnel forwards its public hostname in Host, so
+//! the public website gets the UI and Manus API but never the raw daemon or CLI
+//! — unless the operator explicitly sets AIKO_EXPOSE_NATIVE=1.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -112,10 +112,11 @@ pub struct Jobs {
     map: std::sync::Mutex<HashMap<u64, Arc<std::sync::Mutex<Job>>>>,
 }
 
-/// The loopback gate. Host is attacker-controlled in general, but the tunnel
-/// and any reverse proxy preserve the public hostname in it, and a browser on
-/// this machine sends the loopback literal — which is exactly the distinction
-/// this surface needs.
+/// The loopback gate. Host distinguishes the local app from a tunnel, while
+/// the browser's Origin prevents a hostile website from driving privileged
+/// loopback endpoints. Non-browser clients may omit Origin; when present it
+/// must name this exact HTTP origin. AIKO_EXPOSE_NATIVE is the explicit bypass
+/// for operators who deliberately publish the surface.
 pub fn is_local_request(headers: &HeaderMap) -> bool {
     if std::env::var("AIKO_EXPOSE_NATIVE").is_ok_and(|v| v == "1" || v == "true") {
         return true;
@@ -123,21 +124,58 @@ pub fn is_local_request(headers: &HeaderMap) -> bool {
     let Some(host) = headers.get("host").and_then(|value| value.to_str().ok()) else {
         return false;
     };
-    let host = host.rsplit_once(':').map_or(host, |(name, port)| {
-        // "::1" has colons but no bracketed port form when raw.
-        if port.chars().all(|c| c.is_ascii_digit()) {
+    let host_name = host.rsplit_once(':').map_or(host, |(name, port)| {
+        // "::1" has colons but no bracketed port form when raw. An empty port
+        // is malformed rather than a loopback authority.
+        if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) {
             name
         } else {
             host
         }
     });
-    matches!(host, "127.0.0.1" | "localhost" | "[::1]" | "::1")
+    if !matches!(host_name, "127.0.0.1" | "localhost" | "[::1]" | "::1") {
+        return false;
+    }
+
+    let mut origins = headers.get_all("origin").iter();
+    let Some(origin) = origins.next() else {
+        return true;
+    };
+    if origins.next().is_some() {
+        return false;
+    }
+    origin
+        .to_str()
+        .is_ok_and(|origin| origin == format!("http://{host}"))
 }
 
 fn forbidden() -> Response {
     (
         StatusCode::FORBIDDEN,
         "this surface is loopback-only; open the app locally (or set AIKO_EXPOSE_NATIVE=1 on the host to override)",
+    )
+        .into_response()
+}
+
+/// A tracked, self-contained face for the CLI. It lives with the desktop host
+/// rather than inside the frontend gitlink, so a fresh clone can rebuild the
+/// integration from the parent repository alone.
+pub async fn console_page(headers: HeaderMap) -> Response {
+    if !is_local_request(&headers) {
+        return forbidden();
+    }
+    (
+        [
+            ("content-type", "text/html; charset=utf-8"),
+            ("cache-control", "no-store"),
+            ("x-content-type-options", "nosniff"),
+            ("referrer-policy", "no-referrer"),
+            (
+                "content-security-policy",
+                "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+            ),
+        ],
+        include_str!("../../public/console.html"),
     )
         .into_response()
 }
@@ -181,7 +219,10 @@ pub async fn cli_run(
     let Some(verb) = VERBS.iter().find(|verb| verb.id == request.verb) else {
         return (
             StatusCode::BAD_REQUEST,
-            format!("unknown verb '{}': the catalog at /cli/verbs is the whole surface", request.verb),
+            format!(
+                "unknown verb '{}': the catalog at /cli/verbs is the whole surface",
+                request.verb
+            ),
         )
             .into_response();
     };
@@ -207,31 +248,46 @@ pub async fn cli_run(
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
-            finish(&job, Some(-1), Some(format!("could not start {}: {error}", state.aiko_bin)));
+            finish(
+                &job,
+                Some(-1),
+                Some(format!("could not start {}: {error}", state.aiko_bin)),
+            );
             return snapshot_response(id, &job);
         }
     };
 
-    if let Some(stdout) = child.stdout.take() {
-        append_lines(stdout, job.clone());
-    }
-    if let Some(stderr) = child.stderr.take() {
-        append_lines(stderr, job.clone());
-    }
+    let stdout_task = child
+        .stdout
+        .take()
+        .map(|stdout| append_lines(stdout, job.clone()));
+    let stderr_task = child
+        .stderr
+        .take()
+        .map(|stderr| append_lines(stderr, job.clone()));
     let job_for_wait = job.clone();
     tokio::spawn(async move {
-        match tokio::time::timeout(JOB_TIMEOUT, child.wait()).await {
-            Ok(Ok(status)) => finish(&job_for_wait, status.code(), None),
-            Ok(Err(error)) => finish(&job_for_wait, Some(-1), Some(error.to_string())),
+        let (code, note) = match tokio::time::timeout(JOB_TIMEOUT, child.wait()).await {
+            Ok(Ok(status)) => (status.code(), None),
+            Ok(Err(error)) => (Some(-1), Some(error.to_string())),
             Err(_) => {
                 let _ = child.kill().await;
-                finish(
-                    &job_for_wait,
+                (
                     Some(-1),
                     Some(format!("timed out after {}s", JOB_TIMEOUT.as_secs())),
-                );
+                )
             }
+        };
+        // A process may exit before the independent pipe readers have drained.
+        // Publishing done earlier makes the UI stop polling and silently loses
+        // the final lines — exactly the output a failing command needs most.
+        if let Some(task) = stdout_task {
+            let _ = task.await;
         }
+        if let Some(task) = stderr_task {
+            let _ = task.await;
+        }
+        finish(&job_for_wait, code, note);
     });
 
     snapshot_response(id, &job)
@@ -257,7 +313,7 @@ pub async fn cli_job(
     }
 }
 
-fn append_lines<R>(reader: R, job: Arc<std::sync::Mutex<Job>>)
+fn append_lines<R>(reader: R, job: Arc<std::sync::Mutex<Job>>) -> tokio::task::JoinHandle<()>
 where
     R: tokio::io::AsyncRead + Send + Unpin + 'static,
 {
@@ -451,10 +507,7 @@ pub async fn native_proxy(
     }
 
     let method = request.method().clone();
-    if !matches!(
-        method.as_str(),
-        "GET" | "POST" | "PUT" | "DELETE"
-    ) {
+    if !matches!(method.as_str(), "GET" | "POST" | "PUT" | "DELETE") {
         return (StatusCode::METHOD_NOT_ALLOWED, "method not allowed").into_response();
     }
     let (parts, body) = request.into_parts();
@@ -482,6 +535,21 @@ mod tests {
         assert!(is_local_request(&headers_with_host("127.0.0.1:17870")));
         assert!(is_local_request(&headers_with_host("localhost:17870")));
         assert!(is_local_request(&headers_with_host("localhost")));
+
+        let mut same_origin = headers_with_host("127.0.0.1:17870");
+        same_origin.insert("origin", "http://127.0.0.1:17870".parse().unwrap());
+        assert!(is_local_request(&same_origin));
+        for origin in [
+            "https://127.0.0.1:17870",
+            "http://127.0.0.1:9999",
+            "https://hostile.example",
+            "null",
+        ] {
+            let mut hostile = headers_with_host("127.0.0.1:17870");
+            hostile.insert("origin", origin.parse().unwrap());
+            assert!(!is_local_request(&hostile), "admitted Origin {origin}");
+        }
+        assert!(!is_local_request(&headers_with_host("localhost:")));
         assert!(!is_local_request(&headers_with_host(
             "lucky-otter.trycloudflare.com"
         )));
@@ -546,7 +614,10 @@ mod tests {
 
     #[test]
     fn catalog_includes_login_and_only_fixed_argv() {
-        let login = VERBS.iter().find(|verb| verb.id == "login").expect("login verb");
+        let login = VERBS
+            .iter()
+            .find(|verb| verb.id == "login")
+            .expect("login verb");
         assert!(login.argv.contains(&"--device-auth"));
         // No entry may smuggle a shell: argv is words, never a command line.
         for verb in VERBS {

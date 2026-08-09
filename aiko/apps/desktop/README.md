@@ -19,6 +19,17 @@ apps/frontend/frontend (Vue SPA, built once)
         └── public website   → Cloudflare quick tunnel over either origin
 ```
 
+## Download
+
+Install the latest release for
+[Windows](https://github.com/lekt9/aiko/releases/latest/download/Aiko-Windows-x86_64-Setup.exe),
+[macOS](https://github.com/lekt9/aiko/releases/latest/download/Aiko-macOS.dmg), or
+[Linux](https://github.com/lekt9/aiko/releases/latest/download/Aiko-Linux-x86_64.AppImage).
+Windows also has an [MSI](https://github.com/lekt9/aiko/releases/latest/download/Aiko-Windows-x86_64.msi),
+and Debian/Ubuntu users can download the [`.deb`](https://github.com/lekt9/aiko/releases/latest/download/Aiko-Linux-x86_64.deb).
+See the [root download table](../../../README.md#download-aiko-desktop) for
+portable packages and checksums.
+
 ## How it fits together
 
 - **`src-tauri/src/webhost.rs`** — the app self-hosts the built frontend over
@@ -34,14 +45,14 @@ apps/frontend/frontend (Vue SPA, built once)
   (`native serve` + `agent leader`), which is what the Manus backend's
   `AIKO_LOCAL=true` integration talks to.
 - **`src-tauri/src/console.rs`** — the web face of the CLI and the runtime,
-  rendered by the frontend's `/console` page:
+  rendered by the desktop host's tracked `/console` page:
   - `/cli/verbs`, `/cli/run`, `/cli/jobs/{id}` — a fixed catalog of CLI verbs
     run as polled jobs (fixed argv only, never composed command lines). Sign-in
     uses `aiko login --device-auth`; the page surfaces the verification URL and
     code as they stream.
   - `/native/v1/*` — reverse proxy to the daemon discovered via
-    `~/.aiko/native/api.json`, bearer token injected server-side. The page
-    renders every interface in the live `/v1/manifest` plus a request runner.
+    `~/.aiko/native/api.json`, bearer token injected server-side. The page can
+    load and display the live `/v1/manifest`.
   - Both surfaces refuse any request whose Host is not loopback, so tunnel
     visitors get the UI and the Manus API but never the raw daemon or the CLI
     (`AIKO_EXPOSE_NATIVE=1` overrides, deliberately and loudly).
@@ -80,14 +91,41 @@ viewing the app. `/open` is loopback-only and accepts **http/https only** — a
 `file:`/`javascript:` URL is refused, and a failed hand-off answers 502 rather
 than a 204 it never verified.
 
+## Publish installers on GitHub
+
+The `release` GitHub Actions workflow builds each desktop package on its native
+runner and publishes one GitHub Release only after every expected asset exists.
+Start it in either of two ways:
+
+1. Push a version tag such as `v0.2.115`; or
+2. Open **Actions → release → Run workflow** and enter `0.2.115` (without `v`).
+
+The workflow creates the tag for a manual run, generates checksums, and uploads
+stable filenames used by the download links above. It refuses to publish a
+partial release when any Windows, macOS, or Linux installer is missing or empty.
+Apple signing and notarization secrets are optional for development releases;
+configure them before presenting the DMG as production-signed. The Windows
+workflow currently produces unsigned MSI/NSIS packages, so add Authenticode
+certificate installation before claiming verified Windows publisher identity.
+
 ## Develop / build / verify
 
 ```sh
-npm run tauri dev      # window on the Vue dev server (5173) with /api proxy
-npm run tauri build    # builds apps/frontend/frontend and bundles its dist
-cd src-tauri && cargo test --lib   # webhost + tunnel witnesses
+npm run tauri dev      # initializes the frontend gitlink, then starts Vue + Tauri
+npm run tauri build    # initializes/builds apps/frontend/frontend and bundles dist
+cd src-tauri && cargo test --lib   # webhost + CLI console + tunnel witnesses
+npm run test:console   # clicks the shipped HTML against the real CLI + native manifest in Chrome
 npm run test:links     # drives real Chrome against the running app and CLICKS
 ```
+
+The parent repository now carries `.gitmodules`; `frontend:ensure` materializes
+the pinned frontend automatically on a fresh clone instead of letting a build
+silently skip the UI. The local-only **Aiko CLI** pill opens `/console`, whose
+page is tracked by the desktop app itself. It runs only the fixed verb catalog,
+polls complete output, exposes the live native manifest without its bearer
+token, and is refused for tunnel hosts. `test:console` witnesses the shipped
+HTML interacting with the real CLI and manifest; the Rust tests witness the
+host gate, hostile-Origin refusal, fixed job execution, and output completion.
 
 `test:links` is the UI witness: it launches Chrome against the app's origin,
 clicks a synthetic external link, clicks the shipped Settings → Get help link,

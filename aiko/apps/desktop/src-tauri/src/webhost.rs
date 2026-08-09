@@ -9,12 +9,12 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
+use axum::Router;
 use axum::body::Body;
 use axum::extract::{FromRequestParts, State, WebSocketUpgrade};
 use axum::http::{StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
-use axum::Router;
 use futures_util::{SinkExt, StreamExt};
 use tauri::{AppHandle, Manager, Runtime};
 
@@ -87,8 +87,7 @@ pub async fn launch<R: Runtime>(app: AppHandle<R>) {
         .ok()
         .and_then(|raw| raw.parse().ok())
         .unwrap_or_else(|| DEFAULT_ADDR.parse().expect("default web addr parses"));
-    let backend =
-        std::env::var("AIKO_BACKEND_URL").unwrap_or_else(|_| DEFAULT_BACKEND.to_string());
+    let backend = std::env::var("AIKO_BACKEND_URL").unwrap_or_else(|_| DEFAULT_BACKEND.to_string());
     let dist = frontend_dist(&app);
     if dist.is_none() {
         eprintln!(
@@ -141,19 +140,11 @@ pub async fn serve(
         .route("/api/{*rest}", any(proxy))
         .route("/api", any(proxy))
         .route("/native/{*rest}", any(crate::console::native_proxy))
-        .route(
-            "/cli/verbs",
-            axum::routing::get(crate::console::cli_verbs),
-        )
-        .route(
-            "/cli/auth",
-            axum::routing::get(crate::console::cli_auth),
-        )
+        .route("/console", axum::routing::get(crate::console::console_page))
+        .route("/cli/verbs", axum::routing::get(crate::console::cli_verbs))
+        .route("/cli/auth", axum::routing::get(crate::console::cli_auth))
         .route("/open", axum::routing::post(open_external))
-        .route(
-            "/cli/run",
-            axum::routing::post(crate::console::cli_run),
-        )
+        .route("/cli/run", axum::routing::post(crate::console::cli_run))
         .route(
             "/cli/jobs/{id}",
             axum::routing::get(crate::console::cli_job),
@@ -334,6 +325,14 @@ const LINK_SHIM: &str = r#"<script>
       body: JSON.stringify({ url: url })
     });
   };
+  if (/^(localhost|127\.0\.0\.1|::1|\[::1\])$/.test(window.location.hostname)) {
+    var consoleLink = document.createElement('a');
+    consoleLink.href = '/console';
+    consoleLink.textContent = 'Aiko CLI';
+    consoleLink.setAttribute('aria-label', 'Open Aiko local CLI console');
+    consoleLink.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483647;padding:10px 14px;border-radius:999px;background:#111813;color:#b8f36b;border:1px solid #344136;font:600 12px ui-monospace,monospace;text-decoration:none;box-shadow:0 8px 30px #0008';
+    document.body.appendChild(consoleLink);
+  }
 })();
 </script>"#;
 
@@ -350,11 +349,7 @@ async fn open_external(
     axum::Json(request): axum::Json<OpenRequest>,
 ) -> Response {
     if !crate::console::is_local_request(&headers) {
-        return (
-            StatusCode::FORBIDDEN,
-            "opening links is loopback-only",
-        )
-            .into_response();
+        return (StatusCode::FORBIDDEN, "opening links is loopback-only").into_response();
     }
     if !is_openable(&request.url) {
         return (
@@ -435,11 +430,7 @@ async fn static_file(State(state): State<Arc<HostState>>, uri: Uri) -> Response 
             } else {
                 bytes
             };
-            (
-                [("content-type", mime), ("cache-control", cache)],
-                bytes,
-            )
-                .into_response()
+            ([("content-type", mime), ("cache-control", cache)], bytes).into_response()
         }
         Err(_) => (StatusCode::NOT_FOUND, "not found").into_response(),
     }
@@ -550,6 +541,24 @@ mod tests {
         let base = format!("http://{addr}");
         let client = reqwest::Client::new();
 
+        // The CLI face is a real, discoverable page, not an undocumented API.
+        let console = client
+            .get(format!("{base}/console"))
+            .send()
+            .await
+            .expect("GET /console");
+        assert_eq!(console.status(), 200);
+        assert_eq!(console.headers()["cache-control"], "no-store");
+        assert!(
+            console.headers()["content-security-policy"]
+                .to_str()
+                .unwrap()
+                .contains("frame-ancestors 'none'")
+        );
+        let console_body = console.text().await.unwrap();
+        assert!(console_body.contains("Aiko Console"));
+        assert!(console_body.contains("/cli/verbs"));
+
         // Loopback Host (reqwest's default here) sees the catalog.
         let verbs: serde_json::Value = client
             .get(format!("{base}/cli/verbs"))
@@ -620,6 +629,13 @@ mod tests {
             .await
             .expect("tunneled GET");
         assert_eq!(tunneled.status(), 403);
+        let tunneled_console = client
+            .get(format!("{base}/console"))
+            .header("host", "lucky-otter.trycloudflare.com")
+            .send()
+            .await
+            .expect("tunneled console GET");
+        assert_eq!(tunneled_console.status(), 403);
         let tunneled_native = client
             .get(format!("{base}/native/v1/health"))
             .header("host", "lucky-otter.trycloudflare.com")
@@ -627,6 +643,31 @@ mod tests {
             .await
             .expect("tunneled native GET");
         assert_eq!(tunneled_native.status(), 403);
+
+        // Being addressed to loopback is not enough: a hostile browser Origin
+        // must not be able to drive either HTTP or WebSocket native requests.
+        let hostile_http = client
+            .get(format!("{base}/cli/verbs"))
+            .header("origin", "https://hostile.example")
+            .send()
+            .await
+            .expect("hostile-origin HTTP GET");
+        assert_eq!(hostile_http.status(), 403);
+
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let mut websocket = format!("ws://{addr}/native/v1/events")
+            .into_client_request()
+            .expect("websocket request");
+        websocket
+            .headers_mut()
+            .insert("origin", "https://hostile.example".parse().unwrap());
+        match tokio_tungstenite::connect_async(websocket).await {
+            Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+                assert_eq!(response.status().as_u16(), 403);
+            }
+            Ok(_) => panic!("hostile-origin WebSocket handshake was admitted"),
+            Err(error) => panic!("unexpected WebSocket refusal: {error}"),
+        }
     }
 
     #[test]
@@ -634,6 +675,10 @@ mod tests {
         let page = inject_link_shim(b"<html><body><p>hi</p></body></html>");
         let page = String::from_utf8(page).unwrap();
         assert!(page.contains("aikoOpenExternal"), "shim missing");
+        assert!(
+            page.contains("Open Aiko local CLI console"),
+            "console entry point missing"
+        );
         // It must land INSIDE body, before the close tag.
         let shim_at = page.find("aikoOpenExternal").unwrap();
         assert!(shim_at < page.find("</body>").unwrap());
@@ -658,7 +703,14 @@ mod tests {
         let client = reqwest::Client::new();
 
         // The served page carries the shim, so links are clickable at all.
-        let page = client.get(&base).send().await.unwrap().text().await.unwrap();
+        let page = client
+            .get(&base)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
         assert!(page.contains("aikoOpenExternal"));
 
         let refused = client

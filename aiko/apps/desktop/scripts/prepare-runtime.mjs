@@ -28,9 +28,64 @@ function pathCandidate(name) {
   return undefined;
 }
 
+const root = resolve(import.meta.dirname, "..");
+
+function contractLibraryNames(target) {
+  if (target.includes("windows")) return ["contract.dll", "libcontract.dll"];
+  if (target.includes("apple")) return ["libcontract.dylib"];
+  return ["libcontract.so"];
+}
+
+function contractLibraryCandidates(target) {
+  const contractRoot = resolve(root, "..", "..", "..", "contract", "libcontract");
+  const names = contractLibraryNames(target);
+  return [
+    process.env.AIKO_CONTRACT_LIBRARY,
+    // Zig installs Windows shared libraries in bin/, both for the dedicated
+    // cross prefix and for a native Windows build using the default prefix.
+    ...(target.includes("windows")
+      ? ["zig-out-windows", "zig-out"].flatMap((prefix) =>
+          names.map((name) => resolve(contractRoot, prefix, "bin", name)),
+        )
+      : []),
+    ...names.map((name) => resolve(contractRoot, "zig-out", "lib", name)),
+  ].filter(Boolean);
+}
+
+if (process.argv.includes("--test-contract-candidates")) {
+  const candidates = contractLibraryCandidates("x86_64-pc-windows-msvc").map((candidate) =>
+    candidate.replaceAll("\\", "/"),
+  );
+  for (const suffix of [
+    "/zig-out-windows/bin/contract.dll",
+    "/zig-out/bin/contract.dll",
+  ]) {
+    if (!candidates.some((candidate) => candidate.endsWith(suffix))) {
+      throw new Error(`missing Windows Contract candidate: ${suffix}`);
+    }
+  }
+  const platformCases = [
+    ["aarch64-apple-darwin", "/zig-out/lib/libcontract.dylib"],
+    ["x86_64-unknown-linux-gnu", "/zig-out/lib/libcontract.so"],
+  ];
+  for (const [target, suffix] of platformCases) {
+    const platformCandidates = contractLibraryCandidates(target).map((candidate) =>
+      candidate.replaceAll("\\", "/"),
+    );
+    if (!platformCandidates.some((candidate) => candidate.endsWith(suffix))) {
+      throw new Error(`missing ${target} Contract candidate: ${suffix}`);
+    }
+    candidates.push(...platformCandidates);
+  }
+  if (candidates.some((candidate) => candidate.includes("collective"))) {
+    throw new Error("collective-only library admitted as a full Contract candidate");
+  }
+  process.stdout.write("prepare-runtime full Contract candidates: PASS\n");
+  process.exit(0);
+}
+
 const triple = process.env.TAURI_ENV_TARGET_TRIPLE || hostTriple();
 const executable = executableName(triple);
-const root = resolve(import.meta.dirname, "..");
 const candidates = [
   process.env.AIKO_DESKTOP_RUNTIME,
   resolve(root, "..", "..", "target", "release", executable),
@@ -53,22 +108,7 @@ mkdirSync(binaryDirectory, { recursive: true });
 copyFileSync(source, destination);
 if (!triple.includes("windows")) chmodSync(destination, 0o755);
 
-function contractLibraryNames(target) {
-  if (target.includes("windows")) return ["contract_collective.dll", "libcontract_collective.dll", "contract.dll", "libcontract.dll"];
-  if (target.includes("apple")) return ["libcontract.dylib", "libcontract_collective.dylib"];
-  return ["libcontract.so", "libcontract_collective.so"];
-}
-
-const contractNames = contractLibraryNames(triple);
-const contractCandidates = [
-  process.env.AIKO_CONTRACT_LIBRARY,
-  ...(triple.includes("windows")
-    ? [resolve(root, "..", "..", "..", "contract", "libcontract", "zig-out-windows", "bin", "contract.dll")]
-    : [resolve(root, "..", "..", "..", "contract", "libcontract", "zig-out", "lib", "libcontract.dylib")]),
-  ...contractNames.map((name) =>
-    resolve(root, "..", "..", "..", "contract", "libcontract", "zig-out", "lib", name),
-  ),
-].filter(Boolean);
+const contractCandidates = contractLibraryCandidates(triple);
 const contractSource = contractCandidates.find((candidate) => existsSync(candidate));
 if (!contractSource) {
   throw new Error(
