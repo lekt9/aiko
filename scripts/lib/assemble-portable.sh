@@ -87,6 +87,7 @@ resolve_portable_aiko_bin() {
         return 0
     fi
     set -- \
+        "$AIKO_ROOT/aiko/target/release/aiko" \
         "$AIKO_ROOT/target/release/aiko" \
         "$AIKO_BIN_DIR/aiko" \
         "$HOME/.local/bin/aiko"
