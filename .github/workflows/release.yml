@@ -386,10 +386,101 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  # ── Desktop: Windows native installer (MSI + NSIS) + Node portable fallback
+  desktop-windows:
+    name: desktop windows MSI/NSIS
+    runs-on: windows-latest
+    needs: [portable]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: |
+            aiko/apps/desktop/package-lock.json
+            aiko/apps/desktop/bun.lock
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.92.0"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Install protoc (windows)
+        shell: pwsh
+        run: |
+          choco install protoc --yes 2>$null || echo "choco protoc install skipped"
+          protoc --version
+          cargo install dotslash --locked 2>$null | Select-Object -Last 10
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "aiko -> target"
+      - name: Build Zig (host, for contract lib)
+        run: |
+          zig build -Doptimize=ReleaseFast --summary all
+          ls zig-out/bin/ 2>$null; ls contract/libcontract/zig-out/lib/ 2>$null; echo done
+        shell: pwsh
+      - name: Install frontend deps
+        working-directory: aiko/apps/desktop
+        run: |
+          npm ci 2>$null; if ($LASTEXITCODE -ne 0) { npm install }
+        shell: pwsh
+      - name: Build Aiko (cargo release, windows native)
+        working-directory: aiko
+        shell: pwsh
+        run: |
+          cargo build --release --bin aiko
+          cargo build --release --bin aiko-desktop --manifest-path apps/desktop/src-tauri/Cargo.toml 2>$null; echo "aiko-desktop build done"
+          ls target/release/aiko.exe 2>$null; ls aiko/target/release/aiko.exe 2>$null; echo "cargo aiko done"
+      - name: Prepare runtime (aiko sidecar + contract for windows)
+        working-directory: aiko/apps/desktop
+        shell: pwsh
+        run: |
+          $env:TAURI_ENV_TARGET_TRIPLE = "x86_64-pc-windows-msvc"
+          node scripts/prepare-runtime.mjs
+          if ($LASTEXITCODE -ne 0) { npm run runtime:prepare 2>$null; echo "fallback prepare tried" }
+          ls src-tauri/binaries/ 2>$null; ls src-tauri/resources/contract/ 2>$null
+      - name: Build Tauri Windows MSI/NSIS
+        working-directory: aiko/apps/desktop
+        shell: pwsh
+        run: |
+          npm run tauri build -- --bundles msi --bundles nsis 2>&1 | Select-Object -Last 200
+          if ($LASTEXITCODE -ne 0) { npm run tauri build 2>&1 | Select-Object -Last 200; echo "tauri fallback build" }
+          echo "=== bundle ==="
+          Get-ChildItem -Recurse src-tauri/target/release/bundle 2>$null | Select-Object -First 120 | Format-List
+          Get-ChildItem -Recurse -Filter "*.msi" src-tauri/target/release/bundle 2>$null | Select-Object FullName
+          Get-ChildItem -Recurse -Filter "*.exe" src-tauri/target/release/bundle 2>$null | Select-Object FullName
+          if (-not (Get-ChildItem -Filter "*.msi" -Recurse src-tauri/target/release/bundle 2>$null)) { echo "::warning::No MSI produced" }
+      - name: Package Windows portable/installer (Node zips, also on windows)
+        if: always()
+        working-directory: aiko/apps/desktop
+        shell: pwsh
+        run: |
+          node scripts/package-windows.mjs 2>&1 | Select-Object -Last 100
+          if ($LASTEXITCODE -ne 0) { echo "Windows Node package not produced" }
+          Get-ChildItem ../../dist/windows-x86_64 2>$null | Format-List
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-windows
+          path: |
+            aiko/apps/desktop/src-tauri/target/release/bundle/msi/**
+            aiko/apps/desktop/src-tauri/target/release/bundle/nsis/**
+            aiko/apps/desktop/src-tauri/target/release/bundle/**/*.msi
+            aiko/apps/desktop/src-tauri/target/release/bundle/**/*.exe
+            dist/windows-x86_64/**
+            aiko/dist/**
+            dist/**
+          if-no-files-found: warn
+          retention-days: 30
+
   github-release:
     name: github release
     runs-on: ubuntu-latest
-    needs: [zig-cross, cargo-cross, portable, desktop-linux, desktop-macos]
+    needs: [zig-cross, cargo-cross, portable, desktop-linux, desktop-macos, desktop-windows]
     if: always() && startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
