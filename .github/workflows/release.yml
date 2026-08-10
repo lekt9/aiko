@@ -404,6 +404,21 @@ jobs:
       - name: Prepare runtime
         working-directory: aiko/apps/desktop
         run: node scripts/prepare-runtime.mjs
+      - name: Sign embedded Contract runtime
+        working-directory: aiko
+        shell: bash
+        env:
+          AIKO_APP_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          test -n "$AIKO_APP_SIGNING_IDENTITY" || { echo 'Missing application signing identity' >&2; exit 1; }
+          contract_dylib=apps/desktop/src-tauri/resources/contract/libcontract.dylib
+          test -f "$contract_dylib" || { echo "Missing embedded Contract runtime: $contract_dylib" >&2; exit 1; }
+          codesign --force --timestamp --options runtime --sign "$AIKO_APP_SIGNING_IDENTITY" "$contract_dylib"
+          codesign --verify --strict --verbose=2 "$contract_dylib"
+          codesign --display --verbose=4 "$contract_dylib" 2>&1 | tee "$RUNNER_TEMP/contract-codesign.txt"
+          grep -Fq "Authority=$AIKO_APP_SIGNING_IDENTITY" "$RUNNER_TEMP/contract-codesign.txt"
+          grep -Fq 'Timestamp=' "$RUNNER_TEMP/contract-codesign.txt"
       - name: Build macOS DMG
         working-directory: aiko/apps/desktop
         env:

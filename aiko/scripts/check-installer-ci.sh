@@ -42,6 +42,12 @@ certificate_run = step!(macos, "Configure macOS signing certificates").fetch("ru
   raise "certificate import missing #{value}" unless certificate_run.include?(value)
 end
 
+contract_signing = step!(macos, "Sign embedded Contract runtime").fetch("run")
+%w[libcontract.dylib codesign\ --force --timestamp codesign\ --verify Authority= Timestamp=].each do |claim|
+  value = claim.tr("\\", "")
+  raise "embedded Contract signing missing #{value}" unless contract_signing.include?(value)
+end
+
 build_run = step!(macos, "Build and verify macOS product installer").fetch("run")
 %w[scripts/prep-installer.sh --notarize --check pkgutil\ --check-signature stapler\ validate].each do |claim|
   raise "product installer build missing #{claim}" unless build_run.include?(claim)
