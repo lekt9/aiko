@@ -53,6 +53,8 @@ end
 dmg = step!(macos, "Build macOS DMG")
 raise "DMG build does not pass the application signing identity" unless
   dmg.fetch("env").fetch("APPLE_SIGNING_IDENTITY").include?("secrets.APPLE_SIGNING_IDENTITY")
+raise "DMG build must retain the app bundle for the product installer" unless
+  dmg.fetch("run").include?("npm run tauri build -- --bundles app,dmg")
 
 runtime_prepare = File.read(ARGV.fetch(2))
 %w[APPLE_SIGNING_IDENTITY codesign --force --timestamp --options runtime --verify Authority= Timestamp=].each do |claim|

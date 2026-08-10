@@ -446,7 +446,7 @@ jobs:
           for name in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
             test -n "${!name:-}" || { echo "Required macOS release secret is missing: $name" >&2; exit 1; }
           done
-          npm run tauri build -- --bundles dmg
+          npm run tauri build -- --bundles app,dmg
       - name: Build and verify macOS product installer
         working-directory: aiko
         shell: bash
