@@ -37,6 +37,10 @@ raise "desktop-macos must run natively" unless macos.fetch("runs-on") == "macos-
 windows = release.fetch("jobs").fetch("desktop-windows")
 raise "desktop-windows must disable release PDB generation" unless
   windows.fetch("env").fetch("CARGO_PROFILE_RELEASE_DEBUG").to_s == "0"
+windows_rustflags = windows.fetch("env").fetch("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS")
+%w[force-unwind-tables=yes target-feature=+crt-static link-arg=/DEBUG:NONE].each do |claim|
+  raise "desktop-windows target flags missing #{claim}" unless windows_rustflags.include?(claim)
+end
 
 version_run = step!(macos, "Set and verify desktop release version").fetch("run")
 %w[release_version cli_version].each do |claim|

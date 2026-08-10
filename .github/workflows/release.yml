@@ -511,9 +511,11 @@ jobs:
     runs-on: windows-latest
     env:
       # The full Aiko binary exceeds MSVC's PDB public-symbol ceiling (LNK4319).
-      # Release installers do not ship debug symbols, so do not ask link.exe to
-      # construct a PDB for either the CLI or the later Tauri build.
+      # Release installers do not ship debug symbols. Cargo's debug=0 alone still
+      # lets rustc pass /DEBUG for public symbols, so explicitly override it at
+      # link time while preserving the workspace's Windows target flags.
       CARGO_PROFILE_RELEASE_DEBUG: "0"
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: "-C force-unwind-tables=yes -C target-feature=+crt-static -C link-arg=/DEBUG:NONE"
     steps:
       - uses: actions/checkout@v4
         with:
