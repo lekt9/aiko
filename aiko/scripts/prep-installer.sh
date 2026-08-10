@@ -128,14 +128,52 @@ PY
 }
 
 notarize_pkg() {
+  local -a notary_auth
   if [[ -n "${APPLE_ID:-}" || -n "${APPLE_PASSWORD:-}" || -n "${APPLE_TEAM_ID:-}" ]]; then
     [[ -n "${APPLE_ID:-}" && -n "${APPLE_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" ]] || \
       fail "APPLE_ID, APPLE_PASSWORD, and APPLE_TEAM_ID must be configured together"
-    xcrun notarytool submit "$PRODUCT_PKG" \
-      --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+    notary_auth=(--apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID")
   else
-    xcrun notarytool submit "$PRODUCT_PKG" --keychain-profile "${AIKO_NOTARY_PROFILE:-aiko}" --wait
+    notary_auth=(--keychain-profile "${AIKO_NOTARY_PROFILE:-aiko}")
   fi
+
+  # Submit once, then poll explicitly. `notarytool submit --wait` has crashed
+  # after returning a valid submission ID on hosted macOS runners; polling
+  # preserves that accepted server-side job and makes transient client crashes
+  # retryable instead of rebuilding and resubmitting the entire installer.
+  local submission_json submission_id status_json status
+  submission_json="$(xcrun notarytool submit "$PRODUCT_PKG" "${notary_auth[@]}" --output-format json)"
+  printf '%s\n' "$submission_json"
+  submission_id="$(printf '%s' "$submission_json" | python3 -c \
+    'import json, sys; print(json.load(sys.stdin).get("id", ""))')"
+  [[ -n "$submission_id" ]] || fail "notarytool submit did not return a submission ID"
+
+  local poll_seconds="${AIKO_NOTARY_POLL_SECONDS:-15}"
+  local deadline=$((SECONDS + ${AIKO_NOTARY_TIMEOUT_SECONDS:-1800}))
+  local accepted=0
+  while (( SECONDS < deadline )); do
+    if status_json="$(xcrun notarytool info "$submission_id" "${notary_auth[@]}" --output-format json 2>&1)"; then
+      printf '%s\n' "$status_json"
+      status="$(printf '%s' "$status_json" | python3 -c \
+        'import json, sys; print(json.load(sys.stdin).get("status", ""))')"
+      case "$status" in
+        Accepted)
+          accepted=1
+          break
+          ;;
+        Invalid|Rejected)
+          xcrun notarytool log "$submission_id" "${notary_auth[@]}" || true
+          fail "product pkg notarization was rejected ($status)"
+          ;;
+        "In Progress") ;;
+        *) warn "unexpected notarization status '$status'; retrying" ;;
+      esac
+    else
+      warn "notarytool info failed; retrying submission $submission_id"
+    fi
+    sleep "$poll_seconds"
+  done
+  [[ $accepted -eq 1 ]] || fail "product pkg notarization timed out for submission $submission_id"
   xcrun stapler staple "$PRODUCT_PKG"
 }
 

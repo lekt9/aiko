@@ -7,6 +7,7 @@ REPO_ROOT=$(CDPATH= cd -- "$AIKO_ROOT/.." && pwd)
 RELEASE_WORKFLOW="$REPO_ROOT/.github/workflows/release.yml"
 CI_WORKFLOW="$REPO_ROOT/.github/workflows/ci.yml"
 PREPARE_RUNTIME="$AIKO_ROOT/apps/desktop/scripts/prepare-runtime.mjs"
+PREP_INSTALLER="$AIKO_ROOT/scripts/prep-installer.sh"
 
 for file in \
   "$RELEASE_WORKFLOW" \
@@ -15,11 +16,11 @@ for file in \
   "$AIKO_ROOT/installer/macos/distribution.xml" \
   "$AIKO_ROOT/installer/macos/resources/welcome.html" \
   "$PREPARE_RUNTIME" \
-  "$AIKO_ROOT/scripts/prep-installer.sh"; do
+  "$PREP_INSTALLER"; do
   test -f "$file" || { echo "missing installer CI/CD input: $file" >&2; exit 1; }
 done
 
-ruby - "$RELEASE_WORKFLOW" "$CI_WORKFLOW" "$PREPARE_RUNTIME" <<'RUBY'
+ruby - "$RELEASE_WORKFLOW" "$CI_WORKFLOW" "$PREPARE_RUNTIME" "$PREP_INSTALLER" <<'RUBY'
 require "yaml"
 
 release = YAML.load_file(ARGV.fetch(0))
@@ -60,6 +61,17 @@ runtime_prepare = File.read(ARGV.fetch(2))
 %w[APPLE_SIGNING_IDENTITY codesign --force --timestamp --options runtime --verify Authority= Timestamp=].each do |claim|
   raise "runtime refresh signing missing #{claim}" unless runtime_prepare.include?(claim)
 end
+
+installer_prepare = File.read(ARGV.fetch(3))
+[
+  "notarytool submit", "--output-format json", "notarytool info",
+  "AIKO_NOTARY_POLL_SECONDS", "AIKO_NOTARY_TIMEOUT_SECONDS",
+  "Accepted", "Invalid", "notarytool log"
+].each do |claim|
+  raise "resilient installer notarization missing #{claim}" unless installer_prepare.include?(claim)
+end
+installer_code = installer_prepare.lines.reject { |line| line.lstrip.start_with?("#") }.join
+raise "installer notarization still uses crash-prone --wait" if installer_code.include?("--wait")
 
 build_run = step!(macos, "Build and verify macOS product installer").fetch("run")
 %w[scripts/prep-installer.sh --notarize --check pkgutil\ --check-signature stapler\ validate].each do |claim|
