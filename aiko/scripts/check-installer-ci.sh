@@ -34,6 +34,10 @@ end
 macos = release.fetch("jobs").fetch("desktop-macos")
 raise "desktop-macos must run natively" unless macos.fetch("runs-on") == "macos-latest"
 
+windows = release.fetch("jobs").fetch("desktop-windows")
+raise "desktop-windows must disable release PDB generation" unless
+  windows.fetch("env").fetch("CARGO_PROFILE_RELEASE_DEBUG").to_s == "0"
+
 version_run = step!(macos, "Set and verify desktop release version").fetch("run")
 %w[release_version cli_version].each do |claim|
   raise "release version gate missing #{claim}" unless version_run.include?(claim)
