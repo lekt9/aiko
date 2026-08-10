@@ -141,7 +141,7 @@ notarize_pkg() {
   # after returning a valid submission ID on hosted macOS runners; polling
   # preserves that accepted server-side job and makes transient client crashes
   # retryable instead of rebuilding and resubmitting the entire installer.
-  local submission_json submission_id status_json status
+  local submission_json submission_id status_json notary_status
   submission_json="$(xcrun notarytool submit "$PRODUCT_PKG" "${notary_auth[@]}" --output-format json)"
   printf '%s\n' "$submission_json"
   submission_id="$(printf '%s' "$submission_json" | python3 -c \
@@ -154,19 +154,19 @@ notarize_pkg() {
   while (( SECONDS < deadline )); do
     if status_json="$(xcrun notarytool info "$submission_id" "${notary_auth[@]}" --output-format json 2>&1)"; then
       printf '%s\n' "$status_json"
-      status="$(printf '%s' "$status_json" | python3 -c \
+      notary_status="$(printf '%s' "$status_json" | python3 -c \
         'import json, sys; print(json.load(sys.stdin).get("status", ""))')"
-      case "$status" in
+      case "$notary_status" in
         Accepted)
           accepted=1
           break
           ;;
         Invalid|Rejected)
           xcrun notarytool log "$submission_id" "${notary_auth[@]}" || true
-          fail "product pkg notarization was rejected ($status)"
+          fail "product pkg notarization was rejected ($notary_status)"
           ;;
         "In Progress") ;;
-        *) warn "unexpected notarization status '$status'; retrying" ;;
+        *) warn "unexpected notarization status '$notary_status'; retrying" ;;
       esac
     else
       warn "notarytool info failed; retrying submission $submission_id"

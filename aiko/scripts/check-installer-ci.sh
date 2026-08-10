@@ -66,12 +66,15 @@ installer_prepare = File.read(ARGV.fetch(3))
 [
   "notarytool submit", "--output-format json", "notarytool info",
   "AIKO_NOTARY_POLL_SECONDS", "AIKO_NOTARY_TIMEOUT_SECONDS",
-  "Accepted", "Invalid", "notarytool log"
+  "notary_status", "Accepted", "Invalid", "notarytool log"
 ].each do |claim|
   raise "resilient installer notarization missing #{claim}" unless installer_prepare.include?(claim)
 end
 installer_code = installer_prepare.lines.reject { |line| line.lstrip.start_with?("#") }.join
 raise "installer notarization still uses crash-prone --wait" if installer_code.include?("--wait")
+raise "installer notarization uses zsh read-only variable status" if installer_code.lines.any? { |line|
+  line.match?(/^\s*(?:local\s+.*\s)?status(?:=|\s|$)/)
+}
 
 build_run = step!(macos, "Build and verify macOS product installer").fetch("run")
 %w[scripts/prep-installer.sh --notarize --check pkgutil\ --check-signature stapler\ validate].each do |claim|
