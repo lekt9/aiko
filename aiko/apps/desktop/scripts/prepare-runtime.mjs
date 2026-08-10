@@ -52,6 +52,50 @@ function contractLibraryCandidates(target) {
   ].filter(Boolean);
 }
 
+function signAppleContractRuntime(target, libraryPath) {
+  if (!target.includes("apple")) return;
+
+  const identity = process.env.APPLE_SIGNING_IDENTITY?.trim();
+  if (!identity) return;
+
+  const sign = spawnSync(
+    "codesign",
+    ["--force", "--timestamp", "--options", "runtime", "--sign", identity, libraryPath],
+    { encoding: "utf8" },
+  );
+  if (sign.status !== 0) {
+    throw new Error(
+      `Failed to sign ${basename(libraryPath)}: ${sign.stderr || sign.stdout || sign.error}`,
+    );
+  }
+
+  const verify = spawnSync(
+    "codesign",
+    ["--verify", "--strict", "--verbose=2", libraryPath],
+    { encoding: "utf8" },
+  );
+  if (verify.status !== 0) {
+    throw new Error(
+      `Failed to verify ${basename(libraryPath)}: ${verify.stderr || verify.stdout || verify.error}`,
+    );
+  }
+
+  const display = spawnSync(
+    "codesign",
+    ["--display", "--verbose=4", libraryPath],
+    { encoding: "utf8" },
+  );
+  const signature = `${display.stdout ?? ""}\n${display.stderr ?? ""}`;
+  if (display.status !== 0 || !signature.includes(`Authority=${identity}`)) {
+    throw new Error(`${basename(libraryPath)} is not signed by ${identity}.`);
+  }
+  if (!signature.includes("Timestamp=")) {
+    throw new Error(`${basename(libraryPath)} does not have a secure timestamp.`);
+  }
+
+  process.stdout.write(`Signed and verified ${basename(libraryPath)}\n`);
+}
+
 if (process.argv.includes("--test-contract-candidates")) {
   const candidates = contractLibraryCandidates("x86_64-pc-windows-msvc").map((candidate) =>
     candidate.replaceAll("\\", "/"),
@@ -133,6 +177,9 @@ const packagedContractName = triple.includes("windows") ? "contract.dll" : basen
 const contractDestination = join(contractDirectory, packagedContractName);
 copyFileSync(contractSource, contractDestination);
 if (!triple.includes("windows")) chmodSync(contractDestination, 0o755);
+// Tauri invokes this script again from beforeBuildCommand. Sign after the copy
+// so that refresh cannot replace the release workflow's signed dylib.
+signAppleContractRuntime(triple, contractDestination);
 
 process.stdout.write(
   `Prepared ${basename(destination)} and ${basename(contractDestination)}\n`,

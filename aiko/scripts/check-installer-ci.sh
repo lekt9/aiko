@@ -6,6 +6,7 @@ AIKO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$AIKO_ROOT/.." && pwd)
 RELEASE_WORKFLOW="$REPO_ROOT/.github/workflows/release.yml"
 CI_WORKFLOW="$REPO_ROOT/.github/workflows/ci.yml"
+PREPARE_RUNTIME="$AIKO_ROOT/apps/desktop/scripts/prepare-runtime.mjs"
 
 for file in \
   "$RELEASE_WORKFLOW" \
@@ -13,11 +14,12 @@ for file in \
   "$REPO_ROOT/README.md" \
   "$AIKO_ROOT/installer/macos/distribution.xml" \
   "$AIKO_ROOT/installer/macos/resources/welcome.html" \
+  "$PREPARE_RUNTIME" \
   "$AIKO_ROOT/scripts/prep-installer.sh"; do
   test -f "$file" || { echo "missing installer CI/CD input: $file" >&2; exit 1; }
 done
 
-ruby - "$RELEASE_WORKFLOW" "$CI_WORKFLOW" <<'RUBY'
+ruby - "$RELEASE_WORKFLOW" "$CI_WORKFLOW" "$PREPARE_RUNTIME" <<'RUBY'
 require "yaml"
 
 release = YAML.load_file(ARGV.fetch(0))
@@ -46,6 +48,15 @@ contract_signing = step!(macos, "Sign embedded Contract runtime").fetch("run")
 %w[libcontract.dylib codesign\ --force --timestamp codesign\ --verify Authority= Timestamp=].each do |claim|
   value = claim.tr("\\", "")
   raise "embedded Contract signing missing #{value}" unless contract_signing.include?(value)
+end
+
+dmg = step!(macos, "Build macOS DMG")
+raise "DMG build does not pass the application signing identity" unless
+  dmg.fetch("env").fetch("APPLE_SIGNING_IDENTITY").include?("secrets.APPLE_SIGNING_IDENTITY")
+
+runtime_prepare = File.read(ARGV.fetch(2))
+%w[APPLE_SIGNING_IDENTITY codesign --force --timestamp --options runtime --verify Authority= Timestamp=].each do |claim|
+  raise "runtime refresh signing missing #{claim}" unless runtime_prepare.include?(claim)
 end
 
 build_run = step!(macos, "Build and verify macOS product installer").fetch("run")
