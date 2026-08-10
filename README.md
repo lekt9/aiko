@@ -48,15 +48,15 @@ version.
 | Operating system | Recommended download | Other formats |
 |---|---|---|
 | **Windows 10/11 (x86-64)** | [Download the Setup installer](https://github.com/lekt9/aiko/releases/latest/download/Aiko-Windows-x86_64-Setup.exe) | [MSI](https://github.com/lekt9/aiko/releases/latest/download/Aiko-Windows-x86_64.msi) · [Portable ZIP](https://github.com/lekt9/aiko/releases/latest/download/Aiko-Windows-x86_64-Portable.zip) · [script installer ZIP](https://github.com/lekt9/aiko/releases/latest/download/Aiko-Windows-x86_64-Installer.zip) |
-| **macOS** | [Download the DMG](https://github.com/lekt9/aiko/releases/latest/download/Aiko-macOS.dmg) | — |
+| **macOS** | [Download the DMG](https://github.com/lekt9/aiko/releases/latest/download/Aiko-macOS.dmg) | [Product installer `.pkg`](https://github.com/lekt9/aiko/releases/latest/download/Aiko-macOS.pkg) · [zipped `.pkg`](https://github.com/lekt9/aiko/releases/latest/download/Aiko-macOS.pkg.zip) |
 | **Linux (x86-64)** | [Download the AppImage](https://github.com/lekt9/aiko/releases/latest/download/Aiko-Linux-x86_64.AppImage) | [Debian/Ubuntu `.deb`](https://github.com/lekt9/aiko/releases/latest/download/Aiko-Linux-x86_64.deb) |
 
 Verify a download before installing it with
 [`SHA256SUMS.txt`](https://github.com/lekt9/aiko/releases/latest/download/SHA256SUMS.txt).
 Checksums prove file integrity; they do not establish publisher identity. The
 Windows MSI/NSIS packages are currently unsigned and may trigger SmartScreen.
-The macOS DMG is signed and notarized only when the repository's Apple secrets
-are configured; otherwise macOS may warn before opening it.
+The release workflow publishes the macOS DMG and product package only after
+their Apple application/installer signatures and notarization tickets validate.
 
 The links become available after the first installer-enabled release finishes.
 If a direct link is temporarily unavailable, check the

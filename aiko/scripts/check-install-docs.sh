@@ -4,7 +4,9 @@
 set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-PROXY_ROOT=${AIKO_PROXY_ROOT:-$(CDPATH= cd -- "$ROOT/../../aiko-proxy" 2>/dev/null && pwd || true)}
+# Cross-repo proxy checks are opt-in so an unrelated sibling checkout cannot
+# make Aiko's own documentation witness nondeterministic.
+PROXY_ROOT=${AIKO_PROXY_ROOT:-}
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ok() { echo "ok: $*"; }
@@ -23,6 +25,11 @@ need_grep() {
 need_file "$ROOT/README.md"
 need_file "$ROOT/scripts/contract-runtime.sh"
 need_file "$ROOT/scripts/install-aiko-package.sh"
+need_file "$ROOT/scripts/prep-installer.sh"
+need_file "$ROOT/scripts/stage-dist-app.sh"
+need_file "$ROOT/scripts/check-installer-ci.sh"
+need_file "$ROOT/installer/macos/distribution.xml"
+need_file "$ROOT/installer/macos/resources/welcome.html"
 need_file "$ROOT/sdk/registry/setup.sh"
 
 # ── Aiko README: client install surface ──────────────────────────────
@@ -40,6 +47,14 @@ need_grep "$ROOT/README.md" './install\.sh' 'portable install.sh'
 need_grep "$ROOT/README.md" 'sdk/registry/setup\.sh' 'registry setup'
 need_grep "$ROOT/README.md" 'PATH' 'PATH note for ~/bin'
 need_grep "$ROOT/README.md" 'GITEA_TOKEN' 'registry token'
+need_grep "$ROOT/README.md" 'scripts/prep-installer\.sh' 'canonical macOS installer command'
+need_grep "$ROOT/README.md" 'set-release-version\.mjs' 'desktop release version synchronization'
+need_grep "$ROOT/README.md" 'npm --prefix apps/desktop ci' 'desktop dependency install command'
+need_grep "$ROOT/README.md" 'npm --prefix apps/frontend/frontend ci' 'frontend dependency install command'
+need_grep "$ROOT/README.md" 'npm --prefix apps/desktop run tauri build -- --bundles app' 'desktop app bundle build command'
+need_grep "$ROOT/README.md" 'dist/Aiko-Installer-<version>\.pkg' 'versioned macOS installer output'
+need_grep "$ROOT/README.md" 'Aiko-macOS\.pkg' 'stable CI/CD product installer asset'
+need_grep "$ROOT/README.md" 'APPLE_INSTALLER_CERTIFICATE' 'installer signing secret'
 
 # ── Scripts still teach the same commands ────────────────────────────
 need_grep "$ROOT/scripts/contract-runtime.sh" 'install' 'install command in script'
@@ -58,10 +73,16 @@ need_file "$ROOT/scripts/aiko-doctor-headless.sh"
 need_file "$ROOT/scripts/gap-closure-snapshot.sh"
 need_grep "$ROOT/sdk/registry/bin/aiko-install" 'selfcheck|SELFCHECK' 'registry installer runs selfcheck'
 need_grep "$ROOT/scripts/contract-runtime.sh" 'package-installable-witness' 'package path runs installable witness'
+need_grep "$ROOT/scripts/prep-installer.sh" 'Aiko-Installer-\$CLI_VERSION\.pkg' 'installer uses the CLI release version'
+need_grep "$ROOT/scripts/prep-installer.sh" 'stage_app' 'installer recreates the staged app'
+need_grep "$ROOT/scripts/prep-installer.sh" 'unzip -tq' 'installer verifies its zip'
+need_grep "$ROOT/scripts/prep-installer.sh" 'installer/macos' 'installer uses tracked source templates'
+need_grep "$ROOT/scripts/check-installer-ci.sh" 'release\.yml' 'CI/CD witness inspects release workflow'
+need_grep "$ROOT/apps/desktop/README.md" 'Aiko-macOS\.pkg' 'desktop docs product installer download'
 need_grep "$ROOT/sdk/registry/setup.sh" 'GITEA_TOKEN' 'setup token'
 need_grep "$ROOT/sdk/registry/setup.sh" 'GITEA_URL' 'setup Gitea URL'
 
-# ── aiko-proxy operator docs (when sibling checkout exists) ──────────
+# ── aiko-proxy operator docs (when explicitly requested) ─────────────
 if [[ -n "${PROXY_ROOT:-}" && -d "$PROXY_ROOT" ]]; then
   need_file "$PROXY_ROOT/README.md"
   need_file "$PROXY_ROOT/scripts/deploy.sh"
@@ -81,7 +102,7 @@ if [[ -n "${PROXY_ROOT:-}" && -d "$PROXY_ROOT" ]]; then
   fi
   ok "aiko-proxy docs free of Codegraff-primary defaults"
 else
-  echo "warn: aiko-proxy checkout not found at sibling path; skipped proxy checks" >&2
+  echo "note: set AIKO_PROXY_ROOT to include aiko-proxy operator docs" >&2
 fi
 
 # ── REPOSITORY-GUIDE packaging map still lists install ───────────────

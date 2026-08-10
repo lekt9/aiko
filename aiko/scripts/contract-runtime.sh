@@ -289,6 +289,8 @@ package_runtime() {
     if [ -f "$AIKO_ROOT/scripts/aiko-install-selfcheck.sh" ]; then
         install -m 755 "$AIKO_ROOT/scripts/aiko-install-selfcheck.sh" "$DEST/selfcheck.sh"
     fi
+    install -m 755 "$AIKO_ROOT/scripts/witness-contract-native-compatibility.sh" \
+        "$DEST/contract-selfcheck.sh"
     # SDK registry — self-bootstrapping installer for contract + neuron + limbs
     if [ -d "$AIKO_ROOT/sdk/registry" ]; then
         cp -R "$AIKO_ROOT/sdk/registry/bin" "$DEST/sdk/registry/"

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Aiko",
-  "version": "0.1.0",
+  "version": "0.2.114",
   "identifier": "ai.aiko.desktop",
   "build": {
     "beforeDevCommand": "npm run runtime:prepare && npm run frontend:dev",

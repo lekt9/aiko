@@ -19,6 +19,13 @@
       "skillPath": "skills/react/SKILL.md",
       "computedHash": "42e6c3acd47b1f2374b7401fae31c5b496a3e12b0949289c9f5b60513c519316"
     },
+    "sd25-pe": {
+      "source": "arkdocs-en.tos-ap-southeast-1.volces.com",
+      "sourceUrl": "https://arkdocs-en.tos-ap-southeast-1.volces.com/skills/",
+      "sourceType": "well-known",
+      "computedHash": "4abb900048d77cb5aecf8d2278e8385249b62157337839a3718dd95ddf05910f",
+      "wellKnownDigest": "sha256:7c0bf0aa0eae294e516d7600c6839eb72d07aa7639875d229e9508ba9382f82b"
+    },
     "web-design-guidelines": {
       "source": "vercel-labs/agent-skills",
       "sourceType": "github",

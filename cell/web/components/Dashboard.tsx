@@ -16,7 +16,8 @@ type Entity = {
   relationKeys: string[]; relations: Record<string,string>;
   parentId: string | null; raw: any; view: any;
 };
-type Block = { id: string; port: string; direction: "input"|"output"; schema: any; render: any; data: any; relationKeys: string[]; entities: Entity[] };
+type BusinessLogic = { organelle: string; neuronPath: string; summary: string; steps: { id: string; text: string }[]; raw: string };
+type Block = { id: string; port: string; direction: "input"|"output"; schema: any; render: any; data: any; relationKeys: string[]; entities: Entity[]; businessLogic: BusinessLogic | null };
 type DashboardModel = { cell: any; blocks: Block[]; entities: Entity[]; links: any[]; deps: any; manifest: any };
 
 function titleForPort(port: string) {
@@ -28,7 +29,17 @@ function titleForPort(port: string) {
   return port.replaceAll("_", " ").replace(/\b\w/g, c=> c.toUpperCase());
 }
 
-function specForEntity(entity: Entity, opts?: { compact?: boolean }): any {
+function specForBusinessLogic(bl: BusinessLogic | null | undefined): any | null {
+  if (!bl || !bl.steps?.length) return null;
+  return {
+    root: "root",
+    elements: {
+      root: { type: "BusinessLogic", props: { title: bl.organelle, summary: bl.summary || null, steps: bl.steps, neuronPath: bl.neuronPath ?? null }, children: [] },
+    },
+  };
+}
+function specForEntity(entity: Entity, block: Block | undefined, opts?: { compact?: boolean }): any {
+  void block;
   const raw = entity.raw;
   const isRow = entity.parentId != null;
   const compact = opts?.compact ?? isRow;
@@ -170,16 +181,18 @@ export default function Dashboard({ cellPath }: { cellPath: string; onPickCell?:
       <VisibilityProvider>
         <ValidationProvider>
           <ActionProvider>
-            <div className="space-y-3">
+            <div className="space-y-6">
               {/* tabs — notion DB views */}
-              <div className="flex flex-wrap items-center gap-1 rounded-lg-t border border-os-border bg-os-surface p-1">
+              <div className="flex flex-wrap items-center gap-1 rounded-lg-t border border-os-border bg-os-surface p-1" role="tablist" aria-label="Entity views">
                 {ports.map((p) => {
                   const active = p === activePort;
                   return (
                     <button
                       key={p}
+                      role="tab"
+                      aria-selected={active}
                       onClick={() => setActivePort(p)}
-                      className={`whitespace-nowrap rounded-sm-t px-3 py-1.5 font-mono text-[11px] font-semibold outline-none transition-[background-color,color,border-color] duration-[var(--dur-short)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-2 active:opacity-80 disabled:opacity-50 ${active ? "bg-os-accent text-os-ink" : "text-os-dim hover:text-os-text"}`}
+                      className={`whitespace-nowrap rounded-sm-t px-3 py-1.5 font-mono text-[11px] font-semibold outline-none transition-[background-color,color,border-color] duration-[var(--dur-short)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-2 active:opacity-80 ${active ? "bg-os-accent text-os-ink" : "text-os-dim hover:text-os-text"}`}
                     >
                       {titleForPort(p)} <span className={`ml-1.5 font-mono text-[10px] tabular-nums ${active ? "opacity-90 text-os-ink/90" : "text-os-dim"}`}>{rowCount(p)}</span>
                     </button>
@@ -187,24 +200,27 @@ export default function Dashboard({ cellPath }: { cellPath: string; onPickCell?:
                 })}
               </div>
 
-              {/* list — detail (notion page peek). single selection, no double panels. */}
-              <div className="grid grid-cols-[minmax(0,360px)_minmax(0,1fr)] gap-3 max-[900px]:grid-cols-[minmax(0,1fr)]">
+              {/* list — detail. Workbench rhythm: 24px outer gap, breathing list/detail, view-in on switch */}
+              <div className="grid grid-cols-[minmax(0,360px)_minmax(0,1fr)] gap-6 max-[900px]:grid-cols-[minmax(0,1fr)]">
                 {/* list */}
                 <div className="min-w-0 overflow-hidden rounded-lg-t border border-os-border bg-os-surface">
-                  <div className="flex items-center justify-between gap-2 border-b border-os-hairline px-3 py-2">
+                  <div className="flex items-center justify-between gap-2 border-b border-os-hairline px-4 py-3">
                     <span className="whitespace-nowrap font-mono text-[10px] uppercase tracking-[0.14em] text-os-dim">{activePort ? titleForPort(activePort) : "Records"}</span>
                     <span className="whitespace-nowrap font-mono text-[10px] tabular-nums text-os-dim">{rowsForActive.length} {rowsForActive.length === 1 ? "item" : "items"}</span>
                   </div>
-                  <div className="max-h-[62vh] divide-y divide-os-hairline overflow-auto max-[900px]:max-h-none">
+                  <div className="view" aria-hidden style={{ height: 0 }} />
+                  <div role="listbox" aria-label={`${activePort ? titleForPort(activePort) : "Records"} list`} className="max-h-[62vh] divide-y divide-os-hairline overflow-auto max-[900px]:max-h-none">
                     {rowsForActive.map((row) => {
                       const active = selected?.id === row.id;
                       return (
                         <button
                           key={row.id}
+                          role="option"
+                          aria-selected={active}
                           onClick={() => setSelectedId(row.id)}
-                          className={`flex w-full items-center gap-3 px-3 py-3 text-left outline-none transition-[background-color,color] duration-[var(--dur-short)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-[-2px] active:opacity-90 ${active ? "bg-os-accent text-os-ink" : "hover:bg-os-surface2"}`}
+                          className={`flex min-h-[44px] w-full items-center gap-3 px-4 py-3.5 text-left outline-none transition-[background-color,color] duration-[var(--dur-short)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-[-2px] active:opacity-90 ${active ? "bg-os-accent text-os-ink" : "hover:bg-os-surface2"}`}
                         >
-                          <span className={`dot shrink-0 ${active ? "bg-os-ink" : row.tone === "ok" ? "ok" : row.tone === "warn" ? "warn" : "off"}`} />
+                          <span className={`dot shrink-0 ${active ? "bg-os-ink" : row.tone === "ok" ? "ok" : row.tone === "warn" ? "warn" : "off"}`} aria-hidden />
                           <span className="min-w-0 flex-1">
                             <span className={`block truncate text-[13px] font-medium ${active ? "text-os-ink" : ""}`}>{row.label}</span>
                             {row.subtitle && <span className={`block truncate font-mono text-[11px] ${active ? "text-os-ink/90" : "text-os-dim"}`}>{row.subtitle}</span>}
@@ -216,29 +232,37 @@ export default function Dashboard({ cellPath }: { cellPath: string; onPickCell?:
                   </div>
                 </div>
 
-                {/* detail */}
+                {/* detail — collapsed Business Logic; space-y-6 breathes */}
                 <div className="min-w-0">
                   {!selected ? (
-                    <div className="rounded-lg-t border border-dashed border-os-border bg-os-surface p-8 text-center font-mono text-[11px] text-os-dim">
+                    <div className="rounded-lg-t border border-dashed border-os-border bg-os-surface px-6 py-10 text-center font-mono text-[11px] leading-relaxed text-os-dim">
                       Select a record to view details.
                     </div>
                   ) : (
-                    <div>
-                      <Renderer spec={specForEntity(selected, { compact: false })} registry={registry} />
+                    <div className="view space-y-6" key={selected.id}>
+                      <Renderer spec={specForEntity(selected, model.blocks.find(b=> b.id===selected.blockId), { compact: false })} registry={registry} />
+                      {(() => {
+                        const block = model.blocks.find(b=> b.id===selected.blockId);
+                        const bl = block?.businessLogic ?? null;
+                        if (!bl) return null;
+                        const spec = specForBusinessLogic(bl);
+                        if (!spec) return null;
+                        return <Renderer spec={spec} registry={registry} />;
+                      })()}
                       {(() => {
                         const k = selected.relationKeys[0]; const v = k ? selected.relations[k] : null;
                         if (!k || !v) return null;
                         const related = blockEntities.filter((e) => e.relations[k] === String(v) && e.id !== selected.blockId && e.port !== selected.port);
                         if (!related.length) return null;
                         return (
-                          <div className="mt-3 rounded-lg-t border border-os-border bg-os-surface p-3">
+                          <div className="rounded-lg-t border border-os-border bg-os-surface p-4">
                             <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-os-dim">Related</div>
-                            <div className="mt-2 flex flex-wrap gap-1.5">
+                            <div className="mt-3 flex flex-wrap gap-2">
                               {related.map((r) => (
                                 <button
                                   key={r.id}
                                   onClick={() => { setActivePort(r.port); setSelectedId(r.id); }}
-                                  className="whitespace-nowrap rounded-full border border-os-border bg-os-bg px-2.5 py-1 font-mono text-[11px] outline-none transition-[border-color,color] duration-[var(--dur-short)] hover:border-[var(--border-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-2 active:opacity-80"
+                                  className="whitespace-nowrap rounded-full border border-os-border bg-os-bg px-3 py-1.5 font-mono text-[11px] outline-none transition-[border-color,color] duration-[var(--dur-short)] hover:border-[var(--border-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-2 active:opacity-80"
                                 >
                                   {r.label} <span className="opacity-60">\u00B7 {titleForPort(r.port)}</span>
                                 </button>

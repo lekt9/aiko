@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>Aiko</title>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <options customize="allow" require-scripts="false"/>
+    <os-version min="12.0"/>
+    <domains enable_localSystem="true"/>
+    <choices-outline>
+        <line choice="app"/>
+        <line choice="cli"/>
+    </choices-outline>
+    <choice id="app" title="Aiko Desktop" description="The Aiko desktop application, installed to /Applications.">
+        <pkg-ref id="ai.aiko.desktop"/>
+    </choice>
+    <choice id="cli" title="aiko CLI" description="The aiko command-line tool, installed to /usr/local/bin.">
+        <pkg-ref id="ai.aiko.cli"/>
+    </choice>
+    <pkg-ref id="ai.aiko.desktop" version="__APP_VERSION__">AikoApp.pkg</pkg-ref>
+    <pkg-ref id="ai.aiko.cli" version="__CLI_VERSION__">AikoCLI.pkg</pkg-ref>
+</installer-gui-script>

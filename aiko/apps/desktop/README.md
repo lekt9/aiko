@@ -26,6 +26,7 @@ Install the latest release for
 [macOS](https://github.com/lekt9/aiko/releases/latest/download/Aiko-macOS.dmg), or
 [Linux](https://github.com/lekt9/aiko/releases/latest/download/Aiko-Linux-x86_64.AppImage).
 Windows also has an [MSI](https://github.com/lekt9/aiko/releases/latest/download/Aiko-Windows-x86_64.msi),
+macOS also has a [product installer](https://github.com/lekt9/aiko/releases/latest/download/Aiko-macOS.pkg),
 and Debian/Ubuntu users can download the [`.deb`](https://github.com/lekt9/aiko/releases/latest/download/Aiko-Linux-x86_64.deb).
 See the [root download table](../../../README.md#download-aiko-desktop) for
 portable packages and checksums.
@@ -103,8 +104,9 @@ Start it in either of two ways:
 The workflow creates the tag for a manual run, generates checksums, and uploads
 stable filenames used by the download links above. It refuses to publish a
 partial release when any Windows, macOS, or Linux installer is missing or empty.
-Apple signing and notarization secrets are optional for development releases;
-configure them before presenting the DMG as production-signed. The Windows
+CI permits unsigned product-package smoke artifacts, but the release workflow
+requires Apple application, installer, and notarization secrets and validates
+the stapled ticket before publishing the DMG or product package. The Windows
 workflow currently produces unsigned MSI/NSIS packages, so add Authenticode
 certificate installation before claiming verified Windows publisher identity.
 

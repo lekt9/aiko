@@ -242,7 +242,17 @@ jobs:
         env:
           AIKO_RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
           AIKO_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
-        run: node aiko/apps/desktop/scripts/set-release-version.mjs
+        shell: bash
+        run: |
+          node aiko/apps/desktop/scripts/set-release-version.mjs
+          release_version="${AIKO_RELEASE_TAG#v}"
+          if test -z "$release_version"; then release_version="$AIKO_RELEASE_VERSION"; fi
+          cli_version=$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' aiko/crates/codegen/xai-grok-pager-bin/Cargo.toml | head -1)
+          test -n "$release_version" && test -n "$cli_version"
+          test "$release_version" = "$cli_version" || {
+            echo "Release version $release_version does not match Aiko CLI $cli_version" >&2
+            exit 1
+          }
       - name: Install native build dependencies
         run: |
           sudo apt-get update
@@ -312,9 +322,75 @@ jobs:
         env:
           AIKO_RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
           AIKO_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
-        run: node aiko/apps/desktop/scripts/set-release-version.mjs
+        shell: bash
+        run: |
+          node aiko/apps/desktop/scripts/set-release-version.mjs
+          release_version="${AIKO_RELEASE_TAG#v}"
+          if test -z "$release_version"; then release_version="$AIKO_RELEASE_VERSION"; fi
+          cli_version=$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' aiko/crates/codegen/xai-grok-pager-bin/Cargo.toml | head -1)
+          test -n "$release_version" && test -n "$cli_version"
+          test "$release_version" = "$cli_version" || {
+            echo "Release version $release_version does not match Aiko CLI $cli_version" >&2
+            exit 1
+          }
       - name: Install protoc
         run: brew install protobuf
+      - name: Configure macOS signing certificates
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_INSTALLER_CERTIFICATE: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
+          APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          validate_group() {
+            local label="$1"; shift
+            local present=0
+            for name in "$@"; do
+              test -n "${!name:-}" && present=$((present + 1))
+            done
+            if test "$present" -ne 0 && test "$present" -ne "$#"; then
+              echo "$label secrets must be configured all-or-none" >&2
+              exit 1
+            fi
+          }
+          validate_group "Apple application certificate" APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY
+          validate_group "Apple installer certificate" APPLE_INSTALLER_CERTIFICATE APPLE_INSTALLER_CERTIFICATE_PASSWORD APPLE_INSTALLER_SIGNING_IDENTITY
+          for name in \
+            APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+            APPLE_INSTALLER_CERTIFICATE APPLE_INSTALLER_CERTIFICATE_PASSWORD APPLE_INSTALLER_SIGNING_IDENTITY; do
+            test -n "${!name:-}" || { echo "Required release secret is missing: $name" >&2; exit 1; }
+          done
+          keychain="$RUNNER_TEMP/aiko-signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          echo "AIKO_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          existing_keychains=$(security list-keychains -d user | tr -d '"' | xargs)
+          security list-keychains -d user -s "$keychain" $existing_keychains
+          import_certificate() {
+            local encoded="$1" password="$2" name="$3"
+            test -n "$encoded" || return 0
+            local path="$RUNNER_TEMP/$name.p12"
+            printf '%s' "$encoded" | openssl base64 -d -A > "$path"
+            security import "$path" -P "$password" -A -t cert -f pkcs12 -k "$keychain"
+            rm -f "$path"
+          }
+          import_certificate "$APPLE_CERTIFICATE" "$APPLE_CERTIFICATE_PASSWORD" application
+          import_certificate "$APPLE_INSTALLER_CERTIFICATE" "$APPLE_INSTALLER_CERTIFICATE_PASSWORD" installer
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
+          identities=$(security find-identity -v "$keychain")
+          printf '%s\n' "$identities"
+          if test -n "$APPLE_SIGNING_IDENTITY"; then
+            grep -Fq "$APPLE_SIGNING_IDENTITY" <<< "$identities"
+          fi
+          if test -n "$APPLE_INSTALLER_SIGNING_IDENTITY"; then
+            grep -Fq "$APPLE_INSTALLER_SIGNING_IDENTITY" <<< "$identities"
+          fi
       - name: Install frontend dependencies
         working-directory: aiko/apps/desktop
         run: |
@@ -331,8 +407,6 @@ jobs:
       - name: Build macOS DMG
         working-directory: aiko/apps/desktop
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -353,23 +427,69 @@ jobs:
               for name in "$@"; do unset "$name"; done
             fi
           }
-          validate_group "Apple certificate" APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY
           validate_group "Apple notarization" APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+          for name in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            test -n "${!name:-}" || { echo "Required macOS release secret is missing: $name" >&2; exit 1; }
+          done
           npm run tauri build -- --bundles dmg
-      - name: Normalize macOS asset
+      - name: Build and verify macOS product installer
+        working-directory: aiko
         shell: bash
+        env:
+          AIKO_APP_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          AIKO_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          for name in AIKO_APP_SIGNING_IDENTITY AIKO_INSTALLER_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            test -n "${!name:-}" || { echo "Required signed-installer secret is missing: $name" >&2; exit 1; }
+          done
+          scripts/prep-installer.sh --notarize
+          scripts/prep-installer.sh --check
+          pkg=$(find dist -maxdepth 1 -type f -name 'Aiko-Installer-*.pkg' | head -1)
+          pkgutil --check-signature "$pkg" | grep -Fq "$AIKO_INSTALLER_SIGNING_IDENTITY"
+          xcrun stapler validate "$pkg"
+      - name: Normalize and verify macOS assets
+        shell: bash
+        env:
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
         run: |
           set -euo pipefail
           mkdir -p release-assets
           dmg=$(find aiko/target aiko/apps/desktop/src-tauri/target -type f -name '*.dmg' 2>/dev/null | sort | head -n 1)
           test -n "$dmg" || { echo 'Expected a DMG, but Tauri produced none' >&2; exit 1; }
           cp "$dmg" release-assets/Aiko-macOS.dmg
-          test -s release-assets/Aiko-macOS.dmg
+          packages=(aiko/dist/Aiko-Installer-*.pkg)
+          archives=(aiko/dist/Aiko-Installer-*.pkg.zip)
+          test "${#packages[@]}" -eq 1 && test -f "${packages[0]}" || { echo 'Expected exactly one product pkg' >&2; exit 1; }
+          test "${#archives[@]}" -eq 1 && test -f "${archives[0]}" || { echo 'Expected exactly one product pkg zip' >&2; exit 1; }
+          cp "${packages[0]}" release-assets/Aiko-macOS.pkg
+          cp "${archives[0]}" release-assets/Aiko-macOS.pkg.zip
+          for asset in Aiko-macOS.dmg Aiko-macOS.pkg Aiko-macOS.pkg.zip; do
+            test -s "release-assets/$asset" || { echo "Missing or empty macOS asset: $asset" >&2; exit 1; }
+          done
+          rm -rf "$RUNNER_TEMP/aiko-pkg-expanded"
+          pkgutil --expand release-assets/Aiko-macOS.pkg "$RUNNER_TEMP/aiko-pkg-expanded"
+          test -f "$RUNNER_TEMP/aiko-pkg-expanded/Distribution"
+          unzip -tq release-assets/Aiko-macOS.pkg.zip
+          test -n "$APPLE_INSTALLER_SIGNING_IDENTITY" || { echo 'Missing Installer signing identity' >&2; exit 1; }
+          pkgutil --check-signature release-assets/Aiko-macOS.pkg | tee "$RUNNER_TEMP/pkg-signature.txt"
+          grep -Fq "$APPLE_INSTALLER_SIGNING_IDENTITY" "$RUNNER_TEMP/pkg-signature.txt"
+          xcrun stapler validate release-assets/Aiko-macOS.pkg
       - uses: actions/upload-artifact@v4
         with:
           name: release-macos
           path: release-assets/*
           if-no-files-found: error
+      - name: Remove temporary signing keychain
+        if: always()
+        shell: bash
+        run: |
+          if test -n "${AIKO_SIGNING_KEYCHAIN:-}"; then
+            security delete-keychain "$AIKO_SIGNING_KEYCHAIN" || true
+          fi
 
   desktop-windows:
     name: desktop Windows installers
@@ -527,6 +647,8 @@ jobs:
             Aiko-Linux-x86_64.AppImage
             Aiko-Linux-x86_64.deb
             Aiko-macOS.dmg
+            Aiko-macOS.pkg
+            Aiko-macOS.pkg.zip
             Aiko-Windows-x86_64.msi
             Aiko-Windows-x86_64-Setup.exe
             Aiko-Windows-x86_64-Portable.zip

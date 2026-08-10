@@ -2,7 +2,7 @@
 
 [package]
 name = "aiko-desktop"
-version = "0.1.0"
+version = "0.2.114"
 default-run = "aiko-desktop"
 description = "Native desktop interface for Aiko"
 authors = ["Aiko contributors"]

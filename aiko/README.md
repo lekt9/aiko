@@ -279,6 +279,7 @@ Requirements are the same as [Installation → Prerequisites](#prerequisites-fro
 Additional:
 
 - DotSlash for hermetic tools under `bin/`
+- Node.js + npm for the desktop app and macOS product installer
 - Optional: `AIKO_CONTRACT_LIBRARY` to point at a non-default Contract dylib
 
 ```sh
@@ -299,6 +300,69 @@ scripts/contract-runtime.sh install
 export PATH="$HOME/bin:$PATH"
 ~/bin/aiko --version
 ```
+
+### macOS desktop installer (`.pkg`)
+
+The canonical macOS installer script is [`scripts/prep-installer.sh`](scripts/prep-installer.sh).
+It recreates the staged app, packages both `/Applications/Aiko.app` and
+`/usr/local/bin/aiko`, signs when the matching Apple identities are available,
+verifies the result, and writes versioned deliverables under `dist/`.
+
+Run the build in this order so neither the desktop bundle nor its CLI sidecar is
+stale:
+
+```sh
+# 1. Align desktop metadata with the Aiko CLI release version (same step as CI)
+RELEASE_VERSION="$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
+  crates/codegen/xai-grok-pager-bin/Cargo.toml | head -1)"
+AIKO_RELEASE_VERSION="$RELEASE_VERSION" node apps/desktop/scripts/set-release-version.mjs
+
+# 2. Build Contract, the release CLI, and the portable CLI package
+scripts/contract-runtime.sh build-aiko
+
+# 3. Install the desktop and frontend dependencies (same order as CI)
+npm --prefix apps/desktop ci
+npm --prefix apps/desktop run frontend:ensure
+npm --prefix apps/frontend/frontend ci
+
+# 4. Build the Tauri app bundle with the current CLI + Contract runtime
+npm --prefix apps/desktop run tauri build -- --bundles app
+
+# 5. Recreate and verify the macOS product installer
+scripts/prep-installer.sh
+
+# Outputs, named from the Aiko CLI version:
+#   dist/Aiko-Installer-<version>.pkg
+#   dist/Aiko-Installer-<version>.pkg.zip
+```
+
+Verify an existing installer without rebuilding it:
+
+```sh
+scripts/prep-installer.sh --check
+```
+
+For a production release, install the `Developer ID Application` and
+`Developer ID Installer` identities, store the `notarytool` profile named
+`aiko`, then run `scripts/prep-installer.sh --notarize`. Without those
+identities the script creates an ad-hoc-signed app and unsigned package suitable
+for local testing, but it does not claim the installer is Gatekeeper-ready.
+
+CI runs `bash scripts/check-installer-ci.sh` and an unsigned product-installer
+smoke build on `macos-latest` for every push and pull request. The release
+workflow builds the product installer on `macos-latest`, verifies its expanded
+package and zip, and publishes stable `Aiko-macOS.pkg` and
+`Aiko-macOS.pkg.zip` assets alongside the DMG. Production release signing is
+mandatory; configure
+`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, and
+`APPLE_SIGNING_IDENTITY` for the app, plus `APPLE_INSTALLER_CERTIFICATE`,
+`APPLE_INSTALLER_CERTIFICATE_PASSWORD`, and
+`APPLE_INSTALLER_SIGNING_IDENTITY` for the product package. With
+`APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID`, the package is also notarized.
+The release tag or manual workflow version must match the version in
+`crates/codegen/xai-grok-pager-bin/Cargo.toml`; CD refuses mixed-version assets.
+CD also refuses to publish the package unless the Developer ID Installer
+signature and stapled notarization ticket both validate.
 
 Environment overrides used by the packaging scripts:
 

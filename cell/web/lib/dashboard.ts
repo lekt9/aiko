@@ -36,6 +36,7 @@ export type Entity = {
   raw: any;                 // the underlying object (order / invoice / one asset row / one job row)
   view: any;                // the block's yaml render view (for detail shape)
 };
+export type BusinessLogic = { organelle: string; neuronPath: string; summary: string; steps: { id: string; text: string }[]; raw: string };
 export type Block = {
   id: string;
   port: string;
@@ -46,6 +47,7 @@ export type Block = {
   wiring: { from: string; to: string }[];
   relationKeys: string[];
   entities: Entity[];
+  businessLogic: BusinessLogic | null;
 };
 export type DashboardModel = {
   cell: any; blocks: Block[]; entities: Entity[]; links: any[]; deps: any; manifest: any; outputs: Record<string,any>;
@@ -95,6 +97,9 @@ export function collectBlocks(params:{cellPath?:string}={}): DashboardModel{
     const j=tryReadJson(cand); if(j){ initialInputs=j.order?{order:j.order, ...j}:j; break; }
   }
 
+  // organelle → neuron file mapping + business-logic extraction from comments
+  const organelleToLogic = buildBusinessLogicIndex(root, yamlDoc, wiring);
+
   const blocks:Block[]=[];
   for(const dir of ["inputs","outputs"] as const){
     const ports:Record<string,any>=membrane[dir]??{};
@@ -135,7 +140,8 @@ export function collectBlocks(params:{cellPath?:string}={}): DashboardModel{
       const relationKeys=extractRelationKeys(schema, data);
       const id=`${cellPath}:${dir}:${port}`;
       const entities=entitiesForBlock({ id, port, direction: (dirIsOutput?"output":"input"), schema, data, relationKeys, renderVia:via, view });
-      blocks.push({ id, port, direction:(dirIsOutput?"output":"input"), schemaPath:String(schemaPath), schema, render:{view, via, raw:explicitRender??null}, data, wiring, relationKeys, entities });
+      const businessLogic = organelleToLogic.get(port) ?? organelleToLogic.get(`${dir}:${port}`) ?? null;
+      blocks.push({ id, port, direction:(dirIsOutput?"output":"input"), schemaPath:String(schemaPath), schema, render:{view, via, raw:explicitRender??null}, data, wiring, relationKeys, entities, businessLogic });
     }
   }
 
@@ -266,6 +272,88 @@ function extractRelationKeys(schema:any, data:any): string[]{
 function buildAdj(wiring:{from:string,to:string}[]): Record<string,string[]>{
   const m:Record<string,string[]>={}; for(const w of wiring){ (m[w.from]??=[]).push(w.to); } return m;
 }
+function buildBusinessLogicIndex(root: string, yamlDoc: any, wiring: {from:string,to:string}[]): Map<string, BusinessLogic>{
+  const byPort = new Map<string, BusinessLogic>();
+  const organelles: {name:string, cell?:string}[] = yamlDoc?.spec?.organelles ?? [];
+  // Map organelle name → neuron file via its cell.yaml entry
+  const orgToNeuronFile = new Map<string, string>();
+  const cellDir = path.dirname(path.join(root, "haulio-full.cell.yaml"));
+  for(const org of organelles){
+    const cellRef: string | undefined = org.cell;
+    if(!cellRef) continue;
+    const candidates = [
+      path.join(root, cellRef.replace(/^\.\//,"")),
+      path.join(root, "haulio", path.basename(cellRef)),
+      path.join(cellDir, cellRef.replace(/^\.\//,"")),
+      path.join(cellDir.replace(/haulio$/,"").replace(/\/$/,""), cellRef.replace(/^\.\//, "")),
+    ];
+    for(const cand of candidates){
+      if(!fs.existsSync(cand)) continue;
+      try{
+        const txt=fs.readFileSync(cand,"utf-8");
+        const entry = txt.match(/entry:\s*([^\s]+)/)?.[1]?.trim();
+        if(entry){
+          const base = path.dirname(path.resolve(cand));
+          const neuronAbs = path.isAbsolute(entry) ? entry : path.join(base, entry);
+          if(fs.existsSync(neuronAbs)){ orgToNeuronFile.set(org.name, neuronAbs); break; }
+        }
+      }catch{}
+    }
+  }
+  // Parse each organelle's neuron file — source of truth for business logic
+  const orgLogic = new Map<string, BusinessLogic>();
+  for(const [name, neuronPath] of orgToNeuronFile){
+    const logic = parseBusinessLogic(name, neuronPath);
+    if(logic) orgLogic.set(name, logic);
+  }
+  // Map inputs: membrane.order → portal.order → portal's logic (white-label intake)
+  for(const w of wiring){
+    if(w.from.startsWith("membrane.")){
+      const memPort = w.from.split(".")[1];
+      const dstOrg = w.to.split(".")[0];
+      if(byPort.has(memPort)) continue; // keep first consumer for fan-out (portal wins for order)
+      const logic = orgLogic.get(dstOrg);
+      if(logic) byPort.set(memPort, logic);
+    }
+  }
+  // Map outputs: billing.invoice → membrane.invoice → billing's logic
+  for(const w of wiring){
+    if(!w.to.startsWith("membrane.")) continue;
+    const membranePort = w.to.split(".")[1];
+    const srcOrg = w.from.split(".")[0];
+    const logic = orgLogic.get(srcOrg);
+    if(logic) byPort.set(membranePort, logic);
+  }
+  // Also index by organelle name itself so sub-cells (haulio/billing.cell.yaml etc.) work
+  for(const [name, logic] of orgLogic) byPort.set(name, logic);
+  // Expose a merged index for direct haulio-full lookup and sub-cell lookup
+  return byPort;
+}
+function parseBusinessLogic(organelle: string, filePath: string): BusinessLogic | null{
+  try{
+    const text=fs.readFileSync(filePath,"utf-8");
+    // Extract leading Business Logic docstring: """ ... """ or ''' ... ''' at top of file.
+    const m = text.match(/\"\"\"([\s\S]*?)\"\"\"/);
+    if(!m) return null;
+    const raw = m[1].trim();
+    // Summary = first non-empty line; remaining numbered/bulleted lines become steps.
+    const lines = raw.split("\n").map(s=> s.trim()).filter(s=> s.length>0);
+    const summary = (lines[0] ?? "").replace(/^Business Logic\s*[—-]\s*/i, "").trim();
+    const steps: {id:string,text:string}[] = [];
+    for(const line of lines.slice(1)){
+      // Accept forms: "1. ...", "2) ...", "- ...", "• ...", "(1) ..."
+      const stepMatch = line.match(/^(?:\d+[\.\)]\s*|[-•]\s*)(.+)$/);
+      if(stepMatch) steps.push({ id: String(steps.length+1), text: stepMatch[1].trim() });
+      else if(steps.length) steps[steps.length-1].text += " " + line;
+    }
+    // Fallback: if no numbered steps found, treat each non-empty line after summary as a step
+    if(steps.length===0 && lines.length>1) {
+      for(const l of lines.slice(1)) steps.push({ id: String(steps.length+1), text: l });
+    }
+    return { organelle, neuronPath: path.relative(path.join(path.resolve(process.cwd(),"..")), filePath), summary, steps, raw };
+  }catch{ return null; }
+}
+
 function buildEntityLinks(entities:Entity[]): any[]{
   // Build map from (key,value) -> entity ids that carry that relation.
   const idx:Map<string, string[]> = new Map();

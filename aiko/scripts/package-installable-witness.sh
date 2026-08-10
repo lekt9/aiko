@@ -41,7 +41,11 @@ pm_run pkg-install "Package has install.sh" 1 "test -x \"$PKG/install.sh\" -o -f
 pm_run pkg-contract-cli "Package contains executable bin/contract" 1 "test -x \"$PKG/bin/contract\""
 pm_run pkg-contract-mcp "Packaged contract serves the MCP handshake" 1 \
     "printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"witness\",\"version\":\"1\"}}}' | \"$PKG/bin/contract\" mcp 2>/dev/null | grep -q '\"serverInfo\"'"
+pm_run pkg-contract-native "Packaged contract supports checked tasks and typed MCP declare" 1 \
+    "\"$ROOT/scripts/witness-contract-native-compatibility.sh\" \"$PKG/bin/contract\""
 pm_run pkg-selfcheck "Package ships selfcheck.sh" 1 "test -f \"$PKG/selfcheck.sh\""
+pm_run pkg-contract-selfcheck "Package ships Contract native selfcheck" 1 \
+    "test -x \"$PKG/contract-selfcheck.sh\""
 pm_run pkg-version "Package aiko --version runs" 1 "\"$PKG/bin/aiko\" --version 2>&1 | grep -q 'aiko '"
 pm_run pkg-skills "Package has skills/" 0 "test -d \"$PKG/skills\""
 

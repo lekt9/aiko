@@ -23,9 +23,9 @@ do
 done
 CONTRACT_LIB_BASENAME=$(basename "${CONTRACT_LIBRARY:-}")
 
-if [ ! -x "$AIKO_BINARY" ] || [ -z "$CONTRACT_LIBRARY" ] || [ ! -f "$MANIFEST" ] || \
-   [ ! -d "$PACKAGED_SKILLS" ]; then
-    echo "Invalid Aiko package: expected bin/aiko, lib/libcontract.{so,dylib}, manifest.json, and skills/" >&2
+if [ ! -x "$AIKO_BINARY" ] || [ ! -x "$CONTRACT_CLI_BINARY" ] || \
+   [ -z "$CONTRACT_LIBRARY" ] || [ ! -f "$MANIFEST" ] || [ ! -d "$PACKAGED_SKILLS" ]; then
+    echo "Invalid Aiko package: expected bin/aiko, bin/contract, libcontract, manifest.json, and skills/" >&2
     exit 1
 fi
 
@@ -49,8 +49,10 @@ EXPECTED_ABI=13
 PACKAGE_ABI=$(manifest_number contract_abi)
 EXPECTED_AIKO=$(manifest_value aiko_sha256)
 EXPECTED_CONTRACT=$(manifest_value contract_sha256)
+EXPECTED_CONTRACT_CLI=$(manifest_value contract_cli_sha256)
 ACTUAL_AIKO=$(sha256_file "$AIKO_BINARY")
 ACTUAL_CONTRACT=$(sha256_file "$CONTRACT_LIBRARY")
+ACTUAL_CONTRACT_CLI=$(sha256_file "$CONTRACT_CLI_BINARY")
 
 if [ "$PACKAGE_ABI" != "$EXPECTED_ABI" ]; then
     echo "Incompatible Contract ABI: package has ${PACKAGE_ABI:-none}, Aiko requires $EXPECTED_ABI" >&2
@@ -64,6 +66,10 @@ if [ "$ACTUAL_CONTRACT" != "$EXPECTED_CONTRACT" ]; then
     echo "Contract package checksum mismatch" >&2
     exit 1
 fi
+if [ "$ACTUAL_CONTRACT_CLI" != "$EXPECTED_CONTRACT_CLI" ]; then
+    echo "Contract CLI package checksum mismatch" >&2
+    exit 1
+fi
 
 AIKO_HOME=${AIKO_HOME:-"$HOME/.aiko"}
 AIKO_BIN_DIR=${AIKO_BIN_DIR:-"$HOME/bin"}
@@ -74,22 +80,20 @@ mkdir -p "$AIKO_HOME/skills" "$AIKO_HOME/sdk/registry/bin"
 BIN_TMP="$AIKO_BIN_DIR/.aiko.install.$$"
 LIB_TMP="$AIKO_LIB_DIR/.${CONTRACT_LIB_BASENAME}.install.$$"
 CLI_TMP="$AIKO_BIN_DIR/.contract.install.$$"
-trap 'rm -f "$BIN_TMP" "$LIB_TMP" "$CLI_TMP"' EXIT HUP INT TERM
+CLI_SIG_TMP="$CLI_TMP.sig"
+trap 'rm -f "$BIN_TMP" "$LIB_TMP" "$CLI_TMP" "$CLI_SIG_TMP"' EXIT HUP INT TERM
 
 install -m 755 "$AIKO_BINARY" "$BIN_TMP"
 install -m 755 "$CONTRACT_LIBRARY" "$LIB_TMP"
 "$BIN_TMP" --version >/dev/null
-# The Contract CLI ships in the same package (it is the stdio MCP server and
-# the `contract task` front end). Optional on the *input* side so an older
-# package still installs, but verified before it is moved into place.
-if [ -x "$CONTRACT_CLI_BINARY" ]; then
-    install -m 755 "$CONTRACT_CLI_BINARY" "$CLI_TMP"
-    # Verify via MCP handshake (basename-sensitive: --help fails when CLI_TMP is dot-prefixed)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"witness","version":"1"}}}' | "$CLI_TMP" mcp 2>/dev/null | grep -q '"serverInfo"' || {
-        echo "Packaged contract CLI did not run; refusing to install it" >&2
-        exit 1
-    }
-fi
+# Contract mutations are attested by the target machine's root, not the build
+# machine's root. Sign and verify the staged bytes before atomic activation.
+install -m 755 "$CONTRACT_CLI_BINARY" "$CLI_TMP"
+"$CLI_TMP" sign-binary "$CLI_TMP" >/dev/null
+"$CLI_TMP" verify-self | grep -q 'verify-self: OK' || {
+    echo "Packaged contract CLI could not attest itself; refusing installation" >&2
+    exit 1
+}
 
 mv -f "$LIB_TMP" "$AIKO_LIB_DIR/$CONTRACT_LIB_BASENAME"
 # Keep a dual name so macOS-era tooling and Linux loaders both resolve.
@@ -104,8 +108,15 @@ case "$CONTRACT_LIB_BASENAME" in
         ;;
 esac
 mv -f "$BIN_TMP" "$AIKO_BIN_DIR/aiko"
-if [ -f "$CLI_TMP" ]; then
-    mv -f "$CLI_TMP" "$AIKO_BIN_DIR/contract"
+mv -f "$CLI_TMP" "$AIKO_BIN_DIR/contract"
+rm -f "$AIKO_BIN_DIR/contract.sig"
+mv -f "$CLI_SIG_TMP" "$AIKO_BIN_DIR/contract.sig"
+"$AIKO_BIN_DIR/contract" verify-self | grep -q 'verify-self: OK' || {
+    echo "Installed Contract CLI failed post-activation attestation" >&2
+    exit 1
+}
+if [ -x "$PACKAGE_ROOT/contract-selfcheck.sh" ]; then
+    "$PACKAGE_ROOT/contract-selfcheck.sh" "$AIKO_BIN_DIR/contract"
 fi
 for SKILL_DIR in "$PACKAGED_SKILLS"/*; do
     if [ -f "$SKILL_DIR/SKILL.md" ] && [ -f "$SKILL_DIR/contract-skill.json" ]; then

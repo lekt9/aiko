@@ -46,7 +46,7 @@ export const { registry } = defineRegistry(catalog, {
       return <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 font-mono text-[10px] font-semibold tabular-nums ${bg}`}>{props.label}</span>;
     },
     KVGrid: ({ props }: { props: AnyProps }) => (
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-2">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 max-[640px]:grid-cols-1">
         {props.pairs.map((p: any, i: number) => (
           <div key={i} className="min-w-0 rounded-sm-t border border-os-hairline bg-os-bg px-3 py-2">
             <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-os-dim">{String(p.k).replaceAll("_"," ").replace(/\b\w/g,(c:string)=>c.toUpperCase())}</div>
@@ -118,8 +118,34 @@ export const { registry } = defineRegistry(catalog, {
         <span className="min-w-0 flex-1 text-right font-mono text-[12px] tabular-nums" style={{ overflowWrap: "anywhere" }}>{props.value}</span>
       </div>
     ),
+    BusinessLogic: ({ props }: { props: AnyProps }) => (
+      <details className="group rounded-lg-t border border-os-border bg-os-surface open:bg-os-surface">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-3.5 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-2 [&::-webkit-details-marker]:hidden">
+          <span className="flex items-center gap-2">
+            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-os-dim">Business Logic</span>
+            <span className="hidden font-mono text-[10px] text-os-dim sm:inline">{props.title}</span>
+          </span>
+          <span className="flex items-center gap-2">
+            {props.neuronPath && <span className="hidden font-mono text-[10px] tabular-nums text-os-dim sm:inline">{props.neuronPath}</span>}
+            <span className="flex h-5 w-5 items-center justify-center rounded-full border border-os-border bg-os-bg font-mono text-[10px] text-os-dim transition-transform group-open:rotate-180" aria-hidden>⌄</span>
+          </span>
+        </summary>
+        <div className="border-t border-os-hairline px-5 pb-4 pt-4">
+          <div className="text-[13px] font-semibold tracking-[-0.01em]" style={{ overflowWrap: "anywhere" }}>{props.title}</div>
+          {props.summary && <div className="mt-1.5 font-mono text-[11px] leading-relaxed text-os-dim" style={{ overflowWrap: "anywhere" }}>{props.summary}</div>}
+          <ol className="mt-4 space-y-3">
+            {props.steps.map((s: any) => (
+              <li key={s.id} className="flex gap-3">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-os-accent font-mono text-[10px] font-semibold tabular-nums text-os-ink">{s.id}</span>
+                <span className="min-w-0 flex-1 pt-0.5 font-mono text-[11px] leading-relaxed text-os-text" style={{ overflowWrap: "anywhere" }}>{s.text}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </details>
+    ),
     Block: ({ props, children }: { props: AnyProps; children?: any }) => (
-      <div className="rounded-lg-t border border-os-border bg-os-surface p-4 space-y-3">{children}</div>
+      <div className="rounded-lg-t border border-os-border bg-os-surface p-5 space-y-4">{children}</div>
     ),
   },
   actions: {

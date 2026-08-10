@@ -1,23 +1,23 @@
 #!/bin/zsh
-# prep-installer.sh — rebuild, sign (when possible), and verify the Aiko product pkg.
+# prep-installer.sh — recreate, sign (when possible), and verify the Aiko macOS product pkg.
 #
 # What it does (idempotent, local, reversible — it only writes under dist/):
-#   1. ensures dist/stage/Aiko.app is complete (calls stage-dist-app.sh if needed)
+#   1. recreates dist/stage/Aiko.app from the current Tauri release bundle
 #   2. refreshes dist/cli-root/usr/local/bin/aiko from the freshest built binary
 #      and re-signs it with the Developer ID Application identity
 #   3. rebuilds the two component pkgs:
 #        dist/pkg/AikoApp.pkg  (from staged Aiko.app)
 #        dist/pkg/AikoCLI.pkg  (from cli-root)
-#   4. rebuilds the distribution pkg:
-#        dist/Aiko-Installer-0.1.0.pkg  (via productbuild + distribution.xml)
+#   4. rebuilds the distribution pkg, named for the packaged Aiko CLI version:
+#        dist/Aiko-Installer-<version>.pkg  (via productbuild + distribution.xml)
 #   5. signs the product pkg with Developer ID Installer when that identity exists,
 #      otherwise leaves it unsigned and prints the exact CSR import step
 #   6. verifies every artifact (codesign, pkgutil, spctl, payload list) and prints
 #      a summary with paths, sizes, shasums, and signature state
-#   7. re-zips the product pkg to dist/Aiko-Installer-0.1.0.pkg.zip
+#   7. re-zips the product pkg to dist/Aiko-Installer-<version>.pkg.zip
 #
 # Usage:
-#   scripts/prep-installer.sh [--notarize] [--app-version 0.1.0] [--cli-version 0.2.108]
+#   scripts/prep-installer.sh [--notarize] [--app-version VERSION] [--cli-version VERSION]
 #   scripts/prep-installer.sh --check        # verify only, do not rebuild
 #   scripts/prep-installer.sh --help
 #
@@ -42,16 +42,21 @@ PKG_DIR="$DIST/pkg"
 APP_PKG="$PKG_DIR/AikoApp.pkg"
 CLI_PKG="$PKG_DIR/AikoCLI.pkg"
 DISTRIBUTION_XML="$PKG_DIR/distribution.xml"
-PRODUCT_PKG="$DIST/Aiko-Installer-0.1.0.pkg"
-PRODUCT_ZIP="$DIST/Aiko-Installer-0.1.0.pkg.zip"
-
-IDENT_APP="Developer ID Application: Lewis Tham (547K33EUK7)"
-IDENT_INSTALLER="Developer ID Installer: Lewis Tham (547K33EUK7)"
+INSTALLER_SOURCE="$ROOT/installer/macos"
+IDENT_APP="${AIKO_APP_SIGNING_IDENTITY:-Developer ID Application: Lewis Tham (547K33EUK7)}"
+IDENT_INSTALLER="${AIKO_INSTALLER_SIGNING_IDENTITY:-Developer ID Installer: Lewis Tham (547K33EUK7)}"
 
 # versions default to source of truth
-APP_VERSION="$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])" 2>/dev/null || echo "0.1.0")"
+APP_VERSION="$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])" 2>/dev/null || true)"
+if [[ -z "$APP_VERSION" ]]; then
+  echo "could not read the desktop version from apps/desktop/src-tauri/tauri.conf.json" >&2
+  exit 1
+fi
 CLI_VERSION="$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' crates/codegen/xai-grok-pager-bin/Cargo.toml | head -1)"
-if [[ -z "$CLI_VERSION" ]]; then CLI_VERSION="0.2.108"; fi
+if [[ -z "$CLI_VERSION" ]]; then
+  echo "could not read the Aiko version from crates/codegen/xai-grok-pager-bin/Cargo.toml" >&2
+  exit 1
+fi
 
 DO_NOTARIZE=0
 DO_CHECK_ONLY=0
@@ -76,15 +81,62 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+PRODUCT_PKG="$DIST/Aiko-Installer-$CLI_VERSION.pkg"
+PRODUCT_ZIP="$DIST/Aiko-Installer-$CLI_VERSION.pkg.zip"
+
 # pretty
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 info()  { print -P "%F{blue}==%f $*"; }
 ok()    { print -P "%F{green}✔%f $*"; }
 warn()  { print -P "%F{yellow}!!%f $*"; }
-fail()  { print -P "%F{red}✘%f $*"; }
+fail()  { print -P "%F{red}✘%f $*" >&2; exit 1; }
 
 have_ident() {
   security find-identity -v 2>/dev/null | grep -q "$1"
+}
+
+stage_app() {
+  local sign_ident="$IDENT_APP"
+  if ! have_ident "$IDENT_APP"; then
+    sign_ident="-"
+    warn "no Developer ID Application identity — staging with an ad-hoc signature"
+  fi
+  "$ROOT/scripts/stage-dist-app.sh" "$sign_ident"
+}
+
+if [[ "$APP_VERSION" != "$CLI_VERSION" ]]; then
+  fail "desktop version $APP_VERSION does not match Aiko CLI $CLI_VERSION — run the README release-version step before building the Tauri bundle"
+fi
+
+prepare_installer_metadata() {
+  [[ -f "$INSTALLER_SOURCE/distribution.xml" ]] || fail "missing installer template: $INSTALLER_SOURCE/distribution.xml"
+  [[ -f "$INSTALLER_SOURCE/resources/welcome.html" ]] || fail "missing installer resource: $INSTALLER_SOURCE/resources/welcome.html"
+  mkdir -p "$PKG_DIR/resources"
+  cp "$INSTALLER_SOURCE/distribution.xml" "$DISTRIBUTION_XML"
+  cp "$INSTALLER_SOURCE/resources/welcome.html" "$PKG_DIR/resources/welcome.html"
+  python3 - "$DISTRIBUTION_XML" "$APP_VERSION" "$CLI_VERSION" << 'PY'
+import pathlib, sys
+
+path = pathlib.Path(sys.argv[1])
+source = path.read_text()
+source = source.replace("__APP_VERSION__", sys.argv[2])
+source = source.replace("__CLI_VERSION__", sys.argv[3])
+if "__APP_VERSION__" in source or "__CLI_VERSION__" in source:
+    raise SystemExit("installer version placeholders were not fully replaced")
+path.write_text(source)
+PY
+}
+
+notarize_pkg() {
+  if [[ -n "${APPLE_ID:-}" || -n "${APPLE_PASSWORD:-}" || -n "${APPLE_TEAM_ID:-}" ]]; then
+    [[ -n "${APPLE_ID:-}" && -n "${APPLE_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" ]] || \
+      fail "APPLE_ID, APPLE_PASSWORD, and APPLE_TEAM_ID must be configured together"
+    xcrun notarytool submit "$PRODUCT_PKG" \
+      --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+  else
+    xcrun notarytool submit "$PRODUCT_PKG" --keychain-profile "${AIKO_NOTARY_PROFILE:-aiko}" --wait
+  fi
+  xcrun stapler staple "$PRODUCT_PKG"
 }
 
 # ---- check-only mode -------------------------------------------------------
@@ -95,7 +147,12 @@ verify_only() {
   if [[ -d "$STAGE" ]]; then
     codesign --verify --deep --strict "$STAGE" 2>&1 && ok "stage codesign verify" || fail "stage codesign verify"
     spctl -a -vv -t install "$STAGE" 2>&1 | head -n 5 || true
-    "$STAGE_CLI" --version 2>&1 | head -n 1 || warn "stage aiko --version failed"
+    STAGE_VERSION="$("$STAGE_CLI" --version 2>&1 | sed -nE 's/.* ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' | head -1)"
+    [[ "$STAGE_VERSION" == "$CLI_VERSION" ]] || fail "stage CLI is $STAGE_VERSION, expected $CLI_VERSION"
+    ok "stage CLI version $STAGE_VERSION"
+    STAGE_APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$STAGE/Contents/Info.plist" 2>/dev/null || true)"
+    [[ "$STAGE_APP_VERSION" == "$APP_VERSION" ]] || fail "stage app is $STAGE_APP_VERSION, expected $APP_VERSION"
+    ok "stage app version $STAGE_APP_VERSION"
   else
     fail "missing $STAGE"
   fi
@@ -104,7 +161,9 @@ verify_only() {
   if [[ -x "$CLI_BIN" ]]; then
     codesign -dv "$CLI_BIN" 2>&1 | head -n 8 || true
     codesign --verify --strict "$CLI_BIN" 2>&1 && ok "cli-root codesign verify" || fail "cli-root codesign"
-    "$CLI_BIN" --version 2>&1 | head -n 1 || true
+    ROOT_VERSION="$("$CLI_BIN" --version 2>&1 | sed -nE 's/.* ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' | head -1)"
+    [[ "$ROOT_VERSION" == "$CLI_VERSION" ]] || fail "cli-root is $ROOT_VERSION, expected $CLI_VERSION"
+    ok "cli-root version $ROOT_VERSION"
   else
     fail "missing $CLI_BIN"
   fi
@@ -122,6 +181,13 @@ verify_only() {
     # expand sanity
     rm -rf /tmp/_prep_check_expand
     pkgutil --expand "$PRODUCT_PKG" /tmp/_prep_check_expand 2>&1 && ok "pkgutil --expand ok" || fail "pkgutil --expand failed"
+    grep -q "id=\"ai.aiko.cli\" version=\"$CLI_VERSION\"" /tmp/_prep_check_expand/Distribution || \
+      fail "expanded installer does not declare CLI version $CLI_VERSION"
+    [[ -f "$PRODUCT_ZIP" ]] || fail "missing $PRODUCT_ZIP"
+    unzip -tq "$PRODUCT_ZIP" >/dev/null || fail "invalid installer zip: $PRODUCT_ZIP"
+    unzip -Z1 "$PRODUCT_ZIP" | grep -q "Aiko-Installer-$CLI_VERSION.pkg$" || \
+      fail "installer zip does not contain Aiko-Installer-$CLI_VERSION.pkg"
+    ok "installer zip contains Aiko-Installer-$CLI_VERSION.pkg"
     ls -R /tmp/_prep_check_expand 2>&1 | head -n 40 || true
     cat /tmp/_prep_check_expand/Distribution 2>&1 | head -n 40 || true
   else
@@ -148,43 +214,10 @@ if [[ $DO_CHECK_ONLY -eq 1 ]]; then
   exit 0
 fi
 
-# ---- 1. stage completeness -------------------------------------------------
-info "1/7 stage check"
-NEED_STAGE=0
-for f in \
-  "$STAGE/Contents/MacOS/aiko" \
-  "$STAGE/Contents/MacOS/aiko-desktop" \
-  "$STAGE/Contents/MacOS/aiko-stack" \
-  "$STAGE/Contents/Resources/frontend/index.html" \
-  "$STAGE/Contents/Resources/contract/libcontract.dylib"; do
-  if [[ ! -f "$f" ]]; then
-    warn "missing $f"
-    NEED_STAGE=1
-  fi
-done
-if [[ $NEED_STAGE -eq 1 || ! -d "$STAGE" ]]; then
-  info "staging Aiko.app (scripts/stage-dist-app.sh)"
-  "$ROOT/scripts/stage-dist-app.sh" "$IDENT_APP"
-else
-  ok "stage app present and complete"
-  # re-seal anyway to ensure aiko sidecar is fresh
-  # pick freshest aiko: target/release/aiko > stage cli > cli-root
-  FRESHEST=""
-  FRESHEST_MTIME=0
-  for c in "$ROOT/target/release/aiko" "$STAGE_CLI" "$CLI_BIN"; do
-    if [[ -x "$c" ]]; then
-      mt=$(stat -f %m "$c" 2>/dev/null || stat -c %Y "$c" 2>/dev/null || echo 0)
-      if [[ $mt -gt $FRESHEST_MTIME ]]; then
-        FRESHEST_MTIME=$mt
-        FRESHEST="$c"
-      fi
-    fi
-  done
-  if [[ -n "$FRESHEST" && "$FRESHEST" != "$STAGE_CLI" ]]; then
-    warn "stage aiko is stale vs $FRESHEST — refreshing stage"
-    "$ROOT/scripts/stage-dist-app.sh" "$IDENT_APP"
-  fi
-fi
+# ---- 1. recreate stage ------------------------------------------------------
+info "1/7 recreate stage from the current Tauri bundle"
+prepare_installer_metadata
+stage_app
 
 # hard gate after stage
 for f in \
@@ -200,6 +233,8 @@ for f in \
 done
 ok "stage complete: $STAGE"
 "$STAGE_CLI" --version 2>&1 | head -n 1 || true
+STAGE_APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$STAGE/Contents/Info.plist" 2>/dev/null || true)"
+[[ "$STAGE_APP_VERSION" == "$APP_VERSION" ]] || fail "stage app is $STAGE_APP_VERSION, expected $APP_VERSION"
 
 # ---- 2. cli-root refresh + sign -------------------------------------------
 info "2/7 cli-root refresh"
@@ -231,8 +266,7 @@ fi
 "$CLI_BIN" --version 2>&1 | head -n 1 || true
 CLI_VERSION_ACTUAL="$("$CLI_BIN" --version 2>&1 | sed -nE 's/.* ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' | head -1)"
 if [[ -n "$CLI_VERSION_ACTUAL" && "$CLI_VERSION_ACTUAL" != "$CLI_VERSION" ]]; then
-  warn "CLI binary reports $CLI_VERSION_ACTUAL but packaging as $CLI_VERSION — using $CLI_VERSION_ACTUAL"
-  CLI_VERSION="$CLI_VERSION_ACTUAL"
+  fail "CLI binary reports $CLI_VERSION_ACTUAL but source metadata requires $CLI_VERSION — rebuild Aiko first"
 fi
 
 # ---- 3. rebuild component pkgs --------------------------------------------
@@ -253,22 +287,6 @@ pkgutil --payload-files "$CLI_PKG" 2>&1 | head -n 10 || true
 # ---- 5. distribution pkg ---------------------------------------------------
 info "5/7 build product pkg"
 
-# ensure distribution.xml versions match what we just built
-# (productbuild stamps installKBytes, but version fields must be correct)
-if grep -q "ai.aiko.desktop.*version=\"[^\"]*\"" "$DISTRIBUTION_XML"; then
-  # update versions in place via python for safety
-  python3 - "$DISTRIBUTION_XML" "$APP_VERSION" "$CLI_VERSION" << 'PY'
-import pathlib, re, sys
-p = pathlib.Path(sys.argv[1])
-app_v, cli_v = sys.argv[2], sys.argv[3]
-t = p.read_text()
-t = re.sub(r'(<pkg-ref id="ai\.aiko\.desktop" version=")[^"]*(")', rf'\g<1>{app_v}\2', t)
-t = re.sub(r'(<pkg-ref id="ai\.aiko\.cli" version=")[^"]*(")', rf'\g<1>{cli_v}\2', t)
-p.write_text(t)
-print(f"distribution.xml versions -> app {app_v} cli {cli_v}")
-PY
-fi
-
 rm -f "$PRODUCT_PKG"
 productbuild --distribution "$DISTRIBUTION_XML" --resources "$PKG_DIR/resources" \
   --package-path "$PKG_DIR" "$PRODUCT_PKG" >/dev/null
@@ -282,9 +300,8 @@ if have_ident "$IDENT_INSTALLER"; then
   mv "${PRODUCT_PKG}.signed.pkg" "$PRODUCT_PKG"
   ok "product pkg signed"
   if [[ $DO_NOTARIZE -eq 1 ]]; then
-    info "notarizing product pkg (profile: aiko)"
-    xcrun notarytool submit "$PRODUCT_PKG" --keychain-profile aiko --wait
-    xcrun stapler staple "$PRODUCT_PKG"
+    info "notarizing product pkg"
+    notarize_pkg
     ok "product pkg notarized + stapled"
   else
     warn "notarization skipped (pass --notarize to submit)"
@@ -305,7 +322,7 @@ fi
 # ---- 7. re-zip + verify ----------------------------------------------------
 info "7/7 re-zip + verify"
 rm -f "$PRODUCT_ZIP"
-ditto -c -k --keepParent "$PRODUCT_PKG" "$PRODUCT_ZIP"
+zip -j -q "$PRODUCT_ZIP" "$PRODUCT_PKG"
 ok "zipped $PRODUCT_ZIP ($(du -h "$PRODUCT_ZIP" | awk '{print $1}'))"
 
 echo ""

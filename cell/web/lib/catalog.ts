@@ -60,6 +60,15 @@ export const catalog = defineCatalog(reactSchema, {
       props: z.object({ label: z.string(), value: z.string() }),
       description: "Single key-value row.",
     },
+    BusinessLogic: {
+      props: z.object({
+        title: z.string(),
+        summary: z.string().nullable().optional(),
+        steps: z.array(z.object({ id: z.string(), text: z.string() })),
+        neuronPath: z.string().nullable().optional(),
+      }),
+      description: "Business logic card — summary plus numbered steps parsed from neuron comments.",
+    },
     Block: {
       props: z.object({}),
       description: "Container block — cellulose boundary. Holds children.",

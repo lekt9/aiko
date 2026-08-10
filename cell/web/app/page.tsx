@@ -14,19 +14,25 @@ export default function Page() {
     return ()=> window.removeEventListener("cell:open", onOpen as any);
   }, []);
   return (
-    <div>
-      {/* Workbench: functional header above the list/detail + DAG — no marketing hero */}
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="inline-flex items-center gap-1 rounded-lg-t border border-os-border bg-os-surface p-1">
-          <button onClick={()=> setTab("graph")} className={`whitespace-nowrap rounded-sm-t px-3 py-1.5 font-mono text-[11px] font-semibold outline-none transition-[background-color,color,border-color] duration-[var(--dur-short)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-2 active:opacity-80 disabled:opacity-50 ${tab==="graph" ? "bg-os-accent text-os-ink" : "text-os-dim hover:text-os-text"}`}>Graph</button>
-          <button onClick={()=> setTab("dashboard")} className={`whitespace-nowrap rounded-sm-t px-3 py-1.5 font-mono text-[11px] font-semibold outline-none transition-[background-color,color] duration-[var(--dur-short)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-2 active:opacity-80 disabled:opacity-50 ${tab==="dashboard" ? "bg-os-accent text-os-ink" : "text-os-dim hover:text-os-text"}`}>Dashboard</button>
+    <div className="view space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-[11px] font-bold uppercase tracking-[0.18em] text-os-text">Haulio — TMS</h1>
+          <p className="mt-2 max-w-[52ch] font-mono text-[11px] leading-relaxed text-os-dim">A fractal harness for haulage ops. Orders flow through a typed DAG — portal → dispatch → tracking and billing — with fleet and job-pool alongside.</p>
+          <div className="mt-3 inline-flex items-center gap-1 rounded-lg-t border border-os-border bg-os-surface p-1" role="tablist" aria-label="Workspace">
+            <button role="tab" aria-selected={tab==="dashboard"} onClick={()=> setTab("dashboard")} className={`whitespace-nowrap rounded-sm-t px-3 py-1.5 font-mono text-[11px] font-semibold outline-none transition-[background-color,color,border-color] duration-[var(--dur-short)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-2 active:opacity-80 ${tab==="dashboard" ? "bg-os-accent text-os-ink" : "text-os-dim hover:text-os-text"}`}>Dashboard</button>
+            <button role="tab" aria-selected={tab==="graph"} onClick={()=> setTab("graph")} className={`whitespace-nowrap rounded-sm-t px-3 py-1.5 font-mono text-[11px] font-semibold outline-none transition-[background-color,color,border-color] duration-[var(--dur-short)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-2 active:opacity-80 ${tab==="graph" ? "bg-os-accent text-os-ink" : "text-os-dim hover:text-os-text"}`}>Graph</button>
+          </div>
         </div>
-        {tab==="dashboard" && <span className="hidden font-mono text-[11px] text-os-dim sm:inline whitespace-nowrap">\u2014 orders, invoices & tracking</span>}
+        <div className="hidden items-center gap-2 font-mono text-[10px] text-os-dim md:flex" aria-hidden>
+          <span className="dot ok pulse" />
+          <span>live from manifest + DB</span>
+        </div>
       </div>
       {tab==="graph" && cells.length > 1 && (
-        <div className="mb-3 flex flex-wrap gap-1">
+        <div className="flex flex-wrap gap-1" aria-label="Cell selector">
           {cells.slice(0, 8).map((c:any)=>(
-            <button key={c.rel} onClick={()=> setActive(c.rel)} className={`whitespace-nowrap rounded-full border px-2.5 py-1 font-mono text-[11px] outline-none transition-[border-color,background-color,color] duration-[var(--dur-short)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-2 active:opacity-80 disabled:opacity-50 ${active===c.rel ? "border-os-accent bg-os-accent text-os-ink" : "border-os-border bg-os-surface text-os-dim hover:border-[var(--border-strong)]"}`}>{c.name}</button>
+            <button key={c.rel} aria-pressed={active===c.rel} onClick={()=> setActive(c.rel)} className={`whitespace-nowrap rounded-full border px-2.5 py-1 font-mono text-[11px] outline-none transition-[border-color,background-color,color] duration-[var(--dur-short)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-2 active:opacity-80 ${active===c.rel ? "border-os-accent bg-os-accent text-os-ink" : "border-os-border bg-os-surface text-os-dim hover:border-[var(--border-strong)]"}`}>{c.name}</button>
           ))}
         </div>
       )}

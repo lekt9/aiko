@@ -28,6 +28,7 @@ test -x "$CLI" || { echo "missing CLI: $CLI (run scripts/contract-runtime.sh bui
 
 echo "== assemble stage app from Tauri bundle =="
 rm -rf "$STAGE"
+mkdir -p "$(dirname "$STAGE")"
 ditto "$TAURI_BUNDLE" "$STAGE"
 install -m 755 "$CLI" "$STAGE/Contents/MacOS/aiko"
 
@@ -42,14 +43,19 @@ for f in \
 done
 echo "all required components present"
 
+SIGN_ARGS=(--force --options runtime -s "$IDENT")
+if [[ "$IDENT" != "-" ]]; then
+  SIGN_ARGS=(--force --timestamp --options runtime -s "$IDENT")
+fi
+
 echo "== sign inner Mach-Os explicitly (--deep does not sign plain dylibs) =="
 for bin in aiko aiko-desktop aiko-stack; do
-  codesign --force --timestamp --options runtime -s "$IDENT" "$STAGE/Contents/MacOS/$bin"
+  codesign "${SIGN_ARGS[@]}" "$STAGE/Contents/MacOS/$bin"
 done
-codesign --force --timestamp --options runtime -s "$IDENT" "$STAGE/Contents/Resources/contract/libcontract.dylib"
+codesign "${SIGN_ARGS[@]}" "$STAGE/Contents/Resources/contract/libcontract.dylib"
 
 echo "== seal bundle =="
-codesign --force --deep --timestamp --options runtime -s "$IDENT" "$STAGE"
+codesign --deep "${SIGN_ARGS[@]}" "$STAGE"
 
 echo "== verify =="
 codesign --verify --deep --strict "$STAGE"

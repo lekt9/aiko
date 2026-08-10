@@ -25,6 +25,7 @@ fn writeStdout(bytes: []const u8) isize {
 pub const ToolResult = struct {
     text: []const u8,
     is_error: bool,
+    structured_content: ?[]const u8 = null,
 };
 
 pub const DispatchFn = *const fn (
@@ -48,6 +49,7 @@ pub const ToolSpec = struct {
     name: []const u8,
     description: []const u8,
     schema: []const u8,
+    output_schema: ?[]const u8 = null,
 };
 
 /// The default catalog: contract's own verbs, aligned with unbrowse
@@ -68,6 +70,9 @@ pub const TOOLS = [_]ToolSpec{
         .description = "Declare a contract truth claim with a mechanical check (plan + action).",
         .schema =
         \\{"type":"object","properties":{"plan":{"type":"string"},"action":{"type":"string"},"parent":{"type":"string"},"scope":{"type":"string","enum":["project","global"]},"fast":{"type":"boolean"}},"required":["plan","action"]}
+        ,
+        .output_schema =
+        \\{"type":"object","properties":{"id":{"type":"string"},"status":{"type":"string"}},"required":["id","status"]}
         ,
     },
     .{
@@ -250,6 +255,11 @@ fn writeToolsList(allocator: std.mem.Allocator, arena: std.mem.Allocator, id: Va
         try s.objectField("inputSchema");
         const parsed = try std.json.parseFromSliceLeaky(Value, arena, t.schema, .{ .allocate = .alloc_always });
         try s.write(parsed);
+        if (t.output_schema) |output_schema| {
+            try s.objectField("outputSchema");
+            const parsed_output = try std.json.parseFromSliceLeaky(Value, arena, output_schema, .{ .allocate = .alloc_always });
+            try s.write(parsed_output);
+        }
         try s.endObject();
     }
     try s.endArray();
@@ -278,6 +288,12 @@ fn writeToolResult(allocator: std.mem.Allocator, id: Value, result: ToolResult, 
     try s.write(result.text);
     try s.endObject();
     try s.endArray();
+    if (result.structured_content) |structured_content| {
+        try s.objectField("structuredContent");
+        var parsed = try std.json.parseFromSlice(Value, allocator, structured_content, .{ .allocate = .alloc_always });
+        defer parsed.deinit();
+        try s.write(parsed.value);
+    }
     try s.objectField("isError");
     try s.write(result.is_error);
     try s.endObject();
@@ -326,6 +342,7 @@ fn handleToolsCall(
         return;
     };
     defer allocator.free(output.text);
+    defer if (output.structured_content) |structured_content| allocator.free(structured_content);
     try writeToolResult(allocator, id, output, content_length);
 }
 

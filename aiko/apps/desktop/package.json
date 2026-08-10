@@ -1,7 +1,7 @@
 {
   "name": "@aiko/desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.114",
   "type": "module",
   "scripts": {
     "frontend:dev": "npm run frontend:ensure && BACKEND_URL=${AIKO_BACKEND_URL:-http://127.0.0.1:8000} npm --prefix ../frontend/frontend run dev",

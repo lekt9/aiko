@@ -7,6 +7,63 @@ on:
   workflow_dispatch:
 
 jobs:
+  installer-config:
+    name: macOS installer CI/CD contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify macOS installer workflow and sources
+        run: bash aiko/scripts/check-installer-ci.sh
+
+  macos-installer-smoke:
+    name: macOS product installer smoke
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: aiko/apps/desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.92.0"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Install protoc and frontend dependencies
+        run: |
+          brew install protobuf
+          npm --prefix aiko/apps/desktop ci
+          npm --prefix aiko/apps/desktop run frontend:ensure
+          npm --prefix aiko/apps/frontend/frontend ci
+      - name: Synchronize desktop release version
+        shell: bash
+        run: |
+          version=$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' aiko/crates/codegen/xai-grok-pager-bin/Cargo.toml | head -1)
+          test -n "$version"
+          AIKO_RELEASE_VERSION="$version" node aiko/apps/desktop/scripts/set-release-version.mjs
+      - name: Build runtime and app bundle
+        run: |
+          zig build -Doptimize=ReleaseFast --summary all
+          cargo build --release --bin aiko --manifest-path aiko/Cargo.toml
+          npm --prefix aiko/apps/desktop run tauri build -- --bundles app
+      - name: Build and verify unsigned product installer
+        working-directory: aiko
+        run: |
+          scripts/prep-installer.sh
+          scripts/prep-installer.sh --check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer-smoke
+          path: |
+            aiko/dist/Aiko-Installer-*.pkg
+            aiko/dist/Aiko-Installer-*.pkg.zip
+          if-no-files-found: error
+          retention-days: 7
+
   zig-test:
     name: zig test + gate
     runs-on: ubuntu-latest

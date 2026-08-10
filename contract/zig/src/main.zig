@@ -6,10 +6,18 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+extern fn _NSGetExecutablePath(buf: [*]u8, size: *u32) c_int;
+
 /// Portable self-executable path. Darwin uses _NSGetExecutablePath; Linux
 /// readlinks /proc/self/exe. Returns a slice into the caller-provided buf
 /// (no null terminator) or an error.
 fn selfExePathPortable(buf: []u8) ![]const u8 {
+    if (comptime builtin.os.tag == .macos) {
+        var size: u32 = @intCast(buf.len);
+        if (_NSGetExecutablePath(buf.ptr, &size) != 0) return error.SelfPathTooLong;
+        const len = std.mem.indexOfScalar(u8, buf, 0) orelse buf.len;
+        return buf[0..len];
+    }
     if (comptime builtin.os.tag == .linux) {
         const n = std.c.readlink("/proc/self/exe", buf.ptr, buf.len);
         if (n <= 0) return error.SelfPathTooLong;
@@ -1741,6 +1749,18 @@ fn mcpBoolField(args: std.json.Value, key: []const u8) bool {
     return v == .bool and v.bool;
 }
 
+fn mcpDeclaredId(output: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, output, '\n');
+    while (lines.next()) |line| {
+        const candidate = std.mem.trim(u8, line, " \t\r");
+        if (candidate.len != 8) continue;
+        for (candidate) |byte| {
+            if (!std.ascii.isHex(byte)) break;
+        } else return candidate;
+    }
+    return null;
+}
+
 fn dispatchMcpTool(
     allocator: std.mem.Allocator,
     env: std.process.Environ,
@@ -1756,6 +1776,7 @@ fn dispatchMcpTool(
         try cli.append(allocator, plan);
         try cli.append(allocator, "--action");
         try cli.append(allocator, action);
+        try cli.append(allocator, "--register");
         if (mcpStrField(args, "parent")) |p| {
             try cli.append(allocator, "--parent");
             try cli.append(allocator, p);
@@ -1772,7 +1793,14 @@ fn dispatchMcpTool(
         const cap = try mcpCaptureSelfArgv(allocator, cli.items);
         defer allocator.free(cap.output);
         const text = try allocator.dupe(u8, cap.output);
-        return .{ .text = text, .is_error = cap.rc != 0 };
+        if (cap.rc != 0) return .{ .text = text, .is_error = true };
+        const id = mcpDeclaredId(cap.output) orelse return .{ .text = text, .is_error = true };
+        const structured = try std.fmt.allocPrint(
+            allocator,
+            "{{\"id\":\"{s}\",\"status\":\"pending\"}}",
+            .{id},
+        );
+        return .{ .text = text, .is_error = false, .structured_content = structured };
     }
     if (std.mem.eql(u8, tool_name, "iterate")) {
         const id = mcpStrField(args, "id") orelse return .{ .text = try allocator.dupe(u8, "missing id"), .is_error = true };
