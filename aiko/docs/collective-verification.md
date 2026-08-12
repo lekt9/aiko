@@ -35,8 +35,8 @@ Kademlia provider discovery is tested after the original seed departs.
 
 ## UI and TUI
 
-- `npm --prefix apps/desktop run build` passes and bundles Fonetika.
-- `node --test apps/desktop/src/lib/agentStream.test.mjs` passes the native
+- `pnpm --dir apps/aiko-app build:ui` passes the TypeScript/Vite build.
+- `pnpm --dir apps/aiko-app test` and the Rust ACP golden tests pass the native
   message-stream contract.
 - `cargo check --release -p xai-grok-shell -p xai-grok-pager -p
   xai-grok-pager-bin` passes. Existing non-snake-case captcha wire-field

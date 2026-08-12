@@ -1,1 +1,0 @@
-{"main-window":{"identifier":"main-window","description":"Capabilities for the trusted Aiko desktop window","local":true,"windows":["main"],"permissions":["core:default","dialog:default"]}}

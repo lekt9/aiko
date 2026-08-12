@@ -19,6 +19,6 @@ fi
 
 (cd "$ROOT" && cargo test -p xai-grok-shell contract_native::skill_registry --lib)
 (cd "$ROOT" && cargo check -p xai-grok-pager-bin)
-(cd "$ROOT/apps/desktop" && npx vite build)
+(cd "$ROOT/apps/aiko-app" && pnpm build:ui)
 
 echo "contract-native skill suite passed"

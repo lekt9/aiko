@@ -58,21 +58,23 @@ has "$ROOT/README.md"             -i 'zero setup'    'README states the goal'
 has "$ROOT/docs/README.md"        'GOAL\.md'         'docs map links the goal'
 has "$ROOT/AGENTS.md"             'docs/GOAL\.md'    'AGENTS.md gates on the goal'
 has "$ROOT/AGENTS.md"             -i 'setup step|against the product' 'AGENTS.md carries the gate question'
-has "$ROOT/apps/desktop/README.md" 'docs/GOAL\.md'   'desktop README links the goal'
 
 # every GOAL.md link target must resolve
 for pair in "README.md:docs/GOAL.md" "docs/README.md:docs/GOAL.md" \
-            "AGENTS.md:docs/GOAL.md" "apps/desktop/README.md:docs/GOAL.md"; do
+            "AGENTS.md:docs/GOAL.md"; do
   tgt="$ROOT/${pair##*:}"
   [[ -f "$tgt" ]] || fail "broken goal link from ${pair%%:*}"
 done
 ok "all goal links resolve"
 
 # ── C. the product still leans the way the goal says (falsifiable proxies) ────
-# Zero-setup user path: the desktop app stands up its own stack (adopt-or-start)
-# and bundles the runtime, rather than handing the user a setup checklist.
-has "$ROOT/apps/desktop/src-tauri/src/stack.rs" 'fn ensure'          'desktop self-hosts its stack (adopt-or-start)'
-has "$ROOT/apps/desktop/src-tauri/tauri.conf.json" 'externalBin'      'desktop bundles the aiko runtime sidecar'
+# Zero-setup user path: Tauri bundles the runtime, prepare-runtime materializes
+# the target-named binary, and CLI discovery checks beside the installed app.
+need_file "$ROOT/apps/aiko-app/scripts/prepare-runtime.mjs"
+has "$ROOT/apps/aiko-app/src-tauri/tauri.conf.json" '"externalBin"'   'desktop bundles the aiko runtime sidecar'
+has "$ROOT/apps/aiko-app/scripts/prepare-runtime.mjs" 'aiko-\$\{triple\}' 'prepare script writes Tauri target-named sidecar'
+has "$ROOT/apps/aiko-app/src-tauri/src/cli_probe.rs" 'current_exe'     'CLI probe checks the installed app location'
+has "$ROOT/apps/aiko-app/src-tauri/src/cli_probe.rs" 'aiko'            'CLI probe admits the bundled Aiko executable'
 # One-shot: the CLI takes a prompt as a positional, not a wizard.
 has "$ROOT/README.md" 'aiko "' 'one-shot prompt usage documented'
 

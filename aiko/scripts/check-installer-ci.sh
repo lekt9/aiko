@@ -6,7 +6,7 @@ AIKO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$AIKO_ROOT/.." && pwd)
 RELEASE_WORKFLOW="$REPO_ROOT/.github/workflows/release.yml"
 CI_WORKFLOW="$REPO_ROOT/.github/workflows/ci.yml"
-PREPARE_RUNTIME="$AIKO_ROOT/apps/desktop/scripts/prepare-runtime.mjs"
+PREPARE_RUNTIME="$AIKO_ROOT/apps/aiko-app/scripts/prepare-runtime.mjs"
 PREP_INSTALLER="$AIKO_ROOT/scripts/prep-installer.sh"
 
 for file in \
@@ -42,7 +42,7 @@ windows_rustflags = windows.fetch("env").fetch("CARGO_TARGET_X86_64_PC_WINDOWS_M
   raise "desktop-windows target flags missing #{claim}" unless windows_rustflags.include?(claim)
 end
 
-version_run = step!(macos, "Set and verify desktop release version").fetch("run")
+version_run = step!(macos, "Verify desktop release version").fetch("run")
 %w[release_version cli_version].each do |claim|
   raise "release version gate missing #{claim}" unless version_run.include?(claim)
 end
@@ -63,7 +63,7 @@ dmg = step!(macos, "Build macOS DMG")
 raise "DMG build does not pass the application signing identity" unless
   dmg.fetch("env").fetch("APPLE_SIGNING_IDENTITY").include?("secrets.APPLE_SIGNING_IDENTITY")
 raise "DMG build must retain the app bundle for the product installer" unless
-  dmg.fetch("run").include?("npm run tauri build -- --bundles app,dmg")
+  dmg.fetch("run").include?("pnpm exec tauri build --bundles app,dmg")
 
 runtime_prepare = File.read(ARGV.fetch(2))
 %w[APPLE_SIGNING_IDENTITY codesign --force --timestamp --options runtime --verify Authority= Timestamp=].each do |claim|

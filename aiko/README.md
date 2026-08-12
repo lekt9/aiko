@@ -312,21 +312,23 @@ Run the build in this order so neither the desktop bundle nor its CLI sidecar is
 stale:
 
 ```sh
-# 1. Align desktop metadata with the Aiko CLI release version (same step as CI)
+# 1. Verify desktop metadata is already aligned with the Aiko CLI release
 RELEASE_VERSION="$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
   crates/codegen/xai-grok-pager-bin/Cargo.toml | head -1)"
-AIKO_RELEASE_VERSION="$RELEASE_VERSION" node apps/desktop/scripts/set-release-version.mjs
+test "$(node -p "require('./apps/aiko-app/package.json').version")" = "$RELEASE_VERSION"
+test "$(node -p "require('./apps/aiko-app/src-tauri/tauri.conf.json').version")" = "$RELEASE_VERSION"
+test "$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
+  apps/aiko-app/src-tauri/Cargo.toml | head -1)" = "$RELEASE_VERSION"
 
 # 2. Build Contract, the release CLI, and the portable CLI package
 scripts/contract-runtime.sh build-aiko
 
-# 3. Install the desktop and frontend dependencies (same order as CI)
-npm --prefix apps/desktop ci
-npm --prefix apps/desktop run frontend:ensure
-npm --prefix apps/frontend/frontend ci
+# 3. Install the desktop dependencies and materialize the native sidecar
+pnpm --dir apps/aiko-app install --frozen-lockfile
+pnpm --dir apps/aiko-app runtime:prepare
 
 # 4. Build the Tauri app bundle with the current CLI + Contract runtime
-npm --prefix apps/desktop run tauri build -- --bundles app
+pnpm --dir apps/aiko-app exec tauri build --bundles app
 
 # 5. Recreate and verify the macOS product installer
 scripts/prep-installer.sh

@@ -40,7 +40,7 @@ and the right place to make each kind of change.
 | [OpenAPI schema](aiko-native-api.openapi.json) | Machine-readable native HTTP API |
 | [Interface registry](aiko-native-interfaces.json) | Stable interface ownership and versions |
 | [Native SDK](../sdk/aiko-native/README.md) | JavaScript/TypeScript client |
-| [Generative UI](../apps/desktop/src/generative/README.md) | Safe JSON-driven desktop components |
+| [Aiko App](../apps/aiko-app/README.md) | Native Tauri desktop workbench and ACP host |
 
 ## Fast routes
 

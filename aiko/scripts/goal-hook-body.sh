@@ -2,7 +2,7 @@
 # Re-fire the goal gate iff the files it is derived from are staged.
 set -euo pipefail
 REL="aiko"
-WATCH="$REL/docs/GOAL.md $REL/README.md $REL/docs/README.md $REL/AGENTS.md $REL/apps/desktop/README.md $REL/apps/desktop/src-tauri/src/stack.rs $REL/apps/desktop/src-tauri/tauri.conf.json $REL/scripts/goal-gate.sh"
+WATCH="$REL/docs/GOAL.md $REL/README.md $REL/docs/README.md $REL/AGENTS.md $REL/apps/aiko-app/scripts/prepare-runtime.mjs $REL/apps/aiko-app/src-tauri/src/cli_probe.rs $REL/apps/aiko-app/src-tauri/tauri.conf.json $REL/scripts/goal-gate.sh"
 staged=$(git diff --cached --name-only)
 touched=0
 for w in $WATCH; do echo "$staged" | grep -qxF "$w" && touched=1; done

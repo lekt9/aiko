@@ -96,8 +96,8 @@ if [ "${AIKO_CAPABILITY_FULL:-1}" = 1 ]; then
   check contract-bridge-tests "Turn grounding, privacy filtering, standing orders, and claim identity tests pass." \
     sh -c 'cd "$1" && CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" cargo test --release -p xai-grok-shell --lib contract_native::tests' sh "$ROOT"
 
-  check desktop-build "Desktop TypeScript/Vite build and stream/sanitizer tests pass." \
-    sh -c 'cd "$1" && npm --prefix apps/desktop run build && node --test apps/desktop/src/lib/agentStream.test.mjs apps/desktop/src/generative/sanitizeSpec.test.mjs' sh "$ROOT"
+  check desktop-build "Desktop TypeScript/Vite, UI tests, ACP golden tests, and native wiring pass." \
+    sh -c 'cd "$1" && pnpm --dir apps/aiko-app build:ui && pnpm --dir apps/aiko-app test && cargo test --manifest-path apps/aiko-app/src-tauri/Cargo.toml acp_golden && bash apps/aiko-app/scripts/aiko-native-witness.sh --wiring-only' sh "$ROOT"
 else
   record NOT-RUN collective-kernel "Set AIKO_CAPABILITY_FULL=1 to run the native and peer suites."
   record NOT-RUN native-api-tests "Set AIKO_CAPABILITY_FULL=1 to compile the native API tests."

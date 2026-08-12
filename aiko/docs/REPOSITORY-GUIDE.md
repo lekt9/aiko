@@ -83,7 +83,7 @@ aiko/
 
 | Path | What it owns | What it must not own |
 |---|---|---|
-| `apps/desktop` | Desktop presentation, Tauri lifecycle, sidecar launch, native bridge | Agent semantics or a second transcript database |
+| `apps/aiko-app` | Desktop presentation, Tauri lifecycle, sidecar launch, native bridge | Agent semantics or a second transcript database |
 | `crates/codegen/xai-grok-pager-bin` | `aiko` executable, CLI mode selection, worker/native server startup | Rendering details or Contract policy |
 | `crates/codegen/xai-grok-pager` | Ratatui state, input, scrollback, modals, Collective view | Provider or trust-kernel rules |
 | `crates/codegen/xai-grok-shell` | Agent orchestration, providers, native APIs, Contract and Collective host integration | Canonical public-object policy |
@@ -155,7 +155,8 @@ Key implementation points:
 - `xai-grok-shell` owns sampling, provider selection, prompt/tool assembly,
   session leadership, and Contract integration.
 - `xai-grok-pager` reduces input and agent events into view state.
-- `apps/desktop/src/lib/agentStream.ts` reduces the same ACP stream for React.
+- `apps/aiko-app/src-tauri/src/acp_client.rs` owns the desktop ACP transport,
+  while the React session providers reduce its emitted events for the workbench.
 - Contract failure is non-blocking for ordinary turn bookkeeping. Permission
   checks and high-risk governed actions still fail closed where required.
 
@@ -329,18 +330,16 @@ sequenceDiagram
 ```mermaid
 flowchart TB
     React[React UI]
-    Stream[agentStream reducer]
-    NativeTS[native.ts client]
+    Stream[session hooks + stream coalescer]
+    NativeTS[Tauri invoke client]
     Tauri[Tauri Rust commands]
     Sidecar[Bundled aiko sidecar]
-    API[Loopback native API]
+    ACP[ACP stdio]
     ContractLib[Bundled full Contract library]
 
     React --> Stream
     React --> NativeTS --> Tauri
-    Tauri --> Sidecar
-    Tauri --> API
-    Sidecar --> API
+    Tauri --> ACP --> Sidecar
     Sidecar --> ContractLib
 ```
 
@@ -348,19 +347,18 @@ Desktop source responsibilities:
 
 | Path | Responsibility |
 |---|---|
-| `src/app/App.tsx` | Main shell, navigation, active session surface |
-| `src/components/Composer.tsx` | Prompt entry and send behavior |
-| `src/lib/agentStream.ts` | ACP event-to-message state reducer |
-| `src/bridge/acp.ts` | ACP transport |
-| `src/bridge/native.ts` | Typed native HTTP/Tauri bridge |
-| `src/features/SettingsSurface.tsx` | Runtime, models, Collective, publication controls |
-| `src/generative` | Sanitized JSON-rendered UI catalog |
-| `src/styles` and `tokens.css` | Aiko visual system and Fonetika setup |
-| `src-tauri/src/runtime.rs` | Sidecar discovery, launch, and Contract environment |
-| `src-tauri/src/native_api.rs` | Native command façade |
+| `src/App.tsx` | Main shell, navigation, active session surface |
+| `src/components/ComposerShell.tsx` | Prompt entry and send behavior |
+| `src/hooks/useSessionHostEvents.ts` | Native event-to-session state reduction |
+| `src/lib/streamCoalesce.ts` | Stream chunk coalescing rules |
+| `src/lib/api/host.ts` | Typed Tauri command bridge |
+| `src/components/SettingsPage.tsx` | Runtime, models, account, and integration controls |
+| `src/styles` | Aiko visual system and component surfaces |
+| `src-tauri/src/cli_probe.rs` | Bundled/installed CLI discovery |
+| `src-tauri/src/acp_client.rs` | Sidecar launch and ACP transport |
 | `src-tauri/tauri.conf.json` | Bundle identity, sidecar, resources, icons, targets |
 | `scripts/prepare-runtime.mjs` | Target-clean runtime and full Contract embedding |
-| `scripts/package-windows.mjs` | Windows portable and installer assembly |
+| `scripts/package-windows-portable.sh` | Windows portable archive assembly |
 
 The React UI should remain a projection of native state. It must not recreate
 permission, ranking, ledger, or publication policy in TypeScript.
@@ -521,14 +519,14 @@ cargo check --release -p xai-grok-shell -p xai-grok-pager -p xai-grok-pager-bin
 cargo test --release -p xai-aiko-collective -- --test-threads=1
 
 # Desktop frontend
-npm --prefix apps/desktop run build
-node --test apps/desktop/src/lib/agentStream.test.mjs
+pnpm --dir apps/aiko-app build:ui
+pnpm --dir apps/aiko-app test
 
 # macOS desktop bundle (after building full Contract and Aiko release)
-npm --prefix apps/desktop run tauri -- build --bundles app,dmg
+pnpm --dir apps/aiko-app exec tauri build --bundles app,dmg
 
 # Windows packaging
-npm --prefix apps/desktop run package:windows
+pnpm --dir apps/aiko-app build:win
 
 # Combined CLI + Contract package/install
 # Requires sibling ../contract and ../neuron (or AIKO_CONTRACT_REPO).
@@ -565,8 +563,8 @@ Developer ID notarized. Windows artifacts are x86-64 PE binaries; see
 | Cross-language ABI | `tests/contract_vectors.rs` |
 | Real decentralized flow | `tests/lan_end_to_end.rs` |
 | Abuse resistance | `tests/adversarial_simulations.rs` |
-| Desktop stream | `apps/desktop/src/lib/agentStream.test.mjs` |
-| Generative UI safety | `apps/desktop/src/generative/sanitizeSpec.test.mjs` |
+| Desktop ACP stream | `apps/aiko-app/src-tauri/src/acp_golden_test.rs` and `tests/fixtures/acp/` |
+| Desktop UI | `pnpm --dir apps/aiko-app test` and `pnpm --dir apps/aiko-app build:ui` |
 | TUI/host integration | release checks for shell, pager, and pager-bin |
 | Distribution | checksums, archive integrity, binary format/export inspection, DMG mount/signature verification |
 
@@ -585,8 +583,8 @@ Developer ID notarized. Windows artifacts are x86-64 PE binaries; see
 | Change Collective ranking | Contract `collective_rank.zig` | Rust feature projection and version tests |
 | Add Collective UI data | `xai-aiko-collective/src/events.rs` | shell host, native API, both UIs |
 | Change terminal UX | `xai-grok-pager/src` | stream/events from shell |
-| Change desktop UX/theme | `apps/desktop/src` and `tokens.css` | Tauri bridge when native data changes |
-| Change sidecar startup | `apps/desktop/src-tauri/src/runtime.rs` | Tauri bundle config and prepare script |
+| Change desktop UX/theme | `apps/aiko-app/src` and `tokens.css` | Tauri bridge when native data changes |
+| Change sidecar startup | `apps/aiko-app/src-tauri/src/cli_probe.rs` and `acp_client.rs` | Tauri bundle config and `scripts/prepare-runtime.mjs` |
 | Add native HTTP route | `xai-grok-pager-bin/src/native_api.rs` | OpenAPI, interface registry, SDK, desktop bridge |
 | Change default model/config | `xai-grok-config/src/loader.rs` | config types and model catalog |
 | Change install/update behavior | `scripts/contract-runtime.sh`, `xai-grok-update` | Tauri/Windows packaging |
@@ -596,7 +594,7 @@ Developer ID notarized. Windows artifacts are x86-64 PE binaries; see
 
 When a message cannot be sent:
 
-1. Check the UI composer event and `agentStream`/TUI reducer.
+1. Check the UI composer event and session host-event/TUI reducers.
 2. Check ACP connection, initialization, session creation/loading, and leader
    availability.
 3. Check `session/prompt` reaches the shell runtime.

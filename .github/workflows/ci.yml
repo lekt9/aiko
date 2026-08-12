@@ -22,11 +22,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: aiko/apps/aiko-app/package.json
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: aiko/apps/desktop/package-lock.json
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: aiko/apps/aiko-app/pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.92.0"
@@ -36,20 +39,20 @@ jobs:
       - name: Install protoc and frontend dependencies
         run: |
           brew install protobuf
-          npm --prefix aiko/apps/desktop ci
-          npm --prefix aiko/apps/desktop run frontend:ensure
-          npm --prefix aiko/apps/frontend/frontend ci
-      - name: Synchronize desktop release version
+          pnpm --dir aiko/apps/aiko-app install --frozen-lockfile
+      - name: Verify desktop release version
         shell: bash
         run: |
           version=$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' aiko/crates/codegen/xai-grok-pager-bin/Cargo.toml | head -1)
-          test -n "$version"
-          AIKO_RELEASE_VERSION="$version" node aiko/apps/desktop/scripts/set-release-version.mjs
+          app_version=$(node -p "require('./aiko/apps/aiko-app/package.json').version")
+          tauri_version=$(node -p "require('./aiko/apps/aiko-app/src-tauri/tauri.conf.json').version")
+          cargo_version=$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' aiko/apps/aiko-app/src-tauri/Cargo.toml | head -1)
+          test -n "$version" && test "$app_version" = "$version" && test "$tauri_version" = "$version" && test "$cargo_version" = "$version"
       - name: Build runtime and app bundle
         run: |
           zig build -Doptimize=ReleaseFast --summary all
           cargo build --release --bin aiko --manifest-path aiko/Cargo.toml
-          npm --prefix aiko/apps/desktop run tauri build -- --bundles app
+          pnpm --dir aiko/apps/aiko-app exec tauri build --bundles app
       - name: Build and verify unsigned product installer
         working-directory: aiko
         run: |

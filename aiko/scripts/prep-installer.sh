@@ -47,9 +47,9 @@ IDENT_APP="${AIKO_APP_SIGNING_IDENTITY:-Developer ID Application: Lewis Tham (54
 IDENT_INSTALLER="${AIKO_INSTALLER_SIGNING_IDENTITY:-Developer ID Installer: Lewis Tham (547K33EUK7)}"
 
 # versions default to source of truth
-APP_VERSION="$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])" 2>/dev/null || true)"
+APP_VERSION="$(python3 -c "import json; print(json.load(open('apps/aiko-app/src-tauri/tauri.conf.json'))['version'])" 2>/dev/null || true)"
 if [[ -z "$APP_VERSION" ]]; then
-  echo "could not read the desktop version from apps/desktop/src-tauri/tauri.conf.json" >&2
+  echo "could not read the desktop version from apps/aiko-app/src-tauri/tauri.conf.json" >&2
   exit 1
 fi
 CLI_VERSION="$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' crates/codegen/xai-grok-pager-bin/Cargo.toml | head -1)"

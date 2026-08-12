@@ -219,36 +219,39 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: aiko/apps/aiko-app/package.json
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: aiko/apps/desktop/package-lock.json
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: aiko/apps/aiko-app/pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.92.0"
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
-      # Cache before version synchronization: the setter edits both lockfiles,
-      # while their dependency graph remains identical between releases.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             aiko -> target
-            aiko/apps/desktop/src-tauri -> target
+            aiko/apps/aiko-app/src-tauri -> target
           shared-key: desktop-${{ runner.os }}
-      - name: Set and verify desktop release version
+      - name: Verify desktop release version
         env:
           AIKO_RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
           AIKO_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
         shell: bash
         run: |
-          node aiko/apps/desktop/scripts/set-release-version.mjs
           release_version="${AIKO_RELEASE_TAG#v}"
           if test -z "$release_version"; then release_version="$AIKO_RELEASE_VERSION"; fi
           cli_version=$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' aiko/crates/codegen/xai-grok-pager-bin/Cargo.toml | head -1)
-          test -n "$release_version" && test -n "$cli_version"
+          app_version=$(node -p "require('./aiko/apps/aiko-app/package.json').version")
+          tauri_version=$(node -p "require('./aiko/apps/aiko-app/src-tauri/tauri.conf.json').version")
+          cargo_version=$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' aiko/apps/aiko-app/src-tauri/Cargo.toml | head -1)
+          test -n "$release_version" && test -n "$cli_version" && test "$app_version" = "$cli_version" && test "$tauri_version" = "$cli_version" && test "$cargo_version" = "$cli_version"
           test "$release_version" = "$cli_version" || {
             echo "Release version $release_version does not match Aiko CLI $cli_version" >&2
             exit 1
@@ -258,28 +261,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - name: Install frontend dependencies
-        working-directory: aiko/apps/desktop
-        run: |
-          npm ci
-          npm run frontend:ensure
-          npm --prefix ../frontend/frontend ci
+        working-directory: aiko/apps/aiko-app
+        run: pnpm install --frozen-lockfile
       - name: Build runtime and contract
         run: |
           zig build -Doptimize=ReleaseFast --summary all
           cargo build --release --bin aiko --manifest-path aiko/Cargo.toml
       - name: Prepare runtime
-        working-directory: aiko/apps/desktop
+        working-directory: aiko/apps/aiko-app
         run: node scripts/prepare-runtime.mjs
       - name: Build Linux bundles
-        working-directory: aiko/apps/desktop
-        run: npm run tauri build -- --bundles appimage,deb
+        working-directory: aiko/apps/aiko-app
+        run: pnpm exec tauri build --bundles appimage,deb
       - name: Normalize Linux assets
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          mapfile -t appimages < <(find aiko/target aiko/apps/desktop/src-tauri/target -type f -name '*.AppImage' 2>/dev/null | sort)
-          mapfile -t debs < <(find aiko/target aiko/apps/desktop/src-tauri/target -type f -name '*.deb' 2>/dev/null | sort)
+          mapfile -t appimages < <(find aiko/target aiko/apps/aiko-app/src-tauri/target -type f -name '*.AppImage' 2>/dev/null | sort)
+          mapfile -t debs < <(find aiko/target aiko/apps/aiko-app/src-tauri/target -type f -name '*.deb' 2>/dev/null | sort)
           test "${#appimages[@]}" -gt 0 || { echo 'Expected an AppImage, but Tauri produced none' >&2; exit 1; }
           test "${#debs[@]}" -gt 0 || { echo 'Expected a deb, but Tauri produced none' >&2; exit 1; }
           cp "${appimages[0]}" release-assets/Aiko-Linux-x86_64.AppImage
@@ -299,36 +299,39 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: aiko/apps/aiko-app/package.json
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: aiko/apps/desktop/package-lock.json
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: aiko/apps/aiko-app/pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.92.0"
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
-      # Cache before version synchronization: the setter edits both lockfiles,
-      # while their dependency graph remains identical between releases.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             aiko -> target
-            aiko/apps/desktop/src-tauri -> target
+            aiko/apps/aiko-app/src-tauri -> target
           shared-key: desktop-${{ runner.os }}
-      - name: Set and verify desktop release version
+      - name: Verify desktop release version
         env:
           AIKO_RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
           AIKO_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
         shell: bash
         run: |
-          node aiko/apps/desktop/scripts/set-release-version.mjs
           release_version="${AIKO_RELEASE_TAG#v}"
           if test -z "$release_version"; then release_version="$AIKO_RELEASE_VERSION"; fi
           cli_version=$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' aiko/crates/codegen/xai-grok-pager-bin/Cargo.toml | head -1)
-          test -n "$release_version" && test -n "$cli_version"
+          app_version=$(node -p "require('./aiko/apps/aiko-app/package.json').version")
+          tauri_version=$(node -p "require('./aiko/apps/aiko-app/src-tauri/tauri.conf.json').version")
+          cargo_version=$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' aiko/apps/aiko-app/src-tauri/Cargo.toml | head -1)
+          test -n "$release_version" && test -n "$cli_version" && test "$app_version" = "$cli_version" && test "$tauri_version" = "$cli_version" && test "$cargo_version" = "$cli_version"
           test "$release_version" = "$cli_version" || {
             echo "Release version $release_version does not match Aiko CLI $cli_version" >&2
             exit 1
@@ -392,17 +395,14 @@ jobs:
             grep -Fq "$APPLE_INSTALLER_SIGNING_IDENTITY" <<< "$identities"
           fi
       - name: Install frontend dependencies
-        working-directory: aiko/apps/desktop
-        run: |
-          npm ci
-          npm run frontend:ensure
-          npm --prefix ../frontend/frontend ci
+        working-directory: aiko/apps/aiko-app
+        run: pnpm install --frozen-lockfile
       - name: Build runtime and contract
         run: |
           zig build -Doptimize=ReleaseFast --summary all
           cargo build --release --bin aiko --manifest-path aiko/Cargo.toml
       - name: Prepare runtime
-        working-directory: aiko/apps/desktop
+        working-directory: aiko/apps/aiko-app
         run: node scripts/prepare-runtime.mjs
       - name: Sign embedded Contract runtime
         working-directory: aiko
@@ -412,7 +412,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$AIKO_APP_SIGNING_IDENTITY" || { echo 'Missing application signing identity' >&2; exit 1; }
-          contract_dylib=apps/desktop/src-tauri/resources/contract/libcontract.dylib
+          contract_dylib=apps/aiko-app/src-tauri/resources/contract/libcontract.dylib
           test -f "$contract_dylib" || { echo "Missing embedded Contract runtime: $contract_dylib" >&2; exit 1; }
           codesign --force --timestamp --options runtime --sign "$AIKO_APP_SIGNING_IDENTITY" "$contract_dylib"
           codesign --verify --strict --verbose=2 "$contract_dylib"
@@ -420,7 +420,7 @@ jobs:
           grep -Fq "Authority=$AIKO_APP_SIGNING_IDENTITY" "$RUNNER_TEMP/contract-codesign.txt"
           grep -Fq 'Timestamp=' "$RUNNER_TEMP/contract-codesign.txt"
       - name: Build macOS DMG
-        working-directory: aiko/apps/desktop
+        working-directory: aiko/apps/aiko-app
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -446,7 +446,7 @@ jobs:
           for name in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
             test -n "${!name:-}" || { echo "Required macOS release secret is missing: $name" >&2; exit 1; }
           done
-          npm run tauri build -- --bundles app,dmg
+          pnpm exec tauri build --bundles app,dmg
       - name: Build and verify macOS product installer
         working-directory: aiko
         shell: bash
@@ -473,7 +473,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          dmg=$(find aiko/target aiko/apps/desktop/src-tauri/target -type f -name '*.dmg' 2>/dev/null | sort | head -n 1)
+          dmg=$(find aiko/target aiko/apps/aiko-app/src-tauri/target -type f -name '*.dmg' 2>/dev/null | sort | head -n 1)
           test -n "$dmg" || { echo 'Expected a DMG, but Tauri produced none' >&2; exit 1; }
           cp "$dmg" release-assets/Aiko-macOS.dmg
           packages=(aiko/dist/Aiko-Installer-*.pkg)
@@ -520,55 +520,61 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: aiko/apps/aiko-app/package.json
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: aiko/apps/desktop/package-lock.json
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: aiko/apps/aiko-app/pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.92.0"
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
-      # Cache before version synchronization: the setter edits both lockfiles,
-      # while their dependency graph remains identical between releases.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             aiko -> target
-            aiko/apps/desktop/src-tauri -> target
+            aiko/apps/aiko-app/src-tauri -> target
           shared-key: desktop-${{ runner.os }}
-      - name: Set and verify desktop release version
+      - name: Verify desktop release version
         env:
           AIKO_RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
           AIKO_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || '' }}
-        run: node aiko/apps/desktop/scripts/set-release-version.mjs
+        shell: bash
+        run: |
+          release_version="${AIKO_RELEASE_TAG#v}"
+          if test -z "$release_version"; then release_version="$AIKO_RELEASE_VERSION"; fi
+          cli_version=$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' aiko/crates/codegen/xai-grok-pager-bin/Cargo.toml | head -1)
+          app_version=$(node -p "require('./aiko/apps/aiko-app/package.json').version")
+          tauri_version=$(node -p "require('./aiko/apps/aiko-app/src-tauri/tauri.conf.json').version")
+          cargo_version=$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' aiko/apps/aiko-app/src-tauri/Cargo.toml | head -1)
+          test -n "$release_version" && test -n "$cli_version" && test "$release_version" = "$cli_version" && test "$app_version" = "$cli_version" && test "$tauri_version" = "$cli_version" && test "$cargo_version" = "$cli_version"
       - name: Install protoc
         shell: pwsh
         run: |
           choco install protoc --yes
           protoc --version
       - name: Install frontend dependencies
-        working-directory: aiko/apps/desktop
+        working-directory: aiko/apps/aiko-app
         shell: pwsh
-        run: |
-          npm ci
-          npm run frontend:ensure
-          npm --prefix ../frontend/frontend ci
+        run: pnpm install --frozen-lockfile
       - name: Build runtime and contract
         shell: pwsh
         run: |
           zig build -Doptimize=ReleaseFast --summary all
           cargo build --release --bin aiko --manifest-path aiko/Cargo.toml
       - name: Prepare runtime
-        working-directory: aiko/apps/desktop
+        working-directory: aiko/apps/aiko-app
         shell: pwsh
         run: |
           $env:TAURI_ENV_TARGET_TRIPLE = "x86_64-pc-windows-msvc"
           node scripts/prepare-runtime.mjs
       - name: Build Windows MSI and NSIS installers
-        working-directory: aiko/apps/desktop
+        working-directory: aiko/apps/aiko-app
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -581,28 +587,31 @@ jobs:
             Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
             Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
           }
-          npm run tauri build -- --bundles msi,nsis
-      - name: Build portable and script installer archives
-        working-directory: aiko/apps/desktop
-        shell: pwsh
-        run: node scripts/package-windows.mjs
+          pnpm exec tauri build --bundles msi,nsis
       - name: Normalize Windows assets
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release-assets | Out-Null
-          $msi = Get-ChildItem -Recurse -File aiko/target,aiko/apps/desktop/src-tauri/target -Filter *.msi -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -First 1
-          $setup = Get-ChildItem -Recurse -File aiko/target,aiko/apps/desktop/src-tauri/target -Filter *.exe -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '[\\/]bundle[\\/]nsis[\\/]' } | Sort-Object FullName | Select-Object -First 1
+          $msi = Get-ChildItem -Recurse -File aiko/target,aiko/apps/aiko-app/src-tauri/target -Filter *.msi -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -First 1
+          $setup = Get-ChildItem -Recurse -File aiko/target,aiko/apps/aiko-app/src-tauri/target -Filter *.exe -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '[\\/]bundle[\\/]nsis[\\/]' } | Sort-Object FullName | Select-Object -First 1
           if (-not $msi) { throw "Expected an MSI, but Tauri produced none" }
           if (-not $setup) { throw "Expected an NSIS setup executable, but Tauri produced none" }
           Copy-Item $msi.FullName release-assets/Aiko-Windows-x86_64.msi
           Copy-Item $setup.FullName release-assets/Aiko-Windows-x86_64-Setup.exe
-          Copy-Item aiko/dist/windows-x86_64/Aiko-Windows-x86_64-Portable.zip release-assets/
-          Copy-Item aiko/dist/windows-x86_64/Aiko-Windows-x86_64-Installer.zip release-assets/
+          $appExe = Get-ChildItem -Recurse -File aiko/apps/aiko-app/src-tauri/target -Filter aiko-app.exe -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '[\\/]bundle[\\/]' } | Sort-Object FullName | Select-Object -First 1
+          $sidecar = Get-Item aiko/apps/aiko-app/src-tauri/binaries/aiko-x86_64-pc-windows-msvc.exe
+          $contract = Get-Item aiko/apps/aiko-app/src-tauri/resources/contract/contract.dll
+          if (-not $appExe -or -not $sidecar -or -not $contract) { throw "Portable Aiko app inputs are incomplete" }
+          $portableRoot = Join-Path $env:RUNNER_TEMP 'Aiko-Windows-x86_64-Portable'
+          New-Item -ItemType Directory -Force (Join-Path $portableRoot 'contract') | Out-Null
+          Copy-Item $appExe.FullName (Join-Path $portableRoot 'Aiko.exe')
+          Copy-Item $sidecar.FullName (Join-Path $portableRoot 'aiko.exe')
+          Copy-Item $contract.FullName (Join-Path $portableRoot 'contract/contract.dll')
+          Compress-Archive -Path $portableRoot -DestinationPath release-assets/Aiko-Windows-x86_64-Portable.zip -Force
           $expected = @(
             'Aiko-Windows-x86_64.msi',
             'Aiko-Windows-x86_64-Setup.exe',
-            'Aiko-Windows-x86_64-Portable.zip',
-            'Aiko-Windows-x86_64-Installer.zip'
+            'Aiko-Windows-x86_64-Portable.zip'
           )
           foreach ($name in $expected) {
             $asset = Join-Path release-assets $name
@@ -674,7 +683,6 @@ jobs:
             Aiko-Windows-x86_64.msi
             Aiko-Windows-x86_64-Setup.exe
             Aiko-Windows-x86_64-Portable.zip
-            Aiko-Windows-x86_64-Installer.zip
           )
           for name in "${expected[@]}"; do
             test -s "release-assets/$name" || { echo "Missing or empty required desktop asset: $name" >&2; exit 1; }
