@@ -1,107 +1,90 @@
 #!/usr/bin/env bash
-# Aiko one-line setup — installs contract + neuron + limbs from Gitea package registry
-# Usage: curl -sL <url> | bash
-
+# One-line installation of the complete, verified portable Aiko product.
+# Usage: GITEA_TOKEN=… curl -sL <url> | bash
 set -euo pipefail
 
-GITEA_URL="http://100.124.140.92:3000"
-# Single source of truth — same as scripts/lib/aiko-env.sh
+GITEA_URL="${GITEA_URL:-http://100.124.140.92:3000}"
+GITEA_ORG="${GITEA_ORG:-Unbrowse}"
+GITEA_TOKEN="${GITEA_TOKEN:-${1:-}}"
 AIKO_HOME="${AIKO_HOME:-$HOME/.aiko}"
 AIKO_BIN_DIR="${AIKO_BIN_DIR:-$HOME/.local/bin}"
 AIKO_LIB_DIR="${AIKO_LIB_DIR:-$AIKO_HOME/lib}"
+MANIFEST_URL="${MANIFEST_URL:-$GITEA_URL/$GITEA_ORG/aiko-sdk/raw/branch/main/versions.lock}"
 
-# Colors
-C='\033[0;36m' G='\033[0;32m' Y='\033[1;33m' N='\033[0m'
-
-echo -e "${C}╔══════════════════════════════════════╗${N}"
-echo -e "${C}║${N}  Aiko Setup — Contract + Neuron + Limbs  ${C}║${N}"
-echo -e "${C}╚══════════════════════════════════════╝${N}"
-echo ""
-
-# ─── Platform ───
-OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-ARCH="$(uname -m)"
-[[ "$ARCH" == "arm64" || "$ARCH" == "aarch64" ]] && ARCH="arm64"
-[[ "$ARCH" == "x86_64" || "$ARCH" == "amd64" ]] && ARCH="x86_64"
-PLATFORM="${OS}-${ARCH}"
-echo -e "Platform: ${G}${PLATFORM}${N}"
-
-# ─── Token ───
-if [[ -z "${GITEA_TOKEN:-}" ]] && [[ -n "${1:-}" ]]; then
-    GITEA_TOKEN="$1"
-fi
-if [[ -z "${GITEA_TOKEN:-}" ]]; then
-    echo ""
-    echo -e "${Y}Set GITEA_TOKEN to skip this prompt:${N}"
-    echo "  export GITEA_TOKEN=your_token"
-    echo ""
+if [[ -z "$GITEA_TOKEN" ]]; then
     read -rp "Gitea API token: " GITEA_TOKEN
 fi
-
-# ─── Dirs ───
-mkdir -p "$AIKO_BIN_DIR" "$AIKO_LIB_DIR" "$AIKO_HOME/limbs"
-
-# ─── Fetch versions ───
-echo -e "\n${C}Fetching version manifest...${N}"
-VERSIONS=$(curl -sfL -H "Authorization: token $GITEA_TOKEN" \
-    "$GITEA_URL/Unbrowse/aiko-sdk/raw/branch/main/versions.lock")
-CONTRACT_VER=$(echo "$VERSIONS" | grep "^contract=" | cut -d= -f2)
-NEURON_VER=$(echo "$VERSIONS" | grep "^neuron=" | cut -d= -f2)
-LIMBS_VER=$(echo "$VERSIONS" | grep "^neuron-limbs=" | cut -d= -f2)
-echo "  contract: v${CONTRACT_VER}  neuron: v${NEURON_VER}  limbs: v${LIMBS_VER}"
-
-# ─── Download function ───
-download_and_extract() {
-    local name="$1" version="$2" filename="$3" dest="$4" binary="${5:-}"
-    echo -n "  ${name}... "
-    local url="$GITEA_URL/api/packages/Unbrowse/generic/${name}/${version}/${filename}"
-    local tmp="/tmp/aiko-${name}.tar.gz"
-    if curl -sfL -H "Authorization: token $GITEA_TOKEN" -o "$tmp" "$url"; then
-        tar -xzf "$tmp" -C "$dest" 2>/dev/null
-        if [[ -n "$binary" ]]; then chmod +x "$dest/$binary" 2>/dev/null || true; fi
-        rm -f "$tmp"
-        local size=$(du -sh "$dest/${binary:-$filename}" 2>/dev/null | cut -f1)
-        echo -e "${G}✓${N} ($size)"
-    else
-        echo -e "${Y}✗ not published for $PLATFORM${N}"
-    fi
+get() { curl -sfL -H "Authorization: token $GITEA_TOKEN" -o "$2" "$1"; }
+platform() {
+    case "$(uname -s):$(uname -m)" in
+        Linux:x86_64|Linux:amd64) echo linux-x86_64 ;;
+        Linux:aarch64|Linux:arm64) echo linux-aarch64 ;;
+        Darwin:x86_64|Darwin:amd64) echo macos-x86_64 ;;
+        Darwin:arm64|Darwin:aarch64) echo macos-aarch64 ;;
+        *) echo "Unsupported platform: $(uname -s) $(uname -m)" >&2; exit 1 ;;
+    esac
 }
-
-# ─── Install ───
-echo -e "\n${C}Installing packages for ${PLATFORM}...${N}"
-download_and_extract "contract" "$CONTRACT_VER" "libcontract-${CONTRACT_VER}-${PLATFORM}.tar.gz" "$AIKO_LIB_DIR" "libcontract.dylib"
-download_and_extract "neuron" "$NEURON_VER" "neuron-${NEURON_VER}-${PLATFORM}.tar.gz" "$AIKO_BIN_DIR" "neuron"
-download_and_extract "neuron-limbs" "$LIMBS_VER" "limbs.tar.gz" "$AIKO_HOME"
-
-# ─── PATH ───
-ADDED=""
-if ! echo "$PATH" | grep -q "$AIKO_BIN_DIR"; then
-    echo -e "\n${C}Adding ${AIKO_BIN_DIR} to PATH...${N}"
-    echo "export PATH=\"$AIKO_BIN_DIR:\$PATH\"" >> "$HOME/.zshrc"
-    echo "export PATH=\"$AIKO_BIN_DIR:\$PATH\"" >> "$HOME/.bashrc" 2>/dev/null || true
-    export PATH="$AIKO_BIN_DIR:$PATH"
-    ADDED="added to ~/.zshrc"
-fi
-
-if [[ -n "${CI:-}" ]]; then
-    # CI: add to GITHUB_PATH
-    echo "$AIKO_BIN_DIR" >> "${GITHUB_PATH:-/tmp/aiko-path}" 2>/dev/null || true
-fi
-
-# ─── Done ───
-echo ""
-echo -e "${G}╔══════════════════════════════════════╗${N}"
-echo -e "${G}║${N}  Aiko stack installed!              ${G}║${N}"
-echo -e "${G}╚══════════════════════════════════════╝${N}"
-echo ""
-echo "  neuron --help          neuron CLI"
-echo "  ls ~/.aiko/lib/        libcontract.dylib"
-echo "  ls ~/.aiko/limbs/      neuron limbs (preemptor, auto-attacher, etc.)"
-echo "  export PATH=\"$AIKO_BIN_DIR:\$PATH\""
-echo ""
-if [[ -n "$ADDED" ]]; then
-    echo -e "  (${G}${ADDED}${N} — restart your shell or run:)"
-    echo "  source ~/.zshrc"
-    echo ""
-fi
-echo "  To update later: curl -sL <url> | bash"
+sha256_file() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+    else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+validate_archive() {
+    python3 - "$1" <<'PY'
+import posixpath, sys, tarfile
+archive = sys.argv[1]
+with tarfile.open(archive, "r:gz") as tf:
+    members = tf.getmembers()
+    symlinks = set()
+    for member in members:
+        name = member.name
+        clean = posixpath.normpath(name)
+        if name.startswith("/") or clean == ".." or clean.startswith("../"):
+            raise SystemExit(f"unsafe archive member: {name}")
+        if member.ischr() or member.isblk() or member.isfifo():
+            raise SystemExit(f"special archive member refused: {name}")
+        if member.issym() or member.islnk():
+            target = member.linkname
+            if target.startswith("/"):
+                raise SystemExit(f"absolute archive link refused: {name} -> {target}")
+            base = posixpath.dirname(clean) if member.issym() else ""
+            resolved = posixpath.normpath(posixpath.join(base, target))
+            if resolved == ".." or resolved.startswith("../"):
+                raise SystemExit(f"escaping archive link refused: {name} -> {target}")
+            if member.issym():
+                symlinks.add(clean)
+    for member in members:
+        clean = posixpath.normpath(member.name)
+        parts = clean.split("/")
+        for i in range(1, len(parts)):
+            if "/".join(parts[:i]) in symlinks:
+                raise SystemExit(f"archive member traverses symlink: {member.name}")
+PY
+}
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/aiko-setup.XXXXXX")
+trap 'rm -rf "$WORK"' EXIT HUP INT TERM
+get "$MANIFEST_URL" "$WORK/versions.lock"
+VERSION=$(sed -n 's/^aiko=//p' "$WORK/versions.lock" | head -1)
+[[ -n "$VERSION" ]] || { echo "versions.lock has no aiko version" >&2; exit 1; }
+PLATFORM=$(platform)
+NAME="aiko-${VERSION}-${PLATFORM}.tar.gz"
+BASE="$GITEA_URL/api/packages/$GITEA_ORG/generic/aiko/$VERSION"
+echo "Downloading complete Aiko $VERSION ($PLATFORM)..."
+get "$BASE/$NAME" "$WORK/$NAME"
+get "$BASE/$NAME.sha256" "$WORK/$NAME.sha256"
+EXPECTED=$(awk 'NF {print $1; exit}' "$WORK/$NAME.sha256")
+GOT=$(sha256_file "$WORK/$NAME")
+EXPECTED=$(printf '%s' "$EXPECTED" | tr '[:upper:]' '[:lower:]')
+GOT=$(printf '%s' "$GOT" | tr '[:upper:]' '[:lower:]')
+[[ "$EXPECTED" =~ ^[0-9a-f]{64}$ && "$EXPECTED" == "$GOT" ]] || {
+    echo "SHA256 mismatch for $NAME" >&2; exit 1;
+}
+validate_archive "$WORK/$NAME"
+mkdir "$WORK/extract"
+tar -xzf "$WORK/$NAME" -C "$WORK/extract"
+COUNT=$(find "$WORK/extract" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')
+[[ "$COUNT" == 1 ]] || { echo "Portable archive must contain exactly one root" >&2; exit 1; }
+ROOT=$(find "$WORK/extract" -mindepth 1 -maxdepth 1 -print)
+[[ -d "$ROOT" && -f "$ROOT/install.sh" ]] || { echo "Portable archive root is missing install.sh" >&2; exit 1; }
+chmod 755 "$ROOT/install.sh"
+AIKO_HOME="$AIKO_HOME" AIKO_BIN_DIR="$AIKO_BIN_DIR" AIKO_LIB_DIR="$AIKO_LIB_DIR" "$ROOT/install.sh"
+echo "Aiko + Neuron + Cell + Contract installed."

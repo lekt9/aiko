@@ -158,56 +158,97 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-  # Fan in the already-built host artifacts. Recompiling Cargo and Zig here
-  # duplicated the two longest upstream jobs without changing their bytes.
+  # Portable archives are built natively so the installer can load-test the
+  # Contract ABI before publication. Zig, Rust, and pip exist only in CI; the
+  # resulting archive contains Aiko, Neuron, Contract, Cell, and vendored YAML.
   portable:
-    name: portable stack
-    runs-on: ubuntu-latest
-    needs: [zig-cross, cargo-cross]
+    name: portable ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux-x86_64
+          - runner: ubuntu-24.04-arm
+            platform: linux-aarch64
+          - runner: macos-13
+            platform: macos-x86_64
+          - runner: macos-14
+            platform: macos-aarch64
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Download prebuilt Linux Cargo CLI
-        uses: actions/download-artifact@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          name: cargo-x86_64-unknown-linux-gnu
-          path: dist/cargo-host
-      - name: Download prebuilt Linux Zig runtime
-        uses: actions/download-artifact@v4
+          toolchain: "1.92.0"
+      - uses: mlugg/setup-zig@v2
         with:
-          name: zig-x86_64-linux-gnu
-          path: dist/zig-host
-      - name: Assemble portable stack
+          version: 0.16.0
+      - name: Install native build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ runner.os }}" == Linux ]]; then
+            sudo apt-get update
+            sudo apt-get install -y protobuf-compiler
+          else
+            brew install protobuf
+          fi
+          python3 -m pip install --target "$RUNNER_TEMP/cell-vendor" "PyYAML==6.0.2"
+      - name: Verify native runner target
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64) actual=linux-x86_64 ;;
+            Linux-aarch64|Linux-arm64) actual=linux-aarch64 ;;
+            Darwin-x86_64) actual=macos-x86_64 ;;
+            Darwin-arm64|Darwin-aarch64) actual=macos-aarch64 ;;
+            *) echo "Unsupported native runner: $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+          esac
+          test "$actual" = "${{ matrix.platform }}" || {
+            echo "Runner produced $actual, expected ${{ matrix.platform }}" >&2
+            exit 1
+          }
+      - name: Build release inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          zig build -Doptimize=ReleaseFast --summary all
+          cargo build --release --bin aiko --manifest-path aiko/Cargo.toml
+      - name: Assemble and prove the no-build archive
+        shell: bash
         run: |
           set -euo pipefail
           . scripts/lib/aiko-env.sh
           . scripts/lib/assemble-portable.sh
           aiko_env_init
-          AIKO_PORTABLE_AIKO_BIN="$GITHUB_WORKSPACE/dist/cargo-host/aiko-x86_64-unknown-linux-gnu"
-          test -s "$AIKO_PORTABLE_AIKO_BIN" || { echo "Prebuilt Cargo CLI is missing or empty" >&2; exit 1; }
-          chmod +x "$AIKO_PORTABLE_AIKO_BIN"
-          export AIKO_PORTABLE_AIKO_BIN
-          AIKO_PORTABLE_CONTRACT_LIB=$(find "$GITHUB_WORKSPACE/dist/zig-host" -maxdepth 1 -type f -name 'libcontract.so' -print -quit)
-          test -s "$AIKO_PORTABLE_CONTRACT_LIB" || { echo "Prebuilt full Contract library is missing or empty" >&2; exit 1; }
-          export AIKO_PORTABLE_CONTRACT_LIB
-          AIKO_PORTABLE_NEURON_BIN="$GITHUB_WORKSPACE/dist/zig-host/neuron-x86_64-linux-gnu"
-          if test -s "$AIKO_PORTABLE_NEURON_BIN"; then chmod +x "$AIKO_PORTABLE_NEURON_BIN"; export AIKO_PORTABLE_NEURON_BIN; else unset AIKO_PORTABLE_NEURON_BIN; fi
-          ls -lh "$AIKO_PORTABLE_AIKO_BIN" "$AIKO_PORTABLE_CONTRACT_LIB"
-          assemble_portable_tarball
-          ls -lh target/aiko-package/ 2>/dev/null | head -n 40
-          cat target/aiko-package/*/manifest.json 2>/dev/null | head -n 80 || true
-          echo "--- also check aiko/target ---"
-          ls -lh aiko/target/aiko-package/ 2>/dev/null | head -n 20 || true
+          export AIKO_PORTABLE_AIKO_BIN="$GITHUB_WORKSPACE/aiko/target/release/aiko"
+          export AIKO_PORTABLE_NEURON_BIN="$GITHUB_WORKSPACE/neuron/zig-out/bin/neuron"
+          export AIKO_PORTABLE_LIMBS_DIR="$GITHUB_WORKSPACE/neuron/limbs"
+          export AIKO_PORTABLE_CELL_DIR="$GITHUB_WORKSPACE/cell"
+          export AIKO_PORTABLE_YAML_DIR="$RUNNER_TEMP/cell-vendor/yaml"
+          if [[ "${{ runner.os }}" == macOS ]]; then
+            export AIKO_PORTABLE_CONTRACT_LIB="$GITHUB_WORKSPACE/contract/libcontract/zig-out/lib/libcontract.dylib"
+          else
+            export AIKO_PORTABLE_CONTRACT_LIB="$GITHUB_WORKSPACE/contract/libcontract/zig-out/lib/libcontract.so"
+          fi
+          test -x "$AIKO_PORTABLE_AIKO_BIN"
+          test -x "$AIKO_PORTABLE_NEURON_BIN"
+          test -s "$AIKO_PORTABLE_CONTRACT_LIB"
+          archive=$(assemble_portable_tarball)
+          test -s "$archive"
+          sh tests/portable-package-gate.sh
+          mkdir -p release-portable
+          cp "$archive" release-portable/
+          (cd release-portable && (sha256sum *.tar.gz 2>/dev/null || shasum -a 256 *.tar.gz) > SHA256SUMS-${{ matrix.platform }}.txt)
       - uses: actions/upload-artifact@v4
         with:
-          name: portable-linux-x86_64
-          path: |
-            target/aiko-package/*.tar.gz
-            target/aiko-package/*/manifest.json
-            aiko/target/aiko-package/*.tar.gz
-            aiko/target/aiko-package/*/manifest.json
-          if-no-files-found: warn
+          name: portable-${{ matrix.platform }}
+          path: release-portable/*
+          if-no-files-found: error
           retention-days: 30
 
   # Desktop installers are built natively. Each job normalizes versioned Tauri
@@ -627,7 +668,7 @@ jobs:
     name: github release
     runs-on: ubuntu-latest
     needs: [zig-cross, cargo-cross, portable, desktop-linux, desktop-macos, desktop-windows]
-    if: always() && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
       - name: Download required desktop assets
         uses: actions/download-artifact@v4
@@ -649,8 +690,7 @@ jobs:
           pattern: cargo-*
           path: legacy-assets/cargo
           merge-multiple: true
-      - name: Download optional portable CLI assets
-        continue-on-error: true
+      - name: Download required complete portable stacks
         uses: actions/download-artifact@v4
         with:
           pattern: portable-*
@@ -686,6 +726,14 @@ jobs:
           )
           for name in "${expected[@]}"; do
             test -s "release-assets/$name" || { echo "Missing or empty required desktop asset: $name" >&2; exit 1; }
+          done
+          for platform in linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64; do
+            mapfile -t matches < <(find release-assets -maxdepth 1 -type f -name "aiko-*-$platform.tar.gz" -printf '%f\n')
+            test "${#matches[@]}" -eq 1 || {
+              echo "Expected exactly one complete portable archive for $platform, found ${#matches[@]}" >&2
+              exit 1
+            }
+            test -s "release-assets/${matches[0]}"
           done
           mapfile -t files < <(find release-assets -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\n' | sort)
           test "${#files[@]}" -ge "${#expected[@]}"

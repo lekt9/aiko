@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install one portable Aiko stack package (aiko + contract + optional neuron/limbs).
+# Install one portable Aiko stack package (required Aiko + Neuron + Contract + Cell).
 # Destinations (SSOT — scripts/lib/aiko-env.sh):
 #   $AIKO_BIN_DIR/aiko      default ~/.local/bin/aiko
 #   $AIKO_BIN_DIR/neuron    default ~/.local/bin/neuron
@@ -11,10 +11,9 @@ set -eu
 
 PACKAGE_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 AIKO_BINARY="$PACKAGE_ROOT/bin/aiko"
-NEURON_BINARY=""
-if [ -x "$PACKAGE_ROOT/bin/neuron" ]; then
-    NEURON_BINARY="$PACKAGE_ROOT/bin/neuron"
-fi
+NEURON_BINARY="$PACKAGE_ROOT/bin/neuron"
+CELL_LAUNCHER="$PACKAGE_ROOT/bin/cell"
+CELL_RUNTIME="$PACKAGE_ROOT/share/cell"
 CONTRACT_LIBRARY=""
 for _cand in \
     "$PACKAGE_ROOT/lib/libcontract.so" \
@@ -39,14 +38,20 @@ MANIFEST="$PACKAGE_ROOT/manifest.json"
 PACKAGED_SKILLS="$PACKAGE_ROOT/skills"
 PACKAGED_LIMBS="$PACKAGE_ROOT/limbs"
 
-if [ ! -x "$AIKO_BINARY" ] || [ -z "$CONTRACT_LIBRARY" ] || [ ! -f "$MANIFEST" ]; then
-    echo "Invalid Aiko package: need bin/aiko, lib/libcontract.{so,dylib}, manifest.json" >&2
+if [ ! -x "$AIKO_BINARY" ] || [ ! -x "$NEURON_BINARY" ] || [ ! -x "$CELL_LAUNCHER" ] ||    [ -z "$CONTRACT_LIBRARY" ] || [ ! -f "$MANIFEST" ] ||    [ ! -f "$CELL_RUNTIME/run.py" ] || [ ! -f "$CELL_RUNTIME/helpers.py" ] ||    [ ! -f "$CELL_RUNTIME/SKILL.md" ] || [ ! -f "$CELL_RUNTIME/vendor/yaml/__init__.py" ] || [ ! -d "$PACKAGED_LIMBS" ]; then
+    echo "Invalid Aiko package: Aiko, Contract, Neuron, Cell (with vendored PyYAML), and limbs are mandatory" >&2
     exit 1
 fi
-# skills/ optional for bare stacks but preferred
-if [ ! -d "$PACKAGED_SKILLS" ]; then
-    mkdir -p "$PACKAGED_SKILLS"
-fi
+for _dir in primitives patterns schemas system; do
+    [ -d "$CELL_RUNTIME/$_dir" ] || { echo "Invalid Aiko package: missing share/cell/$_dir" >&2; exit 1; }
+done
+for _component in aiko contract neuron cell limbs; do
+    grep -Eq '"'"$_component"'"[[:space:]]*:[[:space:]]*true' "$MANIFEST" || {
+        echo "Invalid Aiko package: manifest component $_component is not true" >&2; exit 1;
+    }
+done
+[ -d "$PACKAGED_SKILLS" ] || { echo "Invalid Aiko package: skills directory missing" >&2; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "Aiko portable stack requires Python 3" >&2; exit 1; }
 
 case "$(uname -s)" in
     Darwin) CONTRACT_INSTALL_NAME=libcontract.dylib ;;
@@ -61,6 +66,30 @@ sha256_file() {
     fi
 }
 
+tree_sha256() {
+    python3 - "$1" <<'PY'
+import hashlib, os, pathlib, sys
+root = pathlib.Path(sys.argv[1]); h = hashlib.sha256()
+for path in sorted(root.rglob("*"), key=lambda p: p.relative_to(root).as_posix()):
+    rel = path.relative_to(root).as_posix().encode()
+    if path.is_symlink(): kind, payload = b"L", os.readlink(path).encode()
+    elif path.is_file(): kind, payload = b"F", path.read_bytes()
+    else: continue
+    h.update(kind + b"\0" + rel + b"\0" + payload + b"\0")
+print(h.hexdigest())
+PY
+}
+
+host_platform() {
+    case "$(uname -s):$(uname -m)" in
+        Linux:x86_64|Linux:amd64) echo linux-x86_64 ;;
+        Linux:aarch64|Linux:arm64) echo linux-aarch64 ;;
+        Darwin:x86_64|Darwin:amd64) echo macos-x86_64 ;;
+        Darwin:arm64|Darwin:aarch64) echo macos-aarch64 ;;
+        *) echo "Unsupported install host: $(uname -s) $(uname -m)" >&2; return 1 ;;
+    esac
+}
+
 manifest_value() {
     sed -n -E 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$MANIFEST" | head -1
 }
@@ -69,45 +98,54 @@ manifest_number() {
     sed -n -E 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' "$MANIFEST" | head -1
 }
 
+manifest_bool() {
+    sed -n -E 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*(true|false).*/\1/p' "$MANIFEST" | head -1
+}
+
+
 MIN_ABI=2
+command -v python3 >/dev/null 2>&1 || { echo "python3 is required for Cell and Contract ABI verification" >&2; exit 1; }
 PACKAGE_ABI=$(manifest_number contract_abi)
+PACKAGE_PLATFORM=$(manifest_value platform)
 EXPECTED_AIKO=$(manifest_value aiko_sha256)
 EXPECTED_CONTRACT=$(manifest_value contract_sha256)
 EXPECTED_NEURON=$(manifest_value neuron_sha256)
-ACTUAL_AIKO=$(sha256_file "$AIKO_BINARY")
-ACTUAL_CONTRACT=$(sha256_file "$CONTRACT_LIBRARY")
+EXPECTED_CELL=$(manifest_value cell_sha256)
+EXPECTED_CELL_LAUNCHER=$(manifest_value cell_launcher_sha256)
+EXPECTED_CELL_RUNTIME=$(manifest_value cell_runtime_sha256)
+EXPECTED_LIMBS=$(manifest_value limbs_sha256)
 
-if [ -z "$PACKAGE_ABI" ] || [ "$PACKAGE_ABI" -lt "$MIN_ABI" ]; then
-    echo "Incompatible Contract ABI: package has ${PACKAGE_ABI:-none}, need >= $MIN_ABI" >&2
-    exit 1
-fi
-if [ -n "$EXPECTED_AIKO" ] && [ "$ACTUAL_AIKO" != "$EXPECTED_AIKO" ]; then
-    echo "Aiko package checksum mismatch" >&2
-    exit 1
-fi
-if [ -n "$EXPECTED_CONTRACT" ] && [ "$ACTUAL_CONTRACT" != "$EXPECTED_CONTRACT" ]; then
-    echo "Contract package checksum mismatch" >&2
-    exit 1
-fi
-if [ -n "$NEURON_BINARY" ] && [ -n "$EXPECTED_NEURON" ]; then
-    ACTUAL_NEURON=$(sha256_file "$NEURON_BINARY")
-    if [ "$ACTUAL_NEURON" != "$EXPECTED_NEURON" ]; then
-        echo "Neuron package checksum mismatch" >&2
-        exit 1
-    fi
-fi
+[ "$PACKAGE_PLATFORM" = "$(host_platform)" ] || {
+    echo "Wrong Aiko package platform: ${PACKAGE_PLATFORM:-none}; host is $(host_platform)" >&2; exit 1;
+}
+[ -n "$PACKAGE_ABI" ] && [ "$PACKAGE_ABI" -ge "$MIN_ABI" ] || {
+    echo "Incompatible Contract ABI: package has ${PACKAGE_ABI:-none}, need >= $MIN_ABI" >&2; exit 1;
+}
+for _expected in "$EXPECTED_AIKO" "$EXPECTED_CONTRACT" "$EXPECTED_NEURON" "$EXPECTED_CELL" "$EXPECTED_CELL_LAUNCHER" "$EXPECTED_CELL_RUNTIME" "$EXPECTED_LIMBS"; do
+    [ -n "$_expected" ] || { echo "Invalid Aiko package: a mandatory hash is absent" >&2; exit 1; }
+done
+[ "$(sha256_file "$AIKO_BINARY")" = "$EXPECTED_AIKO" ] || { echo "Aiko package checksum mismatch" >&2; exit 1; }
+[ "$(sha256_file "$CONTRACT_LIBRARY")" = "$EXPECTED_CONTRACT" ] || { echo "Contract package checksum mismatch" >&2; exit 1; }
+[ "$(sha256_file "$NEURON_BINARY")" = "$EXPECTED_NEURON" ] || { echo "Neuron package checksum mismatch" >&2; exit 1; }
+[ "$(sha256_file "$CELL_RUNTIME/run.py")" = "$EXPECTED_CELL" ] || { echo "Cell entrypoint checksum mismatch" >&2; exit 1; }
+[ "$(sha256_file "$CELL_LAUNCHER")" = "$EXPECTED_CELL_LAUNCHER" ] || { echo "Cell launcher checksum mismatch" >&2; exit 1; }
+[ "$(tree_sha256 "$CELL_RUNTIME")" = "$EXPECTED_CELL_RUNTIME" ] || { echo "Cell runtime checksum mismatch" >&2; exit 1; }
+[ "$(tree_sha256 "$PACKAGED_LIMBS")" = "$EXPECTED_LIMBS" ] || { echo "Neuron limbs checksum mismatch" >&2; exit 1; }
 
-# Full-ABI gate: auto turn roots require declare_turn
-if command -v nm >/dev/null 2>&1; then
-    if ! nm -D "$CONTRACT_LIBRARY" 2>/dev/null | grep -q 'contract_declare_turn'; then
-        echo "Contract library missing contract_declare_turn — refusing install (tools would hold)" >&2
-        exit 1
-    fi
-    if ! nm -D "$CONTRACT_LIBRARY" 2>/dev/null | grep -q 'contract_abi_version'; then
-        echo "Contract library missing contract_abi_version — refusing install" >&2
-        exit 1
-    fi
-fi
+# Load the library exactly as the host will. Unlike nm -D this works on Linux
+# and macOS and proves callable ABI rather than merely symbol-table spelling.
+PROBED_ABI=$(python3 - "$CONTRACT_LIBRARY" <<'PY'
+import ctypes, sys
+lib = ctypes.CDLL(sys.argv[1])
+for symbol in ("contract_abi_version", "contract_declare_turn"):
+    if not hasattr(lib, symbol): raise SystemExit("Contract library missing " + symbol)
+lib.contract_abi_version.restype = ctypes.c_uint
+print(int(lib.contract_abi_version()))
+PY
+) || { echo "Contract ABI load probe failed" >&2; exit 1; }
+[ "$PROBED_ABI" = "$PACKAGE_ABI" ] || {
+    echo "Contract ABI mismatch: manifest $PACKAGE_ABI, library $PROBED_ABI" >&2; exit 1;
+}
 
 # SSOT destinations
 AIKO_HOME=${AIKO_HOME:-"$HOME/.aiko"}
@@ -115,7 +153,7 @@ AIKO_BIN_DIR=${AIKO_BIN_DIR:-"$HOME/.local/bin"}
 AIKO_LIB_DIR=${AIKO_LIB_DIR:-"$AIKO_HOME/lib"}
 
 mkdir -p "$AIKO_BIN_DIR" "$AIKO_LIB_DIR"
-mkdir -p "$AIKO_HOME/skills" "$AIKO_HOME/sdk/registry/bin" "$AIKO_HOME/limbs"
+mkdir -p "$AIKO_HOME/skills" "$AIKO_HOME/sdk/registry/bin" "$AIKO_HOME/limbs" "$AIKO_HOME/cell"
 
 case ":${PATH:-}:" in
     *:"$AIKO_BIN_DIR":*) ;;
@@ -127,15 +165,17 @@ esac
 
 BIN_TMP="$AIKO_BIN_DIR/.aiko.install.$$"
 NEURON_TMP="$AIKO_BIN_DIR/.neuron.install.$$"
+CELL_TMP="$AIKO_BIN_DIR/.cell.install.$$"
 LIB_TMP="$AIKO_LIB_DIR/.${CONTRACT_INSTALL_NAME}.install.$$"
-trap 'rm -f "$BIN_TMP" "$NEURON_TMP" "$LIB_TMP"' EXIT HUP INT TERM
+CELL_RUNTIME_TMP="$AIKO_HOME/.cell.install.$$"
+trap 'rm -rf "$BIN_TMP" "$NEURON_TMP" "$CELL_TMP" "$LIB_TMP" "$CELL_RUNTIME_TMP"' EXIT HUP INT TERM
 
 install -m 755 "$AIKO_BINARY" "$BIN_TMP"
+install -m 755 "$NEURON_BINARY" "$NEURON_TMP"
+install -m 755 "$CELL_LAUNCHER" "$CELL_TMP"
 install -m 755 "$CONTRACT_LIBRARY" "$LIB_TMP"
+cp -R "$CELL_RUNTIME" "$CELL_RUNTIME_TMP"
 "$BIN_TMP" --version >/dev/null
-if [ -n "$NEURON_BINARY" ]; then
-    install -m 755 "$NEURON_BINARY" "$NEURON_TMP"
-fi
 
 mv -f "$LIB_TMP" "$AIKO_LIB_DIR/$CONTRACT_INSTALL_NAME"
 if [ "$CONTRACT_INSTALL_NAME" = "libcontract.so" ]; then
@@ -146,13 +186,16 @@ fi
 
 rm -f "$AIKO_BIN_DIR/aiko"
 mv -f "$BIN_TMP" "$AIKO_BIN_DIR/aiko"
-if [ -n "$NEURON_BINARY" ] && [ -f "$NEURON_TMP" ]; then
-    rm -f "$AIKO_BIN_DIR/neuron"
-    mv -f "$NEURON_TMP" "$AIKO_BIN_DIR/neuron"
-fi
-
+rm -f "$AIKO_BIN_DIR/neuron"
+mv -f "$NEURON_TMP" "$AIKO_BIN_DIR/neuron"
+rm -f "$AIKO_BIN_DIR/cell"
+mv -f "$CELL_TMP" "$AIKO_BIN_DIR/cell"
+rm -rf "$AIKO_HOME/cell"
+mv "$CELL_RUNTIME_TMP" "$AIKO_HOME/cell"
+mkdir -p "$AIKO_HOME/skills/cell"
+cp "$AIKO_HOME/cell/SKILL.md" "$AIKO_HOME/skills/cell/SKILL.md"
 # Shadows
-for _shadow in "$HOME/bin/aiko" /usr/local/bin/aiko "$HOME/bin/neuron"; do
+for _shadow in "$HOME/bin/aiko" /usr/local/bin/aiko "$HOME/bin/neuron" "$HOME/bin/cell"; do
     if [ -e "$_shadow" ] || [ -L "$_shadow" ]; then
         case "$_shadow" in
             "$AIKO_BIN_DIR"/*) ;;
@@ -197,9 +240,8 @@ trap - EXIT HUP INT TERM
 
 echo "Installed Aiko stack:"
 echo "  aiko     → $AIKO_BIN_DIR/aiko"
-if [ -x "$AIKO_BIN_DIR/neuron" ]; then
-    echo "  neuron   → $AIKO_BIN_DIR/neuron"
-fi
+echo "  neuron   → $AIKO_BIN_DIR/neuron"
+echo "  cell     → $AIKO_BIN_DIR/cell (runtime $AIKO_HOME/cell)"
 echo "  contract → $AIKO_LIB_DIR/$CONTRACT_INSTALL_NAME (ABI ${PACKAGE_ABI})"
 if [ -d "$AIKO_HOME/limbs" ]; then
     echo "  limbs    → $AIKO_HOME/limbs/ ($(ls -1 "$AIKO_HOME/limbs" 2>/dev/null | wc -l | tr -d ' ') entries)"
@@ -213,11 +255,11 @@ if [ "$PATH_AIKO" = "$AIKO_BIN_DIR/aiko" ]; then
 else
     echo "Warning: PATH resolves aiko → ${PATH_AIKO:-none} (expected $AIKO_BIN_DIR/aiko)" >&2
 fi
-if command -v neuron >/dev/null 2>&1; then
-    echo "PATH resolves neuron → $(command -v neuron)"
-fi
+echo "PATH resolves neuron → $(command -v neuron)"
+echo "PATH resolves cell → $(command -v cell)"
+"$AIKO_BIN_DIR/cell" --help >/dev/null
 
-if [ "$(uname -s)" = "Darwin" ]; then
+if [ "$(uname -s)" = "Darwin" ] && [ "${AIKO_SKIP_BACKGROUND_WORKER:-0}" != 1 ]; then
     LABEL="net.theclarityproject.aiko.contract-worker"
     LAUNCH_AGENTS="$HOME/Library/LaunchAgents"
     PLIST="$LAUNCH_AGENTS/$LABEL.plist"

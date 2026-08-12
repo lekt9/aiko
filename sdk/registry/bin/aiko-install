@@ -1,297 +1,133 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# aiko-install — Unified installer for the Aiko stack
-# Pulls pinned versions of contract (libcontract.dylib), neuron (binary),
-# and aiko (binary) from the Gitea package registry over Tailscale.
-#
-# Usage:
-#   aiko-install                    # install everything at pinned versions
-#   aiko-install contract           # install only libcontract
-#   aiko-install neuron             # install only neuron
-#   aiko-install aiko               # install only aiko binary
-#   aiko-install --version 0.2.0    # install specific version
-#   aiko-install --list             # list available versions
-#   aiko-install --update           # update to latest pinned versions
+# aiko-install — install the complete portable Aiko product from the private
+# Gitea generic package registry. Component-only installs are intentionally
+# unsupported: the bundled install.sh admits Aiko + Neuron + Cell + Contract.
 
 GITEA_URL="${GITEA_URL:-http://100.124.140.92:3000}"
 GITEA_TOKEN="${GITEA_TOKEN:-}"
-GITEA_ORG="Unbrowse"
-
-# Single source of truth — same as scripts/lib/aiko-env.sh
+GITEA_ORG="${GITEA_ORG:-Unbrowse}"
 AIKO_HOME="${AIKO_HOME:-$HOME/.aiko}"
 AIKO_BIN_DIR="${AIKO_BIN_DIR:-$HOME/.local/bin}"
 AIKO_LIB_DIR="${AIKO_LIB_DIR:-$AIKO_HOME/lib}"
+MANIFEST_URL="${MANIFEST_URL:-$GITEA_URL/$GITEA_ORG/aiko-sdk/raw/branch/main/versions.lock}"
 
-# Version manifest — the single source of truth for pinned versions
-# Update this file to bump versions across all machines
-MANIFEST_URL="$GITEA_URL/$GITEA_ORG/aiko-sdk/raw/branch/main/versions.lock"
-
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-info()  { echo -e "${CYAN}ℹ${NC}  $*"; }
-ok()    { echo -e "${GREEN}✓${NC}  $*"; }
-warn()  { echo -e "${YELLOW}⚠${NC}  $*"; }
-err()   { echo -e "${RED}✗${NC}  $*" >&2; }
-
-# ─── HTTP helper ───────────────────────────────────────────────────────────
-
+info() { printf 'ℹ  %s\n' "$*"; }
+err() { printf '✗  %s\n' "$*" >&2; }
 http_get() {
-    local url="$1"
-    local dest="${2:-}"
-    if [[ -n "$GITEA_TOKEN" ]]; then
-        if [[ -n "$dest" ]]; then
-            curl -sfL -H "Authorization: token $GITEA_TOKEN" -o "$dest" "$url"
-        else
-            curl -sfL -H "Authorization: token $GITEA_TOKEN" "$url"
-        fi
-    else
-        if [[ -n "$dest" ]]; then
-            curl -sfL -o "$dest" "$url"
-        else
-            curl -sfL "$url"
-        fi
-    fi
+    local url="$1" dest="$2" args=(-sfL)
+    [[ -z "$GITEA_TOKEN" ]] || args+=(-H "Authorization: token $GITEA_TOKEN")
+    curl "${args[@]}" -o "$dest" "$url"
 }
-
-http_status() {
-    local url="$1"
-    if [[ -n "$GITEA_TOKEN" ]]; then
-        curl -sI -H "Authorization: token $GITEA_TOKEN" "$url" | head -1
-    else
-        curl -sI "$url" | head -1
-    fi
-}
-
-# ─── Version management ────────────────────────────────────────────────────
-
-fetch_manifest() {
-    http_get "$MANIFEST_URL" "/tmp/aiko-versions.lock" 2>/dev/null
-    if [[ ! -f /tmp/aiko-versions.lock ]] || [[ ! -s /tmp/aiko-versions.lock ]]; then
-        err "Cannot fetch version manifest from $MANIFEST_URL"
-        err "Check your Tailscale connection and GITEA_TOKEN"
-        exit 1
-    fi
-}
-
-get_version() {
-    local package="$1"
-    grep "^${package}=" /tmp/aiko-versions.lock 2>/dev/null | cut -d= -f2
-}
-
-list_versions() {
-    fetch_manifest
-    echo "Available pinned versions:"
-    while IFS='=' read -r pkg ver; do
-        [[ "$pkg" =~ ^# ]] && continue
-        [[ -z "$pkg" || -z "$ver" ]] && continue
-        printf "  %-15s %s\n" "$pkg" "$ver"
-    done < /tmp/aiko-versions.lock
-}
-
-# ─── Platform detection ────────────────────────────────────────────────────
-
-detect_platform() {
-    local os arch
-    os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-    arch="$(uname -m)"
-    case "$arch" in
-        arm64|aarch64) arch="arm64" ;;
-        x86_64|amd64)  arch="x86_64" ;;
+platform() {
+    case "$(uname -s):$(uname -m)" in
+        Linux:x86_64|Linux:amd64) echo linux-x86_64 ;;
+        Linux:aarch64|Linux:arm64) echo linux-aarch64 ;;
+        Darwin:x86_64|Darwin:amd64) echo macos-x86_64 ;;
+        Darwin:arm64|Darwin:aarch64) echo macos-aarch64 ;;
+        *) err "Unsupported platform: $(uname -s) $(uname -m)"; return 1 ;;
     esac
-    echo "${os}-${arch}"
 }
-
-# ─── Package installers ────────────────────────────────────────────────────
-
-install_contract() {
-    local version="${1:-$(get_version contract)}"
-    local platform
-    platform="$(detect_platform)"
-    local pkg_name="libcontract-${version}-${platform}.tar.gz"
-    local url="$GITEA_URL/api/packages/$GITEA_ORG/generic/contract/${version}/${pkg_name}"
-
-    info "Installing libcontract v${version} (${platform})..."
-
-    mkdir -p "$AIKO_LIB_DIR"
-    local tmpfile="/tmp/${pkg_name}"
-    if ! http_get "$url" "$tmpfile"; then
-        err "Failed to download libcontract v${version}"
-        err "URL: $url"
-        return 1
-    fi
-
-    tar -xzf "$tmpfile" -C "$AIKO_LIB_DIR"
-    rm -f "$tmpfile"
-
-    local lib_ext="dylib"
-    [[ "$(uname -s)" == "Linux" ]] && lib_ext="so"
-
-    ok "libcontract v${version} installed → $AIKO_LIB_DIR/libcontract.${lib_ext}"
+sha256_file() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+    else shasum -a 256 "$1" | awk '{print $1}'; fi
 }
-
-install_neuron() {
-    local version="${1:-$(get_version neuron)}"
-    local platform
-    platform="$(detect_platform)"
-    local pkg_name="neuron-${version}-${platform}.tar.gz"
-    local url="$GITEA_URL/api/packages/$GITEA_ORG/generic/neuron/${version}/${pkg_name}"
-
-    info "Installing neuron v${version} (${platform})..."
-
-    mkdir -p "$AIKO_BIN_DIR"
-    local tmpfile="/tmp/${pkg_name}"
-    if ! http_get "$url" "$tmpfile"; then
-        err "Failed to download neuron v${version}"
-        err "URL: $url"
-        return 1
-    fi
-
-    tar -xzf "$tmpfile" -C "$AIKO_BIN_DIR"
-    chmod +x "$AIKO_BIN_DIR/neuron"
-    rm -f "$tmpfile"
-
-    ok "neuron v${version} installed → $AIKO_BIN_DIR/neuron"
+validate_archive() {
+    python3 - "$1" <<'PY'
+import posixpath, sys, tarfile
+archive = sys.argv[1]
+with tarfile.open(archive, "r:gz") as tf:
+    members = tf.getmembers()
+    symlinks = set()
+    for member in members:
+        name = member.name
+        clean = posixpath.normpath(name)
+        if name.startswith("/") or clean == ".." or clean.startswith("../"):
+            raise SystemExit(f"unsafe archive member: {name}")
+        if member.ischr() or member.isblk() or member.isfifo():
+            raise SystemExit(f"special archive member refused: {name}")
+        if member.issym() or member.islnk():
+            target = member.linkname
+            if target.startswith("/"):
+                raise SystemExit(f"absolute archive link refused: {name} -> {target}")
+            base = posixpath.dirname(clean) if member.issym() else ""
+            resolved = posixpath.normpath(posixpath.join(base, target))
+            if resolved == ".." or resolved.startswith("../"):
+                raise SystemExit(f"escaping archive link refused: {name} -> {target}")
+            if member.issym():
+                symlinks.add(clean)
+    for member in members:
+        clean = posixpath.normpath(member.name)
+        parts = clean.split("/")
+        for i in range(1, len(parts)):
+            if "/".join(parts[:i]) in symlinks:
+                raise SystemExit(f"archive member traverses symlink: {member.name}")
+PY
 }
-
-install_aiko() {
-    local version="${1:-$(get_version aiko)}"
-    local platform
-    platform="$(detect_platform)"
-    local pkg_name="aiko-${version}-${platform}.tar.gz"
-    local url="$GITEA_URL/api/packages/$GITEA_ORG/generic/aiko/${version}/${pkg_name}"
-
-    info "Installing aiko v${version} (${platform})..."
-
-    mkdir -p "$AIKO_BIN_DIR"
-    local tmpfile="/tmp/${pkg_name}"
-    if ! http_get "$url" "$tmpfile"; then
-        err "Failed to download aiko v${version}"
-        err "URL: $url"
-        return 1
-    fi
-
-    tar -xzf "$tmpfile" -C "$AIKO_BIN_DIR"
-    chmod +x "$AIKO_BIN_DIR/aiko"
-    rm -f "$tmpfile"
-
-    ok "aiko v${version} installed → $AIKO_BIN_DIR/aiko"
+fetch_version() {
+    local manifest="$1"
+    http_get "$MANIFEST_URL" "$manifest" || { err "Cannot fetch $MANIFEST_URL"; return 1; }
+    sed -n 's/^aiko=//p' "$manifest" | head -1
 }
-
-install_limbs() {
-    local version="${1:-$(get_version neuron-limbs)}"
-    local url="$GITEA_URL/api/packages/$GITEA_ORG/generic/neuron-limbs/${version}/limbs.tar.gz"
-
-    info "Installing neuron limbs v${version}..."
-
-    mkdir -p "$AIKO_HOME/limbs"
-    local tmpfile="/tmp/limbs.tar.gz"
-    if ! http_get "$url" "$tmpfile"; then
-        warn "Failed to download limbs v${version} (non-fatal)"
-        return 0
-    fi
-
-    tar -xzf "$tmpfile" -C "$AIKO_HOME/limbs"
-    rm -f "$tmpfile"
-
-    ok "neuron limbs v${version} installed → $AIKO_HOME/limbs/"
+list_versions() {
+    local tmp; tmp=$(mktemp "${TMPDIR:-/tmp}/aiko-versions.XXXXXX")
+    AIKO_INSTALL_WORK="$tmp"
+    trap 'rm -rf "${AIKO_INSTALL_WORK:-}"' EXIT
+    http_get "$MANIFEST_URL" "$tmp"
+    cat "$tmp"
 }
-
-install_all() {
-    fetch_manifest
-
-    local contract_ver neuron_ver aiko_ver limbs_ver
-    contract_ver=$(get_version contract)
-    neuron_ver=$(get_version neuron)
-    aiko_ver=$(get_version aiko)
-    limbs_ver=$(get_version neuron-limbs)
-
-    echo ""
-    info "Installing Aiko stack:"
-    info "  contract:     v${contract_ver}"
-    info "  neuron:       v${neuron_ver}"
-    info "  aiko:         v${aiko_ver}"
-    info "  neuron-limbs: v${limbs_ver}"
-    info "  platform:     $(detect_platform)"
-    echo ""
-
-    # Jesus-graph: after the manifest, packages write different paths — fan out.
-    local fails=0
-    install_contract "$contract_ver" &
-    local p1=$!
-    install_neuron "$neuron_ver" &
-    local p2=$!
-    install_aiko "$aiko_ver" &
-    local p3=$!
-    install_limbs "$limbs_ver" &
-    local p4=$!
-    wait "$p1" || fails=$((fails + 1))
-    wait "$p2" || fails=$((fails + 1))
-    wait "$p3" || fails=$((fails + 1))
-    wait "$p4" || fails=$((fails + 1))
-    if [[ "$fails" -gt 0 ]]; then
-        err "$fails package install(s) failed"
-        exit 1
-    fi
-
-    echo ""
-    ok "Aiko stack installed successfully!"
-    echo ""
-    info "Add to PATH: export PATH=\"$AIKO_BIN_DIR:\$PATH\""
-    info "Verify: aiko --version && neuron --version"
-    info "Reinstall / update: aiko-install --update"
+install_portable() {
+    local requested="${1:-}" work version plat name base expected got root count
+    work=$(mktemp -d "${TMPDIR:-/tmp}/aiko-install.XXXXXX")
+    AIKO_INSTALL_WORK="$work"
+    trap 'rm -rf "${AIKO_INSTALL_WORK:-}"' EXIT
+    version="$requested"
+    [[ -n "$version" ]] || version=$(fetch_version "$work/versions.lock")
+    [[ -n "$version" ]] || { err "versions.lock has no aiko version"; return 1; }
+    plat=$(platform)
+    name="aiko-${version}-${plat}.tar.gz"
+    base="$GITEA_URL/api/packages/$GITEA_ORG/generic/aiko/$version"
+    info "Downloading complete Aiko $version ($plat)"
+    http_get "$base/$name" "$work/$name" || { err "Failed to download $base/$name"; return 1; }
+    http_get "$base/$name.sha256" "$work/$name.sha256" || { err "Missing SHA256 sidecar for $name"; return 1; }
+    expected=$(awk 'NF {print $1; exit}' "$work/$name.sha256")
+    got=$(sha256_file "$work/$name")
+    expected=$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')
+    got=$(printf '%s' "$got" | tr '[:upper:]' '[:lower:]')
+    [[ "$expected" =~ ^[0-9a-f]{64}$ && "$expected" == "$got" ]] || {
+        err "SHA256 mismatch for $name"; return 1;
+    }
+    validate_archive "$work/$name"
+    mkdir "$work/extract"
+    tar -xzf "$work/$name" -C "$work/extract"
+    count=$(find "$work/extract" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')
+    [[ "$count" == 1 ]] || { err "Portable archive must contain exactly one root"; return 1; }
+    root=$(find "$work/extract" -mindepth 1 -maxdepth 1 -print)
+    [[ -d "$root" && -f "$root/install.sh" ]] || { err "Portable archive root is missing install.sh"; return 1; }
+    chmod 755 "$root/install.sh"
+    info "Archive verified; invoking bundled complete-product installer"
+    AIKO_HOME="$AIKO_HOME" AIKO_BIN_DIR="$AIKO_BIN_DIR" AIKO_LIB_DIR="$AIKO_LIB_DIR" "$root/install.sh"
 }
+usage() {
+    cat <<'EOF'
+Usage: aiko-install [--version VERSION] [--update] [--list]
 
-# ─── Main ──────────────────────────────────────────────────────────────────
-
+Installs one verified portable package containing mandatory Aiko, Neuron, Cell,
+and Contract. Component-only installs are not supported.
+EOF
+}
 main() {
-    local specific_version=""
-    local target="all"
-
+    local version=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --version) specific_version="$2"; shift 2 ;;
-            --list)    list_versions; exit 0 ;;
-            --update)  fetch_manifest; install_all; exit 0 ;;
-            --help|-h)
-                echo "Usage: aiko-install [target] [--version VER] [--list] [--update]"
-                echo ""
-                echo "Targets:"
-                echo "  all       Install everything (default)"
-                echo "  contract  Install libcontract only"
-                echo "  neuron    Install neuron binary only"
-                echo "  aiko      Install aiko binary only"
-                echo "  limbs     Install neuron limbs only"
-                echo ""
-                echo "Options:"
-                echo "  --version VER  Install specific version"
-                echo "  --list         List available pinned versions"
-                echo "  --update       Update to latest pinned versions"
-                exit 0
-                ;;
-            contract|neuron|aiko|limbs|all) target="$1"; shift ;;
-            *) err "Unknown argument: $1"; exit 1 ;;
+            --version) [[ $# -ge 2 ]] || { err "--version needs a value"; return 2; }; version="$2"; shift 2 ;;
+            --update) shift ;;
+            --list) list_versions; return ;;
+            -h|--help) usage; return ;;
+            *) err "Component targets and unknown arguments are not supported: $1"; usage >&2; return 2 ;;
         esac
     done
-
-    case "$target" in
-        all)
-            if [[ -n "$specific_version" ]]; then
-                err "Cannot specify --version with 'all'. Use individual targets."
-                exit 1
-            fi
-            install_all
-            ;;
-        contract) fetch_manifest; install_contract "$specific_version" ;;
-        neuron)   fetch_manifest; install_neuron "$specific_version" ;;
-        aiko)     fetch_manifest; install_aiko "$specific_version" ;;
-        limbs)    fetch_manifest; install_limbs "$specific_version" ;;
-    esac
+    install_portable "$version"
 }
-
 main "$@"

@@ -35,10 +35,10 @@ Usage: ./install.sh [reinstall|from-release|build|list|package|publish]
   from-release          Same; pass --tag / --url / --path / --hash through.
   build                 Full from-source build + package + install (needs RAM).
   list                  Show local packages, remote releases, PATH binary.
-  package               Assemble portable stack: aiko+contract+neuron+limbs.
-  publish               Upload package as Gitea release asset (needs GITEA_TOKEN).
+  package               Assemble portable stack: Aiko+Neuron+Cell+Contract (all required).
+  publish               Upload package + SHA256 sidecar (needs GITEA_TOKEN).
 
-One product tarball: bin/aiko, bin/neuron, lib/libcontract.so, limbs/, skills/.
+One verified product tarball; component-only installs are not supported.
 SSOT: ~/.local/bin + ~/.aiko  (scripts/lib/aiko-env.sh).
 EOF
         exit 0

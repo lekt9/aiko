@@ -9,7 +9,7 @@
 #   scripts/aiko-release.sh install --path DIR|TGZ  # explicit package dir or tarball
 #   scripts/aiko-release.sh install --url URL       # download tarball and install
 #   scripts/aiko-release.sh install --tag v0.2.103  # Gitea release asset for this platform
-#   scripts/aiko-release.sh install --hash SHA256   # require aiko binary matches hash
+#   scripts/aiko-release.sh install --hash SHA256   # archive hash with --url; binary hash for local package
 #   scripts/aiko-release.sh list                    # local packages + remote releases
 #   scripts/aiko-release.sh package                 # assemble portable stack (no rebuild)
 #   scripts/aiko-release.sh publish [--tag TAG]     # upload latest package as Gitea release asset
@@ -42,6 +42,41 @@ sha256_file() {
     else
         shasum -a 256 "$1" | awk '{print $1}'
     fi
+}
+
+verify_sidecar() {
+    local archive="$1" sidecar="$2" expected got
+    expected=$(awk 'NF {print $1; exit}' "$sidecar")
+    got=$(sha256_file "$archive")
+    [[ "$expected" =~ ^[0-9a-fA-F]{64}$ && "${expected,,}" == "$got" ]] || {
+        err "SHA256 mismatch for $(basename "$archive")"
+        return 1
+    }
+}
+
+validate_archive() {
+    python3 - "$1" <<'PY'
+import posixpath, sys, tarfile
+with tarfile.open(sys.argv[1], "r:gz") as tf:
+    members = tf.getmembers(); symlinks = set()
+    for member in members:
+        clean = posixpath.normpath(member.name)
+        if member.name.startswith("/") or clean == ".." or clean.startswith("../"):
+            raise SystemExit(f"unsafe archive member: {member.name}")
+        if member.ischr() or member.isblk() or member.isfifo():
+            raise SystemExit(f"special archive member refused: {member.name}")
+        if member.issym() or member.islnk():
+            target = member.linkname
+            base = posixpath.dirname(clean) if member.issym() else ""
+            resolved = posixpath.normpath(posixpath.join(base, target))
+            if target.startswith("/") or resolved == ".." or resolved.startswith("../"):
+                raise SystemExit(f"escaping archive link refused: {member.name} -> {target}")
+            if member.issym(): symlinks.add(clean)
+    for member in members:
+        parts = posixpath.normpath(member.name).split("/")
+        if any("/".join(parts[:i]) in symlinks for i in range(1, len(parts))):
+            raise SystemExit(f"archive member traverses symlink: {member.name}")
+PY
 }
 
 platform_name() { aiko_platform; }
@@ -119,7 +154,7 @@ latest_local_package_dir() {
 
 # ─── Unpack / normalize package ────────────────────────────────────────────
 
-# Accept package dir, full tarball, or bare binary tarball (aiko only).
+# Accept only a complete package directory or complete portable tarball.
 prepare_package() {
     local src="$1"
     local work
@@ -144,6 +179,7 @@ prepare_package() {
 
     case "$src" in
         *.tar.gz|*.tgz)
+            validate_archive "$src"
             tar -xzf "$src" -C "$work"
             ;;
         *)
@@ -152,105 +188,28 @@ prepare_package() {
             ;;
     esac
 
-    # Full package: aiko-VERSION-PLATFORM/ with install.sh
-    local found
-    found=$(find "$work" -maxdepth 2 -type f -name install.sh 2>/dev/null | head -1 || true)
-    if [[ -n "$found" ]]; then
-        local root
-        root=$(CDPATH= cd -- "$(dirname -- "$found")" && pwd)
-        # Keep work dir alive by moving to PACKAGE_ROOT extract path
-        local name
-        name=$(basename "$root")
-        mkdir -p "$PACKAGE_ROOT"
-        if [[ -e "$PACKAGE_ROOT/$name" ]]; then
+    # A portable archive has exactly one root and that root owns its installer.
+    local count root name
+    count=$(find "$work" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')
+    if [[ "$count" == 1 ]]; then
+        root=$(find "$work" -mindepth 1 -maxdepth 1 -print)
+        if [[ -d "$root" && -f "$root/install.sh" ]]; then
+            name=$(basename "$root")
+            mkdir -p "$PACKAGE_ROOT"
             rm -rf "$PACKAGE_ROOT/$name.extracting"
             mv "$root" "$PACKAGE_ROOT/$name.extracting"
             rm -rf "$PACKAGE_ROOT/$name"
             mv "$PACKAGE_ROOT/$name.extracting" "$PACKAGE_ROOT/$name"
-        else
-            mv "$root" "$PACKAGE_ROOT/$name"
+            chmod 755 "$PACKAGE_ROOT/$name/install.sh"
+            printf '%s\n' "$PACKAGE_ROOT/$name"
+            trap - RETURN
+            return 0
         fi
-        # Refresh installer to current PATH-aware script when in a checkout
-        if [[ -f "$AIKO_ROOT/scripts/install-aiko-package.sh" ]]; then
-            install -m 755 "$AIKO_ROOT/scripts/install-aiko-package.sh" "$PACKAGE_ROOT/$name/install.sh"
-        fi
-        printf '%s\n' "$PACKAGE_ROOT/$name"
-        trap - RETURN
-        return 0
     fi
 
-    # Bare binary tarball: contains just `aiko`
-    local bin
-    bin=$(find "$work" -type f -name aiko 2>/dev/null | head -1 || true)
-    if [[ -z "$bin" ]]; then
-        err "Archive has neither install.sh package nor aiko binary"
-        return 1
-    fi
-
-    # Need Contract dylib from current install or sibling build
-    local lib=""
-    if [[ -f "$AIKO_HOME/lib/libcontract.dylib" ]]; then
-        lib="$AIKO_HOME/lib/libcontract.dylib"
-    elif [[ -f "$AIKO_HOME/lib/libcontract.so" ]]; then
-        lib="$AIKO_HOME/lib/libcontract.so"
-    else
-        case "$(uname -s)" in
-            Darwin) lib_candidate="$AIKO_ROOT/../contract/libcontract/zig-out/lib/libcontract.dylib" ;;
-            *)      lib_candidate="$AIKO_ROOT/../contract/libcontract/zig-out/lib/libcontract.so" ;;
-        esac
-        if [[ -f "$lib_candidate" ]]; then
-            lib="$lib_candidate"
-        fi
-    fi
-    if [[ -z "$lib" ]]; then
-        err "Bare aiko binary archive needs Contract library at ~/.aiko/lib/ or sibling contract build"
-        return 1
-    fi
-
-    local ver plat name dest
-    ver=$(cargo_version)
-    plat=$(platform_name)
-    name="aiko-${ver}-${plat}"
-    dest="$PACKAGE_ROOT/$name"
-    mkdir -p "$dest/bin" "$dest/lib" "$dest/skills" "$dest/sdk/registry/bin"
-    install -m 755 "$bin" "$dest/bin/aiko"
-    install -m 755 "$lib" "$dest/lib/libcontract.dylib"
-    install -m 755 "$AIKO_ROOT/scripts/install-aiko-package.sh" "$dest/install.sh"
-    if [[ -d "$AIKO_ROOT/sdk/registry" ]]; then
-        cp -R "$AIKO_ROOT/sdk/registry/bin" "$dest/sdk/registry/" 2>/dev/null || true
-        cp "$AIKO_ROOT/sdk/registry/setup.sh" "$dest/sdk/registry/" 2>/dev/null || true
-        cp "$AIKO_ROOT/sdk/registry/versions.lock" "$dest/sdk/registry/" 2>/dev/null || true
-        cp "$AIKO_ROOT/sdk/registry/package.json" "$dest/sdk/registry/" 2>/dev/null || true
-    fi
-    for skill in "$AIKO_ROOT"/.agents/skills/*; do
-        if [[ -f "$skill/contract-skill.json" ]]; then
-            cp -R "$skill" "$dest/skills/"
-        fi
-    done
-    # Empty skills dir is invalid for installer — seed a placeholder marker package needs dir
-    mkdir -p "$dest/skills"
-    local aiko_sha contract_sha
-    aiko_sha=$(sha256_file "$dest/bin/aiko")
-    contract_sha=$(sha256_file "$dest/lib/libcontract.dylib")
-    cat > "$dest/manifest.json" <<EOF
-{
-  "format": 1,
-  "version": "$ver",
-  "platform": "$plat",
-  "contract_abi": 10,
-  "application_runtime": "aiko-native-cdp-v1",
-  "aiko_sha256": "$aiko_sha",
-  "aiko_commit": "$(git -C "$AIKO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)",
-  "aiko_dirty": false,
-  "contract_sha256": "$contract_sha",
-  "contract_commit": "unknown",
-  "contract_dirty": false,
-  "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "source": "bare-binary-archive"
-}
-EOF
-    printf '%s\n' "$dest"
-    trap - RETURN
+    err "Archive is not a complete portable Aiko package (one root with install.sh required)"
+    err "Bare Aiko binaries and component archives are not installable"
+    return 1
 }
 
 # ─── Install ───────────────────────────────────────────────────────────────
@@ -269,10 +228,6 @@ install_package_dir() {
             return 1
         fi
         ok "Hash matches $want_hash"
-    fi
-    # Always use PATH-aware installer from this checkout when available
-    if [[ -f "$AIKO_ROOT/scripts/install-aiko-package.sh" ]]; then
-        install -m 755 "$AIKO_ROOT/scripts/install-aiko-package.sh" "$dest/install.sh"
     fi
     aiko_assert_version_sync || warn "versions.lock out of sync with VERSION"
     info "Installing from $dest → SSOT bin dir $AIKO_BIN_DIR"
@@ -356,13 +311,26 @@ for a in data.get('assets', []):
         err "Could not resolve download URL for $asset_name"
         return 1
     fi
+    local sidecar_name="$asset_name.sha256" sidecar_url
+    sidecar_url=$(printf '%s' "$json" | python3 -c "
+import sys, json
+want = '''$sidecar_name'''
+for asset in json.load(sys.stdin).get('assets', []):
+    if asset['name'] == want:
+        print(asset.get('browser_download_url') or '')
+        break
+")
+    [[ -n "$sidecar_url" ]] || { err "Release $tag_v is missing $sidecar_name"; return 1; }
 
-    local out="$PACKAGE_ROOT/$asset_name"
+    local out="$PACKAGE_ROOT/$asset_name" sidecar="$PACKAGE_ROOT/$sidecar_name"
     mkdir -p "$PACKAGE_ROOT"
-    info "Downloading $asset_name..."
+    info "Downloading $asset_name and SHA256 sidecar..." >&2
     http_get "$url" "$out"
-    ok "Saved $out"
+    http_get "$sidecar_url" "$sidecar"
+    verify_sidecar "$out" "$sidecar"
+    ok "Verified $out" >&2
     printf '%s\n' "$out"
+
 }
 
 cmd_list() {
@@ -420,13 +388,29 @@ cmd_install() {
     if [[ -n "$path" ]]; then
         src="$path"
     elif [[ -n "$url" ]]; then
+        if [[ -z "$want_hash" ]]; then
+            err "--url requires --hash SHA256"
+            return 2
+        fi
         mkdir -p "$PACKAGE_ROOT"
         local fname
         fname=$(basename "$url")
         [[ "$fname" == *tar* ]] || fname="aiko-download.tar.gz"
-        info "Downloading $url"
+        info "Downloading $url and SHA256 sidecar"
         http_get "$url" "$PACKAGE_ROOT/$fname"
+        http_get "$url.sha256" "$PACKAGE_ROOT/$fname.sha256" || {
+            err "Missing SHA256 sidecar: $url.sha256"; return 1;
+        }
+        verify_sidecar "$PACKAGE_ROOT/$fname" "$PACKAGE_ROOT/$fname.sha256"
+        local archive_hash
+        archive_hash=$(sha256_file "$PACKAGE_ROOT/$fname" | tr '[:upper:]' '[:lower:]')
+        want_hash=$(printf '%s' "$want_hash" | tr '[:upper:]' '[:lower:]')
+        [[ "$want_hash" =~ ^[0-9a-f]{64}$ && "$archive_hash" == "$want_hash" ]] || {
+            err "Archive checksum does not match --hash for $fname"
+            return 1
+        }
         src="$PACKAGE_ROOT/$fname"
+        want_hash=""
     elif [[ -n "$tag" ]]; then
         src=$(download_release_asset "$tag")
     else
@@ -508,48 +492,51 @@ cmd_publish() {
     fi
     rid=$(printf '%s' "$release_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 
-    local asset_name
+    local asset_name sidecar sidecar_name
     asset_name=$(basename "$archive")
-    info "Uploading $asset_name to release $tag (id=$rid)..."
-    # Delete existing same-named asset if present
-    printf '%s' "$release_json" | python3 -c "
+    sidecar="$archive.sha256"
+    sidecar_name="$asset_name.sha256"
+    printf '%s  %s\n' "$(sha256_file "$archive")" "$asset_name" > "$sidecar"
+
+    # Upload both the archive and its independently downloadable checksum.
+    local upload_name upload_path
+    for upload_name in "$asset_name" "$sidecar_name"; do
+        if [[ "$upload_name" == "$asset_name" ]]; then upload_path="$archive"; else upload_path="$sidecar"; fi
+        printf '%s' "$release_json" | python3 -c "
 import sys, json
-want = '''$asset_name'''
+want = '''$upload_name'''
 data = json.load(sys.stdin)
 for a in data.get('assets', []):
     if a['name'] == want:
         print(a['id'])
         break
 " | while read -r aid; do
-        [[ -n "$aid" ]] || continue
-        curl -sfL -X DELETE \
-            -H "Authorization: token $GITEA_TOKEN" \
-            "$GITEA_URL/api/v1/repos/$GITEA_ORG/$GITEA_REPO/releases/assets/$aid" >/dev/null \
-            && info "Removed previous asset id=$aid" || true
+            [[ -n "$aid" ]] || continue
+            curl -sfL -X DELETE -H "Authorization: token $GITEA_TOKEN" \
+                "$GITEA_URL/api/v1/repos/$GITEA_ORG/$GITEA_REPO/releases/assets/$aid" >/dev/null || true
+        done
+        info "Uploading $upload_name to release $tag (id=$rid)..."
+        curl -sfL -X POST -H "Authorization: token $GITEA_TOKEN" \
+            "$GITEA_URL/api/v1/repos/$GITEA_ORG/$GITEA_REPO/releases/$rid/assets?name=$upload_name" \
+            -F "attachment=@$upload_path" >/dev/null
     done
+    ok "Published $asset_name and $sidecar_name → $tag"
 
-    curl -sfL -X POST \
-        -H "Authorization: token $GITEA_TOKEN" \
-        "$GITEA_URL/api/v1/repos/$GITEA_ORG/$GITEA_REPO/releases/$rid/assets?name=$asset_name" \
-        -F "attachment=@$archive" >/dev/null
+    # The legacy installers consume the same pair from the generic registry.
+    local generic_base="$GITEA_URL/api/packages/$GITEA_ORG/generic/aiko/${ver}"
+    for upload_name in "$asset_name" "$sidecar_name"; do
+        if [[ "$upload_name" == "$asset_name" ]]; then upload_path="$archive"; else upload_path="$sidecar"; fi
+        local generic_url="$generic_base/$upload_name"
+        if curl -sfL -X PUT -H "Authorization: token $GITEA_TOKEN" \
+            --data-binary @"$upload_path" "$generic_url" >/dev/null 2>&1; then
+            ok "Published generic package aiko/${ver}/$upload_name"
+        else
+            err "Generic package upload failed: $upload_name"
+            return 1
+        fi
+    done
+    ok "Install elsewhere with aiko-install --version $ver"
 
-    ok "Published $asset_name → $tag"
-    ok "Install elsewhere: GITEA_TOKEN=… scripts/aiko-release.sh install --tag $tag"
-
-    # Also publish generic package for aiko-install consumers
-    local generic_url="$GITEA_URL/api/packages/$GITEA_ORG/generic/aiko/${ver}/$asset_name"
-    if curl -sfL -X PUT \
-        -H "Authorization: token $GITEA_TOKEN" \
-        -F "package=@$archive" \
-        "$generic_url" >/dev/null 2>&1 \
-        || curl -sfL -X PUT \
-        -H "Authorization: token $GITEA_TOKEN" \
-        --data-binary @"$archive" \
-        "$generic_url" >/dev/null 2>&1; then
-        ok "Also published generic package aiko/${ver}/$asset_name"
-    else
-        warn "Generic package upload failed (release asset is enough for --tag install)"
-    fi
 }
 
 main() {
