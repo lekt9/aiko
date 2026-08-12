@@ -427,9 +427,11 @@ pub fn readAllShared(allocator: std.mem.Allocator, env: std.process.Environ) ![]
     return buf;
 }
 
+pub const READ_ALL_MAX_BYTES: usize = 16 * 1024 * 1024;
+
 /// Slurp the entire resolved ledger file. Returns an owned []u8 (empty when
-/// the file doesn't exist). 1 GiB cap is way above the largest ledger ever
-/// observed (the global ledger is ~3 MB after months of use).
+/// the file doesn't exist). Whole-buffer callers are bounded; replay and
+/// deduplication over larger ledgers must use forEachLine instead.
 pub fn readAll(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
     const path = try resolvePath(allocator, env);
     defer allocator.free(path);
@@ -456,7 +458,7 @@ pub fn readAll(allocator: std.mem.Allocator, env: std.process.Environ) ![]u8 {
         const n = readFd(fd, &chunk);
         if (n <= 0) break;
         try out.appendSlice(allocator, chunk[0..@intCast(n)]);
-        if (out.items.len > 1024 * 1024 * 1024) return error.LedgerTooLarge;
+        if (out.items.len > READ_ALL_MAX_BYTES) return error.LedgerTooLarge;
     }
     return try out.toOwnedSlice(allocator);
 }
@@ -516,17 +518,17 @@ pub fn forEachLine(
 // ────────── compaction — homeostasis for the append-only store ──────────
 //
 // The resolver exhales exhaust rows (`iterated`, cache probes, guards) at
-// a rate that eventually pushes the store past readAll's 1 GiB cap and
-// every read verb starts failing (observed 2026-07-18: 78k rows, 43 MB,
+// a rate that eventually pushes the store past readAll's bounded whole-buffer
+// cap and every read verb starts failing (observed 2026-07-18: 78k rows, 43 MB,
 // 51k of them `iterated` + 19k orphaned `ebm_proto`). Compaction is the
 // counter-breath: exhaust rows whose contract is already terminal — plus
 // rows no code reads at all — move to `<store>.archive.jsonl` (append-only,
 // nothing is destroyed), and the store keeps the truth skeleton: declared /
 // terminal events / containment edges, and FULL history for still-open ids.
 
-/// Compact when the store crosses this. Below readAll's 1 GiB hard cap so
-/// reads never break before housekeeping kicks in.
-pub const COMPACT_THRESHOLD: u64 = 32 * 1024 * 1024;
+/// Compact before the store reaches readAll's 16 MiB hard cap so lock-time
+/// housekeeping runs before whole-buffer readers can wedge.
+pub const COMPACT_THRESHOLD: u64 = 12 * 1024 * 1024;
 
 /// Uncapped slurp — compaction must be able to read a store that is
 /// already too big for the capped readAll. Private on purpose.

@@ -62,6 +62,9 @@ neuron/limbs if you already have them via the package.
 
 - **Rust** — pin is `rust-toolchain.toml` (currently 1.92.0)
 - **Zig 0.16.0+** — builds Contract (`libcontract`) and the neuron binary
+- **Protocol Buffers compiler** — either install `protoc` on `PATH`, set
+  `PROTOC=/path/to/protoc`, or install DotSlash (`cargo install dotslash`) so
+  the repository's hermetic `bin/protoc` wrapper can run
 - **Sibling repos** (default layout under the monorepo parent):
   - `~/Unbrowse/contract-core` — or `../contract-core` — or set `AIKO_CONTRACT_REPO` (fallback `../contract` for legacy)
   - `contract-core` bundles `libcontract` + `zig` CLI (no separate `neuron` checkout required; legacy `../contract` + `../neuron` still accepted)

@@ -19,6 +19,8 @@ expected by the runtime packaging script:
 
 - Rust 1.92.0, pinned by [`rust-toolchain.toml`](rust-toolchain.toml);
 - Zig 0.16.0 or newer;
+- a Protocol Buffers compiler: `PROTOC`/`protoc` on `PATH`, or DotSlash
+  (`cargo install dotslash`) for the repository's hermetic `bin/protoc`;
 - sibling `contract/` and `neuron/` repositories, or `AIKO_CONTRACT_REPO`
   pointing at the Contract repository.
 
