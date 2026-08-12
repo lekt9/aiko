@@ -424,7 +424,7 @@ quietly stopped also stops changing.
 ### Watch it happen
 
 ```sh
-neuron telemetry serve <node>/state --listen 127.0.0.1:8787   # or aiko telemetry serve …
+neuron telemetry serve <node>/state --listen 127.0.0.1:8787
 ```
 
 A read-only live view: the firing stream as it commits, the derivation graph,
