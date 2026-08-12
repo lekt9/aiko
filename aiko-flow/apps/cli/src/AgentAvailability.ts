@@ -1,0 +1,35 @@
+import type { AgentAvailabilityStatus } from "./AgentAvailabilityStatus.ts";
+
+export type AgentAvailability = {
+  id:
+    | "claude"
+    | "codex"
+    | "openrouter"
+    | "cursor"
+    | "antigravity"
+    | "pi"
+    | "aiko"
+    | "omp"
+    | "opencode"
+    | "openclaw"
+    | "pool"
+    | "kimi"
+    | "amp"
+    | "vibe"
+    | "hermes";
+  displayName: string;
+  binary: string;
+  deprecated?: boolean;
+  deprecationReason?: string;
+  hasBinary: boolean;
+  hasAuthSignal: boolean;
+  hasApiKeySignal: boolean;
+  hasProjectTrustSignal: boolean;
+  /** Registered account labels whose configured credentials passed detection. */
+  registeredAccountLabels?: string[];
+  status: AgentAvailabilityStatus;
+  score: number;
+  usable: boolean;
+  checks: string[];
+  unusableReasons: string[];
+};

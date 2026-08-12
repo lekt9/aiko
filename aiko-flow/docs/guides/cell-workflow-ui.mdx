@@ -1,0 +1,67 @@
+---
+title: "Cell workflow UI"
+description: "Render a Cell visual membrane as a workflow-owned Smithers UI."
+---
+
+A Cell port already declares both its data contract (`schema`) and its visual membrane
+(`render`). `smthrs/cell-ui` projects that declaration over durable Smithers node
+outputs, so an application gets a native run UI without creating another execution
+store.
+
+```tsx
+/** @jsxImportSource react */
+import { createGatewayReactRoot, runIdFromUrl } from "smthrs/gateway-react";
+import { CellWorkflowUi } from "smthrs/cell-ui";
+
+const cell = {
+  metadata: { name: "Staffing" },
+  spec: {
+    membrane: {
+      inputs: {
+        order: {
+          schema: {
+            type: "object",
+            required: ["id"],
+            properties: { id: { type: "string" } },
+          },
+        },
+      },
+      outputs: {
+        roster: {
+          schema: {
+            type: "array",
+            items: { type: "object", properties: { worker: { type: "string" } } },
+          },
+          render: { type: "table", columns: [{ key: "worker", label: "Worker" }] },
+        },
+      },
+    },
+  },
+};
+
+createGatewayReactRoot(
+  <CellWorkflowUi
+    cell={cell}
+    runId={runIdFromUrl()}
+    nodeIds={{ order: "membrane-input", roster: "membrane-output" }}
+  />,
+);
+```
+
+Declare that browser bundle in the workflow as normal:
+
+```tsx
+<UI entry="../ui/staffing.tsx" title="Staffing" />
+```
+
+## Authority boundary
+
+The UI reads Smithers through `useGatewayNodeOutput`. It shows pending and failed
+producers explicitly and never turns missing output into successful empty data.
+It does not schedule Cell nodes, settle Contract claims, call Neuron `redrive`, or
+infer a compensation route. Put those effects in schema-validated workflow tasks;
+the UI remains a projection.
+
+`render` is used when present. When omitted, `smthrs/cell-ui` deterministically
+infers a form for object schemas, a table for arrays of objects, a list for other
+arrays, and a scalar field for primitive schemas.

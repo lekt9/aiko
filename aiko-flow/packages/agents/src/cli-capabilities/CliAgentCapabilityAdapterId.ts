@@ -1,0 +1,15 @@
+export type CliAgentCapabilityAdapterId =
+  | "claude"
+  | "amp"
+  | "antigravity"
+  | "codex"
+  | "cursor"
+  | "forge"
+  | "hermes"
+  | "kimi"
+  | "opencode"
+  | "openclaw"
+  | "pi"
+  | "omp"
+  | "pool"
+  | "vibe";

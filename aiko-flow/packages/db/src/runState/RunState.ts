@@ -1,0 +1,15 @@
+export type RunState =
+  | "running"
+  | "waiting-approval"
+  | "waiting-event"
+  | "waiting-timer"
+  | "waiting-quota"
+  | "paused"
+  | "recovering"
+  | "stale"
+  | "orphaned"
+  | "failed"
+  | "cancel-pending"
+  | "cancelled"
+  | "succeeded"
+  | "unknown";

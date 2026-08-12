@@ -1,0 +1,38 @@
+name: Faults (per-PR)
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  faults:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - uses: pnpm/action-setup@v6.0.8
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: latest
+
+      - run: pnpm install --frozen-lockfile
+
+      # apps/cli's dts rollup needs more heap than the runner's default worker
+      # limit or tsup dies with ERR_WORKER_OUT_OF_MEMORY.
+      - run: pnpm -r build
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+
+      - run: pnpm --filter @smthrs/e2e test:faults
