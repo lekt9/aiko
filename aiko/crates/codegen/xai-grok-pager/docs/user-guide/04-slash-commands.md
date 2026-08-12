@@ -1,5 +1,7 @@
 # Slash Commands
 
+> **Aiko TUI docs.** The user binary is `aiko`. Crate/`~/.grok/` names are compatibility identifiers.
+
 Type `/` in the prompt to access commands. Each command runs an action immediately and autocompletes as you type.
 
 Slash commands come from two sources:
@@ -40,7 +42,7 @@ Compress conversation history to save context window space. Optionally specify w
 /compact keep the auth implementation details
 ```
 
-When the context window fills up, Grok auto-compacts at 85% usage (configurable via `[session] auto_compact_threshold_percent` in config.toml).
+When the context window fills up, Aiko auto-compacts at 85% usage (configurable via `[session] auto_compact_threshold_percent` in config.toml).
 
 ### `/context`
 
@@ -132,7 +134,7 @@ Switch to a different model. Accepts model IDs or display names (case-insensitiv
 
 ```
 /model grok-build
-/model Grok Build
+/model Aiko
 /model Reasoning X high
 ```
 
@@ -214,7 +216,7 @@ fullscreen) switches to the experimental scrollback-native mode; `/fullscreen`
 TUI. Both relaunch the pager on the same conversation for this session only —
 they do not write `config.toml`. Descriptions and the relaunch banner tell you
 how to switch back (`/fullscreen` ⇄ `/minimal`). The `--minimal` /
-`--fullscreen` CLI flags are likewise session-scoped. To make plain `grok` open
+`--fullscreen` CLI flags are likewise session-scoped. To make plain `aiko` open
 in a given mode by default, use `/settings` → **Default screen mode**, or set
 `[ui] screen_mode` in `config.toml`.
 
@@ -353,7 +355,7 @@ Generate a video from an image or text description. Plans shots, generates sourc
 
 ### `/loop [interval] <prompt>`
 
-Run a prompt on a recurring interval. Specify the interval as `30m`, `1 hour`, or `every 2 days`. If you omit it, Grok prompts you.
+Run a prompt on a recurring interval. Specify the interval as `30m`, `1 hour`, or `every 2 days`. If you omit it, Aiko prompts you.
 
 ```
 /loop 30m check deploy status
@@ -370,7 +372,7 @@ Recurring tasks auto-expire after 7 days. Cancel with `scheduler_delete` (the jo
 
 ### `/goal`
 
-Set, manage, or check an autonomous goal. Grok works toward the objective across turns and reports progress.
+Set, manage, or check an autonomous goal. Aiko works toward the objective across turns and reports progress.
 
 ```
 /goal Migrate the auth module to the new API

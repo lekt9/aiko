@@ -1,5 +1,7 @@
 # Video transcript: AI and the Future of Work
 
+> **Historical.** Dated review or transcript. Not current product documentation. What the tree is today: [../SOURCE-OF-TRUTH.md](../SOURCE-OF-TRUTH.md).
+
 
 
 > **Source:** `/home/deck/Downloads/CG9zfpM-PItzAUMw.mp4`

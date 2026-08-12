@@ -1,11 +1,11 @@
 # Contributing
 
-This repository does **not** accept external pull requests or unsolicited
-patches.
+The published monorepo is [`github.com/lekt9/aiko`](https://github.com/lekt9/aiko).
+This directory (`aiko/`) is the Rust host. Contribution process for the whole
+tree is in the root [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
-SpaceXAI develops this software internally. The public tree is published for
-source transparency and local builds under the terms of the Apache License,
-Version 2.0 (see [`LICENSE`](LICENSE)).
+SpaceXAI publishes this source under the Apache License, Version 2.0
+(see [`LICENSE`](LICENSE) and the root [`LICENSE`](../LICENSE)).
 
 ## Security reports
 
@@ -14,15 +14,14 @@ Please report security issues through the process described in
 
 ## Internal development
 
-Authorized internal development uses the toolchains and sibling repositories
-expected by the runtime packaging script:
+Development uses the toolchains expected by the runtime packaging script:
 
 - Rust 1.92.0, pinned by [`rust-toolchain.toml`](rust-toolchain.toml);
 - Zig 0.16.0 or newer;
 - a Protocol Buffers compiler: `PROTOC`/`protoc` on `PATH`, or DotSlash
   (`cargo install dotslash`) for the repository's hermetic `bin/protoc`;
-- sibling `contract/` and `neuron/` repositories, or `AIKO_CONTRACT_REPO`
-  pointing at the Contract repository.
+- in-tree `../contract` and `../neuron` (this monorepo). `AIKO_CONTRACT_REPO`
+  is an override, not a required extra clone.
 
 Run commands from the repository root:
 

@@ -1,5 +1,7 @@
 # Aiko capability verification
 
+> **Historical.** Dated report or retest log. Not current product documentation. What the tree is today: [../../docs/SOURCE-OF-TRUTH.md](../../docs/SOURCE-OF-TRUTH.md).
+
 Updated after repair: `2026-07-22T02:42:13+08:00`
 Installed binary: `/Users/lewis/bin/aiko`
 Version: `aiko 0.2.102 (8acf895)`

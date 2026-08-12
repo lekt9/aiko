@@ -949,7 +949,7 @@ mod tests {
         use xai_grok_shell::agent::auth_method::{GROK_COM_METHOD_ID, XAI_API_KEY_METHOD_ID};
 
         let methods = vec![
-            make_auth_method(GROK_COM_METHOD_ID, "Grok", None),
+            make_auth_method(GROK_COM_METHOD_ID, "Aiko", None),
             make_auth_method(XAI_API_KEY_METHOD_ID, "xai.api_key", None),
         ];
         let (needs, _, _, _) = startup_auth_metadata(&methods);

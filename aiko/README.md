@@ -1,8 +1,11 @@
 # Aiko
 
-**Aiko** is a Contract-native agent for your laptop. It understands a
-codebase, edits files, runs commands, searches the web, and manages long-running
-work from a terminal TUI, headless scripts, or editors using ACP.
+**Aiko** is a Contract-native agent for your laptop — and the first AI
+forward-deployed engineer: an agent you hire, not a tool you integrate. She
+understands a codebase, edits files, runs commands, searches the web, and
+manages long-running work from a terminal TUI, headless scripts, or editors
+using ACP. Given a login, she wires herself into your systems the way a new
+engineer would — and builds the ones that are missing.
 
 For a visual tour of the entire repository—runtime flows, ownership boundaries,
 persistent state, crate inventory, builds, and where to make changes—start with
@@ -36,6 +39,11 @@ design is bent toward that outcome, and features are judged against it.
   When Aiko needs to reach into another system or site, it acts through Unbrowse —
   the action engine of the internet — rather than a hand-written integration or a
   per-service connector the user has to install. One mechanism reaches everything.
+- **Credentials, not API keys.** Aiko authenticates the way an employee does.
+  `aiko login` starts a session — you never paste a provider key — and when she
+  reaches into another system she acts through the account you gave her, via
+  Unbrowse, rather than a per-service API key and connector. The account is the
+  unit of access; keys are the exception, not the model.
 
 The test for any change: does it move Aiko toward *prompt in, result out, nothing
 installed* — or does it add a step the user has to perform first? If it adds a
@@ -52,11 +60,10 @@ There are two install paths. They install **different things**:
 
 | Path | Installs | Needs |
 |------|----------|--------|
-| **From source** (`scripts/contract-runtime.sh install`) | `aiko` binary + Contract dylib + packaged skills/SDK | Rust, Zig, sibling `contract` + `neuron` checkouts |
-| **Registry bootstrap** (`sdk/registry/setup.sh`) | Contract dylib + `neuron` CLI + limbs only (**not** the `aiko` binary) | Tailscale to Gitea, `GITEA_TOKEN` |
+| **From source** (`scripts/contract-runtime.sh install`) | `aiko` binary + Contract dylib + packaged skills/SDK | Rust, Zig, this monorepo (`contract/` and `neuron/` already sit next to `aiko/`) |
+| **Registry bootstrap** (`sdk/registry/setup.sh`) | Contract dylib + `neuron` CLI + limbs only (**not** the `aiko` binary) | Optional operator registry (`GITEA_URL` + `GITEA_TOKEN`). Not required for a public clone. |
 
-Most developers: **from source**, then login. Registry setup is optional for
-neuron/limbs if you already have them via the package.
+Most developers: **from source**, then login. Registry setup is optional.
 
 ### Prerequisites (from source)
 
@@ -65,34 +72,32 @@ neuron/limbs if you already have them via the package.
 - **Protocol Buffers compiler** — either install `protoc` on `PATH`, set
   `PROTOC=/path/to/protoc`, or install DotSlash (`cargo install dotslash`) so
   the repository's hermetic `bin/protoc` wrapper can run
-- **Sibling repos** (default layout under the monorepo parent):
-  - `~/Unbrowse/contract-core` — or `../contract-core` — or set `AIKO_CONTRACT_REPO` (fallback `../contract` for legacy)
-  - `contract-core` bundles `libcontract` + `zig` CLI (no separate `neuron` checkout required; legacy `../contract` + `../neuron` still accepted)
+- This monorepo — `scripts/contract-runtime.sh` finds `../contract` (and
+  `../neuron`) automatically. Set `AIKO_CONTRACT_REPO` only to override.
 - Shell `PATH` includes **`~/bin`** (where `install` places `aiko`)
 
 ```bash
-# monorepo layout expected by defaults
-# <parent>/
-#   aiko/          # this repo
-#   contract/
-#   neuron/
+# published monorepo
+#   <clone>/
+#     aiko/          # this directory — Rust host
+#     contract/
+#     neuron/
 export PATH="$HOME/bin:$PATH"
 ```
 
 ### From source (recommended for this tree)
 
 ```bash
-cd /path/to/aiko   # this repository root
+cd /path/to/aiko/aiko   # Rust host directory inside the monorepo
 
 # Build Contract + Aiko, package, atomically install
 scripts/contract-runtime.sh install
 # → ${AIKO_BIN_DIR:-~/bin}/aiko
 # → ${AIKO_HOME:-~/.aiko}/lib/libcontract.dylib
 
-# Optional: neuron CLI + generative limbs from Gitea package registry
-export GITEA_TOKEN=…   # Unbrowse org token; setup prompts if unset
-bash sdk/registry/setup.sh
-# → ~/.local/bin/neuron  (default AIKO_BIN_DIR for setup.sh)
+# Optional: neuron CLI + generative limbs from an operator registry
+# bash sdk/registry/setup.sh
+# → ~/.local/bin/neuron
 # → ~/.aiko/lib/  and  ~/.aiko/limbs/
 
 # Session login — inference uses the public Aiko proxy (no client Surplus key)
@@ -134,13 +139,11 @@ Override install locations with `AIKO_BIN_DIR` and `AIKO_HOME`.
 ### Registry-only bootstrap (neuron stack, not the agent TUI)
 
 Does **not** install `~/bin/aiko`. Use after you already have an `aiko` binary,
-or only need Contract + neuron + limbs:
+or only need Contract + neuron + limbs. This path talks to an **operator
+registry**; a public GitHub clone does not need it.
 
 ```bash
-export GITEA_TOKEN=…
-# Still needs Tailscale reachability to the Gitea host
-curl -sL http://100.124.140.92:3000/Unbrowse/aiko/raw/branch/main/sdk/registry/setup.sh | bash
-# or, from a checkout:
+# Optional. Requires GITEA_URL (and GITEA_TOKEN if the registry is private).
 bash sdk/registry/setup.sh
 ```
 
@@ -150,25 +153,23 @@ bash sdk/registry/setup.sh
 aiko (session JWT)
   → https://aiko.theclarityproject.net   # aiko-openai-compat
     → aiko-proxy                         # injects server-side SURPLUS_API_KEY
-      → gateway.codegraff.com/v1/* (primary)
-      → api.surplusintelligence.ai/v1/* (failover)
+      → api.surplusintelligence.ai/v1/*  # Surplus primary
 ```
 
 - **Clients:** run `aiko login`. Do **not** set `SURPLUS_API_KEY` for normal use.
-- **Operators** of the proxy: put `SURPLUS_API_KEY` only on the Cloudflare Worker
-  ([aiko-proxy](http://100.124.140.92:3000/Unbrowse/aiko-proxy),
-  `bash scripts/deploy.sh`).
+- **Operators** of the proxy: put `SURPLUS_API_KEY` only on the Cloudflare
+  Worker (`aiko-proxy`, `bash scripts/deploy.sh`). Do not document private
+  operator hosts in this README.
 
 **What a full install gives you:** Aiko agent TUI with Contract-native turn
 lifecycle + typed neuron runtime + generative limbs that self-observe, preempt
 redundant work, route by energy, and can author new limbs for gaps.
 
-**One agent, one repo.** Aiko ships with Contract (libcontract.dylib),
-the neuron runtime, and 8 generative limbs — all pulled from the Gitea
-package registry on install. The sibling repos (`contract`, `neuron`) are
-independent build artifacts with their own toolchains, not separate agents.
-The old `aiko-agent` (Python/Hermes fork) is archived — its features live
-on as neuron limbs.
+**One agent, one monorepo.** Aiko ships with Contract (`libcontract`),
+the neuron runtime, and generative limbs. `contract/` and `neuron/` live in
+this same published tree and are built from source; they are not separate
+agents. The old `aiko-agent` (Python/Hermes fork) is archived — its features
+live on as neuron limbs.
 
 Contract is built into the turn lifecycle. Users ask Aiko for an outcome; Aiko
 automatically declares that goal in the local Contract ledger before work
@@ -215,9 +216,9 @@ wallet or Keychain access.
 ## Canonical Neuron execution
 
 Contract ABI 13 is the durable interpreter for Aiko's typed Skill nodes. Its
-pure `Neuron` types, validation, and identities come from the sibling
-`typed_neuron` Zig package; Aiko consumes mechanically generated Rust transport
-types rather than maintaining a second wire contract.
+pure `Neuron` types, validation, and identities come from the in-tree
+`typed_neuron` Zig package (`../neuron`); Aiko consumes mechanically generated
+Rust transport types rather than maintaining a second wire contract.
 
 Each production node returns a canonical decision. Contract commits that
 decision, its authoritative evidence, node settlement, and pending effects in
@@ -238,8 +239,9 @@ pre-dispatch Contract membrane.
 
 ## SDK, Neuron & Generative Limbs
 
-Aiko ships with an embedded SDK (`sdk/registry/`) that pulls the full stack
-from your private Gitea package registry over Tailscale:
+Aiko ships with an embedded SDK (`sdk/registry/`). A from-source install
+builds Contract and limbs from this monorepo. The optional registry
+bootstrap can pull prebuilt packages from an operator registry:
 
 | Component | Binary | Registry | What it does |
 |-----------|--------|----------|-------------|
@@ -373,7 +375,7 @@ Environment overrides used by the packaging scripts:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `AIKO_CONTRACT_REPO` | `../contract` | Contract source tree |
+| `AIKO_CONTRACT_REPO` | in-tree `../contract` | Override only; default walk already finds the monorepo `contract/` |
 | `AIKO_BUILD_PROFILE` | `release` | Cargo profile |
 | `AIKO_HOME` | `~/.aiko` | Runtime home (lib, skills, limbs) |
 | `AIKO_BIN_DIR` | `~/bin` | Where `install` places `aiko` |
@@ -384,8 +386,9 @@ The release artifact is `target/release/aiko` (also packaged under
 
 ## Contract runtime packaging
 
-Aiko and Contract remain separate source repositories. Contract is built as a
-native runtime library and shipped in the same package as Aiko:
+Aiko and Contract remain separate *source trees* inside this monorepo.
+Contract is built as a native runtime library and shipped in the same package
+as Aiko:
 
 ```text
 aiko-<version>-<platform>/

@@ -1,5 +1,7 @@
 # Repository audit: graph-engineering nativeness
 
+> **Historical.** Dated review or transcript. Not current product documentation. What the tree is today: [../SOURCE-OF-TRUTH.md](../SOURCE-OF-TRUTH.md).
+
 **Snapshot:** current working tree, 2026-08-08
 **Scope:** root Aiko composition, `cell/`, standalone `neuron/`, `contract/libcontract/`, and the Rust host in `aiko/`. This is an architecture audit, not a claim that the current graph witness is green.
 

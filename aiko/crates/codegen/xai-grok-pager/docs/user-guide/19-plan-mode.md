@@ -1,5 +1,7 @@
 # Plan Mode
 
+> **Aiko TUI docs.** The user binary is `aiko`. Crate/`~/.grok/` names are compatibility identifiers.
+
 Plan mode is a structured planning phase: the agent explores the codebase and designs an implementation approach before writing any code. Use it for tasks with genuine ambiguity about the right approach, where getting your input before coding prevents significant rework.
 
 ---

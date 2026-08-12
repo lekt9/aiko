@@ -1,5 +1,9 @@
 # Aiko providers
 
+Provider setup for the Rust host in this monorepo. The default user path is
+still `aiko login` through `https://aiko.theclarityproject.net` (no client
+provider key). BYOK is the override.
+
 Aiko supports any OpenAI-compatible, xAI Responses, or Anthropic Messages
 endpoint through BYOK (Bring Your Own Key) model entries in `config.toml`.
 

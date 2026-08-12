@@ -1,6 +1,10 @@
 # contract-zig
 
-Native Zig CLI for the Contract substrate. It writes signed append-only intent
+Native Zig CLI for the Contract substrate in this monorepo
+([`github.com/lekt9/aiko`](https://github.com/lekt9/aiko)).
+Inventory: [`../../docs/SOURCE-OF-TRUTH.md`](../../docs/SOURCE-OF-TRUTH.md).
+
+It writes signed append-only intent
 and verdict rows, resolves contract graphs, exposes task/role status, and emits a
 schema-v1 causal event stream. Typed declarations may carry one of six governed
 agency roles: purpose, governor, action, sensor, evaluator, or development.

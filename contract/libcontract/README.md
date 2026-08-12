@@ -1,4 +1,12 @@
-# libcontract — Stage 1 Zig data-model for `/contract`
+# libcontract
+
+In-tree Contract kernel for the published Aiko monorepo
+([`github.com/lekt9/aiko`](https://github.com/lekt9/aiko)). Build from
+`libcontract/` with Zig 0.16, or from the monorepo root with `zig build`.
+Inventory: [`../../docs/SOURCE-OF-TRUTH.md`](../../docs/SOURCE-OF-TRUTH.md).
+
+Stage-1 notes below record the original C-ABI / Python-parity path. Treat
+gates and current `src/` as authority if they disagree.
 
 A Zig static library (`zig-out/lib/libcontract.a`) that ports the bootstrap
 verbs from `scripts/lib/contract_core.py` — `declare`, `record_iteration`,

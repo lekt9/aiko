@@ -2,7 +2,12 @@
 
 > A `cell` is a harness composed from YAML, executed by Python, self-similar at every scale.
 
-Self-contained. Does not import `contract/` or `neuron/`. Logic is Python when it needs to be; Zig is only the runtime.
+This directory is the Cell layer of the published Aiko monorepo
+([`github.com/lekt9/aiko`](https://github.com/lekt9/aiko)). Self-contained.
+Does not import `contract/` or `neuron/`. Logic is Python when it needs to be;
+Zig is only the runtime.
+
+Do not commit customer operational data under `cell/data/` or `cell/hoysan-*`.
 
 ---
 

@@ -1,6 +1,6 @@
 //! MCP stdio edge: newline-delimited JSON-RPC 2.0 for foreign harnesses.
 //!
-//! Grok, Claude Code, Aiko — anything that speaks MCP — launches this as a
+//! Aiko and any other MCP client — anything that speaks MCP — launches this as a
 //! stdio server and gains two tools: `neuron.info` (who is this node, what
 //! may I ask) and `neuron.fire` (stimulate a neuron). The edge is a limb
 //! with no ambient authority (§30): every tool call becomes an unsigned

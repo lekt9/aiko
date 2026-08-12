@@ -1,5 +1,7 @@
 # Aiko cancellation lifecycle fix
 
+> **Historical.** Dated report or retest log. Not current product documentation. What the tree is today: [../../docs/SOURCE-OF-TRUTH.md](../../docs/SOURCE-OF-TRUTH.md).
+
 Status: **PASS**
 
 ## Failure

@@ -206,7 +206,7 @@
       "id": "provider.routing",
       "version": 1,
       "kind": "implicit",
-      "description": "Aiko/Grok OAuth and OpenAI-compatible providers such as Codegraff are selected by Aiko configuration and Contract routing. Frontends select advertised models, never receive provider API keys.",
+      "description": "Aiko OAuth and OpenAI-compatible providers are selected by Aiko configuration and Contract routing. Frontends select advertised models, never receive provider API keys.",
       "transport": "agent.mail"
     },
     {

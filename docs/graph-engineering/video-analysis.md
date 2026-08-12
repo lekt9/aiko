@@ -1,5 +1,7 @@
 # Video analysis: *AI and the Future of Work*
 
+> **Historical.** Dated review or transcript. Not current product documentation. What the tree is today: [../SOURCE-OF-TRUTH.md](../SOURCE-OF-TRUTH.md).
+
 ## Identification and scope
 
 The supplied recording is a **Stanford classroom career lecture about AI and the future of work**, not a lecture about graph engineering. The first speaker is **Andrew Ng** (approximately 00:00–16:40). He then introduces **Laurence Moroney**, formerly an AI advocate at Google and, at the time described in the talk, working at Arm. Moroney delivers the main career talk and Q&A. The transcript artifact titles the recording *AI and the Future of Work*; a browser tab visible in several captured frames says “Navigating Your AI Career,” which appears to be the title of Moroney's deck or source page.

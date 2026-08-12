@@ -512,7 +512,7 @@ def measure_determinism_replay_agency(contract_data: dict) -> dict:
 def measure_laziness_detection_agency(contract_data: dict) -> dict:
     """Measure laziness detection from the LazinessDetector.
 
-    Grok Build has a LazinessDetector that:
+    Aiko has a LazinessDetector that:
     - Fires on idle (~10s threshold)
     - Classifies stall patterns
     - Minimum confidence 0.7

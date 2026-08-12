@@ -1,5 +1,7 @@
 # Aiko versus Grok on ARC-AGI-3
 
+> **Historical.** Dated report or retest log. Not current product documentation. What the tree is today: [../../docs/SOURCE-OF-TRUTH.md](../../docs/SOURCE-OF-TRUTH.md).
+
 Generated: `2026-07-22T09:39:30Z`
 
 This is a local offline ARC-AGI-3 comparison, not a leaderboard submission. Both harnesses received the same raw frame and transition format, one fresh model turn per action, and a 1-action cap per game. Exact progress comes from the local `arc_agi` engine.

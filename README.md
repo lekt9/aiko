@@ -1,11 +1,16 @@
 # Aiko
 
 **Aiko is an AI Forward Deployed Engineer**: a digital employee for recurring,
-cross-system operational work, exposed as an MCP and mounted inside Hermes.
-Give her a role, scoped employee accounts, and an outcome to own. The target is
-for Aiko to learn the systems already in place, build and admit the integrations
-she needs, run controllable workflows, wait for the outside world, and verify an
-effect before calling it done.
+cross-system operational work, exposed as an MCP. Give her a role, scoped
+employee accounts, and an outcome to own. She learns the systems already in
+place, builds and admits the integrations she needs, runs controllable
+workflows, waits for the outside world, and verifies an effect before calling
+it done.
+
+This repository is the published monorepo:
+[`github.com/lekt9/aiko`](https://github.com/lekt9/aiko). License:
+[Apache-2.0](LICENSE). What exists in-tree versus what is local-only is
+recorded in [`docs/SOURCE-OF-TRUTH.md`](docs/SOURCE-OF-TRUTH.md).
 
 Most agents can complete a task. The hard problem is a process that runs every
 day, talks to people, waits for replies, and has to be *right* — because being
@@ -16,6 +21,32 @@ features this README pretends are already complete.
 
 > Spelled **Aiko**. Meeting notes and transcripts say "Ico"; that is a
 > transcription artifact.
+
+---
+
+## Hired, not installed
+
+The deployment model is an employment model. Where a platform hands you an
+integration checklist, Aiko onboards herself, the way a forward-deployed
+engineer would:
+
+- **Account credentials are the primary form of auth, not API keys.** An
+  employee is given a login and a seat, not a bag of per-service keys — and so
+  is Aiko. She acts through the same accounts and interfaces a person would,
+  so anything an employee can reach, she can reach, with the same audit trail.
+  (The managed credential vault is direction, not shipped — see
+  [Status](#status).)
+- **She builds the systems.** The processes she operates are systems she
+  stands up herself — gated, witnessed, and refused when wrong (see
+  [the one idea](#the-one-idea) below).
+- **She wires herself in through the same shape at every scale.** Neuron fires,
+  Contract records, Cell composes typed DAGs, and the Rust host is the agent
+  you actually run. Harness within the harness is the design, not an accident;
+  the same seal at every scale is what "meta-fractal" means here.
+- **She is a drop-in replacement for an employee, as an agent.** She takes the
+  seat, the login, and the process. Everything below — the ledger, W6H, the
+  gates — exists so that handoff can be trusted: the one property a report
+  cannot mechanically give you is the one Aiko refuses to fake.
 
 ---
 
@@ -384,9 +415,9 @@ refusal rather than the success.
 Requires Zig 0.16.
 
 ```sh
-git clone git@gitea:Unbrowse/commons.git && cd commons
-zig build                    # → zig-out/bin/aiko + libcontract.a
-zig build test               # both layers' suites
+git clone https://github.com/lekt9/aiko.git && cd aiko
+zig build                    # → zig-out/bin/aiko + aiko-doctor
+zig build test               # both Zig layers' suites
 zig build gate               # the runnable witnesses
 ./zig-out/bin/aiko-doctor    # prove both layers link in one process
 ```
@@ -445,11 +476,11 @@ cannot see. `neuron redrive --dry-run` is the verdict; the view shows the facts.
 (8 tools, asserted as an exact set by `dispatch-gate`). Register it per-project:
 
 ```jsonc
-// ~/.claude.json → projects["/path/to/commons"].mcpServers
+// ~/.claude.json → projects["/path/to/aiko"].mcpServers
 "aiko": { "type": "stdio",
-          "command": "/path/to/commons/zig-out/bin/aiko-doctor",
+          "command": "/path/to/aiko/zig-out/bin/aiko-doctor",
           "args": ["mcp"],
-          "env": { "PATH": "/path/to/commons/zig-out/bin:$PATH" } }
+          "env": { "PATH": "/path/to/aiko/zig-out/bin:$PATH" } }
 ```
 
 The `PATH` entry is required: neuron's verbs are invoked through its own CLI —
@@ -510,11 +541,13 @@ no remote at all, is one repository with one history.
 
 | Path | What it is |
 |------|-----------|
-| `neuron/` | Neuron (Zig) — firing, membrane, ports, redrive, `neuron/limbs/` (12 admitted packages) |
-| `contract/` | Contract substrate — ledger, W6H, occurrences. **Closed source**, see `contract/NEVER-PUBLISH.md` |
-| `aiko/` | Rust host, skills, MCP. Not in the Zig build |
-| `src/` | Root harness — `aiko-doctor` links both layers (comptime assert `contract.FireRequest == typed_neuron.FireRequest`) |
-| `tests/` | Root witnesses — `bridge`, `dispatch`, `tick`, `zig-doctrine`, `conformance`, `minimal-tree` |
+| `neuron/` | Neuron (Zig) — firing, membrane, ports, redrive, `neuron/limbs/` (admitted packages) |
+| `contract/` | Contract substrate — ledger, W6H, occurrences. In-tree; see `contract/README.md` |
+| `aiko/` | Rust host, desktop, skills, MCP. Not in the Zig build |
+| `cell/` | Fractal YAML/Python harness. Standalone — no runtime import of `contract/` or `neuron/` |
+| `src/` | Root harness — `aiko-doctor` links both Zig layers (comptime assert `contract.FireRequest == typed_neuron.FireRequest`) |
+| `tests/` | Root witnesses — `bridge`, `dispatch`, `tick`, `zig-doctrine`, `conformance`, graph-engineering |
+| `docs/` | Cross-layer map — start at [`docs/README.md`](docs/README.md) |
 
 ### History
 
@@ -545,9 +578,9 @@ root `.gitignore` keeps it that way.
 
 ### Pushing a project upstream
 
-```sh
-git subtree push --prefix=neuron   git@gitea:Unbrowse/neuron.git             main
-```
+The public remote is `origin` → `github.com/lekt9/aiko`. Subtree splits to
+historical Gitea remotes are operator-only and are not part of the public
+clone path.
 
 ---
 
@@ -555,14 +588,22 @@ git subtree push --prefix=neuron   git@gitea:Unbrowse/neuron.git             mai
 
 | Document | Authority |
 |---|---|
+| [`docs/SOURCE-OF-TRUTH.md`](docs/SOURCE-OF-TRUTH.md) | published-tree inventory; docs must not contradict it |
+| [`docs/README.md`](docs/README.md) | documentation map |
 | `CLAUDE.md` | agent session context — read first if you are an agent |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | how to change this tree |
+| [`SECURITY.md`](SECURITY.md) | private vulnerability reports |
 | `docs/AIKO-FDE-PLAN.md` | expanded AI Forward Deployed Engineer execution plan |
 | `docs/graph-engineering/aiko-fde.walk.json` | executable, skill-grounded delivery graph |
-| `PLAN-aiko-convergence.md` | completed convergence reasoning; retained as history |
 | `neuron/AGENTS.md` | normative architecture |
 | `neuron/IMPLEMENTATION.md` | what exists today, and known limits |
 | `neuron/reference/ROADMAP.md` | unsettled work only |
 | `contract/DOCTRINE.md` | substrate doctrine and parity spec |
+| `PLAN-aiko-convergence.md` | **historical** — T1–T4 already landed |
+
+## License
+
+Apache License 2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 
 Do not place customer operational data — worker names, identity numbers,
 rosters — in this repository.

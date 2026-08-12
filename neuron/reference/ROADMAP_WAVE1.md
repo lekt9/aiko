@@ -1,5 +1,7 @@
 # Roadmap wave 1 — compaction, daemon availability, admitted drainer
 
+> **Historical.** Dated roadmap wave. Not current product documentation. What the tree is today: [../../docs/SOURCE-OF-TRUTH.md](../../docs/SOURCE-OF-TRUTH.md).
+
 Status: ACTIVE 2026-07-27 (jesus-ralph loop; gate `bash tests/roadmap-wave1-gate.sh`)
 
 Wave selection per the roadmap review on 2026-07-27: the two sharpest

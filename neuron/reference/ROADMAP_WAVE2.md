@@ -1,5 +1,7 @@
 # Roadmap wave 2 — energy router, fan-out, telemetry-advisor
 
+> **Historical.** Dated roadmap wave. Not current product documentation. What the tree is today: [../../docs/SOURCE-OF-TRUTH.md](../../docs/SOURCE-OF-TRUTH.md).
+
 Status: SETTLED 2026-07-27 (jesus-ralph gate `bash tests/roadmap-wave2-gate.sh`)
 
 Wave 2 covered R2a/R2b/R2c/R2e (energy-router completion), R3 (fan-out limb),

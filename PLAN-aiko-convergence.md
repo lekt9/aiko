@@ -1,5 +1,8 @@
 # Aiko — convergence plan: reactive, self-wiring, self-writing
 
+> **Historical.** T1–T4 are landed. Kept for the reasoning, not as a worklist.
+> Current tree: [`docs/SOURCE-OF-TRUTH.md`](docs/SOURCE-OF-TRUTH.md).
+
 Risk-ordered, in the shape `/ix-memory:ix-plan` produces. **ix could not supply the
 blast radii**: it has no symbol graph for this Zig tree (`ix locate` resolves no
 entities; it has indexed only markdown). Every independence claim below is

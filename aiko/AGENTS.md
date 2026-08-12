@@ -7,11 +7,12 @@ one. A feature that makes the user install a skill, run an MCP server, paste a
 key, or walk a wizard to *begin* is working against the product, however useful
 in isolation. Reach other systems through Unbrowse, not a bespoke connector.
 
-Aiko is the Contract-native agent. One repo, one binary. Every tool call
-crosses `neuron.fire/v2`: typed validate → commit → dispatch → settle. The
-Contract substrate (`libcontract.dylib`, ABI v12) is the durable interpreter.
-Sibling repos (`contract`, `neuron`) are independent build artifacts pulled
-from the Gitea package registry on install — not separate agents.
+Aiko is the Contract-native agent. One monorepo, one user binary (`aiko`).
+Every tool call crosses `neuron.fire/v2`: typed validate → commit → dispatch
+→ settle. The Contract substrate (`libcontract`, in-tree at `../contract`)
+is the durable interpreter. `neuron/` and `contract/` are layers in this
+published tree, not extra clones and not separate agents. Inventory:
+[`../docs/SOURCE-OF-TRUTH.md`](../docs/SOURCE-OF-TRUTH.md).
 
 ## The single primitive
 

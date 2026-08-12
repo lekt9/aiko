@@ -1,6 +1,9 @@
 # Cell Spec — `cell/v0`
 
 **Status:** draft · self-contained · python-native.
+
+Layer of the published Aiko monorepo. Must not import `contract/` or
+`neuron/`. Inventory: [`../docs/SOURCE-OF-TRUTH.md`](../docs/SOURCE-OF-TRUTH.md).
 **Canonical form:** JSON. YAML is authoring sugar — `run.py` normalizes to JSON before execution.
 **Runtime:** `run.py` (python) is canonical. `src/main.zig` is an optional static mirror (Zig is only the runtime).
 

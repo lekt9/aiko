@@ -1,5 +1,10 @@
 # Installing Typed Neuron
 
+This is the **standalone Neuron bundle** installer. The published monorepo
+product path is the root [`README.md`](../../README.md) (`zig build` or
+`aiko/` `scripts/contract-runtime.sh install`). Inventory:
+[`../../docs/SOURCE-OF-TRUTH.md`](../../docs/SOURCE-OF-TRUTH.md).
+
 A single static binary plus an installer script. No runtime dependencies, no
 package manager, no daemon you didn't start.
 

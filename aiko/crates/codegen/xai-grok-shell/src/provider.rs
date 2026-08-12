@@ -37,7 +37,7 @@ impl Provider {
     pub fn display_name(&self) -> &'static str {
         match self {
             Provider::Codegraff => "Codegraff",
-            Provider::Grok => "Grok",
+            Provider::Grok => "Aiko",
         }
     }
 
@@ -278,7 +278,7 @@ mod tests {
     #[test]
     fn free_usage_message_includes_provider_specific_text() {
         let g_msg = Provider::Grok.free_usage_message();
-        assert!(g_msg.contains("Grok"));
+        assert!(g_msg.contains("Aiko"));
         assert!(g_msg.contains("SuperGrok"));
         assert!(g_msg.contains("grok.com/supergrok"));
 

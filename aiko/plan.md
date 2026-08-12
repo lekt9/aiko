@@ -1,5 +1,8 @@
 # Active Goal — FECH Core Capability Intelligence
 
+> **Historical plan.** Not a current worklist. See
+> [`../docs/SOURCE-OF-TRUTH.md`](../docs/SOURCE-OF-TRUTH.md).
+
 ## Outcome
 
 Build the smallest useful Fractal Energy Cell Harness across Aiko and

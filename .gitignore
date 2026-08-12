@@ -43,6 +43,14 @@ codedb.snapshot
 *.local.json
 data/
 
+# Unpublished local workspaces (not the product)
+aiko-flow/
+career-ops/
+
+# Customer operational material must never be committed
+cell/data/hoysan*
+cell/hoysan-*
+
 # OS noise
 .DS_Store
 

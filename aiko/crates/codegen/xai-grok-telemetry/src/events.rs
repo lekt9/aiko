@@ -1094,7 +1094,7 @@ pub struct PlanSubmit {
 }
 
 /// Which option the user chose in the project-directory picker (shown on the
-/// first prompt when Grok Build is launched from a non-project directory).
+/// first prompt when Aiko is launched from a non-project directory).
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectPickerOutcome {
@@ -1489,7 +1489,7 @@ pub struct CreditLimitUpsellClicked {
 /// Emitted when a previously access-gated user re-authenticates and the gate
 /// is lifted — i.e. they subscribed (externally on grok.com) and came back.
 /// This is the actual conversion signal for SuperGrok Heavy subscriptions
-/// attributed to Grok Build: the user saw the gate in Grok Build, went and
+/// attributed to Aiko: the user saw the gate in Aiko, went and
 /// paid, then returned with access.
 #[derive(Serialize)]
 pub struct SubscriptionActivated {
@@ -1497,7 +1497,7 @@ pub struct SubscriptionActivated {
     pub auth_method: Option<String>,
     /// Whether the subscribe CTA was shown in this session before the gate
     /// was lifted (`access_gate_shown_logged`). When `true`, the conversion
-    /// is strongly attributable to Grok Build's upsell surface.
+    /// is strongly attributable to Aiko's upsell surface.
     pub upsell_shown_this_session: bool,
 }
 

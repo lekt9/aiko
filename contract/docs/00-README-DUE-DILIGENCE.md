@@ -1,7 +1,9 @@
 # Aiko — Due-Diligence Dossier
 
-> **Confidential.** Prepared for investor due diligence. Not for distribution.
-> This dossier describes proprietary architecture; please do not share it.
+> **Historical internal draft.** Not the product README. Current tree:
+> [`../../docs/SOURCE-OF-TRUTH.md`](../../docs/SOURCE-OF-TRUTH.md).
+> Do not treat claims here as shipped unless a gate in this repository
+> reproduces them.
 
 ---
 

@@ -1,5 +1,8 @@
 # Graph engineering in Aiko
 
+Cross-layer notes for the published monorepo. Inventory:
+[`../SOURCE-OF-TRUTH.md`](../SOURCE-OF-TRUTH.md).
+
 Aiko answers one expensive question before work fans out:
 
 > Is the runnable work **a chain, or a graph**?
@@ -84,6 +87,27 @@ Malformed walks, unknown dependencies, and cycles are refusals. Collisions, grou
 
 The representations are related but not interchangeable: a Contract walk is not automatically executed as a Cell, and Neuron’s `/graph` is committed provenance, not a task plan.
 
+## Package a reusable graph harness
+
+`GraphHarness` adds a content-addressed transport membrane over those existing owners. It pins a bounded data graph, typed inputs and outputs, implementations, grounding, resources, effects, witnesses, judges, recursion ceilings, and provenance without becoming another runtime.
+
+```sh
+mkdir -p /tmp/aiko-harness-demo
+bin/aiko-harness build tests/fixtures/graph-harness/fanout.problem.json \
+  --root tests/fixtures/graph-harness \
+  --output /tmp/aiko-harness-demo/fanout.harness.json
+bin/aiko-harness inspect /tmp/aiko-harness-demo/fanout.harness.json \
+  --root tests/fixtures/graph-harness --json
+bin/aiko-harness register /tmp/aiko-harness-demo/fanout.harness.json \
+  --registry /tmp/aiko-harness-demo/registry
+bin/aiko-harness find fixture-fanout \
+  --registry /tmp/aiko-harness-demo/registry --version 1.0.0
+```
+
+The lifecycle is **build → run → settle → register**, recursively for generated child packages. Only build, inspect, register, and find exist on this command today. `build` validates and packages local pinned bytes; it does not execute nodes, witnesses, or judges. `register` stores an envelope; it does not append Contract truth. Run/settle must use explicit confined executors, independent evidence, Contract durability, and Neuron citations. See [HARNESS-COMPILER.md](HARNESS-COMPILER.md) for commands, exact checks, bounds, compatibility, current limits, and the staged execution route; see [HARNESS-SPEC.md](HARNESS-SPEC.md) for the canonical v1 contract.
+
+This remains **no new scheduler and no new ledger**: Contract owns durable work and settlement, Cell owns typed local execution, Neuron owns committed reactive provenance, and Aiko owns package admission, registry discovery, adapters, and composition.
+
 ## Effects change the rule
 
 Only a kind whose authority is mechanically confined by a portable, witnessed executor may ever parallelize. Frontiers are topological: dependency independence says what is ready, not what is safe to run concurrently. Cell fires every same-frontier Python, exec, HTTP, and composite sibling serially in lexical order. Python/exec caps are audit metadata, not confinement; an empty declaration does not establish effect freedom. Across task workers, overlapping writes need isolated workspaces plus an explicit reconciliation step.
@@ -101,11 +125,15 @@ This gate runs the real Contract dylib witness, the complete Cell gate, the stan
 ## Read next
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — ownership, mappings, invariants, and diagrams.
+- [HARNESS-SPEC.md](HARNESS-SPEC.md) — canonical `graph-harness/v1` transport and admission contract.
+- [HARNESS-COMPILER.md](HARNESS-COMPILER.md) — package lifecycle, commands, exact validation, limits, and confined-execution route.
+- [HARNESS-REVIEW.md](HARNESS-REVIEW.md) — independent adversarial findings, repairs, witnesses, and accepted limits.
 - [MIGRATION.md](MIGRATION.md) — move serial or implicit flows onto declared graph contracts.
 - [EXAMPLES.md](EXAMPLES.md) — runnable chain, fan-out, refusal, gap, invalidation, and compensation examples.
-- [video-analysis.md](video-analysis.md) and [video-transcript.md](video-transcript.md) — source-grounded lecture material and its provenance boundary.
+- [video-analysis.md](video-analysis.md) and [video-transcript.md](video-transcript.md) — source-grounded Andrew Ng/Laurence Moroney lecture material and its provenance boundary.
+- [base44-video-analysis.md](base44-video-analysis.md) and [base44-video-transcript.md](base44-video-transcript.md) — source-grounded analysis of the 56-second Base44 advertisement and the derived graph-native requirements it does not itself claim.
 - [repository-audit.md](repository-audit.md) — the pre-implementation audit; its “gaps” section is a dated snapshot, not the current feature list.
 
 ## Source vs. synthesis
 
-The supplied video is a Stanford career lecture by Andrew Ng and Laurence Moroney about AI work, product discovery, delivery, risk, technical debt, hype, and an intent → plan → tools → reflect loop. It does **not** teach DAG scheduling, Aiko, Cell, Neuron, Contract, typed graph edges, witnesses, or compensation. Translating its themes into the graph mechanics documented here is project synthesis. Reported percentages, forecasts, demonstrations, and anecdotes remain speaker claims unless independently verified.
+The earlier supplied video is a Stanford career lecture by Andrew Ng and Laurence Moroney about AI work, product discovery, delivery, risk, technical debt, hype, and an intent → plan → tools → reflect loop. The later Base44 URL is a 56-second advertisement promising a describe → integrate → refine experience. Neither source teaches DAG scheduling, Aiko, Cell, Neuron, Contract, typed graph edges, witnesses, admission, redrive, or compensation. Translating their themes into the graph mechanics documented here is project synthesis. Reported percentages, forecasts, demonstrations, anecdotes, and product propositions remain source claims unless independently verified.

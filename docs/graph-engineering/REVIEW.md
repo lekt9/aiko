@@ -1,5 +1,7 @@
 # Independent graph-engineering review
 
+> **Historical.** Dated review or transcript. Not current product documentation. What the tree is today: [../SOURCE-OF-TRUTH.md](../SOURCE-OF-TRUTH.md).
+
 Verdict: PASS
 
 No actionable P0, P1, or P2 findings remain. I reran the prior review falsifiers and the cross-layer acceptance surfaces, inspected the three latest repairs, changed only this report, and did not settle the graph JSON.

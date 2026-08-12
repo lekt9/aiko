@@ -1,5 +1,8 @@
 # Aiko — what to build, and what not to
 
+> Current product intent. Layer inventory and clone/build commands live in
+> [`docs/SOURCE-OF-TRUTH.md`](docs/SOURCE-OF-TRUTH.md).
+
 This replaces a 3,279-word architecture document. Elon's algorithm says the most
 common mistake is optimising a thing that should not exist, so this starts by
 deleting, and what survives is small. The previous version is in git history;

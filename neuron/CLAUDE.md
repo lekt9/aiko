@@ -1,5 +1,11 @@
 # CLAUDE.md — working instructions for this repo
 
+This directory is the Neuron layer of the published Aiko monorepo
+([`github.com/lekt9/aiko`](https://github.com/lekt9/aiko)). Inventory:
+[`../docs/SOURCE-OF-TRUTH.md`](../docs/SOURCE-OF-TRUTH.md). From the monorepo
+root, `zig build` installs this CLI as `zig-out/bin/aiko`. Building **here**
+must still succeed without `../contract`.
+
 Typed Neuron: a fail-closed runtime for typed agent workflows, in Zig 0.16.
 
 `AGENTS.md` (~85KB) is the **normative spec**, not session context. Read the

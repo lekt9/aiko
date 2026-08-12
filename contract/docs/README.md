@@ -1,5 +1,9 @@
 # contract — documentation index
 
+> Design notes for the in-tree Contract layer of the published monorepo.
+> Product clone/build: [`../../docs/SOURCE-OF-TRUTH.md`](../../docs/SOURCE-OF-TRUTH.md).
+> Due-diligence essays below are **historical drafts**, not the public README.
+
 One signed binary, one append-only ledger, one truth-root. Start here.
 
 ## How it works (explanatory — the machine, verified against code)

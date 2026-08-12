@@ -1,6 +1,8 @@
 # Session Management
 
-Grok saves every conversation to disk automatically. Whether you work in the TUI, in headless mode, or over agent stdio, Grok records the exchange as a session. You can resume, rewind, or compact it. This document describes how to manage sessions.
+> **Aiko TUI docs.** The user binary is `aiko`. Crate/`~/.grok/` names are compatibility identifiers.
+
+Aiko saves every conversation to disk automatically. Whether you work in the TUI, in headless mode, or over agent stdio, Aiko records the exchange as a session. You can resume, rewind, or compact it. This document describes how to manage sessions.
 
 ---
 
@@ -15,13 +17,13 @@ A session is a persistent conversation with full history. It includes:
 - Token usage and turn counts
 - Subagent sessions (when enabled)
 
-Sessions are identified by a unique session ID (a UUIDv7 when Grok generates it; a client may supply its own ID with `-s`) and stored on disk under `~/.grok/sessions/`. Set `GROK_HOME` to override the base directory; when it is unset, Grok uses `~/.grok`.
+Sessions are identified by a unique session ID (a UUIDv7 when Aiko generates it; a client may supply its own ID with `-s`) and stored on disk under `~/.grok/sessions/`. Set `GROK_HOME` to override the base directory; when it is unset, Aiko uses `~/.grok`.
 
 ---
 
 ## Storage Layout
 
-Grok stores each session in its own directory, grouped by working directory. It URL-encodes the working directory to name the group. When the encoded name exceeds 255 bytes, it instead uses a slug plus a hash and records the original path in a `.cwd` file inside the group.
+Aiko stores each session in its own directory, grouped by working directory. It URL-encodes the working directory to name the group. When the encoded name exceeds 255 bytes, it instead uses a slug plus a hash and records the original path in a `.cwd` file inside the group.
 
 ```
 ~/.grok/sessions/<encoded-cwd>/<session-id>/
@@ -54,13 +56,13 @@ This clears the current context and begins a new conversation. Alias: `/clear`.
 
 ### Exit
 
-End the session and quit Grok:
+End the session and quit Aiko:
 
 ```
 /quit
 ```
 
-Alias: `/exit`. To leave the current session but stay in Grok, use `/home` to return to the welcome screen.
+Alias: `/exit`. To leave the current session but stay in Aiko, use `/home` to return to the welcome screen.
 
 ---
 
@@ -92,7 +94,7 @@ Run `grok --resume` without an ID to resume the most recent session for the curr
 
 ### From the Welcome Screen
 
-When you launch `grok`, the welcome screen lists recent sessions for the current directory. Select one to resume it.
+When you launch `aiko`, the welcome screen lists recent sessions for the current directory. Select one to resume it.
 
 ---
 
@@ -128,7 +130,7 @@ Alias: `/title`.
 /rewind
 ```
 
-When you run `/rewind` (or press **Esc Esc** within 800ms while idle with an empty prompt and conversation messages), Grok:
+When you run `/rewind` (or press **Esc Esc** within 800ms while idle with an empty prompt and conversation messages), Aiko:
 
 1. Shows a list of rewind points (one per user prompt)
 2. Lets you select which point to rewind to
@@ -154,7 +156,7 @@ The optional `context` argument lets you provide additional instructions about w
 
 ### Auto-Compact
 
-Grok automatically compacts the conversation when the context window approaches its limit. You will see a notification when auto-compact triggers. The `context_window` setting on your model configuration controls when this threshold is reached.
+Aiko automatically compacts the conversation when the context window approaches its limit. You will see a notification when auto-compact triggers. The `context_window` setting on your model configuration controls when this threshold is reached.
 
 ---
 
@@ -184,13 +186,13 @@ In headless mode, you manage sessions through command-line flags:
 
 ```bash
 # New session each time (default)
-grok -p "Hello"
+aiko --single "Hello"
 
 # Resume an existing session by ID (errors if it does not exist)
-grok -p "Continue where we left off" -r <session-id>
+aiko --single "Continue where we left off" -r <session-id>
 
 # Continue the most recent session in the current directory
-grok -p "What were we doing?" -c
+aiko --single "What were we doing?" -c
 ```
 
 In headless mode, resume an existing session with `-r`/`--resume`, which errors if the session does not exist, or continue the most recent session in the current directory with `-c`/`--continue`. Pass the session ID from JSON output (see below) to `-r`.
@@ -200,7 +202,7 @@ Use `-s`/`--session-id` only to **create** a new session with a **UUID** (errors
 To read the session ID back, request JSON output:
 
 ```bash
-grok -p "Hello" --output-format json | jq -r '.sessionId'
+aiko --single "Hello" --output-format json | jq -r '.sessionId'
 ```
 
 ---
@@ -249,7 +251,7 @@ grok sessions search "rate limit"
 
 ## Worktree Sessions
 
-When working with subagents or session forks, Grok can create isolated git worktrees per session. Each worktree gets its own copy of the working directory, so file changes in one session do not affect another.
+When working with subagents or session forks, Aiko can create isolated git worktrees per session. Each worktree gets its own copy of the working directory, so file changes in one session do not affect another.
 
 Worktree sessions are managed internally through the `x.ai/git/worktree/*` extension methods. Key operations:
 
@@ -265,7 +267,7 @@ Resume a session in a fresh worktree with `grok -w -r <session-id>`.
 
 ### Persistence Format
 
-Grok stores the conversation as newline-delimited JSON (JSONL). Each line in `updates.jsonl` is a self-contained ACP session update event. This format supports:
+Aiko stores the conversation as newline-delimited JSON (JSONL). Each line in `updates.jsonl` is a self-contained ACP session update event. This format supports:
 
 - Incremental writes (append-only during a session)
 - Efficient streaming reads (for session restore)

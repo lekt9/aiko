@@ -2,6 +2,11 @@
 
 > Fractal harness. One primitive: `Cell = membrane + (run | organelles+wiring)`. Python-native.
 
+This directory is the Cell layer of the published Aiko monorepo
+([`github.com/lekt9/aiko`](https://github.com/lekt9/aiko)). Inventory:
+[`../docs/SOURCE-OF-TRUTH.md`](../docs/SOURCE-OF-TRUTH.md). Cell must not
+import `contract/` or `neuron/`.
+
 ## Quick start
 
 ```sh

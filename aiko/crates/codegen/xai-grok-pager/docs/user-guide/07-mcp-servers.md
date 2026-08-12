@@ -1,12 +1,14 @@
 # MCP Servers
 
-MCP (Model Context Protocol) servers extend Grok with external tool integrations. They let Grok interact with any service that implements the MCP standard.
+> **Aiko TUI docs.** The user binary is `aiko`. Crate/`~/.grok/` names are compatibility identifiers.
+
+MCP (Model Context Protocol) servers extend Aiko with external tool integrations. They let Aiko interact with any service that implements the MCP standard.
 
 ---
 
 ## What Are MCP Servers?
 
-An MCP server is a process that exposes tools to Grok over a standardized protocol. When you configure an MCP server, its tools become available to the model alongside Grok's built-in tools. The model can discover and call these tools during a session.
+An MCP server is a process that exposes tools to Aiko over a standardized protocol. When you configure an MCP server, its tools become available to the model alongside Aiko's built-in tools. The model can discover and call these tools during a session.
 
 For example, a GitHub MCP server might expose tools like `create_issue`, `list_pull_requests`, and `search_code`. A database server might expose `query`, `list_tables`, and `describe_schema`.
 
@@ -20,7 +22,7 @@ MCP servers are configured in `~/.grok/config.toml` under `[mcp_servers.<name>]`
 
 ### stdio Transport (Local Process)
 
-Grok spawns a local process and communicates over stdin/stdout:
+Aiko spawns a local process and communicates over stdin/stdout:
 
 ```toml
 [mcp_servers.my-server]
@@ -44,7 +46,7 @@ tool_timeouts = { slow_op = 120 }     # Per-tool timeout overrides, seconds
 > inline (full payload spilled under the session `mcp/` folder). Default is
 > **20_000 bytes**. Override via:
 >
-> - env `GROK_MAX_MCP_OUTPUT_BYTES` or `MAX_MCP_OUTPUT_BYTES` (bytes; Grok-native
+> - env `GROK_MAX_MCP_OUTPUT_BYTES` or `MAX_MCP_OUTPUT_BYTES` (bytes; Aiko-native
 >   wins if both set; Claude-style name, but we bound by **bytes** not tokens)
 > - `config.toml` — user-level (`~/.grok/config.toml`) **or repo-level**
 >   (`.grok/config.toml` anywhere on the cwd → git-root chain; the deepest
@@ -142,9 +144,9 @@ url = "https://mcp.linear.app/mcp"
 enabled = true
 ```
 
-When a server exposes a native HTTP/SSE endpoint, prefer the `url` form over wrapping it in a stdio proxy such as `npx mcp-remote <url>`. Grok handles HTTP/SSE and OAuth directly, so the native form avoids an extra subprocess per session. It also registers Grok's own OAuth client with the provider.
+When a server exposes a native HTTP/SSE endpoint, prefer the `url` form over wrapping it in a stdio proxy such as `npx mcp-remote <url>`. Aiko handles HTTP/SSE and OAuth directly, so the native form avoids an extra subprocess per session. It also registers Aiko's own OAuth client with the provider.
 
-Grok walks from the current directory up to the git repo root, loading `.grok/config.toml` at each level:
+Aiko walks from the current directory up to the git repo root, loading `.grok/config.toml` at each level:
 
 | Location | Scope | Priority |
 |----------|-------|----------|
@@ -154,7 +156,7 @@ Grok walks from the current directory up to the git repo root, loading `.grok/co
 
 If a project defines a server with the same name as a global one, the project version replaces it entirely (fields are not merged).
 
-Project-scoped files contribute `[mcp_servers]`, `[plugins]`, and `[permission]` entries. Grok reads most other config sections only from `~/.grok/config.toml`.
+Project-scoped files contribute `[mcp_servers]`, `[plugins]`, and `[permission]` entries. Aiko reads most other config sections only from `~/.grok/config.toml`.
 
 ---
 
@@ -169,7 +171,7 @@ MCP tools are namespaced with the server name to avoid collisions:
 
 ## Toggle Servers at Runtime
 
-You can enable or disable MCP servers during a session without restarting Grok.
+You can enable or disable MCP servers during a session without restarting Aiko.
 
 ### The /mcps Modal
 
@@ -198,11 +200,11 @@ The model has access to two built-in tools for working with MCP servers:
 
 ## Compatibility
 
-Grok loads MCP server configurations from multiple sources for compatibility:
+Aiko loads MCP server configurations from multiple sources for compatibility:
 
 | Source | Format | Location | Configurable |
 |--------|--------|----------|-------------|
-| `config.toml` | Native Grok config | `~/.grok/config.toml`, `.grok/config.toml` | Always on |
+| `config.toml` | Native Aiko config | `~/.grok/config.toml`, `.grok/config.toml` | Always on |
 | `.claude.json` | Claude Code format | `~/.claude.json` | `[compat.claude] mcps` |
 | `.cursor/mcp.json` | Cursor format | `~/.cursor/mcp.json`, `<project>/.cursor/mcp.json` | `[compat.cursor] mcps` |
 | `.mcp.json` | MCP standard format | Project root (cwd to git root) | Loaded unless you have imported or dismissed the Claude import prompt (the import marker is set) |
@@ -215,7 +217,7 @@ The Claude and Cursor MCP sources are scanned by default. To disable scanning fo
 
 ## MCP OAuth
 
-For MCP servers that require OAuth authentication, Grok handles the credential flow automatically. When an MCP server requests OAuth credentials, Grok opens a browser-based authorization flow and stores the resulting tokens for future use.
+For MCP servers that require OAuth authentication, Aiko handles the credential flow automatically. When an MCP server requests OAuth credentials, Aiko opens a browser-based authorization flow and stores the resulting tokens for future use.
 
 ---
 
@@ -225,7 +227,7 @@ Use the `url` form for hosted MCP servers and the `command` / `args` form for lo
 
 ### Native HTTP (hosted services)
 
-You must authenticate OAuth-based MCP servers before you can use them. Grok stores the resulting tokens under `~/.grok/mcp_credentials.json` as local plaintext with owner-only file permissions (`0600` on Unix). Prefer full-disk encryption on the host. After you edit `config.toml`, press `r` in the `/mcps` modal to refresh the server list.
+You must authenticate OAuth-based MCP servers before you can use them. Aiko stores the resulting tokens under `~/.grok/mcp_credentials.json` as local plaintext with owner-only file permissions (`0600` on Unix). Prefer full-disk encryption on the host. After you edit `config.toml`, press `r` in the `/mcps` modal to refresh the server list.
 
 ```toml
 [mcp_servers.linear]
@@ -252,7 +254,7 @@ enabled = true
 Authorization = "Bearer <token>"
 ```
 
-To avoid putting secrets in the config file, reference an environment variable with `${VAR}` (or `${VAR:-default}`). Grok expands string fields in `[mcp_servers.*]` — `url`, `command`, `args`, and the values in `env` and `headers` — at load time:
+To avoid putting secrets in the config file, reference an environment variable with `${VAR}` (or `${VAR:-default}`). Aiko expands string fields in `[mcp_servers.*]` — `url`, `command`, `args`, and the values in `env` and `headers` — at load time:
 
 ```toml
 [mcp_servers.internal-tools]
@@ -285,7 +287,7 @@ tool_timeout_sec = 120
 tool_timeouts = { slow_analysis = 300, quick_lookup = 10 }
 ```
 
-On Windows, npm installs launchers like `npx`, `npm`, `pnpm`, and `yarn` as `.cmd` batch shims (there is no `npx.exe`). Grok resolves a bare `command` such as `npx` to its real launcher path on `PATH` (honoring `PATHEXT`) before spawning, so these work without manually wrapping them in `cmd /c`. A `command` given as an absolute path or one containing a path separator is used as-is.
+On Windows, npm installs launchers like `npx`, `npm`, `pnpm`, and `yarn` as `.cmd` batch shims (there is no `npx.exe`). Aiko resolves a bare `command` such as `npx` to its real launcher path on `PATH` (honoring `PATHEXT`) before spawning, so these work without manually wrapping them in `cmd /c`. A `command` given as an absolute path or one containing a path separator is used as-is.
 
 ---
 
@@ -324,7 +326,7 @@ npx -y @modelcontextprotocol/server-filesystem /path
 startup_timeout_sec = 30
 ```
 
-For stdio servers, Grok captures the process's standard error to `~/.grok/logs/mcp/<server>.stderr.log`, truncated on each launch. Check this file when a server starts but fails to handshake:
+For stdio servers, Aiko captures the process's standard error to `~/.grok/logs/mcp/<server>.stderr.log`, truncated on each launch. Check this file when a server starts but fails to handshake:
 
 ```bash
 tail -f ~/.grok/logs/mcp/filesystem.stderr.log

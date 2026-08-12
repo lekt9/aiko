@@ -1,5 +1,7 @@
 # Aiko vs Grok: isolated Harbor rerun
 
+> **Historical.** Dated report or retest log. Not current product documentation. What the tree is today: [../../docs/SOURCE-OF-TRUTH.md](../../docs/SOURCE-OF-TRUTH.md).
+
 Generated: 2026-07-22T05:10:36.552Z
 
 - Aiko: 4/7 (57%)

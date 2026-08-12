@@ -1,7 +1,9 @@
 # Third-party vendored crates
 
-This directory holds **upstream source** vendored into the repository. It is
-**not** first-party application code.
+This directory holds **upstream source** vendored into the Aiko Rust host. It
+is **not** first-party application code. The product name is Aiko; some
+vendored comments still say Aiko where they describe the original dependency
+closure.
 
 ## Why vendor
 
@@ -46,7 +48,7 @@ vendored); grepping only for `LICENSE` will miss them.
 
 Normal Cargo dependencies (tokio, serde, …) are **not** under `third_party/`.
 They resolve via `Cargo.lock` / crates.io. Full attribution and license texts
-for the Grok CLI dependency closure are maintained in
+for the Aiko CLI dependency closure are maintained in
 [`THIRD-PARTY-NOTICES`](../THIRD-PARTY-NOTICES).
 
 This directory is only for **in-tree vendored** sources.

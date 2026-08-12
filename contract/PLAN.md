@@ -1,5 +1,7 @@
 # Contract Agency Substrate — Execution Plan
 
+> **Historical.** Dated plan. Not current product documentation. What the tree is today: [../docs/SOURCE-OF-TRUTH.md](../docs/SOURCE-OF-TRUTH.md).
+
 Execution status: **complete (2026-07-20)**. Release evidence, metric results,
 executed workflows, verification commands, and the human-authority boundary are
 recorded in `docs/AGENCY-SUBSTRATE-RELEASE-EVIDENCE.md`.

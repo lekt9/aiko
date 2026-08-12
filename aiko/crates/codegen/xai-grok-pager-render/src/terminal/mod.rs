@@ -129,8 +129,8 @@ pub enum TerminalName {
     /// indistinguishable. All capabilities are conservative/Unknown.
     #[strum(to_string = "JetBrains")]
     JetBrains,
-    /// Grok Desktop (Electron app).
-    #[strum(to_string = "Grok Desktop")]
+    /// Aiko Desktop.
+    #[strum(to_string = "Aiko Desktop")]
     GrokDesktop,
     /// VTE-based terminal (GNOME Terminal, kgx/GNOME Console, Tilix, etc.).
     #[strum(to_string = "VTE")]

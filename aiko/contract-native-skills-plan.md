@@ -1,5 +1,7 @@
 # Contract-Native Skills Extraction Plan
 
+> **Historical.** Dated plan. Not current product documentation. What the tree is today: [../docs/SOURCE-OF-TRUTH.md](../docs/SOURCE-OF-TRUTH.md).
+
 ## Goal
 
 Make Aiko's Contract substrate small, generic, and mechanically enforceable.

@@ -1,5 +1,7 @@
 # Agent Dashboard
 
+> **Aiko TUI docs.** The user binary is `aiko`. Crate/`~/.grok/` names are compatibility identifiers.
+
 The Agent Dashboard is a centralised, agent-native overview of every
 top-level session you have in flight — your local sessions and forks
 — grouped by state, with peek, attach, and dispatch from one screen.
@@ -23,7 +25,7 @@ Three entry points, all opening the same view:
 ## What you see
 
 ```
- Grok Build · Dashboard — 4 agents · 2 awaiting
+ Aiko · Dashboard — 4 agents · 2 awaiting
 ▌● reviewer · audit token flow    Awaiting your input            2m
  ● implementer · fix login bug    Running: cargo test           12m
  ⋅ refactor · feat/login          Responding…                   24m
@@ -51,7 +53,7 @@ bottom of the group; select it and press `Enter` / `→` (or click it) to
 reveal them all, and `←` to re-fold. The Idle header always shows the true total. Folding is
 suspended while a filter or search is active (so every match shows).
 
-The state icon matches Grok Build's sibling views (
+The state icon matches Aiko's sibling views (
 `tasks_pane`):
 
 - `⋅`/`:`/`⸬`/`⁙` — animated spinner for **Working** rows.

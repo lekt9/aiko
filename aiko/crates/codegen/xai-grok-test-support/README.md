@@ -1,10 +1,10 @@
 # xai-grok-test-support
 
-Shared test infrastructure for the grok-build crates: mock inference server,
-SSE wire-format generators, ACP stdio clients, headless
-runner, and sandboxed process env. Consumed by `xai-grok-shell` integration
-tests, `xai-grok-pager-pty-harness` (`ContentController`), and `xai-grok-sampler`
-tests.
+Shared test infrastructure for the **Aiko** Rust crates. The crate name is a
+compatibility identifier. Provides a mock inference server, SSE wire-format
+generators, ACP stdio clients, a headless runner, and a sandboxed process env.
+Consumed by `xai-grok-shell` integration tests, `xai-grok-pager-pty-harness`
+(`ContentController`), and `xai-grok-sampler` tests.
 
 > **Freshness rule:** update this README in the same PR that changes `src/` —
 > reviewers should treat a `src/` diff without a README diff as incomplete.

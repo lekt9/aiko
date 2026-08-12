@@ -1,6 +1,7 @@
 # xai-crash-handler
 
-Crash handler for SIGBUS/SIGSEGV with best-effort backtrace capture.
+Aiko crash handler for SIGBUS/SIGSEGV with best-effort backtrace capture.
+The crate name is a compatibility identifier.
 
 ## How it works
 

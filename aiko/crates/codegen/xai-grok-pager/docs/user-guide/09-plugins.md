@@ -1,5 +1,7 @@
 # Plugins
 
+> **Aiko TUI docs.** The user binary is `aiko`. Crate/`~/.grok/` names are compatibility identifiers.
+
 A plugin bundles skills, slash commands, agents, hooks, MCP server configurations, and LSP server configurations into one installable unit.
 
 ---
@@ -15,7 +17,7 @@ A plugin is a directory that holds any combination of these components:
 - **MCP servers** -- a `.mcp.json` file of server configurations
 - **LSP servers** -- a `.lsp.json` file of language server configurations
 
-If a plugin includes a `plugin.json` manifest, the manifest can override paths or add metadata; otherwise components load from the convention directories. The manifest is optional: without one, Grok discovers the components above from their standard directories.
+If a plugin includes a `plugin.json` manifest, the manifest can override paths or add metadata; otherwise components load from the convention directories. The manifest is optional: without one, Aiko discovers the components above from their standard directories.
 
 For example, a `team-tools` plugin might include a deploy skill, a code-review agent, pre-commit hooks, and a Linear MCP server. Install them together in one step.
 
@@ -28,25 +30,25 @@ Plugin hooks receive two environment variables beyond the standard ones set for 
 | `GROK_PLUGIN_ROOT`   | Absolute path to the plugin's installed directory. |
 | `GROK_PLUGIN_DATA`   | Absolute path to the plugin's writable data directory, for plugin state, caches, and logs. |
 
-Grok sets these values and overrides any value you declare for the same key in the hook JSON's `env` map. (Grok also sets the `CLAUDE_PLUGIN_ROOT` and `CLAUDE_PLUGIN_DATA` aliases for compatibility.) See the [Hooks guide](10-hooks.md) for every environment variable passed to hooks.
+Aiko sets these values and overrides any value you declare for the same key in the hook JSON's `env` map. (Aiko also sets the `CLAUDE_PLUGIN_ROOT` and `CLAUDE_PLUGIN_DATA` aliases for compatibility.) See the [Hooks guide](10-hooks.md) for every environment variable passed to hooks.
 
 ---
 
 ## Plugin locations
 
-Grok discovers plugins from these locations, in priority order:
+Aiko discovers plugins from these locations, in priority order:
 
 | Location | Scope | Trust |
 |----------|-------|-------|
 | `_meta.pluginDirs` (`session/new` / `session/load`) | Session -- loaded for that session only | Trusted automatically |
-| `--plugin-dir` (CLI flag, `grok agent`) | Process -- loaded for that agent process only | Trusted automatically |
+| `--plugin-dir` (CLI flag, `aiko agent`) | Process -- loaded for that agent process only | Trusted automatically |
 | `.grok/plugins/` | Project -- shared with the team through version control | Requires trust |
 | `~/.grok/plugins/` | User -- personal plugins for every project | Trusted automatically |
 | `[plugins].paths` (config) | Custom directories you add in `config.toml` | Depends on location |
 
-Grok also reads the `.claude/plugins/` equivalents for compatibility. When two plugins share a name, the higher-priority location wins.
+Aiko also reads the `.claude/plugins/` equivalents for compatibility. When two plugins share a name, the higher-priority location wins.
 
-The Agent SDKs load per-session plugins through `GrokOptions.plugins`, which arrives as `_meta.pluginDirs` on `session/new` and `session/load`; because the caller controls the directory, these plugins are always trusted -- their hooks and MCP servers activate without a prompt, and they never persist beyond the session. The `--plugin-dir` flag is the process-wide equivalent for direct CLI use (repeatable: `grok agent --no-leader --plugin-dir A --plugin-dir B stdio`); it applies to dedicated agent processes only and is ignored in leader mode (the shared leader discovers its own plugins).
+The Agent SDKs load per-session plugins through `GrokOptions.plugins`, which arrives as `_meta.pluginDirs` on `session/new` and `session/load`; because the caller controls the directory, these plugins are always trusted -- their hooks and MCP servers activate without a prompt, and they never persist beyond the session. The `--plugin-dir` flag is the process-wide equivalent for direct CLI use (repeatable: `aiko agent --no-leader --plugin-dir A --plugin-dir B stdio`); it applies to dedicated agent processes only and is ignored in leader mode (the shared leader discovers its own plugins).
 
 ---
 
@@ -126,7 +128,7 @@ grok plugin validate [<path>]             # Validate plugin.json (default: curre
 grok plugin tag [<path>] [--push] [--force] [--dry-run]   # Tag a release from the manifest version
 ```
 
-Run `grok plugin install <source>` without `--trust` and Grok prints the source and warns that installing will activate the plugin's hooks, MCP servers, and skills, then stops without installing. Add `--trust` to install it.
+Run `grok plugin install <source>` without `--trust` and Aiko prints the source and warns that installing will activate the plugin's hooks, MCP servers, and skills, then stops without installing. Add `--trust` to install it.
 
 The `<source>` argument accepts:
 
@@ -259,7 +261,7 @@ Place this file at `~/.grok/settings.json` or `~/.claude/settings.json`.
 
 Enabling a plugin loads its skills, slash commands, and agents. Trust is separate and controls whether a plugin's code runs: even for an enabled plugin, its hooks, MCP servers, and LSP servers stay inactive until you trust it. This prevents an untrusted repository from running code on your machine.
 
-Grok trusts plugins from `~/.grok/plugins/` automatically. Project plugins in `.grok/plugins/` require explicit trust. To trust a plugin, install it with `--trust`:
+Aiko trusts plugins from `~/.grok/plugins/` automatically. Project plugins in `.grok/plugins/` require explicit trust. To trust a plugin, install it with `--trust`:
 
 ```bash
 grok plugin install <source> --trust

@@ -1,5 +1,7 @@
 # Antipattern remediation plan
 
+> **Historical.** Dated reference plan. Not current product documentation. What the tree is today: [../../docs/SOURCE-OF-TRUTH.md](../../docs/SOURCE-OF-TRUTH.md).
+
 Status: SETTLED 2026-07-27 — every item struck with gate evidence below;
 80/80 tests, `zig build`, `tests/runtime-gate.sh`, and `tests/gate.sh`
 all exit 0 on the final state.

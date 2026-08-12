@@ -1,0 +1,19 @@
+Aiko
+Copyright 2023-2026 SpaceXAI
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file.
+
+Third-party software
+--------------------
+
+aiko/apps/frontend is a git submodule of https://github.com/Simpleyyt/ai-manus
+and remains under the MIT License, Copyright (c) 2026 Simpleyyt. See that
+subtree's LICENSE.
+
+Some Rust crate and source paths retain `xai-grok-*` names for workspace and
+upstream compatibility. Those are implementation identifiers, not a separate
+Grok product. User-facing binaries, configuration, and packaging are Aiko.
+
+Unbrowse (https://github.com/Unbrowse) is a separate project. References to
+it in this tree do not re-license Unbrowse.

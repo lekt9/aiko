@@ -80,15 +80,13 @@ after the published `typed_neuron` dependency change (Option A).
 Requirements: Zig 0.16 or newer.
 
 ```bash
-# 1. Clone only this repo
-git clone git@gitea:Unbrowse/contract.git
+# From the published monorepo (github.com/lekt9/aiko)
 cd contract
 
-# 2. Fetch the canonical typed-neuron wire (published on gitea)
-#    Replace the commit with the one you want to pin.
-zig fetch 'git+ssh://git@100.67.11.99:2222/Unbrowse/neuron.git#1e69ca97462b63502dd24fedbac8aacfb583928b'
+# Neuron is already in-tree at ../neuron. The libcontract build.zig.zon
+# pin is the source of truth for the typed_neuron dependency.
 
-# 3. Build the core library (this pulls the neuron dep via the .url in build.zig.zon)
+# 3. Build the core library
 cd libcontract
 zig build
 

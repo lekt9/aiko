@@ -1,8 +1,11 @@
 # xai-grok-pager
 
-Terminal UI (TUI) for Grok Build. Provides the interactive full-screen interface
-including the scrollback view, prompt input, session management, and all modal
-dialogs.
+Terminal UI for **Aiko**. The crate name is a compatibility identifier; the
+binary users run is `aiko`. This crate owns the full-screen interface:
+scrollback, prompt input, session management, and modal dialogs.
+
+Product docs: [`../../../README.md`](../../../README.md).
+User guide: [`docs/user-guide/README.md`](docs/user-guide/README.md).
 
 ## Architecture
 

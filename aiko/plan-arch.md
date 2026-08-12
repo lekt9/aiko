@@ -1,5 +1,8 @@
 # Architecture Plan — The Aiko Collective as Unbrowse
 
+> **Historical plan.** Not a current worklist. See
+> [`../docs/SOURCE-OF-TRUTH.md`](../docs/SOURCE-OF-TRUTH.md).
+
 ## Outcome
 
 Build a local-first, cloud-optional network in which independent Aiko nodes

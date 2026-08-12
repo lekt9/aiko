@@ -1,5 +1,7 @@
 # Contract & Graph Engine
 
+> **Aiko TUI docs.** The user binary is `aiko`. Crate/`~/.grok/` names are compatibility identifiers.
+
 Aiko ships with a native Contract substrate and a graph engineering engine that runs every turn. This guide shows you how to use them and what you'll see in the TUI.
 
 ---
@@ -124,7 +126,7 @@ context_window = 200000
 [model.grok-4]
 model = "grok-4.3"
 base_url = "https://api.x.ai/v1"
-name = "Grok 4.3"
+name = "Aiko 4.3"
 api_backend = "chat_completions"
 env_key = "XAI_API_KEY"
 context_window = 1000000

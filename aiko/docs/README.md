@@ -4,6 +4,13 @@
 Unbrowse for integration — nothing for the user to install. It is the north star
 every change is judged against.
 
+The positioning behind that goal: Aiko is the first AI forward-deployed
+engineer — an agent you hire, not a tool you integrate. She authenticates with
+account credentials rather than API keys, builds the systems she will operate,
+and wires herself into those systems rather than waiting to be integrated.
+
+Monorepo inventory: [`../../docs/SOURCE-OF-TRUTH.md`](../../docs/SOURCE-OF-TRUTH.md).
+
 Then start with the [visual repository guide](REPOSITORY-GUIDE.md). It explains
 the whole tree, runtime boundaries, data flows, persistent state, build outputs,
 and the right place to make each kind of change.
@@ -20,10 +27,10 @@ and the right place to make each kind of change.
 |---|---|
 | [Visual repository guide](REPOSITORY-GUIDE.md) | Repo-wide architecture, diagrams, ownership, code map, state, builds, and debugging |
 | [Internal development](../CONTRIBUTING.md#internal-development) | Toolchain prerequisites, inner-loop commands, focused tests, formatting, and Contract task verification |
-| [Photon / positron → Contract → EBM](PHOTON-POSITRON-CONTRACT-EBM.md) | Faithful physics map of the substrate: ledger as field, claim×check collisions, EBM as energy of verified work (canon in `Unbrowse/contract`) |
-| [Photon / positron gaps](PHOTON-POSITRON-GAPS.md) | Gap register: built chamber vs depth/wiring/scale/containment/truth; priority 1–5 (canon in `Unbrowse/contract`) |
-| [Photon / positron runtime](PHOTON-POSITRON-RUNTIME.md) | Waves, daemon-as-clock-hand, preempt; product plan [`plan3.md`](../plan3.md) |
-| [Photon / positron first principles](PHOTON-POSITRON-FIRST-PRINCIPLES.md) | Full law set: fractal seal, duals catalog, composition, conservation (canon in `Unbrowse/contract`) |
+| [Photon / positron → Contract → EBM](PHOTON-POSITRON-CONTRACT-EBM.md) | Physics map of the substrate (design note; canon in-tree `contract/`) |
+| [Photon / positron gaps](PHOTON-POSITRON-GAPS.md) | Gap register (design note) |
+| [Photon / positron runtime](PHOTON-POSITRON-RUNTIME.md) | Waves, daemon-as-clock-hand, preempt; historical plan [`plan3.md`](../plan3.md) |
+| [Photon / positron first principles](PHOTON-POSITRON-FIRST-PRINCIPLES.md) | Full law set (design note) |
 | [Collective architecture plan](../plan-arch.md) | Contract-first decentralized protocol decisions and delivery phases |
 | [Collective verification](collective-verification.md) | Executed acceptance tests and packaged artifact evidence |
 | [Contract agency runtime](contract-agency-runtime.md) | Turn ledger, governed agency roles, grounding, and Contract packaging |
@@ -41,6 +48,18 @@ and the right place to make each kind of change.
 | [Interface registry](aiko-native-interfaces.json) | Stable interface ownership and versions |
 | [Native SDK](../sdk/aiko-native/README.md) | JavaScript/TypeScript client |
 | [Aiko App](../apps/aiko-app/README.md) | Native Tauri desktop workbench and ACP host |
+
+## Historical reports
+
+Dated Harbor / Terminal-Bench / ARC-AGI retest logs in this folder are
+**not** current product docs. Each file is stamped Historical. Start from
+[`../../docs/SOURCE-OF-TRUTH.md`](../../docs/SOURCE-OF-TRUTH.md) instead.
+
+| Kind | Examples |
+|---|---|
+| Benchmark / retest | `AIKO-VS-GROK-*.md`, `AIKO-TERM-BENCH*.md`, `GROK-HARBOR-*.md` |
+| Bugfix logs | `AIKO-*-FIX.md`, `AIKO-*-RETEST.md` |
+| Design notes | `PHOTON-POSITRON-*.md`, `CONTRACT-INTERFACE-HOLES-PLAN.md` |
 
 ## Fast routes
 

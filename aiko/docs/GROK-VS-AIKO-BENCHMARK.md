@@ -1,5 +1,7 @@
 # Grok versus Aiko benchmark
 
+> **Historical.** Dated benchmark report. Not current product documentation. What the tree is today: [../../docs/SOURCE-OF-TRUTH.md](../../docs/SOURCE-OF-TRUTH.md).
+
 Generated: `2026-07-30T10:34:54.993Z`
 
 ## Fairness boundary

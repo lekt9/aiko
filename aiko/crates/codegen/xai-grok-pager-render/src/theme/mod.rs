@@ -5,7 +5,7 @@
 //!
 //! ## Color support
 //!
-//! GrokNight is defined in `Color::Rgb` (truecolor). At startup,
+//! Aiko Night is defined in `Color::Rgb` (truecolor). At startup,
 //! [`Theme::current()`] quantizes every color to the terminal's detected
 //! capability level via [`Theme::quantized`]. Runtime-generated colors (syntax
 //! highlighting, blending) are also quantized via [`color_support::quantize`].
@@ -88,7 +88,7 @@ impl ThemeKind {
     ///
     /// TokyoNight uses blue-tinted backgrounds that lose their character
     /// when quantized to 256 or 16 colors. GrokNight uses neutral grays
-    /// that survive quantization cleanly.
+    /// that survive quantization cleanly. Aiko Night uses the same neutrals.
     pub fn requires_truecolor(self) -> bool {
         match self {
             Self::GrokNight => false,
@@ -143,12 +143,12 @@ pub fn canonical_name(value: &str) -> Option<&'static str> {
 }
 
 /// Human-friendly display name for a canonical theme value (e.g.
-/// `"groknight"` → `"Grok Night"`). Falls back to `value` verbatim.
+/// `"groknight"` → `"Aiko Night"`). Falls back to `value` verbatim.
 pub fn display_name_for_canonical(value: &str) -> &str {
     match value {
         "auto" => "Auto",
         "aiko-night" | "groknight" => "Aiko Night",
-        "grokday" => "Grok Day",
+        "aiko-day" | "grokday" => "Aiko Day",
         "tokyonight" => "Tokyo Night",
         "rosepine-moon" => "Rose Pine Moon",
         other => other,

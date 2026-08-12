@@ -1,5 +1,10 @@
 # Typed Neuron
 
+This directory is the Neuron layer of the published Aiko monorepo
+([`github.com/lekt9/aiko`](https://github.com/lekt9/aiko)). From the monorepo
+root, `zig build` installs this CLI as `zig-out/bin/aiko`. Building **here**
+still produces `./zig-out/bin/neuron` and must succeed **without** `contract/`.
+
 Typed Neuron is the canonical Zig contract and executable reference runtime for
 one agentic primitive:
 
@@ -71,7 +76,9 @@ cd dist/typed-neuron-*
 The installer creates a stable Ed25519 device identity and durable node
 directory, but does not enable a background service without operator action.
 Every node serves the same framed `neuron.wire/v1` interface. Production
-ingress and CLI egress are restricted to Tailscale addresses by default.
+ingress and CLI egress default to Tailscale CGNAT (`100.64.0.0/10`) so a
+swarm is deny-by-default to the public internet. That is a transport
+ceiling, not an operator hostname.
 
 ## Standalone agent entrypoint
 

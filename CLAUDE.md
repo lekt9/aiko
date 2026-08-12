@@ -1,7 +1,10 @@
 # CLAUDE.md — aiko
 
 Session context for this repository. `README.md` is the human-facing document;
-this file is what an agent needs on turn one.
+this file is what an agent needs on turn one. The published-tree inventory is
+[`docs/SOURCE-OF-TRUTH.md`](docs/SOURCE-OF-TRUTH.md) — do not invent sibling
+checkouts or unpublished paths. Public remote: `github.com/lekt9/aiko`.
+License: Apache-2.0 (`LICENSE`).
 
 ## What this is
 
@@ -273,6 +276,8 @@ as done without running its gate.
 | `contract/DOCTRINE.md` | the substrate's doctrine and parity spec |
 | `contract/docs/AGENCY-SUBSTRATE.md` | schema, migration, adversarial evidence |
 | `PLAN-aiko-convergence.md` | the T1–T4 convergence plan. **All four are landed**; kept for the reasoning, not as a worklist |
+| `docs/SOURCE-OF-TRUTH.md` | published-tree inventory (clone URL, layers, unpublished paths) |
+| `CONTRIBUTING.md` / `SECURITY.md` | public contribution and vulnerability process |
 
 `contract/NEVER-PUBLISH.md` applies: that subtree is closed-source. Do not paste
 customer operational data (worker names, NRIC, rosters) into this repository —

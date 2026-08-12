@@ -1,5 +1,7 @@
 # Universal Contract-Native Aiko Plan
 
+> **Historical plan.** Not a current worklist.
+
 ## Goal
 
 Make Contract the stateful, local-first reflex substrate beneath Aiko while

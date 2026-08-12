@@ -1,5 +1,7 @@
 # Plan 3 — Resident clock hand (ledger-stateless daemon)
 
+> **Historical plan.** Not a current worklist.
+
 **Series:** `plan.md` (FECH capability intelligence) → `newplan.md` /
 `plan-arch.md` (universal contract-native Aiko) → **this** (always-on driver
 that does not become the mind).

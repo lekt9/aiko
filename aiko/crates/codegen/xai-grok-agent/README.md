@@ -1,6 +1,7 @@
 # `xai-grok-agent`
 
-Agent builder, definition parsing, and system prompt assembly.
+Aiko agent builder, definition parsing, and system prompt assembly.
+The crate name is a compatibility identifier.
 
 This crate extracts a first-class `Agent` type from `xai-grok-shell`.
 An `Agent` bundles tools, system prompt, system-reminder policy,

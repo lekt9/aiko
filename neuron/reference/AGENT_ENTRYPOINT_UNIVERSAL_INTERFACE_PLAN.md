@@ -1,5 +1,7 @@
 # Neuron Agent Entrypoint and Universal Interface Plan
 
+> **Historical.** Dated reference plan. Not current product documentation. What the tree is today: [../../docs/SOURCE-OF-TRUTH.md](../../docs/SOURCE-OF-TRUTH.md).
+
 Status: implementation plan; Phase 1 (standalone agent bootstrap) and Phase 2
 (local universal interface membrane) are implemented and witnessed by
 `bash tests/agent-entrypoint-gate.sh` and `bash tests/universal-interface-gate.sh`

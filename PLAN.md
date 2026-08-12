@@ -1,5 +1,9 @@
 # PLAN — The Unbrowse Commons as an On-Chain Skill Ledger
 
+> **Historical.** This is not a current worklist. It records a pre-monorepo
+> on-chain commons plan. For what the tree is today, see
+> [`docs/SOURCE-OF-TRUTH.md`](docs/SOURCE-OF-TRUTH.md).
+
 > Status tags follow house convention: **BUILT+PROVEN / DESIGNED / RESEARCH-DIRECTION**.
 > Companions: `contract/docs/PLAN-contracts-as-onchain-ebm-weights.md` (energy +
 > weights), `contract/docs/ECONOMICS-cooperative-commons.md` (reward economics),

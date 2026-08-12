@@ -1,6 +1,17 @@
-# Grok Build User Guide
+# Aiko terminal user guide
 
-Learn how to install, configure, and extend Grok Build, the terminal-based AI coding assistant from SpaceXAI.
+How to install, configure, and extend **Aiko**, the terminal-based AI coding
+assistant from SpaceXAI. These pages live next to the TUI crate
+(`xai-grok-pager`); that name is an implementation identifier, not a second
+product.
+
+Install from the published monorepo
+([`github.com/lekt9/aiko`](https://github.com/lekt9/aiko)) — see
+[`../../../../../README.md`](../../../../../README.md) — or download a
+[desktop/CLI release](https://github.com/lekt9/aiko/releases/latest).
+Do not use `https://x.ai/cli/install.sh`. The user binary is `aiko`.
+Some pages still mention `aiko` or `~/.grok/` where those are compatibility
+paths in the runtime.
 
 ---
 
@@ -20,7 +31,7 @@ Start here. These guides cover what you need on your first day.
 
 ## Tier 2: Core Feature Docs
 
-Customize and extend Grok Build.
+Customize and extend Aiko.
 
 | # | Document | Description |
 |---|----------|-------------|
@@ -37,11 +48,11 @@ Customize and extend Grok Build.
 
 ## Tier 3: Advanced Usage Docs
 
-Automate, script, and integrate Grok Build with other systems.
+Automate, script, and integrate Aiko with other systems.
 
 | # | Document | Description |
 |---|----------|-------------|
-| 14 | [Headless Mode and Scripting](14-headless-mode.md) | `grok -p`, output formats, CI/CD integration, and piping |
+| 14 | [Headless Mode and Scripting](14-headless-mode.md) | `aiko --single`, output formats, CI/CD integration, and piping |
 | 15 | [Agent Mode and IDE Integration](15-agent-mode.md) | ACP stdio transport, WebSocket relay, and SDK integration |
 | 16 | [Subagents and Personas](16-subagents.md) | Parallel child sessions, agent types, personas, and capability modes |
 | 17 | [Session Management](17-sessions.md) | Save, load, resume, rewind, compact, and the session persistence format |

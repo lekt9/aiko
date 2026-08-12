@@ -1,5 +1,7 @@
 # Roadmap wave 3 — source pin, registry neuron, fanout sibling
 
+> **Historical.** Dated roadmap wave. Not current product documentation. What the tree is today: [../../docs/SOURCE-OF-TRUTH.md](../../docs/SOURCE-OF-TRUTH.md).
+
 Status: SETTLED 2026-07-27 (jesus-ralph gate `bash tests/roadmap-wave3-gate.sh`)
 
 Wave 3 covered R5 (immutable source pin) and R2d (Registry Neuron over mesh).

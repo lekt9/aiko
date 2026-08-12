@@ -1,53 +1,29 @@
-# NEVER PUBLISH THIS REPO
+# Contract subtree — publication note
 
-This is the **SERVER side** of `/contract` — the closed-source
-substrate that compiles prose into typed contract neurons, holds the
-canonical ledger, derives wallets, signs binaries, and runs the
-moat-bearing primitives.
+This file used to describe a standalone closed skill tree at
+`~/.agent-skills/contract/`. That layout is gone.
 
-**Public surface:** `@aiko/contract` npm package, source at
-`~/Projects/contract-thin-client/`. That repo (and only that repo) is
-the public edge. This repo (`~/.agent-skills/contract/`) is closed.
+**Current fact:** `contract/` lives in the published Aiko monorepo
+([`github.com/lekt9/aiko`](https://github.com/lekt9/aiko)) so the Zig root
+build can link `libcontract` and `aiko-doctor` from one clone.
 
-## What this repo contains (all CLOSED)
+## What is still true
 
-- `libcontract/` — Zig core (wallet derivation, ledger, cache, signature chain)
-- `zig/` — binary source (aiko, contract)
-- `docs/` — design substrate (observations-fractal-loop.md, the recursive
-  design conversation we're not giving away)
-- `scripts/` — wallet operations (sign-binary, verify-self, build pipeline)
-- `audit-gate/`, `bm25-gate/`, `budget-gate/`, ... — quality gates
-- `references/` — internal references, Outline doc mirrors
-- `audits/` — rule-enforcement scripts
+- Contract is the durable interpreter: ledger, W6H, signatures, validity
+  windows. It is not a second agent and it is not the user-facing `aiko`
+  binary.
+- Do not `npm publish` this subtree. There is still no `package.json` here.
+  The public edge for JS speakers, if any, is a thin client — not this tree.
+- Do not put customer operational data, wallet root keys, or operator
+  Tailscale hosts in this directory.
+- `docs/` under this subtree are design notes and due-diligence drafts, not
+  the product README. Start at [`../docs/SOURCE-OF-TRUTH.md`](../docs/SOURCE-OF-TRUTH.md).
 
-## Mechanical guards
+## What is no longer true
 
-1. **No `package.json` in this tree.** `npm publish` errors hard before it
-   even reads files. If a package.json ever lands here, the next guard fires.
-2. **`.npmignore` excludes everything.** Belt-and-suspenders against
-   accidental publish.
-3. **Pre-push hook refuses `github.com` remotes.** `.git/hooks/pre-push`
-   greps the remote URL; abort if `github.com` appears. Only the internal
-   gitea remotes (Tailscale-only) are allowed.
-4. **Thin client never imports from this tree.** `contract-thin-client`
-   has a separate-folder invariant; any `import` referencing
-   `~/.agent-skills/contract/` OR `../contract/` is a build error.
+- This is not `~/.agent-skills/contract/`.
+- A pre-push hook that refuses `github.com` is not the publication policy of
+  this monorepo. The public remote is GitHub.
+- Clone instructions that point at a private Gitea or Tailscale IP are stale.
 
-## What gets re-implemented (not lifted) in the thin client
-
-The thin client is a **protocol speaker**, not a port of the substrate:
-- Wire format (declare payload + response envelope) — stable surface, re-implemented in TS
-- Wallet bootstrap — three-tier ladder adapted for Node (fs-only, no Keychain shellout)
-- Binary-stdin convention — when the local contract-goal persona IS installed, the
-  thin client pipes to it; when not, falls through to cloud HTTP
-- Tunnel client — ripped from chisel/rathole/yamux/noise; the relay
-  (`contract-tunnel-relay`) already exists separately
-
-The compiler, ledger, signing keys, doctrine corpus, audit gates — all
-stay on this side of the line.
-
-## Doctrine pin
-
-OPEN-SOURCE-NOTICE.md split: capture/RE engine + backend + CLI binary
-+ anti-bot research = CLOSED; SDKs + thin client + OpenClaw plugin =
-OPEN. This repo is the closed half by design.
+License for the published monorepo is Apache-2.0 at the repository root.

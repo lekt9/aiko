@@ -1,5 +1,10 @@
 # CLAUDE.md — contract substrate
 
+This directory is the Contract layer of the published Aiko monorepo
+([`github.com/lekt9/aiko`](https://github.com/lekt9/aiko)). Inventory:
+[`../docs/SOURCE-OF-TRUTH.md`](../docs/SOURCE-OF-TRUTH.md). Product clone
+and build start at the repository root, not a sibling checkout.
+
 This file is read by Claude Code (and any agent framework that consumes
 the `contract` skill) on session entry. It is the **agent-facing
 pointer**, not the doctrine itself.

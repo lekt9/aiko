@@ -1,82 +1,67 @@
 # Getting Started
 
-Grok Build is a terminal-based AI coding assistant from SpaceXAI. It runs as a TUI (Terminal User Interface) that understands your codebase, executes shell commands, edits files, searches the web, and manages tasks.
+> **Aiko TUI docs.** The user binary is `aiko`. Crate/`~/.grok/` names are compatibility identifiers.
+
+**Aiko** is a terminal-based AI coding assistant from SpaceXAI. It runs as a TUI that understands your codebase, executes shell commands, edits files, searches the web, and manages tasks.
 
 You can use it interactively as a full-screen TUI, run it headlessly for scripting and CI/CD, or integrate it into editors via the Agent Client Protocol (ACP).
+
+The crate next to this guide is named `xai-grok-pager`. That is an implementation name. The user binary is `aiko`.
 
 ---
 
 ## Installation
 
-Install the latest stable release (macOS, Linux, or Windows via Git Bash):
+From a clone of [`github.com/lekt9/aiko`](https://github.com/lekt9/aiko):
 
 ```bash
-curl -fsSL https://x.ai/cli/install.sh | bash
+cd aiko   # Rust host directory in the monorepo
+scripts/contract-runtime.sh install
+export PATH="$HOME/bin:$PATH"
+aiko --version
 ```
 
-Install a specific version:
+Or download a published installer from the
+[latest GitHub release](https://github.com/lekt9/aiko/releases/latest).
+Do **not** install from `https://x.ai/cli/install.sh` — that is a different product.
+
+Verify:
 
 ```bash
-curl -fsSL https://x.ai/cli/install.sh | bash -s 0.1.42
+aiko --version
 ```
 
-On **Windows (PowerShell)**, use the native PowerShell installer:
-
-```powershell
-irm https://x.ai/cli/install.ps1 | iex
-```
-
-Install a specific version:
-
-```powershell
-$env:GROK_VERSION="0.1.42"; irm https://x.ai/cli/install.ps1 | iex
-```
-
-The PowerShell installer automatically adds `%USERPROFILE%\.grok\bin` to your User PATH. Alternatively, install via [Git for Windows](https://gitforwindows.org/) (Git Bash) or MSYS2 using the bash script above. WSL users get the Linux binary automatically.
-
-Verify the installation:
-
-```bash
-grok --version
-```
-
-Update to the latest version at any time:
-
-```bash
-grok update
-```
+Full install options (portable tarball, desktop) live in the
+[product README](../../../../../README.md).
 
 ---
 
 ## First Launch
 
-Start Grok by running:
-
 ```bash
-grok
+aiko
 ```
 
-On first launch, Grok opens your browser to authenticate with grok.com. After you sign in, Grok stores your credentials in `~/.grok/auth.json`, where they persist across sessions. Grok refreshes your credentials automatically and prompts you to sign in again when they can no longer be renewed.
+On first launch, run `aiko login`. The default session path uses the public
+Aiko proxy (`https://aiko.theclarityproject.net`). You do not paste a
+provider key for ordinary use.
 
-If you prefer API key authentication (e.g., for CI/CD or environments without a browser), set the `XAI_API_KEY` environment variable instead:
+Compatibility note: some config still lives under `~/.grok/` because the
+runtime retained those paths. Prefer `aiko` on the command line.
 
-```bash
-export XAI_API_KEY="xai-..."
-grok
-```
-
-See [Authentication](02-authentication.md) for the full set of auth options including OIDC, external auth providers, and device code flow.
+If you must use a provider key (CI, BYOK), see [Authentication](02-authentication.md)
+and [`docs/providers`](../../../../../docs/providers/README.md).
 
 ---
 
 ## Basic Interaction
 
-Once authenticated, Grok presents a full-screen TUI with two main areas:
+Once authenticated, Aiko presents a full-screen TUI with two main areas:
 
-- **Scrollback** -- the conversation history showing your prompts, Grok's responses, tool calls, file edits, and more.
+- **Scrollback** -- the conversation history showing your prompts, Aiko's responses, tool calls, file edits, and more.
 - **Prompt** -- the input area at the bottom where you type messages.
 
-Type a message and press `Enter` to send it. Grok reads files, runs commands, and edits code as needed. Each tool run streams into the scrollback in real time.
+Type a message and press `Enter` to send it. Aiko reads files, runs commands, and edits code as needed. Each tool run streams into the scrollback in real time.
 
 Press `Tab` to move focus between the prompt and the scrollback. While a turn is running, `Ctrl+C` cancels it (or clears a non-empty draft first); `Esc` is a no-op mid-turn. Idle, press `Esc` twice within 800ms to clear a non-empty prompt, or (with an empty prompt and conversation messages) to open rewind — see [Keyboard Shortcuts](03-keyboard-shortcuts.md#escape). With the scrollback focused, use the arrow keys to select entries and to collapse or expand them. To navigate with `j`/`k` and fold with `h`/`l` instead, enable Vim mode.
 
@@ -99,7 +84,7 @@ The `@` operator opens a fuzzy file picker. By default it respects `.gitignore` 
 
 ### Permissions
 
-By default, Grok asks for permission before executing shell commands or editing files. You can approve individually or toggle always-approve mode:
+By default, Aiko asks for permission before executing shell commands or editing files. You can approve individually or toggle always-approve mode:
 
 - Press `Ctrl+O` to toggle always-approve mode
 - Use the `--yolo` flag at launch: `grok --yolo`
@@ -122,8 +107,8 @@ Every conversation is a **session**. Sessions are automatically saved to `~/.gro
 The scrollback is the main display area. It shows:
 
 - **User prompts** -- your messages, rendered as sticky headers
-- **Agent messages** -- Grok's responses with full markdown rendering and syntax highlighting
-- **Thinking blocks** -- Grok's reasoning process (collapsible)
+- **Agent messages** -- Aiko's responses with full markdown rendering and syntax highlighting
+- **Thinking blocks** -- Aiko's reasoning process (collapsible)
 - **Tool calls** -- file edits (with inline diffs), command executions, search results, and more
 - **Task lists** -- TODO items tracking progress
 
@@ -131,7 +116,7 @@ Collapse or expand the selected entry with the `Left`/`Right` arrow keys (or `h`
 
 ### Tools
 
-Grok has built-in tools for:
+Aiko has built-in tools for:
 
 | Tool | Description |
 |------|-------------|
@@ -194,7 +179,7 @@ grok --resume <session-id>
 # Continue the most recent session
 grok -c
 
-# Experimental scrollback-native render mode. Sticky: plain `grok` reopens in
+# Experimental scrollback-native render mode. Sticky: plain `aiko` reopens in
 # the mode last chosen via --minimal/--fullscreen (or /minimal//fullscreen).
 grok --minimal
 
@@ -202,17 +187,17 @@ grok --minimal
 grok --fullscreen
 
 # Headless mode (for scripts)
-grok -p "Explain this codebase"
+aiko --single "Explain this codebase"
 ```
 
 ---
 
 ## Headless Mode
 
-Run Grok non-interactively for scripting, CI/CD, and automation:
+Run Aiko non-interactively for scripting, CI/CD, and automation:
 
 ```bash
-grok -p "Your prompt here"
+aiko --single "Your prompt here"
 ```
 
 Output formats:
@@ -226,14 +211,14 @@ Output formats:
 Example CI/CD usage:
 
 ```bash
-grok -p "Review changes for bugs" --output-format json --yolo | jq -r '.text'
+aiko --single "Review changes for bugs" --output-format json --yolo | jq -r '.text'
 ```
 
 ---
 
 ## Project Rules (AGENTS.md)
 
-Add per-project instructions by creating an `AGENTS.md` file in your repository. Grok reads these files and injects their contents as a project-instructions message at the start of the conversation:
+Add per-project instructions by creating an `AGENTS.md` file in your repository. Aiko reads these files and injects their contents as a project-instructions message at the start of the conversation:
 
 ```
 ~/.grok/AGENTS.md           # Global rules (apply to all projects)
@@ -241,7 +226,7 @@ Add per-project instructions by creating an `AGENTS.md` file in your repository.
 <cwd>/AGENTS.md             # Directory-level rules (highest priority)
 ```
 
-Deeper files take precedence. Grok also reads `CLAUDE.md` files for compatibility.
+Deeper files take precedence. Aiko also reads `CLAUDE.md` files for compatibility.
 
 ---
 

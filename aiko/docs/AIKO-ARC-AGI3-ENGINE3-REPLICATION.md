@@ -1,5 +1,7 @@
 # Aiko engine3 ARC-AGI-3 replication
 
+> **Historical.** Dated report or retest log. Not current product documentation. What the tree is today: [../../docs/SOURCE-OF-TRUTH.md](../../docs/SOURCE-OF-TRUTH.md).
+
 ## Outcome
 
 The retained engine3 peak was real, but it was a hybrid result rather than the native
@@ -58,7 +60,7 @@ versions, not only the 25 public environments used during development.
 ## Reproduction command
 
 ```sh
-/Users/lewis/Unbrowse/ARC-AGI-3-Agents/.venv/bin/python \
+python3 \
   .agents/skills/arc-agi-3/scripts/benchmark_native.py \
   --historical-structural --games all --max-actions 80 \
   --output docs/AIKO-ARC-AGI3-ENGINE3-REPLICATION.json

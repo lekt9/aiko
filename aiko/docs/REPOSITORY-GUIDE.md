@@ -9,7 +9,7 @@ deterministic trust substrate; the Collective lets Aiko nodes exchange safe,
 content-addressed capability metadata without requiring a cloud service.**
 
 > Source names beginning with `xai-grok-` are retained for workspace and
-> upstream compatibility. They are implementation names, not separate Grok
+> upstream compatibility. They are implementation names, not separate Aiko
 > products. User-facing code, binaries, configuration, and packaging are Aiko.
 
 ## One-screen system map
@@ -58,25 +58,18 @@ The important boundary is between reasoning and authority:
 ## Repository atlas
 
 ```text
-aiko/
-├── apps/
-│   ├── desktop/                 React + Tauri desktop product
-│   └── aiko-gigs/               auxiliary application workspace
-├── crates/
-│   ├── codegen/                 generated/upstream-compatible product crates
-│   ├── common/                  reusable Aiko-owned runtime primitives
-│   └── build/                   protobuf/build helpers
-├── sdk/aiko-native/             JS/TS native API client
-├── plugins/aiko-persistence/    persistent-task Codex plugin
-├── docs/                        architecture and API documentation
-├── scripts/                     build, install, audit, and toolchain helpers
-├── third_party/                 pinned/vendored source dependencies
-├── spikes/                      bounded architecture experiments
-├── prod/                        optional deployment adapters/proxies
-├── dist/                        finished macOS and Windows deliverables
-├── plan-arch.md                 Collective architecture and acceptance plan
-├── Cargo.toml                   generated Rust workspace root
-└── ../contract/                 sibling Contract source repository
+<aiko-monorepo>/                 github.com/lekt9/aiko
+├── aiko/                        this directory — Rust host
+│   ├── apps/desktop/            React + Tauri desktop product
+│   ├── apps/aiko-gigs/          auxiliary application workspace
+│   ├── crates/                  product crates (`xai-grok-*` are implementation names)
+│   ├── sdk/aiko-native/         JS/TS native API client
+│   ├── docs/                    architecture and API documentation
+│   ├── scripts/                 build, install, audit, and toolchain helpers
+│   └── Cargo.toml               Rust workspace root
+├── contract/                    in-tree Contract source (libcontract)
+├── neuron/                      in-tree Neuron source
+└── cell/                        standalone fractal harness
 ```
 
 ### Top-level ownership
@@ -89,7 +82,7 @@ aiko/
 | `crates/codegen/xai-grok-shell` | Agent orchestration, providers, native APIs, Contract and Collective host integration | Canonical public-object policy |
 | `crates/codegen/xai-aiko-collective` | Local collective storage, indexing, peer transport, replication | Signing/policy/ranking truth or remote execution |
 | `crates/common` | Reusable tools, protocols, application control, tracing | Product-level UI decisions |
-| `../contract/libcontract` | Deterministic ledger/trust/proof/ranking kernel and C ABI | UI, sockets, peer configuration, or Aiko state |
+| `../contract/libcontract` (in-tree) | Deterministic ledger/trust/proof/ranking kernel and C ABI | UI, sockets, peer configuration, or Aiko state |
 | `prod` | Optional infrastructure adapters | A mandatory runtime dependency |
 
 ### Auxiliary and experimental surfaces
@@ -203,8 +196,8 @@ The general tool protocol is split across:
 
 ## Contract boundary
 
-Contract is deliberately a sibling repository, packaged as a native dynamic
-library. Aiko loads it through a narrow C ABI.
+Contract is a separate source tree **in this monorepo** (`../contract`),
+packaged as a native dynamic library. Aiko loads it through a narrow C ABI.
 
 ```mermaid
 flowchart LR
@@ -489,7 +482,7 @@ provenance.
 
 ```mermaid
 flowchart LR
-    ContractSrc[~/Unbrowse/contract-core · libcontract<br/>fallback ../contract/libcontract]
+    ContractSrc[in-tree ../contract/libcontract]
     Zig[Zig full shared library]
     Rust[Rust release aiko]
     Web[React production bundle]
@@ -529,8 +522,8 @@ pnpm --dir apps/aiko-app exec tauri build --bundles app,dmg
 pnpm --dir apps/aiko-app build:win
 
 # Combined CLI + Contract package/install
-# Requires sibling ../contract and ../neuron (or AIKO_CONTRACT_REPO).
-# See README.md → Installation for PATH, login, and registry bootstrap.
+# Uses in-tree ../contract and ../neuron (override with AIKO_CONTRACT_REPO).
+# See README.md → Installation for PATH, login, and optional registry bootstrap.
 scripts/contract-runtime.sh build-aiko
 scripts/contract-runtime.sh install
 export PATH="$HOME/bin:$PATH"

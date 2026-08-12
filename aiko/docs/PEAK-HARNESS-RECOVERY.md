@@ -1,5 +1,7 @@
 # Peak Harness Recovery
 
+> **Historical.** Dated recovery report. Not current product documentation. What the tree is today: [../../docs/SOURCE-OF-TRUTH.md](../../docs/SOURCE-OF-TRUTH.md).
+
 ## Outcome
 
 Aiko's default engineering prompt is compact and evidence-first again. Generative UI is no longer embedded in every agent turn; it is an on-demand skill at `.agents/skills/generative-ui/SKILL.md`.

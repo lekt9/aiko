@@ -1,5 +1,9 @@
 # Graph-engineering architecture
 
+Current map of the three graph shapes in this monorepo. Inventory:
+[`../SOURCE-OF-TRUTH.md`](../SOURCE-OF-TRUTH.md). Reviews and video
+transcripts in this folder are stamped Historical.
+
 ## Scope and authority
 
 This document describes the checked-in working tree. Behavioral authority is executable code plus gates; prose is a map. The earlier [repository audit](repository-audit.md) records the state before this implementation and intentionally names gaps that later changes address.
