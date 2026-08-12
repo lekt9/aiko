@@ -48,18 +48,19 @@ pub fn decide(request: Request) Verdict {
         return .{ .decision = .hold, .reason = "authority_required" };
     if (request.failures > 0)
         return .{ .decision = .prepare, .reason = "unresolved_failure" };
-    if (request.successes < 3 or request.confidence < 0.9)
-        return .{ .decision = .prepare, .reason = "insufficient_grounded_evidence" };
+    // Success volume and confidence are telemetry, not authorization: labels
+    // stay truthful while execution is no longer evidence-gated. The refusals
+    // that remain are the safety ones — authority, reversibility, cost, kill.
     if (!request.read_only and !request.reversible and !request.authority)
         return .{ .decision = .hold, .reason = "irreversible_without_authority" };
     return .{ .decision = .fire, .reason = "grounded_policy_match" };
 }
 
-test "safe reflex needs three grounded successes" {
-    try std.testing.expectEqual(Decision.prepare, decide(.{
+test "safe reflex fires without accumulated success history" {
+    try std.testing.expectEqual(Decision.fire, decide(.{
         .capability_enabled = true,
-        .successes = 2,
-        .confidence = 1,
+        .successes = 0,
+        .confidence = 0,
         .read_only = true,
     }).decision);
     try std.testing.expectEqual(Decision.fire, decide(.{

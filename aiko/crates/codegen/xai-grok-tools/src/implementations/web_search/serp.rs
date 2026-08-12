@@ -127,7 +127,10 @@ fn unbrowse_binary() -> Option<String> {
 fn unbrowse_binary_from(setting: Option<String>) -> Option<String> {
     match setting {
         Some(value)
-            if matches!(value.trim().to_ascii_lowercase().as_str(), "0" | "off" | "false") =>
+            if matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "off" | "false"
+            ) =>
         {
             None
         }
@@ -173,7 +176,11 @@ async fn unbrowse_search(
         command.output(),
     )
     .await
-    .map_err(|_| fail(format!("unbrowse did not answer within {UNBROWSE_TIMEOUT_SECS}s")))?
+    .map_err(|_| {
+        fail(format!(
+            "unbrowse did not answer within {UNBROWSE_TIMEOUT_SECS}s"
+        ))
+    })?
     .map_err(|e| fail(format!("could not run unbrowse: {e}")))?;
     if !output.status.success() {
         return Err(fail(format!("unbrowse exited with {}", output.status)));
@@ -193,36 +200,40 @@ const UNBROWSE_TIMEOUT_SECS: u64 = 90;
 /// the nested and top-level spellings are accepted: this is another program's
 /// output, and a rename there should degrade to "no results", never a panic.
 pub fn parse_unbrowse_payload(payload: &serde_json::Value) -> Vec<SerpResult> {
-    ["/result/exa_candidates", "/exa_candidates", "/result/candidates"]
-        .iter()
-        .find_map(|pointer| payload.pointer(pointer).and_then(|v| v.as_array()))
-        .map(|candidates| {
-            candidates
-                .iter()
-                .filter_map(|candidate| {
-                    let url = candidate.get("url")?.as_str()?.to_string();
-                    if !url.starts_with("http") {
-                        return None;
-                    }
-                    Some(SerpResult {
-                        title: candidate
-                            .get("title")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        url,
-                        snippet: candidate
-                            .get("highlights_excerpt")
-                            .or_else(|| candidate.get("snippet"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                    })
+    [
+        "/result/exa_candidates",
+        "/exa_candidates",
+        "/result/candidates",
+    ]
+    .iter()
+    .find_map(|pointer| payload.pointer(pointer).and_then(|v| v.as_array()))
+    .map(|candidates| {
+        candidates
+            .iter()
+            .filter_map(|candidate| {
+                let url = candidate.get("url")?.as_str()?.to_string();
+                if !url.starts_with("http") {
+                    return None;
+                }
+                Some(SerpResult {
+                    title: candidate
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    url,
+                    snippet: candidate
+                        .get("highlights_excerpt")
+                        .or_else(|| candidate.get("snippet"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
                 })
-                .take(MAX_RESULTS)
-                .collect()
-        })
-        .unwrap_or_default()
+            })
+            .take(MAX_RESULTS)
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 async fn json_serp(
@@ -331,9 +342,13 @@ endpoint that serves the Responses API with a hosted web_search tool.";
 /// Recognise an interstitial challenge rather than a result page.
 fn is_bot_challenge(html: &str) -> bool {
     let html = html.to_ascii_lowercase();
-    ["anomaly-modal", "unfortunately, bots use duckduckgo too", "captcha"]
-        .iter()
-        .any(|marker| html.contains(marker))
+    [
+        "anomaly-modal",
+        "unfortunately, bots use duckduckgo too",
+        "captcha",
+    ]
+    .iter()
+    .any(|marker| html.contains(marker))
 }
 
 /// Parse the keyless HTML SERP into results.
@@ -591,11 +606,12 @@ mod tests {
             );
         }
         // An explicit path is used as given, without a PATH lookup.
-        let explicit = format!("{}opt{}unbrowse", std::path::MAIN_SEPARATOR, std::path::MAIN_SEPARATOR);
-        assert_eq!(
-            unbrowse_binary_from(Some(explicit.clone())),
-            Some(explicit)
+        let explicit = format!(
+            "{}opt{}unbrowse",
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR
         );
+        assert_eq!(unbrowse_binary_from(Some(explicit.clone())), Some(explicit));
     }
 
     #[test]

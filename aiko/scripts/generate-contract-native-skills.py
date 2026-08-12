@@ -21,12 +21,15 @@ def node(
     reversible: bool = False,
     authority: bool = False,
     evidence: list[str] | None = None,
+    input_bindings: dict[str, str] | None = None,
+    writes: list[str] | None = None,
 ) -> dict:
     return {
         "key": key,
         "plan": plan,
         "worker": worker,
         "depends_on": depends_on or [],
+        "input_bindings": input_bindings or {},
         "can_parallel": not depends_on,
         "timeout_ms": 30_000,
         "effect": effect,
@@ -34,6 +37,7 @@ def node(
         "reversible": reversible,
         "requires_authority": authority,
         "evidence": evidence or ["structured_result"],
+        "writes": writes or [],
     }
 
 
@@ -110,8 +114,22 @@ SPECS: dict[str, dict] = {
         ],
         "nodes": [
             node("parse-cadence", "Parse explicit deadline and recurrence semantics for {{goal}}."),
-            node("deduplicate", "Check equivalent durable future contracts for {{goal}}.", worker="host", depends_on=["parse-cadence"]),
-            node("schedule", "Create the governed future contract for {{goal}}.", worker="host", depends_on=["deduplicate"], effect="local_write", read_only=False, reversible=True, authority=True),
+            node(
+                "deduplicate",
+                "Check equivalent durable future contracts for {{goal}}.",
+                depends_on=["parse-cadence"],
+                input_bindings={"cadence": "parse-cadence.structured_result"},
+            ),
+            node(
+                "schedule",
+                "Create the governed future contract for {{goal}}.",
+                depends_on=["deduplicate"],
+                input_bindings={"deduplication": "deduplicate.structured_result"},
+                effect="local_reversible",
+                read_only=False,
+                reversible=True,
+                writes=["workspace://**"],
+            ),
         ],
         "prompt": "Remind me tomorrow to check the build.",
     },

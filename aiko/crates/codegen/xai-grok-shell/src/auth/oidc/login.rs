@@ -423,11 +423,11 @@ pub async fn run_login_flow_with_config(
     } else {
         // No client UI — print to stderr.
         eprintln!();
-        let provider_label = if oidc.issuer == super::super::config::XAI_OAUTH2_ISSUER {
-            "Aiko".to_owned()
-        } else {
-            oidc.issuer.clone()
-        };
+        let provider_label = auth_manager
+            .grok_com_config()
+            .auth_provider_label
+            .clone()
+            .unwrap_or_else(|| oidc.issuer.clone());
         eprintln!("Signing in with {}...", provider_label);
         eprintln!();
         if let Err(e) = webbrowser::open(&auth_url) {

@@ -216,6 +216,7 @@ fn known_host_adapter(value: &str) -> bool {
         "aiko.meta.observe/v1"
             | "aiko.meta.recall/v1"
             | "aiko.meta.route/v1"
+            | "aiko.meta.capture/v1"
             | "aiko.meta.settle/v1"
     )
 }

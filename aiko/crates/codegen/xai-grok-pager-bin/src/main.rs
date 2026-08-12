@@ -6,6 +6,7 @@
     dead_code
 )]
 mod native_api;
+mod workflow_cli;
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
@@ -33,7 +34,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use xai_grok_pager::app::{
     AgentCmd, Command, ContractPairAction, HeadlessArgs, LeaderMgmtArgs, LeaderMgmtCommand,
-    LeaderTargetArgs, PagerArgs, join_early_prefetch, resolve_use_leader,
+    LeaderTargetArgs, LoginProvider, PagerArgs, join_early_prefetch, resolve_use_leader,
 };
 use xai_grok_pager::app::{WorkspaceMgmtArgs, WorkspaceMgmtCommand, WorkspaceStartArgs};
 use xai_grok_pager::client_identity::PAGER_CLIENT_VERSION;
@@ -90,7 +91,7 @@ fn resolve_agent_profile_path(path: &std::path::Path) -> std::path::PathBuf {
 /// Print startup information for the serve command.
 fn print_serve_startup_info(bind_addr: SocketAddr, secret: &str) {
     eprintln!();
-    eprintln!("   Grok agent server starting...");
+    eprintln!("   Aiko agent server starting...");
     eprintln!();
     eprintln!("   Address:  {}:{}", bind_addr.ip(), bind_addr.port());
     eprintln!("   Secret:   {}", secret);
@@ -531,7 +532,7 @@ async fn run_setup_command(json: bool) {
         eprintln!("  deployment_key = \"<your-key>\"");
         eprintln!();
         eprintln!(
-            "If you don't have a deployment key, contact your organization's Grok administrator."
+            "If you don't have a deployment key, contact your organization's Aiko administrator."
         );
         std::process::exit(1);
     }
@@ -1973,7 +1974,7 @@ fn main() {
     );
     raise_fd_limit();
     if let Err(e) = xai_grok_config::validate_requirements() {
-        eprintln!("Couldn't start Grok: {e}");
+        eprintln!("Couldn't start Aiko: {e}");
         eprintln!();
         eprintln!(
             "Update Grok to a version the policy allows, or ask your administrator \
@@ -1997,7 +1998,7 @@ fn main() {
     if xai_grok_shell::util::config::load_crash_handler_enabled_sync() {
         let crash_dir = xai_grok_shell::util::grok_home::grok_home().join("crash");
         if let Some(report) = xai_crash_handler::check_previous_crash(&crash_dir) {
-            eprintln!("Grok crashed during your last session.");
+            eprintln!("Aiko crashed during your last session.");
             eprintln!("  Signal:  {}", report.signal_name);
             eprintln!("  Version: {}", report.app_version);
             eprintln!("  Report:  {}", report.report_path.display());
@@ -2033,8 +2034,93 @@ fn main() {
         std::process::exit(1);
     }
 }
+async fn run_workflow_command(command: workflow_cli::WorkflowCommand) -> Result<()> {
+    use workflow_cli::WorkflowCommand;
+    use xai_grok_shell::graph_harness_service::{
+        API_VERSION, WorkflowOperation, WorkflowOperationRequest,
+    };
+
+    if let WorkflowCommand::Schema { operation } = command {
+        println!(
+            "{}",
+            serde_json::to_string(&xai_grok_shell::graph_harness_service::schema(
+                operation.as_deref()
+            ))?
+        );
+        return Ok(());
+    }
+
+    let cwd = std::env::current_dir()?;
+    let request = command
+        .service_request()
+        .expect("schema returned before service dispatch");
+    let operation = match request.operation {
+        "route" => WorkflowOperation::Route,
+        "submit" => WorkflowOperation::Submit,
+        "status" => WorkflowOperation::Status,
+        "inspect" => WorkflowOperation::Inspect,
+        _ => unreachable!("dependency-small dispatch mapping is closed"),
+    };
+    let goal = request.goal;
+    let bundle_ref = request.bundle_ref;
+    let acceptance_mode = request.acceptance_mode;
+    let state_root = if matches!(
+        operation,
+        WorkflowOperation::Submit | WorkflowOperation::Status | WorkflowOperation::Inspect
+    ) {
+        match xai_grok_shell::graph_harness_service::deployment_state_root(&cwd) {
+            Ok(root) => root,
+            Err(message) => {
+                println!(
+                    "{}",
+                    workflow_cli::error_json(
+                        request.operation,
+                        "workflow_state_root_invalid",
+                        &message,
+                    )
+                );
+                anyhow::bail!("workflow state root refused");
+            }
+        }
+    } else {
+        cwd.clone()
+    };
+    let response = xai_grok_shell::graph_harness_service::execute(
+        WorkflowOperationRequest {
+            api_version: API_VERSION.to_owned(),
+            operation,
+            goal,
+            bundle_ref,
+            acceptance_mode,
+            query: None,
+        },
+        &cwd,
+        "workflow-cli",
+        &[],
+        &state_root,
+    )
+    .await;
+    let ok = response.ok;
+    println!("{}", serde_json::to_string(&response)?);
+    if !ok {
+        anyhow::bail!("workflow operation refused");
+    }
+    Ok(())
+}
+
 async fn async_main() -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
+    match workflow_cli::parse_from(std::env::args_os()) {
+        Ok(Some(command)) => return run_workflow_command(command).await,
+        Ok(None) => {}
+        Err(error) => {
+            println!(
+                "{}",
+                workflow_cli::error_json("cli_parse", error.code, &error.message)
+            );
+            anyhow::bail!("workflow command refused");
+        }
+    }
     let mut args = PagerArgs::parse_and_apply_cwd()?;
     if let Some(ref mode) = args.compaction_mode {
         unsafe { std::env::set_var("GROK_COMPACTION_MODE", mode) };
@@ -2273,25 +2359,27 @@ async fn async_main() -> Result<()> {
             } => {
                 init_tracing_simple("cli");
                 let _otel_guard = xai_grok_telemetry::otel_layer::otel_guard();
-                if let Some(ref provider_name) = provider {
-                    match provider_name.as_str() {
-                        "codex" => {
-                            let home = dirs::home_dir().ok_or_else(|| {
-                                anyhow::anyhow!("could not determine the home directory")
-                            })?;
-                            xai_grok_shell::auth::codex_oauth::codex_login(&home).await?;
-                            println!();
-                            xai_grok_shell::instrumentation::finalize_and_exit(0);
-                        }
-                        other => {
-                            anyhow::bail!("unknown provider '{}' — did you mean 'codex'?", other);
-                        }
-                    }
+                if provider.is_some_and(LoginProvider::uses_openai_oauth) {
+                    let home = dirs::home_dir()
+                        .ok_or_else(|| anyhow::anyhow!("could not determine the home directory"))?;
+                    xai_grok_shell::auth::codex_oauth::codex_login(&home).await?;
+                    println!();
+                    xai_grok_shell::instrumentation::finalize_and_exit(0);
                 } else {
                     let config = xai_grok_shell::config::load_effective_config_disk_only()
                         .map_err(|e| anyhow::anyhow!("Failed to load config: {e}"))?;
-                    let config = AgentConfig::new_from_toml_cfg(&config)
+                    let mut config = AgentConfig::new_from_toml_cfg(&config)
                         .map_err(|e| anyhow::anyhow!("Failed to create agent config: {e}"))?;
+                    match provider {
+                        Some(LoginProvider::Aiko) => {
+                            config.grok_com_config.apply_builtin_login_profile(false)
+                        }
+                        Some(LoginProvider::Grok) => {
+                            config.grok_com_config.apply_builtin_login_profile(true)
+                        }
+                        None => {}
+                        Some(LoginProvider::Openai | LoginProvider::Codex) => unreachable!(),
+                    }
                     xai_grok_shell::auth::run_cli_login(&config, oauth, device_auth, devbox)
                         .await?;
                     println!();

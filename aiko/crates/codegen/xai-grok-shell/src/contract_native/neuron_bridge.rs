@@ -128,6 +128,18 @@ pub enum NeuronSkillWaveStatus {
     Complete,
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GraphHarnessClaimIdentity {
+    pub api_version: String,
+    pub state: String,
+    pub subject_digest: String,
+    pub transitive_digest: String,
+    pub adapter: String,
+    pub bundle_ref: String,
+    pub evaluation_policy: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct NeuronSkillNodeOccurrence {
     pub execution_id: String,
@@ -140,6 +152,14 @@ pub struct NeuronSkillNodeOccurrence {
     pub adapter: Option<String>,
     pub script: Option<String>,
     pub script_digest: Option<String>,
+    #[serde(default)]
+    pub cell_digest: Option<String>,
+    #[serde(default)]
+    pub witness_id: Option<String>,
+    #[serde(default)]
+    pub witness_digest: Option<String>,
+    #[serde(default)]
+    pub judge_digest: Option<String>,
     pub effect_scope: String,
     pub read_only: bool,
     pub reversible: bool,
@@ -158,6 +178,8 @@ pub struct NeuronSkillWave {
     pub status: NeuronSkillWaveStatus,
     pub root_id: String,
     pub graph_digest: String,
+    #[serde(default)]
+    pub graph_harness: Option<GraphHarnessClaimIdentity>,
     pub terminal_evidence: Option<serde_json::Value>,
     pub nodes: Vec<NeuronSkillNodeOccurrence>,
 }

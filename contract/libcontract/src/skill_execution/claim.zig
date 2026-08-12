@@ -81,6 +81,18 @@ pub fn claimJson(
     const graph_digest = (common.latestGraphDigestStreaming(scratch, env, request.root_id) catch
         return common.Error.LedgerFailure) orelse return common.Error.GraphMissing;
     const nodes = try common.loadNodesStreaming(scratch, env, request.root_id, graph_digest);
+    const graph_harness = try common.loadGraphHarnessIdentityStreaming(
+        scratch,
+        env,
+        request.root_id,
+        graph_digest,
+    );
+    if (graph_harness != null) {
+        for (nodes) |node| {
+            if (!common.validGraphHarnessNodePins(node, graph_harness.?))
+                return common.Error.InvalidJson;
+        }
+    }
     const execution_ids = scratch.alloc([64]u8, nodes.len) catch
         return common.Error.OutOfMemory;
     for (nodes, 0..) |node, index| {
@@ -136,6 +148,10 @@ pub fn claimJson(
     out.appendSlice(allocator, ",\"graph_digest\":") catch return common.Error.OutOfMemory;
     common.appendJsonString(&out, allocator, graph_digest) catch
         return common.Error.OutOfMemory;
+    out.appendSlice(allocator, ",\"graph_harness\":") catch
+        return common.Error.OutOfMemory;
+    common.appendGraphHarnessIdentity(&out, allocator, graph_harness) catch
+        return common.Error.OutOfMemory;
     out.appendSlice(allocator, ",\"terminal_evidence\":") catch
         return common.Error.OutOfMemory;
     if (all_satisfied) {
@@ -153,11 +169,14 @@ pub fn claimJson(
     for (eligible[0..eligible_count], 0..) |node_index, output_index| {
         const node = nodes[node_index];
         const attempt = states[node_index].attempt + 1;
-        const row = std.fmt.allocPrint(
+        var occurrence: std.ArrayList(u8) = .empty;
+        defer occurrence.deinit(scratch);
+        occurrence.print(
             scratch,
             "{{\"event\":\"neuron_skill_node_claimed\",\"execution_id\":\"{s}\"," ++
                 "\"root_id\":\"{s}\",\"graph_digest\":\"{s}\",\"node_id\":\"{s}\"," ++
-                "\"attempt\":{d},\"owner_digest\":\"{s}\",\"lease_until_ms\":{d}}}",
+                "\"attempt\":{d},\"owner_digest\":\"{s}\",\"lease_until_ms\":{d}," ++
+                "\"graph_harness\":",
             .{
                 &execution_ids[node_index],
                 request.root_id,
@@ -168,7 +187,21 @@ pub fn claimJson(
                 lease_until,
             },
         ) catch return common.Error.OutOfMemory;
-        const path = ledger.appendRow(allocator, env, row) catch
+        common.appendGraphHarnessIdentity(&occurrence, scratch, graph_harness) catch
+            return common.Error.OutOfMemory;
+        for ([_]struct { label: []const u8, value: ?[]const u8 }{
+            .{ .label = "cell_digest", .value = node.cell_digest },
+            .{ .label = "witness_id", .value = node.witness_id },
+            .{ .label = "witness_digest", .value = node.witness_digest },
+            .{ .label = "judge_digest", .value = node.judge_digest },
+        }) |field| {
+            occurrence.print(scratch, ",\"{s}\":", .{field.label}) catch
+                return common.Error.OutOfMemory;
+            common.appendOptionalJsonString(&occurrence, scratch, field.value) catch
+                return common.Error.OutOfMemory;
+        }
+        occurrence.append(scratch, '}') catch return common.Error.OutOfMemory;
+        const path = ledger.appendRow(allocator, env, occurrence.items) catch
             return common.Error.LedgerFailure;
         allocator.free(path);
         if (output_index > 0) out.append(allocator, ',') catch
@@ -216,6 +249,17 @@ pub fn claimJson(
                 return common.Error.OutOfMemory;
         } else {
             out.appendSlice(allocator, "null") catch return common.Error.OutOfMemory;
+        }
+        for ([_]struct { label: []const u8, value: ?[]const u8 }{
+            .{ .label = "cell_digest", .value = node.cell_digest },
+            .{ .label = "witness_id", .value = node.witness_id },
+            .{ .label = "witness_digest", .value = node.witness_digest },
+            .{ .label = "judge_digest", .value = node.judge_digest },
+        }) |field| {
+            out.print(allocator, ",\"{s}\":", .{field.label}) catch
+                return common.Error.OutOfMemory;
+            common.appendOptionalJsonString(&out, allocator, field.value) catch
+                return common.Error.OutOfMemory;
         }
         out.print(
             allocator,

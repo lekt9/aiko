@@ -1282,9 +1282,7 @@ pub fn load_mcp_server_configs_with_project(
     // Read the legacy home as a lower-precedence user-tier source so those
     // definitions keep working; the active home always wins on a name clash.
     for (name, config) in legacy_home_mcp_servers() {
-        servers
-            .entry(name)
-            .or_insert((config, MCP_SCOPE_USER));
+        servers.entry(name).or_insert((config, MCP_SCOPE_USER));
     }
 
     // find_project_configs is repo-root-first, so nearer files overwrite.

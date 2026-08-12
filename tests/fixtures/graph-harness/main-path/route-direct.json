@@ -1,0 +1,11 @@
+{
+  "api_version": "aiko-workflow-route/v1",
+  "facts": {
+    "read_only_observation": true
+  },
+  "preview": null,
+  "expected": {
+    "route": "direct_allowed",
+    "reason": "read_only_observation"
+  }
+}

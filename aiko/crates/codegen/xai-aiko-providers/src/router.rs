@@ -319,7 +319,10 @@ mod tests {
         );
         let router = ProviderRouter::new(keys);
         let id = router.provider_for("grok-4.3").unwrap().id;
-        assert_eq!(id, "xai", "expected xai (direct) when no gateway keyed, got {id}");
+        assert_eq!(
+            id, "xai",
+            "expected xai (direct) when no gateway keyed, got {id}"
+        );
     }
 
     #[test]

@@ -1,0 +1,51 @@
+#!/bin/sh
+# One membrane over the GraphHarness compiler and registry. It delegates;
+# scheduling remains Contract's authority and durable truth remains in Contract.
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+usage() {
+    cat <<'EOF'
+usage: aiko-harness <command> [arguments]
+
+Prepare and externally admit GraphHarness packages without adding a scheduler or ledger.
+Admission verification uses the deployment-pinned AIKO_CONTRACT_VERIFY_KEY environment path; requests cannot select a key.
+
+commands:
+  build       validate a problem and emit a deterministic prepared package
+  admit       verify a Contract Ed25519 attestation using deployment bootstrap; never execute witnesses
+  inspect     verify a prepared or admitted package and its material closure
+  register    store an already-admitted package in the content-addressed registry
+  find        find the highest compatible admitted package (registry lookup)
+  self-test   run compiler and registry self-tests
+  help        show this help
+
+Run `aiko-harness <command> --help` for command-specific arguments.
+EOF
+}
+
+command=${1:-help}
+[ "$#" -eq 0 ] || shift
+case "$command" in
+    build|admit|inspect)
+        exec python3 "$ROOT/scripts/graph_harness.py" "$command" "$@"
+        ;;
+    register)
+        exec python3 "$ROOT/scripts/graph_harness_registry.py" register "$@"
+        ;;
+    find|lookup)
+        exec python3 "$ROOT/scripts/graph_harness_registry.py" lookup "$@"
+        ;;
+    self-test)
+        python3 "$ROOT/scripts/graph_harness.py" --self-test
+        exec python3 "$ROOT/scripts/graph_harness_registry.py" --self-test
+        ;;
+    help|-h|--help)
+        usage
+        ;;
+    *)
+        printf 'aiko-harness: unknown command: %s\n' "$command" >&2
+        usage >&2
+        exit 2
+        ;;
+esac

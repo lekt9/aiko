@@ -2303,15 +2303,32 @@ impl acp::Agent for MvpAgent {
         // privacy-bounded local machine snapshot and learned EBM route without
         // requiring the user to call Contract or configure context manually.
         let conversation = handle.chat_state_handle.get_conversation().await;
-        let continuation_identity = std::env::var("AIKO_CONVERSATION_ID")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| handle.info.id.0.to_string());
-        let grounded = crate::contract_native::ground_turn(
+        let continuation_identity =
+            crate::contract_native::conversation_identity_from_blocks(&arguments.prompt)
+                .or_else(|| {
+                    std::env::var("AIKO_CONVERSATION_ID")
+                        .ok()
+                        .filter(|value| !value.trim().is_empty())
+                })
+                .unwrap_or_else(|| handle.info.id.0.to_string());
+        let explicit_workflow = arguments.prompt.iter().any(|block| match block {
+            acp::ContentBlock::Text(text) => text
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.get("aikoExplicitWorkflow"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            _ => false,
+        });
+        let grounded = crate::contract_native::ground_turn_with_facts(
             &arguments.prompt,
             std::path::Path::new(&handle.info.cwd),
             &continuation_identity,
             &conversation,
+            crate::contract_native::graph_harness::WorkflowRequestFacts {
+                explicit_workflow,
+                ..Default::default()
+            },
         )
         .await
         .map_err(|reason| {

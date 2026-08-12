@@ -39,6 +39,9 @@
       "depends_on": [
         "parse-cadence"
       ],
+      "input_bindings": {
+        "cadence": "parse-cadence.structured_result"
+      },
       "effect": "read_only",
       "evidence": [
         "structured_result"
@@ -56,7 +59,10 @@
       "depends_on": [
         "deduplicate"
       ],
-      "effect": "local_write",
+      "input_bindings": {
+        "deduplication": "deduplicate.structured_result"
+      },
+      "effect": "local_reversible",
       "evidence": [
         "structured_result"
       ],
@@ -66,7 +72,10 @@
       "requires_authority": false,
       "reversible": true,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": [
+        "workspace://**"
+      ]
     }
   ],
   "output_schema": {

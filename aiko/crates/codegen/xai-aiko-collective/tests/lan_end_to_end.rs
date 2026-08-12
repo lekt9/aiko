@@ -29,29 +29,44 @@ fn contract_library() -> std::path::PathBuf {
     if let Some(path) = std::env::var_os("AIKO_COLLECTIVE_TEST_LIBRARY") {
         return path.into();
     }
-    for rel in ["../../../../contract/libcontract", "../../../../contract-core/libcontract"] {
+    for rel in [
+        "../../../../contract/libcontract",
+        "../../../../contract-core/libcontract",
+    ] {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
         #[cfg(target_os = "macos")]
         {
             let p = root.join("zig-out/lib/libcontract.dylib");
-            if p.is_file() { return p; }
+            if p.is_file() {
+                return p;
+            }
         }
         #[cfg(target_os = "windows")]
         {
             let p = root.join("zig-out-windows/bin/contract.dll");
-            if p.is_file() { return p; }
+            if p.is_file() {
+                return p;
+            }
         }
         #[cfg(all(unix, not(target_os = "macos")))]
         {
             let p = root.join("zig-out/lib/libcontract.so");
-            if p.is_file() { return p; }
+            if p.is_file() {
+                return p;
+            }
         }
     }
-    if let Some(home) = dirs::home_dir().or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from)) {
+    if let Some(home) =
+        dirs::home_dir().or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from))
+    {
         let p = home.join("Unbrowse/contract-core/libcontract/zig-out/lib/libcontract.dylib");
-        if p.is_file() { return p; }
+        if p.is_file() {
+            return p;
+        }
         let p = home.join("Unbrowse/contract-core/libcontract/zig-out/lib/libcontract.so");
-        if p.is_file() { return p; }
+        if p.is_file() {
+            return p;
+        }
     }
     let root =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../contract/libcontract");

@@ -26,8 +26,10 @@ const pointer = @import("pointer.zig");
 const reflex = @import("reflex.zig");
 const skill_lifecycle = @import("skill_lifecycle.zig");
 const skill_execution = @import("skill_execution.zig");
+const skill_execution_common = @import("skill_execution/common.zig");
 const workflow = @import("workflow.zig");
 const graph_plan = @import("graph_plan.zig");
+const graph_harness_attestation = @import("graph_harness_attestation.zig");
 const obligation_fsm = @import("obligation_fsm.zig");
 
 const gpa = std.heap.c_allocator;
@@ -422,6 +424,18 @@ fn validAdapterId(value: []const u8) bool {
     return true;
 }
 
+fn validGraphHarnessWitnessId(value: []const u8) bool {
+    if (value.len == 0 or value.len > 64 or !std.ascii.isLower(value[0])) return false;
+    var previous_hyphen = false;
+    for (value) |byte| {
+        const hyphen = byte == '-';
+        if (!std.ascii.isLower(byte) and !std.ascii.isDigit(byte) and !hyphen) return false;
+        if (hyphen and previous_hyphen) return false;
+        previous_hyphen = hyphen;
+    }
+    return !previous_hyphen;
+}
+
 fn expandGraphJson(request_json: [*:0]const u8) !?[*:0]u8 {
     var parsed = std.json.parseFromSlice(std.json.Value, gpa, cstr(request_json), .{}) catch return null;
     defer parsed.deinit();
@@ -435,6 +449,30 @@ fn expandGraphJson(request_json: [*:0]const u8) !?[*:0]u8 {
     const agent = objectString(root_object, "agent") orelse "aiko-contract-worker";
     const existing_root_id = objectString(root_object, "root_id");
     if (existing_root_id) |id| if (!validContractId(id)) return null;
+    const graph_harness_identity: ?skill_execution_common.GraphHarnessIdentity = if (root_object.get("graph_harness")) |value| blk: {
+        const object = switch (value) {
+            .object => |o| o,
+            else => return null,
+        };
+        if (object.count() != 7) return null;
+        const identity: skill_execution_common.GraphHarnessIdentity = .{
+            .api_version = objectString(object, "api_version") orelse return null,
+            .state = objectString(object, "state") orelse return null,
+            .subject_digest = objectString(object, "subject_digest") orelse return null,
+            .transitive_digest = objectString(object, "transitive_digest") orelse return null,
+            .adapter = objectString(object, "adapter") orelse return null,
+            .bundle_ref = objectString(object, "bundle_ref") orelse return null,
+            .evaluation_policy = objectString(object, "evaluation_policy") orelse return null,
+        };
+        if (!std.mem.eql(u8, identity.api_version, "graph-harness/v1") or
+            !neuron_artifact.validDigest(identity.subject_digest) or
+            !neuron_artifact.validDigest(identity.transitive_digest) or
+            !validAdapterId(identity.adapter) or !validAdapterId(identity.evaluation_policy) or
+            !std.mem.startsWith(u8, identity.bundle_ref, "cas:") or
+            !neuron_artifact.validDigest(identity.bundle_ref[4..]) or
+            !(std.mem.eql(u8, identity.state, "prepared") or std.mem.eql(u8, identity.state, "evaluated"))) return null;
+        break :blk identity;
+    } else null;
     const child_values = switch (root_object.get("children") orelse return null) {
         .array => |array| array.items,
         else => return null,
@@ -442,11 +480,24 @@ fn expandGraphJson(request_json: [*:0]const u8) !?[*:0]u8 {
     if (child_values.len == 0 or child_values.len > muscle.MAX_PARALLEL) return null;
     const graph_digest = skill_execution.graphDigest(cstr(request_json));
 
+    var root_fields: [8]contract.Field = undefined;
+    root_fields[0] = .{ .key = "execution_model", .value = "parallel_contract_dag" };
+    var root_field_count: usize = 1;
+    if (graph_harness_identity) |identity| {
+        root_fields[1] = .{ .key = "graph_harness_api_version", .value = identity.api_version };
+        root_fields[2] = .{ .key = "graph_harness_state", .value = identity.state };
+        root_fields[3] = .{ .key = "graph_harness_subject_digest", .value = identity.subject_digest };
+        root_fields[4] = .{ .key = "graph_harness_transitive_digest", .value = identity.transitive_digest };
+        root_fields[5] = .{ .key = "graph_harness_adapter", .value = identity.adapter };
+        root_fields[6] = .{ .key = "graph_harness_bundle_ref", .value = identity.bundle_ref };
+        root_fields[7] = .{ .key = "graph_harness_evaluation_policy", .value = identity.evaluation_policy };
+        root_field_count = root_fields.len;
+    }
     const owned_root_id = if (existing_root_id == null)
         contract.declare(gpa, extEnv(), plan, action, .{
             .agent = agent,
             .cwd = cwd,
-            .extras = &.{.{ .key = "execution_model", .value = "parallel_contract_dag" }},
+            .extras = root_fields[0..root_field_count],
         }) catch return null
     else
         null;
@@ -607,8 +658,22 @@ fn expandGraphJson(request_json: [*:0]const u8) !?[*:0]u8 {
         const admission = objectString(child, "admission") orelse return null;
         const script = objectString(child, "script") orelse "";
         const script_digest = objectString(child, "script_digest") orelse "";
+        const cell_digest = objectString(child, "cell_digest") orelse "";
+        const witness_id = objectString(child, "witness_id") orelse "";
+        const witness_digest = objectString(child, "witness_digest") orelse "";
+        const judge_digest = objectString(child, "judge_digest") orelse "";
+        if (graph_harness_identity != null and
+            (!neuron_artifact.validDigest(cell_digest) or
+                !validGraphHarnessWitnessId(witness_id) or
+                !neuron_artifact.validDigest(witness_digest) or
+                !neuron_artifact.validDigest(judge_digest) or
+                std.mem.eql(u8, witness_digest, judge_digest))) return null;
+        const aiko_adapter_valid = if (graph_harness_identity == null)
+            adapter.len == 0
+        else
+            std.mem.eql(u8, adapter, "aiko.graph-harness-edge-model/v1");
         const implementation_valid =
-            (std.mem.eql(u8, worker, "aiko") and adapter.len == 0 and
+            (std.mem.eql(u8, worker, "aiko") and aiko_adapter_valid and
                 script.len == 0 and script_digest.len == 0) or
             (std.mem.eql(u8, worker, "host") and validAdapterId(adapter) and
                 script.len == 0 and script_digest.len == 0) or
@@ -642,6 +707,10 @@ fn expandGraphJson(request_json: [*:0]const u8) !?[*:0]u8 {
             .{ .key = "evidence_requirements", .value = evidence_writer.writer.buffered() },
             .{ .key = "script", .value = script },
             .{ .key = "script_digest", .value = script_digest },
+            .{ .key = "cell_digest", .value = cell_digest },
+            .{ .key = "witness_id", .value = witness_id },
+            .{ .key = "witness_digest", .value = witness_digest },
+            .{ .key = "judge_digest", .value = judge_digest },
             .{ .key = "graph_digest", .value = &graph_digest },
         };
         ids[index] = contract.declare(gpa, extEnv(), plans[index], actions[index], .{
@@ -659,13 +728,38 @@ fn expandGraphJson(request_json: [*:0]const u8) !?[*:0]u8 {
     }
 
     const scheduled = muscle.schedule(nodes[0 .. child_values.len + 1], 0) catch return null;
-    try skill_execution.admitGraph(gpa, extEnv(), root_id, &graph_digest, child_values.len);
+    try skill_execution_common.admitGraphWithIdentity(
+        gpa,
+        extEnv(),
+        root_id,
+        &graph_digest,
+        child_values.len,
+        graph_harness_identity,
+    );
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(gpa);
     try out.print(gpa, "{{\"abi_version\":{d},\"root_id\":", .{ABI_VERSION});
     try appendJsonString(&out, root_id);
     try out.appendSlice(gpa, ",\"graph_digest\":");
     try appendJsonString(&out, &graph_digest);
+    if (graph_harness_identity) |identity| {
+        try out.appendSlice(gpa, ",\"graph_harness\":{");
+        try out.appendSlice(gpa, "\"api_version\":");
+        try appendJsonString(&out, identity.api_version);
+        try out.appendSlice(gpa, ",\"state\":");
+        try appendJsonString(&out, identity.state);
+        try out.appendSlice(gpa, ",\"subject_digest\":");
+        try appendJsonString(&out, identity.subject_digest);
+        try out.appendSlice(gpa, ",\"transitive_digest\":");
+        try appendJsonString(&out, identity.transitive_digest);
+        try out.appendSlice(gpa, ",\"adapter\":");
+        try appendJsonString(&out, identity.adapter);
+        try out.appendSlice(gpa, ",\"bundle_ref\":");
+        try appendJsonString(&out, identity.bundle_ref);
+        try out.appendSlice(gpa, ",\"evaluation_policy\":");
+        try appendJsonString(&out, identity.evaluation_policy);
+        try out.append(gpa, '}');
+    }
     try out.appendSlice(gpa, ",\"children\":[");
     for (0..child_values.len) |index| {
         if (index > 0) try out.append(gpa, ',');
@@ -703,6 +797,15 @@ fn expandGraphJson(request_json: [*:0]const u8) !?[*:0]u8 {
 
 export fn contract_expand_json(request_json: [*:0]const u8) ?[*:0]u8 {
     return expandGraphJson(request_json) catch null;
+}
+
+/// Issue the sole production GraphHarness admission statement. Contract derives
+/// all evidence/verdict/ledger references, time and signing identity; null is a
+/// fail-closed refusal and returned bytes are released with contract_free.
+export fn contract_issue_graph_harness_attestation_json(request_json: [*:0]const u8) ?[*:0]u8 {
+    const result = graph_harness_attestation.issueJson(gpa, extEnv(), cstr(request_json)) catch return null;
+    defer gpa.free(result);
+    return returned(result);
 }
 
 // On POSIX with libc, `environ` is the global env-var array. Wrap it as a
@@ -2296,4 +2399,225 @@ test "collective C ABI is additive deterministic and fail closed" {
     const rejected_ptr = contract_collective_canonicalize("{\"token\":\"secret\"}") orelse return error.OutOfMemory;
     defer contract_free(rejected_ptr);
     try std.testing.expect(std.mem.indexOf(u8, std.mem.span(rejected_ptr), "\"verdict\":\"reject\"") != null);
+}
+
+
+test "GraphHarness expand claim projects immutable root and child pins" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var seed: [8]u8 = undefined;
+    io.random(&seed);
+    const abs = try std.fmt.allocPrint(allocator, "/tmp/libcontract-gh-claim-{x}", .{seed});
+    defer allocator.free(abs);
+    const claude_dir = try std.fs.path.join(allocator, &.{ abs, ".claude" });
+    defer allocator.free(claude_dir);
+    try std.Io.Dir.createDirAbsolute(io, abs, .default_dir);
+    try std.Io.Dir.createDirAbsolute(io, claude_dir, .default_dir);
+    defer {
+        var tmp_root = std.Io.Dir.openDirAbsolute(io, "/tmp", .{}) catch unreachable;
+        defer tmp_root.close(io);
+        tmp_root.deleteTree(io, std.fs.path.basename(abs)) catch {};
+    }
+    var cwd_buf: [4096]u8 = undefined;
+    const cwd_ptr = std.c.getcwd(&cwd_buf, cwd_buf.len) orelse return error.CwdFailed;
+    const cwd_z = try allocator.dupeZ(u8, std.mem.span(@as([*:0]const u8, @ptrCast(cwd_ptr))));
+    defer allocator.free(cwd_z);
+    const abs_z = try allocator.dupeZ(u8, abs);
+    defer allocator.free(abs_z);
+    if (std.c.chdir(abs_z.ptr) != 0) return error.ChdirFailed;
+    defer _ = std.c.chdir(cwd_z.ptr);
+
+    const subject = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const transitive = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const bundle = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    const cell = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    const witness = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    const judge = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    const request = try std.fmt.allocPrintSentinel(allocator,
+        "{{\"plan\":\"durable GH\",\"action\":\"neuron:cell\",\"cwd\":\"{s}\"," ++
+            "\"graph_harness\":{{\"api_version\":\"graph-harness/v1\",\"state\":\"prepared\"," ++
+            "\"subject_digest\":\"{s}\",\"transitive_digest\":\"{s}\"," ++
+            "\"adapter\":\"aiko.graph-harness-contract/v1\",\"bundle_ref\":\"cas:{s}\"," ++
+            "\"evaluation_policy\":\"isolated-local/v1\"}},\"children\":[{{" ++
+            "\"key\":\"node-a\",\"plan\":\"pinned work\",\"action\":\"skill:pkg@1.0.0:host\"," ++
+            "\"depends_on\":[],\"input_bindings\":{{}},\"authorization\":\"approved\"," ++
+            "\"effect_scope\":\"read_only\",\"read_only\":true,\"reversible\":true,\"timeout_ms\":1000," ++
+            "\"skill_id\":\"pkg\",\"skill_version\":\"1.0.0\",\"worker\":\"host\"," ++
+            "\"adapter\":\"aiko.graph-harness-cell-v0/v1\",\"activation\":\"runtime\"," ++
+            "\"admission\":\"graph_harness_prepared\",\"script\":\"\",\"script_digest\":\"\"," ++
+            "\"cell_digest\":\"{s}\",\"witness_id\":\"node-a-witness\"," ++
+            "\"witness_digest\":\"{s}\",\"judge_digest\":\"{s}\",\"evidence\":[\"result\"]}}]}}",
+        .{ abs, subject, transitive, bundle, cell, witness, judge }, 0);
+    defer allocator.free(request);
+    const expanded_ptr = contract_expand_json(request.ptr) orelse return error.TestUnexpectedResult;
+    defer contract_free(expanded_ptr);
+    var expanded = try std.json.parseFromSlice(std.json.Value, allocator, std.mem.span(expanded_ptr), .{});
+    defer expanded.deinit();
+    const root_id = expanded.value.object.get("root_id").?.string;
+
+    const claim_request = try std.fmt.allocPrintSentinel(allocator,
+        "{{\"schema\":\"contract.neuron-skill-node.claim/v1\",\"root_id\":\"{s}\"," ++
+            "\"root_occurrence\":\"occ-1\",\"owner\":\"rust-host\",\"now_ms\":1," ++
+            "\"lease_ms\":1000,\"max_nodes\":1}}",
+        .{root_id}, 0);
+    defer allocator.free(claim_request);
+    const claim_ptr = contract_neuron_skill_node_claim_json(claim_request.ptr) orelse
+        return error.TestUnexpectedResult;
+    defer contract_free(claim_ptr);
+    var claimed = try std.json.parseFromSlice(std.json.Value, allocator, std.mem.span(claim_ptr), .{});
+    defer claimed.deinit();
+    const claim_object = claimed.value.object;
+    const identity = claim_object.get("graph_harness").?.object;
+    try std.testing.expectEqualStrings(subject, identity.get("subject_digest").?.string);
+    try std.testing.expectEqualStrings(transitive, identity.get("transitive_digest").?.string);
+    try std.testing.expectEqualStrings("aiko.graph-harness-contract/v1", identity.get("adapter").?.string);
+    try std.testing.expectEqualStrings("cas:" ++ bundle, identity.get("bundle_ref").?.string);
+    try std.testing.expectEqualStrings("isolated-local/v1", identity.get("evaluation_policy").?.string);
+    const occurrence = claim_object.get("nodes").?.array.items[0].object;
+    try std.testing.expectEqualStrings(cell, occurrence.get("cell_digest").?.string);
+    try std.testing.expectEqualStrings("node-a-witness", occurrence.get("witness_id").?.string);
+    try std.testing.expectEqualStrings(witness, occurrence.get("witness_digest").?.string);
+    try std.testing.expectEqualStrings(judge, occurrence.get("judge_digest").?.string);
+
+    // Claim-time caller/current-plan data is not accepted and cannot replace
+    // values projected from the durable admission + declarations.
+    const mutated_claim = try std.fmt.allocPrintSentinel(allocator,
+        "{{\"schema\":\"contract.neuron-skill-node.claim/v1\",\"root_id\":\"{s}\"," ++
+            "\"root_occurrence\":\"occ-2\",\"owner\":\"rust-host\",\"now_ms\":2," ++
+            "\"lease_ms\":1000,\"max_nodes\":1,\"cell_digest\":\"{s}\"}}",
+        .{ root_id, subject }, 0);
+    defer allocator.free(mutated_claim);
+    try std.testing.expect(contract_neuron_skill_node_claim_json(mutated_claim.ptr) == null);
+
+    const ledger_body = try ledger.readAll(allocator, extEnv());
+    defer allocator.free(ledger_body);
+    try std.testing.expect(std.mem.indexOf(u8, ledger_body, "\"cell_digest\":\"" ++ cell ++ "\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ledger_body, "\"graph_harness\":{\"api_version\":\"graph-harness/v1\"") != null);
+
+    // Removing any required child pin refuses GraphHarness expansion.
+    const missing_pin = try std.mem.replaceOwned(u8, allocator, request,
+        "\"cell_digest\":\"" ++ cell ++ "\",", "");
+    defer allocator.free(missing_pin);
+    const missing_pin_z = try allocator.dupeZ(u8, missing_pin);
+    defer allocator.free(missing_pin_z);
+    try std.testing.expect(contract_expand_json(missing_pin_z.ptr) == null);
+
+    // The closed GraphHarness allowlist must also admit and lease the exact
+    // Aiko edge identity, while refusing a foreign adapter before persistence.
+    const edge_request = try std.fmt.allocPrintSentinel(allocator,
+        "{{\"plan\":\"durable edge GH\",\"action\":\"neuron:cell\",\"cwd\":\"{s}\"," ++
+            "\"graph_harness\":{{\"api_version\":\"graph-harness/v1\",\"state\":\"prepared\"," ++
+            "\"subject_digest\":\"{s}\",\"transitive_digest\":\"{s}\"," ++
+            "\"adapter\":\"aiko.graph-harness-contract/v1\",\"bundle_ref\":\"cas:{s}\"," ++
+            "\"evaluation_policy\":\"isolated-local-workspace-sandboxed-neuron/v1\"}},\"children\":[{{" ++
+            "\"key\":\"aiko-meta-agent--act\",\"plan\":\"pinned edge work\",\"action\":\"skill:aiko-meta-agent@1.0.0:aiko\"," ++
+            "\"depends_on\":[],\"input_bindings\":{{}},\"authorization\":\"approved\"," ++
+            "\"effect_scope\":\"local_reversible\",\"read_only\":false,\"reversible\":true,\"timeout_ms\":1000," ++
+            "\"skill_id\":\"aiko-meta-agent\",\"skill_version\":\"1.0.0\",\"worker\":\"aiko\"," ++
+            "\"adapter\":\"aiko.graph-harness-edge-model/v1\",\"activation\":\"runtime\"," ++
+            "\"admission\":\"graph_harness_prepared\",\"script\":null,\"script_digest\":null," ++
+            "\"cell_digest\":\"{s}\",\"witness_id\":\"act-witness\"," ++
+            "\"witness_digest\":\"{s}\",\"judge_digest\":\"{s}\",\"evidence\":[\"action_result\"]}}]}}",
+        .{ abs, subject, transitive, bundle, cell, witness, judge }, 0);
+    defer allocator.free(edge_request);
+    const edge_expanded_ptr = contract_expand_json(edge_request.ptr) orelse return error.TestUnexpectedResult;
+    defer contract_free(edge_expanded_ptr);
+    var edge_expanded = try std.json.parseFromSlice(std.json.Value, allocator, std.mem.span(edge_expanded_ptr), .{});
+    defer edge_expanded.deinit();
+    const edge_root = edge_expanded.value.object.get("root_id").?.string;
+    const edge_claim = try std.fmt.allocPrintSentinel(allocator,
+        "{{\"schema\":\"contract.neuron-skill-node.claim/v1\",\"root_id\":\"{s}\"," ++
+            "\"root_occurrence\":\"occ-edge\",\"owner\":\"rust-host\",\"now_ms\":1,\"lease_ms\":1000,\"max_nodes\":1}}",
+        .{edge_root}, 0);
+    defer allocator.free(edge_claim);
+    const edge_claimed_ptr = contract_neuron_skill_node_claim_json(edge_claim.ptr) orelse return error.TestUnexpectedResult;
+    defer contract_free(edge_claimed_ptr);
+    var edge_claimed = try std.json.parseFromSlice(std.json.Value, allocator, std.mem.span(edge_claimed_ptr), .{});
+    defer edge_claimed.deinit();
+    try std.testing.expectEqualStrings("aiko.graph-harness-edge-model/v1",
+        edge_claimed.value.object.get("nodes").?.array.items[0].object.get("adapter").?.string);
+    const foreign = try std.mem.replaceOwned(u8, allocator, edge_request,
+        "aiko.graph-harness-edge-model/v1", "foreign.edge/v1");
+    defer allocator.free(foreign);
+    const foreign_z = try allocator.dupeZ(u8, foreign);
+    defer allocator.free(foreign_z);
+    try std.testing.expect(contract_expand_json(foreign_z.ptr) == null);
+
+    const host_key = try std.mem.replaceOwned(u8, allocator, request, "node-a", "aiko-meta-agent--observe");
+    defer allocator.free(host_key);
+    const host_witness = try std.mem.replaceOwned(u8, allocator, host_key,
+        "aiko-meta-agent--observe-witness", "observe-witness");
+    defer allocator.free(host_witness);
+    const host_adapter = try std.mem.replaceOwned(u8, allocator, host_witness,
+        "aiko.graph-harness-cell-v0/v1", "aiko.meta.observe/v1");
+    defer allocator.free(host_adapter);
+    const host_skill = try std.mem.replaceOwned(u8, allocator, host_adapter,
+        "\"skill_id\":\"pkg\"", "\"skill_id\":\"aiko-meta-agent\"");
+    defer allocator.free(host_skill);
+    const host_action = try std.mem.replaceOwned(u8, allocator, host_skill,
+        "skill:pkg@1.0.0:host", "skill:aiko-meta-agent@1.0.0:host");
+    defer allocator.free(host_action);
+    const host_z = try allocator.dupeZ(u8, host_action);
+    defer allocator.free(host_z);
+    const host_expanded_ptr = contract_expand_json(host_z.ptr) orelse return error.TestUnexpectedResult;
+    defer contract_free(host_expanded_ptr);
+    var host_expanded = try std.json.parseFromSlice(std.json.Value, allocator, std.mem.span(host_expanded_ptr), .{});
+    defer host_expanded.deinit();
+    const host_root = host_expanded.value.object.get("root_id").?.string;
+    const host_claim = try std.fmt.allocPrintSentinel(allocator,
+        "{{\"schema\":\"contract.neuron-skill-node.claim/v1\",\"root_id\":\"{s}\"," ++
+            "\"root_occurrence\":\"occ-host\",\"owner\":\"rust-host\",\"now_ms\":1,\"lease_ms\":1000,\"max_nodes\":1}}",
+        .{host_root}, 0);
+    defer allocator.free(host_claim);
+    const host_claimed_ptr = contract_neuron_skill_node_claim_json(host_claim.ptr) orelse return error.TestUnexpectedResult;
+    defer contract_free(host_claimed_ptr);
+    var host_claimed = try std.json.parseFromSlice(std.json.Value, allocator, std.mem.span(host_claimed_ptr), .{});
+    defer host_claimed.deinit();
+    try std.testing.expectEqualStrings("aiko.meta.observe/v1",
+        host_claimed.value.object.get("nodes").?.array.items[0].object.get("adapter").?.string);
+
+    const legacy_request = try std.fmt.allocPrintSentinel(allocator,
+        "{{\"plan\":\"legacy graph\",\"action\":\"neuron:cell\",\"cwd\":\"{s}\",\"children\":[{{" ++
+            "\"key\":\"legacy-node\",\"plan\":\"legacy work\",\"action\":\"skill:pkg@1.0.0:host\"," ++
+            "\"depends_on\":[],\"input_bindings\":{{}},\"authorization\":\"approved\"," ++
+            "\"effect_scope\":\"read_only\",\"read_only\":true,\"reversible\":true,\"timeout_ms\":1000," ++
+            "\"skill_id\":\"pkg\",\"skill_version\":\"1.0.0\",\"worker\":\"host\"," ++
+            "\"adapter\":\"legacy-adapter/v1\",\"activation\":\"runtime\",\"admission\":\"admitted\"," ++
+            "\"script\":\"\",\"script_digest\":\"\",\"evidence\":[\"result\"]}}]}}",
+        .{abs}, 0);
+    defer allocator.free(legacy_request);
+    const legacy_expanded_ptr = contract_expand_json(legacy_request.ptr) orelse
+        return error.TestUnexpectedResult;
+    defer contract_free(legacy_expanded_ptr);
+    var legacy_expanded = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        std.mem.span(legacy_expanded_ptr),
+        .{},
+    );
+    defer legacy_expanded.deinit();
+    const legacy_root = legacy_expanded.value.object.get("root_id").?.string;
+    const legacy_claim_request = try std.fmt.allocPrintSentinel(allocator,
+        "{{\"schema\":\"contract.neuron-skill-node.claim/v1\",\"root_id\":\"{s}\"," ++
+            "\"root_occurrence\":\"legacy-occ\",\"owner\":\"rust-host\",\"now_ms\":3," ++
+            "\"lease_ms\":1000,\"max_nodes\":1}}",
+        .{legacy_root}, 0);
+    defer allocator.free(legacy_claim_request);
+    const legacy_claim_ptr = contract_neuron_skill_node_claim_json(legacy_claim_request.ptr) orelse
+        return error.TestUnexpectedResult;
+    defer contract_free(legacy_claim_ptr);
+    var legacy_claim = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        std.mem.span(legacy_claim_ptr),
+        .{},
+    );
+    defer legacy_claim.deinit();
+    try std.testing.expect(legacy_claim.value.object.get("graph_harness").? == .null);
+    const legacy_node = legacy_claim.value.object.get("nodes").?.array.items[0].object;
+    try std.testing.expect(legacy_node.get("cell_digest").? == .null);
+    try std.testing.expect(legacy_node.get("witness_id").? == .null);
+    try std.testing.expect(legacy_node.get("witness_digest").? == .null);
+    try std.testing.expect(legacy_node.get("judge_digest").? == .null);
 }

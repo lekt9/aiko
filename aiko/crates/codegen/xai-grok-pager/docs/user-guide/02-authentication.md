@@ -18,6 +18,20 @@ aiko login
 aiko
 ```
 
+The provider is also available as a native, typed argument:
+
+| Command | Account provider |
+|---|---|
+| `aiko login` or `aiko login aiko` | Aiko (default) |
+| `aiko login grok` | Grok through xAI OAuth |
+| `aiko login openai` | OpenAI through ChatGPT OAuth |
+| `aiko login codex` | Compatibility spelling for OpenAI |
+
+`aiko login grok` uses the OAuth issuer, public client, scopes, referrer, and
+token header synchronized from `xai-org/grok-build`; it does not require local
+environment overrides. `--oauth` and `--device-auth` select the transport for
+the Aiko and Grok flows, not the provider.
+
 Aiko stores the session and reuses it across launches. When the session cannot
 be refreshed, run `aiko login` again.
 

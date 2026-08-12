@@ -13,6 +13,7 @@ spec:
       request_id: { schema: string }
       status: { schema: string }
       response: { schema: object }
+      model: { schema: string }
     caps:
       allow_net: ["queue.fal.run", "fal.run", "api.fal.ai"]
   run:

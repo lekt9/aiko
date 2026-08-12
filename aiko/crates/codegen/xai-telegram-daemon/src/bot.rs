@@ -4,6 +4,7 @@
 //! Outgoing messages use all available channel affordances: typing indicators,
 //! MarkdownV2 formatting, inline keyboards, file uploads, voice.
 
+use crate::agent_mail;
 use crate::api::TelegramApi;
 use crate::types::*;
 use serde::Deserialize;
@@ -13,12 +14,21 @@ use std::time::Duration;
 use tokio::process::Command;
 use tracing::{info, warn};
 
-const RESPONSE_SCHEMA: &str = r#"{"type":"object","additionalProperties":false,"required":["kind"],"properties":{"kind":{"type":"string","enum":["text","voice","photo","document"]},"text":{"type":["string","null"]},"path":{"type":["string","null"]},"caption":{"type":["string","null"]}}}"#;
-const INTERFACE_RULES: &str = "This is an authorized Telegram interface occurrence governed by Contract. Fulfill the user's request with currently authorized tools. Return one typed response. Use kind=text with text for normal replies; use voice/photo/document only when you created or selected a real local file and return its absolute path. Never include secrets. The daemon, not the model, performs the Telegram effect and records provider evidence.";
+const RESPONSE_SCHEMA: &str = r#"{"type":"object","additionalProperties":false,"required":["kind","text","path","caption"],"properties":{"kind":{"type":"string","enum":["text","voice","photo","document"]},"text":{"type":["string","null"]},"path":{"type":["string","null"]},"caption":{"type":["string","null"]}}}"#;
+const INTERFACE_RULES: &str = "You are the full Aiko agent operating through an authorized Telegram interface, not a generic chat responder. Treat every message as an agent request: reason about the requested outcome, use currently authorized tools when work or evidence is required, perform the work before replying, and report the concrete outcome or blocker. Do not merely describe what the user could do and do not invent tool results. Return one typed response. Use kind=text with text for normal replies; use voice/photo/document only when you created or selected a real local file and return its absolute path. Never include secrets. The daemon, not the model, performs the Telegram effect and records provider evidence under Contract.";
+
+#[derive(Debug, Clone, Copy, Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ResponseKind {
+    Text,
+    Voice,
+    Photo,
+    Document,
+}
 
 #[derive(Debug, Deserialize)]
 struct AgentResponse {
-    kind: String,
+    kind: ResponseKind,
     #[serde(default)]
     text: Option<String>,
     #[serde(default)]
@@ -399,31 +409,47 @@ impl TelegramBot {
         let response = self
             .run_aiko_with_typing(msg.chat.id, prompt, parent_id.or(Some(&task.id)))
             .await?;
-        let sent = match response.kind.as_str() {
-            "voice" => {
+        let sent = match response.kind {
+            ResponseKind::Voice => {
                 let path = response
                     .path
                     .as_deref()
                     .ok_or_else(|| TelegramError::ApiError("voice response missing path".into()))?;
-                self.send_voice_with_indicator(msg.chat.id, path, response.caption.as_deref(), None)
-                    .await?
+                let path = approved_attachment(path).await?;
+                self.send_voice_with_indicator(
+                    msg.chat.id,
+                    &path.to_string_lossy(),
+                    response.caption.as_deref(),
+                    None,
+                )
+                .await?
             }
-            "photo" => {
+            ResponseKind::Photo => {
                 let path = response
                     .path
                     .as_deref()
                     .ok_or_else(|| TelegramError::ApiError("photo response missing path".into()))?;
-                self.send_photo_with_indicator(msg.chat.id, path, response.caption.as_deref())
-                    .await?
+                let path = approved_attachment(path).await?;
+                self.send_photo_with_indicator(
+                    msg.chat.id,
+                    &path.to_string_lossy(),
+                    response.caption.as_deref(),
+                )
+                .await?
             }
-            "document" => {
+            ResponseKind::Document => {
                 let path = response.path.as_deref().ok_or_else(|| {
                     TelegramError::ApiError("document response missing path".into())
                 })?;
-                self.send_document_with_indicator(msg.chat.id, path, response.caption.as_deref())
-                    .await?
+                let path = approved_attachment(path).await?;
+                self.send_document_with_indicator(
+                    msg.chat.id,
+                    &path.to_string_lossy(),
+                    response.caption.as_deref(),
+                )
+                .await?
             }
-            _ => {
+            ResponseKind::Text => {
                 let text = response
                     .text
                     .as_deref()
@@ -460,73 +486,36 @@ impl TelegramBot {
         prompt: &str,
         parent_id: Option<&str>,
     ) -> Result<AgentResponse, TelegramError> {
-        let aiko = std::env::var("AIKO_BINARY").unwrap_or_else(|_| {
-            dirs_home()
-                .join("bin")
-                .join("aiko")
-                .to_string_lossy()
-                .into_owned()
-        });
         let cwd = std::env::var("AIKO_TELEGRAM_CWD")
             .map(PathBuf::from)
             .unwrap_or_else(|_| dirs_home());
         let session_id = conversation_session_id("telegram", chat_id);
-        let resume = session_exists(&session_id);
-        let mut command = Command::new(aiko);
-        command.args([
-            "--cwd",
-            &cwd.to_string_lossy(),
-            "--no-auto-update",
-            "--verbatim",
-            "--no-subagents",
-            "--output-format",
-            "json",
-            "--json-schema",
-            RESPONSE_SCHEMA,
-            "--rules",
+        let schema: serde_json::Value = serde_json::from_str(RESPONSE_SCHEMA).map_err(|error| {
+            TelegramError::ApiError(format!("invalid response schema: {error}"))
+        })?;
+        let conversation_id = format!("messaging:telegram:{chat_id}");
+        let turn = agent_mail::prompt(
+            &session_id,
+            &cwd,
+            prompt,
+            &schema,
             INTERFACE_RULES,
-        ]);
-        if resume {
-            command.args(["--resume", &session_id]);
-        } else {
-            command.args(["--session-id", &session_id]);
-        }
-        command
-            .args(["--single", prompt])
-            .env("AIKO_CONTRACT_ROOT_ID", parent_id.unwrap_or(""))
-            .env("AIKO_CONTRACT_PARENT_ID", parent_id.unwrap_or(""))
-            .env("AIKO_CONTRACT_DEPTH", "1")
-            .env("AIKO_CONTRACT_MAX_DEPTH", "4")
-            .env("AIKO_CONTRACT_MAX_CHILDREN", "16")
-            .env("AIKO_INTERFACE_FAMILY", "messaging")
-            .env(
-                "AIKO_CONVERSATION_ID",
-                format!("messaging:telegram:{chat_id}"),
-            )
-            .kill_on_drop(true);
-        let child = command
-            .spawn()
-            .map_err(|error| TelegramError::ApiError(format!("cannot start Aiko: {error}")))?;
-        let output = child.wait_with_output();
-        tokio::pin!(output);
+            parent_id,
+            &conversation_id,
+        );
+        tokio::pin!(turn);
         let mut typing = tokio::time::interval(Duration::from_secs(4));
-        let output = loop {
+        let response = loop {
             tokio::select! {
-                result = &mut output => break result,
+                result = &mut turn => break result,
                 _ = typing.tick() => {
                     let _ = self.api.send_chat_action(chat_id, ChatAction::Typing).await;
                 }
             }
         }
-        .map_err(|error| TelegramError::ApiError(format!("Aiko process failed: {error}")))?;
-        if !output.status.success() {
-            return Err(TelegramError::ApiError(format!(
-                "Aiko exited with {}",
-                output.status
-            )));
-        }
-        parse_agent_response(&output.stdout)
-            .ok_or_else(|| TelegramError::ApiError("Aiko returned no valid typed response".into()))
+        .map_err(|error| TelegramError::ApiError(format!("Aiko agent-mail failed: {error}")))?;
+        serde_json::from_value(response)
+            .map_err(|error| TelegramError::ApiError(format!("invalid Aiko response: {error}")))
     }
 
     async fn begin_contract_task(&self, goal: &str, evidence_key: &str) -> Option<ContractTask> {
@@ -659,19 +648,36 @@ fn conversation_session_id(interface: &str, conversation: i64) -> String {
     )
 }
 
-fn session_exists(session_id: &str) -> bool {
-    let sessions = xai_grok_config::grok_home().join("sessions");
-    std::fs::read_dir(sessions)
-        .ok()
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|entry| entry.path().join(session_id))
-        .any(|candidate| candidate.is_dir())
-}
-
 fn evidence_dir() -> PathBuf {
     dirs_home().join(".aiko").join("telegram").join("evidence")
+}
+
+async fn approved_attachment(path: &str) -> Result<PathBuf, TelegramError> {
+    const MAX_ATTACHMENT_BYTES: u64 = 50 * 1024 * 1024;
+    let root = dirs_home().join(".aiko").join("telegram").join("outputs");
+    tokio::fs::create_dir_all(&root)
+        .await
+        .map_err(|_| TelegramError::ApiError("cannot create Telegram output root".into()))?;
+    let canonical_root = tokio::fs::canonicalize(&root)
+        .await
+        .map_err(|_| TelegramError::ApiError("Telegram output root is unavailable".into()))?;
+    let canonical = tokio::fs::canonicalize(path)
+        .await
+        .map_err(|_| TelegramError::ApiError("attachment does not exist".into()))?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(TelegramError::ApiError(
+            "attachment is outside the approved Telegram output root".into(),
+        ));
+    }
+    let metadata = tokio::fs::metadata(&canonical)
+        .await
+        .map_err(|_| TelegramError::ApiError("cannot inspect attachment".into()))?;
+    if !metadata.is_file() || metadata.len() > MAX_ATTACHMENT_BYTES {
+        return Err(TelegramError::ApiError(
+            "attachment must be a bounded regular file".into(),
+        ));
+    }
+    Ok(canonical)
 }
 
 async fn write_evidence(path: &Path, value: &serde_json::Value) -> std::io::Result<()> {
@@ -681,32 +687,35 @@ async fn write_evidence(path: &Path, value: &serde_json::Value) -> std::io::Resu
     tokio::fs::write(path, serde_json::to_vec(value)?).await
 }
 
-fn parse_agent_response(bytes: &[u8]) -> Option<AgentResponse> {
-    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
-    let structured = value
-        .get("structuredOutput")
-        .or_else(|| value.get("structured_output"))
-        .unwrap_or(&value);
-    serde_json::from_value(structured.clone()).ok()
-}
-
 #[cfg(test)]
 mod contract_interface_tests {
     use super::*;
 
     #[test]
-    fn parses_structured_text_response() {
-        let response = parse_agent_response(
-            br#"{"structuredOutput":{"kind":"text","text":"hello","path":null,"caption":null}}"#,
-        )
-        .expect("typed response");
-        assert_eq!(response.kind, "text");
-        assert_eq!(response.text.as_deref(), Some("hello"));
+    fn telegram_rules_require_agentic_execution_not_generic_chat() {
+        assert!(INTERFACE_RULES.contains("full Aiko agent"));
+        assert!(INTERFACE_RULES.contains("use currently authorized tools"));
+        assert!(INTERFACE_RULES.contains("perform the work before replying"));
+        assert!(INTERFACE_RULES.contains("do not invent tool results"));
     }
 
     #[test]
-    fn rejects_untyped_agent_output() {
-        assert!(parse_agent_response(br#"{"text":"not an interface envelope"}"#).is_none());
+    fn response_schema_requires_every_declared_property() {
+        let schema: serde_json::Value =
+            serde_json::from_str(RESPONSE_SCHEMA).expect("valid response schema");
+        let required = schema["required"].as_array().expect("required array");
+        for property in schema["properties"]
+            .as_object()
+            .expect("properties object")
+            .keys()
+        {
+            assert!(
+                required
+                    .iter()
+                    .any(|entry| entry.as_str() == Some(property)),
+                "strict structured-output providers require {property}"
+            );
+        }
     }
 
     #[test]

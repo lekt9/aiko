@@ -5,9 +5,18 @@ import Dashboard from "@/components/Dashboard";
 
 export default function Page() {
   const [tab, setTab] = useState<"graph" | "dashboard">("dashboard");
-  const [active, setActive] = useState<string>("haulio-full.cell.yaml");
+  const [active, setActive] = useState<string>("hoysan-pipeline.cell.yaml");
   const [cells, setCells] = useState<any[]>([]);
-  useEffect(()=> { fetch("/api/cells").then(r=> r.json()).then(j=> setCells(j.cells ?? [])).catch(()=>{}); }, []);
+  useEffect(()=> {
+    fetch("/api/cells").then(r=> r.json()).then(j=>{
+      const list = j.cells ?? [];
+      setCells(list);
+      if (list.length && !list.find((c:any)=> c.rel===active)) {
+        const preferred = list.find((c:any)=> c.rel==="hoysan-pipeline.cell.yaml") ?? list.find((c:any)=> c.rel.endsWith("hoysan-pipeline.cell.yaml")) ?? list[0];
+        setActive(preferred.rel);
+      }
+    }).catch(()=>{});
+  }, []);
   useEffect(()=> {
     const onOpen = (e: any)=> { if (e.detail?.cellPath) { setActive(e.detail.cellPath); setTab("graph"); } };
     window.addEventListener("cell:open", onOpen as any);

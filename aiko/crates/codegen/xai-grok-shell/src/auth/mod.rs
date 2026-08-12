@@ -19,8 +19,8 @@ mod storage;
 pub(crate) mod token_type;
 pub(crate) use config::LEGACY_AUTH_SCOPE;
 pub use config::{
-    ForceLoginTeam, GrokComConfig, OAuth2ProviderConfig, OidcAuthConfig, PreferredAuthMethod,
-    XAI_OAUTH2_ISSUER, is_xai_oauth2_issuer, xai_oauth2_issuer,
+    ForceLoginTeam, GROK_OAUTH2_ISSUER, GrokComConfig, OAuth2ProviderConfig, OidcAuthConfig,
+    PreferredAuthMethod, XAI_OAUTH2_ISSUER, is_xai_oauth2_issuer, xai_oauth2_issuer,
 };
 pub(crate) use external_auth::{parse_output, refresh_with_command};
 pub(crate) use flow::{

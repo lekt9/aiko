@@ -157,6 +157,7 @@ pub fn build(b: *std.Build) void {
         "src/artifact.zig",
         "src/skill_lifecycle.zig",
         "src/skill_execution.zig",
+        "src/graph_harness_attestation.zig",
         "src/contract.zig",
         "src/pointer.zig",
         "src/guards.zig",

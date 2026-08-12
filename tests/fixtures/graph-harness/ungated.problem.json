@@ -1,0 +1,334 @@
+{
+  "api_version": "graph-harness/v1",
+  "kind": "GraphHarness",
+  "package": {
+    "metadata": {
+      "name": "ungated",
+      "version": "1.0.0",
+      "description": "Synthetic ungated GraphHarness compiler fixture"
+    },
+    "membrane": {
+      "inputs": {
+        "problem": {
+          "schema": {
+            "ref": "schemas/value.schema.json",
+            "digest": {
+              "algorithm": "sha256",
+              "value": "fef974bf60f425c9b5aac171ab1899026ed0a3c44dc447dd564e66d85f123cbf"
+            },
+            "media_type": "application/schema+json"
+          },
+          "required": true,
+          "description": "Synthetic structured problem"
+        }
+      },
+      "outputs": {
+        "result": {
+          "schema": {
+            "ref": "schemas/value.schema.json",
+            "digest": {
+              "algorithm": "sha256",
+              "value": "fef974bf60f425c9b5aac171ab1899026ed0a3c44dc447dd564e66d85f123cbf"
+            },
+            "media_type": "application/schema+json"
+          },
+          "required": true,
+          "description": "Judged synthetic result"
+        }
+      },
+      "authority": {
+        "filesystem": [
+          "artifacts/**"
+        ],
+        "network": [],
+        "process": [
+          "python3"
+        ],
+        "secrets": []
+      }
+    },
+    "north_star": {
+      "claim": "ungated exposes the declared result after independent judgment",
+      "witness": {
+        "id": "package-witness",
+        "implementation": {
+          "ref": "implementations/witness.py",
+          "digest": {
+            "algorithm": "sha256",
+            "value": "c1478629591f6bcf14ecf30b4dceb90e54dcd3b88c23c3ffce012d528b8f15dc"
+          },
+          "entrypoint": "main",
+          "media_type": "text/x-python"
+        },
+        "argv": [
+          "python3",
+          "implementations/witness.py"
+        ],
+        "cwd": ".",
+        "timeout_ms": 1000,
+        "expected": {
+          "exit_codes": [
+            0
+          ],
+          "stdout_schema": {
+            "ref": "schemas/value.schema.json",
+            "digest": {
+              "algorithm": "sha256",
+              "value": "fef974bf60f425c9b5aac171ab1899026ed0a3c44dc447dd564e66d85f123cbf"
+            },
+            "media_type": "application/schema+json"
+          },
+          "artifacts": [
+            "artifacts/result.json"
+          ]
+        },
+        "evidence": [
+          {
+            "name": "package-result",
+            "kind": "artifact",
+            "ref": "artifacts/result.json",
+            "schema": {
+              "ref": "schemas/value.schema.json",
+              "digest": {
+                "algorithm": "sha256",
+                "value": "fef974bf60f425c9b5aac171ab1899026ed0a3c44dc447dd564e66d85f123cbf"
+              },
+              "media_type": "application/schema+json"
+            }
+          }
+        ]
+      },
+      "judge": {
+        "independent": true,
+        "implementation": {
+          "ref": "implementations/package_judge.py",
+          "digest": {
+            "algorithm": "sha256",
+            "value": "c683c1a95c074f9e6e7a804aa12586e4212579fdd6822ac2d9dadfc8b966f20d"
+          },
+          "entrypoint": "main",
+          "media_type": "text/x-python"
+        },
+        "consumes": [
+          "package-result"
+        ],
+        "verdict_schema": {
+          "ref": "schemas/verdict.schema.json",
+          "digest": {
+            "algorithm": "sha256",
+            "value": "f90852dfbc7790ce60cfddb447d63329e9132fd3ca4e7967bbd9c78db3109898"
+          },
+          "media_type": "application/schema+json"
+        },
+        "policy": "all"
+      }
+    },
+    "nodes": [
+      {
+        "id": "self-judged",
+        "description": "Synthetic self-judged fixture node",
+        "depends_on": [],
+        "reads": [
+          "problem"
+        ],
+        "produces": [
+          "result"
+        ],
+        "writes": [
+          "artifacts/self-judged.json"
+        ],
+        "resources": [
+          {
+            "kind": "filesystem",
+            "scope": "artifacts/self-judged.json",
+            "mode": "write",
+            "exclusive": true
+          }
+        ],
+        "effects": [
+          {
+            "kind": "none",
+            "scope": "fixture-local",
+            "external_boundary": false,
+            "readback": "not-applicable",
+            "on_invalidation": "recompute"
+          }
+        ],
+        "implementation": {
+          "ref": "implementations/source.cell.json",
+          "digest": {
+            "algorithm": "sha256",
+            "value": "d094cc3da583fb88a302cbb488408a8dbbd75de78018cfc77b9a65c94593371d"
+          },
+          "media_type": "application/vnd.aiko.cell+json;version=0"
+        },
+        "determinism": "required",
+        "grounding": {
+          "skills": [
+            {
+              "name": "graph-engineering",
+              "declaration": {
+                "ref": "skills/graph-engineering/SKILL.md",
+                "digest": {
+                  "algorithm": "sha256",
+                  "value": "530dc7bb80cff8bcab94df65794c73f236983e65791f330eb69d0c82b73b413a"
+                },
+                "media_type": "text/markdown"
+              }
+            }
+          ]
+        },
+        "acceptance": {
+          "claim": "self-judged produces its declared fixture product",
+          "witness": {
+            "id": "self-judged-witness",
+            "implementation": {
+              "ref": "implementations/witness.py",
+              "digest": {
+                "algorithm": "sha256",
+                "value": "c1478629591f6bcf14ecf30b4dceb90e54dcd3b88c23c3ffce012d528b8f15dc"
+              },
+              "entrypoint": "main",
+              "media_type": "text/x-python"
+            },
+            "argv": [
+              "python3",
+              "implementations/witness.py"
+            ],
+            "cwd": ".",
+            "timeout_ms": 1000,
+            "expected": {
+              "exit_codes": [
+                0
+              ],
+              "stdout_schema": {
+                "ref": "schemas/value.schema.json",
+                "digest": {
+                  "algorithm": "sha256",
+                  "value": "fef974bf60f425c9b5aac171ab1899026ed0a3c44dc447dd564e66d85f123cbf"
+                },
+                "media_type": "application/schema+json"
+              }
+            },
+            "evidence": [
+              {
+                "name": "self-judged-evidence",
+                "kind": "structured-output",
+                "ref": "artifacts/self-judged.json",
+                "schema": {
+                  "ref": "schemas/value.schema.json",
+                  "digest": {
+                    "algorithm": "sha256",
+                    "value": "fef974bf60f425c9b5aac171ab1899026ed0a3c44dc447dd564e66d85f123cbf"
+                  },
+                  "media_type": "application/schema+json"
+                }
+              }
+            ]
+          },
+          "judge": {
+            "independent": true,
+            "implementation": {
+              "ref": "implementations/source.cell.json",
+              "digest": {
+                "algorithm": "sha256",
+                "value": "d094cc3da583fb88a302cbb488408a8dbbd75de78018cfc77b9a65c94593371d"
+              },
+              "media_type": "application/vnd.aiko.cell+json;version=0"
+            },
+            "consumes": [
+              "self-judged-evidence"
+            ],
+            "verdict_schema": {
+              "ref": "schemas/verdict.schema.json",
+              "digest": {
+                "algorithm": "sha256",
+                "value": "f90852dfbc7790ce60cfddb447d63329e9132fd3ca4e7967bbd9c78db3109898"
+              },
+              "media_type": "application/schema+json"
+            },
+            "policy": "all"
+          }
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "node": "$input",
+          "port": "problem"
+        },
+        "to": {
+          "node": "self-judged",
+          "port": "problem"
+        }
+      },
+      {
+        "from": {
+          "node": "self-judged",
+          "port": "result"
+        },
+        "to": {
+          "node": "$output",
+          "port": "result"
+        }
+      }
+    ],
+    "recursion": {
+      "max_depth": 2,
+      "max_children_per_node": 8,
+      "max_total_nodes": 32,
+      "max_wall_time_ms": 10000,
+      "max_tool_calls": 32,
+      "on_exhaustion": "refuse"
+    },
+    "provenance": {
+      "authored_by": "aiko-fixture-author",
+      "source_digests": [
+        {
+          "ref": "sources/problem-source.txt",
+          "digest": {
+            "algorithm": "sha256",
+            "value": "ca3ae10277029e8dddda7da2e51edb256c9f63261aaa069b6c3c051a4b82023b"
+          },
+          "media_type": "text/plain"
+        }
+      ],
+      "generator": {
+        "ref": "implementations/generator.py",
+        "digest": {
+          "algorithm": "sha256",
+          "value": "1d5647d054bf1a3e06bd423147605838cb3c43c97246278c06b2cbe25f44820f"
+        },
+        "entrypoint": "main",
+        "media_type": "text/x-python"
+      }
+    }
+  },
+  "registry": {
+    "media_type": "application/vnd.aiko.graph-harness+json;version=1",
+    "name": "ungated",
+    "version": "1.0.0",
+    "description": "Synthetic ungated GraphHarness compiler fixture",
+    "schema": "graph-harness/v1",
+    "tags": [
+      "fixture",
+      "graph-engineering"
+    ],
+    "projections": {
+      "aiko_skill_v1": {
+        "name": "ungated",
+        "description": "Synthetic ungated GraphHarness compiler fixture",
+        "probe_input": "build ungated",
+        "expect_contains": "admitted"
+      },
+      "cell_v0": {
+        "ref": "implementations/transform.cell.json",
+        "digest": {
+          "algorithm": "sha256",
+          "value": "3ad8166335a5fc68dd250ef6b6864cb2e81cd5db83fdad6f77b960364d21b5b4"
+        }
+      }
+    }
+  }
+}

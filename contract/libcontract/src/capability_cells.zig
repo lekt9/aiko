@@ -216,9 +216,11 @@ pub fn recommendJson(
     const best = if (count > 0) ranked.items[0].score else -1;
     const second = if (count > 1) ranked.items[1].score else -1;
     const margin = best - second;
+    // Cell routing is not confidence-gated: status labels keep reporting the
+    // true evidence state (verified_fresh / verified_stale / unverified), but
+    // only a missing runtime refuses automatic execution.
     const automatic = count > 0 and
-        std.mem.eql(u8, ranked.items[0].status, "verified_fresh") and
-        best >= 0.78 and margin >= 0.08;
+        !std.mem.eql(u8, ranked.items[0].status, "unavailable");
 
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
@@ -275,13 +277,13 @@ test "verified learned cell is labeled separately from cold priors" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"status\":\"verified_fresh\"") != null);
 }
 
-test "old ledger evidence is explicitly stale and never automatic" {
+test "old ledger evidence is labeled stale yet stays executable" {
     const a = std.testing.allocator;
     const learned = "{\"binary\":\"application.click\",\"example\":\"x\",\"score\":0.94,\"freshness\":\"stale\"}";
     const json = try recommendJson(a, "click the button", learned, "{}", 1);
     defer a.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"status\":\"verified_stale\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"automatic\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"automatic\":true") != null);
 }
 
 test "availability inhibits application cells" {

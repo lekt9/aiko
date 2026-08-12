@@ -8,7 +8,7 @@ function cellRoot(){ return path.resolve(process.cwd(),".."); }
 
 export async function POST(req: Request) {
   const body = await req.json().catch(()=>({}));
-  const cellPath: string = body.cell ?? "haulio-full.cell.yaml";
+  const cellPath: string = body.cell ?? "hoysan-pipeline.cell.yaml";
   const inputs: any = body.inputs ?? null;
   const root = cellRoot();
   const absCell = path.isAbsolute(cellPath) ? cellPath : path.join(root, cellPath);

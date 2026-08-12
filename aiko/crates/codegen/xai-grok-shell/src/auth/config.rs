@@ -131,6 +131,10 @@ pub struct OAuth2ProviderConfig {
 /// First-party Aiko OAuth issuer. The legacy name is retained internally to
 /// avoid breaking persisted auth/session compatibility.
 pub const XAI_OAUTH2_ISSUER: &str = "https://aiko.theclarityproject.net";
+/// Grok's first-party OAuth profile, synchronized from xai-org/grok-build.
+pub const GROK_OAUTH2_ISSUER: &str = "https://auth.x.ai";
+const GROK_OAUTH2_CLIENT_ID: &str = obfstr::obfstr!("b1a00492-073a-47ea-816f-4c329264a828");
+const GROK_OAUTH2_REFERRER: &str = "grok-build";
 /// Production accounts-app origin allowlist — the only origins builds without
 /// non-production builds accept. Lives in its own const, referenced by both
 /// profiles below, so the frozen-contract test (monorepo CI compiles with
@@ -188,12 +192,66 @@ pub fn xai_oauth2_issuer() -> &'static str {
 /// [`XAI_OAUTH2_ISSUER`] directly so that local-dev sessions are still
 /// treated as first-party xAI auth.
 pub fn is_xai_oauth2_issuer(issuer: &str) -> bool {
-    issuer == XAI_OAUTH2_ISSUER || issuer == XAI_OAUTH2_LOCAL_ISSUER
+    issuer == XAI_OAUTH2_ISSUER || issuer == GROK_OAUTH2_ISSUER || issuer == XAI_OAUTH2_LOCAL_ISSUER
 }
 /// auth.json scope key used by the pre-OIDC `grok login --legacy` flow.
 /// Matches the key format produced by the original `accounts.x.ai` relay auth.
 pub const LEGACY_AUTH_SCOPE: &str = "https://accounts.x.ai/sign-in";
 impl GrokComConfig {
+    /// Select a complete built-in OAuth profile for an explicit CLI login.
+    ///
+    /// This mutates only the in-memory config for this invocation. Keeping the
+    /// profile atomic prevents a Grok issuer from being combined with Aiko's
+    /// client, scopes, headers, or external-auth provider after config merging.
+    pub fn apply_builtin_login_profile(&mut self, grok: bool) {
+        let (issuer, client_id, scopes, referrer, token_header, label) = if grok {
+            (
+                GROK_OAUTH2_ISSUER,
+                GROK_OAUTH2_CLIENT_ID,
+                vec![
+                    "openid".into(),
+                    "profile".into(),
+                    "email".into(),
+                    "offline_access".into(),
+                    "grok-cli:access".into(),
+                    "api:access".into(),
+                    "conversations:read".into(),
+                    "conversations:write".into(),
+                    "workspaces:read".into(),
+                    "workspaces:write".into(),
+                ],
+                GROK_OAUTH2_REFERRER,
+                "xai-grok-cli",
+                "Grok",
+            )
+        } else {
+            (
+                XAI_OAUTH2_ISSUER,
+                "aiko-cli",
+                default_oauth2_scopes(),
+                DEFAULT_OAUTH2_REFERRER,
+                "aiko-cli",
+                "Aiko",
+            )
+        };
+
+        self.oidc = None;
+        self.oauth2 = Some(OAuth2ProviderConfig {
+            issuer: issuer.to_owned(),
+            client_id: client_id.to_owned(),
+            scopes,
+            principal_type: None,
+            principal_id: None,
+            referrer: Some(referrer.to_owned()),
+        });
+        self.token_header = token_header.to_owned();
+        self.auth_provider_command = None;
+        self.auth_provider_label = Some(label.to_owned());
+        self.auth_token_ttl = None;
+        self.force_login_team_uuid = None;
+        self.preferred_method = Some(PreferredAuthMethod::Oidc);
+    }
+
     /// Whether `xai.api_key` auth is disabled. Pinning a team
     /// (`force_login_team_uuid`) implies this — team membership can't be verified
     /// from a bare API key, so it must go through IdP login. The
@@ -415,6 +473,37 @@ mod tests {
                 "workspaces:write",
             ]
         );
+    }
+
+    #[test]
+    fn builtin_login_profiles_are_complete_and_isolated() {
+        let mut aiko = GrokComConfig::default();
+        aiko.apply_builtin_login_profile(false);
+        let aiko_oauth = aiko.oauth2.as_ref().unwrap();
+        assert_eq!(aiko_oauth.issuer, XAI_OAUTH2_ISSUER);
+        assert_eq!(aiko_oauth.client_id, "aiko-cli");
+        assert!(aiko_oauth.scopes.iter().any(|scope| scope == "aiko:access"));
+        assert_eq!(aiko.token_header, "aiko-cli");
+        assert_eq!(aiko.auth_provider_label.as_deref(), Some("Aiko"));
+
+        let mut grok = GrokComConfig::default();
+        grok.auth_provider_command = Some("should-be-cleared".into());
+        grok.apply_builtin_login_profile(true);
+        let grok_oauth = grok.oauth2.as_ref().unwrap();
+        assert_eq!(grok_oauth.issuer, GROK_OAUTH2_ISSUER);
+        assert_eq!(grok_oauth.client_id, GROK_OAUTH2_CLIENT_ID);
+        assert!(
+            grok_oauth
+                .scopes
+                .iter()
+                .any(|scope| scope == "grok-cli:access")
+        );
+        assert!(!grok_oauth.scopes.iter().any(|scope| scope == "aiko:access"));
+        assert_eq!(grok_oauth.referrer.as_deref(), Some(GROK_OAUTH2_REFERRER));
+        assert_eq!(grok.token_header, "xai-grok-cli");
+        assert_eq!(grok.auth_provider_label.as_deref(), Some("Grok"));
+        assert!(grok.auth_provider_command.is_none());
+        assert!(is_xai_oauth2_issuer(&grok_oauth.issuer));
     }
     #[test]
     fn preferred_method_deserializes_from_toml() {

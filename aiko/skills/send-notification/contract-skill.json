@@ -1,0 +1,104 @@
+{
+  "description": "Prepare outbound notifications and send only with applicable durable authority.",
+  "examples": [
+    {
+      "expect": {
+        "held_effects": [
+          "external_message"
+        ],
+        "root_count": 1,
+        "selected": "send-notification"
+      },
+      "name": "default",
+      "prompt": "Send notification to the local mock channel."
+    }
+  ],
+  "id": "send-notification",
+  "input_schema": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "nodes": [
+    {
+      "can_parallel": true,
+      "depends_on": [],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "resolve-channel",
+      "plan": "Resolve an available notification channel for {{goal}}.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    },
+    {
+      "can_parallel": false,
+      "depends_on": [
+        "resolve-channel"
+      ],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "prepare-message",
+      "plan": "Prepare a bounded notification payload for {{goal}}.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    },
+    {
+      "can_parallel": false,
+      "depends_on": [
+        "prepare-message"
+      ],
+      "effect": "external_message",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "send-message",
+      "plan": "Send the authorized notification for {{goal}}.",
+      "read_only": false,
+      "requires_authority": true,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    },
+    {
+      "can_parallel": false,
+      "depends_on": [
+        "send-message"
+      ],
+      "effect": "read_only",
+      "evidence": [
+        "structured_result"
+      ],
+      "key": "delivery-evidence",
+      "plan": "Verify channel delivery evidence for {{goal}}.",
+      "read_only": true,
+      "requires_authority": false,
+      "reversible": false,
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    }
+  ],
+  "output_schema": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "platforms": [
+    "all"
+  ],
+  "schema_version": 1,
+  "triggers": [
+    "send notification",
+    "notify me",
+    "message me",
+    "send message"
+  ],
+  "version": "1.0.0"
+}

@@ -241,7 +241,14 @@ fn native_verify(id: &str) -> Result<(bool, String), String> {
         "ts": now_rfc3339(),
     }));
 
-    Ok((ok, if ok { "satisfied".into() } else { "FAILED".into() }))
+    Ok((
+        ok,
+        if ok {
+            "satisfied".into()
+        } else {
+            "FAILED".into()
+        },
+    ))
 }
 
 /// Create a paired contract: one work task + one witness task.
@@ -251,7 +258,9 @@ pub fn create_pair(goal: &str, check: &str) -> Result<ContractPair, String> {
         match try_external_create(goal, check) {
             Ok(pair) => return Ok(pair),
             Err(e) => {
-                eprintln!("contract CLI begin failed ({e}); falling back to native local_task store");
+                eprintln!(
+                    "contract CLI begin failed ({e}); falling back to native local_task store"
+                );
             }
         }
     }
@@ -337,7 +346,14 @@ pub fn verify_pair(work_id: &str) -> Result<(bool, bool, String), String> {
                     if !stderr.is_empty() {
                         results.push(format!("  {stderr}"));
                     }
-                    (ok, if ok { "satisfied".into() } else { "FAILED".into() })
+                    (
+                        ok,
+                        if ok {
+                            "satisfied".into()
+                        } else {
+                            "FAILED".into()
+                        },
+                    )
                 }
                 Err(_) => native_verify_or_check(id, &pair.check)?,
             }

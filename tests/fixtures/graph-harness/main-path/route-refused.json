@@ -1,0 +1,12 @@
+{
+  "api_version": "aiko-workflow-route/v1",
+  "facts": {
+    "opaque_composition": true,
+    "requests_process": true
+  },
+  "preview": null,
+  "expected": {
+    "route": "refused",
+    "code": "opaque_workflow"
+  }
+}

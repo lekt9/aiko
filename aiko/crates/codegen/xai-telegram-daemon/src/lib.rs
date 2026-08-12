@@ -11,6 +11,7 @@
 //! TELEGRAM_BOT_TOKEN="123:abc" TELEGRAM_AUTHORIZED_CHATS="108611440" telegram-daemon
 //! ```
 
+pub mod agent_mail;
 pub mod api;
 pub mod bot;
 pub mod daemon;

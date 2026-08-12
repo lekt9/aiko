@@ -533,7 +533,9 @@ impl WebSearchClient {
 /// Pure so it is testable without a live router. Both the OpenAI-style
 /// `{type, url_citation:{url,title}}` and a flattened `{url,title}` are
 /// accepted; a router renaming a field degrades to `None`, never a panic.
-fn parse_router_annotations(payload: &serde_json::Value) -> Option<(String, Vec<(String, String)>)> {
+fn parse_router_annotations(
+    payload: &serde_json::Value,
+) -> Option<(String, Vec<(String, String)>)> {
     let message = payload.pointer("/choices/0/message")?;
     let annotations = message.get("annotations")?.as_array()?;
     let mut citations: Vec<(String, String)> = Vec::new();
@@ -712,7 +714,10 @@ mod tests {
         assert_eq!(
             citations,
             vec![
-                ("Downloads".to_string(), "https://ziglang.org/download/".to_string()),
+                (
+                    "Downloads".to_string(),
+                    "https://ziglang.org/download/".to_string()
+                ),
                 ("News".to_string(), "https://ziglang.org/news/".to_string()),
             ]
         );

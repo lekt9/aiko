@@ -5,7 +5,7 @@ import Palette from "./Palette";
 
 export default function CellCanvas() {
   const [cells, setCells] = useState<any[]>([]);
-  const [active, setActive] = useState<string>("haulio-full.cell.yaml");
+  const [active, setActive] = useState<string>("hoysan-pipeline.cell.yaml");
   const [genMsg, setGenMsg] = useState<string>("");
 
   useEffect(()=>{

@@ -1,0 +1,4 @@
+{
+  "canonical": "{\"control\":\"line\\nfeed\",\"nested\":{\"a\":[null,\"é\",9007199254740991],\"b\":true},\"z\":0,\"€\":\"bmp\",\"😀\":\"astral\"}",
+  "sha256": "34beddc1a4006ae1f2f3a8df332705ce498b58fcb67b3df2431437e5f4477c61"
+}

@@ -94,7 +94,6 @@ pub fn build(b: *std.Build) void {
     contract_build.setCwd(b.path("contract/libcontract"));
     b.getInstallStep().dependOn(&contract_build.step);
 
-
     const run = b.addRunArtifact(harness);
     run.step.dependOn(b.getInstallStep());
     if (b.args) |args| run.addArgs(args);
@@ -117,6 +116,9 @@ pub fn build(b: *std.Build) void {
     // state. Kept as a named step so `zig build gate` is the one command a host
     // runs before trusting a build.
     const gate_step = b.step("gate", "Run the runnable witnesses");
+    const graph_main_gate = b.addSystemCommand(&.{ "bash", "tests/graph-harness-main-path-gate.sh" });
+    graph_main_gate.step.dependOn(b.getInstallStep());
+    gate_step.dependOn(&graph_main_gate.step);
     for ([_][]const u8{
         "neuron/tests/published-interface-gate.sh",
         "neuron/tests/redrive-gate.sh",
@@ -136,6 +138,10 @@ pub fn build(b: *std.Build) void {
     }) |witness| {
         const g = b.addSystemCommand(&.{ "bash", witness });
         g.step.dependOn(b.getInstallStep());
+        if (std.mem.eql(u8, witness, "tests/graph-engineering-gate.sh")) {
+            g.step.dependOn(&graph_main_gate.step);
+            g.setEnvironmentVariable("AIKO_MAIN_PATH_ALREADY_GATED", "1");
+        }
         gate_step.dependOn(&g.step);
     }
 }

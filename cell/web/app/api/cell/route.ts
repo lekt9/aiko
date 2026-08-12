@@ -7,7 +7,14 @@ export const dynamic = "force-dynamic";
 function cellRoot(){ return path.resolve(process.cwd(),".."); }
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const rel = url.searchParams.get("path") ?? "haulio-full.cell.yaml";
+  const raw = url.searchParams.get("path");
+  // Default to a live cell — never to deleted haulio-full (typed 404 noise in console)
+  let rel = raw;
+  if (!rel) {
+    const all = discoverCells();
+    const hoysan = all.find(c => c.path.endsWith("hoysan-pipeline.cell.yaml"));
+    rel = hoysan ? hoysan.path.replace(cellRoot()+"/","") : (all[0]?.path.replace(cellRoot()+"/","") ?? "hoysan-pipeline.cell.yaml");
+  }
   const cell = getCellByPath(rel);
   if (!cell) {
     const all = discoverCells();

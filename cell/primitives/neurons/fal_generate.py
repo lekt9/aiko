@@ -2,7 +2,7 @@
 # fal-generate — prompt + model + params -> request_id + status
 # Thin: model already knows fal API, so this is just the primitive.
 # Uses helpers.render_template-style raw HTTP: no wrapper.
-import os, json, pathlib, urllib.request, urllib.error
+import hashlib, os, json, pathlib, urllib.request, urllib.error
 
 def run(inputs, ctx):
     prompt = inputs.get("prompt", "")
@@ -12,7 +12,7 @@ def run(inputs, ctx):
     if not api_key:
         # Fail-open for offline harness tests: return mock request_id so DAG still fires
         # Real runs require FAL_KEY set; check will show missing key in caps/output.
-        return {"request_id": "mock-req-" + str(hash(prompt))[:8], "status": "mock", "response": {"mock": True, "reason": "FAL_KEY not set — wire a real key in env"}}
+        return {"request_id": "mock-req-" + hashlib.sha256(prompt.encode()).hexdigest()[:8], "status": "mock", "response": {"mock": True, "reason": "FAL_KEY not set — wire a real key in env"}, "model": model}
     # Build body: prompt goes into params-specific shape
     body = {"prompt": prompt}
     body.update(params)
@@ -26,7 +26,7 @@ def run(inputs, ctx):
             raw = resp.read().decode()
             j = json.loads(raw) if raw else {}
             rid = j.get("request_id") or j.get("requestId") or j.get("id") or ""
-            return {"request_id": rid or j.get("request_id",""), "status": j.get("status","queued"), "response": j}
+            return {"request_id": rid or j.get("request_id",""), "status": j.get("status","queued"), "response": j, "model": model}
     except urllib.error.HTTPError as e:
         body_text = e.read().decode()[:1000]
         raise RuntimeError(f"fal-generate {model} -> {e.code} {e.reason}: {body_text}") from e

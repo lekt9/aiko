@@ -69,7 +69,7 @@ pub enum ProfileName {
 
 impl ProfileName {
     pub(crate) fn restricts_network(&self) -> bool {
-        matches!(self, Self::ReadOnly | Self::Strict)
+        matches!(self, Self::Workspace | Self::ReadOnly | Self::Strict)
     }
 }
 
@@ -299,7 +299,9 @@ impl ProfileName {
                 read_write: essential_writable_paths(workspace),
                 deny: vec![],
                 default_read: true,
-                restrict_network: false,
+                // Workspace is the kernel-enforced local mutation profile:
+                // filesystem writes stay under its allowlist and egress is denied.
+                restrict_network: true,
             }),
 
             Self::Devbox => {
@@ -507,7 +509,7 @@ mod tests {
         let config = SandboxConfig::default();
 
         for (name, expected) in [
-            (ProfileName::Workspace, false),
+            (ProfileName::Workspace, true),
             (ProfileName::Devbox, false),
             (ProfileName::ReadOnly, true),
             (ProfileName::Strict, true),

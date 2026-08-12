@@ -1,0 +1,14 @@
+{
+  "z": 0,
+  "😀": "astral",
+  "€": "bmp",
+  "nested": {
+    "b": true,
+    "a": [
+      null,
+      "é",
+      9007199254740991
+    ]
+  },
+  "control": "line\nfeed"
+}

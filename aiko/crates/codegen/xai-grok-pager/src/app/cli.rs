@@ -1,6 +1,6 @@
 //! CLI argument parsing for the pager.
 pub use crate::headless::OutputFormat;
-use clap::{ArgAction, Parser, Subcommand, ValueHint};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::Shell;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -271,6 +271,25 @@ pub enum CaptchaCommand {
 }
 
 /// Top-level commands for the pager binary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum LoginProvider {
+    /// Aiko's native account and OAuth service.
+    Aiko,
+    /// Grok through xAI's native OAuth service.
+    Grok,
+    /// OpenAI through ChatGPT OAuth.
+    Openai,
+    /// Compatibility spelling for OpenAI's Codex OAuth flow.
+    Codex,
+}
+
+impl LoginProvider {
+    pub fn uses_openai_oauth(self) -> bool {
+        matches!(self, Self::Openai | Self::Codex)
+    }
+}
+
+/// Top-level commands for the pager binary.
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
     /// Run Grok without the interactive UI
@@ -285,15 +304,16 @@ pub enum Command {
     Leader(LeaderMgmtArgs),
     /// Sign out and clear cached credentials
     Logout,
-    /// Sign in or create an Aiko account
+    /// Sign in with Aiko, Grok, or OpenAI
     Login {
-        /// Third-party provider to authenticate with (e.g. "codex" for ChatGPT).
-        /// Without this argument, the default xAI OAuth2 flow is used.
-        provider: Option<String>,
+        /// Provider to authenticate with: aiko, grok, openai, or codex.
+        /// Omit this argument for Aiko's configuration-aware default flow.
+        #[arg(value_enum, value_name = "PROVIDER")]
+        provider: Option<LoginProvider>,
         /// Ignored (kept for backwards compatibility). OAuth2 is now the only auth method.
         #[arg(long, hide = true)]
         legacy: bool,
-        /// Use Grok OAuth via auth.x.ai.
+        /// Force browser/loopback transport (Aiko and Grok only).
         #[arg(
             long = "oauth",
             alias = "oidc",
@@ -1457,6 +1477,32 @@ mod tests {
         let args = PagerArgs::try_parse_from(["grok", "logout"]).expect("subcommand parses");
         assert!(matches!(args.command, Some(Command::Logout)));
         assert!(args.prompt.is_none());
+    }
+
+    #[test]
+    fn login_provider_values_are_native_and_typed() {
+        let cases = [
+            ("aiko", LoginProvider::Aiko, false),
+            ("grok", LoginProvider::Grok, false),
+            ("openai", LoginProvider::Openai, true),
+            ("codex", LoginProvider::Codex, true),
+        ];
+
+        for (value, expected, uses_openai_oauth) in cases {
+            let args = PagerArgs::try_parse_from(["aiko", "login", value]).unwrap();
+            let Some(Command::Login { provider, .. }) = args.command else {
+                panic!("expected login command for {value}");
+            };
+            assert_eq!(provider, Some(expected));
+            assert_eq!(expected.uses_openai_oauth(), uses_openai_oauth);
+        }
+
+        let bare = PagerArgs::try_parse_from(["aiko", "login"]).unwrap();
+        assert!(matches!(
+            bare.command,
+            Some(Command::Login { provider: None, .. })
+        ));
+        assert!(PagerArgs::try_parse_from(["aiko", "login", "unknown"]).is_err());
     }
     #[test]
     fn positional_prompt_conflicts_with_headless_single() {

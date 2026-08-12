@@ -306,19 +306,27 @@ fn parse_goal_budget(trimmed: &str) -> (String, Option<i64>) {
     (trimmed.to_string(), None)
 }
 
-const PROMPT_COMMANDS: &[BuiltinCommand] = &[BuiltinCommand {
-    name: "loop",
-    description: "Run a prompt on a recurring interval",
-    argument_hint: Some("[interval] <prompt>"),
-    aliases: &[],
-    gate: BuiltinGate::Scheduler,
-    // INVARIANT: resolve() short-circuits any prompt-only command via a
-    // PROMPT_COMMANDS lookup before reaching this closure. If a future
-    // refactor changes that ordering this `unreachable!` will surface
-    // the bug loudly instead of silently dispatching to ContextInfo
-    // (which is what the previous sentinel did).
-    resolve: |_| unreachable!("/loop is dispatched via the PROMPT_COMMANDS path in resolve()"),
-}];
+const PROMPT_COMMANDS: &[BuiltinCommand] = &[
+    BuiltinCommand {
+        name: "loop",
+        description: "Run a prompt on a recurring interval",
+        argument_hint: Some("[interval] <prompt>"),
+        aliases: &[],
+        gate: BuiltinGate::Scheduler,
+        // INVARIANT: resolve() short-circuits every prompt-only command.
+        resolve: |_| unreachable!("/loop is dispatched via the PROMPT_COMMANDS path in resolve()"),
+    },
+    BuiltinCommand {
+        name: "workflow",
+        description: "Author and submit a workflow through GraphHarness",
+        argument_hint: Some("submit <goal>"),
+        aliases: &[],
+        gate: BuiltinGate::AlwaysOn,
+        resolve: |_| {
+            unreachable!("/workflow is dispatched via the PROMPT_COMMANDS path in resolve()")
+        },
+    },
+];
 
 /// A slash command — either built-in or from a SKILL.md file.
 pub(super) enum SlashCommand<'a> {
@@ -1013,6 +1021,7 @@ pub(super) fn resolve(
         // reusing /loop's prompt builder.
         let mut blocks = match prompt_cmd.name {
             "loop" => build_loop_prompt_blocks(args),
+            "workflow" => build_workflow_prompt_blocks(args),
             other => {
                 unreachable!("prompt-only command /{other} has no resolver wired in resolve()")
             }
@@ -1123,6 +1132,30 @@ fn build_loop_prompt_blocks(args: &str) -> Vec<acp::ContentBlock> {
     };
 
     vec![acp::ContentBlock::Text(acp::TextContent::new(text))]
+}
+
+/// `/workflow` is prompt-only so prompt, headless, and ACP all enter the
+/// same `contract_native::ground_turn` membrane. It does not expose rollout,
+/// verifier, signer, or Cell paths as request-selected arguments.
+fn build_workflow_prompt_blocks(args: &str) -> Vec<acp::ContentBlock> {
+    let args = args.trim();
+    let Some(goal) = args
+        .strip_prefix("submit ")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return vec![acp::ContentBlock::Text(acp::TextContent::new(
+            "Usage: /workflow submit <goal>.".to_string(),
+        ))];
+    };
+    let mut block = acp::TextContent::new(goal.to_owned());
+    // Security provenance is typed metadata set by the command dispatcher;
+    // no model-visible phrase can manufacture it.
+    block
+        .meta
+        .get_or_insert_with(acp::Meta::new)
+        .insert("aikoExplicitWorkflow".into(), serde_json::Value::Bool(true));
+    vec![acp::ContentBlock::Text(block)]
 }
 
 #[cfg(test)]
@@ -2677,5 +2710,33 @@ mod tests {
         tracker.account_elapsed();
         let after = tracker.snapshot().unwrap().elapsed_ms;
         assert!(after > 0, "elapsed should be > 0 after account_elapsed");
+    }
+
+    #[test]
+    fn workflow_command_is_advertised_and_rewrites_to_grounded_prompt() {
+        let commands = available_commands(&[], CommandAvailability::default());
+        assert!(commands.iter().any(|command| command.name == "workflow"));
+        let outcome = resolve(
+            vec![text_block(
+                "/workflow submit reconcile two independently judged sources",
+            )],
+            &[],
+            CommandAvailability::default(),
+            SkillSlashRewrite::default(),
+        )
+        .unwrap_err();
+        let SlashCommandOutcome::InvokeSkill { blocks, skills } = outcome else {
+            panic!("workflow must take the prompt path");
+        };
+        assert!(skills.is_empty());
+        let acp::ContentBlock::Text(text) = &blocks[0] else {
+            panic!("text block")
+        };
+        assert_eq!(text.text, "reconcile two independently judged sources");
+        assert_eq!(text.meta.as_ref().unwrap()["aikoExplicitWorkflow"], true);
+        assert_eq!(
+            text.meta.as_ref().unwrap()["displayText"],
+            "/workflow submit reconcile two independently judged sources"
+        );
     }
 }

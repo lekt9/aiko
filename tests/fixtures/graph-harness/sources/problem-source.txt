@@ -1,0 +1,1 @@
+Synthetic graph-harness fixture source; no customer data.

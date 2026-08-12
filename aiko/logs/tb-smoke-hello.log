@@ -1,0 +1,192 @@
+Starting harness run
+Run ID: aiko-smoke-hello
+Harness execution failed for original-tasks/hello-world: ("Error creating docker client: Error while fetching server API version: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))", 'Please ensure that Docker is installed and running.')
+Traceback (most recent call last):
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 493, in _make_request
+    conn.request(
+    ~~~~~~~~~~~~^
+        method,
+        ^^^^^^^
+    ...<6 lines>...
+        enforce_content_length=enforce_content_length,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/urllib3/connection.py", line 494, in request
+    self.endheaders()
+    ~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/http/client.py", line 1333, in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/http/client.py", line 1093, in _send_output
+    self.send(msg)
+    ~~~~~~~~~^^^^^
+  File "/usr/lib/python3.13/http/client.py", line 1037, in send
+    self.connect()
+    ~~~~~~~~~~~~^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/transport/unixconn.py", line 26, in connect
+    sock.connect(self.unix_socket)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/requests/adapters.py", line 667, in send
+    resp = conn.urlopen(
+        method=request.method,
+    ...<9 lines>...
+        chunked=chunked,
+    )
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+        method, url, error=new_e, _pool=self, _stacktrace=sys.exc_info()[2]
+    )
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/urllib3/util/retry.py", line 474, in increment
+    raise reraise(type(error), error, _stacktrace)
+          ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/urllib3/util/util.py", line 38, in reraise
+    raise value.with_traceback(tb)
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/urllib3/connectionpool.py", line 493, in _make_request
+    conn.request(
+    ~~~~~~~~~~~~^
+        method,
+        ^^^^^^^
+    ...<6 lines>...
+        enforce_content_length=enforce_content_length,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/urllib3/connection.py", line 494, in request
+    self.endheaders()
+    ~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/http/client.py", line 1333, in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/http/client.py", line 1093, in _send_output
+    self.send(msg)
+    ~~~~~~~~~^^^^^
+  File "/usr/lib/python3.13/http/client.py", line 1037, in send
+    self.connect()
+    ~~~~~~~~~~~~^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/transport/unixconn.py", line 26, in connect
+    sock.connect(self.unix_socket)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+urllib3.exceptions.ProtocolError: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/api/client.py", line 223, in _retrieve_server_version
+    return self.version(api_version=False)["ApiVersion"]
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/api/daemon.py", line 181, in version
+    return self._result(self._get(url), json=True)
+                        ~~~~~~~~~^^^^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/utils/decorators.py", line 44, in inner
+    return f(self, *args, **kwargs)
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/api/client.py", line 246, in _get
+    return self.get(url, **self._set_request_timeout(kwargs))
+           ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/requests/sessions.py", line 602, in get
+    return self.request("GET", url, **kwargs)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/requests/sessions.py", line 589, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/requests/sessions.py", line 703, in send
+    r = adapter.send(request, **kwargs)
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/requests/adapters.py", line 682, in send
+    raise ConnectionError(err, request=request)
+requests.exceptions.ConnectionError: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/terminal/docker_compose_manager.py", line 44, in __init__
+    self._client = docker.from_env()
+                   ~~~~~~~~~~~~~~~^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/client.py", line 94, in from_env
+    return cls(
+        timeout=timeout,
+    ...<3 lines>...
+        **kwargs_from_env(**kwargs)
+    )
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/client.py", line 45, in __init__
+    self.api = APIClient(*args, **kwargs)
+               ~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/api/client.py", line 207, in __init__
+    self._version = self._retrieve_server_version()
+                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/api/client.py", line 230, in _retrieve_server_version
+    raise DockerException(
+        f'Error while fetching server API version: {e}'
+    ) from e
+docker.errors.DockerException: Error while fetching server API version: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/harness/harness.py", line 1011, in _execute_single_trial
+    trial_results = self._run_trial(trial_handler)
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/harness/harness.py", line 717, in _run_trial
+    with spin_up_terminal(
+         ~~~~~~~~~~~~~~~~^
+        client_container_name=trial_handler.client_container_name,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+        disable_recording=trial_handler.task.disable_asciinema,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ) as terminal:
+    ^
+  File "/usr/lib/python3.13/contextlib.py", line 141, in __enter__
+    return next(self.gen)
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/terminal/terminal.py", line 161, in spin_up_terminal
+    terminal = Terminal(
+        client_container_name=client_container_name,
+    ...<9 lines>...
+        disable_recording=disable_recording,
+    )
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/terminal/terminal.py", line 38, in __init__
+    self._compose_manager = DockerComposeManager(
+                            ~~~~~~~~~~~~~~~~~~~~^
+        client_container_name=client_container_name,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+        agent_logs_path=agent_logs_path,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/terminal/docker_compose_manager.py", line 46, in __init__
+    raise RuntimeError(
+    ...<4 lines>...
+    )
+RuntimeError: ("Error creating docker client: Error while fetching server API version: ('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))", 'Please ensure that Docker is installed and running.')
+  Running tasks (1/1, Accuracy: 0.00%) - Last: hello-world ✗ ━━━━━━ 100% 0:00:00
+
+
+Results Summary:
++-------------------+---------+
+| Metric            | Value   |
++===================+=========+
+| Resolved Trials   | 0       |
++-------------------+---------+
+| Unresolved Trials | 1       |
++-------------------+---------+
+| Accuracy          | 0.00%   |
++-------------------+---------+
+
+Results written to 
+/home/deck/work/commons/aiko/benchmarks/harbor/tb-runs/aiko-smoke-hello/results.
+json

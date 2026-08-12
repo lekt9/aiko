@@ -1,0 +1,56 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: prime-agent-memory-guard
+  description: Inspect host memory and prime-agent sandbox implementation for bounded RAM remediation.
+spec:
+  membrane:
+    inputs:
+      target: {schema: string}
+    outputs:
+      report: {schema: object}
+    caps:
+      allow_read: ["/proc/**", "/sys/fs/cgroup/**", "/home/deck/.local/lib/node_modules/prime-agent/**", "/home/deck/.prime/**"]
+  run:
+    kind: python
+    code: |
+      def run(inputs, ctx):
+          import os, re, json
+          from pathlib import Path
+          def read(p):
+              try: return Path(p).read_text(errors="replace")
+              except Exception as e: return f"ERROR:{e}"
+          mem = {}
+          for line in read('/proc/meminfo').splitlines():
+              if ':' in line:
+                  k,v=line.split(':',1); mem[k]=v.strip()
+          procs=[]
+          for d in Path('/proc').iterdir():
+              if not d.name.isdigit(): continue
+              status=read(d/'status')
+              if status.startswith('ERROR:'): continue
+              vals={}
+              for line in status.splitlines():
+                  if ':' in line:
+                      k,v=line.split(':',1); vals[k]=v.strip()
+              cmd=read(d/'cmdline').replace('\x00',' ')
+              rss=int((vals.get('VmRSS','0 kB').split() or ['0'])[0])
+              if 'prime-agent' in cmd.lower() or rss > 200000:
+                  procs.append({'pid':int(d.name),'name':vals.get('Name'),'rss_kb':rss,'cmd':cmd[:1000]})
+          procs.sort(key=lambda x:x['rss_kb'], reverse=True)
+          root=Path('/home/deck/.local/lib/node_modules/prime-agent')
+          hits=[]
+          patterns=re.compile(r'(sandbox|memory|max[-_ ]?old|resource|cgroup|rlimit|ulimit)',re.I)
+          for base in [root/'dist', root/'package.json', Path('/home/deck/.prime')]:
+              paths=[base] if base.is_file() else (base.rglob('*') if base.exists() else [])
+              for p in paths:
+                  try:
+                      if not p.is_file() or p.stat().st_size>2000000: continue
+                      txt=p.read_text(errors='replace')
+                  except: continue
+                  if patterns.search(txt):
+                      matching=[ln[:800] for ln in txt.splitlines() if patterns.search(ln)][:12]
+                      hits.append({'path':str(p),'lines':matching})
+                      if len(hits)>=120: break
+          cg={p:read('/sys/fs/cgroup/'+p).strip() for p in ['memory.current','memory.max','memory.high','memory.swap.max','cgroup.controllers']}
+          return {'report':{'meminfo':mem,'cgroup':cg,'processes':procs[:30],'hits':hits}}

@@ -25,21 +25,30 @@ mod activity_sensor;
 pub(crate) mod contract_events;
 mod contract_learning;
 pub mod contract_loop;
+pub mod graph_harness;
+mod graph_harness_cell;
+mod graph_harness_edge;
+mod graph_harness_orchestration;
+use graph_harness_edge::Rollout as GraphHarnessRollout;
 pub mod membrane;
 mod neuron_bridge;
 pub mod pair;
 mod reflex_policy;
 mod skill_registry;
 
+use graph_harness_cell::{
+    AcceptanceExecutionRequest, CellExecutionRequest, CellSidecar, PinnedFile, PinnedProgram,
+    Sha256Pin,
+};
+pub use neuron_bridge::{
+    GraphHarnessClaimIdentity, NeuronSkillNodeOccurrence, NeuronSkillNodeSettlement,
+    NeuronSkillNodeSettlementResult, NeuronSkillWave, NeuronSkillWaveStatus,
+};
 use neuron_bridge::{
     NEURON_FIRE_ABI_VERSION, NeuronDecision, NeuronEffectSettleFn, NeuronFireFn,
     SKILL_EXECUTION_ABI_VERSION, SKILL_LIFECYCLE_ABI_VERSION, SkillNodeClaimFn, SkillNodeSettleFn,
     SkillStateFn, SkillTransitionFn, ToolEffectAdmission, negotiated_contract_abi,
     skill_node_decision, supported_contract_abi,
-};
-pub use neuron_bridge::{
-    NeuronSkillNodeOccurrence, NeuronSkillNodeSettlement, NeuronSkillNodeSettlementResult,
-    NeuronSkillWave, NeuronSkillWaveStatus,
 };
 
 const LOCAL_COMMAND_TIMEOUT: Duration = Duration::from_millis(800);
@@ -64,6 +73,13 @@ pub struct GroundedTurn {
     pub contract: Option<TurnContract>,
     pub capability_route: Option<serde_json::Value>,
     pub continuation: Option<membrane::ContractContinuation>,
+    graph_root_id: Option<String>,
+}
+
+impl GroundedTurn {
+    pub(crate) fn graph_root_id(&self) -> Option<&str> {
+        self.graph_root_id.as_deref()
+    }
 }
 
 /// Compact per-turn feedback card written to the ledger feedback log and
@@ -109,6 +125,7 @@ type MuscleDeleteFn = unsafe extern "C" fn(*const c_char) -> bool;
 type ReflexDecideFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 type DeclareScheduledJsonFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 type ExpandGraphFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
+type IssueGraphHarnessAttestationFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 /// Learned proven-command router: returns JSON {binary, example, score, …}.
 type RecommendProvenFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 type WarmRouterFn = unsafe extern "C" fn(u32) -> u32;
@@ -154,6 +171,7 @@ struct NativeContract {
     reflex_decide: Option<ReflexDecideFn>,
     declare_scheduled_json: Option<DeclareScheduledJsonFn>,
     expand_graph: Option<ExpandGraphFn>,
+    issue_graph_harness_attestation: Option<IssueGraphHarnessAttestationFn>,
     recommend_proven: Option<RecommendProvenFn>,
     warm_router: WarmRouterFn,
     fractal_context: FractalContextFn,
@@ -217,7 +235,10 @@ impl NativeContract {
         // contract-core fallback (~/Unbrowse/contract-core and sibling ../contract-core)
         if let Some(home) = dirs::home_dir() {
             for name in Self::library_names() {
-                paths.push(home.join("Unbrowse/contract-core/libcontract/zig-out/lib").join(name));
+                paths.push(
+                    home.join("Unbrowse/contract-core/libcontract/zig-out/lib")
+                        .join(name),
+                );
             }
         }
         for name in Self::library_names() {
@@ -372,6 +393,14 @@ impl NativeContract {
                     },
                     expand_graph: if abi_version >= 5 {
                         Some(*library.get(b"contract_expand_json\0").ok()?)
+                    } else {
+                        None
+                    },
+                    issue_graph_harness_attestation: if abi_version >= 13 {
+                        library
+                            .get(b"contract_issue_graph_harness_attestation_json\0")
+                            .ok()
+                            .map(|symbol| *symbol)
                     } else {
                         None
                     },
@@ -678,6 +707,13 @@ impl NativeContract {
         serde_json::from_str(&raw).ok()
     }
 
+    fn issue_graph_harness_attestation<T: Serialize>(&self, request: &T) -> Option<Value> {
+        let issue = self.issue_graph_harness_attestation?;
+        let request = CString::new(serde_json::to_vec(request).ok()?).ok()?;
+        let raw = self.take_string(unsafe { issue(request.as_ptr()) })?;
+        serde_json::from_str(&raw).ok()
+    }
+
     /// Nearest proven command for a goal (`contract recommend`).
     fn recommend_proven(&self, goal: &str) -> Option<serde_json::Value> {
         let recommend = self.recommend_proven?;
@@ -851,6 +887,18 @@ fn native_contract() -> Option<&'static NativeContract> {
 /// Negotiated native Contract ABI, if a compatible runtime is available.
 pub fn contract_abi_version() -> Option<u32> {
     native_contract().map(|contract| contract.abi_version)
+}
+
+/// Ask Contract to project and sign a settled GraphHarness attestation. Rust
+/// supplies identity expectations only; the signer and durable evidence remain
+/// inside Contract's deployment bootstrap and ledger.
+pub async fn issue_graph_harness_attestation(request: Value) -> Option<Value> {
+    tokio::task::spawn_blocking(move || {
+        native_contract()?.issue_graph_harness_attestation(&request)
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// Lease due durable work from Contract without invoking its CLI.
@@ -1111,35 +1159,89 @@ fn native_host_verdict(
                         .into(),
             })
         }
+        ("aiko-meta-agent", "1.0.0", "aiko-meta-agent--capture", "aiko.meta.capture/v1") => {
+            let product = node.inputs.get("action_result")?.clone();
+            let product_bytes = graph_harness::canonical_json(&product).ok()?;
+            let product_digest = format!("{:x}", Sha256::digest(&product_bytes));
+            let goal_digest = node_digest(&["aiko.meta.capture/v1", &node.plan]);
+            Some(NodeAdapterVerdict {
+                outcome: "satisfied",
+                evidence: json!({
+                    "product_snapshot": product,
+                    "product_digest": product_digest,
+                    "goal_digest": goal_digest,
+                }),
+                detail: "Captured the exact action product for two direct evaluators".into(),
+            })
+        }
         ("aiko-meta-agent", "1.0.0", "aiko-meta-agent--settle", "aiko.meta.settle/v1") => {
-            let verdict = node.inputs.get("verdict")?.as_object();
-            let completed = verdict
-                .and_then(|value| value.get("completed"))
+            let verification = node.inputs.get("verification")?.as_object();
+            let witness_accepted = verification
+                .and_then(|value| value.get("accepted"))
                 .and_then(Value::as_bool);
-            let retryable = verdict
-                .and_then(|value| value.get("retryable"))
-                .and_then(Value::as_bool);
-            let evidence = verdict
+            let witness_evidence = verification
                 .and_then(|value| value.get("evidence"))
                 .and_then(Value::as_str)
                 .map(privacy_safe_detail)
                 .filter(|value| !value.is_empty());
-            let settlement = match (completed, retryable, evidence) {
-                (Some(completed), Some(retryable), Some(evidence)) => json!({
-                    "completed": completed,
-                    "retryable": retryable,
-                    "evidence": evidence,
+            let verdict = node.inputs.get("verdict")?.as_object();
+            let judge_completed = verdict
+                .and_then(|value| value.get("completed"))
+                .and_then(Value::as_bool);
+            let judge_retryable = verdict
+                .and_then(|value| value.get("retryable"))
+                .and_then(Value::as_bool);
+            let judge_evidence = verdict
+                .and_then(|value| value.get("evidence"))
+                .and_then(Value::as_str)
+                .map(privacy_safe_detail)
+                .filter(|value| !value.is_empty());
+            let product_digest = node
+                .inputs
+                .get("product_digest")
+                .and_then(Value::as_str)
+                .filter(|value| valid_node_digest(value));
+            let goal_digest = node
+                .inputs
+                .get("goal_digest")
+                .and_then(Value::as_str)
+                .filter(|value| valid_node_digest(value));
+            let settlement = match (
+                witness_accepted,
+                witness_evidence,
+                judge_completed,
+                judge_retryable,
+                judge_evidence,
+                product_digest,
+                goal_digest,
+            ) {
+                (
+                    Some(witness_accepted),
+                    Some(witness_evidence),
+                    Some(judge_completed),
+                    Some(judge_retryable),
+                    Some(judge_evidence),
+                    Some(product_digest),
+                    Some(goal_digest),
+                ) => json!({
+                    "completed": witness_accepted && judge_completed && !judge_retryable,
+                    "retryable": judge_retryable || !witness_accepted,
+                    "evidence": judge_evidence,
+                    "goal_digest": goal_digest,
+                    "product_digest": product_digest,
+                    "witness_evidence": witness_evidence,
+                    "judge_evidence": judge_evidence,
                 }),
                 _ => json!({
                     "completed": false,
                     "retryable": true,
-                    "evidence": "Evaluator verdict was not a grounded settlement object",
+                    "evidence": "Independent witness or judge evidence was not grounded",
                 }),
             };
             Some(NodeAdapterVerdict {
                 outcome: "satisfied",
                 evidence: json!({"settlement": settlement}),
-                detail: "Projected the evaluator verdict into the terminal settlement".into(),
+                detail: "Required two direct product evaluations before terminal settlement".into(),
             })
         }
         _ => Some(NodeAdapterVerdict {
@@ -1794,7 +1896,14 @@ async fn run_node_witness(witness: &str, cwd: &Path, timeout_ms: u64) -> Result<
             .collect());
     }
     let tail = String::from_utf8_lossy(&output.stderr);
-    let tail: String = tail.chars().rev().take(500).collect::<String>().chars().rev().collect();
+    let tail: String = tail
+        .chars()
+        .rev()
+        .take(500)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
     Err(format!(
         "witness exited {}: {}",
         output.status.code().unwrap_or(-1),
@@ -1930,6 +2039,978 @@ fn graph_terminal_verdict(terminal: Option<Value>) -> ContractGraphVerdict {
     }
 }
 
+fn graph_harness_state_root(claim: &ContractClaim) -> Result<PathBuf, String> {
+    graph_harness_state_root_bootstrap(Path::new(&claim.cwd))
+}
+
+fn sha_pin(value: &str) -> Sha256Pin {
+    Sha256Pin {
+        algorithm: "sha256".into(),
+        value: value.into(),
+    }
+}
+
+fn pinned_implementation(
+    prepared: &graph_harness::PreparedGraph,
+    implementation: &Value,
+    args: Vec<String>,
+) -> Result<PinnedProgram, String> {
+    let digest = implementation
+        .pointer("/digest/value")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "graph_harness_bundle_invalid: implementation digest missing".to_owned())?;
+    Ok(PinnedProgram {
+        executable: PinnedFile {
+            path: prepared.material_file(digest).map_err(|e| e.to_string())?,
+            digest: sha_pin(digest),
+        },
+        args,
+    })
+}
+
+fn graph_harness_materials(
+    prepared: &graph_harness::PreparedGraph,
+) -> Result<Vec<PinnedFile>, String> {
+    prepared
+        .material_digests()
+        .map(|digest| {
+            Ok(PinnedFile {
+                path: prepared.material_file(digest).map_err(|e| e.to_string())?,
+                digest: sha_pin(digest),
+            })
+        })
+        .collect()
+}
+
+fn validate_graph_harness_wave(
+    claim: &ContractClaim,
+    expected_graph_digest: Option<&str>,
+    expected: &GraphHarnessClaimIdentity,
+    wave: &NeuronSkillWave,
+) -> Result<(), String> {
+    if wave.root_id != claim.contract_id
+        || expected_graph_digest.is_some_and(|digest| wave.graph_digest != digest)
+    {
+        return Err("graph_harness_claim_mismatch: Contract changed root or graph identity".into());
+    }
+    let actual = wave.graph_harness.as_ref().ok_or_else(|| {
+        "graph_harness_claim_missing: immutable bundle identity was not projected".to_owned()
+    })?;
+    if actual != expected {
+        return Err(
+            "graph_harness_claim_mismatch: immutable bundle identity changed between waves".into(),
+        );
+    }
+    Ok(())
+}
+
+fn cell_request_from_claim(
+    prepared: &graph_harness::PreparedGraph,
+    identity: &GraphHarnessClaimIdentity,
+    node: &NeuronSkillNodeOccurrence,
+) -> Result<CellExecutionRequest, String> {
+    if node.adapter.as_deref() != Some(graph_harness::CELL_ADAPTER_VERSION)
+        || node.key == "__graph_harness_north_star"
+    {
+        return Err("graph_harness_node_mismatch: claimed child is not a producer Cell".into());
+    }
+    let package_node = prepared
+        .envelope
+        .pointer("/package/nodes")
+        .and_then(Value::as_array)
+        .and_then(|nodes| {
+            nodes
+                .iter()
+                .find(|value| value.get("id").and_then(Value::as_str) == Some(&node.key))
+        })
+        .ok_or_else(|| {
+            "graph_harness_node_missing: claimed key is absent from prepared bundle".to_owned()
+        })?;
+    if package_node.get("description").and_then(Value::as_str) != Some(&node.plan) {
+        return Err(
+            "graph_harness_node_mismatch: claimed plan differs from prepared bundle".into(),
+        );
+    }
+    let cell = package_node
+        .get("implementation")
+        .ok_or_else(|| "graph_harness_bundle_invalid: Cell implementation missing".to_owned())?;
+    let witness = package_node
+        .pointer("/acceptance/witness/implementation")
+        .ok_or_else(|| "graph_harness_bundle_invalid: witness missing".to_owned())?;
+    let judge = package_node
+        .pointer("/acceptance/judge/implementation")
+        .ok_or_else(|| "graph_harness_bundle_invalid: judge missing".to_owned())?;
+    let cell_digest = cell
+        .pointer("/digest/value")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "graph_harness_bundle_invalid: Cell digest missing".to_owned())?;
+    let witness_digest = witness
+        .pointer("/digest/value")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "graph_harness_bundle_invalid: witness digest missing".to_owned())?;
+    let judge_digest = judge
+        .pointer("/digest/value")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "graph_harness_bundle_invalid: judge digest missing".to_owned())?;
+    let witness_id = package_node
+        .pointer("/acceptance/witness/id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "graph_harness_bundle_invalid: witness id missing".to_owned())?;
+    if node.cell_digest.as_deref() != Some(cell_digest)
+        || node.witness_digest.as_deref() != Some(witness_digest)
+        || node.judge_digest.as_deref() != Some(judge_digest)
+        || node.witness_id.as_deref() != Some(witness_id)
+    {
+        return Err("graph_harness_node_mismatch: claimed Cell/witness/judge pins differ from prepared bundle".into());
+    }
+    let args = package_node
+        .pointer("/acceptance/witness/argv")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|v| {
+            v.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| "graph_harness_bundle_invalid: witness argv is not text".to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let judge_args = Vec::new();
+    let inputs = node
+        .inputs
+        .as_object()
+        .ok_or_else(|| "graph_harness_node_mismatch: claimed inputs are not an object".to_owned())?
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let expected_outputs = package_node
+        .get("produces")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "graph_harness_bundle_invalid: produces missing".to_owned())?
+        .iter()
+        .map(|v| {
+            v.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| "graph_harness_bundle_invalid: output name is not text".to_owned())
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let mut source_refs = package_node
+        .pointer("/grounding/sources")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|source| source.get("ref").and_then(Value::as_str).map(str::to_owned))
+        .collect::<Vec<_>>();
+    source_refs.push(format!("contract:{}/{}", node.node_id, node.execution_id));
+    source_refs.sort();
+    source_refs.dedup();
+    let materials = graph_harness_materials(prepared)?;
+    let transitive_cell_digest =
+        graph_harness_cell::package_closure_digest(&materials).map_err(|e| e.to_string())?;
+    Ok(CellExecutionRequest {
+        graph_subject_digest: identity.subject_digest.clone(),
+        graph_transitive_digest: identity.transitive_digest.clone(),
+        node_id: node.key.clone(),
+        cell: PinnedFile {
+            path: prepared
+                .material_file(cell_digest)
+                .map_err(|e| e.to_string())?,
+            digest: sha_pin(cell_digest),
+        },
+        cell_digest: cell_digest.into(),
+        materials,
+        transitive_cell_digest,
+        inputs,
+        expected_outputs,
+        timeout_ms: node.timeout_ms,
+        witness: pinned_implementation(prepared, witness, args)?,
+        witness_digest: witness_digest.into(),
+        judge: pinned_implementation(prepared, judge, judge_args)?,
+        judge_digest: judge_digest.into(),
+        source_refs,
+    })
+}
+
+async fn graph_harness_node_verdict(
+    sidecar: &CellSidecar,
+    prepared: &graph_harness::PreparedGraph,
+    identity: &GraphHarnessClaimIdentity,
+    node: &NeuronSkillNodeOccurrence,
+) -> NodeAdapterVerdict {
+    let request = match cell_request_from_claim(prepared, identity, node) {
+        Ok(request) => request,
+        Err(detail) => {
+            return NodeAdapterVerdict {
+                outcome: "died",
+                evidence: json!({}),
+                detail,
+            };
+        }
+    };
+    match sidecar.execute(request).await {
+        Ok(cell) => {
+            let mut evidence = serde_json::Map::new();
+            for (name, value) in &cell.outputs {
+                evidence.insert(name.clone(), value.clone());
+            }
+            evidence.insert("cell_manifest".into(), json!({
+                "digest":cell.manifest_digest,"cell_digest":cell.cell_digest,"transitive_digest":cell.transitive_cell_digest,
+                "inputs":cell.input_digests,"outputs":cell.output_digests,"sources":cell.source_refs,"produced_by":cell.produced_by,
+            }));
+            evidence.insert("neuron_firing".into(), json!({"execution_id":node.execution_id,"sources":cell.source_refs,"produced_by":cell.produced_by}));
+            evidence.insert("witness_verdict".into(), json!({"digest":cell.witness_program_digest,"evaluator":node.witness_id.clone().unwrap_or_default(),"verdict":"pass"}));
+            evidence.insert("judge_verdict".into(), json!({"digest":cell.judge_program_digest,"evaluator":format!("judge-{}", &cell.judge_program_digest[..16]),"verdict":"pass"}));
+            NodeAdapterVerdict {
+                outcome: "satisfied",
+                evidence: Value::Object(evidence),
+                detail: format!(
+                    "Cell {} passed pinned witness and independent judge",
+                    node.key
+                ),
+            }
+        }
+        Err(error) => NodeAdapterVerdict {
+            outcome: "died",
+            evidence: json!({}),
+            detail: privacy_safe_detail(&error.to_string()),
+        },
+    }
+}
+
+async fn graph_harness_north_star_verdict(
+    sidecar: &CellSidecar,
+    prepared: &graph_harness::PreparedGraph,
+    identity: &GraphHarnessClaimIdentity,
+    node: &NeuronSkillNodeOccurrence,
+) -> NodeAdapterVerdict {
+    let witness = match prepared
+        .envelope
+        .pointer("/package/north_star/witness/implementation")
+    {
+        Some(v) => v,
+        None => {
+            return NodeAdapterVerdict {
+                outcome: "died",
+                evidence: json!({}),
+                detail: "north-star witness missing".into(),
+            };
+        }
+    };
+    let judge = match prepared
+        .envelope
+        .pointer("/package/north_star/judge/implementation")
+    {
+        Some(v) => v,
+        None => {
+            return NodeAdapterVerdict {
+                outcome: "died",
+                evidence: json!({}),
+                detail: "north-star judge missing".into(),
+            };
+        }
+    };
+    let wd = witness
+        .pointer("/digest/value")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let jd = judge
+        .pointer("/digest/value")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let wid = prepared
+        .envelope
+        .pointer("/package/north_star/witness/id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if node.cell_digest.as_deref() != Some(wd)
+        || node.witness_digest.as_deref() != Some(wd)
+        || node.judge_digest.as_deref() != Some(jd)
+        || node.witness_id.as_deref() != Some(wid)
+    {
+        return NodeAdapterVerdict {
+            outcome: "died",
+            evidence: json!({}),
+            detail: "north-star claimed pins differ from prepared bundle".into(),
+        };
+    }
+    let args = prepared
+        .envelope
+        .pointer("/package/north_star/witness/argv")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str().map(str::to_owned))
+        .collect();
+    let inputs = match node.inputs.as_object() {
+        Some(v) => v.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        None => {
+            return NodeAdapterVerdict {
+                outcome: "died",
+                evidence: json!({}),
+                detail: "north-star inputs are not an object".into(),
+            };
+        }
+    };
+    let request = AcceptanceExecutionRequest {
+        graph_subject_digest: identity.subject_digest.clone(),
+        graph_transitive_digest: identity.transitive_digest.clone(),
+        node_id: node.key.clone(),
+        materials: match graph_harness_materials(prepared) {
+            Ok(v) => v,
+            Err(e) => {
+                return NodeAdapterVerdict {
+                    outcome: "died",
+                    evidence: json!({}),
+                    detail: e,
+                };
+            }
+        },
+        inputs,
+        timeout_ms: node.timeout_ms,
+        witness: match pinned_implementation(prepared, witness, args) {
+            Ok(v) => v,
+            Err(e) => {
+                return NodeAdapterVerdict {
+                    outcome: "died",
+                    evidence: json!({}),
+                    detail: e,
+                };
+            }
+        },
+        witness_digest: wd.into(),
+        judge: match pinned_implementation(prepared, judge, Vec::new()) {
+            Ok(v) => v,
+            Err(e) => {
+                return NodeAdapterVerdict {
+                    outcome: "died",
+                    evidence: json!({}),
+                    detail: e,
+                };
+            }
+        },
+        judge_digest: jd.into(),
+        source_refs: vec![format!("graph-harness:{}", identity.subject_digest)],
+    };
+    match sidecar.execute_acceptance_edge(request).await {
+        Ok(edge) => NodeAdapterVerdict {
+            outcome: "satisfied",
+            evidence: json!({
+                "cell_manifest":{"digest":edge.input_digest,"cell_digest":wd,"transitive_digest":identity.transitive_digest,"sources":[format!("graph-harness:{}",identity.subject_digest)],"produced_by":"aiko.graph-harness-north-star/v1"},
+                "neuron_firing":{"execution_id":node.execution_id,"sources":[format!("graph-harness:{}",identity.subject_digest)],"produced_by":"aiko.graph-harness-north-star/v1"},
+                "witness_verdict":{"digest":wd,"evaluator":wid,"verdict":"pass"},
+                "judge_verdict":{"digest":jd,"evaluator":format!("judge-{}",&jd[..16]),"verdict":"pass"}
+            }),
+            detail: "north-star witness and independent judge passed durable terminal products"
+                .into(),
+        },
+        Err(error) => NodeAdapterVerdict {
+            outcome: "died",
+            evidence: json!({}),
+            detail: privacy_safe_detail(&error.to_string()),
+        },
+    }
+}
+
+fn graph_harness_runtime_pin_matches(
+    prepared: &graph_harness::PreparedGraph,
+    package_node: &Value,
+    observed_runtime_digest: &str,
+    expected_sandbox: &str,
+) -> Result<(), String> {
+    let declaration_digest = package_node
+        .pointer("/implementation/digest/value")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            "graph_harness_runtime_pin_missing: adapter declaration digest".to_owned()
+        })?;
+    let declaration: Value = serde_json::from_slice(
+        prepared
+            .material_bytes(declaration_digest)
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("graph_harness_runtime_pin_invalid: {error}"))?;
+    let pin = declaration
+        .get("runtime_pin")
+        .ok_or_else(|| "graph_harness_runtime_pin_missing: runtime_pin".to_owned())?;
+    if pin.get("api_version").and_then(Value::as_str)
+        != Some(graph_harness::HOST_RUNTIME_PIN_VERSION)
+        || pin.get("process_authority").and_then(Value::as_str)
+            != Some(graph_harness::SANDBOXED_NEURON_PROCESS)
+        || pin.get("executor_scratch").and_then(Value::as_str)
+            != Some(graph_harness::EXECUTOR_SCRATCH_AUTHORITY)
+        || pin.get("network").and_then(Value::as_str) != Some("denied")
+        || pin.get("sandbox").and_then(Value::as_str) != Some(expected_sandbox)
+    {
+        return Err("graph_harness_runtime_pin_mismatch: authority or sandbox drifted".into());
+    }
+    if pin.get("executable_sha256").and_then(Value::as_str) != Some(observed_runtime_digest) {
+        return Err("graph_harness_runtime_pin_mismatch: executable bytes drifted".into());
+    }
+    Ok(())
+}
+
+/// Production adapter for the dependency-minimal strict GraphHarness state
+/// machine.  CellSidecar construction remains fail-closed here, outside the
+/// generic algorithm, and is shared across every leased edge in the claim.
+struct ProductionNeuronEdgeExecutor {
+    executable: PathBuf,
+    cwd: PathBuf,
+    node: NeuronSkillNodeOccurrence,
+}
+
+impl graph_harness_edge::EdgeModelExecutor for ProductionNeuronEdgeExecutor {
+    async fn execute_once(
+        &mut self,
+        _claim: &graph_harness_edge::EdgeExecutionClaim,
+    ) -> graph_harness_edge::EdgeProducerResult {
+        let (_, verdict) = execute_neuron_skill_adapter(
+            self.executable.clone(),
+            self.cwd.clone(),
+            self.node.clone(),
+            Vec::new(),
+        )
+        .await;
+        graph_harness_edge::EdgeProducerResult {
+            outcome: verdict.outcome.into(),
+            evidence: verdict.evidence,
+            detail: verdict.detail,
+        }
+    }
+}
+
+fn edge_claim(
+    identity: &graph_harness_orchestration::ClaimIdentity,
+    node: &NeuronSkillNodeOccurrence,
+    required_outputs: Vec<String>,
+) -> graph_harness_edge::EdgeExecutionClaim {
+    graph_harness_edge::EdgeExecutionClaim {
+        execution_id: node.execution_id.clone(),
+        node_id: node.key.clone(),
+        graph_subject_digest: identity.subject_digest.clone(),
+        graph_transitive_digest: identity.transitive_digest.clone(),
+        adapter: node.adapter.clone().unwrap_or_default(),
+        adapter_digest: node.cell_digest.clone().unwrap_or_default(),
+        witness_id: node.witness_id.clone().unwrap_or_default(),
+        witness_digest: node.witness_digest.clone().unwrap_or_default(),
+        judge_digest: node.judge_digest.clone().unwrap_or_default(),
+        required_outputs,
+    }
+}
+
+struct ProductionGraphHarnessOrchestration {
+    sidecar: Option<CellSidecar>,
+    executable: PathBuf,
+    runtime_digest: String,
+    cwd: PathBuf,
+}
+
+impl ProductionGraphHarnessOrchestration {
+    fn new(executable: PathBuf, cwd: PathBuf) -> Result<Self, String> {
+        let executable = std::fs::canonicalize(executable)
+            .map_err(|error| format!("graph_harness_runtime_pin_failed: {error}"))?;
+        let runtime_digest = graph_harness::pinned_executable_digest(&executable)
+            .map_err(|error| format!("graph_harness_runtime_pin_failed: {error}"))?;
+        Ok(Self {
+            sidecar: None,
+            executable,
+            runtime_digest,
+            cwd,
+        })
+    }
+}
+
+fn orchestration_identity(
+    identity: GraphHarnessClaimIdentity,
+) -> graph_harness_orchestration::ClaimIdentity {
+    graph_harness_orchestration::ClaimIdentity {
+        api_version: identity.api_version,
+        state: identity.state,
+        subject_digest: identity.subject_digest,
+        transitive_digest: identity.transitive_digest,
+        adapter: identity.adapter,
+        bundle_ref: identity.bundle_ref,
+        evaluation_policy: identity.evaluation_policy,
+    }
+}
+
+fn orchestration_wave(
+    wave: NeuronSkillWave,
+) -> graph_harness_orchestration::Wave<NeuronSkillNodeOccurrence> {
+    use graph_harness_orchestration::{Node, Wave, WaveStatus};
+    let status = match wave.status {
+        NeuronSkillWaveStatus::Wave => WaveStatus::Wave,
+        NeuronSkillWaveStatus::Waiting => WaveStatus::Waiting,
+        NeuronSkillWaveStatus::Held => WaveStatus::Held,
+        NeuronSkillWaveStatus::Failed => WaveStatus::Failed,
+        NeuronSkillWaveStatus::Complete => WaveStatus::Complete,
+    };
+    Wave {
+        status,
+        root_id: wave.root_id,
+        graph_digest: wave.graph_digest,
+        identity: wave.graph_harness.map(orchestration_identity),
+        terminal_evidence: wave.terminal_evidence,
+        nodes: wave
+            .nodes
+            .into_iter()
+            .map(|payload| Node {
+                execution_id: payload.execution_id.clone(),
+                attempt: payload.attempt,
+                key: payload.key.clone(),
+                inputs: payload.inputs.clone(),
+                payload,
+            })
+            .collect(),
+    }
+}
+
+impl graph_harness_orchestration::Orchestration for ProductionGraphHarnessOrchestration {
+    type NodePayload = NeuronSkillNodeOccurrence;
+    type PreparedPayload = graph_harness::PreparedGraph;
+    type Decision = NeuronDecision;
+
+    async fn claim_wave(
+        &mut self,
+        contract_id: String,
+        occurrence: String,
+        owner: String,
+    ) -> Option<graph_harness_orchestration::Wave<Self::NodePayload>> {
+        claim_neuron_skill_nodes(
+            contract_id,
+            occurrence,
+            owner,
+            3_660_000,
+            DEFAULT_CONTRACT_MAX_CONCURRENCY as usize,
+        )
+        .await
+        .map(orchestration_wave)
+    }
+
+    fn load_bundle(
+        &mut self,
+        state_root: &Path,
+        bundle_ref: &str,
+    ) -> Result<graph_harness_orchestration::Prepared<Self::PreparedPayload>, String> {
+        let payload = graph_harness::PreparedGraph::load_persisted(state_root, bundle_ref)
+            .map_err(|error| error.to_string())?;
+        let witness_digest = payload
+            .envelope
+            .pointer("/package/north_star/witness/implementation/digest/value")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let judge_digest = payload
+            .envelope
+            .pointer("/package/north_star/judge/implementation/digest/value")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        Ok(graph_harness_orchestration::Prepared {
+            subject_digest: payload.identity.subject_digest.clone(),
+            transitive_digest: payload.identity.transitive_digest.clone(),
+            adapter: payload.identity.adapter_version.clone(),
+            bundle_digest: payload.bundle_digest.clone(),
+            witness_digest,
+            judge_digest,
+            payload,
+        })
+    }
+
+    async fn execute_node(
+        &mut self,
+        prepared: &Self::PreparedPayload,
+        identity: &graph_harness_orchestration::ClaimIdentity,
+        node: &graph_harness_orchestration::Node<Self::NodePayload>,
+    ) -> graph_harness_orchestration::NodeVerdict {
+        let native_identity = GraphHarnessClaimIdentity {
+            api_version: identity.api_version.clone(),
+            state: identity.state.clone(),
+            subject_digest: identity.subject_digest.clone(),
+            transitive_digest: identity.transitive_digest.clone(),
+            adapter: identity.adapter.clone(),
+            bundle_ref: identity.bundle_ref.clone(),
+            evaluation_policy: identity.evaluation_policy.clone(),
+        };
+        let has_edge_model = prepared
+            .envelope
+            .pointer("/package/nodes")
+            .and_then(Value::as_array)
+            .is_some_and(|nodes| {
+                nodes.iter().any(|candidate| {
+                    candidate
+                        .get("implementation_adapter")
+                        .and_then(Value::as_str)
+                        == Some(graph_harness::EDGE_MODEL_ADAPTER_VERSION)
+                })
+            });
+        if node.key == "__graph_harness_north_star" && has_edge_model {
+            let claim = edge_claim(identity, &node.payload, vec!["result".into()]);
+            // Resolve only the implementations named by the leased claim from
+            // the rehashed PreparedGraph CAS. Request data cannot select code.
+            let witness_program = match prepared.material_bytes(&claim.witness_digest) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    return graph_harness_orchestration::NodeVerdict {
+                        outcome: "died",
+                        evidence: json!({}),
+                        detail: error.to_string(),
+                    };
+                }
+            };
+            let judge_program = match prepared.material_bytes(&claim.judge_digest) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    return graph_harness_orchestration::NodeVerdict {
+                        outcome: "died",
+                        evidence: json!({}),
+                        detail: error.to_string(),
+                    };
+                }
+            };
+            let verdict = graph_harness_edge::execute_north_star(
+                &claim,
+                &node.inputs,
+                witness_program,
+                judge_program,
+            );
+            return graph_harness_orchestration::NodeVerdict {
+                outcome: if verdict.outcome == "satisfied" {
+                    "satisfied"
+                } else {
+                    "died"
+                },
+                evidence: verdict.evidence,
+                detail: verdict.detail,
+            };
+        }
+        let package_node = prepared
+            .envelope
+            .pointer("/package/nodes")
+            .and_then(Value::as_array)
+            .and_then(|nodes| {
+                nodes.iter().find(|candidate| {
+                    candidate.get("id").and_then(Value::as_str) == Some(&node.key)
+                })
+            });
+        let adapter = package_node
+            .and_then(|candidate| candidate.get("implementation_adapter"))
+            .and_then(Value::as_str);
+        let pins_match = package_node.is_some_and(|candidate| {
+            node.payload.adapter.as_deref() == adapter
+                && node.payload.cell_digest.as_deref()
+                    == candidate
+                        .pointer("/implementation/digest/value")
+                        .and_then(Value::as_str)
+                && node.payload.witness_digest.as_deref()
+                    == candidate
+                        .pointer("/acceptance/witness/implementation/digest/value")
+                        .and_then(Value::as_str)
+                && node.payload.judge_digest.as_deref()
+                    == candidate
+                        .pointer("/acceptance/judge/implementation/digest/value")
+                        .and_then(Value::as_str)
+                && node.payload.witness_id.as_deref()
+                    == candidate
+                        .pointer("/acceptance/witness/id")
+                        .and_then(Value::as_str)
+        });
+        if !pins_match {
+            return graph_harness_orchestration::NodeVerdict {
+                outcome: "died",
+                evidence: json!({}),
+                detail:
+                    "graph_harness_node_mismatch: leased adapter pins differ from prepared bundle"
+                        .into(),
+            };
+        }
+        if adapter == Some(graph_harness::EDGE_MODEL_ADAPTER_VERSION)
+            || adapter.is_some_and(graph_harness::deterministic_host_adapter)
+        {
+            let sandbox = if node.payload.effect_scope == "local_reversible" {
+                "workspace"
+            } else {
+                "read-only"
+            };
+            if let Err(detail) = graph_harness_runtime_pin_matches(
+                prepared,
+                package_node.expect("pins_match established package node"),
+                &self.runtime_digest,
+                sandbox,
+            ) {
+                return graph_harness_orchestration::NodeVerdict {
+                    outcome: "died",
+                    evidence: json!({}),
+                    detail,
+                };
+            }
+        }
+        let verdict = if adapter == Some(graph_harness::EDGE_MODEL_ADAPTER_VERSION) {
+            let required_outputs = prepared
+                .envelope
+                .pointer("/package/nodes")
+                .and_then(Value::as_array)
+                .and_then(|nodes| {
+                    nodes.iter().find(|candidate| {
+                        candidate.get("id").and_then(Value::as_str) == Some(&node.key)
+                    })
+                })
+                .and_then(|candidate| candidate.get("produces"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect();
+            let claim = edge_claim(identity, &node.payload, required_outputs);
+            let mut executor = ProductionNeuronEdgeExecutor {
+                executable: self.executable.clone(),
+                cwd: self.cwd.clone(),
+                node: node.payload.clone(),
+            };
+            let witness_program = match prepared.material_bytes(&claim.witness_digest) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    return graph_harness_orchestration::NodeVerdict {
+                        outcome: "died",
+                        evidence: json!({}),
+                        detail: error.to_string(),
+                    };
+                }
+            };
+            let judge_program = match prepared.material_bytes(&claim.judge_digest) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    return graph_harness_orchestration::NodeVerdict {
+                        outcome: "died",
+                        evidence: json!({}),
+                        detail: error.to_string(),
+                    };
+                }
+            };
+            let result = graph_harness_edge::execute_pinned_edge(
+                &mut executor,
+                &claim,
+                witness_program,
+                judge_program,
+            )
+            .await;
+            NodeAdapterVerdict {
+                outcome: if result.outcome == "satisfied" {
+                    "satisfied"
+                } else if result.outcome == "retry" {
+                    "retry"
+                } else {
+                    "died"
+                },
+                evidence: result.evidence,
+                detail: result.detail,
+            }
+        } else if adapter.is_some_and(graph_harness::deterministic_host_adapter) {
+            let required_outputs = package_node
+                .and_then(|candidate| candidate.get("produces"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|value| value.as_str().map(str::to_owned))
+                .collect();
+            let selected_skill_refs = prepared
+                .envelope
+                .pointer("/registry/projections/selected_skill_refs")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|value| value.as_str().map(str::to_owned))
+                .collect::<Vec<_>>();
+            let claim = edge_claim(identity, &node.payload, required_outputs);
+            let witness_program = match prepared.material_bytes(&claim.witness_digest) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    return graph_harness_orchestration::NodeVerdict {
+                        outcome: "died",
+                        evidence: json!({}),
+                        detail: error.to_string(),
+                    };
+                }
+            };
+            let judge_program = match prepared.material_bytes(&claim.judge_digest) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    return graph_harness_orchestration::NodeVerdict {
+                        outcome: "died",
+                        evidence: json!({}),
+                        detail: error.to_string(),
+                    };
+                }
+            };
+            let result = graph_harness_edge::execute_pinned_host(
+                &claim,
+                witness_program,
+                judge_program,
+                || {
+                    // The existing authenticated adapter is the only producer. FnOnce
+                    // at the grounding boundary makes a second dispatch impossible.
+                    native_host_verdict(&node.payload, &selected_skill_refs).map(|verdict| {
+                        graph_harness_edge::EdgeProducerResult {
+                            outcome: verdict.outcome.into(),
+                            evidence: verdict.evidence,
+                            detail: verdict.detail,
+                        }
+                    })
+                },
+            );
+            NodeAdapterVerdict {
+                outcome: if result.outcome == "satisfied" {
+                    "satisfied"
+                } else {
+                    "died"
+                },
+                evidence: result.evidence,
+                detail: result.detail,
+            }
+        } else {
+            // Cell and package-acceptance adapters require the pinned deployment
+            // sidecar and strict kernel sandbox. Model and built-in host nodes never do.
+            if self.sidecar.is_none() {
+                match CellSidecar::from_environment() {
+                    Ok(sidecar) => self.sidecar = Some(sidecar),
+                    Err(error) => {
+                        return graph_harness_orchestration::NodeVerdict {
+                            outcome: "died",
+                            evidence: json!({}),
+                            detail: error.to_string(),
+                        };
+                    }
+                }
+            }
+            let sidecar = self.sidecar.as_ref().expect("sidecar initialized above");
+            if node.key == "__graph_harness_north_star" {
+                graph_harness_north_star_verdict(sidecar, prepared, &native_identity, &node.payload)
+                    .await
+            } else {
+                graph_harness_node_verdict(sidecar, prepared, &native_identity, &node.payload).await
+            }
+        };
+        graph_harness_orchestration::NodeVerdict {
+            outcome: verdict.outcome,
+            evidence: verdict.evidence,
+            detail: verdict.detail,
+        }
+    }
+
+    fn commit_neuron(
+        &mut self,
+        node: &graph_harness_orchestration::Node<Self::NodePayload>,
+        verdict: &graph_harness_orchestration::NodeVerdict,
+        now: u64,
+    ) -> Option<Self::Decision> {
+        skill_node_decision(&node.payload, verdict.outcome, &verdict.evidence, now)
+    }
+
+    async fn settle_node(
+        &mut self,
+        settlement: graph_harness_orchestration::Settlement<Self::Decision>,
+        now: u64,
+    ) -> bool {
+        settle_neuron_skill_node(
+            NeuronSkillNodeSettlement {
+                root_id: settlement.root_id,
+                root_occurrence: settlement.root_occurrence,
+                owner: settlement.owner,
+                execution_id: settlement.execution_id,
+                attempt: settlement.attempt,
+                outcome: settlement.outcome,
+                evidence: settlement.evidence,
+                detail: settlement.detail,
+                decision: settlement.decision,
+            },
+            now,
+        )
+        .await
+        .is_some()
+    }
+
+    async fn issue_terminal(&mut self, request: Value) -> Option<Value> {
+        issue_graph_harness_attestation(request).await
+    }
+    fn authenticate_terminal(
+        &mut self,
+        prepared: &Self::PreparedPayload,
+        statement: &Value,
+    ) -> Result<(), String> {
+        let attestation: graph_harness::GraphHarnessAttestation =
+            serde_json::from_value(statement.clone()).map_err(|error| {
+                format!("Contract issuer returned invalid attestation: {error}")
+            })?;
+        graph_harness::DeploymentVerifier::from_environment()
+            .map_err(|e| e.to_string())?
+            .authenticate(prepared, &attestation)
+            .map_err(|e| e.to_string())
+    }
+    fn materialize_terminal(
+        &mut self,
+        prepared: &Self::PreparedPayload,
+        statement: &Value,
+        state_root: &Path,
+    ) -> Result<(), String> {
+        graph_harness::materialize_admitted(prepared, statement, state_root)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    fn now_ms(&mut self) -> u64 {
+        contract_now_ms()
+    }
+    async fn wait_for_wave(&mut self) {
+        tokio::time::sleep(Duration::from_millis(100)).await
+    }
+}
+
+async fn execute_graph_harness_claim(
+    executable: PathBuf,
+    cwd: PathBuf,
+    owner: String,
+    claim: &ContractClaim,
+    policy: GraphHarnessRollout,
+) -> ContractGraphVerdict {
+    let mut host = match ProductionGraphHarnessOrchestration::new(executable, cwd) {
+        Ok(host) => host,
+        Err(evidence) => {
+            return ContractGraphVerdict {
+                completed: false,
+                retryable: false,
+                evidence,
+            };
+        }
+    };
+    let state_root = match graph_harness_state_root(claim) {
+        Ok(root) => root,
+        Err(evidence) => {
+            return ContractGraphVerdict {
+                completed: false,
+                retryable: false,
+                evidence,
+            };
+        }
+    };
+    let orchestration_claim = graph_harness_orchestration::Claim {
+        contract_id: claim.contract_id.clone(),
+        occurrence: claim.occurrence.clone(),
+        state_root,
+        expected_api_version: graph_harness::GRAPH_API_VERSION,
+        expected_adapter: graph_harness::CONTRACT_ADAPTER_VERSION,
+        expected_evaluation_policy: graph_harness::EVALUATION_POLICY_ID,
+        materialize_admission: policy.permits_admission_materialization(),
+    };
+    let verdict = graph_harness_orchestration::execute_graph_harness_claim_with(
+        &mut host,
+        owner,
+        &orchestration_claim,
+    )
+    .await;
+    ContractGraphVerdict {
+        completed: verdict.completed,
+        retryable: verdict.retryable,
+        evidence: verdict.evidence,
+    }
+}
+
 /// Execute a durable root through Contract's admitted graph. `None` means the
 /// ABI/explicit rollback selected the legacy adapter; an ABI-10 graph failure
 /// returns a retry verdict and never falls through to the opaque root worker.
@@ -1941,6 +3022,23 @@ pub async fn execute_claim_neuron_graph(
 ) -> Option<ContractGraphVerdict> {
     if !neuron_graph_execution_enabled() {
         return None;
+    }
+    // New strict-policy roots are never allowed to fall into the historical
+    // claim-time planner/frontier. The Contract claim ABI does not yet project
+    // GraphHarness child bindings, so fail closed until that exact immutable
+    // bundle/node execution seam is available.
+    match GraphHarnessRollout::from_bootstrap() {
+        Ok(policy) if policy.requires_graph_harness() => {
+            return Some(execute_graph_harness_claim(executable, cwd, owner, claim, policy).await);
+        }
+        Err(error) => {
+            return Some(ContractGraphVerdict {
+                completed: false,
+                retryable: false,
+                evidence: error,
+            });
+        }
+        _ => {}
     }
     let Some((_, selected_skill_refs)) = expand_claim_cell_with_routes(
         claim.contract_id.clone(),
@@ -2041,9 +3139,7 @@ pub async fn execute_claim_neuron_graph(
                     // check is green. Red reopens the node as a bounded retry —
                     // never let the producer's own word settle it.
                     if fired.verdict.outcome == "satisfied" {
-                        if let Some(reason) =
-                            settlement_rejection(&plan_index, &node, &cwd).await
-                        {
+                        if let Some(reason) = settlement_rejection(&plan_index, &node, &cwd).await {
                             fired.verdict.outcome = "retry";
                             fired.verdict.evidence = json!({
                                 "witness": "red",
@@ -2283,7 +3379,10 @@ pub fn decide_reflex(
     let policy = reflex_policy::load();
     let request = json!({
         "enabled": policy.reflexes_enabled,
-        "capability_enabled": policy.capabilities.get(capability).copied().unwrap_or(false),
+        // Capabilities are enabled unless explicitly disabled: the policy map
+        // is an opt-out surface, not an opt-in allowlist. The global kill
+        // switch and the native safety refusals still apply downstream.
+        "capability_enabled": policy.capabilities.get(capability).copied().unwrap_or(true),
         "successes": successes,
         "failures": failures,
         "confidence": confidence,
@@ -2661,6 +3760,35 @@ fn strip_spans(raw: &str, open: &str, close: &str) -> String {
     out.trim().to_string()
 }
 
+fn transport_meta_string(blocks: &[acp::ContentBlock], key: &str) -> Option<String> {
+    blocks.iter().find_map(|block| match block {
+        acp::ContentBlock::Text(text) => text
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get(key))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_owned),
+        _ => None,
+    })
+}
+
+fn transport_meta_u32(blocks: &[acp::ContentBlock], key: &str) -> Option<u32> {
+    blocks.iter().find_map(|block| match block {
+        acp::ContentBlock::Text(text) => text
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get(key))
+            .and_then(Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok()),
+        _ => None,
+    })
+}
+
+pub fn conversation_identity_from_blocks(blocks: &[acp::ContentBlock]) -> Option<String> {
+    transport_meta_string(blocks, "aikoConversationId")
+}
+
 /// Register a prompt in the canonical local ledger. Normal Aiko turns treat
 /// this admission as mandatory: without a durable row there is no work identity.
 pub async fn declare_turn(blocks: &[acp::ContentBlock], cwd: &Path) -> Option<TurnContract> {
@@ -2683,13 +3811,15 @@ pub async fn declare_turn(blocks: &[acp::ContentBlock], cwd: &Path) -> Option<Tu
     }
     let goal_for_declare = goal.clone();
     let cwd = cwd.to_owned();
-    let parent_id = std::env::var("AIKO_CONTRACT_PARENT_ID")
-        .ok()
+    let parent_id = transport_meta_string(blocks, "aikoContractParentId")
+        .or_else(|| std::env::var("AIKO_CONTRACT_PARENT_ID").ok())
         .filter(|id| valid_contract_id(id));
-    let root_id = std::env::var("AIKO_CONTRACT_ROOT_ID")
-        .ok()
+    let root_id = transport_meta_string(blocks, "aikoContractRootId")
+        .or_else(|| std::env::var("AIKO_CONTRACT_ROOT_ID").ok())
         .filter(|id| valid_contract_id(id));
-    let depth = bounded_env_u32("AIKO_CONTRACT_DEPTH", 0, 16);
+    let depth = transport_meta_u32(blocks, "aikoContractDepth")
+        .map(|value| value.min(16))
+        .unwrap_or_else(|| bounded_env_u32("AIKO_CONTRACT_DEPTH", 0, 16));
     let max_depth = bounded_env_u32("AIKO_CONTRACT_MAX_DEPTH", DEFAULT_CONTRACT_MAX_DEPTH, 16);
     let max_children = bounded_env_u32(
         "AIKO_CONTRACT_MAX_CHILDREN",
@@ -2754,50 +3884,269 @@ fn bounded_env_u32(name: &str, default: u32, maximum: u32) -> u32 {
         .min(maximum)
 }
 
-async fn expand_turn_root(turn: &TurnContract, cwd: &Path) -> Option<(Value, u32)> {
+enum TurnGraphSource {
+    GraphHarness(graph_harness::PreparedGraph),
+    AtomicContract(skill_registry::ContractSkillPlan),
+}
+
+fn project_plan_preview(
+    plan: &skill_registry::ContractSkillPlan,
+) -> Result<graph_harness::PlanPreview, String> {
+    let children = plan
+        .children
+        .iter()
+        .map(|child| {
+            let field = |name: &str| child.get(name).cloned().unwrap_or(Value::Null);
+            serde_json::from_value(json!({
+                "key": field("key"),
+                "plan": field("plan"),
+                "action": field("action"),
+                "depends_on": field("depends_on"),
+                "input_bindings": field("input_bindings"),
+                "requires_authorization": field("requires_authorization"),
+                "effect_scope": field("effect_scope"),
+                "read_only": field("read_only"),
+                "reversible": field("reversible"),
+                "timeout_ms": field("timeout_ms"),
+                "skill_id": field("skill_id"),
+                "skill_version": field("skill_version"),
+                "worker": field("worker"),
+                "adapter": field("adapter"),
+                "script": field("script"),
+                "script_digest": field("script_digest"),
+                "evidence": field("evidence"),
+                "writes": field("writes"),
+                "capabilities": field("capabilities"),
+                "research": field("research"),
+                "witness": field("witness"),
+                "generated": child.get("admission").and_then(Value::as_str) == Some("generated")
+            }))
+            .map_err(|error| format!("workflow_plan_projection_invalid: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(graph_harness::PlanPreview {
+        core_admitted: plan.core_admitted,
+        children,
+    })
+}
+
+fn require_real_directory(path: &Path, label: &str) -> Result<PathBuf, String> {
+    if !path.is_absolute() {
+        return Err(format!(
+            "graph_harness_state_root_invalid: {label} must be absolute"
+        ));
+    }
+    let meta = std::fs::symlink_metadata(path).map_err(|error| {
+        format!("graph_harness_state_root_invalid: cannot inspect {label}: {error}")
+    })?;
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Err(format!(
+            "graph_harness_state_root_invalid: {label} is not a real directory"
+        ));
+    }
+    std::fs::canonicalize(path).map_err(|error| {
+        format!("graph_harness_state_root_invalid: cannot canonicalize {label}: {error}")
+    })
+}
+
+pub(crate) fn graph_harness_state_root_bootstrap(cwd: &Path) -> Result<PathBuf, String> {
+    if let Some(configured) = std::env::var_os("AIKO_GRAPH_HARNESS_STATE_ROOT") {
+        let configured = PathBuf::from(configured);
+        // Deployment bootstrap must provision this directory. Requests never
+        // select it and Aiko never turns a typo or relative path into writes.
+        return require_real_directory(&configured, "configured deployment state root");
+    }
+    let canonical_cwd = require_real_directory(cwd, "working directory")?;
+    let aiko = canonical_cwd.join(".aiko");
+    if !aiko.exists() {
+        std::fs::create_dir(&aiko).map_err(|error| {
+            format!("graph_harness_state_root_invalid: cannot create deployment .aiko directory: {error}")
+        })?;
+    }
+    let aiko = require_real_directory(&aiko, "deployment .aiko directory")?;
+    let state = aiko.join("graph-harness");
+    if !state.exists() {
+        std::fs::create_dir(&state).map_err(|error| {
+            format!(
+                "graph_harness_state_root_invalid: cannot create deployment state root: {error}"
+            )
+        })?;
+    }
+    require_real_directory(&state, "deployment state root")
+}
+
+fn prepare_turn_graph(
+    goal: &str,
+    cwd: &Path,
+    preview: &graph_harness::PlanPreview,
+    planned: &skill_registry::ContractSkillPlan,
+) -> Result<graph_harness::PreparedGraph, String> {
+    let state_root = graph_harness_state_root_bootstrap(cwd)?;
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("graph_harness_runtime_pin_failed: {error}"))?;
+    let runtime_digest = graph_harness::pinned_executable_digest(&executable)
+        .map_err(|error| format!("graph_harness_runtime_pin_failed: {error}"))?;
+    let policy = graph_harness::EvaluationPolicy {
+        mode: graph_harness::EvaluationMode::IsolatedLocal,
+        max_authority: graph_harness::Authority {
+            filesystem: vec![
+                graph_harness::WORKSPACE_AUTHORITY.into(),
+                graph_harness::EXECUTOR_SCRATCH_AUTHORITY.into(),
+            ],
+            network: vec![],
+            process: vec![graph_harness::SANDBOXED_NEURON_PROCESS.into()],
+            secrets: vec![],
+        },
+        allow_external_effects: false,
+        state_root: state_root.clone(),
+        workspace_root: require_real_directory(cwd, "deployment workspace")?,
+        deadline_ms: 3_600_000,
+        signer_policy_id: "contract-deployment-v1".into(),
+    };
+    let prepared = graph_harness::PreparedGraphAdapter::prepare(
+        goal,
+        preview,
+        &graph_harness::embedded_host_profile(
+            preview,
+            planned
+                .selected
+                .iter()
+                .map(|skill| format!("skill:{}@{}", skill.id, skill.version))
+                .collect(),
+            &runtime_digest,
+        ),
+        &policy,
+    )
+    .map_err(|error| format!("graph_harness_refused: {error}"))?;
+    let destination = state_root.join("prepared").join(&prepared.bundle_digest);
+    if !destination.exists() {
+        graph_harness::EmbeddedCompiler::persist_atomic(&prepared, &destination)
+            .map_err(|error| format!("graph_harness_persist_failed: {error}"))?;
+    }
+    Ok(prepared)
+}
+
+async fn expand_turn_root(
+    turn: &TurnContract,
+    cwd: &Path,
+    source: TurnGraphSource,
+) -> Result<(Value, u32), String> {
     let depth = bounded_env_u32("AIKO_CONTRACT_DEPTH", 0, 16);
     let max_depth = bounded_env_u32("AIKO_CONTRACT_MAX_DEPTH", DEFAULT_CONTRACT_MAX_DEPTH, 16);
     if depth >= max_depth {
-        tracing::debug!(depth, max_depth, "cell expand refused: max depth");
-        return None;
+        return Err(
+            "graph_depth_exhausted: Contract graph expansion exceeded deployment depth".into(),
+        );
     }
-    let max_children = bounded_env_u32(
-        "AIKO_CONTRACT_MAX_CHILDREN",
-        DEFAULT_CONTRACT_MAX_CHILDREN,
-        16,
-    ) as usize;
     let max_concurrency = bounded_env_u32(
         "AIKO_CONTRACT_MAX_CONCURRENCY",
         DEFAULT_CONTRACT_MAX_CONCURRENCY,
         16,
     );
-    let skill_plan = skill_registry::plan_bounded(&turn.goal, cwd, max_children);
-    if !skill_plan.core_admitted || skill_plan.children.is_empty() {
-        tracing::warn!("admitted Aiko Meta-Agent Skill graph was unavailable");
-        return None;
-    }
-    let request = json!({
-        "root_id": turn.id,
-        "plan": turn.goal,
-        "action": "neuron:cell",
-        "cwd": cwd,
-        "agent": "skill:aiko-meta-agent@1.0.0",
-        "children": skill_plan.children,
-        "selected_skills": skill_plan.selected,
-        "core_admitted": skill_plan.core_admitted,
-        "depth": depth,
-        "max_depth": max_depth,
-        "max_children": max_children,
-        "max_concurrency": max_concurrency,
-        "execution_model": "typed_neuron_skill_graph",
-    });
-    tokio::task::spawn_blocking(move || {
+    let request = match &source {
+        TurnGraphSource::GraphHarness(prepared) => serde_json::to_value(
+            graph_harness::GraphHarnessContractAdapter::expand_request(
+                prepared,
+                &turn.id,
+                &turn.goal,
+                cwd,
+                depth,
+                max_depth,
+                max_concurrency,
+            )
+            .map_err(|error| format!("graph_harness_expand_refused: {error}"))?,
+        )
+        .map_err(|error| format!("graph_harness_expand_invalid: {error}"))?,
+        TurnGraphSource::AtomicContract(skill_plan) => {
+            if !skill_plan.core_admitted || skill_plan.children.is_empty() {
+                return Err(
+                    "atomic_contract_plan_unavailable: admitted Contract plan is empty".into(),
+                );
+            }
+            json!({
+                "root_id": turn.id,
+                "plan": turn.goal,
+                "action": "neuron:cell",
+                "cwd": cwd,
+                "agent": "skill:aiko-meta-agent@1.0.0",
+                "children": skill_plan.children,
+                "selected_skills": skill_plan.selected,
+                "core_admitted": skill_plan.core_admitted,
+                "depth": depth,
+                "max_depth": max_depth,
+                "max_children": skill_plan.children.len(),
+                "max_concurrency": max_concurrency,
+                "execution_model": "typed_neuron_skill_graph",
+            })
+        }
+    };
+    let result = tokio::task::spawn_blocking(move || {
         let native = native_contract()?;
         Some((native.expand_graph(&request)?, native.abi_version))
     })
     .await
     .ok()
     .flatten()
+    .ok_or_else(|| "contract_graph_expand_failed: Contract rejected graph expansion".to_owned())?;
+    if let TurnGraphSource::GraphHarness(prepared) = source {
+        graph_harness::GraphHarnessContractAdapter::validate_expand_response(&prepared, &result.0)
+            .map_err(|error| format!("contract_graph_echo_mismatch: {error}"))?;
+        let graph_digest = result
+            .0
+            .get("graph_digest")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "contract_graph_echo_mismatch: graph digest missing".to_owned())?;
+        let state_root = std::env::var_os("AIKO_GRAPH_HARNESS_STATE_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| cwd.join(".aiko/graph-harness"));
+        let roots = state_root.join("roots");
+        std::fs::create_dir_all(&roots)
+            .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
+        let index = json!({
+            "schema": "aiko.graph-harness-root/v1",
+            "root_id": turn.id,
+            "graph_digest": graph_digest,
+            "identity": prepared.identity,
+            "bundle_digest": prepared.bundle_digest,
+            "bundle": state_root.join("prepared").join(&prepared.bundle_digest),
+        });
+        let bytes = graph_harness::canonical_json(&index)
+            .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
+        let path = roots.join(format!("{}.json", turn.id));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                file.write_all(&bytes)
+                    .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
+                file.sync_all()
+                    .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
+                std::fs::File::open(&roots)
+                    .and_then(|directory| directory.sync_all())
+                    .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let metadata = std::fs::symlink_metadata(&path)
+                    .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
+                if metadata.file_type().is_symlink()
+                    || !metadata.is_file()
+                    || metadata.len() > 64 * 1024
+                    || std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice())
+                {
+                    return Err(
+                        "graph_harness_root_index_failed: cached Contract root receipt differs"
+                            .into(),
+                    );
+                }
+            }
+            Err(error) => {
+                return Err(format!("graph_harness_root_index_failed: {error}"));
+            }
+        }
+    }
+    Ok(result)
 }
 
 #[derive(Deserialize)]
@@ -5374,7 +6723,7 @@ pub fn render_capability_plan_context(plan: &Value) -> String {
     format!(
         "Aiko FECH capability plan (Contract-ranked; Aiko permissions remain authoritative):\n\
          confidence={confidence:.3} automatic={automatic}\n{rendered}\n\
-         Use a candidate only if it matches the task and is live. Skill-provider candidates are guidance to load through the Skill tool, never an automatically executable interface. If `parallel` is non-empty, those read-only candidates may be issued together; all other sequences remain ordered and permissioned. An unverified candidate is a suggestion, not permission or proof."
+         Use a candidate only if it matches the task and is live. Skill-provider candidates are guidance to load through the Skill tool, never an automatically executable interface. If `parallel` is non-empty, those read-only candidates may be issued together; all other sequences remain ordered and permissioned. Unverified candidates are executable; their status labels report evidence state, never permission — proof still comes only from a grounded read-back."
     )
 }
 
@@ -5651,10 +7000,7 @@ fn advisory_walk_json_from_skill_plan(skill_plan: &Value) -> Option<String> {
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
-            let witness = child
-                .get("witness")
-                .and_then(Value::as_str)
-                .unwrap_or("");
+            let witness = child.get("witness").and_then(Value::as_str).unwrap_or("");
             let invoke_skills = child
                 .get("skill_id")
                 .and_then(Value::as_str)
@@ -6329,6 +7675,7 @@ fn ground_neuron_node_execution(
         }),
         capability_route: None,
         continuation: Some(continuation),
+        graph_root_id: Some(contract_id.to_owned()),
     })
 }
 
@@ -6342,6 +7689,48 @@ pub async fn ground_turn(
     cwd: &Path,
     identity_scope: &str,
     conversation: &[ConversationItem],
+) -> Result<GroundedTurn, String> {
+    ground_turn_with_facts(
+        blocks,
+        cwd,
+        identity_scope,
+        conversation,
+        graph_harness::WorkflowRequestFacts::default(),
+    )
+    .await
+}
+
+/// Typed workflow provenance enters at the caller boundary. It is never
+/// inferred from model-visible prose.
+pub async fn ground_turn_with_facts(
+    blocks: &[acp::ContentBlock],
+    cwd: &Path,
+    identity_scope: &str,
+    conversation: &[ConversationItem],
+    request_facts: graph_harness::WorkflowRequestFacts,
+) -> Result<GroundedTurn, String> {
+    ground_turn_with_facts_and_prepared(
+        blocks,
+        cwd,
+        identity_scope,
+        conversation,
+        request_facts,
+        None,
+    )
+    .await
+}
+
+/// Reuse an immutable prepared authoring bundle only as input to a fresh
+/// Contract evaluation. Historical admission is never treated as launch
+/// authority; Contract revalidates the exact graph and may return the same
+/// durable root for an idempotent identical request.
+pub async fn ground_turn_with_facts_and_prepared(
+    blocks: &[acp::ContentBlock],
+    cwd: &Path,
+    identity_scope: &str,
+    conversation: &[ConversationItem],
+    request_facts: graph_harness::WorkflowRequestFacts,
+    prepared_reuse: Option<graph_harness::PreparedGraph>,
 ) -> Result<GroundedTurn, String> {
     if blocks.is_empty() {
         return Err("Aiko refused an empty turn before Contract admission".into());
@@ -6362,18 +7751,102 @@ pub async fn ground_turn(
                 )
             });
     }
+    // The bounded planner is sampled exactly once. Classification and either
+    // adapter consume this explicit DTO; neither expansion nor execution may
+    // silently re-plan the same new root.
+    let goal =
+        goal_from_blocks(blocks).unwrap_or_else(|| "[non-text interaction occurrence]".into());
+    let rollout = GraphHarnessRollout::from_bootstrap()?;
+    let source = if let Some(prepared) = prepared_reuse {
+        if !request_facts.explicit_workflow || !request_facts.reuse_or_publish {
+            return Err(
+                "graph_harness_prepared_reuse_untyped: reuse requires explicit typed provenance"
+                    .into(),
+            );
+        }
+        if !rollout.requires_graph_harness() {
+            return Err(
+                "graph_harness_prepared_reuse_disabled: Observe cannot reuse workflow bundles"
+                    .into(),
+            );
+        }
+        graph_harness::EmbeddedCompiler::inspect(&prepared)
+            .map_err(|error| format!("graph_harness_prepared_reuse_refused: {error}"))?;
+        if prepared
+            .envelope
+            .pointer("/package/north_star/claim")
+            .and_then(Value::as_str)
+            != Some(goal.as_str())
+        {
+            return Err(
+                "graph_harness_prepared_reuse_goal_mismatch: bundle was authored for a different goal"
+                    .into(),
+            );
+        }
+        tracing::info!(
+            bundle_digest = %prepared.bundle_digest,
+            "GraphHarness prepared authoring bundle will receive Contract revalidation"
+        );
+        TurnGraphSource::GraphHarness(prepared)
+    } else {
+        let planned = skill_registry::plan_bounded(
+            &goal,
+            cwd,
+            bounded_env_u32(
+                "AIKO_CONTRACT_MAX_CHILDREN",
+                DEFAULT_CONTRACT_MAX_CHILDREN,
+                16,
+            ) as usize,
+        );
+        let preview = project_plan_preview(&planned)?;
+        let route = graph_harness::classify_workflow(&request_facts, Some(&preview));
+        tracing::info!(?rollout, ?route, "GraphHarness main-path route");
+        match route {
+            graph_harness::WorkflowRoute::DirectAllowed { .. }
+                if rollout.requires_graph_harness() =>
+            {
+                TurnGraphSource::GraphHarness(prepare_turn_graph(&goal, cwd, &preview, &planned)?)
+            }
+            graph_harness::WorkflowRoute::DirectAllowed { .. } => {
+                TurnGraphSource::AtomicContract(planned)
+            }
+            graph_harness::WorkflowRoute::GraphHarnessRequired { .. }
+                if rollout.requires_graph_harness() =>
+            {
+                TurnGraphSource::GraphHarness(prepare_turn_graph(&goal, cwd, &preview, &planned)?)
+            }
+            graph_harness::WorkflowRoute::GraphHarnessRequired { .. } => {
+                // Observe is the only deployment policy allowed to retain the old
+                // execution behavior. It is explicitly logged above.
+                TurnGraphSource::AtomicContract(planned)
+            }
+            graph_harness::WorkflowRoute::Refused { code } => {
+                return Err(format!("workflow_route_refused: {code:?}"));
+            }
+            graph_harness::WorkflowRoute::CompatibilityEscape { .. } => {
+                return Err(
+                    "workflow_compatibility_escape_unconfigured: no deployment escape applies"
+                        .into(),
+                );
+            }
+        }
+    };
+
     // Native graph admission is the entry membrane, not optional context. Aiko
     // does not start a reasoning worker and retrofit a graph after effects begin.
     let mut contract = declare_turn(blocks, cwd)
         .await
         .ok_or_else(|| "Aiko could not admit this turn to the native Contract ledger".to_owned())?;
-    let Some((reflex_graph, loaded_abi_version)) = expand_turn_root(&contract, cwd).await else {
-        let cleaned = abandon_turn_graph(&contract.id).await;
-        return Err(if cleaned {
-            "Aiko could not materialize the admitted native execution graph".into()
-        } else {
-            "Aiko could not materialize the native graph or terminalize its root".into()
-        });
+    let (reflex_graph, loaded_abi_version) = match expand_turn_root(&contract, cwd, source).await {
+        Ok(result) => result,
+        Err(error) => {
+            let cleaned = abandon_turn_graph(&contract.id).await;
+            return Err(if cleaned {
+                error
+            } else {
+                format!("{error}; Contract cleanup was incomplete")
+            });
+        }
     };
     if let Err(error) = validate_admitted_turn_graph(&contract, &reflex_graph, loaded_abi_version) {
         let cleaned = abandon_turn_graph(&contract.id).await;
@@ -6384,8 +7857,6 @@ pub async fn ground_turn(
         });
     }
     warm_router_background(4);
-    let goal =
-        goal_from_blocks(blocks).unwrap_or_else(|| "[non-text interaction occurrence]".into());
     let machine_context_enabled = context_enabled();
     let built = if machine_context_enabled {
         build_context(&goal, cwd).await
@@ -6471,12 +7942,40 @@ pub async fn ground_turn(
         contract: Some(contract),
         capability_route: built.capability_route,
         continuation: Some(continuation),
+        graph_root_id: reflex_graph
+            .get("root_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn telegram_transport_metadata_preserves_lineage_and_conversation_identity() {
+        let meta = json!({
+            "aikoContractParentId": "caf00d01",
+            "aikoContractRootId": "caf00d01",
+            "aikoContractDepth": 1,
+            "aikoConversationId": "messaging:telegram:108611440"
+        })
+        .as_object()
+        .cloned();
+        let blocks = vec![acp::ContentBlock::Text(
+            acp::TextContent::new("do the work").meta(meta),
+        )];
+        assert_eq!(
+            transport_meta_string(&blocks, "aikoContractParentId").as_deref(),
+            Some("caf00d01")
+        );
+        assert_eq!(transport_meta_u32(&blocks, "aikoContractDepth"), Some(1));
+        assert_eq!(
+            conversation_identity_from_blocks(&blocks).as_deref(),
+            Some("messaging:telegram:108611440")
+        );
+    }
 
     /// A leading system reminder used to truncate the goal to nothing, which
     /// cost the turn its Contract root and HOLD'd every consequential tool.
@@ -6517,9 +8016,8 @@ mod tests {
 
     #[test]
     fn a_leading_system_reminder_does_not_erase_the_goal() {
-        let goal = clean_goal(
-            "<system-reminder>injected context</system-reminder>\nfix the parser bug",
-        );
+        let goal =
+            clean_goal("<system-reminder>injected context</system-reminder>\nfix the parser bug");
         assert_eq!(goal, "fix the parser bug");
         // Trailing and interleaved reminders keep the text around them too.
         assert_eq!(
@@ -6800,23 +8298,27 @@ mod tests {
         assert!(validate_discovery_artifact(temporary.path(), &discovery).is_err());
 
         // A bound claim without an installed candidate is not settlement.
-        write(&json!({
-            "schema": skill_registry::DISCOVERY_SCHEMA,
-            "query": "SwiftUI accessibility",
-            "status": "bound",
-            "candidates": [{"name": "some-skill", "installed": false}],
-        })
-        .to_string());
+        write(
+            &json!({
+                "schema": skill_registry::DISCOVERY_SCHEMA,
+                "query": "SwiftUI accessibility",
+                "status": "bound",
+                "candidates": [{"name": "some-skill", "installed": false}],
+            })
+            .to_string(),
+        );
         assert!(validate_discovery_artifact(temporary.path(), &discovery).is_err());
 
         // Bound with an installed candidate settles.
-        write(&json!({
-            "schema": skill_registry::DISCOVERY_SCHEMA,
-            "query": "SwiftUI accessibility",
-            "status": "bound",
-            "candidates": [{"name": "ios-accessibility", "installed": true}],
-        })
-        .to_string());
+        write(
+            &json!({
+                "schema": skill_registry::DISCOVERY_SCHEMA,
+                "query": "SwiftUI accessibility",
+                "status": "bound",
+                "candidates": [{"name": "ios-accessibility", "installed": true}],
+            })
+            .to_string(),
+        );
         assert!(validate_discovery_artifact(temporary.path(), &discovery).is_ok());
 
         // Research needs findings unless honestly unavailable.
@@ -6877,6 +8379,10 @@ mod tests {
             adapter: None,
             script: None,
             script_digest: None,
+            cell_digest: None,
+            witness_id: None,
+            witness_digest: None,
+            judge_digest: None,
             effect_scope: "local_reversible".into(),
             read_only: false,
             reversible: true,
@@ -6902,9 +8408,11 @@ mod tests {
 
         // Green witness: no rejection, settlement proceeds.
         let green = index(json!("exit 0"));
-        assert!(settlement_rejection(&green, &node, temporary.path())
-            .await
-            .is_none());
+        assert!(
+            settlement_rejection(&green, &node, temporary.path())
+                .await
+                .is_none()
+        );
 
         // Red witness: rejection carries the reason, the node reopens.
         let red = index(json!("echo boom >&2; exit 3"));
@@ -6916,9 +8424,11 @@ mod tests {
 
         // Missing witness command means nothing to gate on.
         let none_declared = index(Value::Null);
-        assert!(settlement_rejection(&none_declared, &node, temporary.path())
-            .await
-            .is_none());
+        assert!(
+            settlement_rejection(&none_declared, &node, temporary.path())
+                .await
+                .is_none()
+        );
 
         // A discovery node settles only when its artifact validates.
         let discovery_index = HashMap::from([(
@@ -6933,9 +8443,11 @@ mod tests {
                 }
             }),
         )]);
-        assert!(settlement_rejection(&discovery_index, &node, temporary.path())
-            .await
-            .is_some());
+        assert!(
+            settlement_rejection(&discovery_index, &node, temporary.path())
+                .await
+                .is_some()
+        );
     }
 
     #[test]
@@ -7099,6 +8611,10 @@ mod tests {
             adapter: Some("aiko.neuron-json-stdio/v1".into()),
             script: Some("scripts/neuron-script".into()),
             script_digest: Some("b".repeat(64)),
+            cell_digest: None,
+            witness_id: None,
+            witness_digest: None,
+            judge_digest: None,
             effect_scope: "read_only".into(),
             read_only: true,
             reversible: false,
@@ -7142,6 +8658,10 @@ mod tests {
             adapter: Some("aiko.neuron-json-stdio/v1".into()),
             script: Some("scripts/noisy-neuron-script".into()),
             script_digest: Some("b".repeat(64)),
+            cell_digest: None,
+            witness_id: None,
+            witness_digest: None,
+            judge_digest: None,
             effect_scope: "read_only".into(),
             read_only: true,
             reversible: false,
@@ -7181,6 +8701,10 @@ mod tests {
             adapter: Some(adapter.into()),
             script: None,
             script_digest: None,
+            cell_digest: None,
+            witness_id: None,
+            witness_digest: None,
+            judge_digest: None,
             effect_scope: "read_only".into(),
             read_only: true,
             reversible: false,
@@ -7228,16 +8752,39 @@ mod tests {
         assert_eq!(route.outcome, "satisfied");
         assert_eq!(route.evidence["selected_skill_refs"], json!(selected));
 
+        let capture = native_host_verdict(
+            &node(
+                "capture",
+                "aiko.meta.capture/v1",
+                json!({"action_result":{"tests":"passed"}}),
+            ),
+            &[],
+        )
+        .unwrap();
+        assert!(
+            capture.evidence["product_digest"]
+                .as_str()
+                .is_some_and(valid_node_digest)
+        );
+        assert!(
+            capture.evidence["goal_digest"]
+                .as_str()
+                .is_some_and(valid_node_digest)
+        );
+
         let settle = native_host_verdict(
             &node(
                 "settle",
                 "aiko.meta.settle/v1",
                 json!({
+                    "verification": {"accepted":true,"evidence":"witness inspected the product"},
                     "verdict": {
                         "completed": true,
                         "retryable": false,
-                        "evidence": "tests passed",
-                    }
+                        "evidence": "judge independently accepted the product",
+                    },
+                    "product_digest":capture.evidence["product_digest"],
+                    "goal_digest":capture.evidence["goal_digest"],
                 }),
             ),
             &[],
@@ -7287,9 +8834,9 @@ mod tests {
         assert_eq!(req["execution_model"], "typed_neuron_skill_graph");
         assert_eq!(req["core_admitted"], true);
         let children = req["children"].as_array().expect("children array");
-        assert_eq!(children.len(), 7);
+        assert_eq!(children.len(), 8);
         assert_eq!(children[0]["key"], "aiko-meta-agent--observe");
-        assert_eq!(children[6]["key"], "aiko-meta-agent--settle");
+        assert_eq!(children[7]["key"], "aiko-meta-agent--settle");
         assert!(children.iter().all(|child| child["action"] != "agent:aiko"));
         assert!(children.iter().all(|c| {
             c["plan"]

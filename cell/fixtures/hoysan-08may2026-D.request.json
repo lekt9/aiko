@@ -1,0 +1,508 @@
+{
+  "request": {
+    "shift_date": "2026-05-08",
+    "shift_code": "D",
+    "cranes": [
+      {
+        "crane_number": "301",
+        "vessel": "PSA CONNECTIVITY",
+        "wta_required": false,
+        "stroking": "301/304"
+      },
+      {
+        "crane_number": "302",
+        "vessel": "ESPIRITO S E",
+        "wta_required": false,
+        "stroking": "302/309"
+      },
+      {
+        "crane_number": "303",
+        "vessel": "ESPIRITO S E",
+        "wta_required": false,
+        "stroking": "303/308"
+      },
+      {
+        "crane_number": "304",
+        "vessel": "ANBIEN BAY",
+        "wta_required": false,
+        "stroking": "304/301"
+      },
+      {
+        "crane_number": "308",
+        "vessel": "WAN HAI A10",
+        "wta_required": false,
+        "stroking": "308/303"
+      },
+      {
+        "crane_number": "309",
+        "vessel": "WAN HAI A10",
+        "wta_required": true,
+        "stroking": "309/301"
+      },
+      {
+        "crane_number": "310",
+        "vessel": "WAN HAI A10",
+        "wta_required": true,
+        "stroking": "310/304"
+      }
+    ],
+    "workers": [
+      {
+        "nric": "S0001",
+        "name": "SIVA KAUSILIYAN A/L S SMANIAM",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": "302",
+        "last_role": "LW"
+      },
+      {
+        "nric": "S0002",
+        "name": "SENGAMALAM SAMIDURAI",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": "310",
+        "last_role": "CM"
+      },
+      {
+        "nric": "S0003",
+        "name": "MUTHUKRISHNAN SURIYA",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": null,
+        "last_role": null,
+        "role_history": [
+          "CM",
+          "STA"
+        ]
+      },
+      {
+        "nric": "S0004",
+        "name": "AMIRTHAM JEBAMALAI",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [
+          "LW"
+        ],
+        "last_crane": null,
+        "last_role": null,
+        "role_history": [
+          "CM",
+          "CM"
+        ]
+      },
+      {
+        "nric": "S0005",
+        "name": "MUHAMMAD FARID IFWAT BIN ROSLI",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [
+          "LW"
+        ],
+        "last_crane": "305",
+        "last_role": "CM"
+      },
+      {
+        "nric": "S0006",
+        "name": "MANI PRABAKARAN",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": "301",
+        "last_role": "STA"
+      },
+      {
+        "nric": "S0007",
+        "name": "AZMI BIN AYONG",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": "310",
+        "last_role": "CM"
+      },
+      {
+        "nric": "S0008",
+        "name": "GEORGE GOMEZ VIMAL",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": "308",
+        "last_role": "STA"
+      },
+      {
+        "nric": "S0009",
+        "name": "KALIYAMOORHTY VENKADESAN",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": null,
+        "last_role": null,
+        "role_history": [
+          "LW"
+        ]
+      },
+      {
+        "nric": "S0010",
+        "name": "ALPHONES P R BABU POOBAL RAYAR",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [
+          "LW"
+        ],
+        "last_crane": null,
+        "last_role": null
+      },
+      {
+        "nric": "S0011",
+        "name": "MATHIYALAGAN RAMPRAKASH",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": null,
+        "last_role": null,
+        "role_history": [
+          "STA",
+          "STA"
+        ]
+      },
+      {
+        "nric": "S0012",
+        "name": "TAMIL SELWAN GOVINDASAMY",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": null,
+        "last_role": null,
+        "role_history": [
+          "LW",
+          "CM"
+        ]
+      },
+      {
+        "nric": "S0013",
+        "name": "YUVARAJA SATHASIVAN",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": "309",
+        "last_role": "STA"
+      },
+      {
+        "nric": "S0014",
+        "name": "ANBALAGAN SATHANKUMAR",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": "302",
+        "last_role": "LW"
+      },
+      {
+        "nric": "S0015",
+        "name": "ANTHONYSAMY ARULPANDI",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": null,
+        "last_role": null
+      },
+      {
+        "nric": "S0016",
+        "name": "KUNGITHAM ILAIYA RAJA",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": "308",
+        "last_role": "CM"
+      },
+      {
+        "nric": "S0017",
+        "name": "RAWI GOVINDASAMY",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": "303",
+        "last_role": "STA"
+      },
+      {
+        "nric": "S0018",
+        "name": "PERUMAL A/L VEERAN",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [
+          "WTA"
+        ],
+        "last_crane": "310",
+        "last_role": "CM"
+      },
+      {
+        "nric": "S0019",
+        "name": "GOPAL KARTHIK",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": null,
+        "last_role": null,
+        "role_history": [
+          "CM"
+        ]
+      },
+      {
+        "nric": "S0020",
+        "name": "PETER A/L M ARLARAJOO",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": "301",
+        "last_role": "LW"
+      },
+      {
+        "nric": "S0021",
+        "name": "SAIFUL BIN SHARIP",
+        "pool": "SIN",
+        "wah": false,
+        "exceptions": [],
+        "last_crane": "304",
+        "last_role": "CM"
+      },
+      {
+        "nric": "S0022",
+        "name": "MUHAMMAD SHAHRUDY BIN SAHLAN",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [
+          "CM"
+        ],
+        "last_crane": "309",
+        "last_role": "LW"
+      },
+      {
+        "nric": "S0023",
+        "name": "SEKAR KALYANASUNDARAM",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": "302",
+        "last_role": "LW"
+      },
+      {
+        "nric": "S0024",
+        "name": "GEORGE APPATHURAI ANIEX",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": null,
+        "last_role": null,
+        "role_history": [
+          "CM",
+          "WTA"
+        ]
+      },
+      {
+        "nric": "S0025",
+        "name": "SETTU ARAVINDH",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [
+          "STA",
+          "LW"
+        ],
+        "last_crane": null,
+        "last_role": null,
+        "role_history": [
+          "CM",
+          "WTA"
+        ]
+      },
+      {
+        "nric": "S0026",
+        "name": "KEPIN FERNANDO JEYAKUMAR",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": null,
+        "last_role": null
+      },
+      {
+        "nric": "S0027",
+        "name": "ARIVAZHAKAN VINOTH",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": null,
+        "last_role": null
+      },
+      {
+        "nric": "S0028",
+        "name": "MEGANATHAN THAMIZHARASAN",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [
+          "LW"
+        ],
+        "last_crane": null,
+        "last_role": null,
+        "role_history": [
+          "WTA",
+          "STA"
+        ]
+      },
+      {
+        "nric": "S0029",
+        "name": "SIVA A/L BALAKRISHNA",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": "610",
+        "last_role": "STA"
+      },
+      {
+        "nric": "S0030",
+        "name": "SARAVANAN A/L MUNUSAMY",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": "611",
+        "last_role": "STA"
+      },
+      {
+        "nric": "S0031",
+        "name": "SIVA KAUSILIYAN_ALT",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": null,
+        "last_role": null
+      },
+      {
+        "nric": "S0032",
+        "name": "THASS A/L VELLASAMY",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": null,
+        "last_role": null
+      },
+      {
+        "nric": "S0033",
+        "name": "ABDUL WAHAB S/O MOHAMED SHAH",
+        "pool": "SIN",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": "301",
+        "last_role": "STA"
+      },
+      {
+        "nric": "S0034",
+        "name": "RIZDIANT BIN MOHD",
+        "pool": "SIN",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": "310",
+        "last_role": "CM"
+      },
+      {
+        "nric": "S0035",
+        "name": "ALI AZMI BIN ABDULLAH",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [
+          "LW"
+        ],
+        "last_crane": "303",
+        "last_role": "CM"
+      },
+      {
+        "nric": "S0036",
+        "name": "MUHD SHAHRUDY BIN SHALAN",
+        "pool": "TS",
+        "wah": true,
+        "exceptions": [
+          "LW"
+        ],
+        "last_crane": "304",
+        "last_role": "CM"
+      },
+      {
+        "nric": "S0037",
+        "name": "AMIRTHAM JEBAMALAI_2",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [
+          "LW"
+        ],
+        "last_crane": null,
+        "last_role": null
+      },
+      {
+        "nric": "S0038",
+        "name": "VELLAICHAMY VELAVAN",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [
+          "LW"
+        ],
+        "last_crane": null,
+        "last_role": null,
+        "last_shift": "G",
+        "hours_since_last": 12
+      },
+      {
+        "nric": "S0039",
+        "name": "SIVASHANKARAN ARULMARAN",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [
+          "STA",
+          "LW"
+        ],
+        "last_crane": null,
+        "last_role": null
+      },
+      {
+        "nric": "S0040",
+        "name": "TEST_NTS_24H_OK",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": null,
+        "last_role": null,
+        "last_shift": "G",
+        "hours_since_last": 30
+      },
+      {
+        "nric": "S0041",
+        "name": "NTS STANDBY EXTRA 1",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": null,
+        "last_role": null,
+        "role_history": [
+          "STA"
+        ],
+        "last_shift": null,
+        "hours_since_last": null,
+        "available": true
+      },
+      {
+        "nric": "S0042",
+        "name": "NTS STANDBY EXTRA 2",
+        "pool": "NTS",
+        "wah": true,
+        "exceptions": [],
+        "last_crane": null,
+        "last_role": null,
+        "role_history": [],
+        "last_shift": null,
+        "hours_since_last": null,
+        "available": true
+      }
+    ],
+    "pair_state": {
+      "S0013": "LW",
+      "S0020": "STA"
+    }
+  }
+}

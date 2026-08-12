@@ -1,0 +1,140 @@
+Starting harness run
+Run ID: aiko-smoke-hello2
+Error running agent for task hello-world: 404 Client Error for http+docker://localhost/v1.41/exec/1188433246bbd7f8a531e0615d8e3415619887ffc0f2cbb519da78028fdcc7f4/json: Not Found ("no exec session with ID 1188433246bbd7f8a531e0615d8e3415619887ffc0f2cbb519da78028fdcc7f4 found: no such exec session")
+Harness execution failed for original-tasks/hello-world: 404 Client Error for http+docker://localhost/v1.41/containers/1523020c494c58c37bd663c5cb77c038771099018e2c8c0d7451eea497c0077c/exec: Not Found ("no container with name or ID "1523020c494c58c37bd663c5cb77c038771099018e2c8c0d7451eea497c0077c" found: no such container")
+Traceback (most recent call last):
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/api/client.py", line 275, in _raise_for_status
+    response.raise_for_status()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/requests/models.py", line 1026, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 404 Client Error: Not Found for url: http+docker://localhost/v1.41/containers/1523020c494c58c37bd663c5cb77c038771099018e2c8c0d7451eea497c0077c/exec
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/terminal/terminal.py", line 177, in spin_up_terminal
+    yield terminal
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/harness/harness.py", line 749, in _run_trial
+    post_agent_pane = session.capture_pane(capture_entire=True)
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/terminal/tmux_session.py", line 318, in capture_pane
+    result = self._exec_run(self._tmux_capture_pane(capture_entire=capture_entire))
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/terminal/tmux_session.py", line 310, in _exec_run
+    return self.container.exec_run(cmd, user=self._user)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/models/containers.py", line 208, in exec_run
+    resp = self.client.api.exec_create(
+        self.id, cmd, stdout=stdout, stderr=stderr, stdin=stdin, tty=tty,
+        privileged=privileged, user=user, environment=environment,
+        workdir=workdir,
+    )
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/utils/decorators.py", line 19, in wrapped
+    return f(self, resource_id, *args, **kwargs)
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/api/exec_api.py", line 78, in exec_create
+    return self._result(res, True)
+           ~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/api/client.py", line 281, in _result
+    self._raise_for_status(response)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/api/client.py", line 277, in _raise_for_status
+    raise create_api_error_from_http_exception(e) from e
+          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/errors.py", line 39, in create_api_error_from_http_exception
+    raise cls(e, response=response, explanation=explanation) from e
+docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.41/containers/1523020c494c58c37bd663c5cb77c038771099018e2c8c0d7451eea497c0077c/exec: Not Found ("no container with name or ID "1523020c494c58c37bd663c5cb77c038771099018e2c8c0d7451eea497c0077c" found: no such container")
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/api/client.py", line 275, in _raise_for_status
+    response.raise_for_status()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/requests/models.py", line 1026, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 404 Client Error: Not Found for url: http+docker://localhost/v1.41/containers/1523020c494c58c37bd663c5cb77c038771099018e2c8c0d7451eea497c0077c/exec
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/harness/harness.py", line 1011, in _execute_single_trial
+    trial_results = self._run_trial(trial_handler)
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/harness/harness.py", line 717, in _run_trial
+    with spin_up_terminal(
+         ~~~~~~~~~~~~~~~~^
+        client_container_name=trial_handler.client_container_name,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+        disable_recording=trial_handler.task.disable_asciinema,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ) as terminal:
+    ^
+  File "/usr/lib/python3.13/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/terminal/terminal.py", line 179, in spin_up_terminal
+    terminal.stop()
+    ~~~~~~~~~~~~~^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/terminal/terminal.py", line 106, in stop
+    session.stop()
+    ~~~~~~~~~~~~^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/terminal/tmux_session.py", line 150, in stop
+    self.send_keys(
+    ~~~~~~~~~~~~~~^
+        keys=["C-d"],
+        ^^^^^^^^^^^^^
+        min_timeout_sec=0.1,
+        ^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/terminal/tmux_session.py", line 291, in send_keys
+    self._send_non_blocking_keys(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        keys=prepared_keys,
+        ^^^^^^^^^^^^^^^^^^^
+        min_timeout_sec=min_timeout_sec,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/terminal/tmux_session.py", line 230, in _send_non_blocking_keys
+    self._exec_run(self._tmux_send_keys(keys))
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/terminal_bench/terminal/tmux_session.py", line 310, in _exec_run
+    return self.container.exec_run(cmd, user=self._user)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/models/containers.py", line 208, in exec_run
+    resp = self.client.api.exec_create(
+        self.id, cmd, stdout=stdout, stderr=stderr, stdin=stdin, tty=tty,
+        privileged=privileged, user=user, environment=environment,
+        workdir=workdir,
+    )
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/utils/decorators.py", line 19, in wrapped
+    return f(self, resource_id, *args, **kwargs)
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/api/exec_api.py", line 78, in exec_create
+    return self._result(res, True)
+           ~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/api/client.py", line 281, in _result
+    self._raise_for_status(response)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/api/client.py", line 277, in _raise_for_status
+    raise create_api_error_from_http_exception(e) from e
+          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/home/deck/work/commons/aiko/benchmarks/harbor/terminal-bench/.venv/lib/python3.13/site-packages/docker/errors.py", line 39, in create_api_error_from_http_exception
+    raise cls(e, response=response, explanation=explanation) from e
+docker.errors.NotFound: 404 Client Error for http+docker://localhost/v1.41/containers/1523020c494c58c37bd663c5cb77c038771099018e2c8c0d7451eea497c0077c/exec: Not Found ("no container with name or ID "1523020c494c58c37bd663c5cb77c038771099018e2c8c0d7451eea497c0077c" found: no such container")
+  Running tasks (1/1, Accuracy: 0.00%) - Last: hello-world ✗ ━━━━━━ 100% 0:01:52
+
+
+Results Summary:
++-------------------+---------+
+| Metric            | Value   |
++===================+=========+
+| Resolved Trials   | 0       |
++-------------------+---------+
+| Unresolved Trials | 1       |
++-------------------+---------+
+| Accuracy          | 0.00%   |
++-------------------+---------+
+
+Results written to 
+/home/deck/work/commons/aiko/benchmarks/harbor/tb-runs/aiko-smoke-hello2/results
+.json

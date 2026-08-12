@@ -195,6 +195,86 @@ fn ranks_matching_skill_and_namespaces_pointer_graph() {
     );
 }
 
+#[test]
+fn schedule_follow_up_declares_named_evidence_for_each_dependency() {
+    let temporary = tempfile::tempdir().unwrap();
+    let skill_root = temporary.path().join(".agents/skills/schedule-follow-up");
+    std::fs::create_dir_all(&skill_root).unwrap();
+    std::fs::write(
+        skill_root.join(MANIFEST_NAME),
+        include_str!("../../../../../../.agents/skills/schedule-follow-up/contract-skill.json"),
+    )
+    .unwrap();
+    let planned = plan("Remind me tomorrow to check the build.", temporary.path());
+    assert!(
+        planned
+            .selected
+            .iter()
+            .any(|skill| skill.id == "schedule-follow-up")
+    );
+
+    let deduplicate = planned
+        .children
+        .iter()
+        .find(|node| node["key"] == "schedule-follow-up--deduplicate")
+        .unwrap();
+    assert_eq!(
+        deduplicate["input_bindings"]["cadence"],
+        "schedule-follow-up--parse-cadence.structured_result"
+    );
+
+    let schedule = planned
+        .children
+        .iter()
+        .find(|node| node["key"] == "schedule-follow-up--schedule")
+        .unwrap();
+    assert_eq!(
+        schedule["input_bindings"]["deduplication"],
+        "schedule-follow-up--deduplicate.structured_result"
+    );
+    assert_eq!(schedule["effect_scope"], "local_reversible");
+    assert_eq!(schedule["writes"], json!(["workspace://**"]));
+    let preview = super::super::project_plan_preview(&planned).unwrap();
+    let state_root = temporary.path().join("graph-state");
+    std::fs::create_dir(&state_root).unwrap();
+    let policy = super::super::graph_harness::EvaluationPolicy {
+        mode: super::super::graph_harness::EvaluationMode::IsolatedLocal,
+        max_authority: super::super::graph_harness::Authority {
+            filesystem: vec![
+                super::super::graph_harness::WORKSPACE_AUTHORITY.into(),
+                super::super::graph_harness::EXECUTOR_SCRATCH_AUTHORITY.into(),
+            ],
+            network: vec![],
+            process: vec![super::super::graph_harness::SANDBOXED_NEURON_PROCESS.into()],
+            secrets: vec![],
+        },
+        allow_external_effects: false,
+        state_root,
+        workspace_root: temporary.path().to_path_buf(),
+        deadline_ms: 3_600_000,
+        signer_policy_id: "schedule-follow-up-regression".into(),
+    };
+    let runtime_digest =
+        super::super::graph_harness::pinned_executable_digest(&std::env::current_exe().unwrap())
+            .unwrap();
+    let profile = super::super::graph_harness::embedded_host_profile(
+        &preview,
+        planned
+            .selected
+            .iter()
+            .map(|skill| format!("skill:{}@{}", skill.id, skill.version))
+            .collect(),
+        &runtime_digest,
+    );
+    super::super::graph_harness::PreparedGraphAdapter::prepare(
+        "Remind me tomorrow to check the build.",
+        &preview,
+        &profile,
+        &policy,
+    )
+    .expect("schedule-follow-up must pass explicit GraphHarness binding admission");
+}
+
 /// Contract owns graph progress: only ready nodes are leased, exact evidence
 /// unlocks dependents, and the Rust bridge cannot bypass ownership or replay.
 #[test]

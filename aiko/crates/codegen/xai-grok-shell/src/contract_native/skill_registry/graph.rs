@@ -151,6 +151,13 @@ fn compose_ports(selected: &[RankedContractSkill], children: &mut [Value]) {
             .find(|child| child.get("key").and_then(Value::as_str) == Some(&root))
         {
             append_dependency(child, &attach);
+            // Composition is a data edge, not only an ordering edge: the limb
+            // root receives the exact route evidence that selected it.
+            append_binding(
+                child,
+                "core_route".into(),
+                format!("{attach}.selected_skill_refs"),
+            );
         }
     }
     if let Some(join_node) = children

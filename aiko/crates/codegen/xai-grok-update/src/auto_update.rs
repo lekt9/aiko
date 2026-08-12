@@ -1278,7 +1278,9 @@ async fn run_post_install_selfcheck(binary: &std::path::Path) {
         candidates.push(parent.join("selfcheck.sh"));
     }
     candidates.push(grok_home().join("sdk/registry/selfcheck.sh"));
-    candidates.push(std::path::PathBuf::from("scripts/aiko-install-selfcheck.sh"));
+    candidates.push(std::path::PathBuf::from(
+        "scripts/aiko-install-selfcheck.sh",
+    ));
     candidates.push(user_home.join("work/commons/aiko/scripts/aiko-install-selfcheck.sh"));
 
     let script = candidates.into_iter().find(|p| p.is_file());
@@ -1315,12 +1317,14 @@ async fn run_post_install_selfcheck(binary: &std::path::Path) {
         }
         Ok(Ok(status)) => {
             eprintln!("  selfcheck: FAILED (exit {:?})", status.code());
-            if std::env::var("AIKO_UPDATE_SELFCHECK_STRICT").ok().as_deref() == Some("1") {
+            if std::env::var("AIKO_UPDATE_SELFCHECK_STRICT")
+                .ok()
+                .as_deref()
+                == Some("1")
+            {
                 // Surface as warning only in signature — callers treat update as
                 // activated already; strict mode logs loudly for operators.
-                eprintln!(
-                    "  selfcheck: AIKO_UPDATE_SELFCHECK_STRICT=1 — treat update as unproven"
-                );
+                eprintln!("  selfcheck: AIKO_UPDATE_SELFCHECK_STRICT=1 — treat update as unproven");
             }
         }
         Ok(Err(e)) => eprintln!("  selfcheck: spawn error: {e}"),

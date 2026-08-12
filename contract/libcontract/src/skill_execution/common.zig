@@ -50,6 +50,20 @@ pub const Node = struct {
     skill_id: []const u8,
     skill_version: []const u8,
     authorization: []const u8,
+    cell_digest: ?[]const u8,
+    witness_id: ?[]const u8,
+    witness_digest: ?[]const u8,
+    judge_digest: ?[]const u8,
+};
+
+pub const GraphHarnessIdentity = struct {
+    api_version: []const u8,
+    state: []const u8,
+    subject_digest: []const u8,
+    transitive_digest: []const u8,
+    adapter: []const u8,
+    bundle_ref: []const u8,
+    evaluation_policy: []const u8,
 };
 
 pub const Outcome = enum { none, satisfied, retry, died };
@@ -128,24 +142,56 @@ pub fn admitGraph(
     graph_digest: []const u8,
     node_count: usize,
 ) Error!void {
+    return admitGraphWithIdentity(allocator, env, root_id, graph_digest, node_count, null);
+}
+
+pub fn admitGraphWithIdentity(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    root_id: []const u8,
+    graph_digest: []const u8,
+    node_count: usize,
+    identity: ?GraphHarnessIdentity,
+) Error!void {
     if (!safeToken(root_id) or !artifact.validDigest(graph_digest) or
         node_count == 0 or node_count > MAX_NODES) return Error.InvalidRequest;
+    if (identity) |value| {
+        if (!std.mem.eql(u8, value.api_version, "graph-harness/v1") or
+            !artifact.validDigest(value.subject_digest) or
+            !artifact.validDigest(value.transitive_digest) or
+            !safeToken(value.adapter) or !safeToken(value.evaluation_policy) or
+            !std.mem.startsWith(u8, value.bundle_ref, "cas:") or
+            !artifact.validDigest(value.bundle_ref[4..]) or
+            !(std.mem.eql(u8, value.state, "prepared") or
+                std.mem.eql(u8, value.state, "evaluated"))) return Error.InvalidRequest;
+    }
     const lock = ledger.acquireExclusive(allocator, env) catch return Error.LedgerFailure;
     defer ledger.releaseExclusive(lock);
     const prior = latestGraphDigestStreaming(allocator, env, root_id) catch
         return Error.LedgerFailure;
     defer if (prior) |digest| allocator.free(digest);
-    if (prior) |digest| {
-        if (std.mem.eql(u8, digest, graph_digest)) return;
-    }
-    const row = std.fmt.allocPrint(
-        allocator,
-        "{{\"event\":\"neuron_skill_graph_admitted\",\"root_id\":\"{s}\"," ++
-            "\"graph_digest\":\"{s}\",\"node_count\":{d}}}",
-        .{ root_id, graph_digest, node_count },
-    ) catch return Error.OutOfMemory;
-    defer allocator.free(row);
-    const path = ledger.appendRow(allocator, env, row) catch return Error.LedgerFailure;
+    if (prior) |digest| if (std.mem.eql(u8, digest, graph_digest)) return;
+    const row = if (identity) |value|
+        std.fmt.allocPrint(
+            allocator,
+            "{{\"event\":\"neuron_skill_graph_admitted\",\"root_id\":\"{s}\"," ++
+                "\"graph_digest\":\"{s}\",\"node_count\":{d}," ++
+                "\"graph_harness\":{{\"api_version\":\"{s}\",\"state\":\"{s}\"," ++
+                "\"subject_digest\":\"{s}\",\"transitive_digest\":\"{s}\"," ++
+                "\"adapter\":\"{s}\",\"bundle_ref\":\"{s}\"," ++
+                "\"evaluation_policy\":\"{s}\"}}}}",
+            .{ root_id, graph_digest, node_count, value.api_version, value.state, value.subject_digest, value.transitive_digest, value.adapter, value.bundle_ref, value.evaluation_policy },
+        )
+    else
+        std.fmt.allocPrint(
+            allocator,
+            "{{\"event\":\"neuron_skill_graph_admitted\",\"root_id\":\"{s}\"," ++
+                "\"graph_digest\":\"{s}\",\"node_count\":{d}}}",
+            .{ root_id, graph_digest, node_count },
+        );
+    const owned = row catch return Error.OutOfMemory;
+    defer allocator.free(owned);
+    const path = ledger.appendRow(allocator, env, owned) catch return Error.LedgerFailure;
     allocator.free(path);
 }
 
@@ -154,6 +200,26 @@ const GraphDigestScan = struct {
     root_id: []const u8,
     result: ?[]u8 = null,
 };
+
+const GraphHarnessIdentityScan = struct {
+    allocator: std.mem.Allocator,
+    root_id: []const u8,
+    graph_digest: []const u8,
+    found: bool = false,
+    result: ?GraphHarnessIdentity = null,
+    err: ?Error = null,
+};
+
+fn validGraphHarnessIdentity(value: GraphHarnessIdentity) bool {
+    return std.mem.eql(u8, value.api_version, "graph-harness/v1") and
+        artifact.validDigest(value.subject_digest) and
+        artifact.validDigest(value.transitive_digest) and
+        safeToken(value.adapter) and safeToken(value.evaluation_policy) and
+        std.mem.startsWith(u8, value.bundle_ref, "cas:") and
+        artifact.validDigest(value.bundle_ref[4..]) and
+        (std.mem.eql(u8, value.state, "prepared") or
+            std.mem.eql(u8, value.state, "evaluated"));
+}
 
 fn latestGraphDigestLine(opaque_ctx: *anyopaque, line: []const u8) void {
     const ctx: *GraphDigestScan = @ptrCast(@alignCast(opaque_ctx));
@@ -182,6 +248,116 @@ pub fn latestGraphDigestStreaming(
     var ctx: GraphDigestScan = .{ .allocator = allocator, .root_id = root_id };
     ledger.forEachLine(allocator, env, &ctx, latestGraphDigestLine) catch
         return Error.LedgerFailure;
+    return ctx.result;
+}
+
+fn graphHarnessIdentityLine(opaque_ctx: *anyopaque, line: []const u8) void {
+    const ctx: *GraphHarnessIdentityScan = @ptrCast(@alignCast(opaque_ctx));
+    // The first admission for an exact root + graph digest is its immutable
+    // identity. A later raw ledger append must not be able to retarget already
+    // admitted execution material.
+    if (ctx.found or ctx.err != null or
+        std.mem.indexOf(u8, line, "\"neuron_skill_graph_admitted\"") == null) return;
+    var parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, line, .{}) catch return;
+    defer parsed.deinit();
+    if (parsed.value != .object) return;
+    const object = parsed.value.object;
+    if (!std.mem.eql(u8, objectString(object, "event") orelse "", "neuron_skill_graph_admitted") or
+        !std.mem.eql(u8, objectString(object, "root_id") orelse "", ctx.root_id) or
+        !std.mem.eql(u8, objectString(object, "graph_digest") orelse "", ctx.graph_digest)) return;
+    ctx.found = true;
+    const harness_value = object.get("graph_harness") orelse return;
+    if (harness_value != .object) {
+        ctx.err = Error.InvalidJson;
+        return;
+    }
+    const harness = harness_value.object;
+    if (harness.count() != 7) {
+        ctx.err = Error.InvalidJson;
+        return;
+    }
+    const borrowed: GraphHarnessIdentity = .{
+        .api_version = objectString(harness, "api_version") orelse {
+            ctx.err = Error.InvalidJson;
+            return;
+        },
+        .state = objectString(harness, "state") orelse {
+            ctx.err = Error.InvalidJson;
+            return;
+        },
+        .subject_digest = objectString(harness, "subject_digest") orelse {
+            ctx.err = Error.InvalidJson;
+            return;
+        },
+        .transitive_digest = objectString(harness, "transitive_digest") orelse {
+            ctx.err = Error.InvalidJson;
+            return;
+        },
+        .adapter = objectString(harness, "adapter") orelse {
+            ctx.err = Error.InvalidJson;
+            return;
+        },
+        .bundle_ref = objectString(harness, "bundle_ref") orelse {
+            ctx.err = Error.InvalidJson;
+            return;
+        },
+        .evaluation_policy = objectString(harness, "evaluation_policy") orelse {
+            ctx.err = Error.InvalidJson;
+            return;
+        },
+    };
+    if (!validGraphHarnessIdentity(borrowed)) {
+        ctx.err = Error.InvalidJson;
+        return;
+    }
+    ctx.result = .{
+        .api_version = ctx.allocator.dupe(u8, borrowed.api_version) catch {
+            ctx.err = Error.OutOfMemory;
+            return;
+        },
+        .state = ctx.allocator.dupe(u8, borrowed.state) catch {
+            ctx.err = Error.OutOfMemory;
+            return;
+        },
+        .subject_digest = ctx.allocator.dupe(u8, borrowed.subject_digest) catch {
+            ctx.err = Error.OutOfMemory;
+            return;
+        },
+        .transitive_digest = ctx.allocator.dupe(u8, borrowed.transitive_digest) catch {
+            ctx.err = Error.OutOfMemory;
+            return;
+        },
+        .adapter = ctx.allocator.dupe(u8, borrowed.adapter) catch {
+            ctx.err = Error.OutOfMemory;
+            return;
+        },
+        .bundle_ref = ctx.allocator.dupe(u8, borrowed.bundle_ref) catch {
+            ctx.err = Error.OutOfMemory;
+            return;
+        },
+        .evaluation_policy = ctx.allocator.dupe(u8, borrowed.evaluation_policy) catch {
+            ctx.err = Error.OutOfMemory;
+            return;
+        },
+    };
+}
+
+/// Project the immutable GraphHarness root identity from the admission row for
+/// this exact graph. Legacy admissions deliberately return null.
+pub fn loadGraphHarnessIdentityStreaming(
+    allocator: std.mem.Allocator,
+    env: std.process.Environ,
+    root_id: []const u8,
+    graph_digest: []const u8,
+) Error!?GraphHarnessIdentity {
+    var ctx: GraphHarnessIdentityScan = .{
+        .allocator = allocator,
+        .root_id = root_id,
+        .graph_digest = graph_digest,
+    };
+    ledger.forEachLine(allocator, env, &ctx, graphHarnessIdentityLine) catch
+        return Error.LedgerFailure;
+    if (ctx.err) |err| return err;
     return ctx.result;
 }
 
@@ -294,10 +470,15 @@ fn loadNodesLineChecked(ctx: *LoadNodesScan, line: []const u8) Error!void {
         .skill_id = objectString(object, "skill_id") orelse return Error.InvalidJson,
         .skill_version = objectString(object, "skill_version") orelse return Error.InvalidJson,
         .authorization = objectString(object, "authorization") orelse "pending_authorization",
+        .cell_digest = optionalObjectString(object, "cell_digest"),
+        .witness_id = optionalObjectString(object, "witness_id"),
+        .witness_digest = optionalObjectString(object, "witness_digest"),
+        .judge_digest = optionalObjectString(object, "judge_digest"),
     });
     const loaded = ctx.nodes.items[ctx.nodes.items.len - 1];
     const implementation_valid =
-        (std.mem.eql(u8, loaded.worker, "aiko") and loaded.adapter == null and
+        (std.mem.eql(u8, loaded.worker, "aiko") and
+            (loaded.adapter == null or std.mem.eql(u8, loaded.adapter.?, "aiko.graph-harness-edge-model/v1")) and
             loaded.script == null and loaded.script_digest == null) or
         (std.mem.eql(u8, loaded.worker, "host") and loaded.adapter != null and
             loaded.script == null and loaded.script_digest == null) or
@@ -326,6 +507,38 @@ pub fn loadNodesStreaming(
     if (ctx.err) |err| return err;
     if (ctx.nodes.items.len == 0) return Error.GraphMissing;
     return ctx.nodes.toOwnedSlice(allocator) catch Error.OutOfMemory;
+}
+
+fn graphHarnessAdapterAllowed(node: Node) bool {
+    const adapter = node.adapter orelse return false;
+    if (std.mem.eql(u8, adapter, "aiko.graph-harness-cell-v0/v1")) return std.mem.eql(u8, node.worker, "host");
+    if (std.mem.eql(u8, adapter, "aiko.graph-harness-edge-model/v1")) {
+        const read_only = node.read_only and std.mem.eql(u8, node.effect_scope, "read_only");
+        const workspace = !node.read_only and node.reversible and std.mem.eql(u8, node.effect_scope, "local_reversible");
+        return std.mem.eql(u8, node.worker, "aiko") and node.script == null and node.script_digest == null and (read_only or workspace);
+    }
+    const host = std.mem.eql(u8, node.worker, "host") and node.read_only and
+        std.mem.eql(u8, node.effect_scope, "read_only") and node.script == null and
+        node.script_digest == null and std.mem.eql(u8, node.skill_id, "aiko-meta-agent") and
+        std.mem.eql(u8, node.skill_version, "1.0.0");
+    return host and ((std.mem.eql(u8, node.key, "aiko-meta-agent--observe") and std.mem.eql(u8, adapter, "aiko.meta.observe/v1")) or
+        (std.mem.eql(u8, node.key, "aiko-meta-agent--recall") and std.mem.eql(u8, adapter, "aiko.meta.recall/v1")) or
+        (std.mem.eql(u8, node.key, "aiko-meta-agent--route") and std.mem.eql(u8, adapter, "aiko.meta.route/v1")) or
+        (std.mem.eql(u8, node.key, "aiko-meta-agent--capture") and std.mem.eql(u8, adapter, "aiko.meta.capture/v1")) or
+        (std.mem.eql(u8, node.key, "aiko-meta-agent--settle") and std.mem.eql(u8, adapter, "aiko.meta.settle/v1")));
+}
+
+pub fn validGraphHarnessNodePins(node: Node, identity: GraphHarnessIdentity) bool {
+    return node.cell_digest != null and artifact.validDigest(node.cell_digest.?) and
+        node.witness_id != null and safeToken(node.witness_id.?) and
+        node.witness_digest != null and artifact.validDigest(node.witness_digest.?) and
+        node.judge_digest != null and artifact.validDigest(node.judge_digest.?) and
+        !std.mem.eql(u8, node.witness_digest.?, node.judge_digest.?) and
+        // Root identity names the pure GraphHarness→Contract adapter; leased
+        // children name the only executable adapter admitted by v1. Equating
+        // them makes every honest GraphHarness claim unclaimable.
+        std.mem.eql(u8, identity.adapter, "aiko.graph-harness-contract/v1") and
+        node.adapter != null and graphHarnessAdapterAllowed(node);
 }
 
 pub fn nodeIndex(nodes: []const Node, key: []const u8) ?usize {
@@ -466,6 +679,44 @@ pub fn appendJsonValue(
     try out.appendSlice(allocator, writer.writer.buffered());
 }
 
+
+pub fn appendOptionalJsonString(
+    out: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    value: ?[]const u8,
+) !void {
+    if (value) |present| {
+        try appendJsonString(out, allocator, present);
+    } else {
+        try out.appendSlice(allocator, "null");
+    }
+}
+
+pub fn appendGraphHarnessIdentity(
+    out: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    identity: ?GraphHarnessIdentity,
+) !void {
+    const value = identity orelse {
+        try out.appendSlice(allocator, "null");
+        return;
+    };
+    try out.appendSlice(allocator, "{\"api_version\":");
+    try appendJsonString(out, allocator, value.api_version);
+    for ([_]struct { label: []const u8, field: []const u8 }{
+        .{ .label = "state", .field = value.state },
+        .{ .label = "subject_digest", .field = value.subject_digest },
+        .{ .label = "transitive_digest", .field = value.transitive_digest },
+        .{ .label = "adapter", .field = value.adapter },
+        .{ .label = "bundle_ref", .field = value.bundle_ref },
+        .{ .label = "evaluation_policy", .field = value.evaluation_policy },
+    }) |field| {
+        try out.print(allocator, ",\"{s}\":", .{field.label});
+        try appendJsonString(out, allocator, field.field);
+    }
+    try out.append(allocator, '}');
+}
+
 pub fn appendInputs(
     out: *std.ArrayList(u8),
     allocator: std.mem.Allocator,
@@ -578,6 +829,48 @@ test "latestGraphDigestLine keeps the last matching digest for the root" {
     try std.testing.expectEqualStrings(digest_b, ctx.result.?);
 }
 
+
+test "GraphHarness admission identity is first-write immutable and legacy-null" {
+    const a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const c = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var ctx: GraphHarnessIdentityScan = .{
+        .allocator = arena.allocator(),
+        .root_id = "root-gh",
+        .graph_digest = a,
+    };
+    graphHarnessIdentityLine(&ctx,
+        "{\"event\":\"neuron_skill_graph_admitted\",\"root_id\":\"root-gh\",\"graph_digest\":\"" ++ a ++
+        "\",\"node_count\":1,\"graph_harness\":{\"api_version\":\"graph-harness/v1\",\"state\":\"prepared\",\"subject_digest\":\"" ++ b ++
+        "\",\"transitive_digest\":\"" ++ c ++ "\",\"adapter\":\"adapter/v1\",\"bundle_ref\":\"cas:" ++ a ++
+        "\",\"evaluation_policy\":\"policy/v1\"}}"
+    );
+    try std.testing.expect(ctx.err == null);
+    try std.testing.expectEqualStrings(b, ctx.result.?.subject_digest);
+    // A forged later row for the same exact graph cannot change its pins.
+    graphHarnessIdentityLine(&ctx,
+        "{\"event\":\"neuron_skill_graph_admitted\",\"root_id\":\"root-gh\",\"graph_digest\":\"" ++ a ++
+        "\",\"graph_harness\":{\"api_version\":\"graph-harness/v1\",\"state\":\"prepared\",\"subject_digest\":\"" ++ c ++
+        "\",\"transitive_digest\":\"" ++ b ++ "\",\"adapter\":\"adapter/v1\",\"bundle_ref\":\"cas:" ++ a ++
+        "\",\"evaluation_policy\":\"policy/v1\"}}"
+    );
+    try std.testing.expectEqualStrings(b, ctx.result.?.subject_digest);
+
+    var legacy: GraphHarnessIdentityScan = .{
+        .allocator = arena.allocator(),
+        .root_id = "root-legacy",
+        .graph_digest = a,
+    };
+    graphHarnessIdentityLine(&legacy,
+        "{\"event\":\"neuron_skill_graph_admitted\",\"root_id\":\"root-legacy\",\"graph_digest\":\"" ++ a ++ "\",\"node_count\":1}"
+    );
+    try std.testing.expect(legacy.found);
+    try std.testing.expect(legacy.result == null);
+    try std.testing.expect(legacy.err == null);
+}
+
 // POSIX process environ for tests that resolve the real ledger path; same
 // PosixBlock pattern as c_abi.extEnv. Windows skips the file-backed test.
 extern var environ: [*:null]const ?[*:0]const u8;
@@ -670,4 +963,22 @@ test "admitGraph streams dedupe past readAll's 16 MiB cap" {
     defer allocator.free(latest);
     try std.testing.expectEqualStrings(digest_b, latest);
     try std.testing.expect((try latestGraphDigestStreaming(allocator, env, "other-root")) == null);
+}
+
+
+test "GraphHarness node pins accept only exact Cell edge and builtin host adapters" {
+    const a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const c = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    const identity: GraphHarnessIdentity = .{ .api_version = "graph-harness/v1", .state = "prepared", .subject_digest = a, .transitive_digest = b, .adapter = "aiko.graph-harness-contract/v1", .bundle_ref = "cas:x", .evaluation_policy = "isolated-local-workspace-sandboxed-neuron/v1" };
+    var node: Node = .{ .id = "node", .key = "aiko-meta-agent--act", .plan = "act", .action = "skill:x", .depends_on = &.{}, .bindings = &.{}, .evidence = &.{"action_result"}, .worker = "aiko", .adapter = "aiko.graph-harness-edge-model/v1", .script = null, .script_digest = null, .effect_scope = "local_reversible", .read_only = false, .reversible = true, .timeout_ms = 1, .skill_id = "aiko-meta-agent", .skill_version = "1.0.0", .authorization = "approved", .cell_digest = a, .witness_id = "act-witness", .witness_digest = b, .judge_digest = c };
+    try std.testing.expect(validGraphHarnessNodePins(node, identity));
+    node.worker = "host";
+    try std.testing.expect(!validGraphHarnessNodePins(node, identity));
+    node.key = "aiko-meta-agent--observe"; node.adapter = "aiko.meta.observe/v1"; node.effect_scope = "read_only"; node.read_only = true; node.reversible = false;
+    try std.testing.expect(validGraphHarnessNodePins(node, identity));
+    node.adapter = "aiko.meta.unknown/v1";
+    try std.testing.expect(!validGraphHarnessNodePins(node, identity));
+    node.adapter = "aiko.graph-harness-cell-v0/v1";
+    try std.testing.expect(validGraphHarnessNodePins(node, identity));
 }

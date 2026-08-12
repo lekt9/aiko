@@ -78,7 +78,9 @@
         "selected_skill_refs",
         "route_reason"
       ],
-      "input_bindings": {}
+      "input_bindings": {
+        "artifact_digests": "recall.artifact_digests"
+      }
     },
     {
       "key": "act",
@@ -96,14 +98,42 @@
       "evidence": [
         "action_result"
       ],
-      "input_bindings": {}
+      "input_bindings": {
+        "selected_skill_refs": "route.selected_skill_refs"
+      },
+      "writes": [
+        "workspace://**"
+      ]
+    },
+    {
+      "key": "capture",
+      "plan": "Capture the immutable action product and goal identity for independent evaluation of {{goal}}.",
+      "worker": "host",
+      "adapter": "aiko.meta.capture/v1",
+      "depends_on": [
+        "act"
+      ],
+      "input_bindings": {
+        "action_result": "act.action_result"
+      },
+      "can_parallel": false,
+      "timeout_ms": 30000,
+      "effect": "read_only",
+      "reversible": false,
+      "read_only": true,
+      "requires_authority": false,
+      "evidence": [
+        "product_snapshot",
+        "product_digest",
+        "goal_digest"
+      ]
     },
     {
       "key": "verify",
-      "plan": "Verify the routed work against the requested outcome of {{goal}}.",
+      "plan": "Independently witness whether the captured action product satisfies {{goal}}. Return verification as an object with accepted:boolean and bounded nonempty evidence:string.",
       "worker": "aiko",
       "depends_on": [
-        "act"
+        "capture"
       ],
       "can_parallel": false,
       "timeout_ms": 120000,
@@ -114,14 +144,18 @@
       "evidence": [
         "verification"
       ],
-      "input_bindings": {}
+      "input_bindings": {
+        "product_snapshot": "capture.product_snapshot",
+        "product_digest": "capture.product_digest",
+        "goal_digest": "capture.goal_digest"
+      }
     },
     {
       "key": "judge",
-      "plan": "Judge whether the verified evidence genuinely satisfies {{goal}}.",
+      "plan": "Independently judge the captured action product against {{goal}} without trusting the witness summary. Return verdict as an object with completed:boolean, retryable:boolean, and bounded nonempty evidence:string.",
       "worker": "aiko",
       "depends_on": [
-        "verify"
+        "capture"
       ],
       "can_parallel": false,
       "timeout_ms": 30000,
@@ -132,18 +166,27 @@
       "evidence": [
         "verdict"
       ],
-      "input_bindings": {}
+      "input_bindings": {
+        "product_snapshot": "capture.product_snapshot",
+        "product_digest": "capture.product_digest",
+        "goal_digest": "capture.goal_digest"
+      }
     },
     {
       "key": "settle",
-      "plan": "Settle the terminal verdict for {{goal}}.",
+      "plan": "Deterministically settle only matching independent witness and judge evidence for {{goal}}.",
       "worker": "host",
       "adapter": "aiko.meta.settle/v1",
       "depends_on": [
-        "judge"
+        "judge",
+        "verify",
+        "capture"
       ],
       "input_bindings": {
-        "verdict": "judge.verdict"
+        "verdict": "judge.verdict",
+        "verification": "verify.verification",
+        "product_digest": "capture.product_digest",
+        "goal_digest": "capture.goal_digest"
       },
       "can_parallel": false,
       "timeout_ms": 30000,

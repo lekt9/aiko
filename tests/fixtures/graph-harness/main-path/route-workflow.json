@@ -1,0 +1,77 @@
+{
+  "api_version": "aiko-workflow-route/v1",
+  "facts": {
+    "explicit_workflow": true
+  },
+  "preview": {
+    "core_admitted": true,
+    "children": [
+      {
+        "key": "source",
+        "plan": "source",
+        "action": "skill:x@1.0.0:host",
+        "depends_on": [],
+        "input_bindings": {},
+        "requires_authorization": false,
+        "effect_scope": "read_only",
+        "read_only": true,
+        "reversible": true,
+        "timeout_ms": 1000,
+        "skill_id": "x",
+        "skill_version": "1.0.0",
+        "worker": "host",
+        "adapter": "aiko.graph-harness-cell-v0/v1",
+        "script": null,
+        "script_digest": null,
+        "evidence": [
+          "result"
+        ],
+        "writes": [],
+        "capabilities": [],
+        "research": [],
+        "witness": null,
+        "generated": false
+      },
+      {
+        "key": "join",
+        "plan": "join",
+        "action": "skill:x@1.0.0:host",
+        "depends_on": [
+          "source"
+        ],
+        "input_bindings": {
+          "source": "source.result"
+        },
+        "requires_authorization": false,
+        "effect_scope": "read_only",
+        "read_only": true,
+        "reversible": true,
+        "timeout_ms": 1000,
+        "skill_id": "x",
+        "skill_version": "1.0.0",
+        "worker": "host",
+        "adapter": "aiko.graph-harness-cell-v0/v1",
+        "script": null,
+        "script_digest": null,
+        "evidence": [
+          "result"
+        ],
+        "writes": [],
+        "capabilities": [],
+        "research": [],
+        "witness": "check",
+        "generated": false
+      }
+    ]
+  },
+  "expected": {
+    "route": "graph_harness_required",
+    "reasons": [
+      "explicit_workflow",
+      "more_than_one_logical_node",
+      "dependency",
+      "join_or_independent_judge",
+      "opaque_or_host_composition"
+    ]
+  }
+}

@@ -247,10 +247,14 @@ pub const Registry = struct {
             }
             if (parallel_count < 2) parallel_count = 0;
         }
+        // Automatic no longer demands fresh proof or a confidence margin —
+        // evidence labels stay truthful in `status` while execution is not
+        // confidence-gated. What still refuses: an unavailable candidate, one
+        // with a recent failure, a write-effect candidate at plan level, and
+        // skill guidance (never an executable interface).
         const top_automatic = parallel_count == 0 and take > 0 and ranked.items[0].available and
-            ranked.items[0].proof == .verified_fresh and ranked.items[0].read_only and
-            !std.mem.eql(u8, stringField(ranked.items[0].value.object, "provider") orelse "", "skill") and
-            confidence >= 0.85 and margin >= 0.15;
+            ranked.items[0].proof != .failed and ranked.items[0].read_only and
+            !std.mem.eql(u8, stringField(ranked.items[0].value.object, "provider") orelse "", "skill");
 
         try out.beginObject();
         try out.objectField("version");
