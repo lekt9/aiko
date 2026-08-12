@@ -32,10 +32,14 @@ transcription artifact.
 ```sh
 zig build                 # → zig-out/bin/aiko  AND  contract/libcontract/zig-out/lib/libcontract.a
 zig build test            # both layers' suites
-zig build gate            # 10 witnesses — THIS is the acceptance criterion
-                          #   published-interface · redrive · authored-gap
-                          #   skill-doc · zig-doctrine · escalation-ladder
-                          #   staffing-engine · bridge · dispatch · tick
+zig build gate            # 15 witnesses + 12 limb suites — THIS is the acceptance criterion
+                          #   root: published-interface · redrive · authored-gap · skill-doc
+                          #         zig-doctrine · escalation-ladder · staffing-engine
+                          #         claim-deadline · bridge · dispatch · interface-morphogenesis
+                          #         meta-agent · observe-live · self-constructing-agent · tick
+                          #   + neuron standalone: gate · runtime · agent-entrypoint · universal-interface
+                          #     conversation · swarm-package · observability-retention · conformance
+                          #   + 12 limb conformance suites (auto-attacher, client-emitter, …)
 ./zig-out/bin/aiko-doctor # prove both layers are linked in one process
 ```
 

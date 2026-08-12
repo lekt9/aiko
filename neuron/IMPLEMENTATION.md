@@ -359,15 +359,18 @@ Current status:
 | Limb | Status |
 |---|---|
 | Meta-Agent generated retry/verification limb | Conforming reference witness in `src/meta_agent.zig` |
-| `limbs/energy-router` | Reference generative limb package delivered (manifest + Python neurons + versioned schemas + harness execution via `neuron run --def`). Supports EBM routing, sub-EBM spawn, PackageOffer discovery, Usage/Settlement claims for paid mesh commons. Pure scorers (`scorer.py`, `energy.zig`) + early Zig `EnergyRouterNeuron` also present. Not yet wired into meta-agent router slot; full benchmark deltas and Zig build integration remain. |
-| `limbs/publication-morphogenesis` | Conforming. The inbound counterpart to `src/morphogenesis.zig`: a `neuron.publication-gap/v1` is searched against the node's live ports, a `neuron.published-interface/v1` document is generated from the admitted-limb census, and the loop is judged on a real HTTP probe across a real `neuron port http` listener. Adds no CLI verb — every authority step is an existing `neuron port publish\|attach\|detach\|revoke` call. Witnessed by `limbs/publication-morphogenesis/tests/conformance.py` |
-| `limbs/outbox-drainer` | Partial prototype; decision scripts and driver exist, but its manifest and conformance suite are missing |
-
-The energy-router package can be executed through the real harness and emits grounded `EnergyScore` artifacts (and spawns on `wants_sub_ebm`). It is the concrete reference for the structural-energy + paid-neuron-commons direction. It is not yet "the" production router inside the meta-agent, nor has it produced published settlement-metric wins against a baseline. The package + harness witness is the settled artifact.
-
-The outbox drainer likewise must not be used as the production guarantee.
-Production Aiko external effects currently use Contract's canonical effect
-outbox and ABI settlement path.
+| `limbs/auto-attacher` | Conforming generative limb — wires an admitted package's explicit `accepts` schemas into `topology/edges/` edge manifests. Witnessed by `tests/conformance.py` |
+| `limbs/client-emitter` | Conforming generative limb — emits a digest-pinned `ts`/`js`/`json` client from a `neuron.published-manifest/v1`. Witnessed by `tests/conformance.py` |
+| `limbs/conversation` | Conforming generative limb — bidirectional `asker`/`responder`/`forger` exchange via interpreter-stamped envelope (`from`, `correlation`, `reply_to`, `turn`). Witnessed by `tests/conformance.py` and `tests/conversation-gate.sh` |
+| `limbs/dispatch-router` | Conforming generative limb — routes `aiko.*` MCP tools to the owning limb. Witnessed by `tests/conformance.py` |
+| `limbs/energy-router` | Conforming generative limb — EBM routing, sub-EBM spawn, `PackageOffer` discovery, usage/settlement via `energy_router.py` + `registry_lookup.py` plus pure scorers (`scorer.py`, `energy.zig`). Witnessed by `tests/conformance.py` |
+| `limbs/fanout` | Conforming generative limb — deterministic fan-out spawns (`fanout.py`) under narrowed delegation. Witnessed by `tests/conformance.py` |
+| `limbs/introspection` | Conforming generative limb — `inspector`/`gap-analyzer`/`limb-designer`/`promoter`. Witnessed by `tests/conformance.py` |
+| `limbs/introspection-trigger` | Conforming generative limb — triggers introspection on `neuron.inspect-request/v1`. Witnessed by `tests/conformance.py` |
+| `limbs/outbox-drainer` | Conforming generative limb — `drainer.py`/`reconciler.py` over `outbox.*` schemas with bounded retry/dead-letter/reconciliation. Witnessed by `tests/conformance.py` and `tests/lifecycle.py` (admit→run→duplicate→revoke→detach→GC) |
+| `limbs/pipeline` | Conforming generative limb — staged pipeline `stage` neuron. Witnessed by `tests/conformance.py` |
+| `limbs/preemptor` | Conforming generative limb — preemption policy neuron. Witnessed by `tests/conformance.py` |
+| `limbs/publication-morphogenesis` | Conforming generative limb — synthesizes a `neuron.published-interface/v1` from the live port census, judged over a real `neuron port http` listener. Witnessed by `tests/conformance.py` |
 
 ## Reactive provenance projection
 
@@ -410,6 +413,10 @@ Run the smallest gate that proves the claim being changed:
 | Authoring a handler for a gap nothing can satisfy | `bash tests/authored-gap-gate.sh` |
 | Live observability edge (no substrate lock; payloads unreachable) | `bash tests/observe-live-gate.sh` |
 | Inbound interface morphogenesis limb (generates a published interface, verified over the listener) | `PYTHONDONTWRITEBYTECODE=1 python3 limbs/publication-morphogenesis/tests/conformance.py` |
+| Bidirectional conversation (asker/responder/forger) | `bash tests/conversation-gate.sh` and `python3 limbs/conversation/tests/conformance.py` |
+| Generative-limb lifecycle (admit→run→revoke→detach→GC) per limb | `python3 limbs/<limb>/tests/conformance.py` (all 10 limbs) and `python3 limbs/outbox-drainer/tests/lifecycle.py` |
+| Invalidation/re-derivation/compensation (3 cases) | `bash tests/redrive-gate.sh` and `bash tests/observability-retention-gate.sh` |
+| Compacted-journal retention (evidence + ordinal survive compaction) | `bash tests/observability-retention-gate.sh` |
 | Generated files and Neuron/Contract/Aiko boundary | `bash tests/check-production-neuron.sh` |
 | Wire generator drift only | `python3 tools/generate_wire_bindings.py --check` |
 

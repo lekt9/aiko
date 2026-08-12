@@ -403,14 +403,14 @@ Serve a contract as an API, mirror firings into the durable ledger, and run the
 loop:
 
 ```sh
-aiko port publish <node> <published.json>      # admit an inbound contract
-aiko port attach  <node> <agent> --published <digest> --handler <pkg>
-aiko port http    <node> --listen 127.0.0.1:8080
-aiko interface resolve-gap <node> <agent> --gap gap.json   # reuse | discover | author
+neuron port publish <node> <published.json>        # admit an inbound contract
+neuron port attach <node> <agent> --published <dg> --handler <pkg>
+neuron port http <node> --listen 127.0.0.1:8080
+neuron interface resolve-gap <node> <agent> --gap gap.json  # reuse | discover | author
 
-aiko-doctor bridge <node>/state --agent <id>   # firings → W6H-gated rows
-aiko redrive       <node>/state                # the reactive pass
-aiko-doctor tick   <node>/state [--every 5]    # both halves, one pass or resident
+aiko-doctor bridge <node>/state --agent <id>       # firings → W6H-gated contract rows
+neuron redrive <node>/state                        # the reactive pass (act on staleness)
+aiko-doctor tick <node>/state [--every 5]          # both halves, one pass or resident
 ```
 
 `tick` is what makes the loop run on its own. Order is load-bearing — bridge
@@ -424,7 +424,7 @@ quietly stopped also stops changing.
 ### Watch it happen
 
 ```sh
-aiko telemetry serve <node>/state --listen 127.0.0.1:8787
+neuron telemetry serve <node>/state --listen 127.0.0.1:8787   # or aiko telemetry serve …
 ```
 
 A read-only live view: the firing stream as it commits, the derivation graph,
@@ -435,13 +435,14 @@ ids, sizes and citations only.
 It deliberately does **not** say which of redrive's three cases a stale node
 will take. That verdict depends on the topology (does a hop claim determinism,
 is an effector attached now), which an observer that cannot open the substrate
-cannot see. `aiko redrive --dry-run` is the verdict; the view shows the facts.
+cannot see. `neuron redrive --dry-run` is the verdict; the view shows the facts.
 
 ### Use it from Claude
 
 `aiko-doctor mcp` is a stdio MCP server exposing one surface —
 `aiko.ledger.read`, `aiko.port.publish`, `aiko.port.attach`, `aiko.gap.resolve`,
-`aiko.redrive`, `aiko.bridge`. Register it per-project:
+`aiko.redrive`, `aiko.bridge`, `aiko.claim.register`, `aiko.claim.observe`
+(8 tools, asserted as an exact set by `dispatch-gate`). Register it per-project:
 
 ```jsonc
 // ~/.claude.json → projects["/path/to/commons"].mcpServers
@@ -459,9 +460,15 @@ the path the witnesses cover.
 public CLI from an empty directory and asserts against durable state.
 
 ```
-zig build gate     published-interface · redrive · authored-gap
-                   skill-doc · zig-doctrine · escalation-ladder
-                   staffing-engine · bridge · dispatch · tick
+zig build gate     published-interface · redrive · authored-gap           # neuron
+                   skill-doc · escalation-ladder · staffing-engine        # neuron
+                   claim-deadline · interface-morphogenesis · meta-agent  # neuron
+                   observe-live · self-constructing-agent                 # neuron
+                   zig-doctrine · bridge · dispatch · tick                # root
+                   conformance · minimal-tree                              # root (via tests/conformance-gate.sh + minimal-tree-gate.sh)
+                   agent-entrypoint · universal-interface · conversation  # neuron (standalone)
+                   swarm-package · observability-retention                # neuron (standalone)
+                   + 12 limb conformance suites (python3 limbs/<limb>/tests/conformance.py)
 ```
 
 ---
@@ -503,11 +510,11 @@ no remote at all, is one repository with one history.
 
 | Path | What it is |
 |------|-----------|
-| `neuron/` | Neuron (Zig) — firing, membrane, ports, redrive, limbs |
+| `neuron/` | Neuron (Zig) — firing, membrane, ports, redrive, `neuron/limbs/` (12 admitted packages) |
 | `contract/` | Contract substrate — ledger, W6H, occurrences. **Closed source**, see `contract/NEVER-PUBLISH.md` |
-| `aiko/` | Rust host, skills, desktop app. Not in the Zig build |
-| `unbrowse/` | Unbrowse core |
-| `unbrowse-dev/` | Unbrowse dev snapshot |
+| `aiko/` | Rust host, skills, MCP. Not in the Zig build |
+| `src/` | Root harness — `aiko-doctor` links both layers (comptime assert `contract.FireRequest == typed_neuron.FireRequest`) |
+| `tests/` | Root witnesses — `bridge`, `dispatch`, `tick`, `zig-doctrine`, `conformance`, `minimal-tree` |
 
 ### History
 
@@ -539,7 +546,6 @@ root `.gitignore` keeps it that way.
 ### Pushing a project upstream
 
 ```sh
-git subtree push --prefix=unbrowse git@github.com:unbrowse-ai/unbrowse.git main
 git subtree push --prefix=neuron   git@gitea:Unbrowse/neuron.git             main
 ```
 
