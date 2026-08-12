@@ -13,15 +13,15 @@ accountability to the ledger.
 
 ## What this folder is
 
-`Unbrowse/commons/` isolates the five repos this plan spans:
+`commons/` is the monorepo (this repo). Pre-merge it isolated five repos:
 
-| Path | What | State |
+| Path | What | State (pre-merge) |
 |---|---|---|
-| `aiko` → `/Volumes/Disk/…` | Rust production host, MCP server | 63G, dirty=91 |
-| `contract` → `/Volumes/Disk/…` | Zig durable substrate, ledger, Solana engine, energy router | 28G, dirty=6 |
-| `neuron` | Zig canonical `fire(Stimulus,Caps)->Decision`, skill admission, outbox | 1.0G, dirty=37 |
-| `unbrowse` → `/Volumes/Disk/…` | OSS route capture/replay (github.com/unbrowse-ai) | 219M, clean |
-| `unbrowse-dev` | Cloudflare Worker dev surface | 596K, clean |
+| `aiko` | Rust production host, MCP server | in-repo (`aiko/`) |
+| `contract` | Zig durable substrate, ledger, Solana engine, energy router | in-repo (`contract/`) |
+| `neuron` | Zig canonical `fire(Stimulus,Caps)->Decision`, skill admission, outbox | in-repo (`neuron/`) |
+| `unbrowse` | OSS route capture/replay (github.com/unbrowse-ai) | removed at convergence (`1b01694a0`) — not in this tree |
+| `unbrowse-dev` | Cloudflare Worker dev surface | removed — not in this tree |
 
 Dependency direction is one-way and must stay that way:
 `Unbrowse client → Aiko host → Contract ABI → canonical typed_neuron`.

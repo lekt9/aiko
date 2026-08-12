@@ -49,7 +49,7 @@ dependency.
 | `AGENTS.md` | Normative architecture and conformance requirements |
 | `schema/typed-neuron-wire.json` | Canonical transport schema source |
 | `reference/META_AGENT.md` | Normative seed for composed agent behavior |
-| `reference/SUPER_META_PATTERNS.md` | Expanded SMP-01–SMP-32 catalog, sources, coverage, status, and residuals |
+| `reference/SUPER_META_PATTERNS.md` | Expanded SMP-01–SMP-33 catalog, sources, coverage, status, and residuals |
 | `reference/AGENT_ENTRYPOINT_UNIVERSAL_INTERFACE_PLAN.md` | Anything-first agent-entrypoint and universal-interface plan (Phase 1 implemented; Phases 2+ unsettled) |
 | `reference/AGENTIC_ORGANISM.md` | Normative natural-system translation and benchmark derivation |
 | `bench/agentic-organism/benchmark.json` | Structural authority for 48 benchmark prompts, trials, stressors, scoring, evidence, hard failures, and judge output |

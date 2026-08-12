@@ -1,7 +1,8 @@
 # Typed Neuron roadmap
 
-Status: core items settled as of 2026-07-27; six infrastructural gaps remain
-(see §Remaining).
+Status: core items settled as of 2026-07-27; eight infrastructural gaps remain
+(see §Remaining — R11, R12, cross-machine sync, cache dedupe, mesh formation,
+Pattern Registry, membrane Phases 3–7, Agentic Organism runner).
 
 `AGENTS.md` defines the target. `IMPLEMENTATION.md` records what exists.
 Implementation antipatterns found in review on 2026-07-27 were remediated
@@ -181,7 +182,8 @@ bindings and content pins were regenerated across neuron, contract, and aiko.
 
 All items gated by `zig build test` (100/100), `zig build`, `bash
 tests/runtime-gate.sh`, `bash tests/gate.sh`, `bash tests/meta-agent-gate.sh`,
-`bash tests/conversation-gate.sh`.
+`bash tests/conversation-gate.sh`, `bash tests/redrive-gate.sh`,
+`bash tests/observability-retention-gate.sh`.
 Jespa benchmarks: 3 reproduced (agents-contract-discrimination,
 zig-runtime-claimed-safety-tasks, energy-router-discrimination).
 

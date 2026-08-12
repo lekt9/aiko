@@ -78,7 +78,7 @@ contract   a new occurrence INVALIDATES the resolved contract, and its dependant
 neuron     `telemetry stale` reconstructs the derivation graph from `produced_by`
            plus each firing's cited `evidence[].sources`
               ↓
-`aiko redrive <state_dir>` classifies every stale row into exactly three cases:
+`neuron redrive <state_dir>` classifies every stale row into exactly three cases:
 
   redrivable:true                  → re-fire under a NEW firing id
   false, nothing crossed           → open an agent goal (an agent is three writes)

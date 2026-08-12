@@ -311,7 +311,7 @@ contract   a NEW OCCURRENCE invalidates the resolved contract and its dependants
 neuron     telemetry stale rebuilds the derivation graph from produced_by
            plus each firing's cited evidence sources
               ↓
-aiko redrive   classifies every stale row into exactly three cases:
+neuron redrive classifies every stale row into exactly three cases:
 
    ① re-derivable          → re-fire under a NEW firing id
    ② cannot settle         → open an agent goal
@@ -359,7 +359,7 @@ real path, judge, retire on failure.
 
 ```sh
 # discovery_target points at a path that does not exist
-aiko interface resolve-gap <node> <agent> --gap gap.json --json
+neuron interface resolve-gap <node> <agent> --gap gap.json --json
 # → {"route":"authored","verified":true,"interface":"8caf7284…"}
 ```
 
