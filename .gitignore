@@ -44,7 +44,7 @@ codedb.snapshot
 data/
 
 # Unpublished local workspaces (not the product)
-aiko-flow/
+#aiko-flow/
 career-ops/
 
 # Customer operational material must never be committed
