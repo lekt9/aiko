@@ -1,12 +1,18 @@
 # Aiko
 
-A meta-fractal harness for agent-operated business processes, exposed as an MCP
-and mounted inside Hermes.
+**Aiko is an AI Forward Deployed Engineer**: a digital employee for recurring,
+cross-system operational work, exposed as an MCP and mounted inside Hermes.
+Give her a role, scoped employee accounts, and an outcome to own. The target is
+for Aiko to learn the systems already in place, build and admit the integrations
+she needs, run controllable workflows, wait for the outside world, and verify an
+effect before calling it done.
 
 Most agents can complete a task. The hard problem is a process that runs every
 day, talks to people, waits for replies, and has to be *right* — because being
 wrong costs thirty-five phone calls and a missed vessel. Aiko is built for that
-second problem.
+second problem. The workflow substrate exists today; employee-account credential
+handoff and production Telethon/SAP adapters are the delivery plan below, not
+features this README pretends are already complete.
 
 > Spelled **Aiko**. Meeting notes and transcripts say "Ico"; that is a
 > transcription artifact.
@@ -35,6 +41,182 @@ stops being rational.
 **Aiko is not infallible and does not claim to be.** It is fallible and refuses
 to hide it. That is the property worth paying for in a system you may one day
 hand to someone else.
+
+---
+
+## The product direction: a deployed employee, not another chatbot
+
+The category thesis is **AI Forward Deployed Engineer (AI FDE)**. “Drop-in
+employee” describes the intended deployment experience, not an absence of
+security or rollout work. Aiko must still receive an explicit role, dedicated
+least-privilege accounts, tenant and destination scopes, and human approval for
+high-consequence effects. First login may require SSO, MFA, or consent; that is
+a necessary authorization act, not developer integration ceremony.
+
+Do not read this as a market-first claim. The repository has no competitive
+witness for “the first AI FDE”. The claim this repository can make is narrower:
+it is building Aiko toward this category, and it will promote each capability
+only after a runnable witness proves it.
+
+### The role contract
+
+| Question | Binding answer |
+|---|---|
+| **Who** | One tenant-scoped Aiko role identity operating through dedicated employee or service accounts, never a borrowed personal session |
+| **What** | A controllable, digest-pinned workflow, native adapters, cited context lineage, and independently settled effects |
+| **When** | On an event, cadence, reply, invalidation, or explicit approval; uncertain work remains pending |
+| **Where** | Smithers controls; Cell describes; Aiko plans; Contract remembers; Neuron executes; Unbrowse learns existing web systems |
+| **Why** | To enter a real operating loop and leave behind a workflow that can be inspected, handed off, and trusted without trusting Aiko's own report |
+| **How** | Observe → write inert → test → admit by digest → attach least authority → act through the outbox → read back independently → settle or compensate |
+
+“Single entity” means one role identity and one context envelope. It does **not**
+mean collapsing the layers into a monolith. A delivered workflow must continue
+to operate without a hard Aiko dependency; the standalone Neuron architecture
+below is the mechanical evidence for that promise.
+
+## Execution plan
+
+The executable form is
+[`docs/graph-engineering/aiko-fde.walk.json`](docs/graph-engineering/aiko-fde.walk.json);
+the expanded design record is
+[`docs/AIKO-FDE-PLAN.md`](docs/AIKO-FDE-PLAN.md). Contract's real graph planner
+accepts the walk with no cycles, unknown dependencies, write collisions,
+grounding gaps, or missing witnesses:
+
+```sh
+./zig-out/bin/aiko-doctor graph-plan docs/graph-engineering/aiko-fde.walk.json
+```
+
+The plan is a chain at its current frontier, then fans out only where no data
+edge exists:
+
+```text
+0  source-build guard                                        SETTLED
+1  product contract                                         NEXT
+2  credential envelope        ||  workflow binding
+3  context plane || native authoring loop || Unbrowse port
+4  Telethon employee pilot    ||  SAP sandbox pilot
+5  independent FDE judge
+6  documentation promotion
+```
+
+### 0 — Keep the source build honest (settled)
+
+`ledger.readAll` is again bounded at 16 MiB, while graph-admission deduplication
+streams past that limit. Lock-time compaction begins at 12 MiB, before capped
+whole-buffer readers can wedge. The Rust source-build instructions now say that
+Protocol Buffers generation needs `PROTOC`/`protoc`, or DotSlash for the
+repository's hermetic `bin/protoc` wrapper.
+
+**Witness:** both `cd contract/libcontract && zig build test` and root
+`zig build test` pass on the reported macOS ARM64 source build.
+
+### 1 — Freeze the product contract
+
+Create `docs/AI-FORWARD-DEPLOYED-ENGINEER.md` as the canonical boundary before
+building the headline. It must name the customer, first operational wedge,
+authority model, handoff lifecycle, and acceptance criteria, and separate every
+claim into **Proven**, **Designed**, or **Absent**. Telethon is the proposed first
+vertical; SAP remains a sandbox pilot until its own gate is green.
+
+**Witness:** the document exists, contains all three status classes, and names a
+runnable promotion gate for the first vertical.
+
+### 2 — Build the two foundations in parallel
+
+**Employee credential envelope.** Give workflows opaque, tenant-scoped handles,
+not passwords, cookies, or API keys. Secrets stay in the OS credential store and
+are injected locally at the destination boundary. The envelope owns account
+inventory, expiry, MFA handoff, revoke, rotate, logout, origin scope, and allowed
+actions. Raw secrets may never enter prompts, Cell inputs, ledger rows, evidence,
+telemetry, generated package digests, or git. There is no plaintext-file fallback
+for employee credentials.
+
+**Smithers → Cell → Aiko binding.** Smithers is the durable control, approval,
+pause, and resume surface; it is not a second scheduler. It authors a typed Cell
+workflow. Aiko projects the Cell digest, ports, capabilities, reads, writes,
+produces, evidence, and witnesses into Contract graph nodes. Contract owns the
+frontier and durable state; Neuron owns admitted execution.
+
+**Gates:** credential isolation/redaction/revocation and a workflow-control gate
+that proves pause/resume survives restart, code movement changes the digest, and
+Smithers, Cell, Contract, and Neuron cannot disagree about the active revision.
+
+### 3 — Join self-deployment, context, and existing systems
+
+Three independently writable branches follow once both foundations exist:
+
+1. **Context plane.** Context is minimal, tenant-isolated, cited lineage — not an
+   unlimited transcript. Every derived fact records its source digest and
+   `produced_by`; source movement invalidates dependants. The delivered workflow
+   retains the context it needs after handoff without retaining secrets.
+2. **Native authoring loop.** A capability gap may produce adapter code and a
+   Cell only through the existing lifecycle: write inert, build, test, admit by
+   digest, attach least authority, retry on the real path, and retain only after
+   independent success. Compilation alone retains nothing. Authoring stays
+   bounded to witnessed adapter families until a new family earns its own gate.
+3. **Unbrowse port.** Under the employee account, Unbrowse observes first-party
+   routes, compiles a sanitized route DAG, validates it by an independent replay,
+   promotes it locally, and demotes it on drift. Cookies, passwords, raw HAR,
+   filled auth holes, response bodies, and PII remain sealed locally. Unsafe
+   mutations dry-run and require approval from outside the invoking agent.
+
+**Gates:** citation invalidation and tenant isolation; generated-code
+admit/attach/revoke; cold browse → independent replay → promotion → drift
+demotion with no secret entering an admitted or published skill.
+
+### 4 — Prove two verticals without pretending they are generic
+
+**Telethon employee pilot.** Provision a dedicated Telegram account through
+phone/code/2FA, store only its opaque session handle, normalize incoming updates
+through Neuron's provider-neutral interface, enforce per-chat and per-recipient
+ACLs, send through the canonical outbox, and read the resulting Telegram state
+back independently. An amendment contacts only changed recipients; redrive never
+blindly resends a message that already crossed the boundary. Auth expiry or an
+unobservable send stays pending and escalates.
+
+The first workflow is the one already witnessed in parts here: staffing
+requirement → deterministic roster → confirmation messages → replies or timeout
+→ escalation → amended requirement → compensation over the changed workers.
+
+**SAP sandbox pilot.** Pick one customer-relevant business transaction rather
+than claiming universal SAP support. Provision a dedicated least-privilege SAP
+user, record its roles and segregation-of-duties constraints, observe the real
+employee flow through Unbrowse, build against the actual selected surface, admit
+the adapter, permission-gate the mutation, submit once, and read the SAP business
+document back by identifier. A timeout without read-back is uncertain, never
+complete. Do not claim RFC, BAPI, OData, or generic SAP support until that exact
+surface is built and witnessed.
+
+**Gates:** Telethon account auth + inbound/outbound + read-back + ACL + duplicate
+redrive refusal; SAP permission denial + one sandbox transaction + idempotency +
+uncertain timeout + document read-back + compensation.
+
+### 5 — Judge across the boundary
+
+The builders do not promote their own work. Independent lenses judge:
+
+| Lens | Promotion question |
+|---|---|
+| Correctness | Did the requested operational outcome occur? |
+| Security | Did tenant isolation and least authority hold? |
+| Reproduction | Does the workflow recover after restart and survive handoff? |
+| Compensation | Does invalidation avoid repeating an already-crossed effect? |
+| Product | Did deployment remove developer integration ceremony without hiding necessary authorization? |
+
+The end-to-end gate starts from empty state and walks role → account authorization
+→ system observation → adapter authoring → admission → execution → reply/read-back
+→ amendment → redrive/compensation → handoff. No documentation promotion happens
+until these independent witnesses agree.
+
+### 6 — Promote the positioning only when it is true
+
+After the end-to-end gate passes, update the public README, vision, goal, product,
+risk, desktop, and implementation documents. Every capability statement must
+link to a green runnable gate or retain a **Designed**/**Absent** label. Until
+then, the honest status remains the table later in this README: the reactive,
+self-wiring substrate is proven; employee credential handoff, production
+Telethon, SAP, and an operator write UI are not.
 
 ---
 
@@ -309,7 +491,7 @@ Read-only live view (`telemetry serve`) exists and is gated by
 |---|---|
 | Operator UI — queues, roster edit, approvals | ⬜ not started. The live view is read-only by design |
 | OCR at the model edge | ⬜ open. The substrate is binary-safe; the MCP edge has no read tool (`ROADMAP.md` R11). An OCR *HTTP API* works today |
-| Credential vault / browser access | ⬜ none, in any layer |
+| Employee credential vault / browser-session handoff | ⬜ absent; Phase 2 of the AI-FDE plan, and no account-auth claim is promoted before its isolation/redaction/revocation gate |
 | Constraint solver | 🟡 partial, and no more than that. `staffing-engine-gate` witnesses a **deterministic** rotational assignment — qualification filter, then `(last_worked, name)` as a total order, refusing rather than under-filling. That is rotation, not a solver: no shift-conflict resolution, no multi-constraint optimisation, no preference weighting. The determinism requirement is the part that generalises — anything richer must keep it, or the loop never settles |
 
 ---
@@ -368,7 +550,9 @@ git subtree push --prefix=neuron   git@gitea:Unbrowse/neuron.git             mai
 | Document | Authority |
 |---|---|
 | `CLAUDE.md` | agent session context — read first if you are an agent |
-| `PLAN-aiko-convergence.md` | risk-ordered remaining work |
+| `docs/AIKO-FDE-PLAN.md` | expanded AI Forward Deployed Engineer execution plan |
+| `docs/graph-engineering/aiko-fde.walk.json` | executable, skill-grounded delivery graph |
+| `PLAN-aiko-convergence.md` | completed convergence reasoning; retained as history |
 | `neuron/AGENTS.md` | normative architecture |
 | `neuron/IMPLEMENTATION.md` | what exists today, and known limits |
 | `neuron/reference/ROADMAP.md` | unsettled work only |
