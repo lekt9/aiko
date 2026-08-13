@@ -93,12 +93,36 @@ bump_files(){
   for _lock in "$LOCK_FILE" "$ROOT/aiko/sdk/registry/versions.lock"; do
     [ -f "$_lock" ] || continue
     if [[ "$(uname -s)" == "Darwin" ]]; then
-      sed -i '' "s/^aiko=.*/aiko=$new/" "$_lock"
+      sed -i '' -E "s/^(aiko|contract|neuron|cell|neuron-limbs)=.*/\1=$new/" "$_lock"
     else
-      sed -i "s/^aiko=.*/aiko=$new/" "$_lock"
+      sed -i -E "s/^(aiko|contract|neuron|cell|neuron-limbs)=.*/\1=$new/" "$_lock"
     fi
   done
-  ok "Bumped VERSION, 4× Cargo.toml, versions.lock (both) → $new"
+  python3 - "$ROOT/sdk/registry/stack.lock.json" "$new" <<'PY'
+import json, sys
+path, ver = sys.argv[1], sys.argv[2]
+lock = json.loads(open(path, encoding="utf-8").read())
+lock["stack"] = ver
+for name, pkg in (lock.get("packages") or {}).items():
+    if name in ("aiko", "neuron", "contract", "cell"):
+        pkg["version"] = ver
+open(path, "w", encoding="utf-8").write(json.dumps(lock, indent=2) + "\n")
+PY
+  for _man in \
+    "$ROOT/cell/aiko-package.json" \
+    "$ROOT/neuron/aiko-package.json" \
+    "$ROOT/contract/aiko-package.json"
+  do
+    [ -f "$_man" ] || continue
+    python3 - "$_man" "$new" <<'PY'
+import json, sys
+path, ver = sys.argv[1], sys.argv[2]
+man = json.loads(open(path, encoding="utf-8").read())
+man["version"] = ver
+open(path, "w", encoding="utf-8").write(json.dumps(man, indent=2) + "\n")
+PY
+  done
+  ok "Bumped VERSION, Cargo.toml, locks, stack, layer manifests → $new"
 }
 
 do_release(){
@@ -151,7 +175,9 @@ except ImportError:
   fi
 
   # Stage
-  git -C "$ROOT" add VERSION sdk/registry/versions.lock aiko/sdk/registry/versions.lock "${CARGO_FILES[@]#$ROOT/}"
+  git -C "$ROOT" add VERSION sdk/registry/versions.lock aiko/sdk/registry/versions.lock \
+    sdk/registry/stack.lock.json scripts/release.sh "${CARGO_FILES[@]#$ROOT/}" \
+    cell/aiko-package.json neuron/aiko-package.json contract/aiko-package.json
   # Cargo.lock may have changed
   git -C "$ROOT" add aiko/Cargo.lock 2>/dev/null || true
 

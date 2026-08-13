@@ -1,9 +1,11 @@
 {
   "name": "contract",
-  "version": "0.2.115",
+  "version": "0.2.116",
   "abi": 13,
   "kind": "durable-interpreter",
   "standalone": false,
-  "requires": ["neuron"],
+  "requires": [
+    "neuron"
+  ],
   "description": "Ledger, W6H, occurrences. Imports neuron, never the reverse."
 }

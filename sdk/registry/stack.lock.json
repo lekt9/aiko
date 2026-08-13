@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "stack": "0.2.115",
+  "stack": "0.2.116",
   "abi": {
     "contract": 13,
     "cell": "cell/v0",
@@ -8,28 +8,36 @@
   },
   "packages": {
     "neuron": {
-      "version": "0.2.115",
+      "version": "0.2.116",
       "requires": [],
       "optional": false
     },
     "contract": {
-      "version": "0.2.115",
-      "requires": ["neuron"],
+      "version": "0.2.116",
+      "requires": [
+        "neuron"
+      ],
       "optional": false
     },
     "cell": {
-      "version": "0.2.115",
+      "version": "0.2.116",
       "requires": [],
       "optional": false
     },
     "aiko": {
-      "version": "0.2.115",
-      "requires": ["neuron", "contract", "cell"],
+      "version": "0.2.116",
+      "requires": [
+        "neuron",
+        "contract",
+        "cell"
+      ],
       "optional": false
     },
     "control": {
       "version": "0.33.1",
-      "requires": ["cell"],
+      "requires": [
+        "cell"
+      ],
       "optional": true,
       "source": "aiko-flow"
     }
