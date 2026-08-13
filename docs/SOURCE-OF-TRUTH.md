@@ -44,7 +44,7 @@ absent. Do not reverse that dependency.
 
 | Path | Status |
 |---|---|
-| `aiko-flow/` | Local unpublished workspace. Not tracked. Do not document it as a shipped product surface. |
+| `aiko-flow/` | Local unpublished control surface (Smithers). Not tracked. Installs as optional `control` package requiring Cell only. Do not document it as a shipped product surface. |
 | `career-ops/` | Local unpublished workspace. |
 | `cell/hoysan-*`, `cell/data/hoysan-*` | Customer operational material. Must not be committed. |
 | Build outputs (`zig-out/`, `target/`, `.zig-cache/`) | Generated. Reproduce with `zig build` / `cargo`. |

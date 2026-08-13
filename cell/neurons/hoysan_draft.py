@@ -78,8 +78,7 @@ def _violates_24h_rest(worker, shift_code: str) -> tuple[bool, str | None]:
     # Shift switch D<->G
     hours = worker.get("hours_since_last")
     if hours is None:
-        # If unknown rest, do not block (conservative) — but record as warning in caller if needed
-        return False, None
+        return True, f"unknown 24h rest interval NTS {worker['nric']} last {last_shift} -> {shift_code}"
     if hours < 24:
         return True, f"24h rest violation NTS {worker['name']} last {last_shift} -> {shift_code} with {hours}h"
     return False, None
@@ -165,7 +164,44 @@ def run(inputs, ctx):
     shift_code = req["shift_code"]
     cranes_in = list(req["cranes"])
     workers_in = list(req["workers"])
-    pair_state = req.get("pair_state") or {}
+    supplied_pair_state = req.get("pair_state")
+
+    ids = [w.get("nric") for w in workers_in]
+    if any(not isinstance(worker_id, str) or not worker_id for worker_id in ids):
+        raise ValueError("hoysan-draft: refused: every worker requires a non-empty id")
+    if len(ids) != len(set(ids)):
+        raise ValueError("hoysan-draft: refused: duplicate worker id")
+    unknown_pools = sorted({str(w.get("pool")) for w in workers_in if w.get("pool") not in {"TS", "SIN", "NTS"}})
+    if unknown_pools:
+        raise ValueError(f"hoysan-draft: refused: unknown worker pool {','.join(unknown_pools)}")
+    for worker in workers_in:
+        if (
+            worker.get("pool") == "NTS"
+            and worker.get("last_shift")
+            and str(worker.get("last_shift")) != str(shift_code)
+            and worker.get("hours_since_last") is None
+        ):
+            raise ValueError(
+                f"hoysan-draft: refused: unknown rest interval for NTS worker {worker['nric']}"
+            )
+
+    # A pair can be supplied explicitly, or derived only when each worker names
+    # its partner. Never invent a relationship from last_role alone.
+    if supplied_pair_state is None:
+        by_id = {w["nric"]: w for w in workers_in}
+        pair_state = {}
+        for worker in workers_in:
+            partner_id = worker.get("pair_partner_nric")
+            if partner_id:
+                partner = by_id.get(partner_id)
+                if partner is None:
+                    raise ValueError(
+                        f"hoysan-draft: refused: unknown pair partner {partner_id}"
+                    )
+                if partner.get("last_role"):
+                    pair_state[worker["nric"]] = partner["last_role"]
+    else:
+        pair_state = supplied_pair_state
 
     # Deterministic ordering of cranes: by crane_number string
     cranes_in = sorted(cranes_in, key=lambda c: str(c["crane_number"]))
@@ -363,6 +399,10 @@ def run(inputs, ctx):
     if validation["errors"]:
         summary_lines.append("ERRORS: " + "; ".join(validation["errors"][:6]))
     summary = "\n".join(summary_lines)
+
+    if errors:
+        reasons = "; ".join(sorted(set(errors))[:8])
+        raise ValueError(f"hoysan-draft: refused: {reasons}")
 
     result = {
         "shift_date": shift_date,

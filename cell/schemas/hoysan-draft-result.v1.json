@@ -2,33 +2,85 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "hoysan-draft-result.v1",
   "type": "object",
-  "required": ["shift_date", "shift_code", "gangs", "standby", "validation"],
+  "required": [
+    "shift_date",
+    "shift_code",
+    "gangs",
+    "standby",
+    "unassigned",
+    "stats",
+    "validation"
+  ],
   "properties": {
-    "shift_date": { "type": "string" },
-    "shift_code": { "type": "string", "enum": ["D", "G"] },
+    "shift_date": {
+      "type": "string"
+    },
+    "shift_code": {
+      "type": "string",
+      "enum": [
+        "D",
+        "G"
+      ]
+    },
     "gangs": {
       "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["crane_number", "vessel", "stroking", "workers"],
+        "required": [
+          "crane_number",
+          "wta_required",
+          "workers"
+        ],
         "properties": {
-          "crane_number": { "type": "string" },
-          "vessel": { "type": "string" },
-          "stroking": { "type": ["string", "null"] },
-          "wta_required": { "type": "boolean" },
+          "crane_number": {
+            "type": "string"
+          },
+          "vessel": {
+            "type": "string"
+          },
+          "stroking": {},
+          "wta_required": {
+            "type": "boolean"
+          },
           "workers": {
             "type": "array",
             "minItems": 5,
             "maxItems": 5,
             "items": {
               "type": "object",
-              "required": ["nric", "name", "pool", "role", "wah"],
+              "required": [
+                "nric",
+                "name",
+                "pool",
+                "role",
+                "wah"
+              ],
               "properties": {
-                "nric": { "type": "string" },
-                "name": { "type": "string" },
-                "pool": { "type": "string" },
-                "role": { "type": "string", "enum": ["STA", "LW", "CM", "WTA"] },
-                "wah": { "type": "boolean" }
+                "nric": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "pool": {
+                  "enum": [
+                    "TS",
+                    "SIN",
+                    "NTS"
+                  ]
+                },
+                "role": {
+                  "enum": [
+                    "STA",
+                    "LW",
+                    "CM",
+                    "WTA"
+                  ]
+                },
+                "wah": {
+                  "type": "boolean"
+                }
               }
             }
           }
@@ -36,36 +88,28 @@
       }
     },
     "standby": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["for_local_nric", "for_local_name", "nts_nric", "nts_name"],
-        "properties": {
-          "for_local_nric": { "type": "string" },
-          "for_local_name": { "type": "string" },
-          "nts_nric": { "type": "string" },
-          "nts_name": { "type": "string" }
-        }
-      }
+      "type": "array"
     },
     "unassigned": {
-      "type": "array",
-      "items": { "type": "object" }
+      "type": "array"
     },
     "stats": {
-      "type": "object",
-      "properties": {
-        "cranes_requested": { "type": "integer" },
-        "cranes_filled": { "type": "integer" },
-        "workers_deployed": { "type": "integer" }
-      }
+      "type": "object"
     },
     "validation": {
       "type": "object",
-      "required": ["ok", "errors"],
+      "required": [
+        "ok",
+        "errors"
+      ],
       "properties": {
-        "ok": { "type": "boolean" },
-        "errors": { "type": "array", "items": { "type": "string" } }
+        "ok": {
+          "const": true
+        },
+        "errors": {
+          "type": "array",
+          "maxItems": 0
+        }
       }
     }
   }

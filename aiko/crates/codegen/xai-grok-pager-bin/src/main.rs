@@ -32,9 +32,10 @@ use std::env;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+use xai_grok_pager::app::cli::LoginProvider;
 use xai_grok_pager::app::{
     AgentCmd, Command, ContractPairAction, HeadlessArgs, LeaderMgmtArgs, LeaderMgmtCommand,
-    LeaderTargetArgs, LoginProvider, PagerArgs, join_early_prefetch, resolve_use_leader,
+    LeaderTargetArgs, PagerArgs, join_early_prefetch, resolve_use_leader,
 };
 use xai_grok_pager::app::{WorkspaceMgmtArgs, WorkspaceMgmtCommand, WorkspaceStartArgs};
 use xai_grok_pager::client_identity::PAGER_CLIENT_VERSION;
@@ -398,9 +399,7 @@ fn run_background_command(args: xai_grok_pager::app::cli::BackgroundArgs) -> Res
             }
             BackgroundCommand::Start => {
                 if !plist.is_file() {
-                    anyhow::bail!(
-                        "background worker is not installed; reinstall the Aiko package first"
-                    );
+                    install_contract_worker_plist(&plist)?;
                 }
                 let _ = std::process::Command::new("launchctl")
                     .args(["bootstrap", &domain])
@@ -427,6 +426,63 @@ fn run_background_command(args: xai_grok_pager::app::cli::BackgroundArgs) -> Res
             }
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn install_contract_worker_plist(plist: &std::path::Path) -> Result<()> {
+    let exe = std::env::current_exe()?;
+    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("home directory is unavailable"))?;
+    let lib = std::env::var_os("AIKO_CONTRACT_LIBRARY")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| home.join(".aiko/lib/libcontract.dylib"));
+    let log_dir = home.join(".aiko/logs");
+    std::fs::create_dir_all(plist.parent().unwrap())?;
+    std::fs::create_dir_all(&log_dir)?;
+    let xml = |value: &std::path::Path| {
+        value
+            .display()
+            .to_string()
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+    };
+    let path_xml = std::env::var("PATH").unwrap_or_else(|_| {
+        "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".into()
+    });
+    let body = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>net.theclarityproject.aiko.contract-worker</string>
+  <key>ProgramArguments</key><array>
+    <string>{}</string>
+    <string>contract-worker</string>
+    <string>--poll-seconds</string><string>5</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>AIKO_CONTRACT_LIBRARY</key><string>{}</string>
+    <key>PATH</key><string>{}</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>{}</string>
+  <key>StandardErrorPath</key><string>{}</string>
+</dict></plist>
+"#,
+        xml(&exe),
+        xml(&lib),
+        path_xml
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;"),
+        xml(&log_dir.join("contract-worker.log")),
+        xml(&log_dir.join("contract-worker.log")),
+    );
+    std::fs::write(plist, body)?;
+    Ok(())
 }
 
 async fn run_tasks_command(args: xai_grok_pager::app::cli::TasksArgs) -> Result<()> {

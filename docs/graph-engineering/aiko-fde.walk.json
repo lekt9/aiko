@@ -33,7 +33,7 @@
       "id": "product-contract",
       "plan": "Define the bounded AI Forward Deployed Engineer product contract, current/proposed claims, W6H role envelope, and vertical-pilot acceptance",
       "depends_on": [],
-      "status": "pending",
+      "status": "settled",
       "reads": [
         "README.md",
         "VISION.md",
@@ -96,7 +96,7 @@
       "depends_on": [
         "product-contract"
       ],
-      "status": "pending",
+      "status": "settled",
       "reads": [
         "cell/SPEC.md",
         "docs/graph-engineering/README.md",

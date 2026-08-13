@@ -1,0 +1,19 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: deploy-aiko
+  description: seat Aiko as the employee agent on a digest-pinned workflow
+spec:
+  membrane:
+    inputs:
+      role: { schema: string }
+      handle: { schema: object }
+      digest: { schema: string }
+    outputs:
+      attachment: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/deploy_aiko.py
+  policy:
+    determinism: required

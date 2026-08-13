@@ -1,0 +1,18 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: hoysan-draft
+  description: deterministic synthetic-safe crane-gang draft; infeasible drafts refuse and retain nothing
+spec:
+  membrane:
+    inputs:
+      request: { schema: ../../schemas/hoysan-draft-request.v1.json }
+    outputs:
+      result: { schema: ../../schemas/hoysan-draft-result.v1.json }
+      summary: { schema: string }
+    caps: {}
+  policy:
+    determinism: required
+  run:
+    kind: python
+    entry: ../../neurons/hoysan_draft.py

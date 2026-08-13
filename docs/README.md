@@ -27,6 +27,9 @@ tree.
 
 | Document | Purpose |
 |---|---|
+| [`AI-FORWARD-DEPLOYED-ENGINEER.md`](AI-FORWARD-DEPLOYED-ENGINEER.md) | Product boundary: Proven / Designed / Absent |
+| [`AIKO-WORKFLOW-BINDING.md`](AIKO-WORKFLOW-BINDING.md) | Smithers controls, Cell describes; no second scheduler |
+| [`../sdk/registry/stack.lock.json`](../sdk/registry/stack.lock.json) | Compatible layer versions and ABIs |
 | [`graph-engineering/README.md`](graph-engineering/README.md) | Chain-vs-graph planning; `aiko-doctor graph-plan` |
 | [`providers/README.md`](providers/README.md) | BYOK / provider gateway |
 | [`../CONFORMANCE.md`](../CONFORMANCE.md) | Gate-backed architecture verdicts |
@@ -45,3 +48,5 @@ tree.
 | [`../CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md) | Conduct bar |
 
 Do not place customer operational data in this repository.
+
+- [`AIKO-HOYSAN-BENCHMARK.md`](AIKO-HOYSAN-BENCHMARK.md) — synthetic Aiko→Cell→Aiko benchmark and honest Smithers blocker.

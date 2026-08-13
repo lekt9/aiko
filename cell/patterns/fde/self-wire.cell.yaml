@@ -1,0 +1,35 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: self-wire
+  description: account-handle then deploy-workflow then deploy-aiko — Aiko seats Aiko
+spec:
+  membrane:
+    inputs:
+      account: { schema: object }
+      role: { schema: string }
+      outcome: { schema: string }
+    outputs:
+      handle: { schema: ../../primitives/schemas/account-handle.v1.json }
+      workflow_digest: { schema: string }
+      handoff: { schema: object }
+      cell: { schema: object }
+    caps: {}
+  organelles:
+    - { name: account, cell: ../../primitives/account-handle.cell.yaml }
+    - { name: workflow, cell: ./deploy-workflow.cell.yaml }
+    - { name: aiko, cell: ./deploy-aiko.cell.yaml }
+  wiring:
+    - { from: membrane.account, to: account.account }
+    - { from: account.handle, to: workflow.handle }
+    - { from: membrane.role, to: workflow.role }
+    - { from: membrane.outcome, to: workflow.outcome }
+    - { from: workflow.digest, to: aiko.digest }
+    - { from: account.handle, to: aiko.handle }
+    - { from: membrane.role, to: aiko.role }
+    - { from: account.handle, to: membrane.handle }
+    - { from: workflow.digest, to: membrane.workflow_digest }
+    - { from: aiko.attachment, to: membrane.handoff }
+    - { from: workflow.cell, to: membrane.cell }
+  policy:
+    determinism: required

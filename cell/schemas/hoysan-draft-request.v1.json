@@ -2,21 +2,50 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "hoysan-draft-request.v1",
   "type": "object",
-  "required": ["shift_date", "shift_code", "cranes", "workers"],
+  "required": [
+    "shift_date",
+    "shift_code",
+    "cranes",
+    "workers"
+  ],
   "properties": {
-    "shift_date": { "type": "string", "description": "YYYY-MM-DD" },
-    "shift_code": { "type": "string", "enum": ["D", "G"], "description": "D=Day 07:30-19:30, G=Graveyard/Night 19:30-07:30" },
+    "shift_date": {
+      "type": "string",
+      "description": "YYYY-MM-DD"
+    },
+    "shift_code": {
+      "type": "string",
+      "enum": [
+        "D",
+        "G"
+      ],
+      "description": "D=Day 07:30-19:30, G=Graveyard/Night 19:30-07:30"
+    },
     "cranes": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["crane_number", "vessel"],
+        "required": [
+          "crane_number",
+          "vessel"
+        ],
         "properties": {
-          "crane_number": { "type": "string", "description": "e.g. 301, 608" },
-          "vessel": { "type": "string" },
-          "wta_required": { "type": "boolean", "default": false },
-          "stroking": { "type": "string", "description": "e.g. 301/304" }
+          "crane_number": {
+            "type": "string",
+            "description": "e.g. 301, 608"
+          },
+          "vessel": {
+            "type": "string"
+          },
+          "wta_required": {
+            "type": "boolean",
+            "default": false
+          },
+          "stroking": {
+            "type": "string",
+            "description": "e.g. 301/304"
+          }
         }
       }
     },
@@ -25,26 +54,108 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["nric", "name", "pool", "wah"],
+        "required": [
+          "nric",
+          "name",
+          "pool",
+          "wah"
+        ],
         "properties": {
-          "nric": { "type": "string", "description": "NRIC primary key (or masked last 4)" },
-          "name": { "type": "string" },
-          "pool": { "type": "string", "enum": ["TS", "NTS", "SIN"] },
-          "wah": { "type": "boolean", "description": "WAH certified" },
-          "exceptions": { "type": "array", "items": { "type": "string", "enum": ["STA", "LW", "CM", "WTA"] }, "default": [] },
-          "last_crane": { "type": ["string", "null"], "default": null, "description": "crane worked previous day" },
-          "last_role": { "type": ["string", "null"], "default": null, "description": "role held previous day" },
-          "last_shift": { "type": ["string", "null"], "enum": ["D", "G", null], "default": null },
-          "role_history": { "type": "array", "items": { "type": "string" }, "default": [] },
-          "hours_since_last": { "type": ["integer", "null"], "default": null },
-          "available": { "type": "boolean", "default": true }
+          "nric": {
+            "type": "string",
+            "description": "NRIC primary key (or masked last 4)"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pool": {
+            "type": "string",
+            "enum": [
+              "TS",
+              "NTS",
+              "SIN"
+            ]
+          },
+          "wah": {
+            "type": "boolean",
+            "description": "WAH certified"
+          },
+          "exceptions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "STA",
+                "LW",
+                "CM",
+                "WTA"
+              ]
+            },
+            "default": []
+          },
+          "last_crane": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "crane worked previous day"
+          },
+          "last_role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "role held previous day"
+          },
+          "last_shift": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "D",
+              "G",
+              null
+            ],
+            "default": null
+          },
+          "role_history": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "hours_since_last": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "default": null
+          },
+          "available": {
+            "type": "boolean",
+            "default": true
+          },
+          "pair_partner_nric": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Optional partner id used to derive pair rotation when pair_state is omitted"
+          }
         }
       }
     },
     "pair_state": {
       "type": "object",
-      "description": "optional explicit partner yesterday roles for intra-shift rotation; if omitted, derived from workers last_role",
-      "additionalProperties": { "type": "string" }
+      "description": "Optional explicit worker id -> partner previous role mapping; when omitted it is derived only from pair_partner_nric plus the partner last_role",
+      "additionalProperties": {
+        "type": "string"
+      }
     }
   }
 }

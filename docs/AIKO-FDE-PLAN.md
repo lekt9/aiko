@@ -1,6 +1,6 @@
 # Aiko as an AI Forward Deployed Engineer — execution plan
 
-**Status:** planned; the ledger guard and source-build documentation fix are implemented and verified.
+**Status:** product contract written (`docs/AI-FORWARD-DEPLOYED-ENGINEER.md`). Cell-native self-wire increment (`cell/patterns/fde/`) is witnessed by `tests/fde-workflow-gate.sh`. OS vault, Smithers pause/resume, Telethon, and SAP remain Designed or Absent.
 **Executable walk:** [`graph-engineering/aiko-fde.walk.json`](graph-engineering/aiko-fde.walk.json)
 
 ## North star

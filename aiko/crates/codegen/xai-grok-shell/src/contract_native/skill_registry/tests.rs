@@ -439,3 +439,90 @@ fn native_node_execution_runs_the_meta_agent_fixed_point_without_opaque_agent() 
     assert!(!ledger.contains("agent:aiko"));
     drop(restore);
 }
+
+#[test]
+fn isolated_local_retain_drops_act_on_web_api_and_keeps_core() {
+    let web = LoadedContractSkill {
+        manifest: ContractSkillManifest {
+            schema_version: 1,
+            id: "act-on-web-api".into(),
+            version: "1.0.0".into(),
+            description: "web".into(),
+            platforms: vec!["all".into()],
+            triggers: vec!["web api".into()],
+            activation: SkillActivation::Matched,
+            composition: None,
+            input_schema: json!({"type":"object"}),
+            output_schema: json!({"type":"object"}),
+            nodes: vec![SkillNode {
+                key: "execute-request".into(),
+                plan: "Execute".into(),
+                worker: "aiko".into(),
+                adapter: None,
+                script: None,
+                depends_on: Vec::new(),
+                input_bindings: BTreeMap::new(),
+                can_parallel: false,
+                timeout_ms: 30_000,
+                effect: "account_mutation".into(),
+                reversible: false,
+                read_only: false,
+                requires_authority: true,
+                evidence: vec!["structured_result".into()],
+                writes: Vec::new(),
+                capabilities: Vec::new(),
+                research: Vec::new(),
+                witness: None,
+            }],
+            examples: Vec::new(),
+        },
+        directory: PathBuf::from("."),
+        source: SkillSource::Bundled,
+        admission: SkillAdmission::ManifestValidated,
+    };
+    let core = embedded_core_skill().expect("embedded core");
+    let planned = ContractSkillPlan {
+        schema_version: 2,
+        core_admitted: true,
+        selected: vec![
+            RankedContractSkill {
+                id: core.manifest.id.clone(),
+                version: core.manifest.version.clone(),
+                source: core.source,
+                energy: 0,
+                matched_triggers: vec!["activation:core".into()],
+                skill: core,
+            },
+            RankedContractSkill {
+                id: "act-on-web-api".into(),
+                version: "1.0.0".into(),
+                source: SkillSource::Bundled,
+                energy: 1,
+                matched_triggers: vec!["web api".into()],
+                skill: web,
+            },
+        ],
+        children: vec![
+            json!({"key":"aiko-meta-agent--observe","skill_id":"aiko-meta-agent","depends_on":[]}),
+            json!({"key":"act-on-web-api--execute-request","skill_id":"act-on-web-api","depends_on":[]}),
+        ],
+    };
+    let retained = retain_isolated_local_skills(planned);
+    assert!(
+        retained
+            .selected
+            .iter()
+            .any(|skill| skill.id == "aiko-meta-agent")
+    );
+    assert!(
+        retained
+            .selected
+            .iter()
+            .all(|skill| skill.id != "act-on-web-api")
+    );
+    assert!(
+        retained.children.iter().all(|child| {
+            child.get("skill_id").and_then(Value::as_str) != Some("act-on-web-api")
+        })
+    );
+}

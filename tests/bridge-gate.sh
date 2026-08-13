@@ -62,7 +62,7 @@ journal="$root/n/state/substrate.log"
 # --- 1. every firing becomes a row ----------------------------------------
 "$aiko" bridge "$root/n/state" --agent hoysan >"$root/out1.txt" 2>&1 || fail "bridge exited non-zero"
 [ -s "$ledger" ] || fail "the bridge declared nothing"
-rows=$(wc -l < "$ledger")
+rows=$(wc -l < "$ledger" | tr -d "[:space:]")
 bridged=$(sed -n 's/^bridged \([0-9]*\)\/.*/\1/p' "$root/out1.txt")
 [ "$rows" = "$bridged" ] || fail "reported $bridged bridged but the ledger holds $rows rows"
 [ "$rows" -gt 0 ] || fail "no rows landed"
@@ -93,7 +93,7 @@ PY
 
 # --- 4. re-running appends nothing ----------------------------------------
 "$aiko" bridge "$root/n/state" --agent hoysan >/dev/null 2>&1 || fail "second bridge exited non-zero"
-rows2=$(wc -l < "$ledger")
+rows2=$(wc -l < "$ledger" | tr -d "[:space:]")
 [ "$rows" = "$rows2" ] || fail "re-running the bridge duplicated rows ($rows -> $rows2)"
 echo "  idempotent: $rows rows before and after a second run"
 
@@ -102,13 +102,13 @@ echo "  idempotent: $rows rows before and after a second run"
 # empty must be refused, naming the interrogative. This is checked against the
 # CONTRACT path directly, so the gate is exercised even if the bridge later
 # stops constructing plans the same way.
-before=$(wc -l < "$ledger")
+before=$(wc -l < "$ledger" | tr -d "[:space:]")
 shim="$repo/contract/libcontract/zig-out/bin/contract-lib-shim"
 if [ -x "$shim" ]; then
     if "$shim" declare "" "neuron:firing/write" >/dev/null 2>&1; then
         fail "a row with an empty truth claim was ACCEPTED — the W6H gate is not live"
     fi
-    after=$(wc -l < "$ledger")
+    after=$(wc -l < "$ledger" | tr -d "[:space:]")
     [ "$before" = "$after" ] || fail "a refused declare still appended a row"
     echo "  W6H gate refuses an empty 'what' and appends nothing"
 else

@@ -1,0 +1,18 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: account-handle
+  description: primitive — admit an opaque employee-account handle; refuse raw secrets
+spec:
+  membrane:
+    inputs:
+      account: { schema: object }
+    outputs:
+      handle: { schema: schemas/account-handle.v1.json }
+      session: { schema: schemas/session.v1.json }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/account_handle.py
+  policy:
+    determinism: required

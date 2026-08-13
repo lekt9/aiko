@@ -126,6 +126,7 @@ rg -q '"contract_abi": 13' aiko/scripts/contract-runtime.sh ||   fail "packaged 
 rg -q '^EXPECTED_ABI=13$' aiko/scripts/install-aiko-package.sh ||   fail "package installer does not require Contract ABI 13"
 rg -q 'failure after the first child declaration must' aiko/scripts/witness-graph-frontier.sh ||   fail "partial-expansion ledger witness missing"
 rg -q 'Aiko could not admit this turn to the native Contract ledger' "$HOST" || fail "host turn admission is no longer mandatory"
+rg -q 'retain_isolated_local_skills' "$HOST" || fail "IsolatedLocal no longer drops external-effect skills before prepare"
 rg -q 'contract_graph_expand_failed: Contract rejected graph expansion' "$HOST" || fail "host graph expansion is no longer mandatory"
 PROMPT_ENTRY=aiko/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs
 rg -q 'Native Contract graph admission failed; Aiko did not start the worker' "$PROMPT_ENTRY" ||   fail "normal Aiko prompt entry no longer refuses before worker start"

@@ -329,6 +329,73 @@ pub fn plan(goal: &str, cwd: &Path) -> ContractSkillPlan {
     plan_bounded(goal, cwd, MAX_GRAPH_NODES)
 }
 
+/// IsolatedLocal first profile cannot admit network, secrets, or
+/// runtime-authorization nodes. Drop those skills (and their dependents)
+/// rather than refuse the whole turn. Core stays.
+pub fn retain_isolated_local_skills(mut plan: ContractSkillPlan) -> ContractSkillPlan {
+    let drop_ids: BTreeSet<String> = plan
+        .selected
+        .iter()
+        .filter(|ranked| {
+            ranked.skill.manifest.activation != SkillActivation::Core
+                && !ranked
+                    .skill
+                    .manifest
+                    .nodes
+                    .iter()
+                    .all(isolated_local_skill_node)
+        })
+        .map(|ranked| ranked.id.clone())
+        .collect();
+    if drop_ids.is_empty() {
+        return plan;
+    }
+    plan.selected.retain(|ranked| !drop_ids.contains(&ranked.id));
+    plan.children.retain(|child| {
+        child
+            .get("skill_id")
+            .and_then(Value::as_str)
+            .map(|id| !drop_ids.contains(id))
+            .unwrap_or(true)
+    });
+    loop {
+        let keys: BTreeSet<String> = plan
+            .children
+            .iter()
+            .filter_map(|child| child.get("key").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        let before = plan.children.len();
+        plan.children.retain(|child| {
+            child
+                .get("depends_on")
+                .and_then(Value::as_array)
+                .map(|deps| {
+                    deps.iter()
+                        .all(|dep| dep.as_str().is_some_and(|key| keys.contains(key)))
+                })
+                .unwrap_or(true)
+        });
+        if plan.children.len() == before {
+            break;
+        }
+    }
+    plan
+}
+
+fn isolated_local_skill_node(node: &SkillNode) -> bool {
+    if node.requires_authority || !node.capabilities.is_empty() {
+        return false;
+    }
+    let read_only = node.read_only && node.effect == "read_only" && node.writes.is_empty();
+    let workspace_reversible = node.worker == "aiko"
+        && !node.read_only
+        && node.reversible
+        && node.effect == "local_reversible"
+        && node.writes.len() == 1
+        && node.writes[0] == super::super::graph_harness::WORKSPACE_AUTHORITY;
+    read_only || workspace_reversible
+}
+
 pub fn plan_bounded(goal: &str, cwd: &Path, max_nodes: usize) -> ContractSkillPlan {
     let discovered = discover(cwd);
     let core = discovered

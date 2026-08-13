@@ -6,7 +6,7 @@ component has a type-only `FooProps.ts` sidecar.
 
 Rough layers:
 
-- **Core primitives** — Workflow, Task, Sequence, Parallel, Loop/Ralph,
+- **Core primitives** — Workflow, Task, Cell, Sequence, Parallel, Loop/Ralph,
   Branch, Worktree, MergeQueue, ContinueAsNew.
 - **Engine-backed hosts** that render straight to `smithers:*` elements —
   Subflow, Sandbox, WaitForEvent, Signal, Timer, HumanTask, Approval, Saga,
@@ -27,3 +27,21 @@ Gotchas:
   list, or React's special-prop warning trips.
 - `Loop.js` is a re-export shim of Ralph.js kept so the public
   `components/Loop` subpath resolves.
+
+### Native Cell
+
+`Cell` schedules a `*.cell.yaml` membrane as a Smithers compute task. Use
+`outputPort` when one named Cell output is the row persisted by Smithers; the
+row also receives `_cell` provenance (`path`, digest, and manifest).
+
+```tsx
+<Cell
+  id="wire"
+  cell="../cell/patterns/fde/self-wire.cell.yaml"
+  inputs={{ account, role: "fde", outcome }}
+  output={outputs.handoff}
+  outputPort="handoff"
+/>
+```
+
+The task fails closed if the selected port is absent or is not an object.
