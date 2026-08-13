@@ -3876,6 +3876,39 @@ fn valid_contract_id(id: &str) -> bool {
     id.len() == 8 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+/// Environment a tool subprocess must carry so that, if it is itself an Aiko,
+/// its `declare_turn` lands as a DESCENDANT of this turn in the same Contract
+/// lineage tree — never as a disconnected root (the read side above refuses
+/// depth>0 without parent+root).
+///
+/// `AIKO_CONTRACT_ID` is deliberately absent from this list: that variable is
+/// the adopt-identity path — a process started with it does not declare its
+/// own row, it BECOMES the named contract. Exporting it would make every
+/// child impersonate its parent turn instead of descending from it, so the
+/// refusal here is to never emit it for children (spawn sites additionally
+/// strip an inherited copy).
+pub fn lineage_env_for_children(turn: &TurnContract) -> Vec<(String, String)> {
+    lineage_env_for_child_of(&turn.id)
+}
+
+/// Same contract as [`lineage_env_for_children`], for callers that hold only
+/// the turn's contract id (the session actor stores the id, not the struct).
+pub fn lineage_env_for_child_of(turn_id: &str) -> Vec<(String, String)> {
+    // The root travels unchanged from this process's own launch env so a
+    // grandchild still points at the ORIGINAL tree; a depth-0 process is its
+    // own root. Own depth is bounded exactly as the read side bounds it.
+    let root_id = std::env::var("AIKO_CONTRACT_ROOT_ID")
+        .ok()
+        .filter(|id| valid_contract_id(id))
+        .unwrap_or_else(|| turn_id.to_owned());
+    let depth = bounded_env_u32("AIKO_CONTRACT_DEPTH", 0, 16).saturating_add(1);
+    vec![
+        ("AIKO_CONTRACT_PARENT_ID".to_owned(), turn_id.to_owned()),
+        ("AIKO_CONTRACT_ROOT_ID".to_owned(), root_id),
+        ("AIKO_CONTRACT_DEPTH".to_owned(), depth.to_string()),
+    ]
+}
+
 fn bounded_env_u32(name: &str, default: u32, maximum: u32) -> u32 {
     std::env::var(name)
         .ok()
@@ -4102,6 +4135,11 @@ async fn expand_turn_root(
         let roots = state_root.join("roots");
         std::fs::create_dir_all(&roots)
             .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
+        // The generation names the code that derived the digests. A receipt is
+        // only comparable within one generation: the same deterministic root id
+        // legitimately re-derives different digests when the binary or the
+        // Contract ABI underneath it changed.
+        let generation = format!("{}/abi{}", env!("CARGO_PKG_VERSION"), result.1);
         let index = json!({
             "schema": "aiko.graph-harness-root/v1",
             "root_id": turn.id,
@@ -4109,6 +4147,7 @@ async fn expand_turn_root(
             "identity": prepared.identity,
             "bundle_digest": prepared.bundle_digest,
             "bundle": state_root.join("prepared").join(&prepared.bundle_digest),
+            "generation": generation,
         });
         let bytes = graph_harness::canonical_json(&index)
             .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
@@ -4133,11 +4172,71 @@ async fn expand_turn_root(
                 if metadata.file_type().is_symlink()
                     || !metadata.is_file()
                     || metadata.len() > 64 * 1024
-                    || std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice())
                 {
+                    // A symlink or unbounded entry is a tamper shape, never an
+                    // upgrade shape — no supersede path for it.
                     return Err(
                         "graph_harness_root_index_failed: cached Contract root receipt differs"
                             .into(),
+                    );
+                }
+                let existing = std::fs::read(&path)
+                    .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
+                if existing.as_slice() != bytes.as_slice() {
+                    // Within ONE generation a differing receipt stays a refusal:
+                    // same code deriving two graphs for one root id is
+                    // nondeterminism on the recompute path, the exact thing this
+                    // receipt exists to catch. A receipt from a PRIOR generation
+                    // (older binary or ABI, or written before receipts carried a
+                    // generation) is instead superseded by this admission —
+                    // archived beside the index, never erased, so the old pin
+                    // remains inspectable evidence.
+                    let stale_generation = serde_json::from_slice::<Value>(&existing)
+                        .ok()
+                        .and_then(|value| {
+                            value
+                                .get("generation")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned)
+                        });
+                    if stale_generation.as_deref() == Some(generation.as_str()) {
+                        return Err(
+                            "graph_harness_root_index_failed: cached Contract root receipt differs"
+                                .into(),
+                        );
+                    }
+                    // Archived OUTSIDE roots/: the bounded roots scan refuses any
+                    // entry that is not a receipt file, so the archive must not
+                    // add entries there.
+                    let archive_dir = state_root.join("superseded-roots");
+                    std::fs::create_dir_all(&archive_dir)
+                        .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    std::hash::Hash::hash(existing.as_slice(), &mut hasher);
+                    let archive = archive_dir.join(format!(
+                        "{}.{:016x}.json",
+                        turn.id,
+                        std::hash::Hasher::finish(&hasher)
+                    ));
+                    std::fs::rename(&path, &archive)
+                        .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
+                    let mut file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&path)
+                        .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
+                    file.write_all(&bytes)
+                        .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
+                    file.sync_all()
+                        .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
+                    std::fs::File::open(&roots)
+                        .and_then(|directory| directory.sync_all())
+                        .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
+                    tracing::info!(
+                        root_id = %turn.id,
+                        stale_generation = stale_generation.as_deref().unwrap_or("pre-generation"),
+                        generation = %generation,
+                        "superseded prior-generation Contract root receipt"
                     );
                 }
             }

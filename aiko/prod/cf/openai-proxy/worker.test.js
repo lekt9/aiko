@@ -4,10 +4,10 @@ import worker from './worker.js';
 
 const env = {
     CODEGRAFF_API_KEY: 'cg_sk_test',
-    SURPLUS_API_KEY: 'inf_test',
     ISSUER_URL: 'https://aiko.theclarityproject.net',
     CODEGRAFF_URL: 'https://gateway.codegraff.com',
-    TARGET_URL: 'https://api.surplusintelligence.ai',
+    BEST_MODEL: 'muse-spark-1.2-contributor',
+    BEST_CONTEXT_WINDOW: '1048576',
 };
 
 function token(payload = {}) {
@@ -64,26 +64,6 @@ test('normalizes Azure-style /openai/v1 without losing the endpoint', async t =>
     assert.equal(seenUrl, 'https://gateway.codegraff.com/v1/responses/r_1?include=output');
 });
 
-test('fails over to surplus when codegraff returns 503', async t => {
-    const originalFetch = globalThis.fetch;
-    t.after(() => { globalThis.fetch = originalFetch; });
-    const seen = [];
-    globalThis.fetch = async (url, init) => {
-        seen.push({ url: String(url), auth: init.headers.get('authorization') });
-        if (String(url).includes('gateway.codegraff.com')) {
-            return new Response('busy', { status: 503 });
-        }
-        return new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } });
-    };
-    const response = await worker.fetch(request('/v1/chat/completions', {
-        method: 'POST', body: '{"model":"deepseek-v4-pro"}', headers: { 'content-type': 'application/json' },
-    }), env);
-    assert.equal(response.status, 200);
-    assert.ok(seen.some(s => s.url.includes('gateway.codegraff.com')));
-    assert.ok(seen.some(s => s.url.includes('api.surplusintelligence.ai') && s.auth === 'Bearer inf_test'));
-    assert.equal(response.headers.get('x-aiko-upstream'), 'surplus');
-});
-
 test('passes SSE through byte-for-byte and retains event headers', async t => {
     const originalFetch = globalThis.fetch;
     t.after(() => { globalThis.fetch = originalFetch; });
@@ -115,91 +95,133 @@ test('CORS preflight advertises the complete method surface', async () => {
     assert.equal(response.headers.get('access-control-allow-headers'), '*');
 });
 
-// ── Difficulty routing ──────────────────────────────────────────────────────
+// ── Model gate ──────────────────────────────────────────────────────────────
 
-const routingEnv = { ...env, HARD_ROUTING: '1', EASY_MODELS: 'deepseek-v4-flash', HARD_MODEL: 'deepseek-v4-pro' };
-
-async function forwardedBody(reqInit, useEnv = routingEnv) {
+test('publishes exactly one model, `best`, without consulting upstream', async t => {
     const originalFetch = globalThis.fetch;
+    t.after(() => { globalThis.fetch = originalFetch; });
+    let upstreamCalled = false;
+    globalThis.fetch = async () => { upstreamCalled = true; return new Response('{}'); };
+
+    const response = await worker.fetch(request('/v1/models'), env);
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(upstreamCalled, false);
+    assert.equal(payload.data.length, 1);
+    assert.equal(payload.data[0].id, 'best');
+    assert.equal(payload.data[0].model, 'best');
+    assert.equal(payload.data[0].contextWindow, 1048576);
+    assert.equal(payload.data[0].apiBackend, 'chat_completions');
+    assert.equal(payload.data[0].baseUrl, 'https://aiko.example/v1');
+});
+
+test('rewrites `best` to the bound upstream slug and forwards to Codegraff', async t => {
+    const originalFetch = globalThis.fetch;
+    t.after(() => { globalThis.fetch = originalFetch; });
     let seen;
     globalThis.fetch = async (url, init) => {
         seen = { url: String(url), body: init.body ? new TextDecoder().decode(init.body) : null };
-        return new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } });
+        return new Response('{}', { headers: { 'content-type': 'application/json' } });
     };
-    try {
-        const resp = await worker.fetch(request('/v1/chat/completions', {
-            method: 'POST', headers: { 'content-type': 'application/json', ...(reqInit.headers || {}) },
-            body: reqInit.body,
-        }), useEnv);
-        return { model: seen.body ? JSON.parse(seen.body).model : null, resp };
-    } finally {
-        globalThis.fetch = originalFetch;
-    }
-}
 
-test('escalates a hard task (code / multi-step) to the strong model', async () => {
-    const { model, resp } = await forwardedBody({
-        body: JSON.stringify({ model: 'deepseek-v4-flash', messages: [
-            { role: 'user', content: 'Refactor this function and explain the complexity trade-offs:\n```js\nfunction f(){}\n```' },
-        ] }),
-    });
-    assert.equal(model, 'deepseek-v4-pro');
-    assert.equal(resp.headers.get('x-aiko-routed-model'), 'deepseek-v4-pro');
+    await worker.fetch(request('/v1/chat/completions', {
+        method: 'POST',
+        body: '{"model":"best","stream":true,"messages":[{"role":"user","content":"hi"}]}',
+        headers: { 'content-type': 'application/json' },
+    }), env);
+
+    assert.equal(seen.url, 'https://gateway.codegraff.com/v1/chat/completions');
+    const forwarded = JSON.parse(seen.body);
+    assert.equal(forwarded.model, 'muse-spark-1.2-contributor');
+    // The rest of the request survives the rewrite untouched.
+    assert.equal(forwarded.stream, true);
+    assert.deepEqual(forwarded.messages, [{ role: 'user', content: 'hi' }]);
 });
 
-test('leaves an easy task on the cheap model', async () => {
-    const { model, resp } = await forwardedBody({
-        body: JSON.stringify({ model: 'deepseek-v4-flash', messages: [
-            { role: 'user', content: 'Translate "hello" to French.' },
-        ] }),
-    });
-    assert.equal(model, 'deepseek-v4-flash');
-    assert.equal(resp.headers.get('x-aiko-routed-model'), null);
-});
-
-test('caller tag overrides the heuristic in both directions', async () => {
-    // Tag=easy keeps a code prompt cheap.
-    const easy = await forwardedBody({
-        headers: { 'x-aiko-difficulty': 'easy' },
-        body: JSON.stringify({ model: 'deepseek-v4-flash', messages: [{ role: 'user', content: '```py\nprint(1)\n```' }] }),
-    });
-    assert.equal(easy.model, 'deepseek-v4-flash');
-    // Tag=hard escalates a trivial prompt.
-    const hard = await forwardedBody({
-        headers: { 'x-aiko-difficulty': 'hard' },
-        body: JSON.stringify({ model: 'deepseek-v4-flash', messages: [{ role: 'user', content: 'hi' }] }),
-    });
-    assert.equal(hard.model, 'deepseek-v4-pro');
-});
-
-test('never rewrites a model outside EASY_MODELS (no accidental downgrade/upgrade)', async () => {
-    const { model } = await forwardedBody({
-        body: JSON.stringify({ model: 'grok-4.5', messages: [{ role: 'user', content: 'prove that P=NP step by step' }] }),
-    });
-    assert.equal(model, 'grok-4.5');
-});
-
-test('is a no-op when HARD_ROUTING is off', async () => {
-    const { model } = await forwardedBody({
-        body: JSON.stringify({ model: 'deepseek-v4-flash', messages: [{ role: 'user', content: 'debug this race condition' }] }),
-    }, { ...env });  // HARD_ROUTING unset
-    assert.equal(model, 'deepseek-v4-flash');
-});
-
-test('passes a non-JSON body through untouched even with routing on', async () => {
+test('older clients pinned to a previous default still resolve', async t => {
     const originalFetch = globalThis.fetch;
-    let seenBody;
+    t.after(() => { globalThis.fetch = originalFetch; });
+    const bodies = [];
     globalThis.fetch = async (url, init) => {
-        seenBody = init.body;
-        return new Response('{}', { status: 200 });
+        bodies.push(new TextDecoder().decode(init.body));
+        return new Response('{}', { headers: { 'content-type': 'application/json' } });
     };
-    try {
-        const raw = new Uint8Array([1, 2, 3, 4]);
+
+    for (const legacy of ['deepseek-v4-pro', 'kimi-k3', 'auto', '']) {
         await worker.fetch(request('/v1/chat/completions', {
-            method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: raw,
-        }), routingEnv);
-        assert.deepEqual(new Uint8Array(seenBody), raw);
-    } finally {
-        globalThis.fetch = originalFetch;
+            method: 'POST',
+            body: JSON.stringify({ model: legacy, messages: [] }),
+            headers: { 'content-type': 'application/json' },
+        }), env);
     }
+    assert.equal(bodies.length, 4);
+    for (const b of bodies) assert.equal(JSON.parse(b).model, 'muse-spark-1.2-contributor');
+});
+
+test('refuses a model the catalog does not publish, and never reaches upstream', async t => {
+    const originalFetch = globalThis.fetch;
+    t.after(() => { globalThis.fetch = originalFetch; });
+    let upstreamCalled = false;
+    globalThis.fetch = async () => { upstreamCalled = true; return new Response('{}'); };
+
+    for (const model of ['anthropic/claude-opus-5', 'gpt-5.6', 'grok-4.3']) {
+        const response = await worker.fetch(request('/v1/chat/completions', {
+            method: 'POST',
+            body: JSON.stringify({ model, messages: [] }),
+            headers: { 'content-type': 'application/json' },
+        }), env);
+        assert.equal(response.status, 400, `${model} must be refused`);
+        assert.match((await response.json()).error.message, /serves exactly one model: "best"/);
+    }
+    assert.equal(upstreamCalled, false);
+
+    const missing = await worker.fetch(request('/v1/models/anthropic%2Fclaude-opus-5'), env);
+    assert.equal(missing.status, 404);
+});
+
+test('the binding moves with BEST_MODEL, without a client release', async t => {
+    const originalFetch = globalThis.fetch;
+    t.after(() => { globalThis.fetch = originalFetch; });
+    let seen;
+    globalThis.fetch = async (url, init) => {
+        seen = new TextDecoder().decode(init.body);
+        return new Response('{}', { headers: { 'content-type': 'application/json' } });
+    };
+
+    const rebound = { ...env, BEST_MODEL: 'muse-spark-1.3-contributor', BEST_CONTEXT_WINDOW: '2097152' };
+    await worker.fetch(request('/v1/responses', {
+        method: 'POST', body: '{"model":"best"}', headers: { 'content-type': 'application/json' },
+    }), rebound);
+    assert.equal(JSON.parse(seen).model, 'muse-spark-1.3-contributor');
+
+    const listed = await (await worker.fetch(request('/v1/models'), rebound)).json();
+    assert.equal(listed.data[0].contextWindow, 2097152);
+});
+
+test('leaves non-chat routes transparent so embeddings keep their own model', async t => {
+    const originalFetch = globalThis.fetch;
+    t.after(() => { globalThis.fetch = originalFetch; });
+    let seen;
+    globalThis.fetch = async (url, init) => {
+        seen = { url: String(url), body: new TextDecoder().decode(init.body) };
+        return new Response('{}', { headers: { 'content-type': 'application/json' } });
+    };
+
+    await worker.fetch(request('/v1/embeddings', {
+        method: 'POST',
+        body: '{"model":"openai/text-embedding-3-small","input":"hi"}',
+        headers: { 'content-type': 'application/json' },
+    }), env);
+
+    assert.equal(seen.url, 'https://gateway.codegraff.com/v1/embeddings');
+    assert.equal(JSON.parse(seen.body).model, 'openai/text-embedding-3-small');
+});
+
+test('Codegraff is the only upstream — a missing key fails closed', async () => {
+    const response = await worker.fetch(request('/v1/chat/completions', {
+        method: 'POST', body: '{"model":"best"}', headers: { 'content-type': 'application/json' },
+    }), { ISSUER_URL: env.ISSUER_URL });
+    assert.equal(response.status, 503);
+    assert.match((await response.json()).error.message, /CODEGRAFF_API_KEY/);
 });

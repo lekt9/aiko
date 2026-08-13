@@ -2352,7 +2352,7 @@ async fn async_main() -> Result<()> {
             }
             Command::Login {
                 provider,
-                legacy: _,
+                legacy,
                 oauth,
                 device_auth,
                 devbox,
@@ -2360,6 +2360,11 @@ async fn async_main() -> Result<()> {
                 init_tracing_simple("cli");
                 let _otel_guard = xai_grok_telemetry::otel_layer::otel_guard();
                 if provider.is_some_and(LoginProvider::uses_openai_oauth) {
+                    if legacy || oauth || device_auth || devbox {
+                        anyhow::bail!(
+                            "--legacy, --oauth, --device-auth, and --devbox apply only to Aiko/Grok login"
+                        );
+                    }
                     let home = dirs::home_dir()
                         .ok_or_else(|| anyhow::anyhow!("could not determine the home directory"))?;
                     xai_grok_shell::auth::codex_oauth::codex_login(&home).await?;
@@ -2370,28 +2375,65 @@ async fn async_main() -> Result<()> {
                         .map_err(|e| anyhow::anyhow!("Failed to load config: {e}"))?;
                     let mut config = AgentConfig::new_from_toml_cfg(&config)
                         .map_err(|e| anyhow::anyhow!("Failed to create agent config: {e}"))?;
-                    match provider {
+                    let builtin_provider = match provider {
                         Some(LoginProvider::Aiko) => {
-                            config.grok_com_config.apply_builtin_login_profile(false)
+                            Some(xai_grok_shell::auth::BuiltinLoginProvider::Aiko)
                         }
                         Some(LoginProvider::Grok) => {
-                            config.grok_com_config.apply_builtin_login_profile(true)
+                            Some(xai_grok_shell::auth::BuiltinLoginProvider::Grok)
                         }
-                        None => {}
+                        None => None,
                         Some(LoginProvider::Openai | LoginProvider::Codex) => unreachable!(),
+                    };
+                    if let Some(provider) = builtin_provider {
+                        if config.grok_com_config.oidc.is_some()
+                            || config.grok_com_config.auth_provider_command.is_some()
+                        {
+                            anyhow::bail!(
+                                "This deployment configures managed authentication; omit the provider to use it"
+                            );
+                        }
+                        config.grok_com_config.apply_builtin_login_profile(provider);
                     }
                     xai_grok_shell::auth::run_cli_login(&config, oauth, device_auth, devbox)
                         .await?;
+                    if let Some(provider) = builtin_provider {
+                        xai_grok_shell::auth::persist_builtin_login_provider(provider).await?;
+                    }
                     println!();
                     xai_grok_shell::instrumentation::finalize_and_exit(0);
                 }
             }
-            Command::Logout => {
+            Command::Logout { provider } => {
                 init_tracing_simple("cli");
+                if provider.is_some_and(LoginProvider::uses_openai_oauth) {
+                    let home = dirs::home_dir()
+                        .ok_or_else(|| anyhow::anyhow!("could not determine the home directory"))?;
+                    if xai_grok_shell::auth::codex_oauth::clear_codex_auth(&home)? {
+                        eprintln!("Logged out of OpenAI/Codex");
+                    } else {
+                        eprintln!("No cached OpenAI/Codex session to log out of.");
+                    }
+                    xai_grok_shell::instrumentation::finalize_and_exit(0);
+                }
                 let config = xai_grok_shell::config::load_effective_config_disk_only()
                     .map_err(|e| anyhow::anyhow!("Failed to load config: {e}"))?;
-                let config = AgentConfig::new_from_toml_cfg(&config)
+                let mut config = AgentConfig::new_from_toml_cfg(&config)
                     .map_err(|e| anyhow::anyhow!("Failed to create agent config: {e}"))?;
+                match provider {
+                    Some(LoginProvider::Aiko) => {
+                        config.grok_com_config.apply_builtin_login_profile(
+                            xai_grok_shell::auth::BuiltinLoginProvider::Aiko,
+                        )
+                    }
+                    Some(LoginProvider::Grok) => {
+                        config.grok_com_config.apply_builtin_login_profile(
+                            xai_grok_shell::auth::BuiltinLoginProvider::Grok,
+                        )
+                    }
+                    None => {}
+                    Some(LoginProvider::Openai | LoginProvider::Codex) => unreachable!(),
+                }
                 xai_grok_shell::auth::run_cli_logout(&config)?;
                 xai_grok_shell::instrumentation::finalize_and_exit(0);
             }

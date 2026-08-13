@@ -658,6 +658,7 @@ impl LocalTerminalActor {
 
         cmd.envs(crate::util::pager_env());
         crate::util::apply_grok_agent_marker(&mut cmd);
+        crate::util::strip_contract_adopt_identity(&mut cmd);
 
         cmd.fd_mappings(prep.fd_mappings)
             .map_err(|e| ComputerError::io(format!("fd mapping: {e}")))?;
@@ -2726,6 +2727,7 @@ fn spawn_shell_command(
         }
         // Agent marker must win over request/login env.
         crate::util::apply_grok_agent_marker(&mut cmd);
+        crate::util::strip_contract_adopt_identity(&mut cmd);
 
         // Detach from the controlling terminal so subprocesses cannot open
         // /dev/tty and compete with the TUI for terminal input.
@@ -2767,6 +2769,7 @@ fn spawn_shell_command(
         cmd.envs(crate::util::pager_env());
         // Agent marker must win over request env.
         crate::util::apply_grok_agent_marker(&mut cmd);
+        crate::util::strip_contract_adopt_identity(&mut cmd);
 
         // Set creation flags inline rather than via crate::util::detach_command
         // + new_process_group: tokio's creation_flags is a SET, not OR, so

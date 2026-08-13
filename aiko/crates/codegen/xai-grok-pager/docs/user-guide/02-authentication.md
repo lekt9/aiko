@@ -32,6 +32,10 @@ token header synchronized from `xai-org/grok-build`; it does not require local
 environment overrides. `--oauth` and `--device-auth` select the transport for
 the Aiko and Grok flows, not the provider.
 
+After a successful explicit Aiko or Grok login, Aiko remembers that built-in
+profile for later launches. Bare `aiko login` remains configuration-aware, so
+enterprise OIDC and external authentication keep their existing precedence.
+
 Aiko stores the session and reuses it across launches. When the session cannot
 be refreshed, run `aiko login` again.
 
@@ -47,8 +51,9 @@ aiko login
 available for enterprise and headless environments. Compatibility: some
 builds still accept `aiko login` as an alias.
 
-To sign out, run `aiko logout` (or the compatibility `aiko logout`). It
-clears cached credentials.
+To sign out from the active Aiko/Grok profile, run `aiko logout`. Explicit
+provider forms are also available: `aiko logout aiko`, `aiko logout grok`,
+`aiko logout openai`, and the compatible `aiko logout codex` spelling.
 
 ---
 

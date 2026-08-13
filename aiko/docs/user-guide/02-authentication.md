@@ -6,30 +6,43 @@ Grok supports several authentication methods, including interactive browser logi
 
 ## Browser Login (Default)
 
-On first launch, Grok opens your browser to authenticate with grok.com:
+On first launch, Aiko opens your browser using the active authentication
+configuration:
 
 ```bash
-grok
+aiko
 ```
 
-Grok stores credentials in `~/.grok/auth.json` and reuses them across sessions. Grok refreshes access tokens automatically in the background. When a token can't be refreshed, Grok prompts you to sign in again. Credentials without a server-provided expiry fall back to a 30-day lifetime.
+Aiko stores Aiko/Grok credentials in `~/.grok/auth.json` and reuses them across
+sessions. It refreshes access tokens automatically in the background. When a
+token can't be refreshed, the TUI prompts you to sign in again. Credentials
+without a server-provided expiry fall back to a 30-day lifetime.
 
 ### Re-authenticate
 
 To switch accounts or resolve an authentication problem, run:
 
 ```bash
-grok login
+aiko login aiko       # aiko.theclarityproject.net
+aiko login grok       # auth.x.ai
+aiko login openai     # ChatGPT/Codex OAuth
 ```
 
-Running `grok login` starts the sign-in flow again, replacing your cached session. By default, it opens your browser and signs in through SpaceXAI OAuth at `auth.x.ai`. Pass a flag to select a different flow:
+`aiko login codex` remains an alias for `aiko login openai`. Successful Aiko or
+Grok selection is saved in `~/.grok/config.toml`, so later TUI authentication
+uses the same provider. A managed OIDC or external-auth deployment takes
+precedence and cannot be replaced with an explicit Aiko/Grok selector.
+
+The following flow flags apply only to Aiko and Grok:
 
 | Flag | Description |
 |------|-------------|
-| `--oauth` | Sign in through SpaceXAI OAuth at `auth.x.ai`. This is the default, so the flag is optional. |
+| `--oauth` | Use browser OAuth for the selected Aiko/Grok provider. |
 | `--device-auth` (alias `--device-code`) | Sign in with the device-code flow for headless or remote environments. |
 
-To sign out, run `grok logout`. It takes no flags and clears your cached credentials.
+To sign out of a specific credential store, run `aiko logout aiko`, `aiko logout
+grok`, or `aiko logout openai`. Bare `aiko logout` uses the active configured
+Aiko/Grok authentication profile.
 
 ---
 

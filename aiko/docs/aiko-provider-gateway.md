@@ -34,34 +34,54 @@ token subject, records usage against that user, and then selects an upstream
 provider from its server-side model registry. Do not trust `x-userid` or other
 client-supplied identity headers for accounting.
 
-Upstream priority on the Aiko Cloudflare worker is **Codegraff first**, Surplus
-as failover. Keep both keys only on the server:
+Codegraff is the **only** upstream. Keep its key on the server:
 
 ```text
-# primary
 POST https://gateway.codegraff.com/v1/chat/completions
 Authorization: Bearer ${CODEGRAFF_API_KEY}
-
-# failover (retryable 429/5xx or connection failure)
-POST https://api.surplusintelligence.ai/v1/chat/completions
-Authorization: Bearer ${SURPLUS_API_KEY}
 ```
 
-`deepseek-v4-pro` is Aiko's client-side default and should also be the first
-or explicitly selected default in the server model catalog.
+A missing `CODEGRAFF_API_KEY` is a 503, not a fallback to some other vendor.
+Failing over to a second provider would keep the gateway serving while looking
+healthy, which is the one failure nobody notices from outside.
 
-The models response may be a standard OpenAI list. Aiko also understands the
-optional routing metadata shown here:
+## The model gate: one published id
+
+The gateway publishes **exactly one model id, `best`**, and binds it
+server-side to a concrete upstream slug (`BEST_MODEL` / `DEFAULT_MODEL` in the
+worker's config; today `muse-spark-1.2-contributor`). Three things follow, and
+they are the point of the gate:
+
+1. **Re-pointing `best` at a newer model is a var change plus a deploy.** Every
+   installed client follows without updating. A client that hard-coded the
+   upstream slug would keep pinning yesterday's model after the binding moved.
+2. **`/v1/models` is synthesized, never proxied.** Returning the upstream's full
+   catalog would list models the gate then refuses — the listing and the routing
+   would disagree about what Aiko serves.
+3. **An id the catalog does not publish is refused with 400, not forwarded.**
+   The one exception is a compatibility set (`deepseek-v4-pro`,
+   `deepseek-v4-flash`, `kimi-k3`, `auto`, `default`, empty) that older
+   installed clients still send; those resolve to the bound model. Dropping an
+   entry from that set breaks every client pinned to it until it updates.
+
+`best` exists **only inside this worker**. A caller holding a direct Codegraff
+key must name the upstream slug outright — sending `best` to
+`gateway.codegraff.com` is a 400. That is why `xai_aiko_providers` carries both
+`GATEWAY_MODEL` (`best`, session path) and `GATEWAY_UPSTREAM_MODEL` (the slug,
+direct-key path).
+
+The models response is a standard OpenAI list carrying the optional routing
+metadata Aiko understands:
 
 ```json
 {
+  "object": "list",
   "data": [
     {
-      "id": "deepseek-v4-pro",
-      "model": "deepseek-v4-pro",
-      "name": "DeepSeek V4 Pro",
-      "description": "Codegraff",
-      "contextWindow": 1000000,
+      "id": "best",
+      "model": "best",
+      "name": "Best",
+      "contextWindow": 1048576,
       "apiBackend": "chat_completions",
       "baseUrl": "https://aiko.theclarityproject.net/v1"
     }

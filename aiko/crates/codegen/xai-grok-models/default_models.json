@@ -1,32 +1,19 @@
 {
-  "default": "deepseek-v4-pro",
-  "web_search": "deepseek-v4-pro",
-  "image_description": "deepseek-v4-pro",
-  "session_summary": "deepseek-v4-pro",
+  "default": "best",
+  "web_search": "best",
+  "image_description": "best",
+  "session_summary": "best",
   "models": [
     {
-      "model": "deepseek-v4-pro",
-      "name": "DeepSeek V4 Pro",
-      "description": "Aiko's default coding model, served through the authenticated provider gateway",
-      "context_window": 1000000,
+      "model": "best",
+      "name": "Best",
+      "description": "Aiko's best available model, served through the authenticated provider gateway. The gateway binds this id to a concrete model server-side.",
+      "context_window": 1048576,
       "temperature": 0.7,
       "top_p": 0.95,
       "api_backend": "chat_completions",
-      "supported_in_api": false
-    },
-    {
-      "id": "codex",
-      "model": "gpt-5.6-sol",
-      "name": "Codex (ChatGPT)",
-      "description": "OpenAI Codex via ChatGPT Responses API. Login with `aiko login codex`.",
-      "base_url": "https://chatgpt.com/backend-api/codex",
-      "context_window": 270000,
-      "api_backend": "responses",
-      "agent_type": "codex",
       "supported_in_api": false,
-      "hidden": false,
-      "supports_reasoning_effort": true,
-      "supports_backend_search": false
+      "supports_reasoning_effort": true
     }
   ]
 }

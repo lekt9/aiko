@@ -1,6 +1,5 @@
 /** @jsxImportSource react */
-import type { ComponentType } from "react";
-import { useGatewayNodeOutput } from "@smthrs/gateway-react";
+import { useEffect, useState, type ComponentType } from "react";
 import { CellPortView, type CellRenderComponentProps } from "./CellPortView.tsx";
 import { normalizeCellVisualMembrane, type CellPort } from "./model.ts";
 
@@ -63,6 +62,51 @@ export function resolveCellPortState({
   return { value, pending, error };
 }
 
+function useDurableNodeOutput(runId?: string, nodeId?: string): CellPortOutputState {
+  const key = JSON.stringify([runId, nodeId]);
+  const [state, setState] = useState<CellPortOutputState & { key: string }>({ key, loading: Boolean(runId && nodeId) });
+  useEffect(() => {
+    let active = true;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    if (!runId || !nodeId) {
+      setState({ key, loading: false });
+      return () => {
+        active = false;
+      };
+    }
+    const load = async () => {
+      setState((current) => ({ ...current, key, loading: true, error: null }));
+      try {
+        const response = await fetch(
+          `/v1/api/nodes/${encodeURIComponent(runId)}/${encodeURIComponent(nodeId)}/output?iteration=0`,
+        );
+        if (!response.ok) throw new Error(`Node output request failed (${response.status})`);
+        const envelope = (await response.json()) as { data?: unknown };
+        const data = Object.prototype.hasOwnProperty.call(envelope, "data") ? envelope.data : envelope;
+        if (active) {
+          setState({ key, data, loading: false, error: null });
+          if (data !== null && typeof data === "object" && (data as { status?: unknown }).status === "pending")
+            retry = setTimeout(load, 500);
+        }
+      } catch (cause) {
+        if (active)
+          setState((current) => ({
+            ...current,
+            key,
+            loading: false,
+            error: cause instanceof Error ? cause : new Error(String(cause)),
+          }));
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+      if (retry) clearTimeout(retry);
+    };
+  }, [key, runId, nodeId]);
+  return state.key === key ? state : { loading: Boolean(runId && nodeId) };
+}
+
 function LivePort({
   runId,
   nodeId,
@@ -78,7 +122,7 @@ function LivePort({
   fallback?: unknown;
   RenderSpec?: ComponentType<CellRenderComponentProps>;
 }) {
-  const output = useGatewayNodeOutput({ runId, nodeId });
+  const output = useDurableNodeOutput(runId, nodeId);
   const state = resolveCellPortState({ port, runId, nodeId, hasFallback, fallback, output });
   return (
     <CellPortView port={port} value={state.value} RenderSpec={RenderSpec} pending={state.pending} error={state.error} />
@@ -90,7 +134,12 @@ export function CellWorkflowUi({ cell, runId, nodeIds = {}, title, values = {}, 
   return (
     <main className="workflow-shell cell-workflow-ui">
       <style>{`.cell-workflow-ui{font:14px/1.5 system-ui,sans-serif;color:#17202a;padding:24px}.cell-workflow-ui .topbar{display:flex;align-items:end;justify-content:space-between;margin-bottom:20px}.cell-workflow-ui h1{margin:0;font-size:24px}.cell-workflow-ui .meta{color:#667085}.cell-membrane{display:grid;gap:16px}.cell-port{border:1px solid #d0d5dd;border-radius:10px;padding:16px;background:#fff}.cell-port .section-head{display:flex;justify-content:space-between;font-weight:600;margin-bottom:12px}.cell-port .pill{font-size:11px;text-transform:uppercase;color:#475467}.cell-port-table{width:100%;border-collapse:collapse}.cell-port-table th,.cell-port-table td{text-align:left;border-bottom:1px solid #eaecf0;padding:8px}.cell-port-fields{display:grid;gap:8px}.cell-port-field{display:grid;grid-template-columns:minmax(120px,1fr) 2fr}.alert.err{color:#b42318}.empty,.cell-port-empty{color:#667085}`}</style>
-      <header className="topbar"><div><h1>{title ?? membrane.name}</h1>{membrane.description ? <span className="meta">{membrane.description}</span> : null}</div></header>
+      <header className="topbar">
+        <div>
+          <h1>{title ?? membrane.name}</h1>
+          {membrane.description ? <span className="meta">{membrane.description}</span> : null}
+        </div>
+      </header>
       <div className="workflow-dashboard cell-membrane" data-cell={membrane.name}>
         {membrane.ports.map((port) => {
           const directedKey: CellPortKey = `${port.direction}:${port.name}`;

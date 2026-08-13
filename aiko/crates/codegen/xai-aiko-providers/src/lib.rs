@@ -28,15 +28,16 @@
 //!
 //! # Provider routing
 //!
-//! 1. **Codegraff (session proxy) is primary** when `AIKO_ACCESS_TOKEN` is
-//!    available and the model is served.
-//! 2. **Surplus is secondary** when `SURPLUS_API_KEY` is available and the
-//!    model is served (or when Codegraff is not keyed).
-//! 3. **Direct providers are fallback routes** when neither gateway serves
-//!    the requested model / has a key.
-//! 4. **Catalogued models with no keyed provider fail with `MissingKey`**.
-//! 5. **Genuinely unknown models fall back**: `claude*` → Anthropic, everything
-//!    else → Codegraff session proxy (or Surplus if only that is keyed).
+//! Aiko routes to Codegraff and nothing else. The gateway is reachable two
+//! ways, and they do not share a model id:
+//!
+//! 1. **`codegraff`** — the Aiko session proxy (`AIKO_ACCESS_TOKEN`). Publishes
+//!    [`GATEWAY_MODEL`] and rebinds it server-side.
+//! 2. **`surplus`** — a direct Codegraff key (`SURPLUS_API_KEY` /
+//!    `CODEGRAFF_API_KEY`). Names [`GATEWAY_UPSTREAM_MODEL`] outright.
+//! 3. **Catalogued but unkeyed fails with `MissingKey`**; anything else fails
+//!    with `InvalidModel`. There is no heuristic fallback — guessing a provider
+//!    would send a request to a host the catalog never advertised.
 
 mod keys;
 mod provider;
@@ -48,27 +49,46 @@ pub use provider::{AuthStyle, CredentialSource, Provider, ProviderKind};
 pub use router::{ProviderRouter, RouterError};
 pub use spec::ProviderSpec;
 
-/// OpenAI-compatible Surplus Intelligence gateway (primary multi-model path).
-pub const SURPLUS_API_BASE_URL: &str = "https://api.surplusintelligence.ai/v1";
-/// Surplus live model catalog.
-pub const SURPLUS_MODELS_URL: &str = "https://api.surplusintelligence.ai/v1/models";
+/// OpenAI-compatible Codegraff gateway — the upstream behind both Aiko paths.
+pub const CODEGRAFF_API_BASE_URL: &str = "https://gateway.codegraff.com/v1";
+/// Codegraff live model catalog.
+pub const CODEGRAFF_MODELS_URL: &str = "https://gateway.codegraff.com/v1/models";
 /// Fully-qualified chat-completions endpoint.
-pub const SURPLUS_CHAT_COMPLETIONS_URL: &str =
-    "https://api.surplusintelligence.ai/v1/chat/completions";
+pub const CODEGRAFF_CHAT_COMPLETIONS_URL: &str =
+    "https://gateway.codegraff.com/v1/chat/completions";
 
-/// Back-compat aliases — the gateway role formerly held by Codegraff.
-pub const CODEGRAFF_API_BASE_URL: &str = SURPLUS_API_BASE_URL;
-/// Back-compat alias for [`SURPLUS_MODELS_URL`].
-pub const CODEGRAFF_MODELS_URL: &str = SURPLUS_MODELS_URL;
-/// Back-compat alias for [`SURPLUS_CHAT_COMPLETIONS_URL`].
-pub const CODEGRAFF_CHAT_COMPLETIONS_URL: &str = SURPLUS_CHAT_COMPLETIONS_URL;
+/// Aliases kept for the call sites that still name the gateway role "surplus".
+pub const SURPLUS_API_BASE_URL: &str = CODEGRAFF_API_BASE_URL;
+/// Alias for [`CODEGRAFF_MODELS_URL`].
+pub const SURPLUS_MODELS_URL: &str = CODEGRAFF_MODELS_URL;
+/// Alias for [`CODEGRAFF_CHAT_COMPLETIONS_URL`].
+pub const SURPLUS_CHAT_COMPLETIONS_URL: &str = CODEGRAFF_CHAT_COMPLETIONS_URL;
+
+/// The single model id the **Aiko session gateway** publishes.
+///
+/// A session client never names an upstream slug. `best` is bound to
+/// [`GATEWAY_UPSTREAM_MODEL`] inside the worker (`DEFAULT_MODEL` in the
+/// proxy's `wrangler.jsonc`), so moving to a newer model is a worker deploy
+/// that every installed client follows without updating. A client that
+/// hard-coded the upstream slug would keep pinning yesterday's model after the
+/// binding moved.
+pub const GATEWAY_MODEL: &str = "best";
+/// The upstream slug `best` currently resolves to.
+///
+/// This is what a **direct** Codegraff key must name: `best` exists only inside
+/// the Aiko worker, so sending it straight to `gateway.codegraff.com` is a 400.
+/// Keep this in step with `DEFAULT_MODEL` in the proxy's `wrangler.jsonc`.
+pub const GATEWAY_UPSTREAM_MODEL: &str = "muse-spark-1.2-contributor";
+/// Context window for the bound model when the live `/v1/models` catalog is
+/// unavailable. The gateway's own `contextWindow` wins when present.
+pub const GATEWAY_CONTEXT_WINDOW: u64 = 1_048_576;
 
 /// The built-in provider catalog — one entry per supported provider.
 /// Mirrors codegraff's `provider_specs` const array.
 pub fn builtin_specs() -> &'static [ProviderSpec] {
     &[
-        // Aiko Cloudflare API proxy — session JWT path (server holds upstream
-        // keys; CF worker prefers Codegraff then Surplus). Primary when keyed.
+        // Aiko Cloudflare API proxy — session JWT path onto Codegraff (the
+        // server holds the key). Publishes `best`.
         ProviderSpec {
             id: "codegraff",
             display_name: "Aiko Session Proxy",
@@ -76,368 +96,60 @@ pub fn builtin_specs() -> &'static [ProviderSpec] {
             auth: AuthStyle::Bearer,
             url: "https://aiko.theclarityproject.net/v1/chat/completions",
             env_key: "AIKO_ACCESS_TOKEN",
-            default_model: "deepseek-v4-pro",
+            default_model: GATEWAY_MODEL,
         },
-        // Surplus Intelligence — secondary multi-model OpenAI-compatible gateway.
+        // Codegraff — direct-key path. Names the upstream slug outright.
         ProviderSpec {
             id: "surplus",
-            display_name: "Surplus Intelligence",
+            display_name: "Codegraff",
             kind: ProviderKind::OpenAi,
             auth: AuthStyle::Bearer,
-            url: SURPLUS_CHAT_COMPLETIONS_URL,
+            url: CODEGRAFF_CHAT_COMPLETIONS_URL,
             env_key: "SURPLUS_API_KEY",
-            default_model: "deepseek-v4-pro",
-        },
-        // Anthropic — Messages API, x-api-key auth
-        ProviderSpec {
-            id: "anthropic",
-            display_name: "Anthropic",
-            kind: ProviderKind::Anthropic,
-            auth: AuthStyle::XApiKey,
-            url: "https://api.anthropic.com/v1/messages",
-            env_key: "ANTHROPIC_API_KEY",
-            default_model: "claude-opus-4-8",
-        },
-        // DeepSeek — OpenAI-compatible
-        ProviderSpec {
-            id: "deepseek",
-            display_name: "DeepSeek",
-            kind: ProviderKind::OpenAi,
-            auth: AuthStyle::Bearer,
-            url: "https://api.deepseek.com/chat/completions",
-            env_key: "DEEPSEEK_API_KEY",
-            default_model: "deepseek-v4-pro",
-        },
-        // OpenAI — Chat Completions API
-        ProviderSpec {
-            id: "openai",
-            display_name: "OpenAI",
-            kind: ProviderKind::OpenAi,
-            auth: AuthStyle::Bearer,
-            url: "https://api.openai.com/v1/chat/completions",
-            env_key: "OPENAI_API_KEY",
-            default_model: "gpt-5.6",
-        },
-        // MiniMax — Anthropic-format
-        ProviderSpec {
-            id: "minimax",
-            display_name: "MiniMax",
-            kind: ProviderKind::Anthropic,
-            auth: AuthStyle::Bearer,
-            url: "https://api.minimax.io/anthropic/v1/messages",
-            env_key: "MINIMAX_API_KEY",
-            default_model: "MiniMax-M3",
-        },
-        // Xiaomi — OpenAI-compatible
-        ProviderSpec {
-            id: "xiaomi",
-            display_name: "Xiaomi",
-            kind: ProviderKind::OpenAi,
-            auth: AuthStyle::Bearer,
-            url: "https://api.xiaomimimo.com/v1/chat/completions",
-            env_key: "XIAOMI_API_KEY",
-            default_model: "mimo-v2.5-pro",
-        },
-        // Kimi — OpenAI-compatible (native); switches to Anthropic per-model
-        ProviderSpec {
-            id: "kimi",
-            display_name: "Kimi",
-            kind: ProviderKind::OpenAi,
-            auth: AuthStyle::Bearer,
-            url: "https://api.kimi.com/coding/v1/chat/completions",
-            env_key: "KIMI_API_KEY",
-            default_model: "k3",
-        },
-        // Moonshot — Kimi Open Platform
-        ProviderSpec {
-            id: "moonshot",
-            display_name: "Moonshot",
-            kind: ProviderKind::OpenAi,
-            auth: AuthStyle::Bearer,
-            url: "https://api.moonshot.ai/v1/chat/completions",
-            env_key: "MOONSHOT_API_KEY",
-            default_model: "kimi-latest",
-        },
-        // xAI (Grok) — OpenAI-compatible
-        ProviderSpec {
-            id: "xai",
-            display_name: "xAI",
-            kind: ProviderKind::OpenAi,
-            auth: AuthStyle::Bearer,
-            url: "https://api.x.ai/v1/chat/completions",
-            env_key: "XAI_API_KEY",
-            default_model: "grok-4.3",
-        },
-        // Z.AI (GLM) — OpenAI-compatible
-        ProviderSpec {
-            id: "zai",
-            display_name: "Z.AI",
-            kind: ProviderKind::OpenAi,
-            auth: AuthStyle::Bearer,
-            url: "https://api.z.ai/api/paas/v4/chat/completions",
-            env_key: "ZAI_API_KEY",
-            default_model: "glm-5.2",
-        },
-        // Sakana AI (Fugu) — OpenAI-compatible
-        ProviderSpec {
-            id: "fugu",
-            display_name: "fugu",
-            kind: ProviderKind::OpenAi,
-            auth: AuthStyle::Bearer,
-            url: "https://api.sakana.ai/v1/chat/completions",
-            env_key: "FUGU_API_KEY",
-            default_model: "fugu-ultra",
-        },
-        // Fireworks — OpenAI-compatible
-        ProviderSpec {
-            id: "fireworks",
-            display_name: "fireworks",
-            kind: ProviderKind::OpenAi,
-            auth: AuthStyle::Bearer,
-            url: "https://api.fireworks.ai/inference/v1/chat/completions",
-            env_key: "FIREWORKS_API_KEY",
-            default_model: "accounts/fireworks/models/deepseek-v4-pro",
-        },
-        // MLX — local model server (Apple Silicon), OpenAI-compatible
-        ProviderSpec {
-            id: "mlx",
-            display_name: "mlx",
-            kind: ProviderKind::OpenAi,
-            auth: AuthStyle::Bearer,
-            url: "http://127.0.0.1:8080/v1/chat/completions",
-            env_key: "MLX_API_KEY",
-            default_model: "mlx-community/Qwen3.6-27B-OptiQ-4bit",
-        },
-        // LM Studio — local model server, OpenAI-compatible
-        ProviderSpec {
-            id: "lmstudio",
-            display_name: "lmstudio",
-            kind: ProviderKind::OpenAi,
-            auth: AuthStyle::Bearer,
-            url: "http://127.0.0.1:1234/v1/chat/completions",
-            env_key: "LMSTUDIO_API_KEY",
-            default_model: "lmstudio",
-        },
-        // Codex (ChatGPT) — Responses API, bearer auth (OAuth token)
-        ProviderSpec {
-            id: "codex",
-            display_name: "Codex (ChatGPT)",
-            kind: ProviderKind::Responses,
-            auth: AuthStyle::Bearer,
-            url: "https://chatgpt.com/backend-api/codex",
-            env_key: "CODEX_DISABLED", // key comes from OAuth, not env
-            default_model: "gpt-5.6-sol",
+            default_model: GATEWAY_UPSTREAM_MODEL,
         },
     ]
 }
 
-/// Context windows for known models (tokens). Mirrors codegraff's pricing.zig context table.
-/// Key: "provider_id:model_name" → context_window_tokens.
+/// Context window (tokens) for a model on the Codegraff gateway.
+///
+/// Both gateway ids resolve to the same upstream model, so they share a window.
+/// The live `/v1/models` catalog wins when present; this is the offline answer.
 pub fn context_window_for(provider_id: &str, model: &str) -> u64 {
-    let _key = (provider_id, model);
-    // Codex/OpenAI models
-    if provider_id == "codex" || provider_id == "openai" {
+    if provider_id == "surplus" || provider_id == "codegraff" {
         match model {
-            "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" => return 270_000,
-            "gpt-5.5" | "gpt-5.5-codex" => return 270_000,
-            "gpt-5.4" | "gpt-5.4-mini" => return 270_000,
-            "gpt-5.3-codex" => return 270_000,
-            "gpt-5.2" | "gpt-5-codex" => return 270_000,
+            GATEWAY_MODEL | GATEWAY_UPSTREAM_MODEL => return GATEWAY_CONTEXT_WINDOW,
             _ => {}
-        }
-    }
-    // Claude models
-    if provider_id == "anthropic" {
-        match model {
-            "claude-opus-4-8" | "claude-opus-4.8" => return 200_000,
-            "claude-sonnet-4-6" | "claude-sonnet-4.6" => return 200_000,
-            "claude-haiku-4-5" => return 200_000,
-            _ => {}
-        }
-    }
-    // Grok models (xAI)
-    if provider_id == "xai" {
-        match model {
-            "grok-4.3" => return 1_000_000,
-            "grok-build" => return 1_000_000,
-            _ => {}
-        }
-    }
-    // DeepSeek
-    if provider_id == "deepseek" || provider_id == "surplus" || provider_id == "codegraff" {
-        match model {
-            "deepseek-v4-pro" | "deepseek-v4-flash" => return 1_000_000,
-            _ => {}
-        }
-    }
-    // Kimi
-    if provider_id == "kimi" {
-        match model {
-            "kimi-k2.7" | "kimi-k2.6" | "k3" => return 256_000,
-            _ => {}
-        }
-    }
-    // MiniMax
-    if provider_id == "minimax" {
-        if model == "MiniMax-M3" || model == "minimax-m3" {
-            return 1_000_000;
-        }
-    }
-    // GLM (Z.AI)
-    if provider_id == "zai" {
-        match model {
-            "glm-5.2" | "glm-5" | "glm-4.7" | "glm-4.5" => return 128_000,
-            _ => {}
-        }
-    }
-    // Xiaomi
-    if provider_id == "xiaomi" {
-        match model {
-            "mimo-v2.5-pro" | "mimo-v2.5" => return 256_000,
-            _ => {}
-        }
-    }
-    // Fugu
-    if provider_id == "fugu" {
-        if model == "fugu-ultra" {
-            return 128_000;
         }
     }
     // Unknown model — conservative default
     32_000
 }
 
-/// Is this a known model in the catalog? Used so that only genuinely unknown
-/// models fall through to the gateway fallback (codegraff issue #294).
+/// Is this a known model in the catalog?
+///
+/// Only the two gateway ids are. Aiko routes to Codegraff and nothing else, so
+/// there is no second provider a stray model name could belong to.
 pub fn is_known_model(_provider_id: &str, model: &str) -> bool {
-    // Check if a model appears in any provider's context table
-    let providers = [
-        "codex",
-        "openai",
-        "anthropic",
-        "xai",
-        "deepseek",
-        "surplus",
-        "codegraff",
-        "kimi",
-        "minimax",
-        "zai",
-        "xiaomi",
-        "fugu",
-    ];
-    for pid in &providers {
-        let ctx = context_window_for(pid, model);
-        // If the context window is not the default 32_000, it's a known model
-        if ctx != 32_000 {
-            return true;
-        }
-    }
-    // Also check common aliases
-    matches!(model, |"claude-opus-4-8"| "claude-opus-4.8"
-        | "claude-sonnet-4-6"
-        | "claude-sonnet-4.6"
-        | "claude-haiku-4-5"
-        | "gpt-5.6"
-        | "gpt-5.6-sol"
-        | "gpt-5.6-terra"
-        | "gpt-5.6-luna"
-        | "gpt-5.5"
-        | "gpt-5.5-codex"
-        | "gpt-5.4"
-        | "gpt-5.4-mini"
-        | "gpt-5.3-codex"
-        | "gpt-5.2"
-        | "gpt-5-codex"
-        | "deepseek-v4-pro"
-        | "deepseek-v4-flash"
-        | "grok-4.3"
-        | "grok-build"
-        | "mimo-v2.5-pro"
-        | "mimo-v2.5"
-        | "glm-5.2"
-        | "glm-5"
-        | "glm-4.7"
-        | "glm-4.5"
-        | "kimi-k2.7"
-        | "kimi-k2.6"
-        | "kimi-k2-thinking"
-        | "kimi-k2.5"
-        | "k3"
-        | "MiniMax-M3"
-        | "minimax-m3"
-        | "fugu-ultra"
-        | "kimi-latest"
-        | "lmstudio")
+    model == GATEWAY_MODEL || model == GATEWAY_UPSTREAM_MODEL
 }
 
-/// Whether a model is catalogued under any provider.
+/// Is this model in the catalog under any provider?
 pub fn model_in_catalog(model: &str) -> bool {
     is_known_model("", model)
 }
 
-/// Whether a specific (provider, model) pair exists in the catalog.
-/// Uses a proper per-provider model catalog to avoid false positives
-/// (e.g., gpt-5.6-sol must only match under codex).
+/// Does this provider serve this model?
+///
+/// The two paths do not share an id. `codegraff` is the Aiko session proxy and
+/// publishes only [`GATEWAY_MODEL`]; `surplus` is a direct Codegraff key, where
+/// `best` does not exist and the upstream slug must be named outright. Claiming
+/// an id the endpoint would then reject turns a routing decision into a 400 the
+/// user cannot act on.
 pub fn provider_model_in_catalog(provider_id: &str, model: &str) -> bool {
     match provider_id {
-        "codex" => matches!(
-            model,
-            "gpt-5.6-sol"
-                | "gpt-5.6-terra"
-                | "gpt-5.6-luna"
-                | "gpt-5.5-codex"
-                | "gpt-5.4"
-                | "gpt-5.4-mini"
-                | "gpt-5.3-codex"
-                | "gpt-5.2"
-                | "gpt-5-codex"
-        ),
-        "openai" => matches!(
-            model,
-            "gpt-5.6" | "gpt-5.5" | "gpt-5.4" | "gpt-5.4-mini" | "gpt-5.2"
-        ),
-        "anthropic" => matches!(
-            model,
-            "claude-opus-4-8"
-                | "claude-opus-4.8"
-                | "claude-sonnet-4-6"
-                | "claude-sonnet-4.6"
-                | "claude-haiku-4-5"
-        ),
-        "xai" => matches!(model, "grok-4.3" | "grok-build"),
-        "deepseek" => matches!(model, "deepseek-v4-pro" | "deepseek-v4-flash"),
-        "kimi" => matches!(
-            model,
-            "kimi-k2.7" | "kimi-k2.6" | "kimi-k2-thinking" | "kimi-k2.5" | "k3" | "kimi-latest"
-        ),
-        "minimax" => matches!(model, "MiniMax-M3" | "minimax-m3"),
-        "xiaomi" => matches!(model, "mimo-v2.5-pro" | "mimo-v2.5"),
-        "zai" => matches!(model, "glm-5.2" | "glm-5" | "glm-4.7" | "glm-4.5"),
-        "fugu" => matches!(model, "fugu-ultra"),
-        "moonshot" => matches!(model, "kimi-latest"),
-        // Surplus is the multi-model gateway (replaces Codegraff for this role).
-        "surplus" | "codegraff" => matches!(
-            model,
-            "deepseek-v4-pro"
-                | "deepseek-v4-flash"
-                | "gpt-5.6"
-                | "gpt-5.5"
-                | "gpt-5.4"
-                | "claude-opus-4-8"
-                | "claude-sonnet-4-6"
-                | "grok-4.3"
-                | "grok-build"
-                | "mimo-v2.5-pro"
-                | "glm-5.2"
-                | "kimi-k2.7"
-                | "MiniMax-M3"
-                | "fugu-ultra"
-        ),
-        // Local providers only match their known model prefixes
-        "mlx" => model.starts_with("mlx-community/"),
-        "lmstudio" => model == "lmstudio" || model.contains('/'),
-        // Fireworks uses full model paths
-        "fireworks" => model.contains('/'),
+        "codegraff" => model == GATEWAY_MODEL,
+        "surplus" => model == GATEWAY_UPSTREAM_MODEL,
         _ => false,
     }
 }
@@ -445,27 +157,10 @@ pub fn provider_model_in_catalog(provider_id: &str, model: &str) -> bool {
 /// Default model for a provider, resolving aliases.
 pub fn provider_default_model<'a>(provider_id: &str, fallback: &'a str) -> &'a str {
     match provider_id {
-        "codex" => "gpt-5.6-sol",
-        "openai" => "gpt-5.6",
-        "anthropic" => "claude-opus-4-8",
-        "xai" => "grok-4.3",
-        "deepseek" => "deepseek-v4-pro",
-        "kimi" => "k3",
-        "zai" => "glm-5.2",
-        "minimax" => "MiniMax-M3",
-        "xiaomi" => "mimo-v2.5-pro",
-        "fugu" => "fugu-ultra",
-        "moonshot" => "kimi-latest",
-        "surplus" | "codegraff" => "deepseek-v4-pro",
+        "codegraff" => GATEWAY_MODEL,
+        "surplus" => GATEWAY_UPSTREAM_MODEL,
         _ => fallback,
     }
-}
-
-/// Kimi-specific: does this model use the Anthropic protocol?
-pub fn kimi_protocol_is_anthropic(_model: &str) -> bool {
-    // Currently no Kimi models use Anthropic protocol by default;
-    // this is a placeholder for future catalog-driven switching.
-    false
 }
 
 /// Catalog providers that serve a given model.
@@ -483,40 +178,66 @@ pub fn catalog_providers_for(model: &str) -> Vec<&'static str> {
 mod tests {
     use super::*;
 
+    /// Aiko routes to Codegraff and nothing else. The catalog is the mechanism:
+    /// a provider absent from it can never be selected, keyed, or failed over
+    /// to, whatever env vars happen to be set on the machine.
     #[test]
-    fn test_builtin_specs_count() {
-        let specs = builtin_specs();
-        assert!(specs.len() >= 15, "expected at least 15 builtin providers");
-        // Verify key providers exist
-        let ids: Vec<&str> = specs.iter().map(|s| s.id).collect();
-        assert!(ids.contains(&"codex"), "codex provider must exist");
-        assert!(ids.contains(&"xai"), "xAI provider must exist");
-        assert!(ids.contains(&"anthropic"), "Anthropic provider must exist");
-        assert!(ids.contains(&"openai"), "OpenAI provider must exist");
-    }
-
-    #[test]
-    fn codegraff_is_first_gateway_in_catalog() {
+    fn the_catalog_holds_only_codegraff_paths() {
         let ids: Vec<&str> = builtin_specs().iter().map(|s| s.id).collect();
-        let codegraff = ids.iter().position(|id| *id == "codegraff");
-        let surplus = ids.iter().position(|id| *id == "surplus");
-        assert!(codegraff.is_some() && surplus.is_some());
-        assert!(
-            codegraff.unwrap() < surplus.unwrap(),
-            "codegraff must precede surplus so session-proxy wins when both are keyed"
-        );
+        assert_eq!(ids, vec!["codegraff", "surplus"]);
+
+        for spec in builtin_specs() {
+            let host = spec.url.split('/').nth(2).expect("spec url has a host");
+            assert!(
+                host == "gateway.codegraff.com" || host == "aiko.theclarityproject.net",
+                "{} routes to {host}, which is not Codegraff or the Aiko proxy",
+                spec.id
+            );
+        }
+    }
+
+    /// The removed providers must not creep back in through a helper that
+    /// still answers for them — that is how a "removed" provider keeps working.
+    #[test]
+    fn removed_providers_are_unroutable() {
+        for (provider, model) in [
+            ("codex", "gpt-5.6-sol"),
+            ("openai", "gpt-5.6"),
+            ("anthropic", "claude-opus-4-8"),
+            ("xai", "grok-4.3"),
+            ("deepseek", "deepseek-v4-pro"),
+            ("kimi", "k3"),
+            ("minimax", "MiniMax-M3"),
+            ("zai", "glm-5.2"),
+            ("fireworks", "accounts/fireworks/models/deepseek-v4-pro"),
+            ("mlx", "mlx-community/Qwen3.6-27B-OptiQ-4bit"),
+        ] {
+            assert!(
+                !provider_model_in_catalog(provider, model),
+                "{provider} must not serve {model}"
+            );
+            assert!(!is_known_model(provider, model), "{model} must be unknown");
+            assert!(
+                catalog_providers_for(model).is_empty(),
+                "{model} must have no provider"
+            );
+            assert_eq!(provider_default_model(provider, "fallback"), "fallback");
+        }
     }
 
     #[test]
-    fn surplus_is_secondary_gateway() {
+    fn codegraff_is_the_direct_key_path() {
         let spec = builtin_specs()
             .iter()
             .find(|spec| spec.id == "surplus")
-            .expect("Surplus provider spec");
+            .expect("direct-key gateway spec");
 
-        assert_eq!(spec.url, SURPLUS_CHAT_COMPLETIONS_URL);
+        assert_eq!(spec.url, CODEGRAFF_CHAT_COMPLETIONS_URL);
         assert_eq!(spec.env_key, "SURPLUS_API_KEY");
-        assert!(spec.url.contains("surplusintelligence.ai"));
+        assert!(spec.url.contains("gateway.codegraff.com"));
+        // A direct key must name a slug Codegraff actually serves.
+        assert_eq!(spec.default_model, GATEWAY_UPSTREAM_MODEL);
+        assert_ne!(spec.default_model, GATEWAY_MODEL);
     }
 
     #[test]
@@ -531,55 +252,24 @@ mod tests {
             "https://aiko.theclarityproject.net/v1/chat/completions"
         );
         assert_eq!(spec.env_key, "AIKO_ACCESS_TOKEN");
-        // Client talks to the Aiko session proxy; the CF worker hops to
-        // gateway.codegraff.com server-side.
-        assert!(!spec.url.contains("gateway.codegraff.com"));
+        assert_eq!(spec.default_model, GATEWAY_MODEL);
     }
 
     #[test]
-    fn test_context_window_known_models() {
-        assert_eq!(context_window_for("codex", "gpt-5.6-sol"), 270_000);
-        assert_eq!(context_window_for("xai", "grok-4.3"), 1_000_000);
-        assert_eq!(context_window_for("anthropic", "claude-opus-4-8"), 200_000);
+    fn both_paths_share_the_bound_model_context_window() {
+        assert_eq!(
+            context_window_for("codegraff", GATEWAY_MODEL),
+            GATEWAY_CONTEXT_WINDOW
+        );
+        assert_eq!(
+            context_window_for("surplus", GATEWAY_UPSTREAM_MODEL),
+            GATEWAY_CONTEXT_WINDOW
+        );
     }
 
     #[test]
     fn test_context_window_unknown_fallback() {
         assert_eq!(context_window_for("unknown", "some-model"), 32_000);
-    }
-
-    #[test]
-    fn test_is_known_model() {
-        assert!(is_known_model("codex", "gpt-5.6-sol"));
-        assert!(is_known_model("xai", "grok-4.3"));
-        assert!(!is_known_model("unknown", "totally-made-up"));
-    }
-
-    #[test]
-    fn test_provider_default_model() {
-        assert_eq!(provider_default_model("codex", ""), "gpt-5.6-sol");
-        assert_eq!(provider_default_model("xai", ""), "grok-4.3");
-        assert_eq!(provider_default_model("unknown", "fallback"), "fallback");
-    }
-
-    #[test]
-    fn test_codex_responses_kind() {
-        let codex_spec = builtin_specs()
-            .iter()
-            .find(|s| s.id == "codex")
-            .expect("codex spec must exist");
-        assert_eq!(codex_spec.kind, ProviderKind::Responses);
-        assert_eq!(codex_spec.url, "https://chatgpt.com/backend-api/codex");
-    }
-
-    #[test]
-    fn test_grok_is_openai_compatible() {
-        let xai_spec = builtin_specs()
-            .iter()
-            .find(|s| s.id == "xai")
-            .expect("xAI spec must exist");
-        assert_eq!(xai_spec.kind, ProviderKind::OpenAi);
-        assert_eq!(xai_spec.default_model, "grok-4.3");
     }
 
     #[test]

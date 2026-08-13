@@ -123,6 +123,39 @@ where
     }
 }
 impl SessionActor {
+    /// Refresh provider-owned OAuth without involving the Aiko `AuthManager`.
+    /// `Some(false)` means the current model is Codex but refresh failed;
+    /// `None` means the current model is not provider-owned OAuth.
+    async fn refresh_codex_credentials(&self, rejected: Option<String>) -> Option<bool> {
+        let base_url = self
+            .chat_state_handle
+            .get_sampling_config()
+            .await
+            .map(|config| config.base_url)
+            .unwrap_or_default();
+        if !crate::agent::config::is_codex_chatgpt_url(&base_url) {
+            return None;
+        }
+
+        let home = dirs::home_dir().unwrap_or_else(crate::util::grok_home::grok_home);
+        let refreshed = tokio::task::spawn_blocking(move || match rejected {
+            Some(rejected) => {
+                crate::auth::codex_oauth::refresh_codex_auth_after_rejection(&home, &rejected)
+            }
+            None => crate::auth::codex_oauth::load_codex_auth_fresh(&home),
+        })
+        .await
+        .ok()
+        .flatten();
+        let Some(refreshed) = refreshed else {
+            return Some(false);
+        };
+        let mut credentials = self.chat_state_handle.get_credentials().await;
+        credentials.api_key = Some(refreshed.access_token);
+        self.chat_state_handle.update_credentials(credentials);
+        Some(true)
+    }
+
     pub(super) async fn prepare_tool_definitions_timed(&self) -> (Vec<ToolDefinition>, u64) {
         let mcp_wait_start = std::time::Instant::now();
         match self.mcp_strategy {
@@ -659,36 +692,56 @@ impl SessionActor {
             .data(detailed_message);
             return Err(acp_err);
         }
-        let auth_recovery_eligible = matches!(error.kind, SamplingErrorKind::Auth) && {
-            let (model_id, base_url) = self
-                .chat_state_handle
-                .get_sampling_config()
-                .await
-                .map(|c| (c.model, c.base_url))
-                .unwrap_or_default();
-            let gate = self.auth_gate(&model_id, &base_url);
-            let eligible = gate.active();
-            self.log_auth_gate_unknown("handle_sampling_failure", gate, &base_url);
-            if !eligible {
+        let mut provider_owned_auth = false;
+        if matches!(error.kind, SamplingErrorKind::Auth) {
+            let rejected = self.chat_state_handle.get_credentials().await.api_key;
+            if let Some(recovered) = self.refresh_codex_credentials(rejected).await {
+                provider_owned_auth = true;
+                if recovered {
+                    tracing::info!(
+                        session_id = %self.session_info.id.0,
+                        "auth recovery: Codex 401, refreshed provider bearer, retrying"
+                    );
+                    self.prepare_sampler_for_turn().await;
+                    return Ok(SamplerFailureRecovery::RefreshAuthAndResubmit);
+                }
                 tracing::warn!(
-                    session_id = % self.session_info.id.0, is_session_based = gate
-                    .is_session_based, model_byok = gate.model_byok.as_str(),
-                    endpoint_is_first_party = gate.endpoint_is_first_party,
-                    "auth recovery: sampler 401 not refreshable (api-key auth) — surfacing 401",
-                );
-                xai_grok_telemetry::unified_log::warn(
-                    "auth recovery: sampler 401 not eligible (api-key auth)",
-                    Some(self.session_info.id.0.as_ref()),
-                    Some(serde_json::json!(
-                        { "kind" : error.kind.as_str(), "status_code" : error
-                        .status_code, "is_session_based" : gate.is_session_based,
-                        "model_byok" : gate.model_byok.as_str(),
-                        "endpoint_is_first_party" : gate.endpoint_is_first_party, }
-                    )),
+                    session_id = %self.session_info.id.0,
+                    "auth recovery: Codex 401, provider refresh failed"
                 );
             }
-            eligible
-        };
+        }
+        let auth_recovery_eligible =
+            matches!(error.kind, SamplingErrorKind::Auth) && !provider_owned_auth && {
+                let (model_id, base_url) = self
+                    .chat_state_handle
+                    .get_sampling_config()
+                    .await
+                    .map(|c| (c.model, c.base_url))
+                    .unwrap_or_default();
+                let gate = self.auth_gate(&model_id, &base_url);
+                let eligible = gate.active();
+                self.log_auth_gate_unknown("handle_sampling_failure", gate, &base_url);
+                if !eligible {
+                    tracing::warn!(
+                        session_id = % self.session_info.id.0, is_session_based = gate
+                        .is_session_based, model_byok = gate.model_byok.as_str(),
+                        endpoint_is_first_party = gate.endpoint_is_first_party,
+                        "auth recovery: sampler 401 not refreshable (api-key auth) — surfacing 401",
+                    );
+                    xai_grok_telemetry::unified_log::warn(
+                        "auth recovery: sampler 401 not eligible (api-key auth)",
+                        Some(self.session_info.id.0.as_ref()),
+                        Some(serde_json::json!(
+                            { "kind" : error.kind.as_str(), "status_code" : error
+                            .status_code, "is_session_based" : gate.is_session_based,
+                            "model_byok" : gate.model_byok.as_str(),
+                            "endpoint_is_first_party" : gate.endpoint_is_first_party, }
+                        )),
+                    );
+                }
+                eligible
+            };
         if !matches!(error.kind, SamplingErrorKind::Auth) && error.status_code == Some(401) {
             xai_grok_telemetry::unified_log::warn(
                 "auth recovery: sampler 401 not eligible (non-auth error kind)",
@@ -931,6 +984,9 @@ impl SessionActor {
     }
     /// Proactively refresh the auth token if near expiry.
     pub(super) async fn refresh_token_if_expired(&self) {
+        if self.refresh_codex_credentials(None).await.is_some() {
+            return;
+        }
         if let Some(ref am) = self.auth_manager {
             let creds = self.chat_state_handle.get_credentials().await;
             let (model_id, base_url) = self

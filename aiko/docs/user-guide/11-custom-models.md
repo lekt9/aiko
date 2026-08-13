@@ -284,10 +284,13 @@ Codex (OpenAI ChatGPT) is available as a built-in provider with its own OAuth lo
 ### Login
 
 ```bash
-aiko login codex
+aiko login openai
 ```
 
-This opens your browser to `auth.openai.com` (the official ChatGPT OAuth console). Once you authorize, the token is stored in `~/.codex/auth.json` — the same file the official Codex CLI reads, so logging in once works everywhere.
+`aiko login codex` is retained as a compatibility alias. This opens your browser
+to `auth.openai.com` (the official ChatGPT OAuth console). Once you authorize,
+the token is stored in `~/.codex/auth.json` — the same file the official Codex
+CLI reads, so logging in once works everywhere.
 
 ### Select the Model
 
@@ -321,9 +324,12 @@ context_window = 270000
 
 ### Troubleshooting
 
-**"codex model selected but not logged in"** — run `aiko login codex` first.
+**"codex model selected but not logged in"** — run `aiko login openai` first.
 
-**401 / expired token** — the token auto-refreshes near expiry. If you see a 401 during a turn, re-run `aiko login codex` to get a fresh token (refresh tokens issued by OpenAI are single-use; a concurrent sub-agent may have consumed it).
+**401 / expired token** — the token auto-refreshes near expiry and retries once
+after a 401. Refresh is serialized across Aiko/Codex processes to avoid spending
+a single-use refresh token twice. If refresh is rejected, run `aiko login
+openai` to establish a fresh session.
 
 ---
 

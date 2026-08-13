@@ -78,8 +78,11 @@ Order is load-bearing: `question → delete → simplify → accelerate → auto
 
 ```bash
 # Login to a provider
-aiko login              # Default xAI OAuth2
-aiko login codex        # ChatGPT/Codex PKCE OAuth
+aiko login              # Configuration-aware default
+aiko login aiko         # Built-in Aiko OAuth profile
+aiko login grok         # Built-in Grok/xAI OAuth profile
+aiko login openai       # OpenAI ChatGPT PKCE OAuth
+aiko login codex        # Compatibility spelling for OpenAI
 aiko login --device-auth  # Headless device-code flow
 
 # Switch models in the TUI
@@ -154,10 +157,12 @@ For each model, Aiko resolves credentials in this order:
 |---------|-------------|-------------|
 | `aiko` | Launch interactive TUI | — |
 | `aiko -m <model>` | Start on a specific model | Sets sampler config |
-| `aiko login` | xAI OAuth2 (browser) | Writes `~/.grok/auth.json` |
-| `aiko login codex` | ChatGPT PKCE OAuth | Writes `~/.codex/auth.json` |
+| `aiko login` | Configuration-aware default login | Writes `~/.grok/auth.json` |
+| `aiko login aiko` | Built-in Aiko OAuth profile | Writes `~/.grok/auth.json` |
+| `aiko login grok` | Built-in Grok/xAI OAuth profile | Writes `~/.grok/auth.json` |
+| `aiko login openai` / `aiko login codex` | OpenAI ChatGPT PKCE OAuth | Writes `~/.codex/auth.json` |
 | `aiko login --device-auth` | Headless device-code flow | Polls auth server |
-| `aiko logout` | Clear cached credentials | Removes auth.json scope |
+| `aiko logout [aiko\|grok\|openai\|codex]` | Clear active or selected provider credentials | Removes the selected auth scope/file |
 | `aiko models` | List available models | Reads catalog + user config |
 | `/model <name>` | Switch model mid-session | Reselects sampler config |
 | `Ctrl+M` | Interactive model picker | TUI overlay |

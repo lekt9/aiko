@@ -35,6 +35,18 @@ need_file "$ROOT/sdk/registry/setup.sh"
 # ── Aiko README: client install surface ──────────────────────────────
 need_grep "$ROOT/README.md" 'scripts/contract-runtime\.sh install' 'source install command'
 need_grep "$ROOT/README.md" 'aiko login' 'session login'
+need_grep "$ROOT/README.md" 'aiko login aiko' 'explicit Aiko login provider'
+need_grep "$ROOT/README.md" 'aiko login grok' 'Grok login provider'
+need_grep "$ROOT/README.md" 'aiko login openai' 'OpenAI login provider'
+need_grep "$ROOT/README.md" 'aiko login codex' 'Codex login compatibility'
+need_grep "$ROOT/crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md" \
+  'aiko login aiko' 'embedded authentication guide Aiko provider'
+need_grep "$ROOT/crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md" \
+  'aiko login grok' 'embedded authentication guide Grok provider'
+need_grep "$ROOT/crates/codegen/xai-grok-pager/docs/user-guide/11-custom-models.md" \
+  'aiko login openai' 'embedded model guide OpenAI provider'
+need_grep "$ROOT/crates/codegen/xai-grok-pager/docs/user-guide/11-custom-models.md" \
+  'aiko login codex' 'embedded model guide Codex compatibility'
 need_grep "$ROOT/README.md" 'aiko\.theclarityproject\.net' 'public proxy host'
 need_grep "$ROOT/README.md" 'Surplus' 'Surplus upstream name'
 need_grep "$ROOT/README.md" 'AIKO_CONTRACT_REPO|in-tree|../contract' 'in-tree contract path'
@@ -87,20 +99,21 @@ if [[ -n "${PROXY_ROOT:-}" && -d "$PROXY_ROOT" ]]; then
   need_file "$PROXY_ROOT/README.md"
   need_file "$PROXY_ROOT/scripts/deploy.sh"
   need_file "$PROXY_ROOT/wrangler.toml"
-  need_grep "$PROXY_ROOT/README.md" 'SURPLUS_API_KEY' 'proxy Surplus secret'
-  need_grep "$PROXY_ROOT/README.md" 'api\.surplusintelligence\.ai' 'Surplus base URL'
+  need_grep "$PROXY_ROOT/README.md" 'CODEGRAFF_API_KEY' 'proxy Codegraff secret'
+  need_grep "$PROXY_ROOT/README.md" 'gateway\.codegraff\.com' 'Codegraff base URL'
   need_grep "$PROXY_ROOT/README.md" 'wrangler deploy|bash scripts/deploy\.sh' 'deploy command'
   need_grep "$PROXY_ROOT/README.md" 'aiko-openai-compat' 'compat binding note'
-  need_grep "$PROXY_ROOT/scripts/deploy.sh" 'SURPLUS_API_KEY' 'deploy.sh Surplus secret'
-  need_grep "$PROXY_ROOT/wrangler.toml" 'api\.surplusintelligence\.ai' 'wrangler UPSTREAM_BASE'
-  # Stale Codegraff-primary language must not remain as the documented default
-  if rg -q 'CODEGRAFF_API_KEY=cg_sk_' "$PROXY_ROOT/README.md"; then
-    fail "aiko-proxy README still shows CODEGRAFF_API_KEY=cg_sk_ as the primary local run"
+  need_grep "$PROXY_ROOT/scripts/deploy.sh" 'CODEGRAFF_API_KEY' 'deploy.sh Codegraff secret'
+  need_grep "$PROXY_ROOT/wrangler.toml" 'gateway\.codegraff\.com' 'wrangler upstream base'
+  # The gateway publishes one model id; docs that still name an upstream slug
+  # as the client-facing default would send users to a model the gate refuses.
+  need_grep "$PROXY_ROOT/README.md" '\bbest\b' 'published model id'
+  # Aiko routes to Codegraff and nothing else; a documented second upstream
+  # would tell an operator to configure a provider the worker will not use.
+  if rg -q 'api\.surplusintelligence\.ai' "$PROXY_ROOT/README.md"; then
+    fail "aiko-proxy README still documents api.surplusintelligence.ai as an upstream"
   fi
-  if rg -q 'gateway\.codegraff\.com' "$PROXY_ROOT/README.md"; then
-    fail "aiko-proxy README still documents gateway.codegraff.com as primary"
-  fi
-  ok "aiko-proxy docs free of Codegraff-primary defaults"
+  ok "aiko-proxy docs name Codegraff upstream and the published model id"
 else
   echo "note: set AIKO_PROXY_ROOT to include aiko-proxy operator docs" >&2
 fi

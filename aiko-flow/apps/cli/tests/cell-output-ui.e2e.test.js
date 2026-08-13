@@ -85,8 +85,11 @@ test("Cell visual membrane renders a real durable Smithers node output", async (
   const gateway = spawn(process.execPath, ["run", ".smithers/gateway.ts"], {
     cwd: repo.dir,
     env: { ...process.env, ...env, PORT: String(port), HOST: "127.0.0.1" },
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  let gatewayLog = "";
+  gateway.stdout.on("data", (chunk) => (gatewayLog += chunk));
+  gateway.stderr.on("data", (chunk) => (gatewayLog += chunk));
   let browser;
   try {
     await waitForHealth(base);
@@ -105,10 +108,26 @@ test("Cell visual membrane renders a real durable Smithers node output", async (
     const errors = [];
     page.on("pageerror", (e) => errors.push(String(e)));
     await page.goto(`${base}/workflows/cell-output-e2e?runId=${run.json.runId}`, { waitUntil: "domcontentloaded" });
-    await page.waitForSelector('[data-testid="cell-output-ui"]', { timeout: 30_000 });
-    await page.waitForFunction(() => document.body.textContent?.includes("Durable Ada 731"), undefined, {
-      timeout: 30_000,
+    await page.waitForSelector('[data-testid="cell-output-ui"]', { timeout: 30_000 }).catch(async (error) => {
+      const body = await page
+        .locator("body")
+        .innerText()
+        .catch(() => "<unreadable body>");
+      throw new Error(
+        `${error.message}\nGateway log:\n${gatewayLog}\nBrowser body:\n${body}\nPage errors:\n${errors.join("\n")}`,
+      );
     });
+    await page
+      .waitForFunction(() => document.body.textContent?.includes("Durable Ada 731"), undefined, { timeout: 30_000 })
+      .catch(async (error) => {
+        const body = await page
+          .locator("body")
+          .innerText()
+          .catch(() => "<unreadable body>");
+        throw new Error(
+          `${error.message}\nGateway log:\n${gatewayLog}\nBrowser body:\n${body}\nPage errors:\n${errors.join("\n")}`,
+        );
+      });
     expect(await page.locator("table").textContent()).toContain("operator");
     expect(errors).toEqual([]);
   } finally {

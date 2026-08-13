@@ -103,6 +103,12 @@ scripts/contract-runtime.sh install
 # Session login — inference uses the public Aiko proxy (no client Surplus key)
 aiko login
 
+# Optional explicit provider selection (all built in)
+aiko login aiko
+aiko login grok
+aiko login openai
+aiko login codex
+
 # Verify
 aiko --version
 command -v neuron >/dev/null && neuron --help
@@ -156,7 +162,9 @@ aiko (session JWT)
       → api.surplusintelligence.ai/v1/*  # Surplus primary
 ```
 
-- **Clients:** run `aiko login`. Do **not** set `SURPLUS_API_KEY` for normal use.
+- **Clients:** run `aiko login`. Explicit native choices are `aiko login aiko`,
+  `aiko login grok`, and `aiko login openai`; `aiko login codex` remains the
+  compatible OpenAI spelling. Do **not** set `SURPLUS_API_KEY` for normal use.
 - **Operators** of the proxy: put `SURPLUS_API_KEY` only on the Cloudflare
   Worker (`aiko-proxy`, `bash scripts/deploy.sh`). Do not document private
   operator hosts in this README.

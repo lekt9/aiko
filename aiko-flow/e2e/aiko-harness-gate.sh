@@ -25,14 +25,14 @@
 #            run_id = ours, workflow_name = aiko-sentinel, status = finished.
 #
 # Machine pins this gate depends on (both discovered the hard way):
-#   1. AIKO_CONTRACT_LIBRARY=tmp/libcontract-abi12.so — the installed
-#      ~/.aiko/lib/libcontract.so is ABI 13 while aiko 0.2.108 negotiates
-#      ABI 12 and validates result.abi_version on every neuron fire
-#      (aiko repo: crates/codegen/xai-grok-shell/src/contract_native/
-#      neuron_bridge.rs, fire_neuron), so WITHOUT this pin the Contract
-#      membrane HOLDs every consequential tool ("canonical Neuron effect
-#      admission failed or requires reconciliation",
-#      contract_native.rs:6420) and the sentinel can never be written.
+#   1. Contract library: run UNPINNED against the installed pair, honoring an
+#      explicit caller-exported AIKO_CONTRACT_LIBRARY. History: aiko 0.2.108
+#      negotiated ABI 12 against an installed ABI-13 lib, so this gate
+#      originally pinned tmp/libcontract-abi12.so (without it the Contract
+#      membrane HOLDed every consequential tool, contract_native.rs:6420).
+#      The 2026-08-13 reinstall shipped aiko 0.2.115 with a MATCHED ABI-13
+#      libcontract, and the ABI-12 pin now kills startup with
+#      contract_graph_expand_failed (verified both ways with headless probes).
 #   2. --root "$FLOW_ROOT" — pins the Task rootDir (and therefore the
 #      spawned aiko's process cwd AND its --cwd flag,
 #      packages/agents/src/AikoAgent.js buildCommand) to the flow root:
@@ -50,7 +50,6 @@ set -u
 FLOW_ROOT="/home/deck/work/aiko/aiko-flow"
 CLI="$FLOW_ROOT/apps/cli/src/index.js"
 FIXTURE="$FLOW_ROOT/e2e/fixtures/aiko-harness"
-CONTRACT_LIB="$FLOW_ROOT/tmp/libcontract-abi12.so"
 RUN_TIMEOUT_S=300
 
 WS=""
@@ -76,13 +75,17 @@ command -v aiko >/dev/null 2>&1 || fail PREFLIGHT "aiko not on PATH"
 [ -f "$CLI" ] || fail PREFLIGHT "smithers CLI entry missing: $CLI"
 [ -f "$FIXTURE/.smithers/workflows/aiko-sentinel.tsx" ] || fail PREFLIGHT "fixture workflow missing under $FIXTURE"
 [ -f "$FIXTURE/.smithers/agents.ts" ] || fail PREFLIGHT "fixture agents.ts missing under $FIXTURE"
-[ -f "$CONTRACT_LIB" ] || fail PREFLIGHT "ABI-12 contract library missing at $CONTRACT_LIB (without it the aiko Contract membrane HOLDs every file write; see header)"
-if command -v python3 >/dev/null 2>&1; then
-  LIB_ABI=$(python3 -c "import ctypes,sys; print(ctypes.CDLL(sys.argv[1]).contract_abi_version())" "$CONTRACT_LIB" 2>/dev/null)
-  [ "$LIB_ABI" = "12" ] || fail PREFLIGHT "contract library reports abi=$LIB_ABI, expected 12"
-  echo "EVIDENCE[preflight]: AIKO_CONTRACT_LIBRARY=$CONTRACT_LIB (abi=$LIB_ABI)"
+# Contract-library selection (see machine pin 1 in the header).
+if [ -n "${AIKO_CONTRACT_LIBRARY:-}" ]; then
+  [ -f "$AIKO_CONTRACT_LIBRARY" ] || fail PREFLIGHT "caller-set AIKO_CONTRACT_LIBRARY missing: $AIKO_CONTRACT_LIBRARY"
+  echo "EVIDENCE[preflight]: AIKO_CONTRACT_LIBRARY caller override=$AIKO_CONTRACT_LIBRARY"
 else
-  echo "EVIDENCE[preflight]: AIKO_CONTRACT_LIBRARY=$CONTRACT_LIB (python3 absent, abi unverified)"
+  INSTALLED_LIB="$HOME/.aiko/lib/libcontract.so"
+  LIB_ABI=""
+  if command -v python3 >/dev/null 2>&1 && [ -f "$INSTALLED_LIB" ]; then
+    LIB_ABI=$(python3 -c "import ctypes,sys; print(ctypes.CDLL(sys.argv[1]).contract_abi_version())" "$INSTALLED_LIB" 2>/dev/null)
+  fi
+  echo "EVIDENCE[preflight]: unpinned — $(aiko --version 2>/dev/null | head -1) with installed $INSTALLED_LIB (abi=${LIB_ABI:-unknown})"
 fi
 
 # --- CHECK 0: constructor mapping is live ---------------------------------
@@ -120,7 +123,7 @@ echo "sentinel:  $SENTINEL (expected content: $EXPECTED)"
 
 # --- the real run ----------------------------------------------------------
 cd "$WS" || fail PREFLIGHT "cannot cd $WS"
-AIKO_CONTRACT_LIBRARY="$CONTRACT_LIB" timeout "$RUN_TIMEOUT_S" \
+timeout "$RUN_TIMEOUT_S" \
   bun "$CLI" workflow run aiko-sentinel \
     --run-id "$RUN_ID" \
     --root "$FLOW_ROOT" \

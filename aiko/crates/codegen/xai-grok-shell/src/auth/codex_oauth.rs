@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use fs2::FileExt as _;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -89,6 +90,20 @@ pub fn load_codex_auth(home: &std::path::Path) -> Option<CodexAuth> {
     })
 }
 
+/// Remove the shared Codex CLI credential file. Returns `true` when a stored
+/// credential existed. Call only for an explicit OpenAI/Codex logout.
+///
+/// The refresh lock prevents an in-flight sibling process from recreating the
+/// credential immediately after logout with a rotated refresh token.
+pub fn clear_codex_auth(home: &std::path::Path) -> anyhow::Result<bool> {
+    let path = auth_json_path(home);
+    with_cross_process_refresh_lock(home, || match std::fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    })
+}
+
 /// Parse the `exp` claim from the id_token JWT payload to derive the access
 /// token's approximate expiry (id_tokens are typically issued with the same
 /// lifetime as the access token, ~1h).
@@ -104,7 +119,7 @@ fn parse_expiry_from_id_token(id_token: Option<&str>) -> Option<chrono::DateTime
 /// Like `load_codex_auth` but also refreshes the token on disk when within
 /// `REFRESH_MARGIN_S` of expiry (proactive refresh).
 pub fn load_codex_auth_fresh(home: &std::path::Path) -> Option<CodexAuth> {
-    let mut auth = load_codex_auth(home)?;
+    let auth = load_codex_auth(home)?;
 
     // Proactive refresh near expiry
     let should_refresh = auth.expires_at.is_some_and(|exp| {
@@ -122,20 +137,19 @@ pub fn load_codex_auth_fresh(home: &std::path::Path) -> Option<CodexAuth> {
             "codex token near expiry, refreshing proactively"
         );
         let _guard = REFRESH_MUTEX.lock().ok()?;
-
-        // Re-read: another concurrent refresher may have already replaced the token.
-        let recheck = load_codex_auth(home)?;
-        if recheck.expires_at != auth.expires_at {
-            return Some(recheck);
-        }
-
-        // Reload the file for the refresh_token
-        let path = auth_json_path(home);
-        let data = std::fs::read_to_string(&path).ok()?;
-        let v: CodexAuthJson = serde_json::from_str(&data).ok()?;
-        let rt = v.tokens.refresh_token.as_deref()?;
-
-        match do_refresh_off_runtime(home, rt) {
+        match with_cross_process_refresh_lock(home, || {
+            // Re-read after the file lock: the official Codex CLI or a sibling
+            // Aiko process may already have rotated the single-use token.
+            let recheck = load_codex_auth(home)
+                .ok_or_else(|| anyhow::anyhow!("Codex credentials disappeared during refresh"))?;
+            let still_near_expiry = recheck
+                .expires_at
+                .is_some_and(|exp| (exp - chrono::Utc::now()).num_seconds() < REFRESH_MARGIN_S);
+            if !still_near_expiry || recheck.access_token != auth.access_token {
+                return Ok(recheck);
+            }
+            refresh_from_disk(home)
+        }) {
             Ok(new_auth) => Some(new_auth),
             Err(e) => {
                 tracing::warn!(error = %e, "codex token refresh failed, returning cached token");
@@ -149,19 +163,59 @@ pub fn load_codex_auth_fresh(home: &std::path::Path) -> Option<CodexAuth> {
 
 /// Force-refresh the token (called after a 401 on a Codex request).
 pub fn refresh_codex_auth(home: &std::path::Path) -> Option<CodexAuth> {
-    let _guard = REFRESH_MUTEX.lock().ok()?;
-    let path = auth_json_path(home);
-    let data = std::fs::read_to_string(&path).ok()?;
-    let v: CodexAuthJson = serde_json::from_str(&data).ok()?;
-    let rt = v.tokens.refresh_token.as_deref()?;
+    let rejected = load_codex_auth(home)?.access_token;
+    refresh_codex_auth_after_rejection(home, &rejected)
+}
 
-    match do_refresh_off_runtime(home, rt) {
+/// Refresh after a rejected request. If another process already replaced the
+/// rejected bearer while this process waited for the file lock, adopt that
+/// bearer without spending the newly rotated refresh token again.
+pub fn refresh_codex_auth_after_rejection(
+    home: &std::path::Path,
+    rejected_access_token: &str,
+) -> Option<CodexAuth> {
+    let _guard = REFRESH_MUTEX.lock().ok()?;
+    match with_cross_process_refresh_lock(home, || {
+        let current = load_codex_auth(home)
+            .ok_or_else(|| anyhow::anyhow!("Codex credentials unavailable"))?;
+        if current.access_token != rejected_access_token {
+            return Ok(current);
+        }
+        refresh_from_disk(home)
+    }) {
         Ok(new) => Some(new),
         Err(e) => {
             tracing::warn!(error = %e, "codex force-refresh failed");
             None
         }
     }
+}
+
+fn refresh_from_disk(home: &std::path::Path) -> anyhow::Result<CodexAuth> {
+    let path = auth_json_path(home);
+    let data = std::fs::read_to_string(&path)?;
+    let v: CodexAuthJson = serde_json::from_str(&data)?;
+    let rt = v
+        .tokens
+        .refresh_token
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("Codex credential has no refresh_token"))?;
+    do_refresh_off_runtime(home, rt)
+}
+
+fn with_cross_process_refresh_lock<T>(
+    home: &std::path::Path,
+    operation: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let codex_dir = home.join(".codex");
+    std::fs::create_dir_all(&codex_dir)?;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(codex_dir.join("auth.json.lock"))?;
+    lock.lock_exclusive()?;
+    operation()
 }
 
 // ── Refresh (synchronous — called inside the mutex lock) ───────────────────
@@ -444,43 +498,55 @@ async fn accept_callback(listener: TcpListener, expected_state: &str) -> anyhow:
         }
     }
 
-    // Serve a confirmation page (dark-mode, branded)
-    let page = CODE_LOGIN_PAGE_HTML;
+    // Validate the callback before claiming success in the browser.
+    let Some(code) = query_param(&req_line, "code") else {
+        write_callback_response(
+            &mut writer,
+            "400 Bad Request",
+            "Authentication failed: no authorization code was returned.",
+        )
+        .await;
+        anyhow::bail!("no authorization code in callback");
+    };
+
+    let got_state = query_param(&req_line, "state").unwrap_or_default();
+    if got_state != expected_state {
+        write_callback_response(
+            &mut writer,
+            "400 Bad Request",
+            "Authentication failed: invalid OAuth state.",
+        )
+        .await;
+        anyhow::bail!("state mismatch — possible CSRF, aborting");
+    }
+
+    write_callback_response(&mut writer, "200 OK", CODE_LOGIN_PAGE_HTML).await;
+
+    Ok(code)
+}
+
+async fn write_callback_response(
+    writer: &mut tokio::net::tcp::OwnedWriteHalf,
+    status: &str,
+    page: &str,
+) {
     let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\
+        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\n\
          Connection: close\r\nContent-Length: {}\r\n\r\n{}",
         page.len(),
         page,
     );
     let _ = writer.write_all(response.as_bytes()).await;
     let _ = writer.flush().await;
-
-    // Parse code and state from the request line
-    let code = query_param(&req_line, "code")
-        .ok_or_else(|| anyhow::anyhow!("no authorization code in callback"))?;
-
-    let got_state = query_param(&req_line, "state").unwrap_or_default();
-    if got_state != expected_state {
-        anyhow::bail!("state mismatch — possible CSRF, aborting");
-    }
-
-    Ok(code.to_string())
 }
 
-/// Extract a query-parameter value from an HTTP request line.
-fn query_param<'a>(req_line: &'a str, key: &str) -> Option<&'a str> {
-    // GET /path?k1=v1&k2=v2 HTTP/1.1
-    let query_start = req_line.find('?')?;
-    let query_end = req_line[query_start..].find(' ')?;
-    let query = &req_line[query_start + 1..query_start + query_end];
-
-    let prefix = format!("{}=", key);
-    for chunk in query.split('&') {
-        if let Some(stripped) = chunk.strip_prefix(&prefix) {
-            return Some(stripped);
-        }
-    }
-    None
+/// Extract and percent-decode a query parameter from an HTTP request line.
+fn query_param(req_line: &str, key: &str) -> Option<String> {
+    let target = req_line.split_whitespace().nth(1)?;
+    let url = url::Url::parse(&format!("http://localhost{target}")).ok()?;
+    url.query_pairs()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.into_owned())
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -540,8 +606,13 @@ fn write_auth_json(
     let json = serde_json::to_string_pretty(&auth)?;
     let path = auth_json_path(home);
 
-    // Write atomically: temp file → rename
-    let tmp_path = path.with_extension("json.tmp");
+    // Write atomically. A unique temp path avoids sibling Aiko/Codex processes
+    // truncating the same `.tmp` inode while racing to update shared auth.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let tmp_path = path.with_extension(format!("json.tmp.{}.{}", std::process::id(), nanos));
     std::fs::write(&tmp_path, json)?;
 
     // Set 0600 permissions (best-effort, mirrors codegraff/storage.rs pattern)
@@ -555,7 +626,10 @@ fn write_auth_json(
         }
     }
 
-    std::fs::rename(&tmp_path, &path)?;
+    if let Err(error) = std::fs::rename(&tmp_path, &path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(error.into());
+    }
 
     Ok(())
 }
@@ -628,9 +702,17 @@ mod tests {
     #[test]
     fn test_query_param_extraction() {
         let req = "GET /auth/callback?code=abc123&state=def456 HTTP/1.1";
-        assert_eq!(query_param(req, "code"), Some("abc123"));
-        assert_eq!(query_param(req, "state"), Some("def456"));
+        assert_eq!(query_param(req, "code").as_deref(), Some("abc123"));
+        assert_eq!(query_param(req, "state").as_deref(), Some("def456"));
         assert_eq!(query_param(req, "missing"), None);
+        assert_eq!(
+            query_param(
+                "GET /auth/callback?code=abc%2F123%2Bz&state=s HTTP/1.1",
+                "code"
+            )
+            .as_deref(),
+            Some("abc/123+z")
+        );
 
         // No query string
         assert_eq!(query_param("GET / HTTP/1.1", "code"), None);
@@ -699,6 +781,35 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // No .codex/auth.json exists
         assert!(load_codex_auth(dir.path()).is_none());
+    }
+
+    #[test]
+    fn clear_codex_auth_is_scoped_and_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        write_auth_json(dir.path(), &None, "access", None, None).unwrap();
+        let unrelated = dir.path().join("keep.txt");
+        std::fs::write(&unrelated, "keep").unwrap();
+
+        assert!(clear_codex_auth(dir.path()).unwrap());
+        assert!(load_codex_auth(dir.path()).is_none());
+        assert!(unrelated.exists());
+        assert!(!clear_codex_auth(dir.path()).unwrap());
+    }
+
+    #[test]
+    fn rejected_refresh_adopts_token_rotated_by_another_process() {
+        let dir = tempfile::tempdir().unwrap();
+        write_auth_json(
+            dir.path(),
+            &None,
+            "already-rotated",
+            Some("must-not-be-spent"),
+            Some("account"),
+        )
+        .unwrap();
+
+        let adopted = refresh_codex_auth_after_rejection(dir.path(), "rejected-old").unwrap();
+        assert_eq!(adopted.access_token, "already-rotated");
     }
 
     #[test]

@@ -73,17 +73,44 @@ pub fn default_session_summary_model() -> &'static str {
 mod tests {
     use super::*;
 
+    /// Forces the `DEFAULTS` LazyLock, which is where the embedded catalog's
+    /// self-consistency assert lives. Without a test that touches it, a
+    /// `default` naming a model the array does not contain would only surface
+    /// on a user's first run.
     #[test]
-    fn codex_omits_unsupported_sampling_parameters() {
-        let defaults: serde_json::Value = serde_json::from_str(DEFAULT_MODELS_JSON).unwrap();
-        let codex = defaults["models"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|model| model["id"] == "codex")
-            .expect("embedded model catalog must contain codex");
+    fn every_default_role_resolves_to_the_gateway_model() {
+        assert_eq!(default_model(), xai_aiko_providers::GATEWAY_MODEL);
+        assert_eq!(
+            default_web_search_model(),
+            xai_aiko_providers::GATEWAY_MODEL
+        );
+        assert_eq!(
+            default_image_description_model(),
+            xai_aiko_providers::GATEWAY_MODEL
+        );
+        assert_eq!(
+            default_session_summary_model(),
+            xai_aiko_providers::GATEWAY_MODEL
+        );
+    }
 
-        assert!(codex.get("temperature").is_none());
-        assert!(codex.get("top_p").is_none());
+    /// Aiko routes to Codegraff and nothing else, so the embedded catalog is
+    /// one entry. A second entry here would put a model in the picker that the
+    /// gateway's `/v1/models` does not publish and its gate would refuse.
+    #[test]
+    fn the_embedded_catalog_holds_only_the_gateway_model() {
+        let defaults: serde_json::Value = serde_json::from_str(DEFAULT_MODELS_JSON).unwrap();
+        let models = defaults["models"].as_array().unwrap();
+
+        assert_eq!(
+            models.len(),
+            1,
+            "embedded catalog must hold exactly one model"
+        );
+        assert_eq!(models[0]["model"], xai_aiko_providers::GATEWAY_MODEL);
+        assert_eq!(
+            models[0]["api_backend"], "chat_completions",
+            "the gateway speaks Chat Completions; a Responses entry would need a provider we no longer carry"
+        );
     }
 }

@@ -253,6 +253,29 @@ impl SessionActor {
             .or_else(|| {
                 crate::contract_native::active_root_for_session(self.session_info.id.0.as_ref())
             });
+        // Tool subprocesses spawned during this turn must be able to declare
+        // themselves DESCENDANTS of it in the same Contract lineage tree —
+        // `declare_turn` refuses a disconnected descendant, so a child that
+        // does not receive parent/root/depth here can only become a
+        // disconnected root. Publish the lineage into the per-session tool
+        // env now, before any tool runs. `AIKO_CONTRACT_ID` is stripped
+        // rather than forwarded because it is the adopt-identity path: an
+        // inherited value would make every child impersonate this turn
+        // instead of descending from it.
+        {
+            let mut child_env = self.tool_context.session_env.as_ref().clone();
+            child_env.remove("AIKO_CONTRACT_ID");
+            if let Some(turn_id) = turn_contract_root.as_deref() {
+                child_env.extend(crate::contract_native::lineage_env_for_child_of(turn_id));
+            }
+            self.agent
+                .borrow()
+                .tool_bridge()
+                .update_resource(xai_grok_tools::types::resources::SessionEnv(Arc::new(
+                    child_env,
+                )))
+                .await;
+        }
         let routing_goal = prompt_blocks
             .iter()
             .filter_map(|block| match block {

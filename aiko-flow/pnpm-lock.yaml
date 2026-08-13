@@ -1219,9 +1219,6 @@ importers:
       '@json-render/react':
         specifier: ^0.19.0
         version: 0.19.0(react@19.2.7)(zod@4.4.3)
-      '@smthrs/gateway-react':
-        specifier: workspace:*
-        version: link:../gateway-react
     devDependencies:
       '@types/bun':
         specifier: latest

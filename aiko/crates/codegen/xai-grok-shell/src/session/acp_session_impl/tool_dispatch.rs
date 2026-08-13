@@ -231,11 +231,27 @@ impl SessionActor {
         )
         .await;
 
+        // Bash mode bypasses the tool bridge's `SessionEnv` resource, so the
+        // Contract lineage published in `handle_prompt` must be merged here
+        // too — otherwise a bash-mode child would be a disconnected root.
+        // `AIKO_CONTRACT_ID` is stripped for the same reason it is never
+        // exported: it is the adopt-identity path, and forwarding it would
+        // make the child impersonate this turn instead of descending from it.
+        let child_env = {
+            let mut env = self.tool_context.session_env.as_ref().clone();
+            env.remove("AIKO_CONTRACT_ID");
+            if let Some(turn_id) =
+                crate::contract_native::active_root_for_session(self.session_info.id.0.as_ref())
+            {
+                env.extend(crate::contract_native::lineage_env_for_child_of(&turn_id));
+            }
+            env
+        };
         let request = TerminalRunRequest {
             tool_call_id: tool_call_id.clone(),
             command: command.clone(),
             cwd: self.tool_context.cwd.clone(),
-            env: self.tool_context.session_env.as_ref().clone(),
+            env: child_env,
             timeout: DEFAULT_TIMEOUT,
             output_byte_limit: 1_048_576, // 1 MiB
             stream: true,                 // Enable streaming for bash mode

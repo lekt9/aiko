@@ -23,6 +23,18 @@ pub fn apply_grok_agent_marker(cmd: &mut tokio::process::Command) {
     cmd.env(GROK_AGENT_ENV, GROK_AGENT_ENV_VALUE);
 }
 
+/// `AIKO_CONTRACT_ID` is the Contract adopt-identity path: a process started
+/// with it does not declare its own turn row — it BECOMES the named contract.
+/// Terminal children inherit this process's environment wholesale, so a stale
+/// inherited value would make every tool subprocess impersonate its parent's
+/// contract instead of descending from it. Descent travels explicitly via
+/// `AIKO_CONTRACT_PARENT_ID` / `_ROOT_ID` / `_DEPTH` in the request env; the
+/// identity variable is refused here, applied last so neither inherited nor
+/// request env can smuggle one into a child.
+pub fn strip_contract_adopt_identity(cmd: &mut tokio::process::Command) {
+    cmd.env_remove("AIKO_CONTRACT_ID");
+}
+
 /// Expand the four plugin-path tokens (`${CLAUDE_PLUGIN_ROOT}` / `${GROK_PLUGIN_ROOT}`
 /// and `${CLAUDE_PLUGIN_DATA}` / `${GROK_PLUGIN_DATA}`) in `s`. Each pair is expanded
 /// only when its value is provided. Single source of truth for plugin agent bodies,

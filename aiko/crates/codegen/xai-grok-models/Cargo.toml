@@ -9,5 +9,9 @@ description = "Default model IDs for the Aiko CLI, loaded from the embedded defa
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 
+[dev-dependencies]
+# Test-only: pins the embedded catalog's default to the id the gateway publishes.
+xai-aiko-providers = { path = "../xai-aiko-providers" }
+
 [lints]
 workspace = true

@@ -270,7 +270,7 @@ pub enum CaptchaCommand {
     },
 }
 
-/// Top-level commands for the pager binary.
+/// User-facing provider names accepted by `aiko login`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum LoginProvider {
     /// Aiko's native account and OAuth service.
@@ -303,7 +303,11 @@ pub enum Command {
     /// Manage running leader processes
     Leader(LeaderMgmtArgs),
     /// Sign out and clear cached credentials
-    Logout,
+    Logout {
+        /// Provider to sign out from. Omit for the active Aiko/Grok profile.
+        #[arg(value_enum, value_name = "PROVIDER")]
+        provider: Option<LoginProvider>,
+    },
     /// Sign in with Aiko, Grok, or OpenAI
     Login {
         /// Provider to authenticate with: aiko, grok, openai, or codex.
@@ -1475,7 +1479,10 @@ mod tests {
     #[test]
     fn subcommand_takes_precedence_over_positional_prompt() {
         let args = PagerArgs::try_parse_from(["grok", "logout"]).expect("subcommand parses");
-        assert!(matches!(args.command, Some(Command::Logout)));
+        assert!(matches!(
+            args.command,
+            Some(Command::Logout { provider: None })
+        ));
         assert!(args.prompt.is_none());
     }
 
@@ -1503,6 +1510,46 @@ mod tests {
             Some(Command::Login { provider: None, .. })
         ));
         assert!(PagerArgs::try_parse_from(["aiko", "login", "unknown"]).is_err());
+    }
+
+    #[test]
+    fn logout_provider_values_are_typed() {
+        for (value, expected) in [
+            ("aiko", LoginProvider::Aiko),
+            ("grok", LoginProvider::Grok),
+            ("openai", LoginProvider::Openai),
+            ("codex", LoginProvider::Codex),
+        ] {
+            let args = PagerArgs::try_parse_from(["aiko", "logout", value]).unwrap();
+            assert!(matches!(
+                args.command,
+                Some(Command::Logout { provider: Some(actual) }) if actual == expected
+            ));
+        }
+        assert!(PagerArgs::try_parse_from(["aiko", "logout", "unknown"]).is_err());
+    }
+
+    #[test]
+    fn login_provider_preserves_legacy_and_transport_flag_behavior() {
+        let legacy = PagerArgs::try_parse_from(["aiko", "login", "aiko", "--legacy"])
+            .expect("hidden legacy flag remains accepted");
+        assert!(matches!(
+            legacy.command,
+            Some(Command::Login {
+                provider: Some(LoginProvider::Aiko),
+                legacy: true,
+                ..
+            })
+        ));
+
+        let error =
+            PagerArgs::try_parse_from(["aiko", "login", "grok", "--oauth", "--device-auth"])
+                .expect_err("OAuth and device auth must remain mutually exclusive");
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+
+        let error = PagerArgs::try_parse_from(["aiko", "login", "unknown"])
+            .expect_err("unknown login providers must be rejected by clap");
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
     }
     #[test]
     fn positional_prompt_conflicts_with_headless_single() {

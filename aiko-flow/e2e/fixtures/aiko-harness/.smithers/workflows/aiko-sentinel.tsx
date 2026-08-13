@@ -33,7 +33,7 @@ export default smithers((ctx) => (
       {[
         `Create a file at exactly this absolute path: ${ctx.input.sentinelPath}`,
         `The file's entire content must be exactly this single line followed by one trailing newline:`,
-        ctx.input.sentinelContent + "_CORRUPTED",
+        ctx.input.sentinelContent,
         `Do not add anything else to the file — no comments, no extra whitespace.`,
         `Use your file-writing tool to create it (create parent directories if needed).`,
         `After the file is written, reply with ONLY this JSON object and nothing else:`,

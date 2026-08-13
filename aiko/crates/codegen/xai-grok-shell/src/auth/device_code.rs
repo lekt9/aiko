@@ -25,7 +25,7 @@ const MIN_DEVICE_CODE_EXPIRY_FALLBACK_SECS: i64 = 10 * 60;
 pub enum DeviceCodeError {
     #[error(
         "Device-code login is not available for this deployment. \
-         Try `grok login` or set XAI_API_KEY instead."
+         Try `aiko login` or set XAI_API_KEY instead."
     )]
     NotEnabled,
     #[error(transparent)]
@@ -136,6 +136,7 @@ pub async fn request_device_code(
     issuer: &str,
     client_id: &str,
     scopes: &[String],
+    referrer: &str,
     surface: ClientSurface,
 ) -> Result<DeviceCode, DeviceCodeError> {
     let client = crate::http::shared_client();
@@ -153,7 +154,7 @@ pub async fn request_device_code(
             .form(&[
                 ("client_id", client_id),
                 ("scope", scope_str.as_str()),
-                ("referrer", "grok-build"),
+                ("referrer", referrer),
             ]),
         &url,
     )
@@ -314,7 +315,14 @@ pub async fn run_device_code_login_channels(
         detect_cli_surface()
     };
 
-    let device_code = request_device_code(issuer, client_id, scopes, surface).await?;
+    let referrer = auth_manager
+        .grok_com_config()
+        .oauth2
+        .as_ref()
+        .and_then(|oauth| oauth.referrer.as_deref())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("grok-build");
+    let device_code = request_device_code(issuer, client_id, scopes, referrer, surface).await?;
 
     let Some(channels) = channels.take() else {
         // CLI: print the URL + code to stderr.

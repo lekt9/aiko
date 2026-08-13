@@ -1906,6 +1906,9 @@ impl Config {
         config.image_description_model = model_overrides.image_description;
         config.prompt_suggest_model_pin = model_overrides.prompt_suggestion;
         config.apply_env_overrides();
+        config
+            .grok_com_config
+            .apply_configured_builtin_login_profile();
         Ok(config)
     }
     /// Populate `#[serde(skip)]` subagent fields from `SubagentsConfig::resolve()`.
@@ -4427,7 +4430,7 @@ pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> Res
         } else {
             tracing::warn!(
                 model = % info.model,
-                "codex model selected but not logged in — run `aiko login codex`"
+                "codex model selected but not logged in — run `aiko login openai` (`codex` is also accepted)"
             );
             (
                 None,
@@ -7503,6 +7506,30 @@ reasoning_effort = "low"
         let oidc = cfg.grok_com_config.oidc.expect("oidc should be set");
         assert_eq!(oidc.issuer, "https://example.okta.com");
         assert_eq!(oidc.client_id, "test-id");
+    }
+    #[test]
+    fn persisted_grok_provider_materializes_complete_runtime_profile() {
+        let raw: toml::Value = toml::from_str(
+            r#"
+            [auth]
+            provider = "grok"
+            "#,
+        )
+        .unwrap();
+        let cfg = Config::new_from_toml_cfg(&raw).expect("config should parse");
+        assert_eq!(
+            cfg.grok_com_config.provider,
+            Some(crate::auth::BuiltinLoginProvider::Grok)
+        );
+        let oauth = cfg.grok_com_config.oauth2.expect("Grok OAuth profile");
+        assert_eq!(oauth.issuer, crate::auth::GROK_OAUTH2_ISSUER);
+        assert!(oauth.scopes.iter().any(|scope| scope == "grok-cli:access"));
+        assert!(!oauth.scopes.iter().any(|scope| scope == "aiko:access"));
+        assert_eq!(cfg.grok_com_config.token_header, "xai-grok-cli");
+        assert_eq!(
+            cfg.grok_com_config.auth_provider_label.as_deref(),
+            Some("Grok")
+        );
     }
     #[test]
     fn grok_com_config_still_works() {

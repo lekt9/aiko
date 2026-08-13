@@ -5,5 +5,4 @@ export default defineConfig({
   format: ["esm"],
   dts: true,
   clean: true,
-  noExternal: [/^@smthrs\/gateway-react$/, /^@smthrs\/gateway-client$/],
 });
