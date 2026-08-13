@@ -60,7 +60,7 @@ mkdir -p "$root/.contracts"
 {
   echo '{"jsonrpc":"2.0","id":8,"method":"initialize","params":{}}'
   printf '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"aiko.bridge","arguments":{"state_dir":"%s/n/state","agent":"a1"}}}\n' "$root"
-} | env PATH=/usr/bin:/bin timeout 60 "$doctor" mcp > "$root/nopath.jsonl" 2>/dev/null || true
+} | env PATH=/usr/bin:/bin "$(command -v timeout)" 60 "$doctor" mcp > "$root/nopath.jsonl" 2>/dev/null || true
 python3 - "$root/nopath.jsonl" <<'PY2' || exit 1
 import json, sys
 for line in open(sys.argv[1], encoding="utf-8"):

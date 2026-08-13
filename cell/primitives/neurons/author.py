@@ -76,6 +76,65 @@ spec:
       def run(inputs, ctx):
           return {"echoed": inputs.get("text","")}
 """},
+    {"name": "fde-seat", "probe": "fde", "template": """
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: aiko-seat
+  description: harness that seats Aiko as the employee on this role
+spec:
+  membrane:
+    inputs:
+      role: { schema: string }
+      handle: { schema: object }
+      workflow_digest: { schema: string }
+    outputs:
+      handoff: { schema: object }
+    caps: {}
+  organelles:
+    - { name: seat, cell: ../fde/deploy-aiko.cell.yaml }
+  wiring:
+    - { from: membrane.role, to: seat.role }
+    - { from: membrane.handle, to: seat.handle }
+    - { from: membrane.workflow_digest, to: seat.digest }
+    - { from: seat.attachment, to: membrane.handoff }
+"""},
+    {"name": "roster-level", "probe": "roster", "template": """
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: roster-level
+  description: deterministic shift fill — locals then TS then NTS, refuse a shortfall
+spec:
+  membrane:
+    inputs:
+      requirement: { schema: object }
+      workers: { schema: object }
+    outputs:
+      roster: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    code: |
+      def run(inputs, ctx):
+          req = inputs.get("requirement") or {}
+          target = int(req.get("target") or 0)
+          shift = str(req.get("shift") or "D")
+          raw = (inputs.get("workers") or {}).get("items") or []
+          rank = {"local": 0, "ts": 1, "nts": 2}
+          eligible = []
+          for w in raw:
+              if w.get("pref_off"):
+                  continue
+              if int(w.get("consecutive") or 0) >= int(req.get("max_consecutive") or 5):
+                  continue
+              eligible.append(w)
+          eligible.sort(key=lambda w: (rank.get(str(w.get("klass") or "nts").lower(), 9), w.get("last_worked") or "", w.get("name") or w.get("id") or ""))
+          assigned = eligible[:target]
+          if len(assigned) < target:
+              raise ValueError("roster-level: shortfall — refused, wrote nothing")
+          return {"roster": {"shift": shift, "target": target, "assigned": [w.get("id") for w in assigned], "count": len(assigned)}}
+"""},
 ]
 
 def run(inputs, ctx):

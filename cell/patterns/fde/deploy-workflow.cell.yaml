@@ -1,0 +1,22 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: deploy-workflow
+  description: author a digest-pinned seat harness that wires deploy-aiko
+spec:
+  membrane:
+    inputs:
+      role: { schema: string }
+      outcome: { schema: string }
+      handle: { schema: object }
+    outputs:
+      cell: { schema: object }
+      cell_yaml: { schema: string }
+      digest: { schema: string }
+      ports: { schema: object }
+    caps: {}
+  run:
+    kind: python
+    entry: neurons/deploy_workflow.py
+  policy:
+    determinism: required

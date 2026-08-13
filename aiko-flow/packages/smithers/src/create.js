@@ -24,6 +24,7 @@ import {
   continueAsNew as baseContinueAsNew,
   Worktree as BaseWorktree,
   Sandbox as BaseSandbox,
+  Cell as BaseCell,
   Signal as BaseSignal,
   Timer as BaseTimer,
   UI as BaseUI,
@@ -267,6 +268,15 @@ function buildSmithersApi(config) {
     });
   }
   /**
+   * @param {import("@smthrs/components/components/CellProps").CellProps} props
+   */
+  function Cell(props) {
+    return React.createElement(BaseCell, {
+      ...props,
+      smithersContext: RuntimeSmithersContext,
+    });
+  }
+  /**
    * @param {SandboxProps} props
    */
   function Sandbox(props) {
@@ -337,6 +347,7 @@ function buildSmithersApi(config) {
     ContinueAsNew: BaseContinueAsNew,
     continueAsNew: baseContinueAsNew,
     Worktree: BaseWorktree,
+    Cell,
     Sandbox,
     Signal,
     Timer: BaseTimer,

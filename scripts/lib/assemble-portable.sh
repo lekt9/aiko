@@ -129,6 +129,9 @@ assemble_portable_package() {
 
     install -m 755 "$_aiko_bin" "$_dest/bin/aiko"
     install -m 755 "$_neuron_bin" "$_dest/bin/neuron"
+    if [ -x "$AIKO_ROOT/zig-out/bin/aiko-doctor" ]; then
+        install -m 755 "$AIKO_ROOT/zig-out/bin/aiko-doctor" "$_dest/bin/aiko-doctor"
+    fi
     install -m 755 "$_contract_lib" "$_dest/lib/$_lib_name"
     if [ "$_lib_name" = libcontract.so ]; then
         ln -sfn libcontract.so "$_dest/lib/libcontract.dylib"
@@ -139,7 +142,7 @@ assemble_portable_package() {
     # Cell's canonical executable surface and the folders referenced by shipped cells.
     install -m 755 "$_cell_dir/run.py" "$_dest/share/cell/run.py"
     install -m 644 "$_cell_dir/helpers.py" "$_dest/share/cell/helpers.py"
-    for _file in SKILL.md SPEC.md README.md; do
+    for _file in SKILL.md SPEC.md README.md aiko-package.json; do
         [ ! -f "$_cell_dir/$_file" ] || install -m 644 "$_cell_dir/$_file" "$_dest/share/cell/$_file"
     done
     for _dir in primitives patterns schemas system skills docs example; do
@@ -170,7 +173,7 @@ CELL
 
     if [ -d "$AIKO_ROOT/sdk/registry" ]; then
         cp -R "$AIKO_ROOT/sdk/registry/bin/." "$_dest/sdk/registry/bin/" 2>/dev/null || true
-        for _f in setup.sh versions.lock package.json; do [ ! -f "$AIKO_ROOT/sdk/registry/$_f" ] || cp "$AIKO_ROOT/sdk/registry/$_f" "$_dest/sdk/registry/"; done
+        for _f in setup.sh versions.lock package.json stack.lock.json; do [ ! -f "$AIKO_ROOT/sdk/registry/$_f" ] || cp "$AIKO_ROOT/sdk/registry/$_f" "$_dest/sdk/registry/"; done
     fi
 
     # Skills live below the Rust host's aiko/.agents tree, not repository-root .agents.

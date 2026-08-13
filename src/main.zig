@@ -19,6 +19,7 @@ const contract_graph_analyzer = @import("contract_graph_analyzer");
 
 const bridge = @import("bridge.zig");
 const mcp = @import("mcp.zig");
+const workflow_binding = @import("workflow_binding.zig");
 
 pub fn main(init: std.process.Init) !void {
     const a = init.arena.allocator();
@@ -27,6 +28,12 @@ pub fn main(init: std.process.Init) !void {
     while (it.next()) |arg| try argv.append(a, arg);
     if (argv.items.len >= 2 and std.mem.eql(u8, argv.items[1], "graph-plan")) {
         return runGraphPlan(init, a, argv.items[2..]);
+    }
+    if (argv.items.len >= 2 and std.mem.eql(u8, argv.items[1], "bind-workflow")) {
+        return runBindWorkflow(init, a, argv.items[2..]);
+    }
+    if (argv.items.len >= 2 and std.mem.eql(u8, argv.items[1], "workflow-control")) {
+        return runWorkflowControl(init, a, argv.items[2..]);
     }
     if (argv.items.len >= 2 and std.mem.eql(u8, argv.items[1], "bridge")) {
         return runBridge(init, a, argv.items[2..]);
@@ -50,6 +57,9 @@ pub fn main(init: std.process.Init) !void {
     comptime std.debug.assert(contract.neuron.FireRequest == neuron.FireRequest);
 
     try out.print("aiko — meta-fractal harness (MCP surface for Hermes)\n\n", .{});
+    try out.print("  bind-workflow <cell.yaml> [--plan]\n", .{});
+    try out.print("  workflow-control <dir> bind|pause|resume|status|approve [--digest HEX]\n", .{});
+    try out.print("  graph-plan <walk.json>\n\n", .{});
     try out.print("  neuron    core={s}\n", .{neuron.CORE_VERSION});
     try out.print("            hash_profile={s}\n", .{neuron.HASH_PROFILE});
     try out.print("            schema_digest={s}\n", .{neuron.SCHEMA_DIGEST});
@@ -105,6 +115,110 @@ fn runGraphPlan(init: std.process.Init, a: std.mem.Allocator, rest: []const []co
     defer verdict.deinit(a);
     const result = try analyzer.toJson(&verdict);
     try out.print("{s}\n", .{result});
+    try out.flush();
+}
+
+/// `aiko-doctor bind-workflow <cell.yaml> [--plan]`
+///
+/// Ask Cell to canonicalize the workflow, project organelles/wiring into a
+/// Contract walk, and optionally run graph-plan on that walk. Cell executes;
+/// Contract analyzes; this command does not schedule.
+fn runBindWorkflow(init: std.process.Init, a: std.mem.Allocator, rest: []const []const u8) !void {
+    var buf: [4096]u8 = undefined;
+    var w = std.Io.File.stdout().writerStreaming(init.io, &buf);
+    const out = &w.interface;
+
+    var cell_path: ?[]const u8 = null;
+    var with_plan = false;
+    for (rest) |arg| {
+        if (std.mem.eql(u8, arg, "--plan")) {
+            with_plan = true;
+        } else if (cell_path == null) {
+            cell_path = arg;
+        }
+    }
+    if (cell_path == null) {
+        try out.print("usage: aiko-doctor bind-workflow <cell.yaml> [--plan]\n", .{});
+        try out.flush();
+        std.process.exit(2);
+    }
+
+    const built = workflow_binding.buildCell(init, a, cell_path.?) catch |err| {
+        try out.print("{{\"error\":\"{t}\"}}\n", .{err});
+        try out.flush();
+        std.process.exit(1);
+    };
+    const walk = workflow_binding.projectWalk(a, built.canonical, built.digest, cell_path.?) catch |err| {
+        try out.print("{{\"error\":\"{t}\"}}\n", .{err});
+        try out.flush();
+        std.process.exit(1);
+    };
+
+    try out.print("{{\"cell\":{{\"path\":", .{});
+    try writeJsonString(out, cell_path.?);
+    try out.print(",\"digest\":", .{});
+    try writeJsonString(out, built.digest);
+    try out.print("}},\"walk\":{s}", .{walk});
+    if (with_plan) {
+        const plan = workflow_binding.planWalk(a, walk) catch |err| {
+            try out.print(",\"error\":\"{t}\"}}\n", .{err});
+            try out.flush();
+            std.process.exit(1);
+        };
+        try out.print(",\"plan\":{s}", .{plan});
+    }
+    try out.print("}}\n", .{});
+    try out.flush();
+}
+
+fn writeJsonString(out: anytype, s: []const u8) !void {
+    try out.writeAll("\"");
+    for (s) |c| {
+        switch (c) {
+            '"' => try out.writeAll("\\\""),
+            '\\' => try out.writeAll("\\\\"),
+            else => try out.writeAll(&.{c}),
+        }
+    }
+    try out.writeAll("\"");
+}
+
+/// `aiko-doctor workflow-control <dir> bind|pause|resume|status|approve [--digest HEX]`
+///
+/// Durable pause/resume for a bound Cell revision. Survives process restart
+/// because the record is a file, not memory. Does not choose the next organelle.
+fn runWorkflowControl(init: std.process.Init, a: std.mem.Allocator, rest: []const []const u8) !void {
+    var buf: [4096]u8 = undefined;
+    var w = std.Io.File.stdout().writerStreaming(init.io, &buf);
+    const out = &w.interface;
+
+    var dir: ?[]const u8 = null;
+    var op: ?[]const u8 = null;
+    var digest: ?[]const u8 = null;
+    var i: usize = 0;
+    while (i < rest.len) : (i += 1) {
+        if (std.mem.eql(u8, rest[i], "--digest") and i + 1 < rest.len) {
+            i += 1;
+            digest = rest[i];
+            continue;
+        }
+        if (dir == null) {
+            dir = rest[i];
+        } else if (op == null) {
+            op = rest[i];
+        }
+    }
+    if (dir == null or op == null) {
+        try out.print("usage: aiko-doctor workflow-control <dir> bind|pause|resume|status|approve [--digest HEX]\n", .{});
+        try out.flush();
+        std.process.exit(2);
+    }
+    const rec = workflow_binding.applyControl(init, a, dir.?, op.?, digest) catch |err| {
+        try out.print("{{\"error\":\"{t}\"}}\n", .{err});
+        try out.flush();
+        std.process.exit(1);
+    };
+    try out.print("{s}", .{rec});
     try out.flush();
 }
 

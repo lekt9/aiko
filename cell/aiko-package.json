@@ -1,0 +1,10 @@
+{
+  "name": "cell",
+  "version": "0.2.115",
+  "api": "cell/v0",
+  "kind": "harness",
+  "standalone": true,
+  "requires": [],
+  "entry": "run.py",
+  "description": "Typed DAG harness. Does not import contract or neuron."
+}

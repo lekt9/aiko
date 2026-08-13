@@ -45,8 +45,18 @@ aiko_env_init() {
         *)      AIKO_CONTRACT_LIB_NAME=libcontract.so ;;
     esac
     AIKO_CONTRACT_LIBRARY=${AIKO_CONTRACT_LIBRARY:-"$AIKO_LIB_DIR/$AIKO_CONTRACT_LIB_NAME"}
+    if [ -z "${AIKO_CELL_RUNNER:-}" ]; then
+        if [ -f "$AIKO_HOME/packages/cell/current/run.py" ]; then
+            AIKO_CELL_RUNNER="$AIKO_HOME/packages/cell/current/run.py"
+        elif [ -f "$AIKO_HOME/cell/run.py" ]; then
+            AIKO_CELL_RUNNER="$AIKO_HOME/cell/run.py"
+        fi
+    fi
     export AIKO_ROOT AIKO_HOME AIKO_BIN_DIR AIKO_LIB_DIR AIKO_PACKAGE_ROOT
     export AIKO_CONTRACT_LIB_NAME AIKO_CONTRACT_LIBRARY
+    if [ -n "${AIKO_CELL_RUNNER:-}" ]; then
+        export AIKO_CELL_RUNNER
+    fi
 }
 
 # True if path exports the symbols Aiko needs to auto-declare turn roots.

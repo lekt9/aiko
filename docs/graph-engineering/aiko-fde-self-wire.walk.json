@@ -1,0 +1,127 @@
+{
+  "north_star": "Wire Aiko as a Cell-native AI Forward Deployed Engineer: account handles (not API keys) authorize a deploy-workflow cell that authors a seat harness, deploy-aiko seats Aiko on that digest, and the composite self-wire loop is the same shape at every scale.",
+  "grade_min": 8,
+  "nodes": [
+    {
+      "id": "product-contract",
+      "plan": "Write the bounded AI-FDE product contract with Proven/Designed/Absent, first vertical, authority model, and a runnable promotion gate",
+      "depends_on": [],
+      "status": "settled",
+      "reads": ["README.md", "VISION.md", "docs/AIKO-FDE-PLAN.md"],
+      "writes": ["docs/AI-FORWARD-DEPLOYED-ENGINEER.md"],
+      "produces": ["fde-product-contract"],
+      "invoke_skills": ["jesus-pattern", "product-management"],
+      "inspire_from": ["src:README.md", "src:docs/AIKO-FDE-PLAN.md"],
+      "capability_gaps": [],
+      "witness": "test -s docs/AI-FORWARD-DEPLOYED-ENGINEER.md && grep -q 'Proven' docs/AI-FORWARD-DEPLOYED-ENGINEER.md && grep -q 'Designed' docs/AI-FORWARD-DEPLOYED-ENGINEER.md && grep -q 'Absent' docs/AI-FORWARD-DEPLOYED-ENGINEER.md",
+      "how": "eval"
+    },
+    {
+      "id": "account-handle",
+      "plan": "Add a Cell primitive that admits only an opaque employee-account handle and refuses raw API keys, tokens, passwords, and cookies",
+      "depends_on": ["product-contract"],
+      "status": "settled",
+      "reads": ["docs/AI-FORWARD-DEPLOYED-ENGINEER.md", "cell/primitives/auth.cell.yaml"],
+      "writes": [
+        "cell/primitives/account-handle.cell.yaml",
+        "cell/primitives/neurons/account_handle.py",
+        "cell/primitives/schemas/account-handle.v1.json"
+      ],
+      "produces": ["account-handle-primitive"],
+      "invoke_skills": ["cell"],
+      "inspire_from": ["src:cell/primitives/auth.cell.yaml", "src:cell/SPEC.md"],
+      "capability_gaps": ["enterprise-credential-vault"],
+      "witness": "python3 cell/run.py build cell/primitives/account-handle.cell.yaml"
+    },
+    {
+      "id": "deploy-workflow",
+      "plan": "Author a Cell that turns role+outcome+handle into a digest-pinned seat harness whose organelles include deploy-aiko",
+      "depends_on": ["product-contract"],
+      "status": "settled",
+      "reads": ["cell/primitives/author.cell.yaml", "docs/AI-FORWARD-DEPLOYED-ENGINEER.md"],
+      "writes": [
+        "cell/patterns/fde/deploy-workflow.cell.yaml",
+        "cell/patterns/fde/neurons/deploy_workflow.py",
+        "cell/primitives/neurons/author.py"
+      ],
+      "produces": ["deploy-workflow-cell"],
+      "invoke_skills": ["cell"],
+      "inspire_from": ["src:cell/primitives/author.cell.yaml", "src:cell/system/builder.cell.yaml"],
+      "capability_gaps": [],
+      "witness": "python3 cell/run.py build cell/patterns/fde/deploy-workflow.cell.yaml"
+    },
+    {
+      "id": "deploy-aiko",
+      "plan": "Author a Cell that seats Aiko as the employee agent on a workflow digest under an account handle, never under an API key",
+      "depends_on": ["product-contract"],
+      "status": "settled",
+      "reads": ["docs/AI-FORWARD-DEPLOYED-ENGINEER.md", "cell/SPEC.md"],
+      "writes": [
+        "cell/patterns/fde/deploy-aiko.cell.yaml",
+        "cell/patterns/fde/neurons/deploy_aiko.py"
+      ],
+      "produces": ["deploy-aiko-cell"],
+      "invoke_skills": ["cell"],
+      "inspire_from": ["src:neuron/src/limb_ops.zig", "src:cell/SPEC.md"],
+      "capability_gaps": [],
+      "witness": "python3 cell/run.py build cell/patterns/fde/deploy-aiko.cell.yaml"
+    },
+    {
+      "id": "self-wire",
+      "plan": "Compose account-handle → deploy-workflow → deploy-aiko into one self-similar Cell harness",
+      "depends_on": ["account-handle", "deploy-workflow", "deploy-aiko"],
+      "status": "settled",
+      "reads": [
+        "cell/primitives/account-handle.cell.yaml",
+        "cell/patterns/fde/deploy-workflow.cell.yaml",
+        "cell/patterns/fde/deploy-aiko.cell.yaml"
+      ],
+      "writes": [
+        "cell/patterns/fde/self-wire.cell.yaml",
+        "cell/patterns/fde/README.md"
+      ],
+      "produces": ["self-wire-cell"],
+      "invoke_skills": ["cell"],
+      "inspire_from": ["src:cell/README.md", "src:cell/patterns/api-reveng/api-reveng.cell.yaml"],
+      "capability_gaps": [],
+      "witness": "python3 cell/run.py build cell/patterns/fde/self-wire.cell.yaml"
+    },
+    {
+      "id": "fde-workflow-gate",
+      "plan": "Witness secret refusal, digest movement, deterministic double-fire, and that the authored cell seats Aiko",
+      "depends_on": ["self-wire"],
+      "status": "settled",
+      "reads": ["cell/patterns/fde/self-wire.cell.yaml", "docs/AI-FORWARD-DEPLOYED-ENGINEER.md"],
+      "writes": [
+        "cell/tests/gates/fde-self-wire.sh",
+        "tests/fde-workflow-gate.sh"
+      ],
+      "produces": ["fde-workflow-gate"],
+      "invoke_skills": ["harness-engineering", "cell"],
+      "inspire_from": ["src:cell/tests/gates/authored-gap.sh", "src:cell/tests/gates/determinism.sh"],
+      "capability_gaps": [],
+      "witness": "bash tests/fde-workflow-gate.sh"
+    },
+    {
+      "id": "binding-docs",
+      "plan": "Record the Smithers-controls / Cell-describes / Aiko-plans binding without documenting unpublished aiko-flow as shipped",
+      "depends_on": ["fde-workflow-gate"],
+      "status": "settled",
+      "reads": ["docs/AI-FORWARD-DEPLOYED-ENGINEER.md", "docs/SOURCE-OF-TRUTH.md"],
+      "writes": [
+        "docs/AIKO-WORKFLOW-BINDING.md",
+        "cell/primitives/README.md",
+        "cell/patterns/README.md",
+        "docs/README.md",
+        "README.md",
+        "docs/AIKO-FDE-PLAN.md",
+        "docs/graph-engineering/aiko-fde.walk.json"
+      ],
+      "produces": ["workflow-binding-doc"],
+      "invoke_skills": ["harness-engineering"],
+      "inspire_from": ["src:docs/SOURCE-OF-TRUTH.md", "src:docs/AIKO-FDE-PLAN.md"],
+      "capability_gaps": [],
+      "witness": "test -s docs/AIKO-WORKFLOW-BINDING.md && ! grep -q 'aiko-flow is a shipped' docs/AIKO-WORKFLOW-BINDING.md"
+    }
+  ]
+}

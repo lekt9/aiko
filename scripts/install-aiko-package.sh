@@ -166,14 +166,19 @@ esac
 BIN_TMP="$AIKO_BIN_DIR/.aiko.install.$$"
 NEURON_TMP="$AIKO_BIN_DIR/.neuron.install.$$"
 CELL_TMP="$AIKO_BIN_DIR/.cell.install.$$"
+DOCTOR_TMP=""
 LIB_TMP="$AIKO_LIB_DIR/.${CONTRACT_INSTALL_NAME}.install.$$"
 CELL_RUNTIME_TMP="$AIKO_HOME/.cell.install.$$"
-trap 'rm -rf "$BIN_TMP" "$NEURON_TMP" "$CELL_TMP" "$LIB_TMP" "$CELL_RUNTIME_TMP"' EXIT HUP INT TERM
+trap 'rm -rf "$BIN_TMP" "$NEURON_TMP" "$CELL_TMP" "$LIB_TMP" "$CELL_RUNTIME_TMP" ${DOCTOR_TMP:+"$DOCTOR_TMP"}' EXIT HUP INT TERM
 
 install -m 755 "$AIKO_BINARY" "$BIN_TMP"
 install -m 755 "$NEURON_BINARY" "$NEURON_TMP"
 install -m 755 "$CELL_LAUNCHER" "$CELL_TMP"
 install -m 755 "$CONTRACT_LIBRARY" "$LIB_TMP"
+if [ -x "$PACKAGE_ROOT/bin/aiko-doctor" ]; then
+    DOCTOR_TMP="$AIKO_BIN_DIR/.aiko-doctor.install.$$"
+    install -m 755 "$PACKAGE_ROOT/bin/aiko-doctor" "$DOCTOR_TMP"
+fi
 cp -R "$CELL_RUNTIME" "$CELL_RUNTIME_TMP"
 "$BIN_TMP" --version >/dev/null
 
@@ -190,10 +195,24 @@ rm -f "$AIKO_BIN_DIR/neuron"
 mv -f "$NEURON_TMP" "$AIKO_BIN_DIR/neuron"
 rm -f "$AIKO_BIN_DIR/cell"
 mv -f "$CELL_TMP" "$AIKO_BIN_DIR/cell"
+if [ -n "$DOCTOR_TMP" ] && [ -x "$DOCTOR_TMP" ]; then
+    rm -f "$AIKO_BIN_DIR/aiko-doctor"
+    mv -f "$DOCTOR_TMP" "$AIKO_BIN_DIR/aiko-doctor"
+fi
 rm -rf "$AIKO_HOME/cell"
 mv "$CELL_RUNTIME_TMP" "$AIKO_HOME/cell"
 mkdir -p "$AIKO_HOME/skills/cell"
 cp "$AIKO_HOME/cell/SKILL.md" "$AIKO_HOME/skills/cell/SKILL.md"
+# Versioned package current — same bytes, updateable without reversing deps.
+_STACK_VER=$(manifest_value version)
+[ -n "$_STACK_VER" ] || _STACK_VER=unknown
+mkdir -p "$AIKO_HOME/packages/cell"
+ln -sfn "$AIKO_HOME/cell" "$AIKO_HOME/packages/cell/current"
+if [ -f "$PACKAGE_ROOT/sdk/registry/stack.lock.json" ]; then
+    cp "$PACKAGE_ROOT/sdk/registry/stack.lock.json" "$AIKO_HOME/packages/stack.lock.json"
+elif [ -n "${AIKO_ROOT:-}" ] && [ -f "$AIKO_ROOT/sdk/registry/stack.lock.json" ]; then
+    cp "$AIKO_ROOT/sdk/registry/stack.lock.json" "$AIKO_HOME/packages/stack.lock.json"
+fi
 # Shadows
 for _shadow in "$HOME/bin/aiko" /usr/local/bin/aiko "$HOME/bin/neuron" "$HOME/bin/cell"; do
     if [ -e "$_shadow" ] || [ -L "$_shadow" ]; then
@@ -242,6 +261,9 @@ echo "Installed Aiko stack:"
 echo "  aiko     → $AIKO_BIN_DIR/aiko"
 echo "  neuron   → $AIKO_BIN_DIR/neuron"
 echo "  cell     → $AIKO_BIN_DIR/cell (runtime $AIKO_HOME/cell)"
+if [ -x "$AIKO_BIN_DIR/aiko-doctor" ]; then
+    echo "  doctor   → $AIKO_BIN_DIR/aiko-doctor"
+fi
 echo "  contract → $AIKO_LIB_DIR/$CONTRACT_INSTALL_NAME (ABI ${PACKAGE_ABI})"
 if [ -d "$AIKO_HOME/limbs" ]; then
     echo "  limbs    → $AIKO_HOME/limbs/ ($(ls -1 "$AIKO_HOME/limbs" 2>/dev/null | wc -l | tr -d ' ') entries)"

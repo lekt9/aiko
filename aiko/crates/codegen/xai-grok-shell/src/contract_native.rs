@@ -7805,6 +7805,8 @@ pub async fn ground_turn_with_facts_and_prepared(
             graph_harness::WorkflowRoute::DirectAllowed { .. }
                 if rollout.requires_graph_harness() =>
             {
+                let planned = skill_registry::retain_isolated_local_skills(planned);
+                let preview = project_plan_preview(&planned)?;
                 TurnGraphSource::GraphHarness(prepare_turn_graph(&goal, cwd, &preview, &planned)?)
             }
             graph_harness::WorkflowRoute::DirectAllowed { .. } => {
@@ -7813,6 +7815,11 @@ pub async fn ground_turn_with_facts_and_prepared(
             graph_harness::WorkflowRoute::GraphHarnessRequired { .. }
                 if rollout.requires_graph_harness() =>
             {
+                // IsolatedLocal cannot admit network/authorization skills
+                // (act-on-web-api execute-request). Drop them so the turn
+                // still admits; do not kill the prompt.
+                let planned = skill_registry::retain_isolated_local_skills(planned);
+                let preview = project_plan_preview(&planned)?;
                 TurnGraphSource::GraphHarness(prepare_turn_graph(&goal, cwd, &preview, &planned)?)
             }
             graph_harness::WorkflowRoute::GraphHarnessRequired { .. } => {

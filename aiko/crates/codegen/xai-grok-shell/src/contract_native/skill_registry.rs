@@ -9,7 +9,7 @@ mod graph;
 
 pub use graph::{
     ContractSkillPlan, DISCOVERY_SCHEMA, ResolvedScript, catalog, core_guidance, dry_run, plan,
-    plan_bounded, resolve_input_bindings, resolve_script,
+    plan_bounded, resolve_input_bindings, resolve_script, retain_isolated_local_skills,
 };
 
 const MANIFEST_NAME: &str = "contract-skill.json";

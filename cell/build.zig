@@ -21,7 +21,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run cell test suite");
     test_step.dependOn(&pytest.step);
 
-    // zig build gate — 10 witnesses, the acceptance criterion (empty dir, public CLI, durable state)
+    // zig build gate — 13 witnesses, the acceptance criterion (empty dir, public CLI, durable state)
     const gate = b.addSystemCommand(&.{ "bash", "tests/gate.sh" });
     gate.setCwd(b.path("."));
     const gate_step = b.step("gate", "Run 10 gate witnesses (acceptance)");

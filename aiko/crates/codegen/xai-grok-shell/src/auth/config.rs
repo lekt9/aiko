@@ -133,7 +133,12 @@ pub struct OAuth2ProviderConfig {
 pub const XAI_OAUTH2_ISSUER: &str = "https://aiko.theclarityproject.net";
 /// Grok's first-party OAuth profile, synchronized from xai-org/grok-build.
 pub const GROK_OAUTH2_ISSUER: &str = "https://auth.x.ai";
-const GROK_OAUTH2_CLIENT_ID: &str = obfstr::obfstr!("b1a00492-073a-47ea-816f-4c329264a828");
+fn grok_oauth2_client_id() -> &'static str {
+    // rustc 1.92+ forbids obfstr! in const; keep the bytes obfuscated at runtime.
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(|| obfstr::obfstr!("b1a00492-073a-47ea-816f-4c329264a828").to_string())
+        .as_str()
+}
 const GROK_OAUTH2_REFERRER: &str = "grok-build";
 /// Production accounts-app origin allowlist — the only origins builds without
 /// non-production builds accept. Lives in its own const, referenced by both
@@ -207,7 +212,7 @@ impl GrokComConfig {
         let (issuer, client_id, scopes, referrer, token_header, label) = if grok {
             (
                 GROK_OAUTH2_ISSUER,
-                GROK_OAUTH2_CLIENT_ID,
+                grok_oauth2_client_id(),
                 vec![
                     "openid".into(),
                     "profile".into(),
@@ -491,7 +496,7 @@ mod tests {
         grok.apply_builtin_login_profile(true);
         let grok_oauth = grok.oauth2.as_ref().unwrap();
         assert_eq!(grok_oauth.issuer, GROK_OAUTH2_ISSUER);
-        assert_eq!(grok_oauth.client_id, GROK_OAUTH2_CLIENT_ID);
+        assert_eq!(grok_oauth.client_id, grok_oauth2_client_id());
         assert!(
             grok_oauth
                 .scopes

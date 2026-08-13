@@ -46,13 +46,23 @@ spec:
 
 That file *is* a Cell — use it as an organelle in another Cell. Three leaf kinds (`exec` · `python` · `http`) share one membrane, so swapping an API for a binary is one `run:` block.
 
-Fixed **primitives** (`primitives/session`, `auth`, `request`, `cas`) give frozen membranes for API reverse-engineering — session holds state, auth enriches it, request merges auth into HTTP, cas dedups. See `primitives/README.md` + `patterns/api-reveng/`.
+Fixed **primitives** (`primitives/session`, `auth`, `request`, `cas`, `account-handle`) give frozen membranes for API reverse-engineering and the employee seat — session holds state, auth enriches it, request merges auth into HTTP, cas dedups, account-handle admits an opaque `cred:` handle and refuses raw API keys. See `primitives/README.md` + `patterns/api-reveng/` + `patterns/fde/`.
 
 Every firing writes `out/manifest.json` and `helpers.infer_render(schema)` gives the default json-render view — override per-port via `render:` in the membrane (see `example/hello.cell.yaml` banner, `patterns/dashboard/`). (cell hash, input/output digests, evidence, produced_by) — the Merkle. Large blobs go via `primitives/cas` (`.cell-cas/`). See SPEC §5.
 
 Input nodes are cells — poll (`cursor -> item`), webhook (`webhook -> event`), hook (`file -> change`), or CAS (`key -> data`) are just membranes (see `patterns/input-sources/`). The same Merkle (`out/manifest.json`) identifies when any source moved.
 
 Builder is itself a cell (`system/builder.cell.yaml` = parse | validate | emit) — the harness builds itself. See SPEC §3.
+
+The synthetic-only staffing witness runs the actual draft harness (not customer files):
+
+```sh
+python run.py run patterns/hoysan-draft/hoysan-draft.cell.yaml --inputs /tmp/synthetic/feasible.json --out /tmp/draft
+bash ../tests/hoysan-synthetic-correctness-gate.sh
+python3 ../tests/hoysan-fractal-benchmark.py --iterations 10 --out ../zig-out/benchmarks/hoysan-fractal.json
+```
+
+Infeasible drafts refuse before `result.json` or `manifest.json` is retained.
 
 ---
 
@@ -116,10 +126,10 @@ Zig is only the runtime: `zig build && ./zig-out/bin/cell build <root>`
 ```sh
 zig build        # -> zig-out/bin/cell (Zig mirror, validates DAG)
 zig build test   # python test suite (tests/test_cell.py)
-zig build gate   # 10 witnesses — the acceptance criterion (empty dir, CLI, durable state)
+zig build gate   # 13 witnesses — the acceptance criterion (empty dir, CLI, durable state)
 ```
 
-Gates prove the thing works by failing when you delete it. See `tests/gates/` for each witness + falsifier. `tests/gate.sh` aggregates all 10.
+Gates prove the thing works by failing when you delete it. See `tests/gates/` for each witness + falsifier. `tests/gate.sh` aggregates all 13.
 
 ---
 

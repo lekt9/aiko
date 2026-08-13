@@ -77,6 +77,27 @@ export function resolveSmithersCli(from = process.cwd()) {
   if (root) {
     return { command: "bun", args: [join(root, SOURCE_CLI_ENTRY)], source: "workspace", root };
   }
+  const explicitRuntime = process.env.AIKO_SMITHERS_RUNTIME;
+  if (explicitRuntime && isSmithersSourceRoot(explicitRuntime)) {
+    return {
+      command: "bun",
+      args: [join(explicitRuntime, SOURCE_CLI_ENTRY)],
+      source: "workspace",
+      root: explicitRuntime,
+    };
+  }
+  const pluginRoot = process.env.GROK_PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT;
+  if (pluginRoot) {
+    const packagedRuntime = join(pluginRoot, "runtime");
+    if (isSmithersSourceRoot(packagedRuntime)) {
+      return {
+        command: "bun",
+        args: [join(packagedRuntime, SOURCE_CLI_ENTRY)],
+        source: "workspace",
+        root: packagedRuntime,
+      };
+    }
+  }
   return { command: "bunx", args: ["smthrs"], source: "published", root: null };
 }
 

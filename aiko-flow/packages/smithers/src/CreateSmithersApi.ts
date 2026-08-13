@@ -16,6 +16,7 @@ import type {
 } from "@smthrs/components";
 import type { ApprovalProps } from "@smthrs/components/components/ApprovalProps";
 import type { DepsSpec } from "@smthrs/components/components/DepsSpec";
+import type { CellProps } from "@smthrs/components/components/CellProps";
 import type { SandboxProps } from "@smthrs/components/components/SandboxProps";
 import type { SignalProps } from "@smthrs/components/components/SignalProps";
 import type { TaskProps } from "@smthrs/components/components/TaskProps";
@@ -46,6 +47,7 @@ export type CreateSmithersApi<Schema = unknown> = {
   ContinueAsNew: typeof BaseContinueAsNew;
   continueAsNew: typeof baseContinueAsNew;
   Worktree: typeof BaseWorktree;
+  Cell: (props: CellProps) => React.ReactElement;
   Sandbox: (props: SandboxProps) => React.ReactElement;
   Signal: <SignalSchema extends z.ZodObject<z.ZodRawShape>>(props: SignalProps<SignalSchema>) => React.ReactElement;
   Timer: typeof BaseTimer;

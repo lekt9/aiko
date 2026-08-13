@@ -230,6 +230,25 @@ pub struct PlanNode {
     pub generated: bool,
 }
 
+impl PlanNode {
+    /// IsolatedLocal first profile: read-only, or one reversible workspace write.
+    /// Network, secrets, and runtime-authorization nodes are not admissible.
+    pub fn isolated_local_admissible(&self) -> bool {
+        if self.requires_authorization || !self.capabilities.is_empty() {
+            return false;
+        }
+        let read_only =
+            self.read_only && self.effect_scope == "read_only" && self.writes.is_empty();
+        let workspace_reversible = self.worker == "aiko"
+            && !self.read_only
+            && self.reversible
+            && self.effect_scope == "local_reversible"
+            && self.writes.len() == 1
+            && self.writes[0] == WORKSPACE_AUTHORITY;
+        read_only || workspace_reversible
+    }
+}
+
 pub fn classify_workflow(
     facts: &WorkflowRequestFacts,
     preview: Option<&PlanPreview>,
@@ -731,10 +750,17 @@ impl PreparedGraphAdapter {
                     format!("node {} has unresolved capabilities", node.key),
                 ));
             }
-            if node.requires_authorization {
+            if !node.isolated_local_admissible() {
                 return Err(GraphHarnessRefusal::new(
                     RefusalCode::PreparedEffectRefused,
-                    format!("node {} requests authority at runtime", node.key),
+                    if node.requires_authorization {
+                        format!("node {} requests authority at runtime", node.key)
+                    } else {
+                        format!(
+                            "node {} exceeds the declared workspace-only evaluation authority",
+                            node.key
+                        )
+                    },
                 ));
             }
             let read_only =
@@ -745,15 +771,6 @@ impl PreparedGraphAdapter {
                 && node.effect_scope == "local_reversible"
                 && node.writes.len() == 1
                 && node.writes[0] == WORKSPACE_AUTHORITY;
-            if !read_only && !workspace_reversible {
-                return Err(GraphHarnessRefusal::new(
-                    RefusalCode::PreparedEffectRefused,
-                    format!(
-                        "node {} exceeds the declared workspace-only evaluation authority",
-                        node.key
-                    ),
-                ));
-            }
             let adapter = match (node.worker.as_str(), node.adapter.as_deref()) {
                 ("host", Some(adapter))
                     if deterministic_host_adapter(adapter)
@@ -3467,5 +3484,59 @@ mod tests {
                 .code,
             RefusalCode::DigestMismatch
         );
+    }
+
+    #[test]
+    fn isolated_local_refuses_account_mutation_and_admits_read_only() {
+        let mutation = PlanNode {
+            key: "act-on-web-api--execute-request".into(),
+            plan: "Execute".into(),
+            action: "skill:act-on-web-api@1.0.0:aiko".into(),
+            depends_on: vec![],
+            input_bindings: BTreeMap::new(),
+            requires_authorization: true,
+            effect_scope: "account_mutation".into(),
+            read_only: false,
+            reversible: false,
+            timeout_ms: 30_000,
+            skill_id: "act-on-web-api".into(),
+            skill_version: "1.0.0".into(),
+            worker: "aiko".into(),
+            adapter: None,
+            script: None,
+            script_digest: None,
+            evidence: vec![],
+            writes: vec![],
+            capabilities: vec![],
+            research: vec![],
+            witness: None,
+            generated: false,
+        };
+        assert!(!mutation.isolated_local_admissible());
+        let observe = PlanNode {
+            key: "aiko-meta-agent--observe".into(),
+            plan: "Observe".into(),
+            action: "skill:aiko-meta-agent@1.0.0:host".into(),
+            depends_on: vec![],
+            input_bindings: BTreeMap::new(),
+            requires_authorization: false,
+            effect_scope: "read_only".into(),
+            read_only: true,
+            reversible: false,
+            timeout_ms: 30_000,
+            skill_id: "aiko-meta-agent".into(),
+            skill_version: "1.0.0".into(),
+            worker: "host".into(),
+            adapter: Some(HOST_OBSERVE_ADAPTER.into()),
+            script: None,
+            script_digest: None,
+            evidence: vec![],
+            writes: vec![],
+            capabilities: vec![],
+            research: vec![],
+            witness: None,
+            generated: false,
+        };
+        assert!(observe.isolated_local_admissible());
     }
 }

@@ -123,8 +123,8 @@ edge exists:
 
 ```text
 0  source-build guard                                        SETTLED
-1  product contract                                         NEXT
-2  credential envelope        ||  workflow binding
+1  product contract + Cell self-wire increment               SETTLED
+2  credential envelope        ||  workflow binding (aiko-doctor bind-workflow) SETTLED
 3  context plane || native authoring loop || Unbrowse port
 4  Telethon employee pilot    ||  SAP sandbox pilot
 5  independent FDE judge
@@ -142,16 +142,20 @@ repository's hermetic `bin/protoc` wrapper.
 **Witness:** both `cd contract/libcontract && zig build test` and root
 `zig build test` pass on the reported macOS ARM64 source build.
 
-### 1 — Freeze the product contract
+### 1 — Freeze the product contract (written)
 
-Create `docs/AI-FORWARD-DEPLOYED-ENGINEER.md` as the canonical boundary before
-building the headline. It must name the customer, first operational wedge,
-authority model, handoff lifecycle, and acceptance criteria, and separate every
-claim into **Proven**, **Designed**, or **Absent**. Telethon is the proposed first
-vertical; SAP remains a sandbox pilot until its own gate is green.
+[`docs/AI-FORWARD-DEPLOYED-ENGINEER.md`](docs/AI-FORWARD-DEPLOYED-ENGINEER.md)
+is the canonical boundary. It names the customer, first operational wedge,
+authority model, handoff lifecycle, and acceptance criteria, and separates
+every claim into **Proven**, **Designed**, or **Absent**. Telethon is the
+proposed first vertical; SAP remains a sandbox pilot until its own gate is
+green. Market-first stays **Absent**.
 
-**Witness:** the document exists, contains all three status classes, and names a
-runnable promotion gate for the first vertical.
+The first Cell-native increment of the self-wire loop is
+`cell/patterns/fde/` (`account-handle → deploy-workflow → deploy-aiko`).
+Binding: [`docs/AIKO-WORKFLOW-BINDING.md`](docs/AIKO-WORKFLOW-BINDING.md).
+
+**Witness:** `tests/fde-workflow-gate.sh`.
 
 ### 2 — Build the two foundations in parallel
 
@@ -165,9 +169,10 @@ for employee credentials.
 
 **Smithers → Cell → Aiko binding.** Smithers is the durable control, approval,
 pause, and resume surface; it is not a second scheduler. It authors a typed Cell
-workflow. Aiko projects the Cell digest, ports, capabilities, reads, writes,
-produces, evidence, and witnesses into Contract graph nodes. Contract owns the
-frontier and durable state; Neuron owns admitted execution.
+workflow. `aiko-doctor bind-workflow` asks Cell to canonicalize that file and
+projects organelles/wiring into a Contract walk; `graph-plan` is the analyzer;
+`workflow-control` pauses and resumes the bound revision without becoming a
+second scheduler. Neuron still owns admitted execution.
 
 **Gates:** credential isolation/redaction/revocation and a workflow-control gate
 that proves pause/resume survives restart, code movement changes the digest, and
@@ -521,6 +526,7 @@ zig build gate     published-interface · redrive · authored-gap           # ne
 | **Staffing engine — deterministic roster, refuses a shortfall** | ✅ | `staffing-engine-gate` |
 | **Escalation ladder — notify → reply\|timeout → call → stop** | ✅ | `escalation-ladder-gate` |
 | One build, Linux-native, both layers linked | ✅ | `aiko-doctor` |
+| **Cell-native FDE self-wire** — account handle, not API key; Aiko seats Aiko | ✅ | `fde-workflow-gate` |
 
 Read-only live view (`telemetry serve`) exists and is gated by
 `observe-live-gate`. What does **not** exist:
@@ -545,6 +551,7 @@ no remote at all, is one repository with one history.
 | `contract/` | Contract substrate — ledger, W6H, occurrences. In-tree; see `contract/README.md` |
 | `aiko/` | Rust host, desktop, skills, MCP. Not in the Zig build |
 | `cell/` | Fractal YAML/Python harness. Standalone — no runtime import of `contract/` or `neuron/` |
+| `sdk/registry/stack.lock.json` | Compatible package lock — neuron, contract, cell, optional control |
 | `src/` | Root harness — `aiko-doctor` links both Zig layers (comptime assert `contract.FireRequest == typed_neuron.FireRequest`) |
 | `tests/` | Root witnesses — `bridge`, `dispatch`, `tick`, `zig-doctrine`, `conformance`, graph-engineering |
 | `docs/` | Cross-layer map — start at [`docs/README.md`](docs/README.md) |
@@ -593,8 +600,13 @@ clone path.
 | `CLAUDE.md` | agent session context — read first if you are an agent |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | how to change this tree |
 | [`SECURITY.md`](SECURITY.md) | private vulnerability reports |
+| `docs/AI-FORWARD-DEPLOYED-ENGINEER.md` | product boundary (Proven / Designed / Absent) |
+| `docs/AIKO-WORKFLOW-BINDING.md` | Smithers/Cell/Aiko/Contract/Neuron binding |
 | `docs/AIKO-FDE-PLAN.md` | expanded AI Forward Deployed Engineer execution plan |
 | `docs/graph-engineering/aiko-fde.walk.json` | executable, skill-grounded delivery graph |
+| `docs/graph-engineering/aiko-fde-self-wire.walk.json` | Cell-native self-wire increment |
+| `docs/graph-engineering/aiko-hoysan-finish.walk.json` | synthetic end-to-end self-wire and benchmark graph |
+| `docs/AIKO-HOYSAN-BENCHMARK.md` | synthetic performance receipt, fixed defects, and control-plane blocker |
 | `neuron/AGENTS.md` | normative architecture |
 | `neuron/IMPLEMENTATION.md` | what exists today, and known limits |
 | `neuron/reference/ROADMAP.md` | unsettled work only |

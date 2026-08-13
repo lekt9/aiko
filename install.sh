@@ -38,7 +38,8 @@ Usage: ./install.sh [reinstall|from-release|build|list|package|publish]
   package               Assemble portable stack: Aiko+Neuron+Cell+Contract (all required).
   publish               Upload package + SHA256 sidecar (needs GITEA_TOKEN).
 
-One verified product tarball; component-only installs are not supported.
+One verified product tarball; mixed-ABI stacks are refused.
+Layer check/update: scripts/aiko-packages.sh check|list|install
 SSOT: ~/.local/bin + ~/.aiko  (scripts/lib/aiko-env.sh).
 EOF
         exit 0

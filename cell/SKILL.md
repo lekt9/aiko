@@ -81,7 +81,8 @@ Cell = membrane + ( run | organelles + wiring )
 | Primitive | `inputs -> outputs` | Use |
 |---|---|---|
 | `session` | `base_url (+headers?) -> session` | Holds cookies/headers/base_url. One per api-rev-eng run. |
-| `auth` | `session + credentials -> session` | Login/token, enriches session. `{{token}}` / `{{api_key}}` / `{{username,password}}`. |
+| `auth` | `session + credentials -> session` | Login/token, enriches session. `{{token}}` / `{{api_key}}` / `{{username,password}}`. Developer-API path. |
+| `account-handle` | `account -> handle + session` | Employee seat. Opaque `cred:` handle. Refuses raw secrets. |
 | `request` | `session + method? + url -> response` | Merges session auth into raw HTTP, respects `allow_net`. Thin — add HMAC/OAuth to `request.py` and rerun. |
 
 ```yaml

@@ -3,7 +3,7 @@ cell = pathlib.Path(__file__).parent.parent
 def run(*args):
     return subprocess.run(["python3","run.py",*args], cwd=str(cell), capture_output=True, text=True)
 def test_builds():
-    for p in ["example/hello.cell.yaml","example/pipeline.cell.yaml","system/builder.cell.yaml","primitives/session.cell.yaml","primitives/auth.cell.yaml","primitives/request.cell.yaml","patterns/api-reveng/api-reveng.cell.yaml"]:
+    for p in ["example/hello.cell.yaml","example/pipeline.cell.yaml","system/builder.cell.yaml","primitives/session.cell.yaml","primitives/auth.cell.yaml","primitives/request.cell.yaml","primitives/account-handle.cell.yaml","patterns/api-reveng/api-reveng.cell.yaml","patterns/fde/self-wire.cell.yaml"]:
         r = run("build", p)
         assert r.returncode==0, f"build {p}: {r.stderr}"
 def test_runs():

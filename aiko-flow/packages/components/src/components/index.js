@@ -14,6 +14,7 @@
 /** @typedef {import("./ApprovalSelection.ts").ApprovalSelection} ApprovalSelection */
 /** @typedef {import("./AspectsProps.ts").AspectsProps} AspectsProps */
 /** @typedef {import("./BranchProps.ts").BranchProps} BranchProps */
+/** @typedef {import("./CellProps.ts").CellProps} CellProps */
 /** @typedef {import("./CategoryConfig.ts").CategoryConfig} CategoryConfig */
 /** @typedef {import("./CheckConfig.ts").CheckConfig} CheckConfig */
 /** @typedef {import("./CheckSuiteProps.ts").CheckSuiteProps} CheckSuiteProps */
@@ -133,6 +134,7 @@
 export { Workflow } from "./Workflow.js";
 export { Approval, approvalDecisionSchema, approvalRankingSchema, approvalSelectionSchema } from "./Approval.js";
 export { Task } from "./Task.js";
+export { Cell, runCell, findCellRunner } from "./Cell.js";
 export { Sequence } from "./Sequence.js";
 export { Parallel } from "./Parallel.js";
 export { MergeQueue } from "./MergeQueue.js";

@@ -7,7 +7,8 @@ They are part of the spec the way `string` is: **frozen I/O, ordinary implementa
 | Primitive | Membrane | Use |
 |---|---|---|
 | `session` | `base_url (+headers?) -> session` | Holds session state (cookies, headers). One per api-rev-eng run. |
-| `auth` | `session + credentials -> session` | Login / token exchange, enriches session with `Authorization` or cookie. Fail-closed. |
+| `auth` | `session + credentials -> session` | Login / token exchange, enriches session with `Authorization` or cookie. Fail-closed. Developer-API path. |
+| `account-handle` | `account -> handle + session` | Employee-account identity. Emits `cred:<tenant>/<origin>/<account>` and a session that cites only that handle. Refuses `token` / `api_key` / `password` / cookies. |
 | `fal-generate` | `prompt + model? + params? -> request_id + status + response` | Submit fal video job (mock if no `FAL_KEY`). |
 | `fal-status` | `request_id + model? -> status + video_url + response` | Poll queue.fal.run |
 | `request` | `session + method? + url (+headers,+body?) -> response` | Merges session auth into raw HTTP call. Thin — add HMAC/OAuth to `request.py` and rerun. |

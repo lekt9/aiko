@@ -1,0 +1,20 @@
+[Unit]
+Description=Memory-gated Claude/Codex/Prime session resume queue
+After=prime-ram-supervisor.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT@
+Environment=PYTHONPATH=@ROOT@
+Environment=PATH=/home/deck/.local/bin:/home/deck/.local/share/fnm/node-versions/v24.18.1/installation/bin:/usr/bin
+ExecStart=/usr/bin/python3 @ROOT@/dispatch.py
+Restart=always
+RestartSec=30
+Nice=10
+# The dispatcher itself is tiny; children get their own srq-*.scope.
+MemoryMax=256M
+OOMPolicy=continue
+
+[Install]
+WantedBy=default.target

@@ -187,7 +187,8 @@ They are part of the spec in the way `string` is: frozen I/O, ordinary implement
 | Primitive | Membrane | What it does | Example |
 |---|---|---|---|
 | `primitives/session.cell.yaml` | `base_url + headers? -> session` | Holds HTTP session state (cookies, headers, jar) across requests. One session per api-rev-eng run. | `outputs.session: {id, base_url, cookies, headers}` |
-| `primitives/auth.cell.yaml` | `session + credentials -> session` | Takes a session + credentials, performs login / token exchange, outputs the same session enriched with auth (cookie or `Authorization`). Fail-closed on bad creds. | `{{session.base_url}}/login` or token endpoint |
+| `primitives/auth.cell.yaml` | `session + credentials -> session` | Takes a session + credentials, performs login / token exchange, outputs the same session enriched with auth (cookie or `Authorization`). Fail-closed on bad creds. Developer-API path. | `{{session.base_url}}/login` or token endpoint |
+| `primitives/account-handle.cell.yaml` | `account -> handle + session` | Employee-account identity. Opaque `cred:` handle only. Refuses raw API keys, tokens, passwords, cookies. | `X-Aiko-Credential-Handle` on the session; never the secret |
 | `primitives/request.cell.yaml` | `session + method? + url + headers? + body? -> response` | Merges session cookies/auth into an `http` call, respects `allow_net`, outputs raw response. Thin wrapper — model already knows HTTP. | Reuse after auth without repeating auth logic |
 | `primitives/cas.cell.yaml` | `data -> key + deduped` | Content-addressed store (`.cell-cas/`), write-if-absent. Large bodies / captures deduped. | `key` is sha256 hex; `deduped` true if already present |
 

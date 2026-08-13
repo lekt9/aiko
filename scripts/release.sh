@@ -69,9 +69,11 @@ do_check(){
   grep -q "zig-cross" "$ROOT/.github/workflows/release.yml"
   grep -q "cargo-cross" "$ROOT/.github/workflows/release.yml"
   grep -q "portable" "$ROOT/.github/workflows/release.yml"
-  grep -q "desktop-installer" "$ROOT/.github/workflows/release.yml"
+  grep -q "desktop-macos" "$ROOT/.github/workflows/release.yml"
+  grep -q "desktop-linux" "$ROOT/.github/workflows/release.yml"
+  grep -q "desktop-windows" "$ROOT/.github/workflows/release.yml"
   grep -q "github-release" "$ROOT/.github/workflows/release.yml"
-  ok "release workflow has cross + portable + installer + github-release"
+  ok "release workflow has cross + portable + desktop installers + github-release"
   info "Checking zig + cargo smoke ..."
   (cd "$ROOT" && zig build --summary all 2>&1 | tail -5) || true
   ok "check passed"

@@ -13,6 +13,7 @@ Each folder is a runnable `*.cell.yaml` that implements one rung of the Prompt -
 | **Video** | `video/` | `prompt -> fal-generate -> poll -> cas` (mock without `FAL_KEY`). |
 | **Reactive** | `reactive-cell/` | `check` (manifests → changed) → `system/redrive` (→ stale vs compensation). Merkle identifies changes, organelle causes the reaction — not spec. |
 | **Primitives demo** | `api-reveng/` | Fixed stdlib demo — `session -> auth -> request -> extract` using `primitives/` (add HMAC/OAuth to `request.py`). |
+| **FDE self-wire** | `fde/` | `account-handle -> deploy-workflow -> deploy-aiko`. Account credentials, not API keys. The authored cell seats Aiko. |
 
 ```sh
 python run.py build patterns/prompt-cell/classify.cell.yaml

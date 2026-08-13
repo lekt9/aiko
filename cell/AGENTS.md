@@ -44,7 +44,7 @@ cell/
 
 1. One primitive only. New concept? Make it an organelle (a Cell), not a new top-level kind.
 2. Three leaf kinds share one membrane: `exec` · `python` · `http`. Pick the thinnest that works.
-3. Fixed primitives are frozen membranes (`session`/`auth`/`request`) — compose them, don't wrap.
+3. Fixed primitives are frozen membranes (`session`/`auth`/`request`/`account-handle`) — compose them, don't wrap.
 4. Helpers are thin and editable — missing helper -> edit `helpers.py`, add one function, rerun.
 5. Determinism on the path (`required`); models at edges (`best_effort`). DAG only, cycles refused at `build`.
 

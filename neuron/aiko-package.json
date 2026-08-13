@@ -1,0 +1,8 @@
+{
+  "name": "neuron",
+  "version": "0.2.115",
+  "kind": "firing-primitive",
+  "standalone": true,
+  "requires": [],
+  "description": "Firing primitive, membrane, port, redrive. No runtime dependency on contract."
+}
