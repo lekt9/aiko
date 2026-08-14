@@ -60,3 +60,6 @@ cell/hoysan-*
 # up as a spurious diff on every build.
 # cell/ is the fractal harness standard — not a build output (removed 2026-08)
 # cell/zig-out/ and cell/.zig-cache already covered by zig-*/
+
+# Contains a pasted credential from a chat transcript — never commit (rotate the token).
+aiko/test.md

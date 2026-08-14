@@ -112,3 +112,38 @@ SKIP (never PASS) when no token is exported.
 **Known gap (real, unfixed):** the bridge drops inbound messages that arrive
 while a turn is in flight — the cursor advances past them, so a second quick
 message is lost rather than queued. At-most-once with loss.
+
+## The MCP process leak — two defects, both gated
+
+Symptom (2026-08-14): hundreds of `unbrowse mcp` trees under
+`aiko-leader.service`, ~473 MB per session, machine thrashing. **The leader
+wedges before the box OOMs** — at ~52 trees it failed 5/5 client handshakes,
+and a stalled leader stops leaking, so an RSS-only monitor reads "stable"
+while the agent is dead. `systemctl --user restart aiko-leader.service` is
+relief, not a fix.
+
+Two independent causes, both fixed in the Rust host:
+
+1. **Arc cycle** — the liveness task held a strong `Arc<McpClient>` while the
+   client held that task's kill switch, and a healthy stdio server reports
+   `Healthy` forever, so the client was immortal and
+   `SafeTokioChildProcess::Drop` never ran. Liveness now holds a `Weak`
+   (`liveness.rs:174,213`, `servers.rs:3629`), plus session teardown draining
+   `owned_clients` only — never `shared_clients`, so a subagent cannot kill a
+   server its parent still uses.
+2. **Disconnect eviction never routed** — `leader/server.rs:1583` emitted
+   `x.ai/internal/evict_sessions` without the leading underscore the ACP
+   dispatcher requires (`strip_prefix('_')`), so the agent answered -32601,
+   sessions were never unloaded, and each kept its MCP tree. This was the real
+   driver of per-session growth. Three tests asserted the broken string.
+
+```sh
+bash e2e/mcp-leak-gate.sh              # old-binary-leaks vs new-binary-flat, same gate
+bash tmp/witness-mcp-reap-unit.sh      # the Arc-cycle falsifier (red on the cycle, green without)
+bash tmp/witness-evict-route.sh        # disconnect really evicts and reaps
+```
+
+Measurement traps (encoded in the gate, learned the hard way): count TREES by
+ancestry to the leader — the original "189 → 753 in 7 minutes" was a pgrep
+artifact (189×4≈753), not growth; a `ps | grep` pattern matches its own grep;
+and `aiko --single` cannot reproduce any of it (leader mode needs `--leader`).

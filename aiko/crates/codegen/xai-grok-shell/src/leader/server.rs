@@ -1578,11 +1578,20 @@ pub async fn run_leader_server(
             old_driver = id.0, new_driver = next.0,
             "Transferred session driver after disconnect"); } else { session_driver
             .remove(& sid); } } } if last_active_client == Some(id) { last_active_client
-            = None; } if ! detached_sessions.is_empty() { let evict_notification =
-            serde_json::json!({ "jsonrpc" : "2.0", "method" :
-            "x.ai/internal/evict_sessions", "params" : { "sessionIds" : detached_sessions
-            } }); let _ = acp_tx.send(evict_notification.to_string()); info!(client_id =
-            id.0, session_count = detached_sessions.len(),
+            = None; } if ! detached_sessions.is_empty() {
+            // The leading `_` is load-bearing, not cosmetic. The ACP schema
+            // dispatcher routes every non-builtin method through
+            // `method.strip_prefix('_')` (agent-client-protocol-schema
+            // `rpc.rs`, AgentSide::decode_notification); a method without it
+            // falls through to `Error::method_not_found()` and the agent
+            // answers -32601 instead of running `handle_evict_sessions`. The
+            // receiver matches the STRIPPED name, so only the wire form
+            // carries the underscore.
+            let evict_notification = serde_json::json!({ "jsonrpc" : "2.0",
+            "method" : "_x.ai/internal/evict_sessions", "params" : {
+            "sessionIds" : detached_sessions } }); let _ = acp_tx
+            .send(evict_notification.to_string()); info!(client_id = id.0,
+            session_count = detached_sessions.len(),
             "Sent client-disconnect detach notification for disconnected client"); }
             debug!(client_id = id.0, "Client removed"); if clients.is_empty() &&
             had_clients && ! no_exit_on_disconnect {
@@ -4596,8 +4605,13 @@ mod tests {
         cancel.cancel();
     }
     /// When a client disconnects after interacting with a session, the server
-    /// sends an `x.ai/internal/evict_sessions` notification through acp_tx
+    /// sends an `_x.ai/internal/evict_sessions` notification through acp_tx
     /// so the agent can release session memory.
+    ///
+    /// The asserted name carries the leading `_` because that is what the ACP
+    /// dispatcher requires to route an extension method at all. This test
+    /// previously pinned the un-prefixed string and therefore certified the
+    /// bug: the agent replied -32601 and no session was ever detached.
     #[tokio::test]
     async fn evict_sessions_notification_on_disconnect() {
         let temp = TempDir::new().unwrap();
@@ -4651,7 +4665,12 @@ mod tests {
             .expect("channel should not be closed");
         let json: serde_json::Value =
             serde_json::from_str(&eviction_msg).expect("should be valid JSON");
-        assert_eq!(json["method"], "x.ai/internal/evict_sessions");
+        assert_eq!(
+            json["method"], "_x.ai/internal/evict_sessions",
+            "the wire method must carry the leading underscore: the ACP dispatcher \
+             routes extension methods only via strip_prefix('_'), so the un-prefixed \
+             form is answered -32601 and never reaches handle_evict_sessions"
+        );
         let session_ids = json["params"]["sessionIds"]
             .as_array()
             .expect("sessionIds should be an array");
