@@ -59,6 +59,10 @@ pub struct GrokComConfig {
     pub grok_ws_origin: String,
     pub grok_ws_url: String,
     pub token_header: String,
+    /// Persisted built-in OAuth profile. `None` retains configuration-aware
+    /// enterprise/custom authentication.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<BuiltinLoginProvider>,
     /// OIDC config for customer-provided IdPs. See [`OidcAuthConfig`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oidc: Option<OidcAuthConfig>,
@@ -133,13 +137,78 @@ pub struct OAuth2ProviderConfig {
 pub const XAI_OAUTH2_ISSUER: &str = "https://aiko.theclarityproject.net";
 /// Grok's first-party OAuth profile, synchronized from xai-org/grok-build.
 pub const GROK_OAUTH2_ISSUER: &str = "https://auth.x.ai";
+const GROK_OAUTH2_REFERRER: &str = "grok-build";
+
 fn grok_oauth2_client_id() -> &'static str {
     // rustc 1.92+ forbids obfstr! in const; keep the bytes obfuscated at runtime.
     static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     ID.get_or_init(|| obfstr::obfstr!("b1a00492-073a-47ea-816f-4c329264a828").to_string())
         .as_str()
 }
-const GROK_OAUTH2_REFERRER: &str = "grok-build";
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BuiltinLoginProvider {
+    Aiko,
+    Grok,
+}
+
+impl BuiltinLoginProvider {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Aiko => "aiko",
+            Self::Grok => "grok",
+        }
+    }
+}
+
+/// Persist the successfully selected primary OAuth profile without mutating
+/// process-global environment. The next TUI/ACP startup therefore constructs
+/// its `AuthManager` with the same issuer, scope, label, and token header.
+pub async fn persist_builtin_login_provider(provider: BuiltinLoginProvider) -> anyhow::Result<()> {
+    let _guard = crate::util::config::lock_config_writes().await;
+    let path = crate::util::grok_home::grok_home().join("config.toml");
+    let content = crate::util::config::read_to_string_or_empty(&path)?;
+    let mut root = if content.trim().is_empty() {
+        toml::Value::Table(toml::map::Map::new())
+    } else {
+        toml::from_str::<toml::Value>(&content).map_err(|error| {
+            anyhow::anyhow!(
+                "refusing to update OAuth provider in unparseable {}: {error}",
+                path.display()
+            )
+        })?
+    };
+    set_builtin_login_provider(&mut root, provider)?;
+    crate::util::config::atomic_write_string(&path, &toml::to_string_pretty(&root)?)?;
+    Ok(())
+}
+
+fn set_builtin_login_provider(
+    root: &mut toml::Value,
+    provider: BuiltinLoginProvider,
+) -> anyhow::Result<()> {
+    let table = root
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("config.toml root must be a table"))?;
+    // `[grok_com_config]` wins over the `[auth]` alias when both exist, so
+    // update the effective table rather than writing a shadowed preference.
+    let section_name = if table.contains_key("grok_com_config") {
+        "grok_com_config"
+    } else {
+        "auth"
+    };
+    let section = table
+        .entry(section_name.to_owned())
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    let section = section
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("[{section_name}] must be a table"))?;
+    section.insert(
+        "provider".to_owned(),
+        toml::Value::String(provider.as_str().to_owned()),
+    );
+    Ok(())
+}
 /// Production accounts-app origin allowlist — the only origins builds without
 /// non-production builds accept. Lives in its own const, referenced by both
 /// profiles below, so the frozen-contract test (monorepo CI compiles with
@@ -208,11 +277,35 @@ impl GrokComConfig {
     /// This mutates only the in-memory config for this invocation. Keeping the
     /// profile atomic prevents a Grok issuer from being combined with Aiko's
     /// client, scopes, headers, or external-auth provider after config merging.
-    pub fn apply_builtin_login_profile(&mut self, grok: bool) {
-        let (issuer, client_id, scopes, referrer, token_header, label) = if grok {
-            (
+    pub fn apply_builtin_login_profile(&mut self, provider: BuiltinLoginProvider) {
+        self.apply_builtin_login_profile_inner(provider, true);
+    }
+
+    /// Apply a persisted built-in profile during config loading. Enterprise
+    /// OIDC and external-provider deployments retain precedence.
+    pub fn apply_configured_builtin_login_profile(&mut self) {
+        let Some(provider) = self.provider else {
+            return;
+        };
+        if self.oidc.is_some() || self.auth_provider_command.is_some() {
+            tracing::info!(
+                ?provider,
+                "auth: deployment auth overrides built-in provider"
+            );
+            return;
+        }
+        self.apply_builtin_login_profile_inner(provider, false);
+    }
+
+    fn apply_builtin_login_profile_inner(
+        &mut self,
+        provider: BuiltinLoginProvider,
+        force_oidc: bool,
+    ) {
+        let (issuer, client_id, scopes, referrer, token_header, label) = match provider {
+            BuiltinLoginProvider::Grok => (
                 GROK_OAUTH2_ISSUER,
-                grok_oauth2_client_id(),
+                grok_oauth2_client_id().to_owned(),
                 vec![
                     "openid".into(),
                     "profile".into(),
@@ -228,22 +321,22 @@ impl GrokComConfig {
                 GROK_OAUTH2_REFERRER,
                 "xai-grok-cli",
                 "Grok",
-            )
-        } else {
-            (
+            ),
+            BuiltinLoginProvider::Aiko => (
                 XAI_OAUTH2_ISSUER,
-                "aiko-cli",
+                "aiko-cli".to_owned(),
                 default_oauth2_scopes(),
                 DEFAULT_OAUTH2_REFERRER,
                 "aiko-cli",
                 "Aiko",
-            )
+            ),
         };
 
+        self.provider = Some(provider);
         self.oidc = None;
         self.oauth2 = Some(OAuth2ProviderConfig {
             issuer: issuer.to_owned(),
-            client_id: client_id.to_owned(),
+            client_id,
             scopes,
             principal_type: None,
             principal_id: None,
@@ -253,8 +346,9 @@ impl GrokComConfig {
         self.auth_provider_command = None;
         self.auth_provider_label = Some(label.to_owned());
         self.auth_token_ttl = None;
-        self.force_login_team_uuid = None;
-        self.preferred_method = Some(PreferredAuthMethod::Oidc);
+        if force_oidc {
+            self.preferred_method = Some(PreferredAuthMethod::Oidc);
+        }
     }
 
     /// Whether `xai.api_key` auth is disabled. Pinning a team
@@ -358,6 +452,7 @@ impl Default for GrokComConfig {
             grok_ws_url: std::env::var("GROK_WS_URL")
                 .unwrap_or_else(|_| PROD_RELAY_WS_URL.to_owned()),
             token_header: "aiko-cli".to_owned(),
+            provider: None,
             oidc,
             oauth2,
             auth_provider_command: std::env::var("GROK_AUTH_PROVIDER_COMMAND").ok(),
@@ -483,7 +578,7 @@ mod tests {
     #[test]
     fn builtin_login_profiles_are_complete_and_isolated() {
         let mut aiko = GrokComConfig::default();
-        aiko.apply_builtin_login_profile(false);
+        aiko.apply_builtin_login_profile(BuiltinLoginProvider::Aiko);
         let aiko_oauth = aiko.oauth2.as_ref().unwrap();
         assert_eq!(aiko_oauth.issuer, XAI_OAUTH2_ISSUER);
         assert_eq!(aiko_oauth.client_id, "aiko-cli");
@@ -493,10 +588,13 @@ mod tests {
 
         let mut grok = GrokComConfig::default();
         grok.auth_provider_command = Some("should-be-cleared".into());
-        grok.apply_builtin_login_profile(true);
+        grok.apply_builtin_login_profile(BuiltinLoginProvider::Grok);
         let grok_oauth = grok.oauth2.as_ref().unwrap();
         assert_eq!(grok_oauth.issuer, GROK_OAUTH2_ISSUER);
-        assert_eq!(grok_oauth.client_id, grok_oauth2_client_id());
+        assert_eq!(
+            grok_oauth.client_id,
+            grok_oauth2_client_id()
+        );
         assert!(
             grok_oauth
                 .scopes
@@ -509,6 +607,72 @@ mod tests {
         assert_eq!(grok.auth_provider_label.as_deref(), Some("Grok"));
         assert!(grok.auth_provider_command.is_none());
         assert!(is_xai_oauth2_issuer(&grok_oauth.issuer));
+    }
+
+    #[test]
+    fn configured_profile_preserves_policy_and_enterprise_precedence() {
+        let mut grok = GrokComConfig {
+            provider: Some(BuiltinLoginProvider::Grok),
+            preferred_method: Some(PreferredAuthMethod::ApiKey),
+            ..GrokComConfig::default()
+        };
+        grok.apply_configured_builtin_login_profile();
+        assert_eq!(
+            grok.oauth2.as_ref().map(|oauth| oauth.issuer.as_str()),
+            Some(GROK_OAUTH2_ISSUER)
+        );
+        assert_eq!(grok.preferred_method, Some(PreferredAuthMethod::ApiKey));
+
+        let mut enterprise = GrokComConfig {
+            provider: Some(BuiltinLoginProvider::Grok),
+            oidc: Some(OidcAuthConfig {
+                issuer: "https://sso.example".into(),
+                client_id: "enterprise".into(),
+                scopes: default_oidc_scopes(),
+                audience: None,
+            }),
+            oauth2: None,
+            ..GrokComConfig::default()
+        };
+        enterprise.apply_configured_builtin_login_profile();
+        assert_eq!(
+            enterprise.oidc.as_ref().map(|oidc| oidc.issuer.as_str()),
+            Some("https://sso.example")
+        );
+        assert!(enterprise.oauth2.is_none());
+    }
+
+    #[test]
+    fn persisted_provider_targets_effective_auth_table_without_clobbering() {
+        let mut aliased: toml::Value = toml::from_str(
+            r#"
+            [auth]
+            preferred_method = "oidc"
+            [ui]
+            theme = "dark"
+            "#,
+        )
+        .unwrap();
+        set_builtin_login_provider(&mut aliased, BuiltinLoginProvider::Grok).unwrap();
+        assert_eq!(aliased["auth"]["provider"].as_str(), Some("grok"));
+        assert_eq!(aliased["auth"]["preferred_method"].as_str(), Some("oidc"));
+        assert_eq!(aliased["ui"]["theme"].as_str(), Some("dark"));
+
+        let mut canonical: toml::Value = toml::from_str(
+            r#"
+            [auth]
+            provider = "aiko"
+            [grok_com_config]
+            token_header = "custom"
+            "#,
+        )
+        .unwrap();
+        set_builtin_login_provider(&mut canonical, BuiltinLoginProvider::Grok).unwrap();
+        assert_eq!(
+            canonical["grok_com_config"]["provider"].as_str(),
+            Some("grok")
+        );
+        assert_eq!(canonical["auth"]["provider"].as_str(), Some("aiko"));
     }
     #[test]
     fn preferred_method_deserializes_from_toml() {
