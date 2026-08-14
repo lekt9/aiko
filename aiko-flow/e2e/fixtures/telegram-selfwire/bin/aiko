@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# A stand-in for the `aiko` binary, used ONLY by lineage-probe.mjs (CHECK D).
+#
+# AikoAgent.buildCommand hardcodes `command: "aiko"` (packages/agents/src/
+# AikoAgent.js:343), so putting this directory first on PATH makes the REAL
+# AikoAgent spawn THIS process with the env it would have given the real one.
+# The probe then reads that env out of the dump file instead of paying for a
+# model turn — the question is what crosses the process boundary, not what a
+# model says.
+#
+# It writes every AIKO_CONTRACT_* / SMITHERS_* variable it received to
+# $SELFWIRE_LINEAGE_DUMP, then emits the two nd-JSON event shapes AikoAgent's
+# interpreter documents (`text`, then `end`) so generate() completes normally.
+set -u
+if [ -n "${SELFWIRE_LINEAGE_DUMP:-}" ]; then
+  env | grep -E '^(AIKO_CONTRACT_|SMITHERS_)' | sort > "$SELFWIRE_LINEAGE_DUMP"
+fi
+printf '{"type":"text","data":"stub"}\n'
+printf '{"type":"end","stopReason":"EndTurn","sessionId":"selfwire-stub","num_turns":1}\n'
+exit 0

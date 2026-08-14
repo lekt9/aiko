@@ -10,6 +10,10 @@ import { KimiAgent as SmithersKimiAgent } from "smthrs";
 import { AmpAgent as SmithersAmpAgent } from "smthrs";
 import { OpenClawAgent as SmithersOpenClawAgent } from "smthrs";
 import { OpenAIAgent as SmithersOpenAIAgent } from "smthrs";
+// Byte-identical to CONSTRUCTORS["aiko"] in apps/cli/src/agent-detection.js and
+// to e2e/fixtures/aiko-harness/.smithers/agents.ts, so `.smithers/workflows/
+// telegram-aiko-bridge.tsx` takes the same import path a generated workspace does.
+import { AikoAgent as SmithersAikoAgent } from "smthrs";
 // import { CursorAgent as SmithersCursorAgent } from "smthrs";
 // import { AntigravityAgent as SmithersAntigravityAgent } from "smthrs";
 // import { PiAgent as SmithersPiAgent } from "smthrs";
@@ -41,6 +45,7 @@ export { OpenCodeAgent } from "./agents/opencode";
 // }
 
 export const providers = {
+  aiko: new SmithersAikoAgent(),
   claude: new SmithersClaudeCodeAgent({ model: "claude-fable-5" }),
   codex: new SmithersCodexAgent({
     model: "gpt-5.6-luna",

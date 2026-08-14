@@ -19,11 +19,27 @@ export function startTelegramFixture(options = {}) {
   const scripted = new Map();
   let nextMessageId = 1000;
   let nextUpdateId = 1;
+  /** @type {Map<string, { path: string; bytes: Uint8Array }>} file_id → stored file */
+  const files = new Map();
+  let nextFileId = 1;
   const server = Bun.serve({
     port: 0,
     idleTimeout: 30,
     fetch: async (request) => {
       const url = new URL(request.url);
+      // Media download endpoint: GET /file/bot<token>/<file_path>.
+      const fileMatch = url.pathname.match(/^\/file\/bot([^/]+)\/(.+)$/);
+      if (fileMatch) {
+        if (fileMatch[1] !== token) {
+          return Response.json({ ok: false, error_code: 401, description: "Unauthorized" }, { status: 401 });
+        }
+        requests.push({ method: "downloadFile", body: { file_path: fileMatch[2] }, contentType: "" });
+        const stored = [...files.values()].find((entry) => entry.path === fileMatch[2]);
+        if (!stored) {
+          return Response.json({ ok: false, error_code: 404, description: "file not found" }, { status: 404 });
+        }
+        return new Response(stored.bytes, { headers: { "content-type": "application/octet-stream" } });
+      }
       const match = url.pathname.match(/^\/bot([^/]+)\/(\w+)$/);
       if (!match) {
         return Response.json({ ok: false, error_code: 404, description: "Not Found" }, { status: 404 });
@@ -102,6 +118,60 @@ export function startTelegramFixture(options = {}) {
               chat: { id: body.chat_id },
               document: { file_id: `file-${nextMessageId}` },
             },
+          });
+        }
+        case "sendPhoto":
+        case "sendVideo":
+        case "sendAudio":
+        case "sendVoice": {
+          // The Bot API rejects an upload whose multipart FIELD does not
+          // match the method, so the fixture does too: a router that picks
+          // sendPhoto but attaches `video` must fail here, not pass.
+          const field = method.slice(4).toLowerCase();
+          if (body[field] === undefined) {
+            return Response.json(
+              { ok: false, error_code: 400, description: `Bad Request: field "${field}" is missing for ${method}` },
+              { status: 400 },
+            );
+          }
+          nextMessageId += 1;
+          const fileId = `file-${method}-${nextFileId++}`;
+          const attachment = body[field];
+          const filename = typeof attachment === "object" && attachment ? attachment.filename : null;
+          files.set(fileId, {
+            path: `${field}s/${fileId}${filename ? filename.slice(filename.lastIndexOf(".")) : ""}`,
+            bytes: new TextEncoder().encode(
+              typeof attachment === "object" && attachment ? (attachment.text ?? "") : String(attachment),
+            ),
+          });
+          return Response.json({
+            ok: true,
+            result: {
+              message_id: nextMessageId,
+              date: Math.floor(Date.now() / 1000),
+              chat: { id: body.chat_id },
+              caption: body.caption,
+              [field]: { file_id: fileId, file_unique_id: `u-${fileId}` },
+            },
+          });
+        }
+        case "getFile": {
+          const stored = files.get(body.file_id);
+          if (!stored) {
+            return Response.json(
+              { ok: false, error_code: 400, description: "Bad Request: invalid file_id" },
+              { status: 400 },
+            );
+          }
+          return Response.json({
+            ok: true,
+            result: { file_id: body.file_id, file_unique_id: `u-${body.file_id}`, file_size: stored.bytes.length, file_path: stored.path },
+          });
+        }
+        case "getMe": {
+          return Response.json({
+            ok: true,
+            result: { id: 424242, is_bot: true, first_name: "Fixture Bot", username: "fixture_bot" },
           });
         }
         case "sendChatAction":

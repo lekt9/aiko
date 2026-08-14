@@ -68,6 +68,53 @@ type TelegramDocumentInput = string | {
     content: string | Uint8Array;
     contentType?: string;
 };
+/**
+ * Media to upload for `sendPhoto` / `sendVideo` / `sendAudio` / `sendVoice`.
+ * Same two shapes as {@link TelegramDocumentInput}: a URL / existing
+ * `file_id` string (JSON call) or raw bytes (multipart upload). Reading a
+ * local path is deliberately NOT the client's job — the client speaks HTTP
+ * only; `dispatchTelegramReply` (reply.js) is the one place that touches the
+ * filesystem.
+ */
+type TelegramMediaInput = TelegramDocumentInput;
+/** The four inline-media verbs this client covers. */
+type TelegramMediaKind = "photo" | "video" | "audio" | "voice";
+/**
+ * Options shared by the inline-media send verbs. A field that means nothing
+ * for a kind is simply not sent (e.g. `performer` only applies to audio).
+ */
+type SendMediaOptions = {
+    /** Caption (converted/escaped to MarkdownV2 like sendDocument). */
+    caption?: string;
+    replyToMessageId?: number;
+    messageThreadId?: number;
+    disableNotification?: boolean;
+    /** Duration in seconds (video / audio / voice). */
+    duration?: number;
+    /** Video pixel dimensions. */
+    width?: number;
+    height?: number;
+    /** Audio metadata. */
+    performer?: string;
+    title?: string;
+};
+/**
+ * Telegram chat actions (`sendChatAction`). `typing` is the one a chat
+ * bridge refreshes during a long turn — Telegram clears the status after
+ * about five seconds.
+ */
+type TelegramChatAction = "typing" | "upload_photo" | "record_video" | "upload_video" | "record_voice" | "upload_voice" | "upload_document" | "choose_sticker" | "find_location" | "record_video_note" | "upload_video_note";
+type SendChatActionOptions = {
+    messageThreadId?: number;
+};
+/** Bot API `File` object as returned by `getFile`. */
+type TelegramFile = {
+    file_id: string;
+    file_unique_id?: string;
+    file_size?: number;
+    /** Relative path under `<apiBaseUrl>/file/bot<token>/`; valid ~1 hour. */
+    file_path?: string;
+};
 /** The service behind the `TelegramClient` Context.Tag. */
 type TelegramClientService = {
     /**
@@ -87,6 +134,28 @@ type TelegramClientService = {
     editMessageSmart: (chatId: number | string, messageId: number, text: string, options?: Pick<SendMessageSmartOptions, "parseMode" | "inlineKeyboard">) => Effect.Effect<unknown, SmithersError>;
     /** Send a document (URL/file_id via JSON, raw content via multipart). */
     sendDocument: (chatId: number | string, document: TelegramDocumentInput, options?: SendDocumentOptions) => Effect.Effect<unknown, SmithersError>;
+    /**
+     * Standalone chat action. Separate from the one `sendMessageSmart` fires
+     * internally so a long agent turn can REFRESH the indicator (Telegram
+     * expires it after ~5s) instead of showing it once and losing it.
+     */
+    sendChatAction: (chatId: number | string, action?: TelegramChatAction, options?: SendChatActionOptions) => Effect.Effect<unknown, SmithersError>;
+    /** Send an inline photo (URL/file_id via JSON, raw bytes via multipart). */
+    sendPhoto: (chatId: number | string, photo: TelegramMediaInput, options?: SendMediaOptions) => Effect.Effect<unknown, SmithersError>;
+    /** Send an inline video. */
+    sendVideo: (chatId: number | string, video: TelegramMediaInput, options?: SendMediaOptions) => Effect.Effect<unknown, SmithersError>;
+    /** Send an audio track (rendered as a music player). */
+    sendAudio: (chatId: number | string, audio: TelegramMediaInput, options?: SendMediaOptions) => Effect.Effect<unknown, SmithersError>;
+    /** Send a voice note (OGG/Opus; rendered as a waveform bubble). */
+    sendVoice: (chatId: number | string, voice: TelegramMediaInput, options?: SendMediaOptions) => Effect.Effect<unknown, SmithersError>;
+    /** Resolve a `file_id` to a Bot API `File` (carrying `file_path`). */
+    getFile: (fileId: string) => Effect.Effect<TelegramFile, SmithersError>;
+    /**
+     * Download inbound media bytes: `getFile` when handed a `file_id`, then GET
+     * `<apiBaseUrl>/file/bot<token>/<file_path>`. Returns raw bytes — callers
+     * must never put them in a durable row.
+     */
+    downloadFile: (file: string | TelegramFile) => Effect.Effect<Uint8Array, SmithersError>;
     /** Answer a callback query (inline-keyboard button press). */
     answerCallbackQuery: (callbackQueryId: string, options?: {
         text?: string;
@@ -101,4 +170,4 @@ type TelegramClientService = {
     answerWebAppQuery: (webAppQueryId: string, result: Record<string, unknown>) => Effect.Effect<unknown, SmithersError>;
 };
 
-export type { SendDocumentOptions, SendMessageSmartOptions, SendMessageSmartResult, TelegramClientConfig, TelegramClientService, TelegramDocumentInput, TelegramInlineKeyboard, TelegramInlineKeyboardButton };
+export type { SendChatActionOptions, SendDocumentOptions, SendMediaOptions, SendMessageSmartOptions, SendMessageSmartResult, TelegramChatAction, TelegramClientConfig, TelegramClientService, TelegramDocumentInput, TelegramFile, TelegramInlineKeyboard, TelegramInlineKeyboardButton, TelegramMediaInput, TelegramMediaKind };

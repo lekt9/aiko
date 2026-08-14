@@ -304,6 +304,7 @@ pub async fn serve(address: SocketAddr) -> Result<()> {
         .route("/v1/manifest", get(manifest))
         .route("/v1/openapi.json", get(openapi))
         .route("/v1/health", get(health))
+        .route("/v1/auth", get(auth_status))
         .route("/v1/contracts", get(contracts))
         .route("/v1/contracts/scheduled", get(scheduled_contracts))
         .route("/v1/contracts/{id}", get(contract_history))
@@ -457,6 +458,83 @@ async fn health(State(state): State<ApiState>) -> Json<Value> {
         "contractAbi": xai_grok_shell::contract_native::contract_abi_version(),
         "contractAvailable": xai_grok_shell::contract_native::contract_abi_version().is_some(),
     }))
+}
+
+/// Whoami for the CLI's cloud login. Constructed field-by-field — the
+/// auth.json entry is never serialized wholesale — so token material
+/// (`key`, `refresh_token`) cannot ride along in a response.
+#[derive(serde::Serialize)]
+struct AuthStatusResponse {
+    schema: &'static str,
+    signed_in: bool,
+    /// The persisted `BuiltinLoginProvider` (`"aiko"` | `"grok"`), or `null`
+    /// when no built-in provider has been persisted to config.toml.
+    provider: Option<xai_grok_shell::auth::BuiltinLoginProvider>,
+    accounts: Vec<AuthAccountSummary>,
+}
+
+#[derive(serde::Serialize)]
+struct AuthAccountSummary {
+    /// Login-surface label for the account's provider (e.g. "Aiko").
+    label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    email: Option<String>,
+    /// RFC 3339 session expiry, when the credential carries one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_at: Option<String>,
+}
+
+/// GET /v1/auth — report login state exactly the way the CLI decides it:
+/// effective disk config → agent config (which applies the persisted built-in
+/// login profile) → `auth.json` lookup by that profile's scope. Reusing
+/// `read_auth_json`/`lookup_auth` keeps this endpoint from inventing a second
+/// truth about "signed in" (legacy WebLogin tokens are skipped here for the
+/// same reason `read_token_by_scope` skips them).
+async fn auth_status() -> Response {
+    let raw_config = match xai_grok_shell::config::load_effective_config_disk_only() {
+        Ok(value) => value,
+        Err(error) => {
+            return api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "config_unavailable",
+                &error.to_string(),
+            );
+        }
+    };
+    let agent_config =
+        match xai_grok_shell::agent::config::Config::new_from_toml_cfg(&raw_config) {
+            Ok(config) => config,
+            Err(error) => {
+                return api_error(StatusCode::INTERNAL_SERVER_ERROR, "config_unavailable", &error);
+            }
+        };
+    let grok_com = &agent_config.grok_com_config;
+    let scope = grok_com.auth_scope();
+    let auth_path = xai_grok_shell::util::grok_home::grok_home().join("auth.json");
+    // A missing or unreadable auth.json is simply "not signed in" — the same
+    // verdict `read_token_by_scope` reports ("Not logged in. Run `aiko login`.").
+    let session = xai_grok_shell::auth::read_auth_json(&auth_path)
+        .ok()
+        .and_then(|store| xai_grok_shell::auth::lookup_auth(&store, &scope));
+    let accounts = session
+        .map(|auth| {
+            vec![AuthAccountSummary {
+                label: grok_com
+                    .auth_provider_label
+                    .clone()
+                    .unwrap_or_else(|| "Aiko".to_owned()),
+                email: auth.email,
+                expires_at: auth.expires_at.map(|at| at.to_rfc3339()),
+            }]
+        })
+        .unwrap_or_default();
+    Json(AuthStatusResponse {
+        schema: SCHEMA,
+        signed_in: !accounts.is_empty(),
+        provider: grok_com.provider,
+        accounts,
+    })
+    .into_response()
 }
 
 async fn collective_status() -> Json<Value> {
@@ -1545,8 +1623,32 @@ mod tests {
         assert_eq!(manifest["schema"], SCHEMA);
         assert_eq!(manifest["apiVersion"], 1);
         assert_eq!(openapi["openapi"], "3.1.0");
+        assert!(openapi["paths"]["/v1/auth"].is_object());
         assert!(openapi["paths"]["/v1/agent-mail"].is_object());
         assert!(openapi["paths"]["/v1/agentmail/inboxes"].is_object());
+    }
+
+    /// The whoami response is an explicit struct: serializing it must never
+    /// produce token-bearing fields, whatever auth.json contains.
+    #[test]
+    fn auth_status_response_carries_no_token_fields() {
+        let response = AuthStatusResponse {
+            schema: SCHEMA,
+            signed_in: true,
+            provider: Some(xai_grok_shell::auth::BuiltinLoginProvider::Aiko),
+            accounts: vec![AuthAccountSummary {
+                label: "Aiko".to_owned(),
+                email: Some("user@example.com".to_owned()),
+                expires_at: Some("2026-01-01T00:00:00+00:00".to_owned()),
+            }],
+        };
+        let value = serde_json::to_value(&response).unwrap();
+        assert_eq!(value["schema"], SCHEMA);
+        assert_eq!(value["provider"], "aiko");
+        let rendered = value.to_string().to_ascii_lowercase();
+        for banned in ["token", "jwt", "refresh", "\"key\""] {
+            assert!(!rendered.contains(banned), "banned field {banned} leaked");
+        }
     }
 
     #[test]

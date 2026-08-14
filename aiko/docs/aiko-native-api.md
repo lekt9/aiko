@@ -74,6 +74,36 @@ await fetch(`${discovery.baseUrl}/v1/signals`, {
 });
 ```
 
+## Login state (whoami)
+
+`GET /v1/auth` reports whether the machine's Aiko CLI holds a cloud login,
+using the same decision path as `aiko login`/`aiko logout`: the effective disk
+config (including the persisted built-in provider) selects the auth scope, and
+`auth.json` is consulted through the CLI's own auth readers.
+
+```json
+{
+  "schema": "aiko.native.v1",
+  "signed_in": true,
+  "provider": null,
+  "accounts": [
+    {
+      "label": "Aiko",
+      "email": "user@example.com",
+      "expires_at": "2026-09-12T09:49:07.316454596+00:00"
+    }
+  ]
+}
+```
+
+`provider` is the persisted `BuiltinLoginProvider` (`"aiko"` or `"grok"`), or
+`null` when none has been persisted — the CLI then defaults to Aiko at login
+time. The response is an explicit allowlist of fields: access tokens, refresh
+tokens, and API keys are never serialized, and signed-out state is simply
+`signed_in: false` with an empty `accounts` array. Frontends (e.g. the desktop
+onboarding flow) should treat this as the single truth for "is the CLI signed
+in" instead of parsing CLI output.
+
 ## Agent/session mail (ACP)
 
 Connect a WebSocket to `agentMailUrl`, using the `aiko.acp.v1` subprotocol.

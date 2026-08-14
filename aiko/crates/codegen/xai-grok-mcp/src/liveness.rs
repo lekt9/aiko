@@ -42,6 +42,23 @@
 //! (slot-clear-from-inside, external drop) end with the same
 //! handle-drop semantics.
 //!
+//! ## Why the task holds a `Weak`, never an `Arc`
+//!
+//! The client owns this task's kill switch: the
+//! [`TransportLivenessHandle`] returned here is stored back into
+//! [`McpClient::liveness_handle`]. A strong `Arc<McpClient>` inside
+//! the task would therefore close a reference cycle —
+//! task → `Arc<McpClient>` → handle → `DropGuard` → cancels the task —
+//! and neither side could ever be released. For a healthy stdio
+//! server [`McpClient::liveness_check`] returns
+//! [`LivenessCheck::Healthy`] forever, so the cycle never breaks on
+//! its own: the client is immortal, its `Arc<RunningService>` is
+//! never dropped, rmcp never runs `transport.close()`, and the stdio
+//! child process is leaked for the life of the host. That is exactly
+//! the leak this `Weak` refuses. The task upgrades per tick and a
+//! failed upgrade is a clean exit — the watcher must never resurrect
+//! a client its owners have let go of.
+//!
 //! ## Why polling, not a `JoinHandle`-on-the-service-loop?
 //!
 //! rmcp 2.1's `RunningService` does not expose a future that
@@ -52,7 +69,7 @@
 //! that quarantine break and the overhead is negligible (one mutex
 //! acquire + one atomic load per tick).
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use tokio::sync::mpsc::UnboundedSender;
@@ -116,7 +133,11 @@ impl TransportLivenessHandle {
 /// # Parameters
 ///
 /// - `server_name`: bound to emitted events.
-/// - `client`: `Arc<McpClient>` whose `liveness_check` we poll.
+/// - `client`: **`Weak<McpClient>`** whose `liveness_check` we poll.
+///   Weak on purpose — see the module doc's "Why the task holds a
+///   `Weak`". Upgraded per tick and dropped again before the next
+///   `.await` on the tick, so the watcher never extends the client's
+///   life past its owners'.
 /// - `poll_interval`: tick period.
 /// - `on_event`: sink for `TransportClosed` if observed.
 /// - `liveness_slot`: shared Arc to the owning `McpClient`'s
@@ -130,6 +151,10 @@ impl TransportLivenessHandle {
 ///   ([`McpClient::arm_liveness_watcher`] enforces this).
 /// - The poller exits silently on transient non-`Ready` states; only
 ///   `Ready` + closed transport produces an event.
+/// - The poller exits silently — and WITHOUT clearing the slot —
+///   when the `Weak` fails to upgrade. The slot lives inside the
+///   client that just died, so there is nothing left to clear and
+///   nothing left to watch.
 /// - The send may fail if the dispatcher has dropped its receiver
 ///   (subagent teardown, session shutdown). That's logged at debug
 ///   and the task exits — there's no retry.
@@ -146,7 +171,7 @@ impl TransportLivenessHandle {
 /// delays detection.
 pub fn spawn_transport_liveness(
     server_name: McpServerName,
-    client: Arc<McpClient>,
+    client: Weak<McpClient>,
     poll_interval: Duration,
     on_event: UnboundedSender<McpClientEvent>,
     liveness_slot: SharedLivenessSlot,
@@ -174,6 +199,24 @@ pub fn spawn_transport_liveness(
                     return;
                 }
                 _ = tick.tick() => {
+                    // Upgrade per tick, never hold the strong ref
+                    // across the loop: this task's kill switch lives
+                    // INSIDE the client, so a retained `Arc` here is a
+                    // cycle that makes a healthy client — and its stdio
+                    // child — immortal. See the module doc.
+                    //
+                    // `None` means the last owner (`owned_clients`,
+                    // `shared_clients`, an in-flight caller) let go
+                    // while we were sleeping. Exit; do NOT clear the
+                    // slot — it died with the client, and there is
+                    // nothing to re-arm.
+                    let Some(client) = client.upgrade() else {
+                        tracing::trace!(
+                            server = %server_name_for_task,
+                            "transport liveness watcher: client dropped, exiting",
+                        );
+                        return;
+                    };
                     match client.liveness_check().await {
                         LivenessCheck::Healthy => continue,
                         LivenessCheck::TransportClosed => {
@@ -265,7 +308,7 @@ mod tests {
         let client = make_stub_client();
         let handle = spawn_transport_liveness(
             "test-server".to_string(),
-            client,
+            Arc::downgrade(&client),
             Duration::from_millis(500),
             tx,
             Arc::clone(&slot),
@@ -309,7 +352,7 @@ mod tests {
         let client = make_stub_client();
         let handle = spawn_transport_liveness(
             "test-server".to_string(),
-            client,
+            Arc::downgrade(&client),
             Duration::from_millis(500),
             tx,
             Arc::clone(&slot),
@@ -340,7 +383,7 @@ mod tests {
         let client = make_stub_client();
         let handle = spawn_transport_liveness(
             "test-server".to_string(),
-            client,
+            Arc::downgrade(&client),
             Duration::from_secs(60), // Long interval so the first tick is far away.
             tx,
             Arc::clone(&slot),
@@ -350,5 +393,61 @@ mod tests {
         drop(handle);
         tokio::task::yield_now().await;
         assert!(rx.try_recv().is_err());
+    }
+
+    /// Contract (the leak's structural falsifier, process-free): the
+    /// spawned watcher holds NO strong reference to the client it
+    /// watches. If this ever regresses to `Arc::clone`, every healthy
+    /// MCP client becomes immortal and its stdio child is leaked —
+    /// see the module doc.
+    #[tokio::test(start_paused = true)]
+    async fn spawned_watcher_holds_no_strong_ref_to_client() {
+        let (tx, _rx) = unbounded_channel::<McpClientEvent>();
+        let slot: SharedLivenessSlot = Arc::new(parking_lot::Mutex::new(None));
+        let client = make_stub_client();
+        let handle = spawn_transport_liveness(
+            "test-server".to_string(),
+            Arc::downgrade(&client),
+            Duration::from_secs(60), // Never ticks during the test.
+            tx,
+            Arc::clone(&slot),
+        );
+        assert_eq!(
+            Arc::strong_count(&client),
+            1,
+            "the liveness task must not own an Arc<McpClient>: the client owns \
+             this task's kill switch, so a strong ref is a reference cycle",
+        );
+        drop(handle);
+    }
+
+    /// Contract: a watcher whose client has already been dropped
+    /// exits on its next tick instead of resurrecting anything.
+    #[tokio::test(start_paused = true)]
+    async fn watcher_exits_when_client_is_dropped() {
+        let (tx, mut rx) = unbounded_channel::<McpClientEvent>();
+        let slot: SharedLivenessSlot = Arc::new(parking_lot::Mutex::new(None));
+        let client = make_stub_client();
+        let weak = Arc::downgrade(&client);
+        let handle = spawn_transport_liveness(
+            "test-server".to_string(),
+            weak.clone(),
+            Duration::from_millis(500),
+            tx,
+            Arc::clone(&slot),
+        );
+        // Keep the handle out of the slot so the DropGuard is not the
+        // thing that stops the task — the failed upgrade must be.
+        drop(client);
+        assert!(weak.upgrade().is_none(), "client must be fully dropped");
+
+        tokio::time::advance(Duration::from_millis(600)).await;
+        tokio::task::yield_now().await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "a vanished client must not produce a TransportClosed event",
+        );
+        drop(handle);
     }
 }

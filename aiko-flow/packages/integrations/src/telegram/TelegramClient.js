@@ -6,6 +6,12 @@
 /** @typedef {import("./TelegramClientTypes.ts").SendDocumentOptions} SendDocumentOptions */
 /** @typedef {import("./TelegramClientTypes.ts").TelegramDocumentInput} TelegramDocumentInput */
 /** @typedef {import("./TelegramClientTypes.ts").TelegramInlineKeyboard} TelegramInlineKeyboard */
+/** @typedef {import("./TelegramClientTypes.ts").TelegramMediaInput} TelegramMediaInput */
+/** @typedef {import("./TelegramClientTypes.ts").TelegramMediaKind} TelegramMediaKind */
+/** @typedef {import("./TelegramClientTypes.ts").SendMediaOptions} SendMediaOptions */
+/** @typedef {import("./TelegramClientTypes.ts").TelegramChatAction} TelegramChatAction */
+/** @typedef {import("./TelegramClientTypes.ts").SendChatActionOptions} SendChatActionOptions */
+/** @typedef {import("./TelegramClientTypes.ts").TelegramFile} TelegramFile */
 // @smithers-type-exports-end
 
 import { Context, Effect, Layer, Schedule } from "effect";
@@ -17,6 +23,29 @@ import { cleanText, convertMarkdownToTelegram } from "./markdown.js";
 export const DEFAULT_TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 const DEFAULT_MAX_RATE_LIMIT_RETRIES = 3;
 const DEFAULT_MAX_RETRY_AFTER_SECONDS = 30;
+
+/**
+ * Bot API method per inline-media kind. The multipart FIELD name is the kind
+ * itself (`photo`, `video`, `audio`, `voice`) — Telegram rejects an upload
+ * whose field does not match its method, which is why the two are derived
+ * from one table instead of being passed separately.
+ * @type {Record<TelegramMediaKind, string>}
+ */
+export const TELEGRAM_MEDIA_METHODS = {
+  photo: "sendPhoto",
+  video: "sendVideo",
+  audio: "sendAudio",
+  voice: "sendVoice",
+};
+
+/** Fallback content types per kind when the caller supplies none. */
+const DEFAULT_MEDIA_CONTENT_TYPE = {
+  photo: "image/jpeg",
+  video: "video/mp4",
+  audio: "audio/mpeg",
+  // Telegram only renders a voice bubble for OGG/Opus.
+  voice: "audio/ogg",
+};
 
 /**
  * Error from the Telegram Bot API. Carries the Bot API `error_code` and
@@ -359,6 +388,145 @@ export function makeTelegramClient(config) {
     );
     return rawCall("sendDocument", { body: form }).pipe(Effect.retry(rateLimitSchedule));
   };
+  /**
+   * Standalone chat action. `sendMessageSmart` still fires its own internal
+   * one; this exists so the indicator can be REFRESHED on an interval during
+   * a long turn (Telegram clears it after ~5s), which a side effect buried
+   * inside a send can never do.
+   * @type {TelegramClientService["sendChatAction"]}
+   */
+  const sendChatAction = (chatId, action = "typing", options = {}) =>
+    call("sendChatAction", {
+      chat_id: chatId,
+      action,
+      ...(options.messageThreadId != null ? { message_thread_id: options.messageThreadId } : {}),
+    });
+  /**
+   * One implementation for the four inline-media verbs: the method and the
+   * multipart field both come from `kind`, so they cannot drift apart.
+   * @param {TelegramMediaKind} kind
+   * @param {number | string} chatId
+   * @param {TelegramMediaInput} media
+   * @param {SendMediaOptions} [options]
+   * @returns {Effect.Effect<unknown, SmithersError>}
+   */
+  const sendMedia = (kind, chatId, media, options = {}) => {
+    const method = TELEGRAM_MEDIA_METHODS[kind];
+    if (!method) {
+      return Effect.fail(new SmithersError("INVALID_INPUT", `Unknown Telegram media kind "${String(kind)}".`));
+    }
+    if (media == null || (typeof media !== "string" && typeof media !== "object")) {
+      return Effect.fail(
+        new SmithersError("INVALID_INPUT", `Telegram ${method} requires a URL/file_id string or an upload object.`),
+      );
+    }
+    const caption = options.caption ? convertMarkdownToTelegram(cleanText(options.caption)) : undefined;
+    const shared = {
+      ...(caption ? { caption, parse_mode: "MarkdownV2" } : {}),
+      ...(options.messageThreadId != null ? { message_thread_id: options.messageThreadId } : {}),
+      ...(options.replyToMessageId != null ? { reply_to_message_id: options.replyToMessageId } : {}),
+      ...(options.disableNotification ? { disable_notification: true } : {}),
+      ...(options.duration != null ? { duration: options.duration } : {}),
+      ...(kind === "video" && options.width != null ? { width: options.width } : {}),
+      ...(kind === "video" && options.height != null ? { height: options.height } : {}),
+      ...(kind === "audio" && options.performer ? { performer: options.performer } : {}),
+      ...(kind === "audio" && options.title ? { title: options.title } : {}),
+    };
+    if (typeof media === "string") {
+      // URL or existing file_id — plain JSON call.
+      return call(method, { chat_id: chatId, [kind]: media, ...shared });
+    }
+    // Raw content upload — multipart form data, same path as sendDocument.
+    const form = new FormData();
+    form.set("chat_id", String(chatId));
+    for (const [key, value] of Object.entries(shared)) {
+      form.set(key, typeof value === "string" ? value : String(value));
+    }
+    const bytes = typeof media.content === "string" ? new TextEncoder().encode(media.content) : media.content;
+    form.set(kind, new Blob([bytes], { type: media.contentType ?? DEFAULT_MEDIA_CONTENT_TYPE[kind] }), media.filename);
+    return rawCall(method, { body: form }).pipe(Effect.retry(rateLimitSchedule));
+  };
+  /** @type {TelegramClientService["sendPhoto"]} */
+  const sendPhoto = (chatId, photo, options = {}) => sendMedia("photo", chatId, photo, options);
+  /** @type {TelegramClientService["sendVideo"]} */
+  const sendVideo = (chatId, video, options = {}) => sendMedia("video", chatId, video, options);
+  /** @type {TelegramClientService["sendAudio"]} */
+  const sendAudio = (chatId, audio, options = {}) => sendMedia("audio", chatId, audio, options);
+  /** @type {TelegramClientService["sendVoice"]} */
+  const sendVoice = (chatId, voice, options = {}) => sendMedia("voice", chatId, voice, options);
+  /** @type {TelegramClientService["getFile"]} */
+  const getFile = (fileId) =>
+    call("getFile", { file_id: fileId }).pipe(
+      Effect.map((result) => /** @type {TelegramFile} */ (result ?? { file_id: fileId })),
+    );
+  /**
+   * GET the media bytes. This is the ONE place the token appears outside a
+   * `/bot<token>/<method>` POST, so every failure message is redacted the
+   * same way rawCall's is.
+   * @param {string} filePath
+   * @returns {Effect.Effect<Uint8Array, SmithersError>}
+   */
+  const downloadFilePath = (filePath) =>
+    Effect.suspend(() => {
+      const controller = new AbortController();
+      const relative = String(filePath).replace(/^\/+/, "");
+      return Effect.gen(function* () {
+        const response = yield* Effect.tryPromise({
+          try: (signal) => {
+            linkInterruptSignal(signal, controller);
+            return fetch(`${apiBaseUrl}/file/bot${botToken}/${relative}`, { signal: controller.signal });
+          },
+          catch: (cause) =>
+            new TelegramApiError(
+              `Telegram file download failed: ${redactBotToken(cause instanceof Error ? cause.message : String(cause), botToken)}`,
+              { method: "downloadFile" },
+            ),
+        });
+        if (!response.ok) {
+          return yield* Effect.fail(
+            new TelegramApiError(`Telegram file download failed with HTTP ${response.status}.`, {
+              method: "downloadFile",
+              errorCode: response.status,
+            }),
+          );
+        }
+        const buffer = yield* Effect.tryPromise({
+          try: (signal) => {
+            linkInterruptSignal(signal, controller);
+            return response.arrayBuffer();
+          },
+          catch: (cause) =>
+            new TelegramApiError(
+              `Telegram file download body read failed: ${redactBotToken(cause instanceof Error ? cause.message : String(cause), botToken)}`,
+              { method: "downloadFile" },
+            ),
+        });
+        return new Uint8Array(buffer);
+      });
+    });
+  /** @type {TelegramClientService["downloadFile"]} */
+  const downloadFile = (file) => {
+    if (typeof file === "string") {
+      return getFile(file).pipe(
+        Effect.flatMap((resolved) =>
+          resolved?.file_path
+            ? downloadFilePath(resolved.file_path)
+            : Effect.fail(
+                new SmithersError("INVALID_INPUT", "Telegram getFile returned no file_path; nothing to download.", {
+                  fileId: file,
+                }),
+              ),
+        ),
+      );
+    }
+    if (file?.file_path) {
+      return downloadFilePath(file.file_path);
+    }
+    if (file?.file_id) {
+      return downloadFile(file.file_id);
+    }
+    return Effect.fail(new SmithersError("INVALID_INPUT", "Telegram downloadFile requires a file_id or file_path."));
+  };
   /** @type {TelegramClientService["answerCallbackQuery"]} */
   const answerCallbackQuery = (callbackQueryId, options = {}) =>
     call("answerCallbackQuery", {
@@ -372,7 +540,21 @@ export function makeTelegramClient(config) {
       web_app_query_id: webAppQueryId,
       result,
     });
-  return { call, sendMessageSmart, editMessageSmart, sendDocument, answerCallbackQuery, answerWebAppQuery };
+  return {
+    call,
+    sendMessageSmart,
+    editMessageSmart,
+    sendDocument,
+    sendChatAction,
+    sendPhoto,
+    sendVideo,
+    sendAudio,
+    sendVoice,
+    getFile,
+    downloadFile,
+    answerCallbackQuery,
+    answerWebAppQuery,
+  };
 }
 
 /**

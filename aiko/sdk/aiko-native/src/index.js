@@ -23,6 +23,10 @@ export class AikoNativeClient {
     return this.request("/v1/health");
   }
 
+  auth() {
+    return this.request("/v1/auth");
+  }
+
   manifest() {
     return this.request("/v1/manifest");
   }

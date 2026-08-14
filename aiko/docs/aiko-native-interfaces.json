@@ -27,6 +27,15 @@
       ]
     },
     {
+      "id": "auth.session",
+      "version": 1,
+      "kind": "read",
+      "description": "Report the CLI's cloud login state: signed_in, the persisted built-in provider (aiko|grok|null), and account label/email/expiry. Decided by the same config and auth.json path the CLI's login/logout commands use; token material is never returned.",
+      "operations": [
+        "GET /v1/auth"
+      ]
+    },
+    {
       "id": "agent.mail",
       "version": 1,
       "kind": "duplex",

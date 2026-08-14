@@ -26,6 +26,36 @@ export function listenerCorrelationId(props) {
 }
 
 /**
+ * Drop null-valued keys from a delivered row before the schema sees it.
+ *
+ * A durable output row is columnar: every optional field the Bot API omitted
+ * comes back as SQL NULL, and `z.string().optional()` refuses null. Without
+ * this, a render-prop listener parses fine in memory and throws the moment
+ * the same payload has round-tripped through the store — which is every
+ * resume. Absent is absent; Telegram never means "null" by a missing field.
+ *
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+export function stripNullFields(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripNullFields(entry));
+  }
+  if (value && typeof value === "object" && !(value instanceof Date)) {
+    /** @type {Record<string, unknown>} */
+    const out = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (entry === null || entry === undefined) {
+        continue;
+      }
+      out[key] = stripNullFields(entry);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
  * @param {string} eventName integration signal name to wait for
  * @param {import("./OnMessageProps.ts").TelegramListenerBaseProps<any>} props
  * @param {import("zod").ZodTypeAny} schema effective payload schema
@@ -65,6 +95,6 @@ export function renderTelegramListener(eventName, props, schema) {
   if (row === undefined) {
     return waitNode;
   }
-  const data = schema.parse(stripAutoColumns(row));
+  const data = schema.parse(stripNullFields(stripAutoColumns(row)));
   return React.createElement(React.Fragment, null, waitNode, props.children(data));
 }

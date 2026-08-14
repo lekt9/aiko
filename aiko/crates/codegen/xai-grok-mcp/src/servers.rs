@@ -3005,6 +3005,35 @@ impl McpClient {
         Ok(service)
     }
 
+    /// Deterministic teardown for a client this session OWNS.
+    ///
+    /// Stops the liveness poller, then drops whatever the state machine
+    /// is holding: `Ready(Arc<RunningService>)` (rmcp's `DropGuard`
+    /// cancels the serve loop, which runs `transport.close()` →
+    /// [`SafeTokioChildProcess::graceful_shutdown`] → `killpg` + reap)
+    /// or `Pending(Stdio(child))` (dropped directly →
+    /// [`SafeTokioChildProcess::drop`]).
+    ///
+    /// Ordering is load-bearing: clear the liveness slot FIRST so the
+    /// poller cannot observe the state transition and emit a spurious
+    /// `TransportClosed` to a dispatcher that is itself shutting down.
+    ///
+    /// Dropping the last `Arc<McpClient>` already reaps the child on its
+    /// own (that is what [`crate::liveness`]'s `Weak` restores). This is
+    /// the belt-and-braces version: it does not depend on rmcp's drop
+    /// ordering, and unlike a bare `drop` it works even when some other
+    /// holder — an in-flight tool call, a status snapshot — still has an
+    /// `Arc` at teardown time.
+    ///
+    /// **Only ever call this for `McpState::owned_clients`.**
+    /// `shared_clients` are the parent's, inherited by reference; a
+    /// subagent that shut one down would kill a server its parent is
+    /// still using.
+    pub async fn shutdown(&self) {
+        self.set_liveness_handle(None);
+        self.replace_state(ClientState::Empty).await;
+    }
+
     /// Replace [`Self::state`] under the lock and wake any
     /// [`Self::ensure_initialized`] callers parked on [`Self::init_done`]
     /// so they re-check the new state on their next loop iteration.
@@ -3588,7 +3617,16 @@ impl McpClient {
         }
         let handle = crate::liveness::spawn_transport_liveness(
             self.server_name.clone(),
-            Arc::clone(self),
+            // `downgrade`, NOT `clone`. The handle we are about to store
+            // in `self.liveness_handle` is the spawned task's kill
+            // switch, so a strong `Arc` here would close the cycle
+            // task -> client -> handle -> cancels task. `liveness_check`
+            // returns `Healthy` forever for a live stdio server, so the
+            // cycle would never break: the client would be immortal, its
+            // `Arc<RunningService>` never dropped, rmcp's `transport.close()`
+            // never run, and the child process leaked for the life of the
+            // host. One leaked tree per session. Never make this strong.
+            Arc::downgrade(self),
             poll_interval,
             event_tx,
             Arc::clone(&self.liveness_handle),
@@ -4640,6 +4678,242 @@ mod tests {
             return true;
         }
         std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    }
+
+    // ── the Arc-cycle falsifier: a healthy stdio client must be mortal ──
+    //
+    // `arm_liveness_watcher` used to move a strong `Arc<McpClient>` into the
+    // liveness task while storing that task's own kill switch
+    // (`TransportLivenessHandle` → `DropGuard`) back inside the same client.
+    // For a live stdio server `liveness_check()` returns `Healthy` forever, so
+    // neither side could be released: the client was immortal, its
+    // `Arc<RunningService>` never dropped, rmcp never ran `transport.close()`,
+    // and `SafeTokioChildProcess`'s reap code — which is correct — never fired.
+    // One leaked process tree per session, for the life of the host.
+    //
+    // Falsifier: revert `Arc::downgrade(self)` to `Arc::clone(self)` in
+    // `arm_liveness_watcher` and
+    // `dropping_last_client_arc_reaps_child_even_with_liveness_armed` goes red.
+
+    /// A minimal MCP stdio server: answers `initialize` over line-delimited
+    /// JSON-RPC, then blocks on stdin. It exits on EOF, so a `transport.close()`
+    /// that really happens reaps it in milliseconds and one that never happens
+    /// leaves it running — which is the signal these tests read.
+    #[cfg(unix)]
+    const FAKE_STDIO_MCP_SERVER: &str = r#"
+import json, sys
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        continue
+    if msg.get("method") == "initialize":
+        sys.stdout.write(json.dumps({
+            "jsonrpc": "2.0",
+            "id": msg.get("id"),
+            "result": {
+                "protocolVersion": msg.get("params", {}).get("protocolVersion"),
+                "capabilities": {},
+                "serverInfo": {"name": "fake-stdio", "version": "0.0.0"},
+            },
+        }) + "\n")
+        sys.stdout.flush()
+"#;
+
+    /// Panics rather than skipping: a reap test that quietly does not run is
+    /// the exact failure mode these tests exist to rule out.
+    #[cfg(unix)]
+    fn python_interpreter() -> String {
+        for candidate in ["python3", "python"] {
+            if which::which(candidate).is_ok() {
+                return candidate.to_string();
+            }
+        }
+        panic!(
+            "MCP child-reap tests need a python interpreter for the fake stdio \
+             MCP server; refusing to pass vacuously without one"
+        );
+    }
+
+    /// Keeps the fixture's incidental owners alive for the duration of a test
+    /// (script dir, event receiver, stderr pipe) without letting any of them
+    /// hold an `Arc<McpClient>`.
+    #[cfg(unix)]
+    struct StdioFixtureGuards {
+        _dir: tempfile::TempDir,
+        _events: tokio::sync::mpsc::UnboundedReceiver<McpClientEvent>,
+        _stderr: Option<tokio::process::ChildStderr>,
+    }
+
+    /// Spawn the fake stdio server, complete the handshake, and hand back the
+    /// **sole** `Arc<McpClient>` plus the child's pid.
+    #[cfg(unix)]
+    async fn spawn_ready_stdio_client() -> (Arc<McpClient>, u32, StdioFixtureGuards) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("fake_mcp_server.py");
+        std::fs::write(&script, FAKE_STDIO_MCP_SERVER).expect("write fake stdio server");
+
+        let mut cmd = Command::new(python_interpreter());
+        // `-u`: unbuffered stdout, so the initialize reply is not stuck in a
+        // block buffer while the client waits out its startup timeout.
+        cmd.arg("-u").arg(&script).kill_on_drop(true);
+        xai_grok_tools::util::detach_command(&mut cmd);
+        let (transport, stderr) = SafeTokioChildProcess::spawn(
+            cmd,
+            "fake-stdio".to_string(),
+            xai_file_utils::events::EventWriter::noop(),
+        )
+        .expect("spawn fake stdio MCP server");
+        let pid = transport.id().expect("spawned child pid");
+
+        let overrides = McpClientTimeoutOverrides {
+            startup_timeout_sec: Some(10),
+            tool_timeout_sec: Some(10),
+            ..Default::default()
+        };
+        let client = Arc::new(McpClient::new_stdio(
+            "fake-stdio".to_string(),
+            transport,
+            Some(&overrides),
+            None,
+        ));
+        let (tx, events) = tokio::sync::mpsc::unbounded_channel::<McpClientEvent>();
+        client.set_event_tx(Some(tx));
+        client
+            .ensure_initialized()
+            .await
+            .expect("fake stdio MCP handshake must succeed");
+        assert!(
+            unix_process_exists(pid),
+            "fake stdio server {pid} must still be running after the handshake",
+        );
+        (
+            client,
+            pid,
+            StdioFixtureGuards {
+                _dir: dir,
+                _events: events,
+                _stderr: stderr,
+            },
+        )
+    }
+
+    #[cfg(unix)]
+    async fn reaped_within(pid: u32, within: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + within;
+        while std::time::Instant::now() < deadline {
+            if !unix_process_exists(pid) {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        !unix_process_exists(pid)
+    }
+
+    /// THE falsifier for the per-session MCP process leak.
+    ///
+    /// Arm the liveness watcher on a healthy stdio client — the state the
+    /// leader is in for every live session — then drop the last
+    /// `Arc<McpClient>`. The child must die. It does not, and cannot, while
+    /// the watcher owns a strong `Arc` back to the client that holds the
+    /// watcher's kill switch.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dropping_last_client_arc_reaps_child_even_with_liveness_armed() {
+        let (client, pid, _guards) = spawn_ready_stdio_client().await;
+
+        assert!(
+            client
+                .arm_liveness_watcher(std::time::Duration::from_millis(100))
+                .await,
+            "liveness must arm for a Ready stdio client with a wired event sender",
+        );
+        // Let the watcher poll at least twice, so the client is in exactly the
+        // state a live leader session sits in: Ready, healthy, watched.
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        assert!(
+            client.is_healthy().await,
+            "the fake stdio server must still be healthy before the drop",
+        );
+
+        drop(client);
+
+        assert!(
+            reaped_within(pid, std::time::Duration::from_secs(2)).await,
+            "MCP stdio child {pid} outlived the last Arc<McpClient> with the \
+             liveness watcher armed — the Arc cycle is back and every session \
+             leaks a process tree again",
+        );
+    }
+
+    /// The teardown half: `McpClient::shutdown()` reaps the child even while
+    /// somebody else still holds an `Arc` (an in-flight tool call, a status
+    /// snapshot). This is what session teardown calls after draining
+    /// `owned_clients`, and it does not depend on rmcp's drop ordering.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn client_shutdown_reaps_child_while_another_arc_is_held() {
+        let (client, pid, _guards) = spawn_ready_stdio_client().await;
+        assert!(
+            client
+                .arm_liveness_watcher(std::time::Duration::from_millis(100))
+                .await,
+        );
+
+        let other_holder = Arc::clone(&client);
+        client.shutdown().await;
+
+        assert!(
+            reaped_within(pid, std::time::Duration::from_secs(2)).await,
+            "McpClient::shutdown() left MCP stdio child {pid} alive",
+        );
+        assert!(
+            matches!(
+                other_holder.state_kind().await,
+                ClientStateKind::Empty
+            ),
+            "shutdown() must leave the client Empty, not Ready over a dead child",
+        );
+        assert!(
+            other_holder.liveness_handle.lock().is_none(),
+            "shutdown() must disarm the liveness watcher",
+        );
+    }
+
+    /// Structural companion, process-free: arming must not bump the client's
+    /// strong count. Cheap enough to run everywhere, and it fails on the same
+    /// regression as the reap test above.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn arm_liveness_watcher_does_not_keep_client_alive() {
+        let (client, pid, _guards) = spawn_ready_stdio_client().await;
+        let before = Arc::strong_count(&client);
+        assert!(
+            client
+                .arm_liveness_watcher(std::time::Duration::from_millis(100))
+                .await,
+        );
+        // Sleep past two poll intervals: the count must be unchanged after the
+        // task has actually run, not merely before it was first scheduled.
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        assert_eq!(
+            Arc::strong_count(&client),
+            before,
+            "the liveness task must hold no strong Arc<McpClient> — it owns the \
+             client's kill switch, so a strong ref is a cycle",
+        );
+        let weak = Arc::downgrade(&client);
+        drop(client);
+        assert!(
+            weak.upgrade().is_none(),
+            "the client must be fully dropped once its last owner lets go",
+        );
+        // Housekeeping so the test does not leave a child behind if the
+        // assertions above ever regress.
+        let _ = reaped_within(pid, std::time::Duration::from_secs(2)).await;
     }
 
     #[test]

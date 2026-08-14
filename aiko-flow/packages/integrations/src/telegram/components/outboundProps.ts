@@ -2,9 +2,11 @@ import type React from "react";
 import type { z } from "zod";
 import type {
   SendMessageSmartOptions,
+  TelegramChatAction,
   TelegramClientConfig,
   TelegramDocumentInput,
   TelegramInlineKeyboard,
+  TelegramMediaInput,
 } from "../TelegramClientTypes.ts";
 
 /** Loose deps spec (mirrors Task's DepsSpec: dep key → zod output schema). */
@@ -28,6 +30,13 @@ export type TelegramOutboundBaseProps = {
   needs?: Record<string, string>;
   output?: z.ZodTypeAny;
   outputSchema?: z.ZodTypeAny;
+  /**
+   * Attempt bound. Without it a failing outbound task retries FOREVER (the
+   * engine's default for a bridge-managed compute), so a reply naming a file
+   * that does not exist becomes an infinite backoff loop instead of a failed
+   * turn. Bound it on anything whose input a model chose.
+   */
+  retries?: number;
   retryPolicy?: unknown;
   timeoutMs?: number;
   dependsOn?: string[];
@@ -74,6 +83,66 @@ export type SendDocumentProps = TelegramOutboundBaseProps & {
   replyToMessageId?: number;
   messageThreadId?: number;
   children?: (deps: ResolvedDeps) => { document: TelegramDocumentInput; caption?: string };
+};
+
+/** Props for `<SendPhoto>` / `<SendVideo>` / `<SendAudio>` / `<SendVoice>`. */
+export type SendMediaProps = TelegramOutboundBaseProps & {
+  chatId: number | string;
+  /** URL / existing file_id / explicit upload object. */
+  media?: TelegramMediaInput;
+  /** Local file path — loaded by the reply router, the one fs toucher. */
+  path?: string;
+  caption?: string | null;
+  replyToMessageId?: number;
+  messageThreadId?: number;
+  duration?: number;
+  width?: number;
+  height?: number;
+  performer?: string;
+  title?: string;
+  children?: (deps: ResolvedDeps) => {
+    media?: TelegramMediaInput;
+    path?: string;
+    caption?: string | null;
+    replyToMessageId?: number;
+    messageThreadId?: number;
+    duration?: number;
+    width?: number;
+    height?: number;
+    performer?: string;
+    title?: string;
+  };
+};
+
+/** Props for `<SendChatAction>` — one presence signal, once. */
+export type SendChatActionProps = TelegramOutboundBaseProps & {
+  chatId: number | string;
+  /** @default "typing" */
+  action?: TelegramChatAction;
+  messageThreadId?: number;
+};
+
+/** Props for `<TypingIndicator>` — a REFRESHING presence signal, bounded. */
+export type TypingIndicatorProps = TelegramOutboundBaseProps & {
+  chatId: number | string;
+  /** @default "typing" */
+  action?: TelegramChatAction;
+  /** Refresh cadence; Telegram expires a chat action after ~5s. @default 4000 */
+  intervalMs?: number;
+  /** Hard bound on the hold. @default 300000 */
+  maxMs?: number;
+  messageThreadId?: number;
+};
+
+/** Props for `<SendReply>` — the typed-reply router. */
+export type SendReplyProps = TelegramOutboundBaseProps & {
+  /** Destination, from the INBOUND event — never from the worker payload. */
+  chatId: number | string;
+  /** Worker output shaped like `telegramWorkerReplySchema`. */
+  reply?: unknown;
+  replyToMessageId?: number;
+  messageThreadId?: number;
+  children?: (deps: ResolvedDeps) => unknown;
 };
 
 export type AnswerCallbackQueryProps = TelegramOutboundBaseProps & {

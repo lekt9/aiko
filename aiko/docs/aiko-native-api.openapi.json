@@ -33,6 +33,28 @@
         }
       }
     },
+    "/v1/auth": {
+      "get": {
+        "operationId": "getAuthStatus",
+        "summary": "Report the CLI's cloud login state (whoami)",
+        "description": "Reads the same config and auth.json state the CLI's own login/logout commands use. Never returns token material.",
+        "responses": {
+          "200": {
+            "description": "Login state, persisted provider, and account summaries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
     "/v1/manifest": {
       "get": {
         "operationId": "getNativeManifest",
@@ -619,6 +641,53 @@
           },
           "contractAvailable": {
             "type": "boolean"
+          }
+        }
+      },
+      "AuthStatus": {
+        "type": "object",
+        "required": [
+          "schema",
+          "signed_in",
+          "provider",
+          "accounts"
+        ],
+        "properties": {
+          "schema": {
+            "const": "aiko.native.v1"
+          },
+          "signed_in": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": ["aiko", "grok", null],
+            "description": "Persisted built-in login provider; null when none has been persisted."
+          },
+          "accounts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["label"],
+              "additionalProperties": false,
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "description": "Login-surface label for the provider (e.g. Aiko)"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "expires_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Session expiry when the credential carries one. No token material is ever included."
+                }
+              }
+            }
           }
         }
       },

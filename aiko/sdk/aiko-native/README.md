@@ -9,6 +9,10 @@ const aiko = await connectToAiko();
 console.log(await aiko.health());
 console.log(await aiko.scheduledContracts());
 
+// Cloud login state (whoami) — signed_in, persisted provider ("aiko"|"grok"|null),
+// and account label/email/expiry. Never contains token material.
+const { signed_in, provider, accounts } = await aiko.auth();
+
 const mail = new WebSocket(aiko.browserAgentMailUrl(), "aiko.acp.v1");
 mail.addEventListener("open", () => {
   mail.send(JSON.stringify({

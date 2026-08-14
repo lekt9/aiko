@@ -10,6 +10,46 @@ Contract ledger, scheduler, child lineage, parallel waves, and isolated Aiko
 workers. Keep the bot token in the local environment or keychain; never place it
 in a contract, prompt, proof, log, or shared descriptor.
 
+## Preferred wiring route
+
+Read `.agents/skills/self-integrate/SKILL.md` first. This file describes how a
+Telegram event *should be shaped* once it is inside Contract; `self-integrate`
+describes how to get it inside at all, and it is the step that keeps getting
+skipped. The failure it exists to prevent is on record in `aiko/test.md`: this
+skill was read, the security advice was correct, and the session still ended by
+asking the user to send a message so the agent could re-poll by hand. Verifying
+a token with `getMe` is step 2 of seven, not the deliverable.
+
+The durable route is a Smithers bridge, not a hand-rolled poll: an ingest source
+(`makeTelegramSource`, `packages/integrations/src/telegram/TelegramSource.js:171`)
+with a persisted `update_id` cursor, feeding a long-lived workflow in
+`.smithers/workflows/` that parks on `<OnMessage>` and runs an `AikoAgent`
+worker producing a typed discriminated-union reply, with a router mapping
+`kind → verb`. The token is passed by *env var name* in the workflow input and
+resolved inside the effect, as `.smithers/workflows/telegram-daily-digest.tsx:15,280`
+already does. Never a `while true` in a shell, and never a token in argv.
+
+**Correction — media verbs this repository does not have.** "Build the graph"
+step 3 below names `sendVoice` as an example effect child. That verb is **not
+implemented**. An exhaustive grep across `packages/telegram/**` and
+`packages/integrations/**` matches zero files for `sendPhoto`, `sendVideo`,
+`sendAudio`, `sendVoice`, `sendVideoNote`, `sendAnimation`, `sendSticker`,
+`sendMediaGroup`, `getFile`, `file_path`, `downloadFile`, `editMessageMedia` and
+`sendLocation`. What exists today: `sendMessage`/`sendMessageSmart`,
+`editMessageText`/`editMessageSmart`, `sendDocument` (which Telegram renders as
+an attachment, not an inline photo), `answerCallbackQuery`, `answerWebAppQuery`,
+webhook management, and `sendChatAction` — the last reachable as a standalone
+verb only in `packages/telegram/src/index.js:433`, since in the integrations
+client it fires solely as a side effect inside `sendMessageSmart`
+(`TelegramClient.js:267-273`). Inbound normalization is text-only
+(`packages/telegram/src/index.js:26-30`): a photo or voice message arrives as its
+caption or an empty string, and its bytes cannot be fetched without `getFile`.
+
+Do not plan an effect child around a verb in that gap list until it has been
+written inert, taught to `packages/integrations/tests/telegram-fixture.js`, and
+admitted. A skill that promises a verb the code lacks fails at the boundary, at
+runtime, with a user watching.
+
 ## Build the graph
 
 1. Declare every inbound update before filtering it. Store update id, chat/user

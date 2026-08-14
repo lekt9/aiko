@@ -105,6 +105,10 @@ export function renderOutboundTask(props, componentName, run) {
       key: props.key,
       output: props.output,
       outputSchema: props.outputSchema,
+      // Without an explicit bound the engine retries a bridge-managed compute
+      // forever; a reply whose media path does not exist would back off into
+      // an infinite loop instead of failing the turn.
+      retries: props.retries,
       retryPolicy: props.retryPolicy,
       timeoutMs: props.timeoutMs,
       dependsOn: dependsOn.length > 0 ? dependsOn : undefined,

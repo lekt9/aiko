@@ -26,6 +26,21 @@ export interface AikoNativeHealth {
   contractAvailable: boolean;
 }
 
+export interface AikoAuthAccount {
+  label: string;
+  email?: string;
+  /** RFC 3339 session expiry when the credential carries one. */
+  expires_at?: string;
+}
+
+export interface AikoAuthStatus {
+  schema: typeof AIKO_NATIVE_SCHEMA;
+  signed_in: boolean;
+  /** Persisted built-in login provider; null when none has been persisted. */
+  provider: "aiko" | "grok" | null;
+  accounts: AikoAuthAccount[];
+}
+
 export interface ContractSummary {
   id: string;
   plan: string;
@@ -100,6 +115,7 @@ export declare class AikoNativeClient {
     fetchImplementation?: typeof globalThis.fetch,
   );
   health(): Promise<AikoNativeHealth>;
+  auth(): Promise<AikoAuthStatus>;
   manifest(): Promise<Record<string, unknown>>;
   openApi(): Promise<Record<string, unknown>>;
   contracts(): Promise<ContractSummary[]>;

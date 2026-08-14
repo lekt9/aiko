@@ -30,6 +30,86 @@ mod yolo_toggle_report_tests {
 /// Best-effort removal of this session's per-session scratch staging on
 /// teardown. A no-op in builds without a scratch producer.
 fn cleanup_session_scratch(_session: &SessionActor) {}
+/// Tear down the MCP servers this session OWNS, on the actor's way out.
+///
+/// Every terminal arm of [`run_session`] must call this. Without it a
+/// session's stdio MCP children (`unbrowse mcp`, `npx …`) survive the
+/// actor that spawned them: nothing else in the tree enumerates live MCP
+/// children, there is no reaper loop, and a long-lived leader accumulates
+/// one leaked process tree per `session/new`.
+///
+/// **Drains `owned_clients` ONLY, never `shared_clients`.** That single
+/// choice is the whole safety argument: `shared_clients` are the parent's
+/// clients, inherited by reference at subagent spawn
+/// (`McpState::import_shared_clients`), so a subagent reaching its own
+/// teardown provably cannot kill a server its parent is still using.
+/// A subagent's `owned_clients` contains only servers it spawned itself.
+///
+/// The drain also drops this session's `Arc<McpClient>` handles, which is
+/// what actually reaps a healthy client — `McpClient::shutdown` is the
+/// deterministic half that does not depend on rmcp's drop ordering and
+/// still fires when some other holder briefly outlives the map entry.
+async fn shutdown_owned_mcp_clients(session: &SessionActor) {
+    let owned = drain_owned_clients(&mut *session.mcp_state.lock().await);
+    if owned.is_empty() {
+        return;
+    }
+    tracing::debug!(
+        session_id = % session.session_info.id.0, clients = owned.len(),
+        "session teardown: shutting down owned MCP clients"
+    );
+    for client in owned {
+        client.shutdown().await;
+    }
+}
+/// Take every client this session OWNS out of `state`, leaving
+/// [`McpState::shared_clients`] untouched.
+///
+/// Split out from [`shutdown_owned_mcp_clients`] so the one property that
+/// makes teardown safe is unit-testable without a live `SessionActor`:
+/// a subagent draining its own map must never reach a server its parent
+/// still holds.
+fn drain_owned_clients(
+    state: &mut McpState,
+) -> Vec<std::sync::Arc<crate::session::mcp_servers::McpClient>> {
+    state.owned_clients.drain().map(|(_, c)| c).collect()
+}
+#[cfg(test)]
+mod mcp_teardown_tests {
+    use super::drain_owned_clients;
+    use crate::session::mcp_servers::{McpClient, McpState};
+    use std::sync::Arc;
+    /// The safety argument for session-teardown MCP shutdown, in one
+    /// assertion: `shared_clients` are the parent's, inherited by reference
+    /// at subagent spawn. A subagent that drained them would kill a server
+    /// its parent is still using, so the drain touches `owned_clients` only.
+    #[test]
+    fn drain_owned_clients_never_touches_shared_clients() {
+        let mut state = McpState::new(vec![]);
+        state
+            .owned_clients
+            .insert("mine".to_string(), Arc::new(McpClient::stub("mine")));
+        state
+            .shared_clients
+            .insert("parents".to_string(), Arc::new(McpClient::stub("parents")));
+        let drained = drain_owned_clients(&mut state);
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].server_name(), "mine");
+        assert!(state.owned_clients.is_empty(), "owned clients must be taken");
+        assert_eq!(
+            state.shared_clients.len(),
+            1,
+            "shared_clients belong to the parent session and must survive teardown",
+        );
+        assert!(state.shared_clients.contains_key("parents"));
+    }
+    /// Teardown on a session with no MCP servers is a no-op, not a panic.
+    #[test]
+    fn drain_owned_clients_on_empty_state_is_empty() {
+        let mut state = McpState::new(vec![]);
+        assert!(drain_owned_clients(&mut state).is_empty());
+    }
+}
 pub(super) async fn run_session(
     session: Arc<SessionActor>,
     mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
@@ -269,7 +349,8 @@ pub(super) async fn run_session(
             Some(cancel) = & session.sync_loop_cancel { cancel.cancel(); } session
             .feedback_manager.shutdown(session.upload_queue.get()). await; if ! session
             .startup_hints.is_subagent { session.persist_background_task_manifest().
-            await; } cleanup_session_scratch(& session); return; }; match cmd {
+            await; } shutdown_owned_mcp_clients(& session). await;
+            cleanup_session_scratch(& session); return; }; match cmd {
             SessionCommand::Initialize { system_prompt } => { session
             .initialize(system_prompt). await; let s = session.clone(); let handle =
             tokio::task::spawn_local(async move { s.build_prefix_background(). await });
@@ -815,6 +896,7 @@ pub(super) async fn run_session(
             .sync_loop_cancel { cancel.cancel(); } session.feedback_manager
             .shutdown(session.upload_queue.get()). await; if ! session.startup_hints
             .is_subagent { session.persist_background_task_manifest(). await; }
+            shutdown_owned_mcp_clients(& session). await;
             cleanup_session_scratch(& session); return; } } }
         }
     }

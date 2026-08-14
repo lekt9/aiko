@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "Credential-handover prompt SHAPES for e2e/telegram-selfwire-gate.sh CHECK A.",
+    "These are paraphrases of the failure transcript's opening move, written here",
+    "so the gate never has to read /home/deck/work/aiko/aiko/test.md — that file",
+    "holds a live COMPROMISED bot token. No token, real or fake, appears below:",
+    "the credential is written as the literal string <TOKEN>, exactly as the",
+    "self-integrate SKILL.md redacts it.",
+    "",
+    "'triggers' are substrings the resolved description must contain for the",
+    "selection surface to fire on this shape at all; 'prompts' are scored by BM25",
+    "against every skill aiko discovers, and self-integrate must rank first."
+  ],
+  "triggers": [
+    "bot token",
+    "api key",
+    "talk to me through",
+    "connect me to",
+    "let me message you on",
+    "curl"
+  ],
+  "prompts": [
+    {
+      "id": "bot-token-paste",
+      "text": "here is my telegram bot token <TOKEN>, talk to me through here so i can message you",
+      "why": "the transcript's opening move: a pasted bot token plus 'talk to me through here'"
+    },
+    {
+      "id": "other-boundary",
+      "text": "connect me to slack, here is the api key, wire up the bot and set up the channel",
+      "why": "the same shape at a NON-Telegram boundary; a Telegram-only skill must not win here"
+    },
+    {
+      "id": "generic-handover",
+      "text": "i pasted my api token above, integrate with the service so you can message me there",
+      "why": "no service named at all — selection must rest on the handover, not the brand"
+    }
+  ]
+}
