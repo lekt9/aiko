@@ -115,6 +115,18 @@ pub fn build(b: *std.Build) void {
     // drives the public CLI from an empty directory and asserts against durable
     // state. Kept as a named step so `zig build gate` is the one command a host
     // runs before trusting a build.
+    // Self-check must run on every native build (`zig build`), not only `zig build gate`.
+    // It is anchored to the install aggregate so `zig build` always verifies wiring.
+    // To avoid a cycle (`install <-> self-check`), the check depends on the
+    // concrete install artifacts (harness + doctor + libcontract), while the
+    // top-level install depends on the check. This keeps the graph acyclic.
+    const self_check = b.addSystemCommand(&.{ "bash", "tests/aiko-self-check-gate.sh" });
+    self_check.step.dependOn(&install.step);
+    self_check.step.dependOn(&doctor.step);
+    self_check.step.dependOn(&contract_build.step);
+    b.getInstallStep().dependOn(&self_check.step);
+    b.step("self-check", "Run the aiko self-wire/self-check gate").dependOn(&self_check.step);
+
     const gate_step = b.step("gate", "Run the runnable witnesses");
     const graph_main_gate = b.addSystemCommand(&.{ "bash", "tests/graph-harness-main-path-gate.sh" });
     graph_main_gate.step.dependOn(b.getInstallStep());
@@ -135,7 +147,8 @@ pub fn build(b: *std.Build) void {
         "neuron/tests/self-constructing-agent-gate.sh",
         "tests/tick-gate.sh",
         "tests/graph-engineering-gate.sh",
-        "tests/aiko-self-check-gate.sh",
+        // self-check is already covered via install — skip here to avoid a
+        // duplicate run inside gate (the dependency through install is enough).
     }) |witness| {
         const g = b.addSystemCommand(&.{ "bash", witness });
         g.step.dependOn(b.getInstallStep());
@@ -145,4 +158,5 @@ pub fn build(b: *std.Build) void {
         }
         gate_step.dependOn(&g.step);
     }
+    gate_step.dependOn(&self_check.step);
 }
