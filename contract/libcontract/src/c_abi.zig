@@ -1435,8 +1435,9 @@ export fn contract_tick_json(request_json: [*:0]const u8) ?[*:0]u8 {
     if (parsed.value != .object) return null;
     const object = parsed.value.object;
     const owner = objectString(object, "owner") orelse return null;
+    const owner_incarnation = objectString(object, "owner_incarnation") orelse return null;
     const cwd = objectString(object, "cwd");
-    if (owner.len == 0 or owner.len > 256) return null;
+    if (owner.len == 0 or owner.len > 256 or owner_incarnation.len != 64) return null;
     const now_unix = objectInt(object, "now_unix") orelse time(null);
     const max_raw = objectInt(object, "max_items") orelse 32;
     const lease_raw = objectInt(object, "lease_seconds") orelse 300;
@@ -1450,6 +1451,7 @@ export fn contract_tick_json(request_json: [*:0]const u8) ?[*:0]u8 {
         now_unix,
         max_items,
         owner,
+        owner_incarnation,
         lease_seconds,
         cwd,
     ) catch return null;
@@ -1480,6 +1482,12 @@ export fn contract_tick_json(request_json: [*:0]const u8) ?[*:0]u8 {
         out.print(gpa, "{d}", .{claim.due_unix}) catch return null;
         out.appendSlice(gpa, ",\"lease_until_unix\":") catch return null;
         out.print(gpa, "{d}", .{claim.lease_until_unix}) catch return null;
+        out.appendSlice(gpa, ",\"lease_id\":") catch return null;
+        appendJsonString(&out, claim.lease_id) catch return null;
+        out.appendSlice(gpa, ",\"owner_incarnation\":") catch return null;
+        appendJsonString(&out, claim.owner_incarnation) catch return null;
+        out.print(gpa, ",\"attempt\":{d},\"fence\":{d},\"graph_version\":{d},\"input_version\":{d},\"commit_ordinal\":{d}",
+            .{ claim.attempt, claim.fence, claim.graph_version, claim.input_version, claim.commit_ordinal }) catch return null;
         out.append(gpa, '}') catch return null;
     }
     out.appendSlice(gpa, "]}") catch return null;
@@ -1495,6 +1503,15 @@ export fn contract_settle_execution_json(request_json: [*:0]const u8) c_int {
     if (parsed.value != .object) return 1;
     const object = parsed.value.object;
     const owner = objectString(object, "owner") orelse return 1;
+    const owner_incarnation = objectString(object, "owner_incarnation") orelse return 1;
+    const lease_id = objectString(object, "lease_id") orelse return 1;
+    const attempt_raw = objectInt(object, "attempt") orelse return 1;
+    const fence_raw = objectInt(object, "fence") orelse return 1;
+    const graph_raw = objectInt(object, "graph_version") orelse return 1;
+    const input_raw = objectInt(object, "input_version") orelse return 1;
+    if (attempt_raw <= 0 or fence_raw <= 0 or graph_raw < 0 or input_raw < 0) return 1;
+    const attempt: u32 = @intCast(attempt_raw); const fence: u64 = @intCast(fence_raw);
+    const graph_version: u64 = @intCast(graph_raw); const input_version: u64 = @intCast(input_raw);
     const id = objectString(object, "contract_id") orelse return 1;
     const occurrence = objectString(object, "occurrence") orelse return 1;
     const outcome_text = objectString(object, "outcome") orelse return 1;
@@ -1515,7 +1532,7 @@ export fn contract_settle_execution_json(request_json: [*:0]const u8) c_int {
         time(null),
         id,
         occurrence,
-        owner,
+        owner, owner_incarnation, lease_id, attempt, fence, graph_version, input_version,
         outcome,
         detail,
     ) catch return 1;
@@ -1536,6 +1553,15 @@ export fn contract_renew_execution_json(request_json: [*:0]const u8) c_int {
     if (parsed.value != .object) return 1;
     const object = parsed.value.object;
     const owner = objectString(object, "owner") orelse return 1;
+    const owner_incarnation = objectString(object, "owner_incarnation") orelse return 1;
+    const lease_id = objectString(object, "lease_id") orelse return 1;
+    const attempt_raw = objectInt(object, "attempt") orelse return 1;
+    const fence_raw = objectInt(object, "fence") orelse return 1;
+    const graph_raw = objectInt(object, "graph_version") orelse return 1;
+    const input_raw = objectInt(object, "input_version") orelse return 1;
+    if (attempt_raw <= 0 or fence_raw <= 0 or graph_raw < 0 or input_raw < 0) return 1;
+    const attempt: u32 = @intCast(attempt_raw); const fence: u64 = @intCast(fence_raw);
+    const graph_version: u64 = @intCast(graph_raw); const input_version: u64 = @intCast(input_raw);
     const id = objectString(object, "contract_id") orelse return 1;
     const occurrence = objectString(object, "occurrence") orelse return 1;
     const lease_raw = objectInt(object, "lease_seconds") orelse return 1;
@@ -1547,7 +1573,7 @@ export fn contract_renew_execution_json(request_json: [*:0]const u8) c_int {
         time(null),
         id,
         occurrence,
-        owner,
+        owner, owner_incarnation, lease_id, attempt, fence, graph_version, input_version,
         lease_seconds,
     ) catch return 1;
     return 0;

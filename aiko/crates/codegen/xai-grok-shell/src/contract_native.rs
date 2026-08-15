@@ -25,6 +25,7 @@ mod activity_sensor;
 pub(crate) mod contract_events;
 mod contract_learning;
 pub mod contract_loop;
+mod execution_control;
 pub mod graph_harness;
 mod graph_harness_cell;
 mod graph_harness_edge;
@@ -832,6 +833,7 @@ impl NativeContract {
 #[derive(Debug, Serialize)]
 struct ContractTickRequest<'a> {
     owner: &'a str,
+    owner_incarnation: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     cwd: Option<&'a str>,
     max_items: usize,
@@ -846,6 +848,13 @@ pub struct ContractClaim {
     pub cwd: String,
     pub due_unix: i64,
     pub lease_until_unix: i64,
+    pub lease_id: String,
+    pub owner_incarnation: String,
+    pub attempt: u32,
+    pub fence: u64,
+    pub graph_version: u64,
+    pub input_version: u64,
+    pub commit_ordinal: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -859,6 +868,12 @@ pub struct ContractTick {
 #[derive(Debug, Serialize)]
 struct ContractSettlement<'a> {
     owner: &'a str,
+    owner_incarnation: &'a str,
+    lease_id: &'a str,
+    attempt: u32,
+    fence: u64,
+    graph_version: u64,
+    input_version: u64,
     contract_id: &'a str,
     occurrence: &'a str,
     outcome: &'a str,
@@ -875,6 +890,12 @@ struct ContractSignal<'a> {
 #[derive(Debug, Serialize)]
 struct ContractRenewal<'a> {
     owner: &'a str,
+    owner_incarnation: &'a str,
+    lease_id: &'a str,
+    attempt: u32,
+    fence: u64,
+    graph_version: u64,
+    input_version: u64,
     contract_id: &'a str,
     occurrence: &'a str,
     lease_seconds: u32,
@@ -911,8 +932,10 @@ pub async fn tick_due_contracts(
 ) -> Option<ContractTick> {
     tokio::task::spawn_blocking(move || {
         let cwd = cwd.as_deref().map(|path| path.to_string_lossy());
+        let incarnation = execution_control::owner_incarnation(&owner);
         native_contract()?.tick(&ContractTickRequest {
             owner: &owner,
+            owner_incarnation: &incarnation,
             cwd: cwd.as_deref(),
             max_items,
             lease_seconds,
@@ -3206,6 +3229,12 @@ pub async fn settle_contract_claim(
         native_contract().is_some_and(|contract| {
             contract.settle(&ContractSettlement {
                 owner: &owner,
+                owner_incarnation: &claim.owner_incarnation,
+                lease_id: &claim.lease_id,
+                attempt: claim.attempt,
+                fence: claim.fence,
+                graph_version: claim.graph_version,
+                input_version: claim.input_version,
                 contract_id: &claim.contract_id,
                 occurrence: &claim.occurrence,
                 outcome,
@@ -3238,6 +3267,12 @@ async fn renew_contract_claim(owner: String, claim: ContractClaim, lease_seconds
         native_contract().is_some_and(|contract| {
             contract.renew(&ContractRenewal {
                 owner: &owner,
+                owner_incarnation: &claim.owner_incarnation,
+                lease_id: &claim.lease_id,
+                attempt: claim.attempt,
+                fence: claim.fence,
+                graph_version: claim.graph_version,
+                input_version: claim.input_version,
                 contract_id: &claim.contract_id,
                 occurrence: &claim.occurrence,
                 lease_seconds,
@@ -9414,6 +9449,13 @@ mod tests {
             cwd: "/tmp/project".to_string(),
             due_unix: 2_520,
             lease_until_unix: 2_820,
+            lease_id: "a".repeat(64),
+            owner_incarnation: "b".repeat(64),
+            attempt: 1,
+            fence: 1,
+            graph_version: 1,
+            input_version: 1,
+            commit_ordinal: 1,
         };
         let task_id = contract_task_id(&claim);
         assert_eq!(task_id, "contract-abc12345-repeat-60-42");
