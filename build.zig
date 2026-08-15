@@ -135,6 +135,7 @@ pub fn build(b: *std.Build) void {
         "neuron/tests/self-constructing-agent-gate.sh",
         "tests/tick-gate.sh",
         "tests/graph-engineering-gate.sh",
+        "tests/aiko-self-check-gate.sh",
     }) |witness| {
         const g = b.addSystemCommand(&.{ "bash", witness });
         g.step.dependOn(b.getInstallStep());
