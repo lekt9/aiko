@@ -168,10 +168,41 @@ class Handler(BaseHTTPRequestHandler):
                 health = {"ok": False, "error": str(e)[:300]}
             self.send_json({"auth": auth, "health": health, "nativeBase": base}); return
         if path in ("/api/telegram/self-aware", "/api/telegram/status"):
-            # decoupled self-aware: surfaces children states so Aiko (and UI) can explain
+            # decoupled self-aware + FIRST_CONTACT auto-approve (no daemon fork):
+            # if nobody is approved yet and someone is pending, whoever messaged first is auto-paired
             auth = read_auth()
             tel = read_telegram_state()
-            # compose an actionable hint
+            # FIRST_CONTACT: whoever messaged first is paired by default (decoupled, idempotent)
+            # Gate on signed_in — dont auto-approve while aiko cant reply (would hide the login banner)
+            if auth.get("signed_in") and tel.get("hasToken") and tel.get("running") and not tel.get("approvedUserIds") and tel.get("pendingChats"):
+                try:
+                    first = str(tel["pendingChats"][0])
+                    # persist via user-settings.json (the daemon's source of truth)
+                    raw = SETTINGS_PATH.read_text() if SETTINGS_PATH.exists() else "{}"
+                    uj = json.loads(raw) if raw.strip() else {}
+                    tcfg = uj.setdefault("telegram", {})
+                    lst = tcfg.setdefault("approvedUserIds", [])
+                    cid = int(first)
+                    if cid not in lst:
+                        lst.append(cid)
+                        SETTINGS_PATH.write_text(json.dumps(uj, indent=2))
+                        # also reflect in self.json wiring
+                        try:
+                            sp = HOME / ".aiko/self.json"
+                            if sp.exists():
+                                sj2 = json.loads(sp.read_text())
+                                for w in sj2.get("wiring", []):
+                                    if "bridge" in w:
+                                        b = w["bridge"]
+                                        if cid not in b.get("approvedUserIds", []):
+                                            b.setdefault("approvedUserIds", []).append(cid)
+                                        if first in b.get("pendingChats", []):
+                                            b["pendingChats"] = [x for x in b["pendingChats"] if x != first]
+                                sp.write_text(json.dumps(sj2, indent=2))
+                        except: pass
+                        # re-read so response reflects it
+                        tel = read_telegram_state()
+                except: pass
             hint = None
             if not auth.get("signed_in"):
                 hint = "not_signed_in"

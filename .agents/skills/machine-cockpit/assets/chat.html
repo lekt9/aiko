@@ -238,7 +238,7 @@ async function checkAuth(){
 async function checkTelegram(){
   try{
     const j = await fetchJson("/api/telegram/self-aware");
-    // expected: { hasToken, username, running, approvedUserIds, bridgeLog, auth: {signed_in, provider} }
+    // expected: { hasToken, username, running, approvedUserIds, pendingChats, bridgeLog, auth: {signed_in, provider} }
     if(j && typeof j.hasToken !== "undefined"){
       cachedTelegram = j;
     } else {
