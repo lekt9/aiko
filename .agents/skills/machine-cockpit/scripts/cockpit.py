@@ -95,13 +95,17 @@ def read_telegram_state():
             log_tail = LOG_PATH.read_text().splitlines()[-20:]
     except Exception:
         pass
-    # surface unauthorized attempts so UI can explain pairing
+    # surface unauthorized attempts so UI can explain pairing (filter already-approved)
     pending_chats = []
     for line in log_tail:
         if "Unauthorized chat" in line:
             m = re.search(r"Unauthorized chat (\d+)", line)
             if m:
                 cid = m.group(1)
+                try:
+                    if int(cid) in (approved or []):
+                        continue
+                except: pass
                 if cid not in pending_chats:
                     pending_chats.append(cid)
     return {

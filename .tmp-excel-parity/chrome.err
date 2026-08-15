@@ -1,0 +1,6 @@
+[21057:990372:0812/164256.855846:ERROR:chrome/browser/ui/views/user_education/impl/browser_user_education_interface_impl.cc:186] Attempting to show IPH IPH_BatterySaverMode before browser initialization complete; IPH will not be shown.
+[21057:990372:0812/164258.626088:ERROR:chrome/browser/ui/views/user_education/impl/browser_user_education_interface_impl.cc:186] Attempting to show IPH IPH_BatterySaverMode before browser initialization; IPH will not be shown.
+Trying to load the allocator multiple times. This is *not* supported.
+150993 bytes written to file /Users/lewis/Unbrowse/commons/.tmp-excel-parity/aiko-graph-roster.png
+[21057:990579:0812/164301.708320:ERROR:google_apis/gcm/engine/registration_request.cc:291] Registration response error message: DEPRECATED_ENDPOINT
+[21057:990372:0812/164302.122218:ERROR:chrome/browser/web_applications/externally_managed_app_manager.cc:680] https://mail.google.com/mail/installwebapp?usp=chrome_default from install source 1 failed to install with reason 21
