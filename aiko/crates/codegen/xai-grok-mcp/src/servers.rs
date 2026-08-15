@@ -3031,6 +3031,34 @@ impl McpClient {
     /// still using.
     pub async fn shutdown(&self) {
         self.set_liveness_handle(None);
+
+        // Cancel the service EXPLICITLY rather than relying on drop ordering.
+        //
+        // Dropping our own `Arc<RunningService>` is not sufficient. rmcp tears
+        // the child down only when the LAST `Arc` drops, and
+        // `ensure_initialized` hands out `service.clone()` to every caller —
+        // an in-flight tool call, a status snapshot — so a single retained
+        // clone keeps the stdio child alive straight past `shutdown()`. With
+        // the default tool-dispatch timeout at 6000s that window is long enough
+        // to accumulate the same unbounded process leak this method exists to
+        // prevent, and it is invisible: the client looks shut down.
+        //
+        // `cancellation_token()` returns a clone of the SHARED token, so
+        // cancelling it stops the service regardless of how many `Arc` clones
+        // are still outstanding. That is the property drop ordering cannot give
+        // us. Read the service out from under the lock first so the token is
+        // captured before the state is cleared.
+        let service = {
+            let guard = self.state.lock().await;
+            match &*guard {
+                ClientState::Ready(service) => Some(service.clone()),
+                _ => None,
+            }
+        };
+        if let Some(service) = service {
+            service.cancellation_token().cancel();
+        }
+
         self.replace_state(ClientState::Empty).await;
     }
 
@@ -4881,6 +4909,56 @@ for line in sys.stdin:
             other_holder.liveness_handle.lock().is_none(),
             "shutdown() must disarm the liveness watcher",
         );
+    }
+
+    /// The case the test above does NOT cover — and the one that actually leaked.
+    ///
+    /// `client_shutdown_reaps_child_while_another_arc_is_held` holds an
+    /// `Arc<McpClient>`, and its doc comment claims that stands in for "an
+    /// in-flight tool call, a status snapshot". It does not. An in-flight tool
+    /// call holds the `Arc<RunningService>` that `ensure_initialized` cloned out
+    /// to it, which is a different Arc entirely. rmcp tears the stdio child down
+    /// only when the LAST service Arc drops, so a single retained service clone
+    /// kept the child alive straight past `shutdown()` — for up to the 6000s
+    /// default dispatch timeout, while the client reported itself Empty.
+    ///
+    /// FALSIFIER: revert `shutdown()` to its two-line body
+    /// (`set_liveness_handle(None)` + `replace_state(Empty)`) and this test goes
+    /// red while the sibling test above stays GREEN. That divergence is the
+    /// whole reason this test exists; do not "fix" a future failure here by
+    /// weakening the assertion.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn shutdown_reaps_child_even_with_service_clone_held() {
+        let (client, pid, _guards) = spawn_ready_stdio_client().await;
+
+        // Exactly what an in-flight tool call is holding when teardown runs.
+        let service = client
+            .ensure_initialized()
+            .await
+            .expect("a Ready stdio client must hand out its service");
+        assert!(
+            !service.is_closed(),
+            "precondition: the service must be live before shutdown, or this \
+             test could pass without proving anything",
+        );
+
+        client.shutdown().await;
+
+        assert!(
+            reaped_within(pid, std::time::Duration::from_secs(5)).await,
+            "MCP stdio child {pid} outlived shutdown() while a service clone was \
+             held — cancellation is relying on drop ordering again, and every \
+             session with an in-flight call leaks a process tree",
+        );
+        assert!(
+            service.is_closed(),
+            "shutdown() must cancel the shared service, not merely drop its own \
+             Arc; a retained clone reporting open means the child's lifetime is \
+             still owned by whoever holds it",
+        );
+
+        drop(service);
     }
 
     /// Structural companion, process-free: arming must not bump the client's
