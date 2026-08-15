@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "stack": "0.2.116",
+  "stack": "0.2.117",
   "abi": {
     "contract": 13,
     "cell": "cell/v0",
@@ -8,24 +8,24 @@
   },
   "packages": {
     "neuron": {
-      "version": "0.2.116",
+      "version": "0.2.117",
       "requires": [],
       "optional": false
     },
     "contract": {
-      "version": "0.2.116",
+      "version": "0.2.117",
       "requires": [
         "neuron"
       ],
       "optional": false
     },
     "cell": {
-      "version": "0.2.116",
+      "version": "0.2.117",
       "requires": [],
       "optional": false
     },
     "aiko": {
-      "version": "0.2.116",
+      "version": "0.2.117",
       "requires": [
         "neuron",
         "contract",
