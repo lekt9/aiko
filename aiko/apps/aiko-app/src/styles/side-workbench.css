@@ -1,0 +1,1707 @@
+/**
+ * Side Workbench — thin deltas on top of ResourceViewer `.rp` / `.rp-chrome`.
+ * Do NOT re-skin chrome/tabs; those come from composer.part3.css.
+ */
+
+/*
+ * Expanded = overlay (not unmount / not width:0).
+ * Chat column stays in the flex tree with full DOM so collapse is instant and
+ * stable; aside paints over the free area (right of the session rail).
+ * Optional docked composer (icon toggle on SideTabBar): class
+ * .workbench--side-dock + --sw-dock-composer-h shortens aside.
+ * --sw-sidebar-occupied / --sw-dock-composer-h set on .workbench from layout.
+ */
+.workbench--side-expanded .main {
+  /* Keep size & subtree; only block interaction while covered by aside */
+  pointer-events: none;
+  user-select: none;
+}
+
+/*
+ * Expand WITHOUT dock: completely remove in-main composer.
+ * (visibility alone can still leave a painted strip under some themes;
+ *  main[inert] would also make a visible strip unclickable.)
+ */
+.workbench--side-expanded:not(.workbench--side-dock) .composer-wrap {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  opacity: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+}
+
+/*
+ * Docked compressed composer — portaled to document.body so main[inert]
+ * cannot block focus/clicks. Fixed bottom of free area (right of session rail).
+ * --sw-sidebar-occupied is set on the wrap itself when portaled.
+ */
+.composer-wrap.composer-wrap--side-dock,
+body > .composer-wrap.composer-wrap--side-dock {
+  position: fixed !important;
+  left: var(--sw-sidebar-occupied, 0px) !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  top: auto !important;
+  z-index: 12000;
+  width: auto !important;
+  max-width: none !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  visibility: visible !important;
+  user-select: auto;
+  overflow: visible !important;
+  /* Tight strip — height measured → --sw-dock-composer-h on workbench */
+  padding: 6px 12px 8px !important;
+  gap: 4px !important;
+  margin: 0 !important;
+  background: var(--bg-main) !important;
+  border-top: 1px solid var(--border-subtle);
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.composer-wrap--side-dock .composer {
+  pointer-events: auto !important;
+  width: 100%;
+  max-width: min(42rem, calc(100% - 8px));
+  /* Compressed chrome */
+  padding: 6px 10px 6px;
+  gap: 4px;
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.04),
+    0 4px 14px rgba(0, 0, 0, 0.1);
+}
+
+/* Side pane: full free area when no dock; bottom inset only with --sw-dock-composer-h */
+.workbench--side-expanded .aside:not(.aside--hidden) {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: var(--sw-sidebar-occupied, 0px);
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  z-index: 40;
+  border-left: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+/*
+ * Expanded free area: theme-solid surfaces only.
+ * Wallpaper mode uses color-mix(... transparent) !important on .aside — beat it
+ * so the expanded side (chrome + body) never shows custom wallpaper through.
+ */
+.workbench--side-expanded .aside:not(.aside--hidden),
+html[data-wallpaper="1"] .workbench--side-expanded .aside:not(.aside--hidden),
+html[data-wallpaper="1"][data-wallpaper-clear="1"]
+  .workbench--side-expanded
+  .aside:not(.aside--hidden),
+html[data-wallpaper="1"].platform-mac[data-theme="light"]
+  .workbench--side-expanded
+  .aside:not(.aside--hidden) {
+  background: var(--bg-aside) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+.workbench--side-expanded .aside .aside__inner {
+  background: var(--bg-aside) !important;
+}
+
+/* Top tab strip: solid chrome (not glass mix over wallpaper) */
+.workbench--side-expanded .aside .rp-chrome,
+.workbench--side-expanded .aside .rp-chrome.sw-chrome {
+  background: var(--bg-card) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Content shell under chrome — solid fill; terminal keeps its own veil layer */
+.workbench--side-expanded .aside .rp.sw,
+.workbench--side-expanded .aside .sw__content,
+.workbench--side-expanded .aside .sw__empty,
+.workbench--side-expanded .aside .sw__persist-host,
+.workbench--side-expanded .aside .sw-browser,
+.workbench--side-expanded .aside .sw-browser__host {
+  background: var(--bg-aside) !important;
+}
+
+/* Files still use card surfaces; ensure no transparent hole under expand */
+.workbench--side-expanded .aside .sw__files-host,
+.workbench--side-expanded .aside .sw-files {
+  background: var(--bg-card) !important;
+}
+
+.workbench--side-expanded.workbench--side-dock .aside:not(.aside--hidden) {
+  bottom: var(--sw-dock-composer-h, 96px);
+}
+
+.workbench--side-expanded .aside-resizer {
+  display: none !important;
+}
+
+/* Full height chain: .aside → .aside__inner → .rp.sw → content → files */
+.aside__inner > .rp.sw,
+.aside__inner .rp.sw {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* Card bg would leave a hard edge under transparent xterm — stay skin-native */
+  background: transparent;
+  box-shadow: none;
+}
+
+.sw.rp {
+  /* height fill above; .rp base also sets column flex */
+  background: transparent;
+  box-shadow: none;
+}
+
+/*
+ * Tabs + plus stick together (Codex):
+ *   [ tab ][ tab ][ + ]  ………drag………  [ expand ][ side ]
+ * Tabs cluster sizes to content; empty gap is .sw-chrome__drag (window move).
+ *
+ * Do NOT set max-width: calc(100% - 36px) on the scroll strip when the cluster
+ * is content-sized — that circular constraint under-sizes the strip and clips
+ * the last tab’s right border-radius against overflow.
+ */
+.sw-tabs-cluster {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
+  /* Leave room for expand + side-toggle (~72px) so close stays on-screen when
+   * the pane is squeezed on a non-maximized window. */
+  max-width: calc(100% - 72px);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 2px;
+  /* visible: avoid clipping tab chip border-radius; fade masks still work */
+  overflow: visible;
+}
+
+/* Titlebar drag filler — blank area between tab cluster and right actions */
+.sw-chrome__drag {
+  flex: 1 1 auto;
+  min-width: 8px;
+  align-self: stretch;
+  height: 100%;
+}
+
+/* Scroll only the tab chips; width follows content; shrink+scroll when tight */
+.sw-tabs-cluster .sw-tabs__scroll,
+.sw-tabs-cluster .rp-tabs__scroll {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: visible;
+  scrollbar-width: none;
+}
+
+.sw-tabs-cluster .rp-tabs__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.sw-plus {
+  flex-shrink: 0;
+}
+
+/* Overflow fade on the scroll edge (image-3) */
+.sw-tabs--fade-l::before,
+.sw-tabs--fade-r::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 24px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.sw-tabs--fade-l::before {
+  left: 0;
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--bg-hover) 40%, var(--bg-card)) 0%,
+    transparent 100%
+  );
+}
+
+.sw-tabs--fade-r::after {
+  /* just before the + button */
+  right: 34px;
+  background: linear-gradient(
+    to left,
+    color-mix(in srgb, var(--bg-hover) 40%, var(--bg-card)) 0%,
+    transparent 100%
+  );
+}
+
+.sw__content {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sw__empty {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 24px 16px;
+}
+
+.sw__files-host {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sw__files-host[hidden] {
+  display: none !important;
+}
+
+/* Files workspace must fill host so .rp-split can grow.
+ * Solid theme surfaces — not transparent glass (wallpaper would show through). */
+.sw__files-host,
+.sw-files {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-card);
+}
+
+.sw-files .rp-split {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--bg-card);
+}
+
+/* Preview + tree: opaque tokens for light/dark (override translucent color-mix). */
+.sw-files .rp-split__preview {
+  background: var(--bg-card);
+}
+
+/* Divider is only the shared .rp-split__resizer line — no tree border-left
+ * (avoids the double vertical line between preview and file tree). */
+.sw-files .rp-split__tree {
+  background: var(--bg-elevated, var(--bg-card));
+  border-left: none;
+}
+
+/* 1px hairline (base resizer draws 2px — too heavy next to solid panes). */
+.sw-files .rp-split__resizer::after {
+  left: 2px;
+  width: 1px;
+}
+
+.sw-files .rp-tree-search {
+  background: var(--bg-elevated, var(--bg-card));
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sw-files .rp-files-toolbar {
+  background: var(--bg-card);
+}
+
+.sw__files-host .rp--embedded,
+.sw-files.rp--embedded {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  background: var(--bg-card);
+}
+
+/*
+ * Side picker rows — shared item chrome only.
+ * Width is NOT shared between empty-state card and + dropdown (see modifiers).
+ */
+.sw-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-sizing: border-box;
+}
+
+.sw-picker__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  margin: 0;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+
+.sw-picker__item:hover,
+.sw-picker__item:focus-visible {
+  background: var(--bg-hover, color-mix(in srgb, var(--text-primary) 8%, transparent));
+  outline: none;
+}
+
+.sw-picker__ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  color: var(--text-secondary);
+}
+
+.sw-picker__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.sw-picker__shortcut {
+  flex-shrink: 0;
+  margin-left: 20px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  opacity: 0.5;
+  color: var(--text-tertiary);
+}
+
+/*
+ * Empty-state card (center of side pane when no tabs).
+ * Soft frosted glass — translucent but not see-through (≈88% card + light blur).
+ * Intentionally wider — not the dropdown content-width rule.
+ */
+.sw-picker--empty {
+  width: min(280px, calc(100% - 32px));
+  min-width: min(260px, 100%);
+  max-width: min(300px, calc(100% - 24px));
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border, var(--border-subtle));
+  background: color-mix(
+    in srgb,
+    var(--bg-elevated, var(--bg-card)) 88%,
+    transparent
+  );
+  backdrop-filter: blur(20px) saturate(1.45);
+  -webkit-backdrop-filter: blur(20px) saturate(1.45);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+.sw-picker--empty .sw-picker__item {
+  min-height: 40px;
+  padding: 10px 14px;
+}
+
+.sw-picker--empty .sw-picker__shortcut {
+  margin-left: 28px;
+}
+
+/*
+ * + dropdown list only (portaled .sw-plus-menu).
+ * Global menu rule: width = widest row + padding. Independent of empty card.
+ */
+.sw-picker--compact {
+  width: max-content;
+  min-width: 0;
+  max-width: none;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.sw-plus-menu.menu-panel,
+.menu-panel.sw-plus-menu {
+  z-index: 13000;
+  width: max-content;
+  min-width: 0;
+  max-width: min(var(--menu-max-width, 360px), calc(100vw - 16px));
+  background: var(--menu-context-bg, var(--bg-elevated, var(--bg-card)));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--menu-context-border, var(--border-subtle));
+  box-shadow: var(--menu-context-shadow, 0 8px 28px rgba(0, 0, 0, 0.45));
+  border-radius: 12px;
+  padding: 6px;
+  box-sizing: border-box;
+}
+
+/* Keep dropdown rows compact even if empty-card item overrides exist later */
+.sw-plus-menu .sw-picker--compact .sw-picker__item {
+  min-height: 36px;
+  padding: 8px 12px;
+}
+
+.sw-plus-menu .sw-picker--compact .sw-picker__shortcut {
+  margin-left: 20px;
+}
+
+/* Dual-row files toolbar (image-5/6) — under shared .rp-chrome */
+.rp-files-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  height: 36px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.rp-files-toolbar__crumbs {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.rp-files-toolbar__crumb-wrap {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.rp-files-toolbar__crumb {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+.rp-files-toolbar__crumb.is-current {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.rp-files-toolbar__muted {
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rp-files-toolbar__sep {
+  opacity: 0.4;
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+
+/* Tree toggle + 打开 on the RIGHT (image-5/6) */
+.rp-files-toolbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* Browser / terminal — fill pane; chrome from embedded-browser / rp-tree-search */
+.sw-browser,
+.sw-terminal,
+.sw-review,
+.sw-plan {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.sw-browser__url-wrap {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.sw-browser__host {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Nested EmbeddedBrowser already has its own bar — hide duplicate when we own URL bar.
+ * Keep the progress strip visible so navigations are never a silent white panel. */
+.sw-browser__host .embedded-browser__bar {
+  display: none;
+}
+
+.sw-browser__host .embedded-browser {
+  flex: 1;
+  min-height: 0;
+}
+
+.sw-browser__host .embedded-browser__progress {
+  /* Sit flush under the side tab address bar */
+  z-index: 1;
+}
+
+/* Persist browser/terminal hosts across tab switches (keep PTY/xterm alive) */
+.sw__persist-host {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.sw__persist-host[hidden] {
+  display: none !important;
+}
+
+/*
+ * Interactive PTY terminal — edge-to-edge fill.
+ * SINGLE 50% veil on this root (not ancestors, not xterm canvas).
+ * FitAddon floors rows → leftover px at bottom; CSS veil covers that strip.
+ */
+.sw-terminal--pty {
+  --sw-term-veil: #00000080;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  gap: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--sw-term-veil);
+  box-shadow: none;
+  border: none;
+  border-radius: 0;
+}
+
+html[data-theme="light"] .sw-terminal--pty {
+  --sw-term-veil: #ffffff80;
+}
+
+/* Status strip removed — full-bleed xterm under tab chrome */
+.sw-terminal__restart {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.sw-terminal__restart:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sw-terminal__restart--inline {
+  margin-left: 8px;
+}
+
+/* Zero inset — fills remaining column under status; veil inherited from parent */
+.sw-terminal__xterm {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: transparent;
+  box-shadow: none;
+  --vscode-scrollbar-shadow: transparent;
+}
+
+/* xterm default CSS paints #000 on viewport/helpers + scrollbar inset shadows. */
+.sw-terminal__xterm .xterm {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.sw-terminal__xterm .xterm-viewport {
+  width: 100% !important;
+  /* Full host height so leftover px under last row stay in-pane */
+  height: 100% !important;
+  min-height: 100% !important;
+  background-color: transparent !important;
+  background: transparent !important;
+  overflow-y: auto !important;
+  box-shadow: none !important;
+}
+
+.sw-terminal__xterm .xterm-screen {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.sw-terminal__xterm .xterm-helpers,
+.sw-terminal__xterm .xterm-helper-textarea {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.sw-terminal__xterm .xterm-scrollable-element > .shadow,
+.sw-terminal__xterm .xterm-scrollable-element > .shadow.top,
+.sw-terminal__xterm .xterm-scrollable-element > .shadow.left,
+.sw-terminal__xterm .xterm-scrollable-element > .shadow.top-left-corner,
+.sw-terminal__xterm .xterm-scrollable-element > .shadow.top.left {
+  display: none !important;
+  opacity: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  pointer-events: none !important;
+}
+
+.sw-terminal__xterm .xterm-scrollable-element > .scrollbar,
+.sw-terminal__xterm .xterm-scrollable-element > .scrollbar > .slider {
+  box-shadow: none !important;
+}
+
+.sw-terminal__xterm .xterm-scrollable-element > .scrollbar.horizontal {
+  display: none !important;
+  height: 0 !important;
+  box-shadow: none !important;
+}
+
+.sw-terminal__xterm .xterm-rows,
+.sw-terminal__xterm canvas {
+  box-shadow: none !important;
+}
+
+/* Keep workbench chrome transparent under terminal (veil only on .sw-terminal--pty) */
+.sw.rp:has(.sw-terminal--pty),
+.sw__persist-host:has(.sw-terminal--pty),
+.sw__content:has(.sw-terminal--pty) {
+  background: transparent !important;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  gap: 0;
+  min-height: 0;
+  height: 100%;
+  flex: 1 1 auto;
+}
+
+/* Persist host must stretch so terminal can reach the pane bottom */
+.sw__persist-host:has(.sw-terminal--pty) {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Env menu — solid panel (same family as .sw-plus-menu / context menus).
+ * Bare .menu-panel has no surface; without this the rows float over chat. */
+.sw-env-menu.menu-panel,
+.menu-panel.sw-env-menu {
+  z-index: 13000;
+  min-width: 0;
+  max-width: min(var(--menu-max-width, 360px), calc(100vw - 16px));
+  width: max-content;
+  background: var(--menu-context-bg, var(--bg-elevated, var(--bg-card)));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--menu-context-border, var(--border-subtle));
+  box-shadow: var(--menu-context-shadow, 0 8px 28px rgba(0, 0, 0, 0.45));
+  border-radius: 12px;
+  padding: 10px 8px 8px;
+  box-sizing: border-box;
+}
+
+.sw-env-menu__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  padding: 2px 8px 4px;
+}
+
+.sw-env-menu__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sw-env-menu__body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sw-env-menu__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sw-env-menu__row:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.sw-env-menu__row:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.sw-env-menu__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.sw-env-menu__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sw-env-menu__right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  max-width: 52%;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.sw-env-menu__right-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+  opacity: 0.8;
+}
+
+.sw-env-menu__chev {
+  flex-shrink: 0;
+  opacity: 0.45;
+}
+
+/* Match .rp-changes-row +/− chips (green / red). */
+.sw-env-menu__delta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 650;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.sw-env-menu__add {
+  color: #3d9a5f;
+}
+
+.sw-env-menu__del {
+  color: #d45454;
+}
+
+/* Review — Codex-style stacked diffs + side tree (theme-aware) */
+.sw-review {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-card, var(--bg-elevated, #121212));
+  color: var(--text-primary, #e6e6e6);
+}
+
+.sw-review__header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 168px 6px 10px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
+  background: color-mix(in srgb, var(--bg-card, #141414) 92%, var(--bg-elevated, #1a1a1a));
+  position: relative;
+}
+
+.sw-review__header-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.sw-review__scope-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.sw-review__scope-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary, #e8e8e8);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 2px 4px 2px 2px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  line-height: 1.3;
+}
+
+.sw-review__scope-btn:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+}
+
+.sw-review__scope-chev {
+  font-size: 10px;
+  opacity: 0.7;
+  color: var(--text-secondary, inherit);
+}
+
+.sw-review__scope-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  min-width: 168px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--bg-elevated, var(--bg-menu, #2a2a2a));
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  box-shadow: 0 10px 28px color-mix(in srgb, #000 35%, transparent);
+}
+
+.sw-review__scope-opt {
+  appearance: none;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary, #e6e6e6);
+  font-size: 12.5px;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sw-review__scope-opt:hover,
+.sw-review__scope-opt.is-active {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+}
+
+.sw-review__scope-check {
+  color: var(--accent, #7eb8ff);
+  font-size: 12px;
+}
+
+.sw-review__totals {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.sw-review__totals-muted {
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.45));
+  font-weight: 500;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.sw-review__add {
+  color: var(--diff-add, #3fb950);
+}
+
+.sw-review__del {
+  color: var(--diff-del, #f85149);
+}
+
+.sw-review__branch-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 2px;
+  font-size: 11.5px;
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.45));
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.sw-review__branch-arrow {
+  opacity: 0.55;
+}
+
+.sw-review__header-actions {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sw-review__more-wrap {
+  position: relative;
+}
+
+.sw-review__more-menu {
+  right: 0;
+  left: auto;
+}
+
+.sw-review__icon-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.55));
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sw-review__icon-btn:hover:not(:disabled) {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  color: var(--text-primary, #fff);
+}
+
+.sw-review__icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.sw-review__icon-btn.is-active {
+  color: var(--accent, #7eb8ff);
+  background: color-mix(in srgb, var(--accent, #6c8cff) 14%, transparent);
+}
+
+.sw-review__split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-card, #121212);
+}
+
+/* Left: stacked file blocks */
+.sw-review__stack {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  padding: 6px 0 24px;
+  scroll-behavior: smooth;
+}
+
+.sw-review-file {
+  margin: 0 6px 8px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--bg-elevated, #1a1a1a) 88%, transparent);
+  border: 1px solid transparent;
+}
+
+.sw-review-file.is-selected {
+  border-color: color-mix(in srgb, var(--accent, #6c8cff) 28%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #6c8cff) 12%, transparent);
+}
+
+.sw-review-file__head {
+  appearance: none;
+  width: 100%;
+  border: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: color-mix(in srgb, var(--bg-hover, #222) 70%, var(--bg-elevated, #1a1a1a));
+  color: var(--text-primary, #e8e8e8);
+  cursor: pointer;
+  text-align: left;
+  font-size: 12.5px;
+  min-height: 32px;
+}
+
+.sw-review-file__head:hover {
+  background: var(--bg-hover, #282828);
+}
+
+.sw-review-file__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.sw-review-file__stats {
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.sw-review-file__body {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.45;
+  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.04));
+  background: color-mix(in srgb, var(--bg-code, var(--bg-card, #141414)) 96%, transparent);
+}
+
+.sw-review-file__msg {
+  padding: 12px 14px;
+  font-size: 12px;
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.45));
+  font-family: inherit;
+}
+
+.sw-review-line {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  min-height: 18px;
+  white-space: pre;
+}
+
+.sw-review-line__ln {
+  text-align: right;
+  padding: 0 8px 0 4px;
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.28));
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.sw-review-line__code {
+  padding: 0 10px 0 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary, rgba(230, 230, 230, 0.88));
+}
+
+.sw-review-line--add {
+  background: color-mix(in srgb, var(--diff-add, #2ea043) 18%, transparent);
+}
+
+.sw-review-line--add .sw-review-line__code {
+  color: color-mix(in srgb, var(--diff-add, #3fb950) 85%, var(--text-primary, #fff));
+}
+
+.sw-review-line--del {
+  background: color-mix(in srgb, var(--diff-del, #f85149) 16%, transparent);
+}
+
+.sw-review-line--del .sw-review-line__code {
+  color: color-mix(in srgb, var(--diff-del, #f85149) 80%, var(--text-primary, #fff));
+}
+
+.sw-review-line--ctx .sw-review-line__code {
+  color: var(--text-secondary, rgba(220, 220, 220, 0.72));
+}
+
+.sw-review-fold {
+  width: 100%;
+  border: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 5px 8px;
+  background: color-mix(in srgb, var(--bg-hover, #1c1c1c) 80%, transparent);
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.42));
+  font-size: 11.5px;
+  font-family: inherit;
+  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.03));
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.03));
+  user-select: none;
+}
+
+.sw-review-fold__chev {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.sw-review-more {
+  appearance: none;
+  width: 100%;
+  border: 0;
+  padding: 8px;
+  background: transparent;
+  color: var(--accent, #7eb8ff);
+  font-size: 11.5px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.sw-review-more:hover {
+  text-decoration: underline;
+}
+
+/* Kind chips (JS / TS / MD …) */
+.sw-review-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  background: color-mix(in srgb, var(--text-primary, #fff) 8%, transparent);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.75));
+}
+
+.sw-review-chip--js {
+  background: color-mix(in srgb, #e6c35c 22%, transparent);
+  color: #b8922a;
+}
+
+.sw-review-chip--ts {
+  background: color-mix(in srgb, #4f9ee8 22%, transparent);
+  color: #3b82c4;
+}
+
+.sw-review-chip--md {
+  background: color-mix(in srgb, #3fb950 20%, transparent);
+  color: #2f8a42;
+}
+
+.sw-review-chip--json {
+  background: color-mix(in srgb, #d2a8ff 16%, transparent);
+  color: #9b6fd4;
+}
+
+.sw-review-chip--sh {
+  background: color-mix(in srgb, #3fb950 18%, transparent);
+  color: #2f8a42;
+}
+
+.sw-review-chip--img {
+  background: color-mix(in srgb, #db72b4 18%, transparent);
+  color: #b84d92;
+}
+
+.sw-review-chip--git {
+  background: color-mix(in srgb, #e07040 20%, transparent);
+  color: #c45a30;
+}
+
+.sw-review-chip--css {
+  background: color-mix(in srgb, #569cd6 20%, transparent);
+  color: #3b82c4;
+}
+
+.sw-review-chip--rs {
+  background: color-mix(in srgb, #de7e5a 20%, transparent);
+  color: #c45a30;
+}
+
+.sw-review-chip--py {
+  background: color-mix(in srgb, #4b8bbe 22%, transparent);
+  color: #3b82c4;
+}
+
+.sw-review-chip--cfg,
+.sw-review-chip--file {
+  background: color-mix(in srgb, var(--text-primary, #fff) 8%, transparent);
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.55));
+}
+
+[data-theme="dark"] .sw-review-chip--js { color: #e6c35c; }
+[data-theme="dark"] .sw-review-chip--ts { color: #6cb6f5; }
+[data-theme="dark"] .sw-review-chip--md { color: #56d364; }
+[data-theme="dark"] .sw-review-chip--json { color: #d2a8ff; }
+[data-theme="dark"] .sw-review-chip--sh { color: #56d364; }
+[data-theme="dark"] .sw-review-chip--img { color: #db72b4; }
+[data-theme="dark"] .sw-review-chip--git { color: #e07040; }
+[data-theme="dark"] .sw-review-chip--css { color: #6cb6f5; }
+[data-theme="dark"] .sw-review-chip--rs { color: #de7e5a; }
+[data-theme="dark"] .sw-review-chip--py { color: #6cb6f5; }
+
+/* Right: filter + tree */
+.sw-review__side {
+  flex: 0 0 240px;
+  min-width: 180px;
+  max-width: 42%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
+  background: color-mix(in srgb, var(--bg-elevated, #161616) 94%, transparent);
+}
+
+.sw-review__filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 8px 4px;
+  padding: 0 10px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--bg-input, var(--bg-hover, #1f1f1f));
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
+  flex-shrink: 0;
+}
+
+.sw-review__filter-icon {
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.35));
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.sw-review__filter-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary, #e6e6e6);
+  font-size: 12px;
+  padding: 0;
+}
+
+.sw-review__filter-input::placeholder {
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.32));
+}
+
+.sw-review__tree-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 4px 12px;
+}
+
+.sw-review-tree__row {
+  appearance: none;
+  width: 100%;
+  border: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 3px 6px 3px 0;
+  margin: 1px 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary, rgba(230, 230, 230, 0.88));
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sw-review-tree__row:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.05));
+}
+
+.sw-review-tree__row.is-selected {
+  background: color-mix(in srgb, var(--accent, #6c8cff) 14%, transparent);
+}
+
+.sw-review-tree__row--dir {
+  color: var(--text-secondary, rgba(230, 230, 230, 0.7));
+  font-weight: 550;
+}
+
+.sw-review-tree__chev {
+  width: 12px;
+  flex-shrink: 0;
+  font-size: 9px;
+  opacity: 0.55;
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
+.sw-review-tree__chev--spacer {
+  visibility: hidden;
+}
+
+.sw-review-tree__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+}
+
+.sw-review-tree__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #e07040;
+  flex-shrink: 0;
+  opacity: 0.85;
+  margin-left: 2px;
+}
+
+.sw-review-tree__status {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: #e07040;
+  opacity: 0.9;
+  margin-left: 2px;
+}
+
+.sw-review-tree__status.is-add {
+  color: var(--diff-add, #3fb950);
+}
+
+.sw-review-tree__eye {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.4));
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  opacity: 0;
+  padding: 0;
+}
+
+.sw-review-tree__row:hover .sw-review-tree__eye,
+.sw-review-tree__row.is-selected .sw-review-tree__eye {
+  opacity: 1;
+}
+
+.sw-review-tree__eye:hover {
+  background: color-mix(in srgb, var(--accent, #e07040) 18%, transparent);
+  color: #e07040;
+}
+
+.sw-review-tree__eye.is-add-badge {
+  opacity: 1;
+  color: var(--diff-add, #3fb950);
+  border: 1px solid color-mix(in srgb, var(--diff-add, #3fb950) 35%, transparent);
+  border-radius: 4px;
+  width: 18px;
+  height: 18px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+/* Empty states inherit theme */
+.sw-review .rp__empty-state {
+  color: var(--text-secondary);
+}
+
+.sw-review .rp__empty-title {
+  color: var(--text-primary);
+}
+
+.sw-review .rp__empty-desc {
+  color: var(--text-tertiary);
+}
+
+
+
+/* aside-close-clip-fix
+ * When the right pane is narrower than ideal (non-maximized / tight frame),
+ * keep expand + side-toggle on screen: never let the tab cluster push them
+ * past the chrome edge. Empty picker also shrinks cleanly.
+ */
+.sw-chrome.rp-chrome {
+  min-width: 0;
+  overflow: hidden;
+}
+
+
+.sw-picker--empty {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sw-picker--empty .sw-picker__item {
+  min-width: 0;
+}
+
+.sw-picker--empty .sw-picker__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 1100px) {
+  .sw-picker--empty .sw-picker__shortcut {
+    display: none;
+  }
+}
+
+/* Find skills — docked right panel (live rank from composer draft) */
+.sw-skills {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.sw-skills__head {
+  flex: 0 0 auto;
+  padding: 12px 12px 8px;
+  border-bottom: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sw-skills__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.sw-skills__count {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted, #6b7280);
+  font-variant-numeric: tabular-nums;
+}
+.sw-skills__hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted, #6b7280);
+}
+.sw-skills__filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.1));
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: var(--bg-input, var(--bg-elevated, #fff));
+}
+.sw-skills__filter input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+}
+.sw-skills__section {
+  flex: 0 0 auto;
+  padding: 8px 12px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #6b7280);
+}
+.sw-skills__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sw-skills__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  width: 100%;
+}
+.sw-skills__item:hover {
+  background: color-mix(in srgb, var(--accent, #6b8cff) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent, #6b8cff) 22%, transparent);
+}
+.sw-skills__item--matched {
+  border-left: 3px solid color-mix(in srgb, var(--accent, #16a34a) 50%, transparent);
+}
+.sw-skills__item--top {
+  background: color-mix(in srgb, var(--accent, #16a34a) 7%, transparent);
+}
+.sw-skills__item-ico {
+  flex-shrink: 0;
+  margin-top: 2px;
+  opacity: 0.75;
+}
+.sw-skills__item-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sw-skills__item-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.sw-skills__item-name {
+  font-size: 12px;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sw-skills__score {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent, #16a34a) 14%, transparent);
+  color: var(--accent, #15803d);
+}
+.sw-skills__item-desc {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-muted, #6b7280);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.sw-skills__tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+.sw-skills__token {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent, #6b8cff) 28%, transparent);
+  background: color-mix(in srgb, var(--accent, #6b8cff) 8%, transparent);
+}
+.sw-skills__empty {
+  padding: 16px 12px;
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sw-skills__empty-title {
+  font-weight: 600;
+  color: var(--text-primary, inherit);
+}
+.sw-skills__empty-hint {
+  font-size: 11px;
+  line-height: 1.4;
+}
+.sw-skills__empty-error {
+  font-size: 11px;
+  color: #b91c1c;
+  word-break: break-word;
+}
+.sw-skills__clear {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+

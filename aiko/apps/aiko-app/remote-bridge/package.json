@@ -1,0 +1,29 @@
+{
+  "name": "@aiko-app/remote-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "In-app Remote IM bridge for Aiko App (Feishu/Lark × Aiko CLI ACP). Migrated from agent-connect.",
+  "type": "module",
+  "bin": {
+    "aiko-remote-bridge": "bin/grok-remote-bridge.js"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.71.1",
+    "qrcode-terminal": "^0.12.0",
+    "smol-toml": "^1.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/qrcode-terminal": "^0.12.2",
+    "typescript": "^5.8.2"
+  }
+}

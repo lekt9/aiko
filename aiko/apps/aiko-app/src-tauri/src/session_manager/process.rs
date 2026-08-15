@@ -1,0 +1,1069 @@
+//! Process capacity, park/unpark, idle recycle, snapshots.
+
+#![allow(dead_code)] // residual-clippy: snapshot_from_parked
+use std::collections::{HashMap, HashSet};
+use std::time::Instant;
+
+use tauri::{AppHandle, Emitter};
+use uuid::Uuid;
+
+use crate::acp_client::AcpClient;
+use crate::error::{AgentError, AgentErrorCode};
+use crate::journal_throttle::JournalWriteThrottle;
+use crate::permission::SessionAllowCache;
+use crate::process_limits::{
+    can_spawn_process, is_idle_expired, normalize_idle_minutes, normalize_max_concurrent,
+    parked_slots_to_free_for_spawn, process_limit_message,
+};
+use crate::session_fsm::{SessionFsm, SessionState};
+use crate::store::{self, ChatMessageStored};
+
+use super::*;
+
+impl SessionManager {
+    pub(super) fn active_process_count(&self) -> u32 {
+        let live = self
+            .inner
+            .lock()
+            .as_ref()
+            .and_then(|s| s.acp.as_ref())
+            .filter(|c| c.is_alive())
+            .is_some() as u32;
+        let background = self
+            .background
+            .lock()
+            .values()
+            .filter(|s| s.acp.as_ref().is_some_and(|c| c.is_alive()))
+            .count() as u32;
+        let parked = self
+            .parked
+            .lock()
+            .values()
+            .filter(|p| p.acp.is_alive())
+            .count() as u32;
+        live + background + parked
+    }
+
+    /// Process ids that currently run a turn (live busy or demoted background).
+    /// A shared process with a busy session must not be picked for a new
+    /// session's reuse — that would stack a second concurrent turn on it.
+    #[allow(dead_code)] // kept for diagnostics; reuse now includes busy processes
+    pub(super) fn busy_process_ids(&self) -> std::collections::HashSet<String> {
+        let mut out = std::collections::HashSet::new();
+        if let Some(s) = self.inner.lock().as_ref() {
+            if Self::live_session_is_busy(s) {
+                if !s.process_id.is_empty() {
+                    out.insert(s.process_id.clone());
+                }
+            }
+        }
+        for s in self.background.lock().values() {
+            if !s.process_id.is_empty() {
+                out.insert(s.process_id.clone());
+            }
+        }
+        out
+    }
+
+    pub(super) fn max_concurrent_from_settings() -> u32 {
+        normalize_max_concurrent(store::load_settings().max_concurrent_agents)
+    }
+
+    pub(super) fn idle_minutes_from_settings() -> u32 {
+        normalize_idle_minutes(store::load_settings().agent_idle_minutes)
+    }
+
+    pub(super) fn emit_idle_recycled(app: &AppHandle, session_id: &str, reason: &str) {
+        let _ = app.emit(
+            "session://idle_recycled",
+            serde_json::json!({
+                "sessionId": session_id,
+                "reason": reason,
+            }),
+        );
+    }
+
+    pub(super) fn emit_process_limit(app: &AppHandle, session_id: Option<&str>, max: u32) {
+        let _ = app.emit(
+            "session://process_limit",
+            serde_json::json!({
+                "sessionId": session_id,
+                "maxConcurrentAgents": max,
+                "code": "PROCESS_LIMIT",
+                "message": process_limit_message(max),
+            }),
+        );
+    }
+
+    /// Drop dead parked entries; return removed count (for logging).
+    pub(super) fn sweep_dead_parked(&self) -> usize {
+        let mut parked = self.parked.lock();
+        let before = parked.len();
+        parked.retain(|_, p| p.acp.is_alive());
+        before.saturating_sub(parked.len())
+    }
+
+    /// Drop background shells whose ACP child is gone (stale mid-turn maps).
+    pub(super) fn sweep_dead_background(&self) -> usize {
+        let mut bg = self.background.lock();
+        let before = bg.len();
+        bg.retain(|_, s| s.acp.as_ref().is_some_and(|c| c.is_alive()));
+        before.saturating_sub(bg.len())
+    }
+
+    /// Live + background process count (excludes reclaimable parked idle).
+    /// Used for diagnostics / limit messaging after parked reclaim.
+    pub(super) fn busy_process_count(&self) -> u32 {
+        let live = self
+            .inner
+            .lock()
+            .as_ref()
+            .and_then(|s| s.acp.as_ref())
+            .filter(|c| c.is_alive())
+            .is_some() as u32;
+        let background = self
+            .background
+            .lock()
+            .values()
+            .filter(|s| s.acp.as_ref().is_some_and(|c| c.is_alive()))
+            .count() as u32;
+        live + background
+    }
+
+    /// True while a turn is still in flight — must demote to `background`, never park.
+    /// Includes open tools / deferred prompt_complete even if FSM already Ready
+    /// (early prompt_complete + long-running find/subagent).
+    pub(super) fn live_session_is_busy(s: &LiveSession) -> bool {
+        // Authoritative: the prompt RPC has not resolved, so the agent is still
+        // producing output for this chat no matter what the FSM says. Parking
+        // here dropped the rest of the answer on the floor (parked agents get no
+        // event routing) while the agent happily finished the turn.
+        if s.prompt_in_flight {
+            return true;
+        }
+        if matches!(
+            s.fsm.state(),
+            SessionState::Streaming | SessionState::AwaitingPermission | SessionState::Connecting
+        ) {
+            return true;
+        }
+        if s.streaming_message_id.is_some() {
+            return true;
+        }
+        if !s.open_tool_ids.is_empty() {
+            return true;
+        }
+        if s.deferred_prompt_complete.is_some() {
+            return true;
+        }
+        if s.pending_plan_rpc_id.is_some() || s.pending_ask_user_rpc_id.is_some() {
+            return true;
+        }
+        false
+    }
+
+    /// Whether a provider `retry_state` may fail the host turn and write a chat error.
+    ///
+    /// Residual retries during `session/load` reconnect (or shared-process noise
+    /// while idle) must **not** append NETWORK_PROVIDER rows or flip the FSM to
+    /// Disconnected. Unlike [`Self::live_session_is_busy`], this deliberately
+    /// excludes `Connecting` — reconnect is busy for process policy but has no
+    /// user turn to abort.
+    ///
+    /// Host-owned turn = prompt RPC open, stream/tools still live after early
+    /// `prompt_complete`, or explicit Streaming / AwaitingPermission.
+    #[inline]
+    pub(super) fn should_apply_provider_retry_abort(s: &LiveSession) -> bool {
+        should_apply_provider_retry_abort_flags(
+            s.prompt_in_flight,
+            s.streaming_message_id.is_some(),
+            !s.open_tool_ids.is_empty(),
+            s.deferred_prompt_complete.is_some(),
+            s.fsm.state(),
+        )
+    }
+
+    /// Whether connect/respawn must keep the existing agent process.
+    ///
+    /// Terminal FSM states (`Disconnected` / `Idle`) never preserve the process —
+    /// even when leftover busy flags remain after a failed turn. Otherwise a 502
+    /// (or similar) that left `deferred_prompt_complete` set would make every
+    /// subsequent connect no-op as `state=Disconnected busy=true`, and the chat
+    /// could not send again (Remote IM still works because it uses one-shot `aiko -p`).
+    pub(super) fn should_preserve_live_process(s: &LiveSession) -> bool {
+        connect_should_preserve_live_process(s.fsm.state(), Self::live_session_is_busy(s))
+    }
+
+    /// Drop all in-turn busy markers after a terminal turn failure.
+    /// Complements FSM `fail_with` (which only flips state + last_error).
+    pub(super) fn release_failed_turn_markers(s: &mut LiveSession) {
+        s.prompt_in_flight = false;
+        s.streaming_message_id = None;
+        s.active_turn_id = None;
+        s.stream_message_id_locked = false;
+        s.stream_buf.clear();
+        s.stream_thought.clear();
+        s.stream_last_was_assistant = false;
+        s.stream_attachments.clear();
+        s.open_tool_ids.clear();
+        s.open_tool_seen_at.clear();
+        s.terminal_tool_ids.clear();
+        s.deferred_prompt_complete = None;
+        s.pending_plan_rpc_id = None;
+        s.pending_ask_user_rpc_id = None;
+        s.pending_stream_emit = None;
+        s.journal_throttle.reset();
+        s.last_stall_emit = None;
+        s.stall_soft_emits = 0;
+        s.saw_model_output = false;
+        s.tools_this_turn = 0;
+    }
+
+    /// Park or background the current live session so focus can move.
+    ///
+    /// - Idle Ready (no open tools) → warm `parked`.
+    /// - Busy (FSM or open tools / deferred complete) → `background` (event pump kept).
+    /// - Demoting a busy turn always succeeds (never cancel for focus).
+    pub(super) fn try_park_live(&self) -> Result<(), AgentError> {
+        let mut guard = self.inner.lock();
+        let Some(s) = guard.as_mut() else {
+            return Ok(());
+        };
+        // Nothing to park
+        if s.acp.as_ref().is_none_or(|c| !c.is_alive()) {
+            // Drop dead shell so connect can rebuild.
+            let _ = guard.take();
+            return Ok(());
+        }
+
+        // Busy (incl. open tools while FSM Ready) → background, never park/reclaim.
+        if Self::live_session_is_busy(s) {
+            let Some(live) = guard.take() else {
+                return Ok(());
+            };
+            let sid = live.app_session_id.clone();
+            let st = live.fsm.state();
+            let tools = live.open_tool_ids.len();
+            drop(guard);
+            tracing::info!(
+                "acp demote busy session to background sid={sid} state={st:?} open_tools={tools}"
+            );
+            self.background.lock().insert(sid, live);
+            return Ok(());
+        }
+
+        match s.fsm.state() {
+            SessionState::Ready => {
+                let acp = match s.acp.take() {
+                    Some(c) if c.is_alive() => c,
+                    Some(_) | None => {
+                        let _ = guard.take();
+                        return Ok(());
+                    }
+                };
+                // Sessions that only got opened to look at (no prompt sent this
+                // visit) are NOT kept warm — close the connection instead of
+                // parking. Busy turns never reach here (demoted to background),
+                // so submitted-and-running chats are untouched.
+                if !s.sent_prompt_this_visit {
+                    let sid = s.app_session_id.clone();
+                    let pid = s.process_id.clone();
+                    let agent_sid = s.meta.agent_session_id.clone();
+                    // Shared process (other sessions still reference it): just
+                    // drop our reference; the CLI stays for co-tenants.
+                    let shared = self
+                        .parked
+                        .lock()
+                        .values()
+                        .any(|p| p.process_id == pid && p.app_session_id != sid)
+                        || self
+                            .background
+                            .lock()
+                            .values()
+                            .any(|b| b.process_id == pid && b.app_session_id != sid);
+                    let _ = guard.take();
+                    drop(guard);
+                    if !shared {
+                        // Exclusive: kill — the CLI accumulates a session actor
+                        // per load and has no public unload API (internal evict
+                        // unavailable, close finalizes). A kept process would
+                        // make the next load of this same session wait the CLI's
+                        // 5s old-thread drain. The prewarm slot is refreshed on
+                        // the next connect with a clean process.
+                        tracing::info!(
+                            "acp detach unsubmitted session={sid} process={pid} (viewed only; closed)"
+                        );
+                        let c = acp;
+                        tokio::spawn(async move {
+                            c.kill().await;
+                        });
+                    } else {
+                        tracing::info!(
+                            "acp detach unsubmitted session={sid} process={pid} (viewed only; shared process kept)"
+                        );
+                        // Best-effort actor unload (keeps session resumable) —
+                        // soft-fails on CLIs without the internal method.
+                        if let Some(asid) = agent_sid {
+                            let c = acp.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = c.evict_sessions(&[asid]).await {
+                                    tracing::debug!("evict session failed (soft): {e}");
+                                }
+                            });
+                        }
+                    }
+                    return Ok(());
+                }
+                let sandbox_profile = acp.sandbox_profile();
+                let parked = ParkedAgent {
+                    process_id: s.process_id.clone(),
+                    app_session_id: s.app_session_id.clone(),
+                    meta: s.meta.clone(),
+                    acp,
+                    last_activity: s.last_activity,
+                    model_id: s.model_id.clone(),
+                    effort: s.effort.clone(),
+                    product_mode: s.product_mode.clone(),
+                    project_path: s.project_path.clone(),
+                    policy: s.policy,
+                    sandbox_profile,
+                    needs_history_bootstrap: s.needs_history_bootstrap,
+                    backend: s.backend.clone(),
+                };
+                let _ = guard.take();
+                drop(guard);
+                self.parked
+                    .lock()
+                    .insert(parked.app_session_id.clone(), parked);
+                Ok(())
+            }
+            SessionState::Idle | SessionState::Disconnected => {
+                // Detach dead/idle shell without killing if no acp; drop shell.
+                let _ = guard.take();
+                Ok(())
+            }
+            other => Err(AgentError::new(
+                AgentErrorCode::ProcessLimit,
+                format!(
+                    "Session is busy ({other:?}). Stop the turn or wait, then switch chats. {}",
+                    process_limit_message(Self::max_concurrent_from_settings())
+                ),
+            )),
+        }
+    }
+
+    /// Like `try_park_live`, then emit `session://runtime` for the demoted session.
+    pub(super) fn try_park_live_emit(&self, app: &AppHandle) -> Result<(), AgentError> {
+        let pre = self.inner.lock().as_ref().map(|s| {
+            let busy = Self::live_session_is_busy(s);
+            let mut snap = Self::snapshot_from_live(s);
+            if busy && snap.state == SessionState::Ready {
+                // Open tools while Ready — project as streaming so UI keeps busy.
+                snap.state = SessionState::Streaming;
+            }
+            (busy, snap)
+        });
+        self.try_park_live()?;
+        if let Some((busy, snap)) = pre {
+            if busy {
+                Self::emit_runtime(app, &snap);
+            } else if snap.state == SessionState::Ready {
+                let mut parked_snap = snap;
+                parked_snap.streaming_message_id = None;
+                Self::emit_runtime(app, &parked_snap);
+            }
+        }
+        Ok(())
+    }
+
+    /// If a background session finished its turn (Ready, no open tools), park warm.
+    pub(super) fn promote_background_ready_to_parked(&self, app_session_id: &str) {
+        let mut bg = self.background.lock();
+        let ready = bg.get(app_session_id).is_some_and(|s| {
+            matches!(s.fsm.state(), SessionState::Ready)
+                && !s.prompt_in_flight
+                && s.streaming_message_id.is_none()
+                && s.open_tool_ids.is_empty()
+                && s.deferred_prompt_complete.is_none()
+                && s.pending_plan_rpc_id.is_none()
+                && s.pending_ask_user_rpc_id.is_none()
+                && s.acp.as_ref().is_some_and(|c| c.is_alive())
+        });
+        if !ready {
+            return;
+        }
+        let Some(mut s) = bg.remove(app_session_id) else {
+            return;
+        };
+        drop(bg);
+        let Some(acp) = s.acp.take() else {
+            return;
+        };
+        let sandbox_profile = acp.sandbox_profile();
+        let parked = ParkedAgent {
+            process_id: s.process_id.clone(),
+            app_session_id: s.app_session_id.clone(),
+            meta: s.meta.clone(),
+            acp,
+            last_activity: s.last_activity,
+            model_id: s.model_id.clone(),
+            effort: s.effort.clone(),
+            product_mode: s.product_mode.clone(),
+            project_path: s.project_path.clone(),
+            policy: s.policy,
+            sandbox_profile,
+            needs_history_bootstrap: s.needs_history_bootstrap,
+            backend: s.backend.clone(),
+        };
+        self.parked
+            .lock()
+            .insert(parked.app_session_id.clone(), parked);
+        tracing::info!(
+            "acp background session ready → parked sid={}",
+            app_session_id
+        );
+    }
+
+    /// Promote a parked agent into the live slot (caller must have cleared live).
+    pub(super) fn unpark_to_live(&self, app_session_id: &str) -> Option<LiveSession> {
+        let parked = self.parked.lock().remove(app_session_id)?;
+        if !parked.acp.is_alive() {
+            return None;
+        }
+        let mut fsm = SessionFsm::new();
+        // Parked agents were Ready; restore Ready without connect handshake.
+        let _ = fsm.start_connect();
+        let _ = fsm.handshake_ok();
+        let now = Instant::now();
+        Some(LiveSession {
+            app_session_id: parked.app_session_id,
+            process_id: parked.process_id,
+            meta: parked.meta,
+            fsm,
+            backend: parked.backend,
+            acp: Some(parked.acp),
+            mock_stream: None,
+            streaming_message_id: None,
+            active_turn_id: None,
+            stream_message_id_locked: false,
+            stream_buf: String::new(),
+            stream_thought: String::new(),
+            stream_last_was_assistant: false,
+            stream_attachments: Vec::new(),
+            model_id: parked.model_id,
+            effort: parked.effort,
+            product_mode: parked.product_mode,
+            project_path: parked.project_path,
+            allow_cache: SessionAllowCache::default(),
+            policy: parked.policy,
+            provider_retry_attempt: 0,
+            provider_retry_aborted: false,
+            needs_history_bootstrap: parked.needs_history_bootstrap,
+            pending_plan_rpc_id: None,
+            pending_permission_rpc_id: None,
+            pending_permission_options: None,
+            pending_permission_tool_name: None,
+            pending_ask_user_rpc_id: None,
+            last_activity: now,
+            last_stream_progress: now,
+            last_stall_emit: None,
+            stall_soft_emits: 0,
+            journal_throttle: JournalWriteThrottle::with_default_interval(),
+            open_tool_ids: HashSet::new(),
+            open_tool_seen_at: HashMap::new(),
+            terminal_tool_ids: HashSet::new(),
+            deferred_prompt_complete: None,
+            tools_this_turn: 0,
+            saw_model_output: false,
+            prompt_in_flight: false,
+            sent_prompt_this_visit: false,
+            pending_stream_emit: None,
+            stream_emit_flush_gen: 0,
+            last_tool_heartbeat_emit: None,
+        })
+    }
+
+    /// Run `f` on a session's runtime state wherever it currently sits —
+    /// the live focus slot **or** a demoted `background` turn.
+    ///
+    /// Session-scoped commands (permission / plan / ask_user answers) must use
+    /// this instead of reaching for `self.inner`: the pending JSON-RPC id lives
+    /// on the session that asked, and that session may have been demoted when
+    /// the user switched chats. Answering against the live slot sent the reply
+    /// to the wrong ACP child, so the background turn waited forever.
+    ///
+    /// Parked agents are idle Ready and hold no pending RPC — not searched.
+    pub(super) fn with_session_mut<R>(
+        &self,
+        app_session_id: &str,
+        f: impl FnOnce(&mut LiveSession) -> R,
+    ) -> Option<R> {
+        {
+            let mut guard = self.inner.lock();
+            if let Some(s) = guard.as_mut() {
+                if s.app_session_id == app_session_id {
+                    return Some(f(s));
+                }
+            }
+        }
+        let mut bg = self.background.lock();
+        bg.get_mut(app_session_id).map(f)
+    }
+
+    /// True when `app_session_id` currently owns the live focus slot.
+    pub(super) fn is_live_session(&self, app_session_id: &str) -> bool {
+        self.inner
+            .lock()
+            .as_ref()
+            .is_some_and(|s| s.app_session_id == app_session_id)
+    }
+
+    /// Emit the right runtime event for a session touched out-of-focus:
+    /// `session://state` when it is live, `session://runtime` when demoted.
+    pub(super) fn emit_for_session(&self, app: &AppHandle, app_session_id: &str) {
+        if self.is_live_session(app_session_id) {
+            Self::emit_state(app, &self.snapshot());
+            return;
+        }
+        let snap = self
+            .background
+            .lock()
+            .get(app_session_id)
+            .map(Self::snapshot_from_live);
+        if let Some(snap) = snap {
+            Self::emit_runtime(app, &snap);
+        }
+    }
+
+    /// Move `target_sid` into the live focus slot **without spawning**.
+    ///
+    /// Demotes the current live session first (busy → `background`, Ready →
+    /// `parked`), then promotes the target from `background` / `parked`.
+    /// Returns `false` when the target has no warm process — the caller must
+    /// `connect` (cold spawn) instead.
+    ///
+    /// `send` prefers [`Self::ensure_promptable_session`] so a mid-turn live
+    /// chat is not demoted when the target already has a warm background /
+    /// parked agent (multi-window concurrent pool). This helper remains for
+    /// callers that need the UI focus slot itself.
+    ///
+    /// Under `connect_lock` so a concurrent warm connect cannot swap the live
+    /// slot between the caller's connect and its send (that delivered prompts
+    /// into a foreign chat and left empty-journal zombie sessions behind).
+    pub(super) fn focus_session(
+        &self,
+        app: &AppHandle,
+        target_sid: &str,
+    ) -> Result<bool, AgentError> {
+        if self.inner.lock().as_ref().is_some_and(|s| {
+            s.app_session_id == target_sid && s.acp.as_ref().is_some_and(|c| c.is_alive())
+        }) {
+            return Ok(true);
+        }
+        let in_background = self.background.lock().contains_key(target_sid);
+        let in_parked = self.parked.lock().contains_key(target_sid);
+        if !in_background && !in_parked {
+            return Ok(false);
+        }
+
+        self.try_park_live_emit(app)?;
+        // Never overwrite a shell that still holds a living ACP child.
+        if self
+            .inner
+            .lock()
+            .as_ref()
+            .is_some_and(|s| s.acp.as_ref().is_some_and(|c| c.is_alive()))
+        {
+            self.try_park_live()?;
+        }
+        let _ = self.inner.lock().take();
+
+        if in_background {
+            if let Some(live) = self.background.lock().remove(target_sid) {
+                *self.inner.lock() = Some(live);
+                tracing::info!("acp focus: background → live sid={target_sid}");
+                Self::emit_state(app, &self.snapshot());
+                return Ok(true);
+            }
+        }
+        if let Some(live) = self.unpark_to_live(target_sid) {
+            *self.inner.lock() = Some(live);
+            tracing::info!("acp focus: parked → live sid={target_sid}");
+            Self::emit_state(app, &self.snapshot());
+            return Ok(true);
+        }
+        // Parked process died between the check and the promote → cold spawn.
+        Ok(false)
+    }
+
+    /// Ensure `target_sid` can accept a prompt **without** demoting a different
+    /// mid-turn live agent when the target is already warm in the pool.
+    ///
+    /// Multi-window concurrent slots:
+    /// - Already live → ok
+    /// - Already background (busy or idle shell) → prompt in place (no promote)
+    /// - Parked while live is busy on another chat → unpark into **background**
+    ///   so the streaming focus is not stolen
+    /// - Parked while live is free / same chat → normal focus promote
+    /// - No warm process → `Ok(false)` (caller cold-connects)
+    ///
+    /// Must run under `connect_lock`.
+    pub(super) fn ensure_promptable_session(
+        &self,
+        app: &AppHandle,
+        target_sid: &str,
+    ) -> Result<bool, AgentError> {
+        // Live focus already on target with a living ACP.
+        if self.inner.lock().as_ref().is_some_and(|s| {
+            s.app_session_id == target_sid && s.acp.as_ref().is_some_and(|c| c.is_alive())
+        }) {
+            return Ok(true);
+        }
+
+        // Background: keep in place — do not demote the current live focus.
+        if self
+            .background
+            .lock()
+            .get(target_sid)
+            .is_some_and(|s| s.acp.as_ref().is_some_and(|c| c.is_alive()))
+        {
+            tracing::info!("acp promptable: background in-place sid={target_sid} (no live demote)");
+            return Ok(true);
+        }
+
+        // Parked warm: if live is mid-turn on another chat, unpark into
+        // background so concurrent multi-window send does not steal focus.
+        let live_busy_other = self.inner.lock().as_ref().is_some_and(|s| {
+            s.app_session_id != target_sid
+                && s.acp.as_ref().is_some_and(|c| c.is_alive())
+                && Self::live_session_is_busy(s)
+        });
+        if live_busy_other && self.parked.lock().contains_key(target_sid) {
+            if let Some(live) = self.unpark_to_live(target_sid) {
+                // unpark_to_live builds a LiveSession; place it into background
+                // so the busy live focus is not demoted.
+                let sid = live.app_session_id.clone();
+                let snap = Self::snapshot_from_live(&live);
+                self.background.lock().insert(sid.clone(), live);
+                tracing::info!(
+                    "acp promptable: parked → background sid={sid} (live busy preserved)"
+                );
+                Self::emit_runtime(app, &snap);
+                return Ok(true);
+            }
+            // Parked process died — fall through to focus / cold path.
+        }
+
+        // Default: promote into live focus (may demote Ready live → parked,
+        // or busy live → background — never kills a busy turn).
+        self.focus_session(app, target_sid)
+    }
+
+    /// Kill oldest parked agents until `need_slots` are freed (or none left).
+    /// Parked = Ready idle; never touches background busy turns.
+    pub(super) async fn free_parked_for_capacity(&self, app: &AppHandle, need_slots: u32) {
+        if need_slots == 0 {
+            return;
+        }
+        // One slot = one process. Parked entries may now SHARE a process, so
+        // recycle whole process groups (all sessions on the oldest process),
+        // never individual entries (killing one session's handle would kill
+        // the shared CLI under its co-tenants).
+        for _ in 0..need_slots {
+            let victim = {
+                let mut parked = self.parked.lock();
+                let mut groups: HashMap<String, Vec<ParkedAgent>> = HashMap::new();
+                let keys: Vec<String> = parked.keys().cloned().collect();
+                for k in keys {
+                    if let Some(p) = parked.remove(&k) {
+                        groups.entry(p.process_id.clone()).or_default().push(p);
+                    }
+                }
+                let oldest_pid = groups
+                    .iter()
+                    .min_by_key(|(_, es)| {
+                        es.iter()
+                            .map(|p| p.last_activity)
+                            .min()
+                            .unwrap_or(std::time::Instant::now())
+                    })
+                    .map(|(pid, _)| pid.clone());
+                match oldest_pid {
+                    Some(pid) => {
+                        let entries = groups.remove(&pid).unwrap_or_default();
+                        let mut rest: Vec<ParkedAgent> = Vec::new();
+                        for (_, es) in groups {
+                            rest.extend(es);
+                        }
+                        for p in rest {
+                            parked.insert(p.app_session_id.clone(), p);
+                        }
+                        Some((pid, entries))
+                    }
+                    None => None,
+                }
+            };
+            let Some((pid, entries)) = victim else {
+                break;
+            };
+            tracing::info!(
+                "process limit: recycling process={pid} sessions={}",
+                entries.len()
+            );
+            if let Some(acp) = entries.first().map(|p| p.acp.clone()) {
+                acp.kill().await;
+            }
+            for p in entries {
+                Self::emit_idle_recycled(app, &p.app_session_id, "capacity");
+            }
+        }
+    }
+
+    /// Move every finished `background` turn into `parked`.
+    ///
+    /// `background` is only reclaimable via `parked`, and it is only drained on
+    /// the events that end a turn. A turn that ended by any other route (error,
+    /// stop, a missed completion) left its agent sitting in `background`
+    /// forever: it counted against the pool but no reclaim path could ever free
+    /// it, so the app reported "all slots busy" with nothing running.
+    pub(super) fn sweep_finished_background_to_parked(&self) {
+        let keys: Vec<String> = self.background.lock().keys().cloned().collect();
+        for k in keys {
+            self.promote_background_ready_to_parked(&k);
+        }
+    }
+
+    /// Before spawn: reclaim idle parked until there is room (never kill busy).
+    pub(super) async fn reclaim_parked_until_can_spawn(
+        &self,
+        app: &AppHandle,
+        max_concurrent: u32,
+    ) {
+        self.sweep_dead_parked();
+        self.sweep_dead_background();
+        // Finished background turns are idle warm agents — make them reclaimable
+        // before deciding the pool is full of running work.
+        self.sweep_finished_background_to_parked();
+        // Free enough parked slots for one new process (may free multiple).
+        let active = self.active_process_count();
+        let need = parked_slots_to_free_for_spawn(active, max_concurrent);
+        if need > 0 {
+            self.free_parked_for_capacity(app, need).await;
+        }
+        // If still full (e.g. free returned fewer), keep freeing until spawnable or empty.
+        while !can_spawn_process(self.active_process_count(), max_concurrent) {
+            let parked_n = self.parked.lock().len();
+            if parked_n == 0 {
+                break;
+            }
+            self.free_parked_for_capacity(app, 1).await;
+        }
+    }
+
+    /// Idle recycle for live + parked (I03).
+    pub(super) async fn tick_idle_recycle(&self, app: &AppHandle) {
+        let idle_mins = Self::idle_minutes_from_settings();
+        let now = Instant::now();
+        self.sweep_dead_parked();
+        self.sweep_dead_background();
+        // Finished background turns become parked so the idle window applies.
+        self.sweep_finished_background_to_parked();
+
+        // Parked first — recycle whole process groups when EVERY session on the
+        // process is idle-expired (a shared process must not be killed while a
+        // co-tenant session is still warm).
+        let expired_groups: Vec<(String, Vec<ParkedAgent>)> = {
+            let mut parked = self.parked.lock();
+            let mut groups: HashMap<String, Vec<ParkedAgent>> = HashMap::new();
+            let keys: Vec<String> = parked.keys().cloned().collect();
+            for k in keys {
+                if let Some(p) = parked.remove(&k) {
+                    groups.entry(p.process_id.clone()).or_default().push(p);
+                }
+            }
+            let mut keep: HashMap<String, ParkedAgent> = HashMap::new();
+            let mut expired: Vec<(String, Vec<ParkedAgent>)> = Vec::new();
+            for (pid, entries) in groups {
+                if entries
+                    .iter()
+                    .all(|p| is_idle_expired(p.last_activity, idle_mins, now))
+                {
+                    expired.push((pid, entries));
+                } else {
+                    for p in entries {
+                        keep.insert(p.app_session_id.clone(), p);
+                    }
+                }
+            }
+            *parked = keep;
+            expired
+        };
+        for (pid, entries) in expired_groups {
+            tracing::info!(
+                "idle recycle process={pid} sessions={} after {idle_mins}min",
+                entries.len()
+            );
+            if let Some(acp) = entries.first().map(|p| p.acp.clone()) {
+                acp.kill().await;
+            }
+            for p in entries {
+                Self::emit_idle_recycled(app, &p.app_session_id, "idle");
+            }
+        }
+
+        // Live: only true idle Ready (never mid-turn / open tools). Killing a
+        // live process also reaps any parked co-tenant entries sharing it.
+        let live_kill = {
+            let mut guard = self.inner.lock();
+            if let Some(s) = guard.as_mut() {
+                let idle = is_idle_expired(s.last_activity, idle_mins, now);
+                let ready_idle =
+                    matches!(s.fsm.state(), SessionState::Ready) && !Self::live_session_is_busy(s);
+                if idle && ready_idle {
+                    if let Some(acp) = s.acp.take() {
+                        s.fsm.soft_disconnect();
+                        s.needs_history_bootstrap = false;
+                        Some((s.app_session_id.clone(), s.process_id.clone(), acp))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        if let Some((sid, pid, acp)) = live_kill {
+            tracing::info!("idle recycle live session={sid} after {idle_mins}min");
+            acp.kill().await;
+            // Co-tenants on the same process lose their process too.
+            self.parked.lock().retain(|_, p| p.process_id != pid);
+            Self::emit_idle_recycled(app, &sid, "idle");
+            Self::emit_state(app, &self.snapshot());
+        }
+    }
+
+    pub(super) fn backend_name() -> String {
+        if AcpClient::use_mock() {
+            "mock_acp".into()
+        } else {
+            "aiko_agent_stdio".into()
+        }
+    }
+
+    pub fn snapshot(&self) -> SessionSnapshot {
+        let guard = self.inner.lock();
+        match guard.as_ref() {
+            None => SessionSnapshot {
+                session_id: None,
+                agent_session_id: None,
+                state: SessionState::Idle,
+                last_error: None,
+                streaming_message_id: None,
+                backend: Self::backend_name(),
+                model_id: None,
+                project_path: None,
+                title: String::new(),
+            },
+            Some(s) => SessionSnapshot {
+                session_id: Some(s.app_session_id.clone()),
+                agent_session_id: s.meta.agent_session_id.clone(),
+                state: s.fsm.state(),
+                last_error: s.fsm.last_error().cloned(),
+                streaming_message_id: s.streaming_message_id.clone(),
+                backend: s.backend.clone(),
+                model_id: s.model_id.clone(),
+                project_path: s.project_path.clone(),
+                title: s.meta.title.clone(),
+            },
+        }
+    }
+
+    /// Runtime diagnostics for a session export package (live, background, or parked).
+    /// Returns `None` when the session is not currently attached to a process.
+    pub fn diagnostic_runtime_for(&self, app_session_id: &str) -> Option<serde_json::Value> {
+        {
+            let guard = self.inner.lock();
+            if let Some(s) = guard.as_ref() {
+                if s.app_session_id == app_session_id {
+                    return Some(Self::live_runtime_json(s, "live"));
+                }
+            }
+        }
+        {
+            let bg = self.background.lock();
+            if let Some(s) = bg.get(app_session_id) {
+                // Overnight / demoted busy turns live here — export must see them.
+                return Some(Self::live_runtime_json(s, "background"));
+            }
+        }
+        let parked = self.parked.lock();
+        if let Some(p) = parked.get(app_session_id) {
+            return Some(serde_json::json!({
+                "slot": "parked",
+                "state": "Ready",
+                "backend": p.backend,
+                "modelId": p.model_id,
+                "effort": p.effort,
+                "mode": p.product_mode,
+                "permissionPolicy": p.policy.as_str(),
+                "projectPath": p.project_path,
+                "agentSessionId": p.meta.agent_session_id,
+                "processId": p.process_id,
+                "agentAlive": p.acp.is_alive(),
+                "cwd": p.acp.cwd().display().to_string(),
+                "streamingMessageId": serde_json::Value::Null,
+                "toolsThisTurn": 0,
+                "openToolCount": 0,
+                "promptInFlight": false,
+                "needsHistoryBootstrap": p.needs_history_bootstrap,
+                "lastError": serde_json::Value::Null,
+            }));
+        }
+        None
+    }
+
+    pub(super) fn live_runtime_json(s: &LiveSession, slot: &str) -> serde_json::Value {
+        let cwd = s.acp.as_ref().map(|c| c.cwd().display().to_string());
+        let agent_alive = s.acp.as_ref().is_some_and(|c| c.is_alive());
+        serde_json::json!({
+            "slot": slot,
+            "state": format!("{:?}", s.fsm.state()),
+            "backend": s.backend,
+            "modelId": s.model_id,
+            "effort": s.effort,
+            "mode": s.product_mode,
+            "permissionPolicy": s.policy.as_str(),
+            "projectPath": s.project_path,
+            "agentSessionId": s.meta.agent_session_id,
+            "processId": s.process_id,
+            "agentAlive": agent_alive,
+            "cwd": cwd,
+            "streamingMessageId": s.streaming_message_id,
+            "toolsThisTurn": s.tools_this_turn,
+            "openToolCount": s.open_tool_ids.len(),
+            "promptInFlight": s.prompt_in_flight,
+            "needsHistoryBootstrap": s.needs_history_bootstrap,
+            "lastError": s.fsm.last_error().map(|e| {
+                serde_json::json!({
+                    "code": e.code.as_str(),
+                    "message": e.message,
+                })
+            }),
+        })
+    }
+
+    /// Keep live session meta title in sync after store rename / auto-title.
+    /// Without this, later `session://state` events re-emit the stale connect-time title
+    /// and wipe sidebar / header renames.
+    pub fn apply_title(&self, app: &AppHandle, session_id: &str, title: &str) -> bool {
+        let title = title.trim();
+        if title.is_empty() {
+            return false;
+        }
+        let mut guard = self.inner.lock();
+        let Some(s) = guard.as_mut() else {
+            return false;
+        };
+        if s.app_session_id != session_id {
+            return false;
+        }
+        if s.meta.title == title {
+            return true;
+        }
+        s.meta.title = title.to_string();
+        s.meta.updated_at = chrono::Utc::now();
+        drop(guard);
+        Self::emit_state(app, &self.snapshot());
+        true
+    }
+
+    pub(super) fn emit_state(app: &AppHandle, snap: &SessionSnapshot) {
+        let _ = app.emit("session://state", snap);
+    }
+
+    /// Multi-session runtime for a non-focused session (background / parked).
+    /// Does **not** move the live focus slot — UI projects this into `liveMap` only.
+    pub(super) fn emit_runtime(app: &AppHandle, snap: &SessionSnapshot) {
+        let _ = app.emit("session://runtime", snap);
+    }
+
+    pub(super) fn snapshot_from_live(s: &LiveSession) -> SessionSnapshot {
+        SessionSnapshot {
+            session_id: Some(s.app_session_id.clone()),
+            agent_session_id: s.meta.agent_session_id.clone(),
+            state: s.fsm.state(),
+            last_error: s.fsm.last_error().cloned(),
+            streaming_message_id: s.streaming_message_id.clone(),
+            backend: s.backend.clone(),
+            model_id: s.model_id.clone(),
+            project_path: s.project_path.clone(),
+            title: s.meta.title.clone(),
+        }
+    }
+
+    pub(super) fn snapshot_from_parked(p: &ParkedAgent) -> SessionSnapshot {
+        SessionSnapshot {
+            session_id: Some(p.app_session_id.clone()),
+            agent_session_id: p.meta.agent_session_id.clone(),
+            state: SessionState::Ready,
+            last_error: None,
+            streaming_message_id: None,
+            backend: p.backend.clone(),
+            model_id: p.model_id.clone(),
+            project_path: p.project_path.clone(),
+            title: p.meta.title.clone(),
+        }
+    }
+
+    /// Persist + push a chat-visible error for a failed turn (retries exhausted, RPC fail, …).
+    /// Updates UI via `session://turn_error` so the optimistic thinking bubble becomes a record.
+    ///
+    /// Content is intentionally short (code + compact reason). The UI maps codes to i18n copy
+    /// and must not dump raw RPC/MCP stderr into the chat bubble.
+    pub(super) fn record_turn_error(s: &mut LiveSession, app: &AppHandle, err: &AgentError) {
+        let mid = s
+            .streaming_message_id
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let code = err.code.as_str();
+        let detail = sanitize_error_detail(err.message.trim());
+        // Persist machine-readable code first so the frontend can i18n the summary.
+        let content = if detail.is_empty() {
+            format!("**{code}**")
+        } else {
+            format!("**{code}**\n\n{detail}")
+        };
+        let _ = store::append_message(
+            &s.app_session_id,
+            ChatMessageStored {
+                id: mid.clone(),
+                role: "assistant".into(),
+                content: content.clone(),
+                thought: None,
+                created_at: chrono::Utc::now(),
+                is_error: true,
+                attachments: None,
+                marker: None,
+            },
+        );
+        s.meta.updated_at = chrono::Utc::now();
+        let _ = store::update_session_meta(&s.meta);
+        // Clear *all* busy markers (including deferred prompt_complete / open tools).
+        // Leaving them set after fail_with left the session as Disconnected+busy,
+        // so connect no-oped forever and local sends failed while Remote IM still worked.
+        Self::release_failed_turn_markers(s);
+
+        let _ = app.emit(
+            "session://turn_error",
+            serde_json::json!({
+                "sessionId": s.app_session_id,
+                "messageId": mid,
+                "code": code,
+                "message": detail,
+                "content": content,
+            }),
+        );
+    }
+}

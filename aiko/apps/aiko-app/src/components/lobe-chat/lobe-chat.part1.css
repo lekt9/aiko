@@ -1,0 +1,774 @@
+/* lobe-chat css chunk */
+/**
+ * Chat transcript — pixel-matched to Cursor agent message card (ref screenshot).
+ * Dark-first soft surfaces, path/code chrome, file links, file cards.
+ */
+
+.lobe-chat {
+  /* Type */
+  --chat-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei",
+    system-ui, sans-serif;
+  --chat-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  /* Defaults = md; overridden by html[data-chat-font] (Appearance). */
+  --chat-fs: 14px;
+  --chat-fs-sm: 12.5px;
+  --chat-fs-xs: 11.5px;
+  /* Code block font; overridden by html[data-code-font] (Appearance). */
+  --code-fs: 12.5px;
+  --chat-lh: 1.65;
+  --chat-lh-sm: 1.5;
+
+  /* Density = comfortable; overridden by html[data-chat-density] (Appearance). */
+  --chat-list-gap: 4px;
+  --chat-item-pad-block: 10px;
+  --chat-item-gap: 8px;
+  --chat-item-body-gap: 10px;
+  --chat-bubble-pad-y: 10px;
+  --chat-bubble-pad-x: 14px;
+
+  --chat-r: 10px;
+  --chat-r-lg: 12px;
+  --chat-r-sm: 8px;
+
+  /*
+   * Default = follow app design tokens (tokens.css on html[data-theme]).
+   * Do NOT pin dark via `:root .lobe-chat` — that forced dark code chrome in
+   * light theme and made fenced code unreadable (dark bg + wrong fg).
+   */
+  --chat-text: var(--text-primary, #e8e8ea);
+  --chat-text-2: var(--text-secondary, #a1a1a6);
+  --chat-text-3: var(--text-tertiary, #6e6e73);
+  --chat-link: var(--accent, #6db3f2);
+  --chat-link-hover: var(--accent-hover, #8fc4f5);
+  --chat-bg: transparent;
+  /* Code surfaces: always pair bg + fg from the active theme */
+  --chat-code-bg: var(--bg-code, #1e1e22);
+  --chat-code-fg: var(--text-primary, #e8e8ea);
+  --chat-code-bar: color-mix(
+    in srgb,
+    var(--chat-code-bg) 88%,
+    var(--chat-text) 12%
+  );
+  --chat-code-border: var(--border-subtle, rgba(255, 255, 255, 0.08));
+  --chat-inline-code-bg: color-mix(
+    in srgb,
+    var(--chat-code-bg) 70%,
+    transparent
+  );
+  --chat-inline-code-fg: var(--chat-code-fg);
+  --chat-bubble: var(--bg-user-bubble, rgba(255, 255, 255, 0.08));
+  --chat-card: var(--bg-card, #2a2a2e);
+  --chat-card-border: var(--border-subtle, rgba(255, 255, 255, 0.08));
+  --chat-card-hover: var(--bg-hover, rgba(255, 255, 255, 0.04));
+  --chat-divider: var(--border-subtle, rgba(255, 255, 255, 0.08));
+  --chat-success: var(--success, #3ecf8e);
+  --chat-danger: var(--danger, #f07178);
+  --chat-tag-bg: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  --chat-icon-btn: var(--text-secondary, rgba(255, 255, 255, 0.55));
+  --chat-icon-btn-hover: var(--text-primary, rgba(255, 255, 255, 0.9));
+
+  font-family: var(--chat-font);
+  font-size: var(--chat-fs);
+  line-height: var(--chat-lh);
+  color: var(--chat-text);
+}
+
+/* Optional dark polish (slightly softer code well than pure --bg-code) */
+[data-theme="dark"] .lobe-chat {
+  --chat-code-bg: color-mix(in srgb, var(--bg-code, #0a0a0a) 55%, #2a2a2e);
+  --chat-code-fg: var(--text-primary, #e8e8ea);
+  --chat-inline-code-bg: rgba(255, 255, 255, 0.08);
+  --chat-inline-code-fg: var(--chat-code-fg);
+}
+
+/* Light: elevated soft gray code well + dark ink (never dark-on-dark) */
+[data-theme="light"] .lobe-chat {
+  --chat-code-bg: var(--bg-code, #f0f0f2);
+  --chat-code-fg: var(--text-primary, #1d1d1f);
+  --chat-code-bar: color-mix(in srgb, var(--chat-code-bg) 92%, #000 8%);
+  --chat-code-border: var(--border-subtle, rgba(0, 0, 0, 0.08));
+  --chat-inline-code-bg: rgba(0, 0, 0, 0.06);
+  --chat-inline-code-fg: var(--chat-code-fg);
+  --chat-bubble: var(--bg-user-bubble, rgba(0, 0, 0, 0.05));
+  --chat-card: var(--bg-card, #f5f5f7);
+  --chat-card-border: var(--border-subtle, rgba(0, 0, 0, 0.08));
+  --chat-card-hover: var(--bg-hover, rgba(0, 0, 0, 0.03));
+  --chat-icon-btn: var(--text-secondary, rgba(0, 0, 0, 0.45));
+  --chat-icon-btn-hover: var(--text-primary, rgba(0, 0, 0, 0.85));
+}
+
+/* ── Shell ── */
+.lobe-chat {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  background: var(--chat-bg);
+  color: var(--chat-text);
+}
+
+.lobe-chat__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* none: kill elastic rubber-band at the locked bottom (macOS trackpad
+   * overscroll looked like "can pull a little then snap back + flash"). */
+  overscroll-behavior: none;
+  overscroll-behavior-y: none;
+  /* We manage stick-to-bottom ourselves; browser anchoring fights
+   * programmatic scrollTop during stream growth and feels like bounce. */
+  overflow-anchor: none;
+  /* Reserve gutter so image max-width / text wrap don't thrash when the
+   * scrollbar appears mid-load (classic width↔height oscillation). */
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.35) transparent;
+}
+
+.lobe-chat__inner {
+  box-sizing: border-box;
+  width: 100%;
+  /* Default = medium; overridden by html[data-chat-width] (Appearance). */
+  max-width: var(--chat-width-max, 800px);
+  margin: 0 auto;
+  padding: 20px 20px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--chat-list-gap, 4px);
+}
+
+/* ── Message rows ── */
+.lobe-chat-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+  padding-block: var(--chat-item-pad-block, 10px);
+  gap: var(--chat-item-gap, 8px);
+  /* Isolate layout so stream growth on the tail row dirties less of the
+   * surrounding tree during markdown reflow (Intel Retina). Avoid
+   * content-visibility here — the list is already virtualized. */
+  contain: layout style;
+}
+
+.lobe-chat-item--user {
+  align-items: flex-end;
+  padding-inline-start: 0;
+}
+
+.lobe-chat-item--assistant {
+  align-items: stretch;
+}
+
+.lobe-chat-item__header {
+  display: none; /* no avatars / titles */
+}
+
+.lobe-chat-item__body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--chat-item-body-gap, 10px);
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.lobe-chat-item--assistant .lobe-chat-item__body {
+  width: 100%;
+}
+
+/* User bubble — soft fill, 12px radius; keep input newlines / blank lines */
+.lobe-chat-bubble {
+  max-width: min(100%, 36rem);
+  padding: var(--chat-bubble-pad-y, 10px) var(--chat-bubble-pad-x, 14px);
+  border-radius: 14px;
+  background: var(--chat-bubble);
+  color: var(--chat-text);
+  font-size: var(--chat-fs);
+  line-height: var(--chat-lh);
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: none;
+  box-shadow: none;
+}
+
+/* Plain / skill-mixed user body — same newline policy as the composer */
+.lobe-chat-bubble .user-msg-body,
+.lobe-chat-user-msg__body .user-msg-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.lobe-chat-bubble .user-msg-body__text {
+  white-space: pre-wrap;
+}
+
+
+.lobe-chat-bubble--interjection {
+  border: 1px solid color-mix(in srgb, var(--chat-link) 24%, transparent);
+  background: color-mix(in srgb, var(--chat-link) 8%, var(--chat-bubble));
+}
+
+.lobe-chat-interjection-tag {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-block-end: 6px;
+  color: color-mix(in srgb, var(--chat-link) 78%, var(--chat-text));
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+}
+
+.lobe-chat-interjection-tag svg {
+  flex: 0 0 auto;
+}
+
+/* Scheduled automation user card: clock tag + body */
+.lobe-chat-user-msg {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  white-space: normal;
+}
+
+.lobe-chat-user-msg__body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  width: 100%;
+}
+
+.lobe-scheduled-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 3px 9px 3px 7px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--chat-text-2, var(--text-secondary, #a1a1aa));
+  background: color-mix(in srgb, var(--chat-text, #fff) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chat-text, #fff) 12%, transparent);
+  white-space: nowrap;
+}
+
+.lobe-scheduled-tag__icon {
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.lobe-scheduled-tag__kind {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.lobe-scheduled-tag__sep {
+  flex-shrink: 0;
+  opacity: 0.45;
+}
+
+.lobe-scheduled-tag__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--chat-text, inherit);
+  font-weight: 550;
+}
+
+/* Remote IM journaled user turn — same pill as scheduled, subtle accent */
+.lobe-remote-im-tag {
+  color: color-mix(
+    in srgb,
+    var(--accent, #60a5fa) 72%,
+    var(--chat-text-2, #a1a1aa)
+  );
+  background: color-mix(in srgb, var(--accent, #60a5fa) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent, #60a5fa) 28%, transparent);
+}
+
+.lobe-remote-im-tag .lobe-scheduled-tag__title {
+  color: var(--chat-text, inherit);
+}
+
+/* Hover actions (default) — focus-within keeps keyboard a11y */
+.lobe-chat-item__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+.lobe-chat-item:hover .lobe-chat-item__actions,
+.lobe-chat-item:focus-within .lobe-chat-item__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Settings → Appearance: always show message action buttons */
+html[data-msg-actions="always"] .lobe-chat-item__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.lobe-chat-item--user .lobe-chat-item__actions {
+  justify-content: flex-end;
+}
+
+.lobe-chat-action-time {
+  font-size: 11px;
+  line-height: 28px;
+  color: var(--chat-text-3, var(--text-tertiary));
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  padding-inline: 4px 2px;
+  white-space: nowrap;
+}
+
+/* Settings → Appearance: muted word/char count under finished assistant replies */
+.lobe-chat-reply-length {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--chat-text-3, var(--text-tertiary));
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  user-select: none;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.lobe-chat-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--chat-icon-btn);
+  cursor: pointer;
+}
+.lobe-chat-action:hover {
+  background: var(--chat-card-hover);
+  color: var(--chat-icon-btn-hover);
+}
+.lobe-chat-action:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.lobe-chat-action:disabled:hover {
+  background: transparent;
+  color: var(--chat-icon-btn);
+}
+.lobe-chat-action.is-copied {
+  color: var(--success, #3ecf8e);
+}
+
+/* Regenerate: primary refresh + optional model chevron (split control). */
+.lobe-chat-regen {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  vertical-align: middle;
+}
+.lobe-chat-regen .lobe-chat-action {
+  border-radius: 8px;
+}
+.lobe-chat-regen__chevron {
+  width: 20px;
+  margin-inline-start: -2px;
+}
+
+/* ── Markdown body ── */
+.chat-md,
+.lobe-chat-md {
+  font-size: var(--chat-fs);
+  line-height: var(--chat-lh);
+  color: var(--chat-text);
+  word-break: break-word;
+  min-width: 0;
+}
+
+.chat-md > *:first-child {
+  margin-top: 0;
+}
+.chat-md > *:last-child {
+  margin-bottom: 0;
+}
+
+.chat-md p {
+  margin: 0 0 0.85em;
+}
+.chat-md p:last-child {
+  margin-bottom: 0;
+}
+
+.chat-md h1,
+.chat-md h2,
+.chat-md h3,
+.chat-md h4 {
+  margin: 1.15em 0 0.5em;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--chat-text);
+  letter-spacing: -0.01em;
+}
+.chat-md h1 {
+  font-size: 1.25em;
+}
+.chat-md h2 {
+  font-size: 1.12em;
+}
+.chat-md h3 {
+  font-size: 1.05em;
+}
+.chat-md h4 {
+  font-size: 1em;
+}
+
+.chat-md ul,
+.chat-md ol {
+  margin: 0 0 0.85em;
+  padding-left: 1.35em;
+}
+.chat-md li {
+  margin: 0.28em 0;
+  padding-left: 0.15em;
+}
+.chat-md li::marker {
+  color: var(--chat-text-2);
+}
+
+.chat-md strong {
+  font-weight: 600;
+  color: var(--chat-text);
+}
+
+.chat-md blockquote {
+  margin: 0.65em 0;
+  padding: 0.1em 0 0.1em 0.85em;
+  border-left: 2px solid var(--chat-divider);
+  color: var(--chat-text-2);
+}
+
+.chat-md hr {
+  display: none;
+}
+
+.chat-md__link {
+  color: var(--chat-link);
+  text-decoration: none;
+}
+.chat-md__link:hover {
+  color: var(--chat-link-hover);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* File path / name links (blue + doc icon) */
+.chat-md__file-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--chat-link);
+  text-decoration: none;
+  font-size: var(--chat-fs);
+  line-height: var(--chat-lh);
+  vertical-align: baseline;
+  max-width: 100%;
+}
+.chat-md__file-link:hover {
+  color: var(--chat-link-hover);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.chat-md__file-link span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Inline code / tags — always readable on both themes */
+.chat-md__inline-code,
+.chat-md :not(pre) > code {
+  display: inline;
+  padding: 0.12em 0.45em;
+  border-radius: 6px;
+  background: var(--chat-inline-code-bg);
+  border: 1px solid var(--chat-code-border);
+  font-family: var(--chat-mono);
+  font-size: 0.9em;
+  color: var(--chat-inline-code-fg);
+  box-shadow: none;
+  outline: none;
+}
+
+/* ── Code / path block (theme-aware chrome) ── */
+.chat-code {
+  margin: 0.75em 0;
+  border-radius: var(--chat-r);
+  background: var(--chat-code-bg);
+  border: 1px solid var(--chat-code-border);
+  color: var(--chat-code-fg);
+  overflow: hidden;
+  box-shadow: none;
+}
+
+.chat-code__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 10px 0 12px;
+  background: var(--chat-code-bar);
+  border-bottom: 1px solid var(--chat-code-border);
+  color: var(--chat-text-2);
+}
+
+.chat-code__lang {
+  font-family: var(--chat-mono);
+  font-size: var(--chat-fs-xs);
+  color: var(--chat-text-3);
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.chat-code__bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.chat-code__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--chat-icon-btn);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.chat-code__btn:hover,
+.chat-code__btn.is-on {
+  background: var(--chat-card-hover);
+  color: var(--chat-icon-btn-hover);
+}
+
+.chat-code__body {
+  display: block;
+  min-width: 0;
+}
+
+.chat-code__pre {
+  margin: 0;
+  padding: 10px 14px 14px;
+  overflow-x: auto;
+  font-family: var(--chat-mono);
+  font-size: var(--code-fs, var(--chat-fs-sm));
+  line-height: 1.55;
+  /* Explicit fg — never inherit a muted/wrong parent color */
+  color: var(--chat-code-fg) !important;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
+  white-space: pre;
+  -webkit-text-fill-color: var(--chat-code-fg);
+}
+
+.chat-code__pre.is-wrap {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-code__pre code {
+  font: inherit;
+  color: var(--chat-code-fg) !important;
+  -webkit-text-fill-color: var(--chat-code-fg);
+  background: none !important;
+  border: none;
+  padding: 0;
+  white-space: inherit;
+}
+
+/* Optional line-number gutter (Settings → Appearance → Interface). */
+.chat-code--lines .chat-code__body {
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.chat-code--lines .chat-code__gutter {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 10px 0 14px 12px;
+  margin: 0;
+  font-family: var(--chat-mono);
+  font-size: var(--code-fs, var(--chat-fs-sm));
+  line-height: 1.55;
+  color: var(--chat-text-3);
+  user-select: none;
+  pointer-events: none;
+  border-right: 1px solid var(--chat-code-border);
+}
+
+.chat-code--lines .chat-code__ln {
+  display: block;
+  min-width: 1.5em;
+  padding-right: 10px;
+  text-align: right;
+  opacity: 0.72;
+}
+
+.chat-code--lines .chat-code__pre {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: visible;
+  padding-left: 12px;
+}
+
+/*
+ * Tables:
+ * - Default: fill the wrap (columns stretch across full width)
+ * - Wide content: table grows past wrap → horizontal scroll
+ * - Never force columns narrower than their content (nowrap + min-width)
+ */
+.chat-md__table-wrap {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 0.75em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--chat-code-border);
+  border-radius: var(--chat-r);
+  background: var(--chat-code-bg);
+}
+
+.chat-md table {
+  border-collapse: collapse;
+  /* Fill container when content is narrow; grow when content is wide */
+  width: 100%;
+  min-width: max-content;
+  max-width: none;
+  margin: 0;
+  font-size: var(--chat-fs-sm);
+  line-height: var(--chat-lh-sm);
+  table-layout: auto;
+}
+
+.chat-md th,
+.chat-md td {
+  border-bottom: 1px solid var(--chat-divider);
+  padding: 8px 14px;
+  text-align: left;
+  vertical-align: top;
+  color: var(--chat-text);
+  white-space: nowrap;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.chat-md th {
+  background: rgba(128, 128, 128, 0.08);
+  font-weight: 600;
+}
+
+.chat-md tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Streaming caret disabled — smooth buffer handles reveal. */
+.chat-md--streaming > *:last-child::after {
+  content: none;
+  display: none;
+}
+
+/* Muted prose only — do not paint code blocks with secondary/low-contrast ink */
+.chat-md--muted {
+  color: var(--chat-text-2);
+}
+.chat-md--muted :not(code):not(pre) {
+  color: inherit;
+}
+.chat-md--muted .chat-code,
+.chat-md--muted .chat-code__pre,
+.chat-md--muted .chat-code__pre code,
+.chat-md--muted .chat-md__inline-code,
+.chat-md--muted :not(pre) > code {
+  color: var(--chat-code-fg) !important;
+  -webkit-text-fill-color: var(--chat-code-fg);
+}
+
+/* ── Assistant timeline (Grok.com activity rail — match official web) ── */
+.lobe-chat-assistant-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  width: 100%;
+}
+
+.lobe-timeline-rail {
+  width: 100%;
+  max-width: var(--chat-content-max, 48rem);
+  margin: 0;
+  padding: 0;
+  border-left: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/*
+ * Official palette (light):
+ *   header / steps text ≈ #737373
+ *   rail ≈ #e5e5e5
+ *   answer text ≈ #0a0a0a
+ * Dark theme uses chat-text-* tokens with similar relative weight.
+ */
+.aiko-act {
+  --aiko-act-fg: color-mix(in srgb, var(--chat-text-2, #737373) 100%, transparent);
+  --aiko-act-fg-dim: color-mix(in srgb, var(--chat-text-3, #a3a3a3) 100%, transparent);
+  --aiko-act-rail: color-mix(in srgb, var(--chat-border, #e5e5e5) 85%, transparent);
+  /* Shared activity chrome metrics — keep thought / step / working aligned */
+  --aiko-act-icon: 16px;
+  --aiko-act-gap: 8px;
+  --aiko-act-font: 13px;
+  width: 100%;
+  max-width: var(--chat-content-max, 48rem);
+  margin: 0 0 6px;
+  color: var(--aiko-act-fg);
+  font-size: var(--aiko-act-font);
+  line-height: 1.4;
+  font-weight: 400;
+  font-family: inherit;
+  letter-spacing: -0.01em;
+}

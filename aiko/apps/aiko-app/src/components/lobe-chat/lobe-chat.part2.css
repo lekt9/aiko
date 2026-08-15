@@ -1,0 +1,1019 @@
+/* lobe-chat css chunk */
+
+/* Worked for 1m 2s ∨ — same chrome size as thought / steps (13px) */
+.aiko-act__header {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--aiko-act-gap, 8px);
+  margin: 0 0 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--aiko-act-fg-dim);
+  font-size: var(--aiko-act-font, 13px);
+  font-weight: 400;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+  font-family: inherit;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  text-align: left;
+}
+.aiko-act__header:hover {
+  color: var(--aiko-act-fg);
+}
+.aiko-act__header-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--aiko-act-icon, 16px);
+  height: var(--aiko-act-icon, 16px);
+  color: var(--aiko-act-fg);
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+.aiko-act__header:hover .aiko-act__header-icon {
+  opacity: 1;
+}
+.aiko-act__header-text {
+  min-width: 0;
+}
+.aiko-act__header-caret {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+
+.aiko-act__steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 4px 0 0;
+  padding: 0;
+}
+
+/* Long step lists: fixed max-height scroller for VirtualList windowing.
+   Row height must stay in sync with GROK_ACTIVITY_STEP_ROW_PX (30). */
+.aiko-act__steps--virtual {
+  max-height: 360px; /* fallback; inline style sets min(12, n) * 30 */
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* VirtualList root is the only child; stretch full width */
+  min-height: 0;
+}
+.aiko-act__steps--virtual .aiko-act__step {
+  height: 30px;
+  min-height: 30px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+.aiko-act__steps--virtual .aiko-act__main {
+  padding-bottom: 0;
+  justify-content: center;
+}
+.aiko-act__steps--virtual .aiko-act__icon-col {
+  padding-top: 7px; /* center 16px icon in 30px row */
+}
+.aiko-act__steps--virtual .aiko-act__step.is-last .aiko-act__main {
+  padding-bottom: 0;
+}
+
+/* One step row — icon | continuous rail + label */
+.aiko-act__step {
+  display: flex;
+  align-items: stretch;
+  gap: var(--aiko-act-gap, 8px);
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  color: var(--aiko-act-fg);
+  font-size: var(--aiko-act-font, 13px);
+  line-height: 1.4;
+  font-weight: 400;
+  font-family: inherit;
+}
+.aiko-act__step.is-error {
+  color: var(--chat-danger, #c44);
+}
+.aiko-act__step.is-running .aiko-act__label-text,
+.aiko-act__step.is-running .aiko-act__label {
+  opacity: 0.9;
+}
+
+.aiko-act__icon-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: var(--aiko-act-icon, 16px);
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+.aiko-act__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--aiko-act-icon, 16px);
+  height: var(--aiko-act-icon, 16px);
+  color: var(--aiko-act-fg);
+  flex-shrink: 0;
+  z-index: 1;
+  opacity: 0.85;
+}
+.aiko-act__step.is-error .aiko-act__icon {
+  color: var(--chat-danger, #c44);
+  opacity: 1;
+}
+.aiko-act__step.is-running .aiko-act__icon {
+  animation: chat-live-pulse 1.2s ease-in-out infinite;
+}
+
+/* Vertical connector — continuous, 1px, light gray */
+.aiko-act__rail {
+  flex: 1 1 auto;
+  width: 1px;
+  min-height: 10px;
+  margin: 4px 0 0;
+  background: var(--aiko-act-rail);
+}
+
+.aiko-act__main {
+  flex: 1;
+  min-width: 0;
+  padding: 0 0 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+.aiko-act__step.is-last .aiko-act__main {
+  padding-bottom: 2px;
+}
+
+.aiko-act__label-row {
+  display: flex;
+  align-items: center;
+  gap: var(--aiko-act-gap, 8px);
+  min-width: 0;
+  width: 100%;
+}
+
+/* Bare tool row + phase step text share the same type ramp */
+.aiko-act__label,
+.aiko-act__label-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+  font-size: var(--aiko-act-font, 13px);
+  line-height: 1.4;
+  color: var(--aiko-act-fg);
+  font-family: inherit;
+}
+
+/* Expandable bare tool button — keep label + caret on one row */
+.aiko-act__step-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.aiko-act__step-btn--grow {
+  flex: 1;
+  width: 100%;
+}
+.aiko-act__mini-caret {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.75;
+  flex-shrink: 0;
+  transition: transform 0.12s ease;
+}
+.aiko-act__mini-caret.is-open {
+  transform: rotate(90deg);
+}
+
+/* “Read file · main.ts” companion basename — muted, same size */
+.aiko-act__label-path {
+  color: var(--aiko-act-fg-dim);
+}
+
+/* “Browsed ” / “Searched web for ” same weight; url/query not bold */
+.aiko-act__label-prefix {
+  font-weight: 400;
+}
+.aiko-act__label-url,
+.aiko-act__label-query {
+  font-weight: 400;
+}
+
+/* Right meta: “10 results” + favicon stack */
+.aiko-act__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--aiko-act-fg-dim);
+  font-size: var(--aiko-act-font, 13px);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.aiko-act__meta-count {
+  opacity: 0.95;
+}
+.aiko-act__favicons {
+  display: inline-flex;
+  align-items: center;
+  flex-direction: row-reverse;
+}
+.aiko-act__favicon {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--chat-bg, #fff);
+  border: 1.5px solid color-mix(in srgb, var(--chat-border, #e5e5e5) 80%, transparent);
+  object-fit: cover;
+  margin-left: -6px;
+  box-sizing: border-box;
+}
+.aiko-act__favicon:last-child {
+  margin-left: 0;
+}
+
+/* Live footer — same icon column + type as steps */
+.aiko-act__working {
+  display: flex;
+  align-items: center;
+  gap: var(--aiko-act-gap, 8px);
+  margin: 2px 0 0;
+  padding: 0;
+  color: var(--aiko-act-fg);
+  font-size: var(--aiko-act-font, 13px);
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  font-family: inherit;
+}
+.aiko-act__working-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--aiko-act-icon, 16px);
+  height: var(--aiko-act-icon, 16px);
+  color: var(--aiko-act-fg);
+  opacity: 0.85;
+  flex-shrink: 0;
+  animation: chat-live-pulse 1.2s ease-in-out infinite;
+}
+.aiko-act__working-label {
+  min-width: 0;
+  font-size: var(--aiko-act-font, 13px);
+  line-height: 1.4;
+}
+
+@keyframes chat-live-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+@keyframes chat-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+.lobe-shiny-text {
+  color: var(--chat-text-2);
+  background: none;
+  -webkit-background-clip: unset;
+  background-clip: unset;
+  animation: none;
+}
+
+/* Bare tool expand body (failures) + phase step secondary expand */
+.lobe-timeline-tool {
+  flex-wrap: wrap;
+}
+.lobe-timeline-tool__body {
+  flex: 1 1 100%;
+  width: 100%;
+  margin: 0 0 2px 28px;
+  padding: 0 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* Phase rail: expand sits under label inside .aiko-act__main (no extra left margin). */
+.aiko-act__expand-body {
+  margin: 2px 0 4px;
+  max-height: 160px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.lobe-timeline-tool__detail {
+  margin: 0;
+  padding: 0;
+  max-width: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--chat-text-3);
+  /* Cap height so phase expand never blows VirtualList outer chrome. */
+  max-height: 140px;
+}
+.lobe-timeline-tool__fail-hint {
+  margin: 0;
+  padding: 0;
+  color: var(--chat-text-3);
+  font-size: 12px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.lobe-timeline-tool-group {
+  width: 100%;
+  margin: 0;
+  font-size: 13px;
+  color: var(--chat-text-2);
+}
+.lobe-timeline-tool-group__list {
+  margin: 0;
+  padding: 0 0 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── Bare thinking (Thought for Ns) — match activity chrome metrics ── */
+.aiko-thought {
+  --aiko-act-icon: 16px;
+  --aiko-act-gap: 8px;
+  --aiko-act-font: 13px;
+  width: 100%;
+  max-width: var(--chat-content-max, 48rem);
+  margin: 2px 0 4px;
+  font-size: var(--aiko-act-font);
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--chat-text-2, #9ca3af) 95%, transparent);
+}
+.aiko-thought__header {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--aiko-act-gap);
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: color-mix(in srgb, var(--chat-text-2, #9ca3af) 92%, transparent);
+  font-size: var(--aiko-act-font);
+  font-weight: 400;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  cursor: pointer;
+  text-align: left;
+}
+.aiko-thought__header:disabled {
+  cursor: default;
+}
+.aiko-thought__header:not(:disabled):hover {
+  color: var(--chat-text-2, #d1d5db);
+}
+.aiko-thought__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--aiko-act-icon);
+  height: var(--aiko-act-icon);
+  color: color-mix(in srgb, var(--chat-text-3, #9ca3af) 100%, transparent);
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+.aiko-thought.is-live .aiko-thought__icon,
+.aiko-thought__label--live {
+  animation: chat-live-pulse 1.2s ease-in-out infinite;
+}
+.aiko-thought__label {
+  min-width: 0;
+  font-weight: 400;
+  font-size: var(--aiko-act-font);
+  line-height: 1.4;
+  font-family: inherit;
+}
+.aiko-thought__caret {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+/* Dig-in body: clearly secondary, not the answer */
+.aiko-thought__body {
+  margin: 4px 0 2px 24px; /* 16 icon + 8 gap */
+  padding: 0 0 2px;
+  max-height: min(32vh, 220px);
+  overflow-y: auto;
+  color: color-mix(in srgb, var(--chat-text-3, #9ca3af) 95%, transparent);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.aiko-thought__body .chat-md,
+.aiko-thought__body .chat-md--muted,
+.aiko-thought__body .chat-md p,
+.aiko-thought__body .chat-md li {
+  color: color-mix(in srgb, var(--chat-text-3, #9ca3af) 98%, transparent) !important;
+  font-size: 12.5px;
+}
+.aiko-thought.is-collapsed .aiko-thought__body {
+  display: none;
+}
+
+/* ── Historical turn fragments (folded progress notes) ── */
+.aiko-fragments {
+  width: 100%;
+  max-width: var(--chat-content-max, 48rem);
+  margin: 2px 0 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--chat-text-2, #9ca3af) 92%, transparent);
+}
+.aiko-fragments__header {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: color-mix(in srgb, var(--chat-text-3, #9ca3af) 100%, transparent);
+  font-size: 12.5px;
+  font-weight: 400;
+  font-family: inherit;
+  line-height: 1.5;
+  cursor: pointer;
+  text-align: left;
+}
+.aiko-fragments__header:hover {
+  color: var(--chat-text-2, #d1d5db);
+}
+.aiko-fragments__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: color-mix(in srgb, var(--chat-text-3, #9ca3af) 100%, transparent);
+  flex-shrink: 0;
+}
+.aiko-fragments__label {
+  min-width: 0;
+  font-weight: 400;
+  font-family: inherit;
+}
+.aiko-fragments__caret {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.75;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+/* Secondary dig-in body (muted, scrollable) */
+.aiko-fragments__body {
+  margin: 6px 0 4px 26px;
+  padding: 0 0 4px;
+  max-height: min(32vh, 220px);
+  overflow-y: auto;
+  color: color-mix(in srgb, var(--chat-text-3, #9ca3af) 95%, transparent);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.aiko-fragments__body .chat-md,
+.aiko-fragments__body .chat-md--muted,
+.aiko-fragments__body .chat-md p,
+.aiko-fragments__body .chat-md li {
+  color: color-mix(in srgb, var(--chat-text-3, #9ca3af) 98%, transparent) !important;
+  font-size: 12.5px;
+}
+.aiko-fragments.is-collapsed .aiko-fragments__body {
+  display: none;
+}
+
+/* ── Turn activity summary (tasks panel / legacy) ── */
+.lobe-turn-activity {
+  width: 100%;
+  max-width: var(--chat-content-max, 48rem);
+  margin: 6px 0 2px;
+  padding: 4px 0;
+  font-size: var(--chat-fs-sm);
+  color: var(--chat-text-2);
+  border-top: 1px solid color-mix(in srgb, var(--chat-border, #888) 28%, transparent);
+}
+/* Error state: no loud chrome — only red step dots / title count */
+.lobe-turn-activity--error {
+  border-top-color: color-mix(in srgb, var(--chat-border, #888) 28%, transparent);
+}
+.lobe-turn-activity__trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 4px 0;
+  border: none;
+  background: transparent;
+  color: var(--chat-text-2);
+  font-size: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.lobe-turn-activity__trigger:hover {
+  color: var(--chat-text);
+}
+.lobe-turn-activity__chev {
+  display: inline-flex;
+  color: var(--chat-text-3);
+}
+.lobe-turn-activity__title {
+  font-weight: 500;
+}
+.lobe-turn-activity__list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0 0 0 4px;
+}
+.lobe-turn-activity__seg {
+  margin: 2px 0;
+}
+.lobe-turn-activity__tool {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 1px 0;
+  min-height: 22px;
+}
+.lobe-turn-activity__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--chat-text-3);
+  flex-shrink: 0;
+}
+.lobe-turn-activity__dot.is-error {
+  background: var(--chat-danger, #e11);
+}
+.lobe-turn-activity__dot.is-running {
+  background: var(--chat-link);
+  animation: chat-live-pulse 1.2s ease-in-out infinite;
+}
+.lobe-turn-activity__tool-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: min(100%, 36rem);
+  color: var(--chat-text-2);
+}
+.lobe-turn-activity__tool-name.is-error {
+  color: var(--chat-danger, #c44);
+}
+.lobe-turn-activity__fail-hint {
+  flex: 1 1 100%;
+  margin: 0 0 0 14px;
+  padding: 0;
+  color: var(--chat-text-3);
+  font-size: 11px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  /* No dark code block — quiet secondary line only */
+  background: transparent;
+  border: none;
+}
+.lobe-turn-activity__ctx-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  color: var(--chat-text-2);
+  font-size: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.lobe-turn-activity__sub {
+  list-style: none;
+  margin: 0 0 0 12px;
+  padding: 0 0 0 8px;
+  border-left: 2px solid color-mix(in srgb, var(--chat-border, #888) 40%, transparent);
+}
+.lobe-turn-activity__files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  align-items: center;
+}
+.lobe-turn-activity__files-btn,
+.lobe-turn-activity__file {
+  margin: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--chat-border, #888) 50%, transparent);
+  background: transparent;
+  color: var(--chat-text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.lobe-turn-activity__files-btn:hover,
+.lobe-turn-activity__file:hover {
+  color: var(--chat-text);
+  border-color: var(--chat-text-3);
+}
+
+/* ── Mid-stream tool text (plain one line under reply, replace-only) ── */
+.lobe-chat-tool-text {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 10px 0 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--chat-text-3, var(--lobe-color-text-tertiary, #8e8e93));
+  font-size: var(--chat-fs-sm, 13px);
+  font-weight: 400;
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Quiet thinking / cancel rows (shared chrome) */
+.lobe-chat-live-tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 2px 0 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--chat-text-2);
+  font-size: var(--chat-fs-sm);
+  line-height: 1.35;
+  min-height: 20px;
+}
+.lobe-chat-live-tool__mark {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--chat-text-3);
+}
+.lobe-chat-live-tool__title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--chat-text-2);
+  font-weight: 400;
+}
+.lobe-chat-live-tool.is-running .lobe-chat-live-tool__title,
+.lobe-chat-live-tool__title--pulse {
+  color: var(--chat-text);
+}
+/* Must match .lobe-chat-thinking__dot--live (was 1.4s vs 1.2s → visible desync). */
+.lobe-chat-live-tool__title--pulse {
+  animation: chat-live-pulse 1.2s ease-in-out infinite;
+}
+.lobe-chat-live-tool__done {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--chat-text-3, #6e6e73) 55%, transparent);
+}
+.lobe-chat-live-tool__x {
+  font-size: 12px;
+  line-height: 1;
+  color: var(--chat-danger, #e55);
+}
+.lobe-chat-live-tool.is-failed .lobe-chat-live-tool__title {
+  color: var(--chat-danger, #e55);
+}
+.lobe-chat-live-tool--cancel {
+  color: var(--chat-text-3);
+}
+
+/* End-of-turn chip — match .lobe-chat-live-tool quiet chrome metrics */
+.lobe-end-turn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 2px 0 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--chat-text-3, #6e6e73);
+  font-size: var(--chat-fs-sm);
+  line-height: 1.35;
+  min-height: 20px;
+}
+.lobe-end-turn__mark {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  line-height: 0;
+  color: currentColor;
+}
+/* Collapse wrap() size so SVG fills the 14×14 slot (same as live-tool mark). */
+.lobe-end-turn__mark .g-icon {
+  width: 14px !important;
+  height: 14px !important;
+  line-height: 0 !important;
+}
+.lobe-end-turn__mark .g-icon svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+/*
+ * Solid stop square (user stop / cancelled).
+ * CSS glyph avoids Tabler viewBox padding that mis-centers at sm size.
+ * Cap-height-ish vs 12.5px text: 8px in a 14px slot → true vertical center.
+ */
+.lobe-end-turn__stop {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 1.5px;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.lobe-end-turn__title {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: currentColor;
+  font-weight: 400;
+  font-size: inherit;
+  line-height: inherit;
+}
+.lobe-end-turn--warning {
+  color: color-mix(
+    in srgb,
+    var(--chat-warning, #c90) 75%,
+    var(--chat-text-3, #6e6e73)
+  );
+}
+.lobe-end-turn--error {
+  color: var(--chat-danger, #e55);
+}
+.lobe-end-turn--neutral {
+  color: var(--chat-text-3, #6e6e73);
+}
+
+/* Legacy class kept for any residual markers */
+.lobe-chat-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: var(--chat-fs-sm);
+  color: var(--chat-text-2);
+}
+
+/* ── Context compact marker (auto or /compact) ── */
+.lobe-chat-compact {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 6px 0 10px;
+  padding: 10px 12px;
+  border-radius: var(--chat-r);
+  border: 1px solid var(--chat-border, var(--border-subtle, rgba(255, 255, 255, 0.08)));
+  background: color-mix(in srgb, var(--chat-text-3, #6e6e73) 12%, transparent);
+  color: var(--chat-text-2);
+  /* Long compact notes / shell one-liners must not widen the chat column (#537). */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.lobe-chat-compact__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--chat-text-3);
+}
+.lobe-chat-compact__body {
+  min-width: 0;
+  flex: 1;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.lobe-chat-compact__title {
+  font-size: var(--chat-fs-sm);
+  font-weight: 560;
+  color: var(--chat-text);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.lobe-chat-compact__detail {
+  margin-top: 2px;
+  font-size: var(--chat-fs-xs);
+  color: var(--chat-text-3);
+  font-variant-numeric: tabular-nums;
+  /* Compact note often contains long paths / CLI flags with few spaces. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+}
+.lobe-chat-compact__summary {
+  margin-top: 6px;
+  font-size: var(--chat-fs-xs);
+  color: var(--chat-text-3);
+  max-width: 100%;
+}
+.lobe-chat-compact__summary summary {
+  cursor: pointer;
+  user-select: none;
+  color: var(--chat-text-2);
+}
+.lobe-chat-compact__summary p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: var(--chat-lh-sm);
+  color: var(--chat-text-2);
+  max-width: 100%;
+}
+
+/* ── Turn notice (Codex-style soft pill — not a red alert box) ── */
+.lobe-chat-error {
+  width: 100%;
+  max-width: min(100%, 40rem);
+  box-sizing: border-box;
+  padding: 4px 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--chat-text-2, var(--text-secondary));
+}
+
+.lobe-chat-error__pill {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 100%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--chat-text, #fff) 10%, transparent);
+  background: color-mix(in srgb, var(--chat-text, #fff) 7%, transparent);
+  color: var(--chat-text-2, var(--text-secondary, #a1a1aa));
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.lobe-chat-error__icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--chat-text-2, var(--text-secondary));
+  opacity: 0.85;
+  border: 1px solid color-mix(in srgb, var(--chat-text, #fff) 18%, transparent);
+}
+
+.lobe-chat-error__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.lobe-chat-error__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  margin-top: -2px;
+  margin-inline-end: -4px;
+  opacity: 0.85;
+}
+
+/* Legacy label kept for find-hit styles; no longer painted red. */
+.lobe-chat-error__label {
+  display: none;
+}
+
+.lobe-chat-error__body {
+  display: none;
+}
+
+/* ── Empty ── */
+.lobe-chat-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 36vh;
+  padding: 40px 20px;
+  text-align: center;
+  gap: 6px;
+}
+/* Welcome state: no copy, no vertical claim (logo + composer are centered) */
+.lobe-chat-empty--spacer {
+  min-height: 0;
+  padding: 0;
+  flex: 0 0 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.lobe-chat-empty__title {
+  margin: 0;
+  font-size: var(--chat-fs);
+  font-weight: 500;
+  color: var(--chat-text);
+}
+.lobe-chat-empty__desc {
+  margin: 0;
+  max-width: 28rem;
+  font-size: var(--chat-fs-sm);
+  color: var(--chat-text-3);
+  line-height: var(--chat-lh-sm);
+}
+
+/* ── Back bottom ──
+ * Sit above the floating composer (App sets --composer-float-pad from
+ * measured shell height). Centered so narrow panes don't overlap the
+ * composer card / side controls.
+ */
+/* ── Message node rail (Grok-web style, right edge) ── */
+.lobe-msg-rail {
+  position: absolute;
+  z-index: 40;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  max-height: min(70vh, 520px);
+  padding: 4px 2px;
+  pointer-events: none;
+}
+
+.lobe-msg-rail__step,
+.lobe-msg-rail__tick,
+.lobe-msg-rail__list {
+  pointer-events: auto;
+}

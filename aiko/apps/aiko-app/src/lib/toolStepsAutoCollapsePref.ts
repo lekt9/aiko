@@ -1,0 +1,84 @@
+/**
+ * User preference: auto-collapse finished tool steps in the chat timeline.
+ * localStorage-only — does not touch Host AppSettings.
+ * Default: true (completed/failed rows start collapsed; running stays expanded).
+ */
+
+export const TOOL_STEPS_AUTO_COLLAPSE_STORAGE_KEY = "aiko.toolStepsAutoCollapse";
+
+/** Fired on `window` after a successful save (detail = boolean autoCollapse). */
+export const TOOL_STEPS_AUTO_COLLAPSE_CHANGE_EVENT =
+  "aiko-tool-steps-auto-collapse-change";
+
+export const DEFAULT_TOOL_STEPS_AUTO_COLLAPSE = true;
+
+/** Minimal storage surface so unit tests need no jsdom. */
+export interface ToolStepsAutoCollapseStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+function defaultStorage(): ToolStepsAutoCollapseStorage {
+  if (typeof localStorage !== "undefined") return localStorage;
+  return { getItem: () => null, setItem: () => {} };
+}
+
+/** Parse stored value; invalid / empty → default true. */
+export function parseToolStepsAutoCollapsePref(raw: unknown): boolean {
+  if (raw === "0" || raw === "false" || raw === false) return false;
+  if (raw === "1" || raw === "true" || raw === true) return true;
+  return DEFAULT_TOOL_STEPS_AUTO_COLLAPSE;
+}
+
+export function loadToolStepsAutoCollapsePref(
+  storage: ToolStepsAutoCollapseStorage = defaultStorage(),
+): boolean {
+  try {
+    return parseToolStepsAutoCollapsePref(
+      storage.getItem(TOOL_STEPS_AUTO_COLLAPSE_STORAGE_KEY),
+    );
+  } catch {
+    /* private mode */
+    return DEFAULT_TOOL_STEPS_AUTO_COLLAPSE;
+  }
+}
+
+export function saveToolStepsAutoCollapsePref(
+  autoCollapse: boolean,
+  storage: ToolStepsAutoCollapseStorage = defaultStorage(),
+): void {
+  try {
+    storage.setItem(
+      TOOL_STEPS_AUTO_COLLAPSE_STORAGE_KEY,
+      autoCollapse ? "1" : "0",
+    );
+  } catch {
+    /* private mode / quota */
+  }
+  if (
+    typeof window !== "undefined" &&
+    typeof window.dispatchEvent === "function"
+  ) {
+    try {
+      window.dispatchEvent(
+        new CustomEvent(TOOL_STEPS_AUTO_COLLAPSE_CHANGE_EVENT, {
+          detail: autoCollapse,
+        }),
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * Pure default-open for a tool step / context group / work phase.
+ * Running tools always expand; finished (completed or failed) follow the pref.
+ */
+export function toolStepDefaultOpen(
+  running: boolean,
+  autoCollapse: boolean = DEFAULT_TOOL_STEPS_AUTO_COLLAPSE,
+): boolean {
+  if (running) return true;
+  return !autoCollapse;
+}

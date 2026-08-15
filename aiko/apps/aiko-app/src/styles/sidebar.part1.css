@@ -1,0 +1,1015 @@
+/* domain CSS chunk (move-only split; selectors unchanged) */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  /* Transparent window chrome still ok; paint solid via .app-shell */
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: transparent;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* Image lightbox must sit above GlassModal (.overlay = 12000) and Select (13000) */
+.yarl__portal {
+  z-index: 14000 !important;
+}
+
+/*
+ * Lightbox images: fill the stage with object-fit contain.
+ * YARL defaults only set max-width/max-height to natural px, so small images
+ * stay tiny; ImageViewer also sets logical width/height + imageProps — this
+ * CSS is the durable fallback if props are stripped.
+ */
+.yarl__slide_image {
+  max-width: 100% !important;
+  max-height: 100% !important;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* Avoid browser native image drag interfering with zoom pan. */
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+/* Zoomed past fit: drag to pan (YARL adds this class when zoom > 1). */
+.yarl__slide_wrapper_interactive {
+  cursor: grab;
+}
+
+.yarl__slide_wrapper_interactive:active {
+  cursor: grabbing;
+}
+
+.yarl__slide_wrapper_interactive .yarl__slide_image {
+  cursor: grab;
+}
+
+.yarl__slide_wrapper_interactive:active .yarl__slide_image {
+  cursor: grabbing;
+}
+
+/* ── Codex-style tip (replaces native title= tooltips) ── */
+.ui-tip {
+  position: fixed;
+  z-index: 10050;
+  /* Inline style also sets maxWidth from viewport clamp; keep a CSS fallback. */
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--glass-surface-solid);
+  color: var(--text-primary);
+  border: 0.5px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  /* top/left are the box origin (no translate); viewport clamp in tooltip.tsx */
+  box-sizing: border-box;
+  animation: ui-tip-in 100ms ease-out;
+}
+
+/* Settings help: longer descriptions wrap instead of ellipsizing */
+.ui-tip--wrap {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 8px 10px;
+  line-height: 1.45;
+  font-weight: 400;
+}
+
+/* JSON Schema full text on active chip tip */
+.ui-tip--mono {
+  max-width: min(420px, calc(100vw - 16px));
+  max-height: min(240px, 40vh);
+  overflow: hidden;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@keyframes ui-tip-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.lobe-chat-action.is-copied {
+  color: var(--success, #3ecf8e);
+}
+
+/* Global: no focus outline rings — chrome uses hover / active instead */
+:focus,
+:focus-visible {
+  outline: none;
+}
+
+/* Screen-reader only (T15 live regions / labels) */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Keyboard focus for permission / ask-user (no global outline, but visible here) */
+.perm-bar__btn:focus-visible,
+.ask-user__opt:focus-visible,
+.modal-actions .btn:focus-visible,
+.modal-close:focus-visible {
+  outline: 2px solid var(--border-focus, #6b8cff);
+  outline-offset: 2px;
+}
+
+/* Composer textarea: no focus ring / border flash (Codex-like quiet field) */
+textarea:focus-visible,
+.composer__input:focus,
+.composer__input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /*
+   * macOS: keep transparent so native Sidebar vibrancy + CSS sidebar blur
+   * show through. Win/other paint solid via .platform-win rules below.
+   */
+  background: transparent;
+  color: var(--text-primary);
+  border-radius: var(--radius-window);
+  overflow: hidden;
+  position: relative;
+  /* UI chrome is not selectable; opt back in for chat + resource preview */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Tauri window drag regions (mac Overlay + frameless Win) */
+[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+/* Interactive controls inside drag regions stay clickable */
+button,
+a,
+input,
+textarea,
+select,
+[role="button"],
+[role="tab"],
+[role="menuitem"],
+[role="option"],
+[contenteditable="true"] {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* Chat transcript (messages / reasoning / tools) may be copied */
+.chat-surface,
+.chat-surface *,
+.lobe-chat,
+.lobe-chat * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Right resource panel: only the preview body, not tree / chrome */
+.rp-preview-body,
+.rp-preview-body *,
+.rp-preview-office,
+.rp-preview-office *,
+.rp-preview-code-host,
+.rp-preview-code-host *,
+.rp-code,
+.rp-code * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Keep line-number gutter non-selectable while code body is */
+.rp-code__gutter,
+.rp-code__gutter * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Form fields always need selection for edit/copy */
+.app-shell input,
+.app-shell textarea,
+.app-shell [contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Win / frameless self-drawn chrome (mac uses Overlay traffic lights) */
+.window-controls {
+  display: none;
+  align-items: stretch;
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 10040;
+  height: var(--titlebar-height, 40px);
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.platform-win .window-controls,
+.platform-other .window-controls,
+.has-custom-chrome .window-controls {
+  display: flex;
+}
+
+.window-controls__btn {
+  width: 46px;
+  height: var(--titlebar-height, 40px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  border-radius: 0;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.window-controls__btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.window-controls__btn--close:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+/*
+ * Solid shell on Windows / non-mac (no native vibrancy).
+ * mac keeps transparent shell so NSVisualEffectMaterial::Sidebar shows through.
+ */
+.platform-win .app-shell,
+.platform-other .app-shell,
+.has-custom-chrome.app-shell {
+  background: var(--bg-app);
+  /* Frameless opaque windows are square — the CSS 12px radius above would
+     leave dark corner wedges between the inner radius and the square window
+     edge (webview background shows through). Square corners match the
+     window; macOS keeps the radius because its window is transparent. */
+  border-radius: 0;
+}
+
+.platform-win .workbench,
+.platform-other .workbench,
+.has-custom-chrome .workbench {
+  background: var(--bg-app);
+}
+
+.platform-win .sidebar,
+.platform-other .sidebar {
+  background: var(--bg-sidebar-solid, var(--bg-sidebar));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Maximized: square corners */
+.app-shell.is-maximized,
+.app-shell.is-maximized .sidebar {
+  border-radius: 0 !important;
+}
+
+.workbench {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  /* Transparent on mac so sidebar vibrancy is not covered by solid paint */
+  background: transparent;
+}
+
+/*
+ * Left sidebar — frosted glass rail.
+ * mac: native Sidebar vibrancy + translucent CSS tint (one material layer).
+ * Light: airy white glass + soft inward edge shade (ChatGPT-style).
+ * Win: solid via .platform-win .sidebar.
+ */
+.sidebar {
+  position: relative;
+  /* Default size; open desktop rail overrides via inline width from layout prefs */
+  width: 268px;
+  min-width: 0;
+  max-width: none;
+  flex-shrink: 0;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-subtle);
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  /* No outer padding — chrome / brand / scroll / footer own their insets */
+  padding: 0;
+  gap: 0;
+  transition: width 160ms ease, min-width 160ms ease, opacity 160ms ease;
+  z-index: 1;
+}
+
+/* Drag-resize: skip width transition so the rail tracks the pointer */
+.sidebar.is-resizing {
+  transition: none;
+  user-select: none;
+}
+
+/* Right-edge drag handle (mirrors .aside-resizer) */
+.sidebar-resizer {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  z-index: 6;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  right: 1px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.sidebar-resizer:hover::after,
+.sidebar.is-resizing .sidebar-resizer::after {
+  background: var(--border-focus, #6b8cff);
+}
+
+/* mac: tint only — native vibrancy provides blur */
+.platform-mac .sidebar {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
+/*
+ * ── Light theme chrome (reference: ChatGPT settings) ─────────────────────
+ * Sidebar: translucent white glass (more open than solid main).
+ * Main / aside / settings content: pure solid white, slightly elevated.
+ * Edge: soft inward shade on rail right (not a hard double hairline).
+ * Requires setTheme('light') so native vibrancy is light.
+ */
+html.platform-mac[data-theme="light"] .app-shell {
+  /* Fully transparent shell so glass rail samples vibrancy; soft rim only */
+  background: transparent;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+}
+
+html.platform-mac[data-theme="light"] .workbench {
+  background: transparent;
+}
+
+html.platform-mac[data-theme="light"] .sidebar,
+.platform-mac[data-theme="light"] .sidebar {
+  background: var(--bg-sidebar);
+  /* Edge treated by box-shadow only — no border-right (avoids double line) */
+  border-right: none;
+  box-shadow: var(--sidebar-edge-inset);
+}
+
+/* Solid elevated content columns — pure white, sit above glass rail */
+html.platform-mac[data-theme="light"] .main {
+  background: #ffffff;
+  border-left: none;
+  /* Barely-there lift; rail inset carries the edge hierarchy */
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.02);
+  z-index: 2;
+}
+
+html.platform-mac[data-theme="light"] .aside {
+  background: #ffffff;
+  border-left: 1px solid rgba(0, 0, 0, 0.05);
+  z-index: 2;
+}
+
+/*
+ * Settings page chrome must match workbench:
+ * transparent page → glass nav samples native vibrancy (same as .sidebar).
+ * Solid white parent under nav would make glass look opaque/dirty.
+ */
+.platform-mac .settings-page {
+  background: transparent;
+}
+
+.platform-mac .settings-page__nav {
+  background: var(--bg-sidebar);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  /* same default edge as workbench rail */
+  border-right: 1px solid var(--border-subtle);
+  box-shadow: none;
+}
+
+.platform-mac .settings-page__content {
+  background: var(--bg-main);
+  z-index: 2;
+}
+
+/* Light: same edge inset + no hard border + soft content lift as .main */
+html.platform-mac[data-theme="light"] .settings-page__nav {
+  border-right: none;
+  box-shadow: var(--sidebar-edge-inset);
+}
+
+html.platform-mac[data-theme="light"] .settings-page__content {
+  background: #ffffff;
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.02);
+}
+
+/* Fully closed left pane (no icon rail) — reopen from main top icons */
+.sidebar--hidden {
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.sidebar--collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Row 1: same height as main__top + rv__head — keep divider Y aligned across panes */
+.sidebar-chrome {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: var(--titlebar-height, 40px);
+  min-height: var(--titlebar-height, 40px);
+  max-height: var(--titlebar-height, 40px);
+  padding: 0 10px;
+  /* Traffic lights + control width — must clear red/yellow/green entirely */
+  padding-left: var(--titlebar-safe-left, 96px);
+  margin: 0;
+  user-select: none;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  /* No bottom border: left rail is continuous glass; L/R split lines still share the 40px band */
+}
+
+.platform-win .sidebar-chrome,
+.platform-other .sidebar-chrome,
+.has-custom-chrome .sidebar-chrome {
+  padding-left: 10px;
+}
+
+/* Panel toggle next to traffic lights — no extra left margin; keep drawable */
+.sidebar-chrome > .chrome-btn--traffic {
+  margin-left: 0;
+  margin-right: 2px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  position: relative;
+  z-index: 2;
+}
+
+/* Avoid Tip/layout making the traffic-adjacent control look like an empty slab */
+.sidebar-chrome > .chrome-btn--traffic svg,
+.main__top .chrome-btn--traffic svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.sidebar-chrome__drag {
+  flex: 1;
+  height: 100%;
+  min-width: 8px;
+}
+
+/* Row 2: logo left, search right */
+.sidebar-brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px 4px;
+  margin-bottom: 2px;
+  flex-shrink: 0;
+}
+
+.sidebar-brand-row__left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+}
+
+/* Swappable provider brand marks — height-locked for size parity.
+ * Wordmarks (DeepSeek / OpenCode) scale by height; icon-only (Volcengine /
+ * Amux) use the same height via ProviderBrandIcon `size`. Override welcome
+ * composer max-widths so sidebar marks stay compact. */
+.sidebar-brand-row__left .sidebar-brand-mark--wordmark,
+.sidebar-brand-row__left .deepseek-full-mark.sidebar-brand-mark,
+.sidebar-brand-row__left .opencode-wordmark.sidebar-brand-mark {
+  display: block;
+  height: 18px;
+  width: auto;
+  max-width: min(140px, 48vw);
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.sidebar-brand-row__left .sidebar-brand-mark--icon {
+  flex-shrink: 0;
+  display: block;
+}
+
+.sidebar-brand-row__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* App update affordance — right of brand logo, accent glyph + corner dot. */
+.sidebar-update-btn {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--accent, #6b9fff);
+  cursor: pointer;
+  overflow: visible;
+}
+
+.sidebar-update-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent, #6b9fff) 14%, transparent);
+  color: var(--accent-hover, var(--accent, #6b9fff));
+}
+
+.sidebar-update-btn:disabled {
+  opacity: 0.72;
+  cursor: default;
+}
+
+.sidebar-update-btn--busy {
+  opacity: 0.9;
+}
+
+.sidebar-update-btn__dot {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #6b9fff);
+  box-shadow: 0 0 0 1.5px var(--bg-secondary, var(--bg-primary, #1a1a1a));
+  pointer-events: none;
+}
+
+.sidebar-update-btn__dot--pulse {
+  animation: sidebar-update-dot-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes sidebar-update-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-update-btn__dot--pulse {
+    animation: none;
+  }
+}
+
+.chrome-btn {
+  /* relative: rp-chrome__badge is position:absolute; without this it
+     anchors to .main / window and drifts to the top-right corner. */
+  position: relative;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  /* Allow badge to peek past the 28×28 hit box */
+  overflow: visible;
+}
+
+.chrome-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* Match mac traffic light vertical center (~18px y + half button) */
+.chrome-btn--traffic {
+  width: 28px;
+  height: 28px;
+}
+
+.sidebar__scroll {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar__scroll-inner,
+.sidebar__scroll .overlay-scroll__viewport {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 10px 10px;
+}
+
+.sidebar__scroll .tree-l2,
+.sidebar__scroll .tree-l3 {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 32px;
+  contain: layout style;
+  border-radius: 8px;
+}
+
+/* Sidebar items: no focus ring (quiet list chrome) */
+.sidebar .tree-l1__head:focus,
+.sidebar .tree-l1__head:focus-visible,
+.sidebar .tree-l1__action:focus,
+.sidebar .tree-l1__action:focus-visible,
+.sidebar .tree-l2:focus,
+.sidebar .tree-l2:focus-visible,
+.sidebar .tree-l3:focus,
+.sidebar .tree-l3:focus-visible,
+.sidebar .tree-icon-btn:focus,
+.sidebar .tree-icon-btn:focus-visible,
+.sidebar .chrome-btn:focus,
+.sidebar .chrome-btn:focus-visible,
+.sidebar .nav-item:focus,
+.sidebar .nav-item:focus-visible,
+.sidebar .nav-new:focus,
+.sidebar .nav-new:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* 3-level project tree — fixed row heights, no hover layout shift */
+.tree-l1 {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 8px;
+  margin-bottom: 4px;
+  min-height: 28px;
+  padding-right: 2px;
+}
+
+.tree-l1__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-align: left;
+}
+
+.tree-l1__head:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.tree-l1__label {
+  flex: 1;
+}
+
+.tree-l1__actions {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-shrink: 0;
+  /* Collapse + add: only when hovering the Projects row (or keyboard focus). */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.tree-l1:hover .tree-l1__actions,
+.tree-l1:focus-within .tree-l1__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Multi-select: keep group “Select all” visible (not hover-only). */
+.tree-l1__actions--select-mode {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.tree-l1__action {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.tree-l1__action:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.tree-l1__select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  max-width: 7.5rem;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.tree-l1__select-all:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.tree-l1__select-all--on {
+  color: var(--text-secondary);
+}
+
+.tree-l1__select-all-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-project {
+  margin-bottom: 2px;
+}
+
+.tree-l2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  min-height: 32px;
+  max-height: 32px;
+  box-sizing: border-box;
+  padding: 0 6px 0 8px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  position: relative;
+}
+
+.tree-l2:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* Folder gone / not a directory (D05) — keep row usable for relocate/remove. */
+.tree-l2--path-missing {
+  color: var(--warning);
+}
+.tree-l2--path-missing:hover {
+  color: var(--warning);
+}
+.tree-l2--path-missing .tree-l2__icon {
+  color: var(--warning);
+  opacity: 1;
+}
+.project-row__badge--path-missing {
+  color: var(--warning);
+  background: var(--warning-muted);
+  border-radius: 4px;
+  padding: 0 5px;
+  line-height: 16px;
+  flex-shrink: 0;
+}
+
+/* Project rows are expand/collapse only — never selected. Selection is tree-l3 sessions. */
+
+.tree-l2__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  opacity: 0.9;
+  flex-shrink: 0;
+}
+
+/* Optional project accent (token or #hex) — sits between folder icon and name. */
+.tree-l2__color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--project-color, var(--accent));
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+
+.project-color-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+
+.tree-l2__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  line-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tree-l2__pin,
+.tree-l3__pin {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+/* Project rows: reserve action slot width — opacity only on hover (no layout jump) */
+.tree-l2__actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0;
+  width: 48px;
+  min-width: 48px;
+  height: 24px;
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 100ms ease;
+}
+
+/* Multi-select: always show group select-all; width follows label. */
+.tree-l2__actions--select-mode {
+  width: auto;
+  min-width: 0;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.tree-l2__select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  max-width: 7.5rem;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.tree-l2__select-all:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.tree-l2__select-all--on {
+  color: var(--text-secondary);
+}
+
+.tree-l2__select-all-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Session rows: overlay actions on hover (do not hard-reserve width).
+ *
+ * --bg-hover / --bg-active are translucent tints — using them alone lets the
+ * marquee title bleed through. Composite an opaque strip:
+ *   [hover/active tint] over [--bg-sidebar-solid]
+ * so the whole button block is solid, matching the hovered row surface.
+ * Only the LEFT edge fades to transparent (mask), not a frosted glass fill.
+ */

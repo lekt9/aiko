@@ -1,0 +1,806 @@
+/* domain CSS chunk (move-only split; selectors unchanged) */
+
+
+.wallpaper-source-tabs__btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-active) 70%, transparent);
+}
+
+.wallpaper-source-tabs__btn--active {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 12%, transparent);
+}
+
+.wallpaper-source-tabs__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Shared control metrics for X search + Imagine form rows */
+.wallpaper-source-form {
+  --ws-control-h: var(--control-height, 32px);
+  --ws-control-gap: 8px;
+  --ws-control-radius: var(--radius-md);
+  --ws-control-font: var(--text-sm, 13px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ws-control-gap);
+}
+
+.wallpaper-source-form__hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-tertiary);
+}
+
+.wallpaper-source-form__row {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--ws-control-gap);
+  align-items: center;
+  min-height: var(--ws-control-h);
+}
+
+.wallpaper-source-form__input,
+.wallpaper-source-form__textarea {
+  box-sizing: border-box;
+  font: inherit;
+  font-size: var(--ws-control-font);
+  line-height: 1.25;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--ws-control-radius);
+  margin: 0;
+}
+
+.wallpaper-source-form__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--ws-control-h);
+  padding: 0 12px;
+}
+
+/* Kill UA search field chrome so height stays exact */
+.wallpaper-source-form__input[type="search"] {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.wallpaper-source-form__input[type="search"]::-webkit-search-decoration,
+.wallpaper-source-form__input[type="search"]::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+.wallpaper-source-form__textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: calc(var(--ws-control-h) * 3);
+  padding: 8px 12px;
+  line-height: 1.4;
+}
+
+/* App Select — same height / radius / border as input + button */
+.wallpaper-source-form__select {
+  flex: 0 0 auto;
+  min-width: 96px;
+  height: var(--ws-control-h);
+}
+
+.wallpaper-source-form__select .c-select__trigger {
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--ws-control-h);
+  min-height: var(--ws-control-h);
+  max-height: var(--ws-control-h);
+  padding: 0 10px;
+  font-size: var(--ws-control-font);
+  line-height: 1;
+  border-radius: var(--ws-control-radius);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+}
+
+/* Search / Generate CTA — match control height (ignore btn--sm) */
+.wallpaper-source-form__row > .btn {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  height: var(--ws-control-h);
+  min-height: var(--ws-control-h);
+  max-height: var(--ws-control-h);
+  padding: 0 14px;
+  font-size: var(--ws-control-font);
+  border-radius: var(--ws-control-radius);
+  line-height: 1;
+}
+
+.wallpaper-source-modal .modal-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.wallpaper-source-footer-hint {
+  flex: 1 1 140px;
+  min-width: 0;
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.3;
+}
+
+.wallpaper-source-status {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.wallpaper-source-error {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger, #e55) 12%, var(--bg-elevated));
+  color: var(--text-primary);
+  font-size: 12.5px;
+}
+
+.wallpaper-source-error p {
+  margin: 0;
+  flex: 1 1 auto;
+}
+
+/*
+ * X search gallery scroll + masonry
+ *
+ * CSS multi-column MUST NOT be the overflow scroller. With max-height +
+ * overflow-y on the same element, WebKit/Blink pack overflow into extra
+ * columns to the *right* (not taller content). overflow-x:hidden then
+ * clips those columns — only the first “page” of thumbs is visible and
+ * the rest of a long X search is unreachable (wasted results).
+ *
+ * Scroll lives on the outer shell; multi-column lives on the inner track
+ * with unconstrained height so all cards participate in 3 columns and
+ * the shell scrolls vertically.
+ */
+.wallpaper-masonry-scroll {
+  flex: 1 1 auto;
+  min-height: 180px;
+  /* Prefer remaining modal body height over a short fixed cap */
+  max-height: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 2px;
+  border: none;
+  outline: none;
+  background: transparent;
+}
+
+.wallpaper-masonry-scroll:focus,
+.wallpaper-masonry-scroll:focus-visible {
+  outline: none;
+}
+
+/* True 3-col masonry — height follows image, no fixed crop box */
+.wallpaper-masonry {
+  column-count: 3;
+  column-gap: 10px;
+  column-fill: balance;
+  column-rule: none;
+  width: 100%;
+  /* Never constrain height here — see .wallpaper-masonry-scroll */
+  max-height: none;
+  overflow: visible;
+}
+
+/* Imagine: one full-width column */
+.wallpaper-masonry--full {
+  column-count: 1;
+  column-gap: 0;
+}
+
+.wallpaper-masonry__empty {
+  column-span: all;
+  margin: 24px 8px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.wallpaper-masonry__card {
+  break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+  page-break-inside: avoid;
+  display: inline-block;
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  overflow: hidden;
+  cursor: zoom-in;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  vertical-align: top;
+  transition:
+    border-color var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease;
+}
+
+.wallpaper-masonry--full .wallpaper-masonry__card {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.wallpaper-masonry__card:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-subtle));
+}
+
+.wallpaper-masonry__card--selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.wallpaper-masonry__card--loading {
+  cursor: wait;
+  opacity: 0.85;
+}
+
+.wallpaper-masonry__card:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+/* Natural image height — no aspect-ratio crop */
+.wallpaper-masonry__img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  vertical-align: middle;
+  background: color-mix(in srgb, var(--bg-hover) 80%, #000);
+  border: none;
+  object-fit: contain;
+}
+
+.wallpaper-masonry__meta {
+  display: block;
+  padding: 6px 8px;
+  font-size: 11.5px;
+  line-height: 1.3;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: none;
+}
+
+@media (max-width: 640px) {
+  .wallpaper-masonry:not(.wallpaper-masonry--full) {
+    column-count: 2;
+  }
+}
+
+/* Ensure flex children above the gallery don’t shrink the scroll region away */
+.wallpaper-source-modal__body > .wallpaper-source-tabs,
+.wallpaper-source-modal__body > .wallpaper-source-form,
+.wallpaper-source-modal__body > .wallpaper-source-status,
+.wallpaper-source-modal__body > .wallpaper-source-error {
+  flex: 0 0 auto;
+}
+
+.wallpaper-source-modal__body > .wallpaper-masonry-scroll {
+  flex: 1 1 auto;
+  min-height: 0; /* critical: allow flex child to scroll */
+}
+
+.settings-wallpaper__preview-wrap {
+  position: relative;
+  width: 100%;
+}
+
+/* Window-shaped preview (~desktop frame). Empty state click → file picker. */
+.settings-wallpaper__preview {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  min-height: 160px;
+  padding: 0;
+  margin: 0;
+  border-radius: var(--radius-md);
+  border: 1px dashed color-mix(in srgb, var(--border-strong) 70%, transparent);
+  background:
+    linear-gradient(135deg, var(--bg-hover), var(--bg-elevated));
+  overflow: hidden;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  transition:
+    border-color var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease,
+    background var(--motion-fast) ease;
+}
+
+button.settings-wallpaper__preview:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-subtle));
+  background: color-mix(in srgb, var(--bg-active) 80%, var(--bg-elevated));
+}
+
+.settings-wallpaper__preview:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.settings-wallpaper__preview--set {
+  border-style: solid;
+  border-color: var(--border-subtle);
+  cursor: default;
+}
+
+.settings-wallpaper__preview--busy {
+  cursor: progress;
+  opacity: 0.85;
+}
+
+.settings-wallpaper__media {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--bg-elevated) 70%, #000 30%);
+}
+
+.settings-wallpaper__media-el {
+  display: block;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+
+.settings-wallpaper__preview-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 16px 14px;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.settings-wallpaper__busy {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg-elevated) 55%, transparent);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 560;
+}
+
+/* Hover actions: replace + focus crop (shown only when media is set). */
+.settings-wallpaper__hover {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 28px 12px 12px;
+  background: color-mix(in srgb, var(--bg-elevated) 42%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast) ease;
+}
+
+.settings-wallpaper__preview--set:hover .settings-wallpaper__hover,
+.settings-wallpaper__preview--set:focus-within .settings-wallpaper__hover {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Touch / no-hover: keep actions reachable without hover. */
+@media (hover: none) {
+  .settings-wallpaper__preview--set .settings-wallpaper__hover {
+    opacity: 1;
+    pointer-events: auto;
+    background: color-mix(in srgb, var(--bg-elevated) 28%, transparent);
+  }
+}
+
+.settings-wallpaper__hover .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 2px 10px color-mix(in srgb, #000 28%, transparent);
+}
+
+.settings-wallpaper__clear {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  background: color-mix(in srgb, var(--bg-elevated) 88%, transparent) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 1px 4px color-mix(in srgb, #000 25%, transparent);
+}
+
+/* ── Wallpaper focus editor modal ── */
+.modal.wallpaper-focus-modal {
+  width: min(920px, calc(100vw - 32px));
+  max-height: min(90vh, 860px);
+}
+
+.wallpaper-focus-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.wallpaper-focus-modal__hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-tertiary);
+}
+
+.wallpaper-focus-modal__footer-spacer {
+  flex: 1;
+  min-width: 8px;
+}
+
+.wallpaper-focus-stage {
+  position: relative;
+  width: 100%;
+  height: min(52vh, 440px);
+  min-height: 220px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, #000 55%, var(--bg-elevated));
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+
+.wallpaper-focus-stage__media {
+  display: block;
+  max-width: none;
+  /* Video: keep decode cheap — no filters / blend modes on the element. */
+  pointer-events: none;
+}
+
+.wallpaper-focus-frame {
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  /* Dim outside the crop with a huge box-shadow (no extra video layer). */
+  box-shadow: 0 0 0 9999px color-mix(in srgb, #000 52%, transparent);
+  border: 2px solid color-mix(in srgb, var(--accent) 85%, #fff);
+  border-radius: 3px;
+  cursor: grab;
+  touch-action: none;
+  will-change: transform, width, height;
+}
+
+.wallpaper-focus-frame:active {
+  cursor: grabbing;
+}
+
+.wallpaper-focus-frame__edge {
+  position: absolute;
+  inset: 6px;
+  border: 1px dashed color-mix(in srgb, #fff 55%, transparent);
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+/* Video clip dual-handle timeline */
+.wallpaper-clip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wallpaper-clip__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wallpaper-clip__label {
+  font-size: 12.5px;
+  font-weight: 560;
+  color: var(--text-secondary);
+}
+
+.wallpaper-clip__times {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.wallpaper-clip__dur {
+  color: var(--text-secondary);
+}
+
+.wallpaper-clip__track {
+  position: relative;
+  height: 28px;
+  touch-action: none;
+  user-select: none;
+  cursor: default;
+}
+
+.wallpaper-clip__rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border-strong) 55%, var(--bg-hover));
+}
+
+.wallpaper-clip__range {
+  position: absolute;
+  top: 50%;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+  cursor: grab;
+  touch-action: none;
+}
+
+.wallpaper-clip__range:active {
+  cursor: grabbing;
+}
+
+.wallpaper-clip__handle {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 22px;
+  margin-top: -11px;
+  margin-left: -7px;
+  padding: 0;
+  border: 2px solid var(--bg-elevated);
+  border-radius: 4px;
+  background: var(--accent);
+  box-shadow: 0 1px 4px color-mix(in srgb, #000 30%, transparent);
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 1;
+}
+
+.wallpaper-clip__handle:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.wallpaper-clip__handle--start {
+  border-radius: 4px 2px 2px 4px;
+}
+
+.wallpaper-clip__handle--end {
+  border-radius: 2px 4px 4px 2px;
+}
+
+.wallpaper-focus-zoom {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px 12px;
+}
+
+.wallpaper-focus-zoom__label {
+  font-size: 12.5px;
+  font-weight: 560;
+  color: var(--text-secondary);
+}
+
+.wallpaper-focus-zoom__value {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  min-width: 2.8em;
+  text-align: right;
+}
+
+.wallpaper-focus-zoom__range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border-strong) 55%, var(--bg-hover));
+  outline: none;
+  cursor: pointer;
+}
+
+.wallpaper-focus-zoom__range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-elevated);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+  cursor: pointer;
+}
+
+.wallpaper-focus-zoom__range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-elevated);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+  cursor: pointer;
+}
+
+.wallpaper-focus-zoom__range:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 3px;
+}
+
+/* Footer actions share one row with reset on the left */
+.wallpaper-focus-modal .modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-wallpaper__error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger);
+  line-height: 1.35;
+}
+
+/* Wallpaper scrim strength — affects only the shell ::after overlay. */
+.settings-wallpaper__scrim {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.settings-wallpaper__scrim-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-wallpaper__scrim-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 560;
+  color: var(--text-secondary);
+}
+
+.settings-wallpaper__scrim-value {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.settings-wallpaper__scrim-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border-strong) 55%, var(--bg-hover));
+  outline: none;
+  cursor: pointer;
+}
+
+.settings-wallpaper__scrim-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-elevated);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+  cursor: pointer;
+}
+
+.settings-wallpaper__scrim-range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-elevated);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+  cursor: pointer;
+}
+
+.settings-wallpaper__scrim-range:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 3px;
+}
+
+.settings-wallpaper__scrim-hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--text-tertiary);
+}
+
+/* Discover / import / open Aiko CLI sessions */
+.settings-cli-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.settings-cli-sessions__note {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid
+    color-mix(in srgb, var(--accent, #6b8afd) 28%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent, #6b8afd) 8%, transparent);
+}
+
+.settings-cli-sessions__path {
+  font-size: 11.5px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-cli-sessions__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.settings-cli-sessions__filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+}
