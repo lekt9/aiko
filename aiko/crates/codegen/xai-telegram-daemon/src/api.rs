@@ -421,4 +421,45 @@ impl TelegramApi {
             .await?;
         resp.into_result()
     }
+
+    /// Register slash commands for autocomplete.
+    pub async fn set_my_commands(&self, commands: &[(&str, &str)]) -> Result<bool, TelegramError> {
+        let body = serde_json::json!({
+            "commands": commands.iter().map(|(c, d)| serde_json::json!({"command": c, "description": d})).collect::<Vec<_>>()
+        });
+        let resp: ApiResponse<bool> = self
+            .client
+            .post(self.endpoint("setMyCommands"))
+            .json(&body)
+            .send()
+            .await?
+            .json()
+            .await?;
+        resp.into_result()
+    }
+
+    /// Fetch currently registered commands.
+    pub async fn get_my_commands(&self) -> Result<Vec<BotCommand>, TelegramError> {
+        let resp: ApiResponse<Vec<BotCommand>> = self
+            .client
+            .get(self.endpoint("getMyCommands"))
+            .send()
+            .await?
+            .json()
+            .await?;
+        resp.into_result()
+    }
+
+    /// Remove webhook (switch to polling).
+    pub async fn delete_webhook(&self) -> Result<bool, TelegramError> {
+        let resp: ApiResponse<bool> = self
+            .client
+            .post(self.endpoint("deleteWebhook"))
+            .json(&serde_json::json!({}))
+            .send()
+            .await?
+            .json()
+            .await?;
+        resp.into_result()
+    }
 }

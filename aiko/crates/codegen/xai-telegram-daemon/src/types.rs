@@ -367,5 +367,11 @@ pub enum TelegramError {
     Http(#[from] reqwest::Error),
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BotCommand {
+    pub command: String,
+    pub description: String,
+}
+
 /// Shorthand for sendMessage response (returns the sent Message).
 pub type SendMessageResponse = ApiResponse<Message>;

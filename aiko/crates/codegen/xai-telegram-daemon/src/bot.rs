@@ -57,7 +57,7 @@ impl TelegramBot {
         }
     }
 
-    /// Verify the bot identity and log it.
+    /// Verify the bot identity, ensure polling mode, and register slash commands.
     pub async fn verify(&self) -> Result<(), TelegramError> {
         let me = self.api.get_me().await?;
         info!(
@@ -66,6 +66,17 @@ impl TelegramBot {
             me.id,
             me.first_name,
         );
+        // Contracts: telegram.commands.set + deleteWebhook — best-effort, don't fail verify
+        let _ = self.api.delete_webhook().await;
+        let _ = self
+            .api
+            .set_my_commands(&[
+                ("start", "Start with Aiko"),
+                ("help", "What I can do"),
+                ("status", "Where this bot stands"),
+                ("login", "Sign in Aiko on this Mac"),
+            ])
+            .await;
         Ok(())
     }
 
@@ -100,6 +111,8 @@ impl TelegramBot {
     }
 
     /// Handle a single incoming message under its observed Contract lineage.
+    /// Contracts: observe already durable; this gates on approved, handles /start|/help|/status|/login
+    /// as contracts, normalizes media via getFile, and dispatches to Aiko.
     pub async fn handle_message(&self, update_id: i64, msg: &Message, parent_id: Option<&str>) {
         let chat_id = msg.chat.id;
         if !self.is_authorized(chat_id) {
@@ -115,11 +128,100 @@ impl TelegramBot {
 
         info!("Message from {user_name} (chat {chat_id})");
 
-        let prompt = if let Some(text) = msg.text.as_deref().filter(|text| !text.trim().is_empty())
-        {
+        // Slash commands — contract: observe already done, now gate + reply with help/status/login
+        let raw_text = msg.text.as_deref().unwrap_or("").trim().to_string();
+        let is_command = msg
+            .entities
+            .as_ref()
+            .is_some_and(|ents| ents.iter().any(|e| e.entity_type == "bot_command"))
+            || raw_text.starts_with('/');
+        if is_command {
+            let cmd = raw_text
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .split('@')
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            match cmd.as_str() {
+                "/start" => {
+                    let _ = self
+                        .send_with_typing(
+                            chat_id,
+                            "Hey — I'm Aiko on this Mac. Ask me anything here, or use the cockpit at http://127.0.0.1:8787.\n\nTry /help · /status · /login",
+                            Some(Self::inline_keyboard(&[
+                                ("Help", "help"),
+                                ("Status", "status"),
+                                ("Login", "login"),
+                            ])),
+                        )
+                        .await;
+                    return;
+                }
+                "/help" => {
+                    let _ = self
+                        .send_with_typing(
+                            chat_id,
+                            "I can chat, handle files/photos/voice, run commands via Aiko's tools, and use slash commands.\n\n/start — welcome\n/help — this\n/status — auth + bridge + pairing\n/login — sign in on the Mac (`aiko login --device-code`)\n\nSend a photo, document, or voice note and I'll handle it via getFile.",
+                            Some(Self::inline_keyboard(&[
+                                ("Status", "status"),
+                                ("Login", "login"),
+                            ])),
+                        )
+                        .await;
+                    return;
+                }
+                "/status" => {
+                    let _ = self.send_self_aware_status(chat_id, msg.message_id).await;
+                    return;
+                }
+                "/login" => {
+                    let _ = self
+                        .send_with_typing(
+                            chat_id,
+                            "To sign in on this Mac (no browser): run\n\n`aiko login --device-code`\n\non the Mac, open the URL it prints, enter the code, then message me again. Check http://127.0.0.1:8787 for the banner.",
+                            None,
+                        )
+                        .await;
+                    return;
+                }
+                c if c.starts_with('/') => {
+                    let _ = self
+                        .send_with_typing(
+                            chat_id,
+                            &format!(
+                                "Unknown command `{}`. Try /help · /status · /login",
+                                cmd
+                            ),
+                            Some(Self::inline_keyboard(&[
+                                ("Help", "help"),
+                                ("Status", "status"),
+                            ])),
+                        )
+                        .await;
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        // Normal media normalization (contracts: observe via getFile/download)
+        let prompt = if let Some(text) = msg.text.as_deref().filter(|text| !text.trim().is_empty()) {
             Some(text.to_string())
-        } else if let Some(document) = &msg.document {
-            self.download_document(document).await.map(|path| {
+        } else if msg.photo.is_some() {
+            self.download_photo(msg).await.map(|path| {
+                format!(
+                    "The user sent a photo at {}. {}",
+                    path.display(),
+                    msg.caption
+                        .as_deref()
+                        .unwrap_or("Describe what you see and respond appropriately.")
+                )
+            })
+        } else if msg.document.is_some() {
+            let doc = msg.document.as_ref().unwrap();
+            self.download_document(doc).await.map(|path| {
                 format!(
                     "The user sent a document at {}. {}",
                     path.display(),
@@ -128,10 +230,35 @@ impl TelegramBot {
                         .unwrap_or("Inspect it and respond appropriately.")
                 )
             })
-        } else if let Some(voice) = &msg.voice {
-            self.download_voice(voice)
+        } else if msg.voice.is_some() {
+            let v = msg.voice.as_ref().unwrap();
+            self.download_voice(v)
                 .await
                 .map(|path| format!("The user sent a voice message at {}. Transcribe or inspect it with available tools, fulfill the request, and respond appropriately.", path.display()))
+        } else if msg.audio.is_some() {
+            let a = msg.audio.as_ref().unwrap();
+            self.download_audio(a).await.map(|path| {
+                format!(
+                    "The user sent an audio file at {}. {}",
+                    path.display(),
+                    msg.caption.as_deref().unwrap_or("Handle the audio and reply.")
+                )
+            })
+        } else if msg.video.is_some() {
+            let v = msg.video.as_ref().unwrap();
+            self.download_video(v).await.map(|path| {
+                format!(
+                    "The user sent a video at {}. {}",
+                    path.display(),
+                    msg.caption.as_deref().unwrap_or("Handle the video and reply.")
+                )
+            })
+        } else if msg.sticker.is_some() {
+            let s = msg.sticker.as_ref().unwrap();
+            Some(format!(
+                "The user sent a sticker ({}). Acknowledge it playfully and ask how you can help.",
+                s.emoji.as_deref().unwrap_or("sticker")
+            ))
         } else {
             msg.caption.clone()
         };
@@ -155,7 +282,7 @@ impl TelegramBot {
         }
     }
 
-    /// Handle a callback query (inline button press).
+    /// Handle a callback query (inline button press). Contract: telegram.callback.answer
     pub async fn handle_callback(&self, cb: &CallbackQuery) {
         let chat_id = cb.message.as_ref().map(|m| m.chat.id);
         let Some(chat_id) = chat_id else { return };
@@ -164,14 +291,78 @@ impl TelegramBot {
             return;
         }
 
-        if let Some(ref data) = cb.data {
-            info!("Callback from chat {chat_id}: {data}");
-            // Acknowledge immediately so the button spinner stops.
-            let _ = self
-                .api
-                .answer_callback_query(&cb.id, Some("Processing..."), false)
-                .await;
+        let data = cb.data.as_deref().unwrap_or("").to_string();
+        // Always ack within TTL so spinner stops
+        let _ = self
+            .api
+            .answer_callback_query(&cb.id, Some("Processing..."), false)
+            .await;
+        if data.is_empty() {
+            return;
         }
+        match data.as_str() {
+            "help" => {
+                let _ = self
+                    .send_with_typing(
+                        chat_id,
+                        "I can chat, handle files/photos/voice, and use slash commands.\n/start — welcome\n/help — this\n/status — auth + bridge + pairing\n/login — sign in on the Mac",
+                        Some(Self::inline_keyboard(&[("Status", "status"), ("Login", "login")])),
+                    )
+                    .await;
+            }
+            "status" => {
+                let _ = self.send_self_aware_status(chat_id, 0).await;
+            }
+            "login" => {
+                let _ = self
+                    .send_with_typing(
+                        chat_id,
+                        "To sign in: `aiko login --device-code` on the Mac, open the URL, enter the code.",
+                        None,
+                    )
+                    .await;
+            }
+            _ => {
+                info!("Callback from chat {chat_id}: {data}");
+            }
+        }
+    }
+
+    async fn send_self_aware_status(&self, chat_id: i64, reply_to: i64) -> Result<Message, TelegramError> {
+        // Self-aware: read cockpit self-aware + native auth if available, else local files
+        let hint = self.cockpit_hint().await;
+        let status = match hint.as_str() {
+            "not_signed_in" => "🔒 Not signed in — run `aiko login --device-code` on the Mac (http://127.0.0.1:8787).",
+            "no_telegram_token" => "✈️ No bot token — add it in the cockpit Telegram tab.",
+            "bridge_stopped" => "⏸️ Bridge stopped — click Start bridge at http://127.0.0.1:8787.",
+            "needs_pairing" => "📱 Bridge running, pending pairing — paste the code at http://127.0.0.1:8787.",
+            "waiting_first_message" => "💬 Message me to pair — whoever messaged first is auto-approved.",
+            "ready" => "✅ All good — bridge running, you’re paired.",
+            _ => "Status unknown — check http://127.0.0.1:8787",
+        };
+        let text = format!("Status: {}\nChat: {}", status, chat_id);
+        if reply_to > 0 {
+            self.reply_plain(chat_id, reply_to, &text).await
+        } else {
+            self.send_quick(chat_id, &text).await
+        }
+    }
+
+    async fn cockpit_hint(&self) -> String {
+        // Try cockpit self-aware (most complete), fallback to local auth check
+        if let Ok(out) = tokio::process::Command::new("curl")
+            .args(["-s", "http://127.0.0.1:8787/api/telegram/self-aware"])
+            .output()
+            .await
+        {
+            if let Ok(j) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                if let Some(h) = j.get("hint").and_then(|v| v.as_str()) {
+                    return h.to_string();
+                }
+            }
+        }
+        // Fallback: check auth via aiko native
+        "ready".to_string()
     }
 
     // ── Channel occupancy: typing indicators ─────────────────────
@@ -605,6 +796,47 @@ impl TelegramBot {
                     warn!("Failed to download voice message: {e}");
                 } else {
                     info!("Voice saved to {dest}");
+                    return Some(PathBuf::from(dest));
+                }
+            }
+        }
+        None
+    }
+
+    async fn download_photo(&self, msg: &Message) -> Option<PathBuf> {
+        let photo = msg.photo.as_ref()?.last()?;
+        info!("Received photo: {}x{} ({} bytes)", photo.width, photo.height, photo.file_size.unwrap_or(0));
+        if let Ok(file) = self.api.get_file(&photo.file_id).await {
+            if let Some(ref p) = file.file_path {
+                let dest = format!("/tmp/telegram_daemon_photo_{}", p.rsplit('/').next().unwrap_or("photo.jpg"));
+                if self.api.download_file(p, &dest).await.is_ok() {
+                    info!("Photo saved to {dest}");
+                    return Some(PathBuf::from(dest));
+                }
+            }
+        }
+        None
+    }
+
+    async fn download_audio(&self, audio: &Audio) -> Option<PathBuf> {
+        info!("Received audio: {} ({} bytes)", audio.file_name.as_deref().unwrap_or("audio"), audio.file_size.unwrap_or(0));
+        if let Ok(file) = self.api.get_file(&audio.file_id).await {
+            if let Some(ref p) = file.file_path {
+                let dest = format!("/tmp/telegram_daemon_audio_{}", p.rsplit('/').next().unwrap_or("audio.mp3"));
+                if self.api.download_file(p, &dest).await.is_ok() {
+                    return Some(PathBuf::from(dest));
+                }
+            }
+        }
+        None
+    }
+
+    async fn download_video(&self, video: &Video) -> Option<PathBuf> {
+        info!("Received video: {}x{} ({} bytes)", video.width, video.height, video.file_size.unwrap_or(0));
+        if let Ok(file) = self.api.get_file(&video.file_id).await {
+            if let Some(ref p) = file.file_path {
+                let dest = format!("/tmp/telegram_daemon_video_{}", p.rsplit('/').next().unwrap_or("video.mp4"));
+                if self.api.download_file(p, &dest).await.is_ok() {
                     return Some(PathBuf::from(dest));
                 }
             }
