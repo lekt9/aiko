@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Aiko — cockpit</title>
+<style>
+*{box-sizing:border-box}html,body{height:100%;margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+body{display:flex;flex-direction:column;background:#0d0d0d;color:#e8e8e8}
+:root{--bg:#0d0d0d;--card:#171717;--muted:#9a9a9a;--border:#2a2a2a;--accent:#7c5cff;--ok:#22c55e;--warn:#eab308;--err:#ef4444}
+header{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--border);background:rgba(23,23,23,.9);backdrop-filter:blur(8px);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+header .dot{width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px rgba(34,197,94,.6)}
+header h1{font-size:15px;font-weight:650;letter-spacing:.02em;margin:0}
+header .sub{font-size:11px;color:var(--muted)}
+header .right{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.pill{font-size:11px;padding:4px 8px;border-radius:999px;border:1px solid var(--border);background:#1c1c1c;color:var(--muted)}
+.pill.ok{border-color:rgba(34,197,94,.3);color:#86efac}
+.pill.warn{border-color:rgba(234,179,8,.3);color:#fde68a}
+.pill.err{border-color:rgba(239,68,68,.3);color:#fca5a5}
+.tabs{display:flex;gap:6px;padding:10px 18px;border-bottom:1px solid var(--border);background:#111}
+.tabs button{padding:7px 14px;border-radius:999px;border:1px solid var(--border);background:#1a1a1a;color:#cfcfcf;cursor:pointer;font-size:13px}
+.tabs button.active{background:var(--accent);border-color:var(--accent);color:#fff}
+main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#chatView{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#statusBar{display:none;max-width:760px;width:100%;margin:8px auto 0;padding:0 0}
+.status-card{border-radius:12px;padding:10px 14px;font-size:12px;line-height:1.5;border:1px solid var(--border);background:#1a1a1a;display:flex;gap:10px;align-items:flex-start}
+.status-card.warn{border-color:rgba(234,179,8,.4);background:rgba(234,179,8,.08)}
+.status-card.err{border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.08)}
+.status-card.ok{border-color:rgba(34,197,94,.3);background:rgba(34,197,94,.07)}
+.status-card .icon{font-size:16px;flex-shrink:0}
+.status-card .body{flex:1}
+.status-card .body strong{font-weight:650}
+.status-card .actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.status-card .actions button{padding:5px 10px;border-radius:8px;border:1px solid var(--border);background:#242424;color:#fff;cursor:pointer;font-size:11px}
+.status-card .actions button.primary{background:var(--accent);border-color:var(--accent)}
+#msgs{flex:1;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:14px}
+.msg{max-width:760px;width:100%;margin:0 auto;display:flex;gap:10px}
+.msg .bubble{flex:1;padding:12px 14px;border-radius:14px;line-height:1.5;font-size:14px;white-space:pre-wrap;word-break:break-word}
+.msg.user .bubble{background:#2a2a2a;color:#fff;border:1px solid #333}
+.msg.assistant .bubble{background:var(--card);border:1px solid var(--border)}
+.msg .role{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.tool{margin:0 auto;max-width:760px;width:100%;font-size:12px;color:#a3a3a3;background:#141414;border:1px dashed #2a2a2a;border-radius:10px;padding:8px 12px}
+.composer{padding:14px 18px;border-top:1px solid var(--border);background:#0f0f0f;display:flex;gap:10px;align-items:flex-end;max-width:760px;width:100%;margin:0 auto}
+.composer textarea{flex:1;min-height:44px;max-height:120px;resize:none;border-radius:12px;border:1px solid var(--border);background:#171717;color:#fff;padding:11px 14px;font-size:14px;outline:none}
+.composer button{padding:11px 18px;border-radius:12px;border:0;background:var(--accent);color:#fff;font-weight:600;cursor:pointer}
+.composer button:disabled{opacity:.5;cursor:not-allowed}
+#telegramView{display:none;flex:1;overflow:auto;padding:22px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:18px;max-width:720px;margin:0 auto 16px;width:100%}
+.card h2{font-size:14px;margin:0 0 6px;font-weight:650}
+.card p{font-size:13px;color:var(--muted);line-height:1.5;margin:6px 0}
+.card label{font-size:12px;color:#cfcfcf;display:block;margin:10px 0 6px}
+.card input{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:#0f0f0f;color:#fff;font-size:13px}
+.card .row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.btn{padding:9px 14px;border-radius:10px;border:1px solid var(--border);background:#1e1e1e;color:#fff;cursor:pointer;font-size:13px}
+.btn.primary{background:var(--accent);border-color:var(--accent)}
+.btn:disabled{opacity:.5}
+.status{font-size:12px;color:var(--muted);margin-top:8px;min-height:16px}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#0f0f0f;border:1px solid var(--border);padding:10px;border-radius:10px;white-space:pre-wrap;word-break:break-all;max-height:220px;overflow:auto}
+.hint{font-size:12px;color:var(--muted);border-left:2px solid var(--accent);padding-left:10px;margin:10px 0}
+a{color:#8ea6ff}
+#loginSheet{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);z-index:20;align-items:center;justify-content:center;padding:18px}
+#loginSheet.open{display:flex}
+.sheet{background:#171717;border:1px solid #2a2a2a;border-radius:16px;padding:18px;max-width:520px;width:100%}
+.sheet h3{margin:0 0 8px;font-size:14px}
+.sheet p{font-size:12px;color:var(--muted);line-height:1.5;margin:4px 0}
+.sheet .row{display:flex;gap:8px;margin-top:12px}
+.sheet input{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #2a2a2a;background:#0f0f0f;color:#fff;font-size:12px;font-family:ui-monospace,Menlo,monospace}
+.sheet .mono{margin-top:10px}
+</style>
+</head>
+<body>
+<header>
+  <div class="dot" id="dot"></div>
+  <div><h1>Aiko <span style="font-weight:400;color:#9a9a9a">— cockpit</span></h1><div class="sub" id="subtitle">native 127.0.0.1:19420 · contract ABI 13</div></div>
+  <div class="right">
+    <span class="pill" id="healthPill">● checking…</span>
+    <span class="pill" id="authPill">auth…</span>
+    <span class="pill" id="modelPill">aiko</span>
+  </div>
+</header>
+<div class="tabs">
+  <button class="active" data-tab="chat">💬 Chat</button>
+  <button data-tab="telegram">✈️ Telegram</button>
+</div>
+<main>
+  <div id="chatView">
+    <div id="statusBar"></div>
+    <div id="msgs">
+      <div class="msg assistant"><div class="bubble"><div class="role">Aiko</div>Hey — I'm Aiko on this Mac. Ask me anything, or use the Telegram tab to connect your phone. If you see a banner above, it means something needs attention (login, pairing, or bridge).</div></div>
+    </div>
+    <div class="composer">
+      <textarea id="prompt" placeholder="Ask Aiko anything… (Enter to send, Shift+Enter for newline)"></textarea>
+      <button id="sendBtn">Send</button>
+    </div>
+  </div>
+  <div id="telegramView">
+    <div class="card">
+      <h2>1 · Create a bot</h2>
+      <p>Open Telegram → <b>@BotFather</b> → <code>/newbot</code> → pick a name and username → copy the token <code>123456:ABC-...</code></p>
+      <p class="hint">Do this once. The token is the bot's password — paste it only here.</p>
+    </div>
+    <div class="card">
+      <h2>2 · Paste token here</h2>
+      <label>Bot token</label>
+      <input id="tokenInput" placeholder="1234567890:AAH..." autocomplete="off" spellcheck="false"/>
+      <div class="row"><button class="btn primary" id="saveTokenBtn">Save token to this Mac</button><button class="btn" id="checkTokenBtn">Check token</button></div>
+      <div class="status" id="tokenStatus"></div>
+      <div id="tokenOut" class="mono" style="display:none"></div>
+    </div>
+    <div class="card">
+      <h2>3 · Start the bridge</h2>
+      <p>Polls Telegram and forwards every message to Aiko. Asks before risky work.</p>
+      <div class="row"><button class="btn primary" id="startBridgeBtn">Start Telegram bridge</button><button class="btn" id="stopBridgeBtn">Stop bridge</button><button class="btn" id="bridgeStatusBtn">Status</button></div>
+      <div class="status" id="bridgeStatus"></div>
+      <div id="bridgeOut" class="mono" style="display:none"></div>
+    </div>
+    <div class="card">
+      <h2>4 · Pair your phone</h2>
+      <p>Message your bot — it'll reply with a pairing code like <code>AB12</code>. Paste it here.</p>
+      <label>Pairing code (4–6 hex)</label>
+      <input id="pairInput" placeholder="AB12" style="text-transform:uppercase" maxlength="6"/>
+      <div class="row"><button class="btn primary" id="pairBtn">Approve pairing code</button><button class="btn" id="pairLogBtn">Bridge log</button></div>
+      <div class="status" id="pairStatus"></div>
+      <div id="pairOut" class="mono" style="display:none"></div>
+    </div>
+    <div class="card">
+      <h2>Need help?</h2>
+      <p>Terminal still works: <code>aiko native telegram status</code> · <code>aiko login --device-code</code></p>
+    </div>
+  </div>
+</main>
+<div id="loginSheet"><div class="sheet">
+  <h3>Sign in to Aiko</h3>
+  <p>This Mac isn't logged in, so Aiko can't answer Telegram (or chat). Pick a provider and run the login on this Mac:</p>
+  <div class="row"><button class="btn primary" id="loginAikoBtn">aiko login aiko</button><button class="btn" id="loginGrokBtn">aiko login grok</button><button class="btn" id="loginOpenaiBtn">aiko login openai</button></div>
+  <p style="margin-top:10px">On a headless Mac (no browser), use:</p>
+  <div class="mono">aiko login --device-code</div>
+  <p>Then open the URL it prints, enter the code, and come back here.</p>
+  <div class="row"><button class="btn" id="loginCheckBtn">Check again</button><button class="btn" id="loginCloseBtn">Close</button></div>
+  <div class="status" id="loginStatus"></div>
+</div></div>
+<script>
+const API = "__API_BASE__";
+const TOKEN = "__TOKEN__";
+const $ = s => document.querySelector(s);
+const msgs = $("#msgs"), promptEl = $("#prompt"), sendBtn = $("#sendBtn");
+const dot = $("#dot"), healthPill = $("#healthPill"), authPill = $("#authPill"), statusBar = $("#statusBar");
+let sessionId = localStorage.getItem("aiko:sessionId") || crypto.randomUUID();
+localStorage.setItem("aiko:sessionId", sessionId);
+let busy = false;
+let cachedHealth = null, cachedAuth = null, cachedTelegram = null;
+
+function addMsg(role, text){
+  const wrap = document.createElement("div");
+  wrap.className = "msg " + role;
+  wrap.innerHTML = `<div class="bubble"><div class="role">${role==="user"?"You":"Aiko"}</div>${escapeHtml(text)}</div>`;
+  msgs.appendChild(wrap); msgs.scrollTop = msgs.scrollHeight; return wrap;
+}
+function escapeHtml(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+async function fetchJson(path, opts){
+  const url = path.startsWith("/api/") ? path : API + path;
+  const headers = {};
+  if(path.startsWith("/v1/")) headers["Authorization"] = "Bearer " + TOKEN;
+  const r = await fetch(url, { ...opts, headers: { ...headers, ...(opts&&opts.headers||{}) }});
+  const t = await r.text(); try{ return JSON.parse(t); }catch{ return { _raw:t, ok:r.ok, status:r.status }; }
+}
+
+function renderStatusBar(){
+  const h = cachedHealth, a = cachedAuth, t = cachedTelegram;
+  const signedIn = a && a.signed_in;
+  const bridgeRunning = t && t.running;
+  const approved = t && Array.isArray(t.approvedUserIds) ? t.approvedUserIds.length : null;
+  const cards = [];
+
+  if(a && !signedIn){
+    cards.push(`<div class="status-card err"><div class="icon">🔒</div><div class="body"><strong>Not signed in</strong> — Aiko can't reply on Telegram (or fully in chat) until you log in.<div class="actions"><button class="primary" onclick="openLoginSheet()">Sign in</button><button onclick="checkAll()">Recheck</button></div><div style="font-size:11px;color:var(--muted);margin-top:6px">On this Mac: <code>aiko login --device-code</code> (headless) or <code>aiko login aiko</code> / <code>grok</code> / <code>openai</code> with a browser.</div></div></div>`);
+  }
+  // Telegram-specific second card only when signed in or when bridge state matters
+  if(t){
+    if(!t.hasToken){
+      cards.push(`<div class="status-card warn"><div class="icon">✈️</div><div class="body"><strong>Telegram not set up</strong> — add a bot token in the Telegram tab to receive messages.<div class="actions"><button class="primary" onclick="switchTab('telegram')">Open Telegram tab</button></div></div></div>`);
+    } else if(!bridgeRunning){
+      cards.push(`<div class="status-card warn"><div class="icon">⏸️</div><div class="body"><strong>Telegram bridge stopped</strong> — bot @${escapeHtml(t.username||"?")} is saved but not polling.<div class="actions"><button class="primary" onclick="startBridgeFromBanner()">Start bridge</button><button onclick="checkAll()">Recheck</button></div></div></div>`);
+    } else if(signedIn && approved===0){
+      cards.push(`<div class="status-card warn"><div class="icon">📱</div><div class="body"><strong>Bridge running, nobody paired yet</strong> — message <b>@${escapeHtml(t.username||"your bot")}</b> on Telegram, then paste the pairing code in the Telegram tab. Until then messages are observed but not answered.<div class="actions"><button class="primary" onclick="switchTab('telegram')">Pair a phone</button><button onclick="checkAll()">Recheck</button></div></div></div>`);
+    } else if(signedIn && approved>0 && bridgeRunning){
+      cards.push(`<div class="status-card ok"><div class="icon">✅</div><div class="body"><strong>All good</strong> — @${escapeHtml(t.username||"bot")} · bridge running · ${approved} paired · signed in as ${escapeHtml((a&&a.accounts&&a.accounts[0]&&a.accounts[0].email)||a.provider||"aiko")}.</div></div>`);
+    }
+  }
+  // Health down
+  if(h && h.status!=="ok"){
+    cards.unshift(`<div class="status-card err"><div class="icon">⚠️</div><div class="body"><strong>Aiko native API down</strong> — try: <code>aiko native serve</code> or restart the <code>contract-worker</code>.</div></div>`);
+  }
+  if(!cards.length){ statusBar.style.display="none"; statusBar.innerHTML=""; return; }
+  statusBar.style.display="block";
+  statusBar.innerHTML = cards.join("");
+}
+
+function switchTab(name){
+  document.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("active"));
+  const btn = document.querySelector(`.tabs button[data-tab="${name}"]`);
+  if(btn) btn.classList.add("active");
+  $("#chatView").style.display = name==="chat"?"flex":"none";
+  $("#telegramView").style.display = name==="telegram"?"block":"none";
+}
+function openLoginSheet(){ $("#loginSheet").classList.add("open"); }
+function closeLoginSheet(){ $("#loginSheet").classList.remove("open"); }
+async function startBridgeFromBanner(){
+  const j = await fetchJson("/api/telegram/start", { method:"POST" });
+  await checkAll();
+}
+
+async function checkHealth(){
+  try{
+    const j = await fetchJson("/v1/health");
+    cachedHealth = j;
+    if(j.status==="ok"){ healthPill.textContent="● live"; healthPill.className="pill ok"; dot.style.background="#22c55e"; $("#subtitle").textContent = `native ${j.address||"127.0.0.1:19420"} · ABI ${j.contractAbi||"?"} · ${j.version||""}`; }
+    else throw 0;
+  }catch(e){ healthPill.textContent="● offline"; healthPill.className="pill err"; dot.style.background="#ef4444"; cachedHealth={status:"down"}; }
+  renderStatusBar();
+}
+async function checkAuth(){
+  try{
+    const j = await fetchJson("/v1/auth");
+    cachedAuth = j;
+    if(j.signed_in){
+      const label = (j.accounts&&j.accounts[0]&&j.accounts[0].email) || j.provider || "signed in";
+      authPill.textContent = "● " + label;
+      authPill.className="pill ok";
+    } else {
+      authPill.textContent="● not signed in";
+      authPill.className="pill err";
+    }
+  }catch(e){ authPill.textContent="● auth unknown"; authPill.className="pill warn"; }
+  renderStatusBar();
+}
+async function checkTelegram(){
+  try{
+    const j = await fetchJson("/api/telegram/self-aware");
+    // expected: { hasToken, username, running, approvedUserIds, bridgeLog, auth: {signed_in, provider} }
+    if(j && typeof j.hasToken !== "undefined"){
+      cachedTelegram = j;
+    } else {
+      // fallback to old /api/telegram/status shape
+      const k = await fetchJson("/api/telegram/status");
+      cachedTelegram = { hasToken: !!k.raw || !!j.hasToken, running: !!k.running, approvedUserIds: [], username: null, ...k };
+    }
+  }catch(e){ /* keep previous */ }
+  renderStatusBar();
+}
+async function checkAll(){ await Promise.all([checkHealth(), checkAuth(), checkTelegram()]); }
+checkAll(); setInterval(checkAll, 12000);
+
+document.querySelectorAll(".tabs button").forEach(b=>{
+  b.addEventListener("click", ()=>{
+    document.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active");
+    const t=b.dataset.tab; $("#chatView").style.display=t==="chat"?"flex":"none"; $("#telegramView").style.display=t==="telegram"?"block":"none";
+    if(t==="telegram") checkTelegram();
+  });
+});
+$("#loginCloseBtn").addEventListener("click", closeLoginSheet);
+$("#loginCheckBtn").addEventListener("click", async()=>{ $("#loginStatus").textContent="Checking…"; await checkAll(); $("#loginStatus").textContent = (cachedAuth&&cachedAuth.signed_in) ? "Signed in ✔ — you can close this." : "Still not signed in — run aiko login on this Mac."; });
+["loginAikoBtn","loginGrokBtn","loginOpenaiBtn"].forEach(id=>{
+  $(`#${id}`).addEventListener("click", ()=>{
+    const prov = id==="loginAikoBtn" ? "aiko" : id==="loginGrokBtn" ? "grok" : "openai";
+    $("#loginStatus").textContent = `On this Mac, run: aiko login ${prov}   (or: aiko login --device-code) — then click Check again.`;
+  });
+});
+
+function connectAgentMail(){
+  return new Promise((resolve, reject)=>{
+    const url = API.replace("http","ws") + "/v1/agent-mail?token=" + encodeURIComponent(TOKEN);
+    const sock = new WebSocket(url, "aiko.acp.v1");
+    let to = setTimeout(()=>{ try{sock.close()}catch{}; reject(new Error("ws timeout")); }, 8000);
+    sock.onopen = ()=>{ clearTimeout(to); resolve(sock); };
+    sock.onerror = e=>{ clearTimeout(to); reject(e); };
+  });
+}
+async function rpc(sock, id, method, params){
+  const payload = JSON.stringify({jsonrpc:"2.0", id, method, params});
+  sock.send(payload);
+  return new Promise((resolve, reject)=>{
+    const deadline = Date.now()+300000;
+    function onMsg(ev){
+      try{
+        const m = JSON.parse(ev.data);
+        if(m.id===id && m.error){ sock.removeEventListener("message", onMsg); reject(new Error(m.error.message||JSON.stringify(m.error))); return; }
+        if(m.id===id && m.result!==undefined){ sock.removeEventListener("message", onMsg); resolve(m.result); return; }
+        if(m.id!=null && m.method){
+          let resp=null;
+          if(m.method==="session/request_permission"){
+            const opts=(m.params&&m.params.options)||[]; const allow=opts.find(o=>o.kind==="allow_once"||o.kind==="allow-once");
+            resp = allow ? {jsonrpc:"2.0", id:m.id, result:{outcome:{outcome:"selected", optionId:allow.optionId||allow.option_id}}} : {jsonrpc:"2.0", id:m.id, result:{outcome:{outcome:"cancelled"}}};
+          } else if(m.method==="x.ai/ask_user_question"||m.method==="_x.ai/ask_user_question"){ resp={jsonrpc:"2.0", id:m.id, result:{outcome:"cancelled"}}; }
+          else if(m.method){ resp={jsonrpc:"2.0", id:m.id, error:{code:-32601, message:"unhandled "+m.method}}; }
+          if(resp) sock.send(JSON.stringify(resp));
+        }
+        if(Date.now()>deadline){ sock.removeEventListener("message", onMsg); reject(new Error(method+" timeout")); }
+      }catch(err){}
+    }
+    sock.addEventListener("message", onMsg);
+  });
+}
+async function sendPrompt(text){
+  if(!text.trim()||busy) return;
+  if(cachedAuth && !cachedAuth.signed_in){
+    addMsg("assistant", "I'm not signed in on this Mac yet — I can't call the model. Open the banner above or run `aiko login --device-code` in Terminal, then try again.");
+    openLoginSheet();
+    return;
+  }
+  busy=true; sendBtn.disabled=true; addMsg("user", text); promptEl.value="";
+  const placeholder = addMsg("assistant","… thinking");
+  const bubble = placeholder.querySelector(".bubble");
+  bubble.innerHTML = `<div class="role">Aiko</div><span style="color:#9a9a9a">Working…</span>`;
+  let sock=null;
+  try{
+    sock = await connectAgentMail();
+    await rpc(sock, 1, "initialize", {protocolVersion:1, clientCapabilities:{fs:{readTextFile:false, writeTextFile:false}, terminal:false}, _meta:{clientType:"aiko-chat-ui", clientVersion:"0.2.116"}});
+    try{ await rpc(sock, 2, "session/load", {sessionId, cwd:"/Users/gbear", mcpServers:[], _meta:{rules:""}}); }catch(e){
+      const msg=String(e.message||e);
+      if(msg.includes("FS_NOT_FOUND")||msg.includes("not found")||msg.toLowerCase().includes("unknown")){
+        const created = await rpc(sock, 3, "session/new", {cwd:"/Users/gbear", mcpServers:[], _meta:{sessionId, rules:""}});
+        if(created.sessionId) sessionId=created.sessionId, localStorage.setItem("aiko:sessionId", sessionId);
+      } else throw e;
+    }
+    const result = await rpc(sock, 4, "session/prompt", {sessionId, prompt:[{type:"text", text}], _meta:{clientIdentifier:"aiko-chat-ui"}});
+    let out = "";
+    if(typeof result==="string") out=result;
+    else if(result.content) out=result.content;
+    else if(result.text) out=result.text;
+    else if(result.output) out=result.output;
+    else if(result.message) out=result.message;
+    else if(Array.isArray(result) && result[0] && result[0].text) out=result[0].text;
+    else out = JSON.stringify(result, null, 2);
+    // Detect auth failure surfaced as model error and surface as banner
+    if(/not signed in|aiko login/i.test(out)){
+      bubble.innerHTML = `<div class="role">Aiko</div>${escapeHtml(out)}<br/><br/><span style="font-size:12px;color:#fbbf24">→ Sign in so I can actually answer. <a href="#" onclick="openLoginSheet();return false">Open sign-in</a></span>`;
+      await checkAuth();
+    } else {
+      bubble.innerHTML = `<div class="role">Aiko</div>${escapeHtml(out)}`;
+    }
+    msgs.scrollTop = msgs.scrollHeight;
+  }catch(e){
+    const msg = String(e.message||e);
+    if(/not signed in|unauthenticated|auth/i.test(msg)){
+      bubble.innerHTML = `<div class="role">Aiko</div><span style="color:#fbbf24">Not signed in.</span> Run <code>aiko login --device-code</code> on this Mac, then try again. <a href="#" onclick="openLoginSheet();return false">Sign in</a><br/><span style="font-size:11px;color:#9a9a9a">${escapeHtml(msg.slice(0,300))}</span>`;
+      await checkAuth();
+      openLoginSheet();
+    } else {
+      bubble.innerHTML = `<div class="role">Aiko</div><span style="color:#f87171">Error: ${escapeHtml(msg.slice(0,600))}</span>`;
+    }
+  }finally{
+    try{ sock && sock.close(); }catch{}
+    busy=false; sendBtn.disabled=false; promptEl.focus();
+  }
+}
+sendBtn.addEventListener("click", ()=> sendPrompt(promptEl.value));
+promptEl.addEventListener("keydown", e=>{
+  if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); sendPrompt(promptEl.value); }
+});
+async function api(path, opts={}){
+  const r = await fetch(path, opts); const t = await r.text(); try{ return JSON.parse(t); }catch{ return {ok:r.ok, text:t, status:r.status}; }
+}
+$("#saveTokenBtn").addEventListener("click", async()=>{
+  const tok=$("#tokenInput").value.trim(); if(!tok){ $("#tokenStatus").textContent="Paste a token first."; return; }
+  $("#tokenStatus").textContent="Saving…"; $("#saveTokenBtn").disabled=true;
+  const j = await api("/api/telegram/set-token",{method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({token:tok})});
+  $("#saveTokenBtn").disabled=false;
+  $("#tokenStatus").textContent = j.ok ? "Saved ✔ — token masked as "+(j.masked||"…") : ("Failed: "+(j.error||j.text||"unknown"));
+  if(j.ok){ $("#tokenOut").style.display="block"; $("#tokenOut").textContent=JSON.stringify(j,null,2); await checkTelegram(); }
+});
+$("#checkTokenBtn").addEventListener("click", async()=>{
+  $("#tokenStatus").textContent="Checking getMe…";
+  const j=await api("/api/telegram/check"); $("#tokenOut").style.display="block"; $("#tokenOut").textContent=JSON.stringify(j,null,2); $("#tokenStatus").textContent=j.ok?"Token valid ✔ — @"+(j.username||"?"):"Check failed: "+(j.error||j.text||"");
+});
+$("#startBridgeBtn").addEventListener("click", async()=>{
+  $("#bridgeStatus").textContent="Starting…"; const j=await api("/api/telegram/start",{method:"POST"}); $("#bridgeOut").style.display="block"; $("#bridgeOut").textContent=JSON.stringify(j,null,2); $("#bridgeStatus").textContent=j.ok?"Bridge running ✔":"Failed: "+(j.error||""); await checkTelegram();
+});
+$("#stopBridgeBtn").addEventListener("click", async()=>{
+  $("#bridgeStatus").textContent="Stopping…"; const j=await api("/api/telegram/stop",{method:"POST"}); $("#bridgeOut").style.display="block"; $("#bridgeOut").textContent=JSON.stringify(j,null,2); $("#bridgeStatus").textContent=j.ok?"Bridge stopped":"Failed: "+(j.error||""); await checkTelegram();
+});
+$("#bridgeStatusBtn").addEventListener("click", async()=>{
+  const j=await api("/api/telegram/status"); $("#bridgeOut").style.display="block"; $("#bridgeOut").textContent=JSON.stringify(j,null,2); $("#bridgeStatus").textContent=j.ok?"Bridge: "+(j.running?"running":"stopped"):""+(j.error||"");
+});
+$("#pairBtn").addEventListener("click", async()=>{
+  const code=$("#pairInput").value.trim(); if(!code){ $("#pairStatus").textContent="Enter the 4–6 char code from Telegram."; return; }
+  $("#pairStatus").textContent="Approving…";
+  const j=await api("/api/telegram/approve-pair",{method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({code})});
+  $("#pairOut").style.display="block"; $("#pairOut").textContent=JSON.stringify(j,null,2); $("#pairStatus").textContent=j.ok?"Paired ✔ — try messaging your bot now":"Failed: "+(j.error||""); await checkTelegram();
+});
+$("#pairLogBtn").addEventListener("click", async()=>{
+  const j=await api("/api/telegram/log"); $("#pairOut").style.display="block"; $("#pairOut").textContent=Array.isArray(j)?j.join("\n"):JSON.stringify(j,null,2);
+});
+// also expose for banner buttons
+window.switchTab = switchTab; window.openLoginSheet = openLoginSheet; window.checkAll = checkAll; window.startBridgeFromBanner = startBridgeFromBanner;
+</script>
+</body>
+</html>
