@@ -34,11 +34,34 @@ Spelling: **Aiko**. Meeting notes that say “Ico” are a transcription artifac
 | `tests/` | Root witnesses (`bridge`, `dispatch`, `tick`, `zig-doctrine`, `conformance`, graph-engineering) | Driven by `zig build gate` |
 | `aiko/` | Rust host: TUI, desktop, ACP, MCP, packaging | **No** — compile from `aiko/` |
 | `cell/` | Fractal YAML/Python harness standard | **No** — standalone, does not import `contract/` or `neuron/` |
+| `cell/primitives/credential-envelope/` | OS-vault-only opaque credential boundary; hermetic lifecycle gate uses an in-memory witness double | No |
+| `cell/primitives/context-plane/` | Tenant-scoped cited lineage and cold-handoff artifact | No |
+| `cell/adapters/unbrowse/` | Read-only observe/replay/promote/demote boundary learner | No |
+| `cell/adapters/authored/` | Bounded worker-directory adapter authoring lifecycle | No |
+| `cell/adapters/telethon/` | Seven-point Telethon policy implementation with an injected provider; repository gate uses a synthetic provider journal | No |
 | `docs/` | Cross-layer product docs (this tree) | n/a |
 | `aiko/apps/frontend` | Third-party submodule ([Simpleyyt/ai-manus](https://github.com/Simpleyyt/ai-manus), MIT) | No |
 
 **Direction is load-bearing:** `neuron` builds and tests with `contract`
 absent. Do not reverse that dependency.
+
+## AI-FDE claim boundary
+
+The following published witnesses are green in this tree:
+
+| Proven in-tree claim | Runnable witness |
+|---|---|
+| OS-only credential-envelope boundary and lifecycle contract | `tests/credential-envelope-gate.sh` |
+| Durable workflow pause/resume bound to Cell digest and Contract plan | `tests/fde-workflow-gate.sh` |
+| Tenant-isolated cited context, source invalidation, cold handoff | `tests/fde-context-gate.sh` |
+| Bounded adapter authoring through real-path judgment | `tests/fde-authoring-gate.sh` |
+| Unbrowse independent replay promotion and drift demotion | `tests/unbrowse-aiko-gate.sh` |
+| Telethon seven-point policy contract with a hermetic provider journal | `tests/telethon-fde-gate.sh` |
+
+These witnesses do **not** establish a market-first claim, a managed enterprise
+credential vault, a production Telegram employee-account/provider integration,
+a production SAP adapter, or an operator write UI. Those remain **Absent** in
+[`AI-FORWARD-DEPLOYED-ENGINEER.md`](AI-FORWARD-DEPLOYED-ENGINEER.md).
 
 ## What is *not* in the published tree
 

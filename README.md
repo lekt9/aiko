@@ -15,9 +15,10 @@ recorded in [`docs/SOURCE-OF-TRUTH.md`](docs/SOURCE-OF-TRUTH.md).
 Most agents can complete a task. The hard problem is a process that runs every
 day, talks to people, waits for replies, and has to be *right* — because being
 wrong costs thirty-five phone calls and a missed vessel. Aiko is built for that
-second problem. The workflow substrate exists today; employee-account credential
-handoff and production Telethon/SAP adapters are the delivery plan below, not
-features this README pretends are already complete.
+second problem. The workflow substrate and an OS-only opaque credential-envelope boundary exist
+today. The seven-point Telethon policy contract is witnessed with a hermetic
+provider journal; production Telethon/SAP provider integrations are not features
+this README pretends are already complete.
 
 > Spelled **Aiko**. Meeting notes and transcripts say "Ico"; that is a
 > transcription artifact.
@@ -30,12 +31,12 @@ The deployment model is an employment model. Where a platform hands you an
 integration checklist, Aiko onboards herself, the way a forward-deployed
 engineer would:
 
-- **Account credentials are the primary form of auth, not API keys.** An
-  employee is given a login and a seat, not a bag of per-service keys — and so
-  is Aiko. She acts through the same accounts and interfaces a person would,
-  so anything an employee can reach, she can reach, with the same audit trail.
-  (The managed credential vault is direction, not shipped — see
-  [Status](#status).)
+- **Account credentials are the intended primary form of auth, not API keys.**
+  The proven boundary accepts opaque, tenant/origin/account/action-scoped
+  handles and refuses raw secret fields. It does not establish that every
+  employee-reachable system is integrated. The OS-only envelope contract is
+  gated; a managed enterprise vault and browser-session handoff are not shipped
+  (see [Status](#status).)
 - **She builds the systems.** The processes she operates are systems she
   stands up herself — gated, witnessed, and refused when wrong (see
   [the one idea](#the-one-idea) below).
@@ -125,10 +126,10 @@ edge exists:
 0  source-build guard                                        SETTLED
 1  product contract + Cell self-wire increment               SETTLED
 2  credential envelope        ||  workflow binding (aiko-doctor bind-workflow) SETTLED
-3  context plane || native authoring loop || Unbrowse port
-4  Telethon employee pilot    ||  SAP sandbox pilot
-5  independent FDE judge
-6  documentation promotion
+3  context plane || native authoring loop || Unbrowse port       SETTLED
+4  Telethon policy contract SETTLED || SAP sandbox pilot OPEN
+5  independent FDE judge                                      SETTLED
+6  documentation promotion                                    SETTLED
 ```
 
 ### 0 — Keep the source build honest (settled)
@@ -157,59 +158,64 @@ Binding: [`docs/AIKO-WORKFLOW-BINDING.md`](docs/AIKO-WORKFLOW-BINDING.md).
 
 **Witness:** `tests/fde-workflow-gate.sh`.
 
-### 2 — Build the two foundations in parallel
+### 2 — Two foundations (proven)
 
-**Employee credential envelope.** Give workflows opaque, tenant-scoped handles,
-not passwords, cookies, or API keys. Secrets stay in the OS credential store and
-are injected locally at the destination boundary. The envelope owns account
-inventory, expiry, MFA handoff, revoke, rotate, logout, origin scope, and allowed
-actions. Raw secrets may never enter prompts, Cell inputs, ledger rows, evidence,
-telemetry, generated package digests, or git. There is no plaintext-file fallback
-for employee credentials.
+**Employee credential envelope.** Workflows receive opaque, tenant-scoped
+handles, not passwords, cookies, or API keys. The implementation stores records
+only through macOS Keychain or Linux Secret Service and refuses when neither is
+available; it has no plaintext-file fallback. Its lifecycle covers inventory,
+expiry, MFA handoff, revoke, rotate, logout, origin scope, and allowed actions.
+Public Cell inputs refuse raw secret-shaped fields. The gate uses an in-memory
+vault double for lifecycle evidence and separately checks that the production
+constructor is hard-wired to the native OS vault.
 
-**Smithers → Cell → Aiko binding.** Smithers is the durable control, approval,
-pause, and resume surface; it is not a second scheduler. It authors a typed Cell
-workflow. `aiko-doctor bind-workflow` asks Cell to canonicalize that file and
+**Cell → Aiko binding and root workflow control.** The published
+`aiko-doctor bind-workflow` asks Cell to canonicalize a typed workflow and
 projects organelles/wiring into a Contract walk; `graph-plan` is the analyzer;
-`workflow-control` pauses and resumes the bound revision without becoming a
-second scheduler. Neuron still owns admitted execution.
+`workflow-control` durably pauses and resumes the bound revision without becoming
+a second scheduler. Smithers is the local unpublished authoring/control surface,
+not a shipped product surface. Neuron still owns admitted execution.
 
-**Gates:** credential isolation/redaction/revocation and a workflow-control gate
-that proves pause/resume survives restart, code movement changes the digest, and
-Smithers, Cell, Contract, and Neuron cannot disagree about the active revision.
+**Gates:** `tests/credential-envelope-gate.sh` proves the OS-only boundary and
+synthetic lifecycle contract; `tests/fde-workflow-gate.sh` proves pause/resume
+survives restart, code movement changes the digest, and the bound Cell and
+Contract plan cannot disagree about the active revision.
 
-### 3 — Join self-deployment, context, and existing systems
+### 3 — Self-deployment, context, and existing systems (proven)
 
-Three independently writable branches follow once both foundations exist:
+Three independently writable branches are now in this tree:
 
-1. **Context plane.** Context is minimal, tenant-isolated, cited lineage — not an
-   unlimited transcript. Every derived fact records its source digest and
-   `produced_by`; source movement invalidates dependants. The delivered workflow
-   retains the context it needs after handoff without retaining secrets.
-2. **Native authoring loop.** A capability gap may produce adapter code and a
-   Cell only through the existing lifecycle: write inert, build, test, admit by
-   digest, attach least authority, retry on the real path, and retain only after
-   independent success. Compilation alone retains nothing. Authoring stays
-   bounded to witnessed adapter families until a new family earns its own gate.
-3. **Unbrowse port.** Under the employee account, Unbrowse observes first-party
-   routes, compiles a sanitized route DAG, validates it by an independent replay,
-   promotes it locally, and demotes it on drift. Cookies, passwords, raw HAR,
-   filled auth holes, response bodies, and PII remain sealed locally. Unsafe
-   mutations dry-run and require approval from outside the invoking agent.
+1. **Context plane.** Context is tenant-isolated cited lineage, not an
+   unlimited transcript. Every claim records citations to a stimulus, message,
+   or pinned read; source movement invalidates dependants. Its canonical JSON
+   artifact verifies after a cold-copy handoff without a running Aiko host.
+2. **Native authoring loop.** The witnessed worker-directory family is selected
+   only from a promoted response schema, then follows write inert, compile, real
+   behavior test, admit by digest, attach least authority, retry, and judgment.
+   Compilation alone retains nothing. Other adapter families remain outside the
+   proven claim until each earns its own bounded transform and gate.
+3. **Unbrowse read boundary.** The in-tree adapter observes a credentialed JSON
+   GET, retains only route shape/schema/digests, validates it by a second origin
+   read, promotes only on exact agreement, and demotes on schema drift. The
+   credential and raw response are excluded from learned state. Mutation learning
+   and approval are outside this proven read-only boundary.
 
-**Gates:** citation invalidation and tenant isolation; generated-code
-admit/attach/revoke; cold browse → independent replay → promotion → drift
-demotion with no secret entering an admitted or published skill.
+**Gates:** `tests/fde-context-gate.sh`, `tests/fde-authoring-gate.sh`, and
+`tests/unbrowse-aiko-gate.sh` respectively prove citation invalidation and tenant
+isolation; write-inert/test/admit/attach/retry/judge; and cold observation →
+independent replay → promotion → drift demotion without retaining secrets.
 
-### 4 — Prove two verticals without pretending they are generic
+### 4 — Prove bounded verticals without pretending they are production-generic
 
-**Telethon employee pilot.** Provision a dedicated Telegram account through
-phone/code/2FA, store only its opaque session handle, normalize incoming updates
-through Neuron's provider-neutral interface, enforce per-chat and per-recipient
-ACLs, send through the canonical outbox, and read the resulting Telegram state
-back independently. An amendment contacts only changed recipients; redrive never
-blindly resends a message that already crossed the boundary. Auth expiry or an
-unobservable send stays pending and escalates.
+**Telethon policy contract (proven with a hermetic provider journal).** The
+empty-state witness consumes phone/code/2FA authorization material without
+persisting it, retains only an opaque handle, normalizes provider-shaped inbound
+updates, enforces per-chat and per-recipient ACLs, sends through a durable outbox,
+and settles only after a separate provider journal agrees. An amendment contacts
+only changed recipients; redrive never blindly resends a message that already
+crossed the boundary. Auth expiry or an unobservable send stays pending and
+escalates. This is not a claim that a production Telegram account integration is
+present.
 
 The first workflow is the one already witnessed in parts here: staffing
 requirement → deterministic roster → confirmation messages → replies or timeout
@@ -224,9 +230,9 @@ document back by identifier. A timeout without read-back is uncertain, never
 complete. Do not claim RFC, BAPI, OData, or generic SAP support until that exact
 surface is built and witnessed.
 
-**Gates:** Telethon account auth + inbound/outbound + read-back + ACL + duplicate
-redrive refusal; SAP permission denial + one sandbox transaction + idempotency +
-uncertain timeout + document read-back + compensation.
+**Gates:** `tests/telethon-fde-gate.sh` is green for the seven-point policy
+contract using synthetic provider records. A production Telethon provider witness
+and the SAP permission/idempotency/read-back/compensation gate remain absent.
 
 ### 5 — Judge across the boundary
 
@@ -249,10 +255,11 @@ until these independent witnesses agree.
 
 After the end-to-end gate passes, update the public README, vision, goal, product,
 risk, desktop, and implementation documents. Every capability statement must
-link to a green runnable gate or retain a **Designed**/**Absent** label. Until
-then, the honest status remains the table later in this README: the reactive,
-self-wiring substrate is proven; employee credential handoff, production
-Telethon, SAP, and an operator write UI are not.
+link to a green runnable gate or retain a **Designed**/**Absent** label. The honest status remains the table later in this README: the reactive,
+self-wiring substrate, OS-only credential envelope contract, cited context,
+bounded adapter authoring, learned read boundary, and Telethon policy contract
+are proven. Managed enterprise credential service, production Telethon, SAP, and
+an operator write UI are not.
 
 ---
 
@@ -527,6 +534,11 @@ zig build gate     published-interface · redrive · authored-gap           # ne
 | **Escalation ladder — notify → reply\|timeout → call → stop** | ✅ | `escalation-ladder-gate` |
 | One build, Linux-native, both layers linked | ✅ | `aiko-doctor` |
 | **Cell-native FDE self-wire** — account handle, not API key; Aiko seats Aiko | ✅ | `fde-workflow-gate` |
+| **OS-only credential-envelope contract** — opaque scope, expiry, MFA, revoke, rotate, logout | ✅ | `credential-envelope-gate` |
+| **Cited context plane** — tenant isolation, source invalidation, cold handoff | ✅ | `fde-context-gate` |
+| **Unbrowse read boundary** — independent replay promotion, drift demotion, sealed state | ✅ | `unbrowse-aiko-gate` |
+| **Bounded native adapter authoring** — inert bytes through judgment on the real local path | ✅ | `fde-authoring-gate` |
+| **Telethon seven-point policy contract** — hermetic provider journal, not production Telegram | ✅ | `telethon-fde-gate` |
 
 Read-only live view (`telemetry serve`) exists and is gated by
 `observe-live-gate`. What does **not** exist:
@@ -535,7 +547,7 @@ Read-only live view (`telemetry serve`) exists and is gated by
 |---|---|
 | Operator UI — queues, roster edit, approvals | ⬜ not started. The live view is read-only by design |
 | OCR at the model edge | ⬜ open. The substrate is binary-safe; the MCP edge has no read tool (`ROADMAP.md` R11). An OCR *HTTP API* works today |
-| Employee credential vault / browser-session handoff | ⬜ absent; Phase 2 of the AI-FDE plan, and no account-auth claim is promoted before its isolation/redaction/revocation gate |
+| Managed enterprise credential vault / browser-session handoff | ⬜ absent. The gated envelope uses native OS vaults and has no plaintext fallback; its lifecycle witness is synthetic, not a managed enterprise service |
 | Constraint solver | 🟡 partial, and no more than that. `staffing-engine-gate` witnesses a **deterministic** rotational assignment — qualification filter, then `(last_worked, name)` as a total order, refusing rather than under-filling. That is rotation, not a solver: no shift-conflict resolution, no multi-constraint optimisation, no preference weighting. The determinism requirement is the part that generalises — anything richer must keep it, or the loop never settles |
 
 ---

@@ -33,13 +33,13 @@ Aiko is hired into that loop as one **role identity**, not installed as a bag of
 
 ## First operational wedge
 
-**Telethon employee account** is the proposed first vertical. The first workflow is the staffing loop already partially witnessed here.
+**Telethon employee account** is the first vertical contract. Its seven safety properties are now witnessed from empty state with a hermetic provider journal; a production Telegram account/provider integration is still Absent. The first workflow is the staffing loop already partially witnessed here.
 
-**SAP** stays a sandbox pilot on its own gate. Do not block Telethon promotion on SAP. Do not claim RFC/BAPI/OData support until the selected customer surface is built and witnessed.
+**SAP** stays a sandbox pilot on its own gate. Do not block the Telethon contract on SAP. Do not claim RFC/BAPI/OData support until the selected customer surface is built and witnessed.
 
 ## Authority model
 
-- Aiko receives an **opaque credential handle** (`cred:<tenant>/<origin>/<account>`), never a password, cookie, token, or API key in prompts, Cell inputs, ledger rows, evidence, telemetry, generated package digests, or git.
+- Aiko receives an **opaque credential handle** (`cred:<opaque-id>`); its vault record binds tenant, origin, account, and allowed actions. A password, cookie, token, or API key never enters prompts, Cell inputs, ledger rows, evidence, telemetry, generated package digests, or git.
 - Secrets stay in the OS credential store and are injected only at the destination boundary. There is no plaintext-file fallback for employee credentials.
 - Every handle is tenant / origin / account scoped and lists allowed actions.
 - SSO, MFA, or consent on first use is required authorization, not ceremony to delete.
@@ -87,23 +87,23 @@ Smithers (local unpublished checkout: `aiko-flow/`) is the control/authoring sur
 | Account handle is the Cell-native auth unit; raw API keys are refused | `cell/tests/gates/fde-self-wire.sh` |
 | Deploy-workflow authors a seat Cell; deploy-aiko seats Aiko; digest moves with the outcome | `tests/fde-workflow-gate.sh` |
 | Graph planning is Contract’s, not a second scheduler | `tests/graph-engineering-gate.sh`, `aiko-doctor graph-plan` |
+| OS-only credential-envelope boundary and lifecycle contract: inventory, expiry, MFA handoff, revoke, rotate, logout | `tests/credential-envelope-gate.sh` |
+| Workflow pause/resume survives process restart and agrees with the bound Cell digest and Contract plan | `tests/fde-workflow-gate.sh` |
+| Context plane is cited, tenant-isolated, invalidates on source movement, and survives cold handoff | `tests/fde-context-gate.sh` |
+| A new worker-directory adapter family follows write-inert → real-path test → digest admission → least-authority attach → retry → judgment | `tests/fde-authoring-gate.sh` |
+| Unbrowse read boundary requires independent replay before promotion, demotes on drift, and seals credentials/raw responses from learned state | `tests/unbrowse-aiko-gate.sh` |
+| Telethon vertical policy contract: opaque login, neutral inbound, ACL, outbox/read-back, delta amendment, no crossed resend, expiry pending | `tests/telethon-fde-gate.sh` (hermetic provider journal) |
 
 ### Designed
 
-| Claim | Next witness |
-|---|---|
-| OS credential vault: inventory, expiry, MFA handoff, revoke, rotate, logout | `tests/credential-envelope-gate.sh` (not yet written) |
-| Smithers pause/resume survives restart and agrees with Cell digest + Contract frontier | remainder of `fde-workflow-gate` (control-plane half) |
-| Context plane: cited, tenant-isolated, invalidates on source movement, survives handoff | `tests/fde-context-gate.sh` |
-| Native authoring of a new adapter family through write-inert → admit → attach | `tests/fde-authoring-gate.sh` |
-| Unbrowse port: observe → independent replay → promote → drift demotes; secrets sealed | `tests/unbrowse-aiko-gate.sh` |
+No claim remains **Designed** in this increment. New provider families and live customer surfaces remain Designed until they have their own bounded implementation and witness.
 
 ### Absent
 
 | Claim | Why it is absent |
 |---|---|
 | Market-first / “the first AI FDE” | No competitive witness |
-| Production Telethon employee-account adapter | No `telethon-fde-gate` |
+| Production Telethon employee-account/provider integration | The green `telethon-fde-gate` uses a hermetic provider journal; it does not authenticate to or read back from Telegram |
 | Production SAP adapter | No `sap-fde-gate` |
 | Operator write UI (queues, roster edit, approvals) | Live view is read-only by design |
 | Managed credential vault in the OS secret store | Capability gap `enterprise-credential-vault` |
@@ -111,7 +111,7 @@ Smithers (local unpublished checkout: `aiko-flow/`) is the control/authoring sur
 
 ## Promotion gate for the first vertical
 
-Telethon may be promoted from Designed to Proven only when `tests/telethon-fde-gate.sh` proves, from empty state:
+The Telethon vertical policy contract is **Proven** because `tests/telethon-fde-gate.sh` is green and proves, from empty state with synthetic provider records:
 
 1. dedicated account login (phone / code / 2FA) stores only an opaque handle
 2. inbound updates normalize through Neuron’s provider-neutral interface
@@ -121,7 +121,7 @@ Telethon may be promoted from Designed to Proven only when `tests/telethon-fde-g
 6. redrive never resends a message that already crossed
 7. auth expiry or unobservable send stays pending and escalates
 
-No documentation promotion of “Aiko runs Telegram as an employee” happens before that gate is green.
+This promotes the seven-point policy contract, not “Aiko runs Telegram as an employee.” That production claim remains **Absent** until a separate witness exercises dedicated-account authentication, sending, and independent read-back against the real provider.
 
 ## Acceptance for this document
 
