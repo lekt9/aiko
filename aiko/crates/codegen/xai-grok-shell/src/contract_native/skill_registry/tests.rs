@@ -196,6 +196,38 @@ fn ranks_matching_skill_and_namespaces_pointer_graph() {
 }
 
 #[test]
+fn bundled_browser_takeover_routes_to_executable_web_action() {
+    let directory =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../.agents/skills/act-on-web-api");
+    let manifest = serde_json::from_slice::<ContractSkillManifest>(
+        &std::fs::read(directory.join(MANIFEST_NAME)).unwrap(),
+    )
+    .unwrap();
+    validate_manifest(&manifest, &directory).unwrap();
+
+    let ranked = rank(
+        "can you take over my browser and bulk-download the files",
+        vec![LoadedContractSkill {
+            manifest,
+            directory,
+            source: SkillSource::Bundled,
+            admission: SkillAdmission::ManifestValidated,
+        }],
+    );
+    assert_eq!(ranked.len(), 1);
+    assert_eq!(ranked[0].id, "act-on-web-api");
+    let execute = ranked[0]
+        .skill
+        .manifest
+        .nodes
+        .iter()
+        .find(|node| node.key == "execute-request")
+        .unwrap();
+    assert!(!execute.requires_authority);
+    assert!(execute.reversible);
+}
+
+#[test]
 fn schedule_follow_up_declares_named_evidence_for_each_dependency() {
     let temporary = tempfile::tempdir().unwrap();
     let skill_root = temporary.path().join(".agents/skills/schedule-follow-up");

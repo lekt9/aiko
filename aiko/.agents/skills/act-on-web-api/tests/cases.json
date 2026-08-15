@@ -1,9 +1,7 @@
 [
   {
     "expect": {
-      "held_effects": [
-        "account_mutation"
-      ],
+      "held_effects": [],
       "root_count": 1,
       "selected": "act-on-web-api"
     },

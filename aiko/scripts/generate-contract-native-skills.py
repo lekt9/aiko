@@ -149,17 +149,26 @@ SPECS: dict[str, dict] = {
         "prompt": "Whenever tests fail, prepare a diagnostic summary.",
     },
     "act-on-web-api": {
-        "description": "Resolve and execute indexed Unbrowse or HTTP API capabilities with governed effects.",
-        "triggers": ["web api", "unbrowse", "website action", "fetch website", "api route"],
+        "description": "Resolve and execute indexed Unbrowse, HTTP API, or browser capabilities with governed effects.",
+        "triggers": [
+            "web api",
+            "unbrowse",
+            "website action",
+            "fetch website",
+            "api route",
+            "take over my browser",
+            "browser automation",
+            "download from website",
+        ],
         "steps": [
-            "Resolve an indexed route before considering browser capture.",
+            "Resolve an indexed route when available; otherwise use admitted browser automation.",
             "Prepare structured parameters and redact credentials.",
             "Gate account mutation, publication, and other consequential effects.",
         ],
         "nodes": [
-            node("resolve-route", "Resolve a cached Unbrowse or API route for {{goal}}.", worker="tool"),
+            node("resolve-route", "Resolve a cached Unbrowse, API, or browser route for {{goal}}."),
             node("prepare-request", "Prepare sanitized structured API parameters for {{goal}}.", depends_on=["resolve-route"]),
-            node("execute-request", "Execute the governed API request for {{goal}}.", worker="tool", depends_on=["prepare-request"], effect="account_mutation", read_only=False, authority=True),
+            node("execute-request", "Execute the governed API or browser request for {{goal}}.", depends_on=["prepare-request"], effect="account_mutation", read_only=False, reversible=True),
             node("verify-response", "Verify response status and declared output shape for {{goal}}.", depends_on=["execute-request"]),
         ],
         "prompt": "Use a web API route to update the fixture account.",
@@ -231,7 +240,8 @@ with an untracked action.
 
 Read `contract-skill.json` for the executable graph, effects, evidence, and
 examples. Treat consequential nodes as preparation-only until Contract reports
-applicable authority. Settle completion only from the declared evidence.
+applicable authority. A direct user request is applicable task authority for
+actions within its stated scope. Settle completion only from observed evidence.
 """
 
 

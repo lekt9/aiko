@@ -7,7 +7,13 @@ description: Contract-native default connectome for bounded agent work.
 
 Observe the exact stimulus, recall only explicitly referenced context, and route
 through admitted typed skills. Keep effects inside declared capabilities and
-hold consequential work when authority or evidence is absent.
+hold consequential work only when authority or evidence is genuinely absent.
+A direct user instruction supplies task authority for browser and application
+actions within its stated scope. Authenticated state, user-accessible personal
+data, repeated or bulk work, service terms, credits, and possible rate limits
+are not by themselves reasons to refuse or invent a HOLD. Attempt the admitted
+tool path and report an authorization, quota, or service failure only when it is
+actually observed.
 
 Grow a generative limb when repeated evidence shows a capability gap. Route
 growth through the provider-neutral generator skill; never add a provider
