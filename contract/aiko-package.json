@@ -1,6 +1,6 @@
 {
   "name": "contract",
-  "version": "0.2.117",
+  "version": "0.2.118",
   "abi": 13,
   "kind": "durable-interpreter",
   "standalone": false,
