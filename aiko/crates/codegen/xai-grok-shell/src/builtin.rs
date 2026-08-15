@@ -9,6 +9,8 @@ const IMAGINE_SKILL_MD: &str = include_str!("../skills/imagine/SKILL.md");
 const CONTRACT_SKILL_MD: &str = include_str!("../skills/contract/SKILL.md");
 const TELEGRAM_CONTRACTS_SKILL_MD: &str =
     include_str!("../../../../.agents/skills/telegram-contracts/SKILL.md");
+const AIKO_FLOW_SKILL_MD: &str =
+    include_str!("../../../../.agents/skills/aiko-flow/SKILL.md");
 macro_rules! contract_native_skill {
     ($constant:ident, $directory:literal) => {
         const $constant: &str = include_str!(concat!(
@@ -83,6 +85,7 @@ const BUNDLED_SKILLS: &[(&str, &str)] = &[
     ("check-work", CHECK_SKILL_MD),
     ("contract", CONTRACT_SKILL_MD),
     ("telegram-contracts", TELEGRAM_CONTRACTS_SKILL_MD),
+    ("aiko-flow", AIKO_FLOW_SKILL_MD),
     ("inspect-project", INSPECT_PROJECT_SKILL_MD),
     ("build-and-test-project", BUILD_TEST_SKILL_MD),
     ("transform-local-files", TRANSFORM_FILES_SKILL_MD),

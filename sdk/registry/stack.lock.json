@@ -38,7 +38,7 @@
       "requires": [
         "cell"
       ],
-      "optional": true,
+      "optional": false,
       "source": "aiko-flow"
     }
   }

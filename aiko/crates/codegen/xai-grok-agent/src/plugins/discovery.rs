@@ -186,6 +186,8 @@ impl DiscoveryConfig {
     /// Plugins from auto-enabled scopes (`CliOverride`, `ConfigPath`) are added
     /// to `enabled`. All others (`User`, `Project`) are added to `disabled`.
     /// Plugins already present in either list are left untouched.
+    /// The Smithers control plane is default-enabled when present (Cell-native
+    /// self-wire is the product default, not an opt-in flag).
     pub fn populate_plugin_lists(&mut self, discovered: &[DiscoveredPlugin]) {
         for dp in discovered {
             let name = &dp.manifest.name;
@@ -195,7 +197,10 @@ impl DiscoveryConfig {
                 tracing::debug!(plugin = %name, id = %dp.id.0, "plugin already in enabled/disabled list");
                 continue;
             }
-            if matches!(dp.scope, PluginScope::CliOverride | PluginScope::ConfigPath) {
+            let is_default_enabled = name == "smithers";
+            if is_default_enabled
+                || matches!(dp.scope, PluginScope::CliOverride | PluginScope::ConfigPath)
+            {
                 tracing::debug!(plugin = %name, scope = ?dp.scope, "auto-adding to enabled list");
                 self.enabled.push(name.clone());
             } else {

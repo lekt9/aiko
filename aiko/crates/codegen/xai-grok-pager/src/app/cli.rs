@@ -989,7 +989,7 @@ pub struct PagerArgs {
     #[arg(long = "best-of-n", value_name = "N", conflicts_with = "no_subagents")]
     pub best_of_n: Option<u32>,
     /// Sandbox profile for filesystem and network access.
-    #[arg(long, env = "GROK_SANDBOX", value_name = "PROFILE")]
+    #[arg(long, env = "AIKO_SANDBOX", value_name = "PROFILE")]
     pub sandbox: Option<String>,
     /// Session storage mode: local or writeback.
     #[arg(long = "storage-mode", value_name = "MODE", hide = true)]

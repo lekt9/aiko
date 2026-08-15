@@ -858,6 +858,32 @@ pub(crate) fn resolve_string_flag(
     }
     None
 }
+
+/// Alias-aware variant: prefer `canonical_env` (AIKO_*) then `compat_env` (GROK_*).
+pub(crate) fn resolve_string_flag_compat(
+    cli_arg: Option<&str>,
+    canonical_env: &str,
+    compat_env: &str,
+    config_val: Option<&str>,
+    feature_flag_val: Option<&str>,
+) -> Option<Resolved<String>> {
+    if let Some(val) = cli_arg.filter(|s| !s.is_empty()) {
+        return Some(Resolved::new(val.to_owned(), ConfigSource::Cli));
+    }
+    if let Some(val) = env_string(canonical_env) {
+        return Some(Resolved::new(val, ConfigSource::Env));
+    }
+    if let Some(val) = env_string(compat_env) {
+        return Some(Resolved::new(val, ConfigSource::Env));
+    }
+    if let Some(val) = config_val.filter(|s| !s.is_empty()) {
+        return Some(Resolved::new(val.to_owned(), ConfigSource::Config));
+    }
+    if let Some(val) = feature_flag_val.filter(|s| !s.is_empty()) {
+        return Some(Resolved::new(val.to_owned(), ConfigSource::Remote));
+    }
+    None
+}
 /// Resolve `enabled` for section-based configs (memory, subagents, etc.).
 /// Feature flag only applies when the TOML section is absent.
 pub(crate) fn resolve_enabled(
@@ -1153,11 +1179,27 @@ impl SandboxSettingsConfig {
         if let Some(val) = requirement {
             return Resolved::new(val.to_owned(), ConfigSource::Requirement);
         }
-        resolve_string_flag(cli_arg, "GROK_SANDBOX", self.profile.as_deref(), None)
-            .unwrap_or_else(|| Resolved::new("off".to_owned(), ConfigSource::Default))
+        // Prefer AIKO_SANDBOX (canonical), fall back to GROK_SANDBOX (compat).
+        if let Some(v) = resolve_string_flag_compat(
+            cli_arg,
+            "AIKO_SANDBOX",
+            "GROK_SANDBOX",
+            self.profile.as_deref(),
+            None,
+        ) {
+            return v;
+        }
+        Resolved::new("off".to_owned(), ConfigSource::Default)
     }
     /// Resolve auto_allow_bash: requirement > env > config > default (false).
     pub fn resolve_auto_allow_bash(&self, requirement: Option<bool>) -> Resolved<bool> {
+        // Canonical AIKO_, compat GROK_ (shared env var space — check new name first).
+        if std::env::var_os("AIKO_SANDBOX_AUTO_ALLOW_BASH").is_some() {
+            return BoolFlag::env("AIKO_SANDBOX_AUTO_ALLOW_BASH")
+                .requirement(requirement)
+                .config(self.auto_allow_bash)
+                .resolve();
+        }
         BoolFlag::env("GROK_SANDBOX_AUTO_ALLOW_BASH")
             .requirement(requirement)
             .config(self.auto_allow_bash)

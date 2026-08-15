@@ -7,6 +7,10 @@ zig-out/
 zig-out-*/
 zig-cache/
 .zig-cache/
+# Host-local offload symlinks (no trailing slash — git tracks these as files)
+/.zig-cache
+/target
+/neuron/.zig-cache
 __pycache__/
 *.pyc
 .venv/

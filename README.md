@@ -551,7 +551,7 @@ no remote at all, is one repository with one history.
 | `contract/` | Contract substrate — ledger, W6H, occurrences. In-tree; see `contract/README.md` |
 | `aiko/` | Rust host, desktop, skills, MCP. Not in the Zig build |
 | `cell/` | Fractal YAML/Python harness. Standalone — no runtime import of `contract/` or `neuron/` |
-| `sdk/registry/stack.lock.json` | Compatible package lock — neuron, contract, cell, optional control |
+| `sdk/registry/stack.lock.json` | Compatible package lock — neuron, contract, cell, control (Smithers) |
 | `src/` | Root harness — `aiko-doctor` links both Zig layers (comptime assert `contract.FireRequest == typed_neuron.FireRequest`) |
 | `tests/` | Root witnesses — `bridge`, `dispatch`, `tick`, `zig-doctrine`, `conformance`, graph-engineering |
 | `docs/` | Cross-layer map — start at [`docs/README.md`](docs/README.md) |

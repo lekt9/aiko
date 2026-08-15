@@ -208,7 +208,8 @@ def list_pkgs(lock: dict) -> None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="aiko-packages")
     ap.add_argument("cmd", choices=("check", "list", "install", "update"))
-    ap.add_argument("--with-control", action="store_true", help="also install Smithers as an Aiko plugin limb")
+    ap.add_argument("--with-control", action="store_true", help="also install Smithers as an Aiko plugin limb (now the default when the control source is present)")
+    ap.add_argument("--without-control", action="store_true", help="skip Smithers control limb even when its source is present")
     ap.add_argument("--aiko-bin", help="Aiko binary used for native plugin installation")
     args = ap.parse_args(argv)
     if not LOCK_PATH.is_file():
@@ -225,7 +226,25 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "check":
             print("aiko-packages: compatible")
             return 0
-        path, control_path = install(lock, with_control=args.with_control, aiko_bin=args.aiko_bin)
+        # Smithers is the default control plane: install it whenever the source
+        # is present unless the caller explicitly opts out. --with-control is
+        # kept for compatibility and forces the install (failing if incomplete).
+        with_control = args.with_control
+        if not with_control and not args.without_control and args.cmd == "install":
+            control_src = ROOT / "aiko-flow"
+            plugin_src = control_src / "claude-plugin"
+            if (control_src / "apps" / "cli" / "src" / "index.js").is_file() and (control_src / "node_modules").is_dir() and (plugin_src / ".mcp.json").is_file():
+                with_control = True
+        try:
+            path, control_path = install(lock, with_control=with_control, aiko_bin=args.aiko_bin)
+        except SystemExit as e:
+            # Auto-detected installs must not break `install` on a bare tree;
+            # fall back to cell-only with a warning when dependencies are missing.
+            if not args.with_control and not args.without_control and with_control:
+                print(f"aiko-packages: control auto-install skipped — {e}", file=sys.stderr)
+                path, control_path = install(lock, with_control=False, aiko_bin=args.aiko_bin)
+            else:
+                raise
         print(f"aiko-packages: installed cell → {path}")
         if control_path:
             print(f"aiko-packages: installed control limb → {control_path}")

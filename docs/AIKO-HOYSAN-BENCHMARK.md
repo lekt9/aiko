@@ -56,9 +56,9 @@ The new gates cover exact gang composition, global worker uniqueness, WAH and ex
 
 ## Honest remaining blocker
 
-This does **not** claim a full Smithers scheduler/CLI run. `aiko-flow/` is unpublished and incomplete in this tree. A clean `bun apps/cli/src/index.js graph ...` currently cannot boot: dependencies are not installed, and the audited checkout also lacks 18 imported `packages/gateway-client/src/data/*` modules. The package gate installs Cell, not the optional control plane.
+The Smithers control plane is now the default distribution (Cell + `control` package). The `aiko-packages` installer auto-installs `smithers` as an Aiko plugin when `aiko-flow/` and its `node_modules` are present, and `DiscoveryConfig::populate_plugin_lists` default-enables the installed `smithers` plugin so no manual `aiko plugin enable` or integration flag is needed. A bare source tree without `aiko-flow/node_modules` falls back to a Cell-only install with a warning — this accommodates the public `github.com/lekt9/aiko` clone path where `aiko-flow` may be absent, and should not be confused with an intentional opt-in surface.
 
-Therefore the proved boundary is: **native `<Cell>` adapter and actual harness execution**, not durable Smithers scheduling/resume. Closing that boundary requires a complete, version-matched Smithers source package, generated types, an optional control installer, and a scheduler-level resume/no-refire witness. Inventing those missing upstream modules here would be a fabricated green.
+The remaining unproved boundary is durable Smithers scheduling/resume witness coverage on real gateway-run surfaces, not whether the harness is installed. Inventing upstream scheduler internals here would be a fabricated green.
 
 ## Repository acceptance-gate audit
 

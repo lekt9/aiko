@@ -1,5 +1,5 @@
 #!/bin/sh
-# Compatible stack packages: neuron, contract, cell, optional control.
+# Compatible stack packages: neuron, contract, cell, control (Smithers, default-enabled).
 #   scripts/aiko-packages.sh check|list|install|update
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
