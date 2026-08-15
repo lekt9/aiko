@@ -1,108 +1,123 @@
 ---
 name: machine-cockpit
-description: "Wire a fresh macOS seat so a non-technical teammate can chat with Aiko in their browser and pair Telegram without touching the terminal. Use when the user says 'wire Gbear', 'set up a new Mac', 'install aiko on a machine', 'give them a UI', 'hook up Telegram for them', 'make it friendly', or hands you an IP/user/password for a new host. Also use when installing the aiko portable package + cockpit chat (port 8787) + telegram-daemon (launchd) onto a target over Tailscale/SSH."
+description: "Channel-generic cockpit for wiring any mac seat: browser chat (port 8787) + per-provider setup (Telegram, Slack, Discord, webhook) with self-aware auth/bridge/pairing. Use when the user says 'wire Gbear', 'set up a new Mac', 'install aiko', 'give them a UI', 'hook up Telegram/Slack/Discord', 'make it friendly', or hands you an IP/user/password. Telegram is one provider, not the product."
 ---
 
-# Machine Cockpit — friendly seat setup
+# Machine Cockpit — channel-generic seat setup
 
-Turn a bare macOS host into a chat-ready Aiko seat: install the portable stack, drop a browser chat UI, and make Telegram pairable in one tab — no terminal needed on the other end.
+Turn a bare macOS host into a chat-ready Aiko seat for **any** messaging channel: a browser cockpit on `:8787` plus per-provider wiring. Telegram was the first provider; the skill is provider-generic (Telegram is one `provider=telegram` row).
 
-## What this does (3 minutes, same-arch shortcut)
+## What this does (provider-generic)
 
-1. **Install Aiko** — assemble (or reuse) `target/aiko-package/aiko-<ver>-macos-aarch64.tar.gz` locally, `scp` to `gbear@HOST:/tmp/`, `tar -xzf` + `install.sh` on the host. Verifies `aiko --version`, `aiko-doctor`, `~/.aiko/lib/libcontract.dylib` ABI, and `~/.local/bin` on PATH. Assumes same arch (both aarch64) so no cross-compile.
+1. **Install Aiko** — assemble `target/aiko-package/aiko-<ver>-macos-aarch64.tar.gz`, ship + `install.sh` on target. Verifies `aiko --version`, `aiko-doctor`, `libcontract ABI`, `~/.local/bin` on PATH. Same-arch shortcut, no cross-compile.
 
-2. **Drop the Cockpit** — browser chat + Telegram wizard at `http://127.0.0.1:8787`:
-   - UI template: local `aiko/.agents/skills/machine-cockpit/assets/chat.html` (or `/tmp/aiko-chat-ui.html` during dev) — dark, two tabs (Chat / Telegram), talks to `aiko native serve` on `127.0.0.1:19420` via WebSocket ACP `aiko.acp.v1` (`session/load` → `session/new` → `session/prompt`), auto-handles `session/request_permission` + `x.ai/ask_user_question`.
-   - Backend: `cockpit.py` (python3 stdlib only, `http.server`) serves `__TOKEN__`/`__API_BASE__` from `~/.aiko/native/api.json` and wraps `aiko native telegram {status,set-token,approve-pair,log}` + `launchctl` for the bridge. Endpoints: `GET /`, `GET /api/health`, `GET /api/telegram/{status,check,log}`, `POST /api/telegram/{set-token,start,stop,approve-pair}`.
-   - Daemon: `aiko/target/release/telegram-daemon` → `~/.local/bin/telegram-daemon` (verify via http before saving token, then `launchd` bridge at `net.theclarityproject.aiko.telegram-bridge`).
-   - Launchd: `~/Library/LaunchAgents/net.theclarityproject.aiko.cockpit.plist` (`/usr/bin/python3 ~/.local/share/aiko-cockpit/cockpit.py`, `KeepAlive`+`RunAtLoad`, `AIKO_COCKPIT_PORT=8787`, logs to `~/.aiko/logs/cockpit.log`). Also leaves `~/Desktop/Aiko — Start Here.txt`.
+2. **Cockpit** — `http://127.0.0.1:8787`:
+   - UI: `assets/chat.html` — Chat tab (WebSocket ACP `aiko.acp.v1` to `aiko native serve` on `:19420`) + per-provider tabs (Telegram today, Slack/Discord next) rendered from `wiring[]`. Auto-handles `session/request_permission` + `x.ai/ask_user_question`.
+   - Backend: `scripts/cockpit.py` (stdlib only) serves `__TOKEN__/__API_BASE__` from `~/.aiko/native/api.json`, wraps provider CLIs (`aiko native telegram ...` is `provider=telegram`) + `launchctl`. Generic endpoints: `GET /`, `GET /api/health`, `GET /api/self` (self.json + live), `GET /api/auth-aware`, `GET /api/<provider>/self-aware|status|check|log`, `POST /api/<provider>/{set-token,start,stop,approve-pair}`. Telegram keeps `GET /api/telegram/self-aware` as alias for compat.
+   - Self-aware (decoupled, no daemon fork): cockpit is the brain, daemon stays dumb. `hint ∈ {not_signed_in, no_token, bridge_stopped, needs_pairing, waiting_first_message, ready}` drives the chat banner. `sendPrompt` checks `cachedAuth.signed_in` before ACP and shows "Not signed in → aiko login --device-code" sheet. First-contact: whoever messaged first is auto-approved when `approved==[] && signed_in` (pendingChats[0] → approvedUserIds).
+   - Daemon: `aiko/target/release/telegram-daemon` → `~/.local/bin/telegram-daemon` for `provider=telegram` (other providers via `channel.register` below).
+   - Launchd: `net.theclarityproject.aiko.cockpit` (`python3 cockpit.py`, KeepAlive+RunAtLoad, `AIKO_COCKPIT_PORT=8787`). Also leaves `~/Desktop/Aiko — Start Here.txt`.
 
-3. **Telegram wiring** — the UI's Telegram tab guides: `@BotFather /newbot` → paste token → `Save` (masked `XXXX…YYYY`, `getMe` checked, save via `aiko native telegram set-token`) → `Start bridge` → message bot → paste pairing code → `Approve` (`aiko native telegram approve-pair`). UI also supports `Stop`/`Status`/`Check`/`Log`.
+3. **Provider wiring (example: Telegram)** — `@BotFather /newbot` → paste token → Save (masked `XXXX…YYYY`, `getMe` checked, `aiko native telegram set-token`) → Start bridge (launchd `net.theclarityproject.aiko.telegram-bridge`) → slash commands registered (`/start /help /status /login` via `setMyCommands`) → message bot → pairing (auto, or manual code) → Aiko dispatches via `agent_mail` with typing + media (photo/document/voice/audio/video) + inline keyboards. See `docs/channel-api.md` (generic) + `docs/telegram-api.md` (provider).
+
+## Channels
+
+| provider | token/credential | observe | send | presence | media in/out | commands | status hint same? |
+|---|---|---|---|---|---|---|---|
+| **telegram** | `@BotFather` token → `aiko native telegram set-token` | `getUpdates` poll | `sendMessage` (+ typing) | `sendChatAction` | `getFile` ↔ `sendPhoto/Document/Voice/Audio/Video` | `setMyCommands` `/start /help /status /login` | yes |
+| **slack** | `SLACK_BOT_TOKEN` → `aiko native slack set-token` (future) | Events API / Socket Mode | `chat.postMessage` | typing via `conversations_typing` | `files.info` ↔ `files.upload` | `commands` + shortcuts | yes — same `wiring[].channel` shape |
+| **discord** | `DISCORD_BOT_TOKEN` (future) | Gateway intents | `create_message` | typing | attachments ↔ uploads | `bulk_overwrite_guild_commands` | yes |
+| **webhook/IMAP/SAP** | env var per `self-integrate` | poll/webhook per service | adapter verb | — | per OPENAPI verb list | — | yes |
+
+Adding a provider = new `provider=` value, a `docs/<provider>-api.md` row, and a `channel.register` entry (see below). No changes to self-model, hint enum, or chat.html contract.
+
+### Registering a new channel (without editing the skill prose)
+
+```sh
+# 1. Docs: add .agents/skills/machine-cockpit/docs/<provider>-api.md (contract table)
+# 2. Script: add provider case to cockpit.py: read_<provider>_state() + routes /api/<provider>/self-aware
+# 3. Contract: add .agents/skills/machine-cockpit/docs/<provider>-contracts.md (contracts per verb)
+# 4. Self-model: wiring[] already generic — just push {id, channel: "<provider>", host, token masked, bridge:{state, hint}, artifacts}
+# 5. UI: chat.html renders tabs from GET /api/self wiring[] (no hard-coded Telegram tab)
+python3 .agents/skills/machine-cockpit/scripts/build-self.py  # refreshes self.json
+./tests/machine-cockpit-self-aware-gate.sh --provider <provider>  # gate must go red if you revert cockpit
+```
 
 ## When to use
 
-- "set up Gbear / a new teammate / this Mac / that IP"
-- "wire them a UI / make it non-technical / Telegram setup"
-- handed an `IP  user  password` triple for a new host
+- "wire Gbear / new Mac / this host / that IP" — any provider
+- "make it friendly / give them a UI / hook up Telegram/Slack/Discord"
+- handed `IP user password` triple
 
-## Inputs the skill expects
+## Inputs
 
-- `host`: Tailscale IP or `user@host` (gbear@100.104.x.x)
-- `password`: for `sshpass` (pass `--ask` or env `AIKO_COCKPIT_PASSWORD` instead of pasting into chat when possible)
-- optional `port` (default `8787`), `aikoPort` (default `19420`)
+- `host`: `user@host` (gbear@100.104.x.x), `password` via `sshpass`/`--ask`/`AIKO_COCKPIT_PASSWORD`, `port` (8787), `aikoPort` (19420), `provider` (default: telegram, or `auto` to wire all configured)
 
-Don't ask for what `aiko native discovery` already knows.
+## Steps (inside this machine, over SSH)
 
-## Steps (run inside this machine, talking to the target over SSH)
-
-All remote work uses `ssh -F /dev/null -o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive` + `sshpass` (so `~/.ssh/config` Host * identity doesn't interfere). Prefer piping files over `cat | ssh "cat > /tmp/..."` to avoid `scp` auth quirks; big binaries stream the same way.
+`ssh -F /dev/null -o PubkeyAuthentication=no` + `sshpass`, pipe files via `cat | ssh "cat > /tmp/..."` for auth safety, binaries via same.
 
 ### A — build & ship Aiko
+
 ```sh
-# 1. ensure pyyaml for assemble-portable on this machine
 pip3 install --break-system-packages pyyaml 2>&1 | tail -2
-# 2. assemble (reuses existing binaries when present, no rebuild)
 AIKO_PACKAGE_ONLY=1 bash -c 'source scripts/lib/aiko-env.sh; aiko_env_init; source scripts/lib/assemble-portable.sh; assemble_portable_tarball' 2>&1 | tail -3
-# 3. ship + install on target
-sshpass -p "$PASS" scp -F /dev/null ... target/aiko-package/*.tar.gz gbear@HOST:/tmp/aiko-package.tar.gz
-sshpass -p "$PASS" ssh ... gbear@HOST "mkdir -p ~/src/aiko-package && tar -xzf /tmp/aiko-package.tar.gz -C ~/src/aiko-package && bash ~/src/aiko-package/aiko-*/install.sh"
-ssh ... gbear@HOST "~/.local/bin/aiko --version; ~/.local/bin/aiko-doctor | head"
+sshpass ... scp -F /dev/null target/aiko-package/*.tar.gz gbear@HOST:/tmp/aiko-package.tar.gz
+sshpass ... ssh ... gbear@HOST "mkdir -p ~/src/aiko-package && tar -xzf /tmp/aiko-package.tar.gz -C ~/src/aiko-package && bash ~/src/aiko-package/aiko-*/install.sh"
 ```
 
-### B — ship cockpit + daemon
+### B — ship cockpit + provider daemon
+
 ```sh
-# daemon (build once, reuse): cargo build --manifest-path aiko/Cargo.toml -p xai-telegram-daemon --bin telegram-daemon --release
-cat aiko/target/release/telegram-daemon | ssh ... gbear@HOST "cat > /tmp/telegram-daemon.bin && install -m 755 /tmp/telegram-daemon.bin ~/.local/bin/telegram-daemon"
-cat /tmp/aiko-chat-ui.html | ssh ... gbear@HOST "cat > /tmp/aiko-chat-ui.html"
-cat /tmp/aiko-cockpit.py   | ssh ... gbear@HOST "cat > /tmp/aiko-cockpit.py && python3 -m py_compile /tmp/aiko-cockpit.py"
-ssh ... gbear@HOST "install -m 755 /tmp/telegram-daemon.bin ~/.local/bin/telegram-daemon; mkdir -p ~/.local/share/aiko-cockpit; cp /tmp/aiko-chat-ui.html ~/.local/share/aiko-cockpit/index.template.html; cp /tmp/aiko-cockpit.py ~/.local/share/aiko-cockpit/cockpit.py; cp ~/.local/share/aiko-cockpit/cockpit.py ~/.local/bin/aiko-cockpit; chmod +x ~/.local/bin/aiko-cockpit"
+cargo build --manifest-path aiko/Cargo.toml -p xai-telegram-daemon --bin telegram-daemon --release
+cat aiko/target/release/telegram-daemon | ssh ... "cat > /tmp/telegram-daemon.bin && install -m 755 /tmp/telegram-daemon.bin ~/.local/bin/telegram-daemon"
+cat .agents/skills/machine-cockpit/assets/chat.html | ssh ... "cat > /tmp/chat.html && mkdir -p ~/.local/share/aiko-cockpit && cp /tmp/chat.html ~/.local/share/aiko-cockpit/index.template.html"
+cat .agents/skills/machine-cockpit/scripts/cockpit.py | ssh ... "cat > /tmp/cockpit.py && python3 -m py_compile /tmp/cockpit.py && mkdir -p ~/.local/share/aiko-cockpit && cp /tmp/cockpit.py ~/.local/share/aiko-cockpit/cockpit.py && cp ~/.local/share/aiko-cockpit/cockpit.py ~/.local/bin/aiko-cockpit && chmod +x ~/.local/bin/aiko-cockpit"
 ```
 
-### C — launch
+### C — launch + self-aware
+
 ```sh
-ssh ... gbear@HOST "cat > ~/Library/LaunchAgents/net.theclarityproject.aiko.cockpit.plist <<'PLIST' ...; launchctl bootout ...; launchctl bootstrap ...; launchctl kickstart ...; sleep 1; curl -s http://127.0.0.1:8787/api/health; curl -s http://127.0.0.1:8787/ | head"
-ssh ... gbear@HOST "cat > ~/Desktop/'Aiko — Start Here.txt' <<'TXT' ...; open http://127.0.0.1:8787"
+ssh ... "cat > ~/Library/LaunchAgents/net.theclarityproject.aiko.cockpit.plist <<'PLIST' ...; launchctl bootout ...; launchctl bootstrap ...; launchctl kickstart ...; sleep 1; curl -s http://127.0.0.1:8787/api/self | jq .hint; curl -s http://127.0.0.1:8787/api/telegram/self-aware | jq .hint"
 ```
 
-## Verification (the skill's own gate)
+## Verification (gate)
 
-On the target, these must all succeed (non-zero or empty = fail the skill):
+All must pass (target):
 
 ```sh
 curl -s http://127.0.0.1:19420/v1/health -H "Authorization: Bearer $(cat ~/.aiko/native/token)" | jq -e '.status=="ok" and .contractAbi==13'
 curl -s http://127.0.0.1:8787/api/health | jq -e '.ok==true'
-curl -s http://127.0.0.1:8787/ | grep -q '<title>Aiko'
+curl -s http://127.0.0.1:8787/api/self | jq -e '.schema=="aiko.self.v1"'
+curl -s http://127.0.0.1:8787/ | grep -q 'Aiko'
 ~/.local/bin/aiko --version | grep -q 'aiko '
-~/.local/bin/telegram-daemon --help 2>&1 | grep -q 'Telegram' || test -x ~/.local/bin/telegram-daemon
 launchctl print gui/$(id -u)/net.theclarityproject.aiko.cockpit | grep -q 'state = running'
-test -f ~/Desktop/'Aiko — Start Here.txt'
+test -f ~/.aiko/self.json && python3 -c "import json,pathlib; d=json.loads(pathlib.Path.home().joinpath('.aiko/self.json').read_text()); assert 'telegram' in str(d).lower() or 'wiring' in d"
 ```
+Provider-specific (telegram today): `~/.local/bin/telegram-daemon` + `curl .../api/telegram/self-aware | jq -e '.hint'`.
 
 ## Where things live
 
-| Thing | On your machine (source) | On their machine (dest) |
+| Thing | Source | Dest |
 |---|---|---|
-| Aiko package | `target/aiko-package/*.tar.gz` | `/tmp/aiko-package.tar.gz` → `~/src/aiko-package/` → `~/.local/bin/aiko`, `~/.aiko/lib/libcontract.*`, `~/.aiko/limbs/`, `~/.aiko/cell/` |
-| Chat UI template | this skill's `assets/chat.html` | `~/.local/share/aiko-cockpit/index.template.html` + `/tmp/aiko-chat-ui.html` |
-| Cockpit server | this skill's `scripts/cockpit.py` | `~/.local/share/aiko-cockpit/cockpit.py` + `~/.local/bin/aiko-cockpit` + `/tmp/aiko-cockpit.py` |
-| Telegram daemon | `aiko/target/release/telegram-daemon` | `~/.local/bin/telegram-daemon` |
-| Plists | generated on target | `~/Library/LaunchAgents/net.theclarityproject.aiko.cockpit.plist` (port 8787) + `net.theclarityproject.aiko.telegram-bridge.plist` (on first Start) + `net.theclarityproject.aiko.contract-worker.plist` |
+| Aiko package | `target/aiko-package/*.tar.gz` | `/tmp/aiko-package.tar.gz` → `~/.local/bin/aiko`, `~/.aiko/lib/libcontract.*`, `~/.aiko/limbs/` |
+| Chat UI | `assets/chat.html` | `~/.local/share/aiko-cockpit/index.template.html` |
+| Cockpit | `scripts/cockpit.py` (generic `GET /api/<provider>/self-aware`) | `~/.local/share/aiko-cockpit/cockpit.py` + `~/.local/bin/aiko-cockpit` |
+| Provider daemon | `aiko/target/release/telegram-daemon` (`provider=telegram`) | `~/.local/bin/telegram-daemon` (other providers analogous) |
+| Plists | generated on target | `net.theclarityproject.aiko.cockpit` (:8787) + `net.theclarityproject.aiko.telegram-bridge` + `net.theclarityproject.aiko.contract-worker` |
+| Docs | `docs/channel-api.md` (generic) + `docs/telegram-api.md` (provider) | — |
+| Self model | `scripts/build-self.py` → `~/.aiko/self.json` (`aiko.self.v1`: aiko/host/auth + `wiring[]` `{id, channel, bridge:{hint, pendingChats}}` + `artifacts[]`) | — |
 
-Secrets: the UI never logs a token. `cockpit.py` validates via `https://api.telegram.org/bot<token>/getMe` before calling `aiko native telegram set-token`; the token is then masked as `XXXX…YYYY` in responses. Pair codes are 4–6 hex.
+Secrets: no raw token in self.json/logs/rows; masked `XXXX…YYYY`; pair codes not stored.
 
 ## Reuse
 
-Next time, same skill — just `aiko "wire 100.104.x.x as Gbear"` and it will detect an existing Aiko (`~/.local/bin/aiko --version` succeeds) and skip the heavy install, jumping straight to cockpit/daemon refresh. The skill is at `aiko/.agents/skills/machine-cockpit/SKILL.md` (repo-local, highest precedence, no rebuild needed) and live-reloads within ~2s.
+`aiko "wire 100.104.x.x as Gbear"` — existing `~/.local/bin/aiko` skips heavy install, refreshes cockpit/daemon, rebuilds `self.json`. Skill is project-local (`.agents/skills/machine-cockpit/`), `aiko inspect --json` shows `machine-cockpit` as `project`.
 
 ## Self-aware layer (decoupled, no daemon fork)
 
-The cockpit is the brain, the daemon stays dumb. New endpoints (no core changes):
+`GET /api/self` + `GET /api/<provider>/self-aware` → `{hasToken, username, running, approvedUserIds, pendingChats, bridgeLog, auth, hint, action}` with `hint ∈ {not_signed_in, no_token, bridge_stopped, needs_pairing, waiting_first_message, ready}` (generic). First-contact: `pendingChats[0]` auto-approved when `approved==[] && signed_in`.
 
-- `GET /api/telegram/self-aware` → `{hasToken, username, running, approvedUserIds, pendingChats, bridgeLog, auth:{signed_in, provider, accounts}, hint, action}`
-  - `hint` in `not_signed_in|no_telegram_token|bridge_stopped|needs_pairing|waiting_first_message|ready`
-  - `pendingChats` parsed from `~/.aiko/logs/telegram-bridge.log` "Unauthorized chat 123"
-- `GET /api/auth-aware` → `{auth:{signed_in,...}, health:{ok, version, contractAbi}, nativeBase}` (via `GET /v1/auth` + `GET /v1/health` with the native bearer)
+## Contracts (every touchpoint)
 
-The UI shows a status bar (top of Chat tab) driven by `hint`: not_signed_in → "Sign in" sheet (`aiko login --device-code` or `aiko login aiko/grok/openai`), bridge stopped → Start, no pairing → Pair, etc. Chat's `sendPrompt` also checks `cachedAuth.signed_in` before calling ACP and surfaces "Not signed in" instead of silently failing. All decoupled: remove `cockpit.py` and the daemon still works, just without the self-awareness.
-
-First-contact auto-approve is also decoupled: when `approvedUserIds==[]`, the cockpit's `pendingChats` surfaces the first sender so the owner can one-click approve (or we ship a tiny `first_contact_wrapper.py` in `/tmp/` on the target that reads the log and appends to `user-settings.json` — never modifying `aiko/crates/codegen/xai-telegram-daemon/src/bot.rs`).
+`telegram.*` today, `<provider>.*` generically: `observe` (durable before `offset+1`) → `approved` gate → `send/edit/delete/presence/media/callback/commands`. See `docs/telegram-contracts.md` (provider) + `docs/channel-api.md` (generic). Every `curl` with `bot<TOKEN>` is an event contract, never a prompt/proof.
