@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::git_info;
 use crate::render::line_utils::truncate_line;
+use crate::smithers_gateway::smithers_gateway_info_lazy;
 use crate::theme::Theme;
 
 pub fn render_top_bar(
@@ -81,6 +82,28 @@ pub(crate) fn location_line_at(theme: &Theme, cwd: &Path) -> Line<'static> {
     let cwd_display = format_cwd_display(cwd, info.as_ref());
     let cwd_style = Style::default().fg(theme.gray_dim);
     parts.push(Span::styled(cwd_display, cwd_style));
+
+    // Smithers gateway — same singleton the UI autostarts. Show `Smithers :PORT`
+    // with a liveness dot (\u{25cf} live / \u{25cb} down) so the greeting
+    // answers "what's happening" without a command. Reads the per-workspace
+    // state file (TMPDIR/smithers-gateway/*.json), cached 2s, pid-validated.
+    if let Some(gw) = smithers_gateway_info_lazy(cwd) {
+        parts.push(Span::styled("  ", info_style));
+        parts.push(Span::styled(
+            format!("Smithers :{} ", gw.port),
+            Style::default().fg(theme.gray),
+        ));
+        parts.push(Span::styled(
+            "\u{25cf}",
+            Style::default().fg(theme.accent_user),
+        ));
+    } else {
+        parts.push(Span::styled("  ", info_style));
+        parts.push(Span::styled(
+            "Smithers \u{25cb}",
+            Style::default().fg(theme.gray),
+        ));
+    }
     Line::from(parts)
 }
 

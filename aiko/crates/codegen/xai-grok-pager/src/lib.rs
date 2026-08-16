@@ -53,6 +53,7 @@ pub mod startup;
 pub mod tips;
 pub mod wrap_clipboard_image;
 pub mod wrap_cmd;
+pub mod smithers_gateway;
 pub(crate) mod wrap_filter;
 pub(crate) mod wrap_restore;
 
