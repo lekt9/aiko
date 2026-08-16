@@ -1,91 +1,63 @@
 // smithers-source: user
 // smithers-metadata-version: 1
-// smithers-display-name: Deploy Aiko
-// smithers-description: Seat Aiko as a Cell harness inside this workflow, then continue as the Aiko agent. Account credentials, not API keys.
-// smithers-tags: aiko, cell, fde
+// smithers-display-name: Deploy Aiko through Contract
+// smithers-description: Authenticated Contract hook -> pinned Cell/workflow -> admitted Aiko -> one delegated child.
+// smithers-tags: aiko, contract, cell, webhook
 /** @jsxImportSource smthrs */
 import { createSmithers } from "smthrs";
-import { AikoAgent } from "smthrs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { ContractAikoAgent } from "@smthrs/agents/ContractAikoAgent";
 import { z } from "zod/v4";
 
-const selfWire = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../../cell/patterns/fde/self-wire.cell.yaml",
-);
-
-const { Workflow, Task, Sequence, Cell, smithers, outputs } = createSmithers({
+const SERVICE = Symbol.for("smithers.contract-aiko-agent.v1");
+const { Workflow, Task, Sequence, smithers, outputs } = createSmithers({
+  // This is a public-hook delivery reference, not an authority DTO. Tenant,
+  // root, role, account and effects are deliberately not caller-controlled.
   input: z.object({
-    tenant: z.string().default("acme"),
-    origin: z.string().default("https://mail.example"),
-    account_id: z.string().default("aiko-ops"),
-    role: z.string().default("ops-staffer"),
-    outcome: z.string().default("own daily roster confirmation"),
-    seatAgent: z.boolean().default(false),
-  }),
-  handoff: z.object({
-    agent: z.string().optional(),
-    seat: z.string().optional(),
-    auth: z.string().optional(),
-    role: z.string().optional(),
-    workflow_digest: z.string().optional(),
-    handle_id: z.string().optional(),
-    tenant: z.string().optional(),
-    origin: z.string().optional(),
-    account_id: z.string().optional(),
-    authority: z.array(z.string()).optional(),
-    _cell: z.unknown().optional(),
-  }).passthrough(),
+    hookDeliveryHandle: z.string().min(16),
+    canonicalRequestDigest: z.string().regex(/^[0-9a-f]{64}$/i),
+  }).strict(),
   output: z.object({
-    handle_id: z.string().optional(),
-    workflow_digest: z.string().optional(),
-    role: z.string().optional(),
-    agent: z.string().optional(),
-  }),
+    status: z.enum(["settled", "cancelled", "compensating"]),
+    rootId: z.string().optional(),
+    occurrenceId: z.string(),
+    childOccurrenceId: z.string().optional(),
+    childExecutionId: z.string().optional(),
+    workflowDigest: z.string().optional(),
+  }).strict(),
 });
+
+function boundContractAgent() {
+  const agent = globalThis[SERVICE];
+  if (!(agent instanceof ContractAikoAgent)) {
+    throw new Error("deploy-aiko requires an explicitly bound ContractAikoAgent service");
+  }
+  return agent;
+}
 
 /**
- * Harness within the workflow: a Cell seats Aiko. Optionally an AikoAgent
- * task continues as that employee. Smithers is control; Cell is the harness.
+ * Smithers only schedules the invocation. ContractAikoAgent re-authenticates
+ * the public delivery handle, reads purpose-scoped cited Contract context,
+ * checks the admitted limb and pinned Cell/workflow, then delegates one child.
  */
-export default smithers((ctx) => {
-  const handoff = ctx.outputMaybe(outputs.handoff, { nodeId: "wire" });
-  return (
-    <Workflow name="deploy-aiko">
-      <Sequence>
-        <Cell
-          id="wire"
-          cell={selfWire}
-          output={outputs.handoff}
-          outputPort="handoff"
-          inputs={{
-            account: {
-              tenant: ctx.input.tenant,
-              origin: ctx.input.origin,
-              account_id: ctx.input.account_id,
-            },
-            role: ctx.input.role,
-            outcome: ctx.input.outcome,
-          }}
-        />
-        {handoff && ctx.input.seatAgent ? (
-          <Task id="aiko" agent={new AikoAgent({})} output={outputs.output} deps={{ handoff: outputs.handoff }}>
-            {() =>
-              `You are Aiko, seated as ${handoff.role ?? ctx.input.role} via handle ${handoff.handle_id ?? ""}. Own: ${ctx.input.outcome}`
-            }
-          </Task>
-        ) : handoff ? (
-          <Task id="output" output={outputs.output}>
-            {() => ({
-              handle_id: handoff.handle_id,
-              workflow_digest: handoff.workflow_digest,
-              role: handoff.role,
-              agent: handoff.agent,
-            })}
-          </Task>
-        ) : null}
-      </Sequence>
-    </Workflow>
-  );
-});
+export default smithers((ctx) => (
+  <Workflow name="deploy-aiko-contract-organism">
+    <Sequence>
+      <Task id="contract-hook" output={outputs.output}>
+        {async () => {
+          const result = await boundContractAgent().launchFromHook({
+            deliveryHandle: ctx.input.hookDeliveryHandle,
+            canonicalRequestDigest: ctx.input.canonicalRequestDigest,
+          });
+          return {
+            status: result.status,
+            rootId: result.rootId,
+            occurrenceId: result.occurrenceId,
+            childOccurrenceId: result.childOccurrenceId,
+            childExecutionId: result.childExecutionId,
+            workflowDigest: result.workflowDigest,
+          };
+        }}
+      </Task>
+    </Sequence>
+  </Workflow>
+));

@@ -3,10 +3,21 @@
   "version": "0.33.1",
   "kind": "control-surface",
   "standalone": false,
-  "requires": ["cell"],
+  "requires": [
+    "cell"
+  ],
   "source": "aiko-flow",
   "native": {
     "cell": "packages/components/src/components/Cell.js"
   },
-  "description": "Smithers control plane. Cell is a native workflow element. Optional local package."
+  "description": "Smithers control plane. Cell is a native workflow element. Optional local package.",
+  "abi": "smithers-control/v1",
+  "dependency_lock_sha256": "72d09420746b3395f5be509a3ef167458b84b5f90a1bcb142bdbf6435b079783",
+  "exports": [
+    "ContractCell",
+    "createContractDriver",
+    "ContractLifecycleClient",
+    "createExecutionRecovery",
+    "recoveryDecision"
+  ]
 }

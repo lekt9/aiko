@@ -10,10 +10,11 @@ use serde::Deserialize;
 use url::Url;
 
 use crate::config::HookSpec;
+use crate::data_membrane::{CAPABILITY_ENV, HookDataPolicy, minimize_envelope, redact_text};
 use crate::event::HookEventEnvelope;
 use crate::result::{HookDecision, HttpInfo};
 
-use super::{HookRunOutput, HookRunnerResult, RunContext};
+use super::{HookRunOutput, HookRunnerResult, RunContext, http_membrane};
 
 /// Maximum characters to keep from the response body for the preview.
 const RESPONSE_PREVIEW_MAX: usize = 200;
@@ -181,8 +182,19 @@ pub async fn run_http_hook(
     // Unset refs are preserved verbatim, so `validate_hook_url` will
     // reject them with an "invalid URL" error rather than silently
     // smuggling a literal `${VAR}` past validation.
+    let policy = HookDataPolicy::parse(spec.extra_env.get(CAPABILITY_ENV).map(String::as_str));
     let expanded_url = crate::env_expand::expand_env_vars_with_extra(raw_url, &spec.extra_env);
-    let url: &str = &expanded_url;
+    let constrained = match http_membrane::constrained_url(&expanded_url, &policy) {
+        Ok(url) => url,
+        Err(reason) => {
+            return (
+                HookRunnerResult::Failed(format!("blocked by hook data membrane: {reason}")),
+                start.elapsed(),
+                None,
+            );
+        }
+    };
+    let url: &str = constrained.as_str();
     // For tracing/log purposes prefer the pre-expansion source so
     // resolved values from the user `env` map (which may contain
     // secrets like API tokens) don't land in `~/.grok/logs`. Falls
@@ -222,7 +234,7 @@ pub async fn run_http_hook(
         );
     }
 
-    let body = match serde_json::to_string(envelope) {
+    let body = match serde_json::to_string(&minimize_envelope(envelope, &policy)) {
         Ok(j) => j,
         Err(e) => {
             return (
@@ -313,13 +325,36 @@ pub async fn run_http_hook(
     let response_preview = if response_text.trim().is_empty() {
         None
     } else {
-        Some(truncate_preview(&response_text))
+        Some(redact_text(
+            &truncate_preview(&response_text),
+            &HookDataPolicy::default(),
+        ))
     };
 
     let http_info = Some(make_info(Some(status_code), response_preview.clone()));
 
-    let result = parse_http_blocking_result(&response_text, status, &spec.name);
+    let result = redact_http_result(parse_http_blocking_result(
+        &response_text,
+        status,
+        &spec.name,
+    ));
     (result, elapsed, http_info)
+}
+
+fn redact_http_result(result: HookRunnerResult) -> HookRunnerResult {
+    let output_policy = HookDataPolicy::default();
+    match result {
+        HookRunnerResult::Decision(HookDecision::Deny { reason, hook_name }) => {
+            HookRunnerResult::Decision(HookDecision::Deny {
+                reason: redact_text(&reason, &output_policy),
+                hook_name,
+            })
+        }
+        HookRunnerResult::Failed(error) => {
+            HookRunnerResult::Failed(redact_text(&error, &output_policy))
+        }
+        other => other,
+    }
 }
 
 /// Parse an HTTP blocking hook response into a `HookRunnerResult`.
@@ -756,6 +791,10 @@ mod tests {
     async fn run_http_hook_uses_post_expansion_url_for_ssrf() {
         let mut extra_env = std::collections::HashMap::new();
         extra_env.insert("INTERNAL_HOST_SSRF".to_string(), "10.0.0.1".to_string());
+        extra_env.insert(
+            CAPABILITY_ENV.to_string(),
+            "http:10.0.0.1,http:literal_ip".to_string(),
+        );
 
         let raw = "https://${INTERNAL_HOST_SSRF}/hook";
         let spec = HookSpec {
@@ -844,6 +883,10 @@ mod tests {
         let mut extra_env = std::collections::HashMap::new();
         extra_env.insert("RUNTIME_HOST".to_string(), "192.0.2.1".to_string());
         extra_env.insert("MY_TOKEN".to_string(), secret.to_string());
+        extra_env.insert(
+            CAPABILITY_ENV.to_string(),
+            "http:192.0.2.1,http:literal_ip,http:query".to_string(),
+        );
 
         let raw = "https://${RUNTIME_HOST}/check?token=${MY_TOKEN}";
         let spec = HookSpec {

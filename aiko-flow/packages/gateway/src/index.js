@@ -106,3 +106,6 @@ export {
   serializeWorkflowRow,
 } from "./api/index.js";
 export { GATEWAY_SCOPE_VALUES, GATEWAY_SCOPE_DESCRIPTIONS, isGatewayScope, hasGatewayScope } from "./auth/scopes.js";
+
+export { CONTRACT_WEBHOOK_RPC_METHODS, isContractWebhookRpcMethod, routeContractWebhookRpc } from "./rpc/contractWebhooks.js";
+export { CONTRACT_LIFECYCLE_RPC_METHODS, isContractLifecycleRpcMethod, routeContractLifecycleRpc } from "./rpc/contractLifecycle.js";

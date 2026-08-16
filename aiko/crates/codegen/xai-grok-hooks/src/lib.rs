@@ -37,6 +37,9 @@
 //! ```
 
 pub mod config;
+pub mod contract_projection;
+pub mod criticality;
+pub mod data_membrane;
 pub mod discovery;
 pub mod dispatcher;
 mod env_expand;

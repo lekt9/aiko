@@ -1,0 +1,29 @@
+{
+  "authority": {
+    "occurrenceId": "occ-provision-001",
+    "authenticatedSubject": "operator-fixture",
+    "verifiedTenant": "tenant-fixture",
+    "grantedScopes": [
+      "webhook:provision"
+    ],
+    "approved": true,
+    "approvalId": "approval-001"
+  },
+  "endpointId": "wh_fixture_0000000001",
+  "deliveryId": "delivery-001",
+  "deliveryBody": {
+    "event": "fixture.created",
+    "value": 7
+  },
+  "outboundBody": {
+    "callback": "fixture-accepted",
+    "value": 7
+  },
+  "mutations": [
+    "rotate",
+    "rollback",
+    "pause",
+    "revoke",
+    "invalidate"
+  ]
+}

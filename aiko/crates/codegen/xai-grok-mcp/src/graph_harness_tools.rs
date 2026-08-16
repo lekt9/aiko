@@ -461,3 +461,242 @@ mod tests {
         server_task.await.expect("server task join");
     }
 }
+
+// -- Admitted AikoAgent capability lifecycle ---------------------------------
+
+pub const ADMITTED_TOOL_API_VERSION: &str = "aiko.admitted-tools/v1";
+
+/// Public MCP projection of the AikoAgent capability protocol. Authority facts
+/// are deliberately absent: the authenticated shell composition root supplies
+/// current Contract and credential projections on every call.
+pub fn admitted_tool_catalog() -> Vec<GraphHarnessToolSpec> {
+    let identity = || {
+        json!({
+            "api_version":{"const":ADMITTED_TOOL_API_VERSION},
+            "name":{"type":"string","minLength":1},
+            "digest":{"type":"string","pattern":"^[0-9a-f]{64}$"}
+        })
+    };
+    let closed = |properties: Value, required: Vec<&str>| json!({"type":"object","additionalProperties":false,"properties":properties,"required":required});
+    vec![
+        GraphHarnessToolSpec {
+            name: "capability_list",
+            description: "List generated package bytes inert under their SHA-256 identity",
+            input_schema: closed(
+                {
+                    let mut p = identity();
+                    p.as_object_mut().unwrap().insert("package_bytes".into(),json!({"type":"array","items":{"type":"integer","minimum":0,"maximum":255},"minItems":1}));
+                    p
+                },
+                vec!["api_version", "name", "digest", "package_bytes"],
+            ),
+            read_only: false,
+        },
+        GraphHarnessToolSpec {
+            name: "capability_admit",
+            description: "Admit the currently listed package digest",
+            input_schema: closed(identity(), vec!["api_version", "name", "digest"]),
+            read_only: false,
+        },
+        GraphHarnessToolSpec {
+            name: "capability_attach",
+            description: "Attach an admitted package to an explicit attenuated grant",
+            input_schema: closed(
+                {
+                    let mut p = identity();
+                    p.as_object_mut().unwrap().insert("grant".into(),json!({"type":"object","additionalProperties":false,"properties":{"subject":{"type":"string","minLength":1},"tenant":{"type":"string","minLength":1},"effect":{"type":"string","minLength":1},"resource_prefix":{"type":"string","minLength":1},"credential_audience":{"type":"string","minLength":1},"credential_generation":{"type":"integer","minimum":1}},"required":["subject","tenant","effect","resource_prefix","credential_audience","credential_generation"]}));
+                    p
+                },
+                vec!["api_version", "name", "digest", "grant"],
+            ),
+            read_only: false,
+        },
+        GraphHarnessToolSpec {
+            name: "capability_use",
+            description: "Claim and immediately dispatch an attached capability under fresh authority",
+            input_schema: closed(
+                {
+                    let mut p = identity();
+                    for (k, v) in [
+                        ("effect", json!({"type":"string","minLength":1})),
+                        ("resource", json!({"type":"string","minLength":1})),
+                        ("cost", json!({"type":"integer","minimum":0})),
+                    ] {
+                        p.as_object_mut().unwrap().insert(k.into(), v);
+                    }
+                    p
+                },
+                vec![
+                    "api_version",
+                    "name",
+                    "digest",
+                    "effect",
+                    "resource",
+                    "cost",
+                ],
+            ),
+            read_only: false,
+        },
+        GraphHarnessToolSpec {
+            name: "capability_revoke",
+            description: "Revoke a package and advance its revocation generation",
+            input_schema: closed(identity(), vec!["api_version", "name", "digest"]),
+            read_only: false,
+        },
+        GraphHarnessToolSpec {
+            name: "capability_detach",
+            description: "Detach a revoked package and advance its attachment generation",
+            input_schema: closed(identity(), vec!["api_version", "name", "digest"]),
+            read_only: false,
+        },
+        GraphHarnessToolSpec {
+            name: "capability_collect",
+            description: "Collect detached revoked package bytes",
+            input_schema: closed(identity(), vec!["api_version", "name", "digest"]),
+            read_only: false,
+        },
+    ]
+}
+
+pub async fn dispatch_admitted_tool<F, Fut>(tool_name: &str, input: Value, service: F) -> Value
+where
+    F: FnOnce(&str, Value) -> Fut,
+    Fut: Future<Output = Value>,
+{
+    let Some(spec) = admitted_tool_catalog()
+        .into_iter()
+        .find(|s| s.name == tool_name)
+    else {
+        return json!({"api_version":ADMITTED_TOOL_API_VERSION,"ok":false,"error":{"code":"capability_unlisted","message":"unknown or unlisted capability operation"}});
+    };
+    let Some(object) = input.as_object() else {
+        return json!({"api_version":ADMITTED_TOOL_API_VERSION,"ok":false,"error":{"code":"invalid_request","message":"tool input must be an object"}});
+    };
+    if object.get("api_version").and_then(Value::as_str) != Some(ADMITTED_TOOL_API_VERSION) {
+        return json!({"api_version":ADMITTED_TOOL_API_VERSION,"ok":false,"error":{"code":"invalid_request","message":"unsupported api_version"}});
+    }
+    let allowed = spec.input_schema["properties"].as_object().expect("schema");
+    if object.keys().any(|k| !allowed.contains_key(k)) {
+        return json!({"api_version":ADMITTED_TOOL_API_VERSION,"ok":false,"error":{"code":"invalid_request","message":"unknown request field"}});
+    }
+    service(tool_name, input).await
+}
+
+pub type AdmittedCapabilityService =
+    Arc<dyn Fn(&str, Value) -> Pin<Box<dyn Future<Output = Value> + Send + 'static>> + Send + Sync>;
+
+#[derive(Clone)]
+pub struct AdmittedCapabilityMcpServer {
+    tools: Arc<Vec<Tool>>,
+    service: AdmittedCapabilityService,
+}
+impl AdmittedCapabilityMcpServer {
+    pub fn new(service: AdmittedCapabilityService) -> Self {
+        let tools = admitted_tool_catalog()
+            .into_iter()
+            .map(|s| {
+                let schema: JsonObject =
+                    serde_json::from_value(s.input_schema).expect("object schema");
+                Tool::new(
+                    Cow::Borrowed(s.name),
+                    Cow::Borrowed(s.description),
+                    Arc::new(schema),
+                )
+            })
+            .collect();
+        Self {
+            tools: Arc::new(tools),
+            service,
+        }
+    }
+    async fn invoke_admitted(
+        &self,
+        request: CallToolRequestParams,
+    ) -> Result<CallToolResult, ErrorData> {
+        if !self.tools.iter().any(|t| t.name == request.name) {
+            return Err(ErrorData::invalid_params(
+                "unlisted capability operation",
+                None,
+            ));
+        }
+        let input = Value::Object(request.arguments.unwrap_or_default());
+        let value = dispatch_admitted_tool(request.name.as_ref(), input, |name, input| {
+            (self.service)(name, input)
+        })
+        .await;
+        let encoded = serde_json::to_string(&value)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![ContentBlock::text(encoded)]))
+    }
+}
+impl ServerHandler for AdmittedCapabilityMcpServer {
+    fn get_info(&self) -> ServerInfo {
+        let mut i = ServerInfo::default();
+        i.capabilities = ServerCapabilities::builder().enable_tools().build();
+        i.server_info.name = "aiko_admitted_capabilities".into();
+        i.server_info.version = ADMITTED_TOOL_API_VERSION.into();
+        i
+    }
+    fn list_tools(
+        &self,
+        _: Option<PaginatedRequestParams>,
+        _: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> impl Future<Output = Result<ListToolsResult, ErrorData>> + Send + '_ {
+        let tools = self.tools.clone();
+        async move {
+            Ok(ListToolsResult {
+                tools: (*tools).clone(),
+                next_cursor: None,
+                meta: None,
+            })
+        }
+    }
+    async fn call_tool(
+        &self,
+        r: CallToolRequestParams,
+        _: rmcp::service::RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.invoke_admitted(r).await
+    }
+}
+
+#[cfg(test)]
+mod admitted_tests {
+    use super::*;
+    #[test]
+    fn seven_lifecycle_calls_are_public_and_authority_is_not_payload() {
+        let c = admitted_tool_catalog();
+        assert_eq!(
+            c.iter().map(|s| s.name).collect::<Vec<_>>(),
+            vec![
+                "capability_list",
+                "capability_admit",
+                "capability_attach",
+                "capability_use",
+                "capability_revoke",
+                "capability_detach",
+                "capability_collect"
+            ]
+        );
+        for s in c {
+            assert_eq!(s.input_schema["additionalProperties"], false);
+            let text = s.input_schema.to_string();
+            for forbidden in [
+                "lease_fence",
+                "remaining_budget",
+                "subject_verified",
+                "tenant_verified",
+                "home",
+                "env",
+            ] {
+                assert!(!text.contains(forbidden));
+            }
+        }
+    }
+    #[tokio::test]
+    async fn unknown_direct_call_refuses_before_service() {
+        let v =
+            dispatch_admitted_tool("capability_direct", json!({}), |_, _| async { panic!() }).await;
+        assert_eq!(v["error"]["code"], "capability_unlisted");
+    }
+}

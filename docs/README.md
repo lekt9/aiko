@@ -28,7 +28,7 @@ tree.
 | Document | Purpose |
 |---|---|
 | [`AI-FORWARD-DEPLOYED-ENGINEER.md`](AI-FORWARD-DEPLOYED-ENGINEER.md) | Product boundary: Proven / Designed / Absent |
-| [`AIKO-WORKFLOW-BINDING.md`](AIKO-WORKFLOW-BINDING.md) | Smithers controls, Cell describes; no second scheduler |
+| [`graph-engineering/AIKO-HOOK-ORGANISM.md`](graph-engineering/AIKO-HOOK-ORGANISM.md) | Native Contract/Neuron/Smithers authority covenant; Cell/runCell remains the typed harness |
 | [`../sdk/registry/stack.lock.json`](../sdk/registry/stack.lock.json) | Compatible layer versions and ABIs |
 | [`graph-engineering/README.md`](graph-engineering/README.md) | Chain-vs-graph planning; `aiko-doctor graph-plan` |
 | [`providers/README.md`](providers/README.md) | BYOK / provider gateway |

@@ -23,3 +23,6 @@ export type {
   EffectRevertFailed,
   SideEffectBoundaryCrossed,
 } from "./gatewayRpcTypes.ts";
+
+export type { CredentialHandle, ContractTemplatePin, ContractWebhookEndpoint, CreateContractWebhookRequest, ContractWebhookRpcRequestMap, ContractWebhookRpcResponseMap } from "./contractWebhooks.ts";
+export type { ContractPinKind, ContractRunPin, ContractExecutionRun, ContractLifecycleRpcRequestMap, ContractLifecycleRpcResponseMap } from "./contractLifecycle.ts";

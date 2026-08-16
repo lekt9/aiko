@@ -66,7 +66,30 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_wire_tests = b.addRunArtifact(wire_tests);
+    // The retention projection is a production boundary of its own: keeping
+    // it as a root test proves it has no accidental dependency on payload
+    // codecs or Contract internals.
+    const retention_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/cross_journal_retention.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_retention_tests = b.addRunArtifact(retention_tests);
+    // Dispatch authority belongs to Neuron and must remain independently
+    // buildable without linking or importing the Contract interpreter.
+    const capability_policy_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/capability_dispatch_policy.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_capability_policy_tests = b.addRunArtifact(capability_policy_tests);
     const test_step = b.step("test", "Run all behavioral and contract tests");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_wire_tests.step);
+    test_step.dependOn(&run_retention_tests.step);
+    test_step.dependOn(&run_capability_policy_tests.step);
 }

@@ -33,6 +33,7 @@ pub const verses = @import("verses.zig");
 pub const bible = @import("bible.zig");
 pub const cache = @import("cache.zig");
 pub const scheduler = @import("scheduler.zig");
+pub const execution_recovery = @import("execution_recovery.zig");
 pub const terminal = @import("terminal.zig");
 pub const capability = @import("capability.zig");
 pub const trust = @import("trust.zig");

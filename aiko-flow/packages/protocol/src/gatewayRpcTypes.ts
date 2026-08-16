@@ -80,7 +80,20 @@ export type GatewayRpcMethod =
   | "browserContext"
   | "browserPick"
   | "closeBrowserSession"
-  | "listBrowserSessions";
+  | "listBrowserSessions"
+  | "contractWebhooks.create"
+  | "contractWebhooks.list"
+  | "contractWebhooks.inspect"
+  | "contractWebhooks.rotate"
+  | "contractWebhooks.pause"
+  | "contractWebhooks.revoke"
+  | "contractLifecycle.inspect"
+  | "contractLifecycle.pause"
+  | "contractLifecycle.resume"
+  | "contractLifecycle.cancel"
+  | "contractLifecycle.revoke"
+  | "contractLifecycle.semanticRollback"
+  | "contractLifecycle.timeTravelFork";
 
 export type BrowserActor = "user" | "agent" | "page";
 export type BrowserViewport = { width: number; height: number };

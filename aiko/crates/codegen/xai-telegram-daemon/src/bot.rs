@@ -190,10 +190,7 @@ impl TelegramBot {
                     let _ = self
                         .send_with_typing(
                             chat_id,
-                            &format!(
-                                "Unknown command `{}`. Try /help · /status · /login",
-                                cmd
-                            ),
+                            &format!("Unknown command `{}`. Try /help · /status · /login", cmd),
                             Some(Self::inline_keyboard(&[
                                 ("Help", "help"),
                                 ("Status", "status"),
@@ -207,7 +204,8 @@ impl TelegramBot {
         }
 
         // Normal media normalization (contracts: observe via getFile/download)
-        let prompt = if let Some(text) = msg.text.as_deref().filter(|text| !text.trim().is_empty()) {
+        let prompt = if let Some(text) = msg.text.as_deref().filter(|text| !text.trim().is_empty())
+        {
             Some(text.to_string())
         } else if msg.photo.is_some() {
             self.download_photo(msg).await.map(|path| {
@@ -241,7 +239,9 @@ impl TelegramBot {
                 format!(
                     "The user sent an audio file at {}. {}",
                     path.display(),
-                    msg.caption.as_deref().unwrap_or("Handle the audio and reply.")
+                    msg.caption
+                        .as_deref()
+                        .unwrap_or("Handle the audio and reply.")
                 )
             })
         } else if msg.video.is_some() {
@@ -250,7 +250,9 @@ impl TelegramBot {
                 format!(
                     "The user sent a video at {}. {}",
                     path.display(),
-                    msg.caption.as_deref().unwrap_or("Handle the video and reply.")
+                    msg.caption
+                        .as_deref()
+                        .unwrap_or("Handle the video and reply.")
                 )
             })
         } else if msg.sticker.is_some() {
@@ -328,15 +330,25 @@ impl TelegramBot {
         }
     }
 
-    async fn send_self_aware_status(&self, chat_id: i64, reply_to: i64) -> Result<Message, TelegramError> {
+    async fn send_self_aware_status(
+        &self,
+        chat_id: i64,
+        reply_to: i64,
+    ) -> Result<Message, TelegramError> {
         // Self-aware: read cockpit self-aware + native auth if available, else local files
         let hint = self.cockpit_hint().await;
         let status = match hint.as_str() {
-            "not_signed_in" => "🔒 Not signed in — run `aiko login --device-code` on the Mac (http://127.0.0.1:8787).",
+            "not_signed_in" => {
+                "🔒 Not signed in — run `aiko login --device-code` on the Mac (http://127.0.0.1:8787)."
+            }
             "no_telegram_token" => "✈️ No bot token — add it in the cockpit Telegram tab.",
             "bridge_stopped" => "⏸️ Bridge stopped — click Start bridge at http://127.0.0.1:8787.",
-            "needs_pairing" => "📱 Bridge running, pending pairing — paste the code at http://127.0.0.1:8787.",
-            "waiting_first_message" => "💬 Message me to pair — whoever messaged first is auto-approved.",
+            "needs_pairing" => {
+                "📱 Bridge running, pending pairing — paste the code at http://127.0.0.1:8787."
+            }
+            "waiting_first_message" => {
+                "💬 Message me to pair — whoever messaged first is auto-approved."
+            }
             "ready" => "✅ All good — bridge running, you’re paired.",
             _ => "Status unknown — check http://127.0.0.1:8787",
         };
@@ -805,10 +817,18 @@ impl TelegramBot {
 
     async fn download_photo(&self, msg: &Message) -> Option<PathBuf> {
         let photo = msg.photo.as_ref()?.last()?;
-        info!("Received photo: {}x{} ({} bytes)", photo.width, photo.height, photo.file_size.unwrap_or(0));
+        info!(
+            "Received photo: {}x{} ({} bytes)",
+            photo.width,
+            photo.height,
+            photo.file_size.unwrap_or(0)
+        );
         if let Ok(file) = self.api.get_file(&photo.file_id).await {
             if let Some(ref p) = file.file_path {
-                let dest = format!("/tmp/telegram_daemon_photo_{}", p.rsplit('/').next().unwrap_or("photo.jpg"));
+                let dest = format!(
+                    "/tmp/telegram_daemon_photo_{}",
+                    p.rsplit('/').next().unwrap_or("photo.jpg")
+                );
                 if self.api.download_file(p, &dest).await.is_ok() {
                     info!("Photo saved to {dest}");
                     return Some(PathBuf::from(dest));
@@ -819,10 +839,17 @@ impl TelegramBot {
     }
 
     async fn download_audio(&self, audio: &Audio) -> Option<PathBuf> {
-        info!("Received audio: {} ({} bytes)", audio.file_name.as_deref().unwrap_or("audio"), audio.file_size.unwrap_or(0));
+        info!(
+            "Received audio: {} ({} bytes)",
+            audio.file_name.as_deref().unwrap_or("audio"),
+            audio.file_size.unwrap_or(0)
+        );
         if let Ok(file) = self.api.get_file(&audio.file_id).await {
             if let Some(ref p) = file.file_path {
-                let dest = format!("/tmp/telegram_daemon_audio_{}", p.rsplit('/').next().unwrap_or("audio.mp3"));
+                let dest = format!(
+                    "/tmp/telegram_daemon_audio_{}",
+                    p.rsplit('/').next().unwrap_or("audio.mp3")
+                );
                 if self.api.download_file(p, &dest).await.is_ok() {
                     return Some(PathBuf::from(dest));
                 }
@@ -832,10 +859,18 @@ impl TelegramBot {
     }
 
     async fn download_video(&self, video: &Video) -> Option<PathBuf> {
-        info!("Received video: {}x{} ({} bytes)", video.width, video.height, video.file_size.unwrap_or(0));
+        info!(
+            "Received video: {}x{} ({} bytes)",
+            video.width,
+            video.height,
+            video.file_size.unwrap_or(0)
+        );
         if let Ok(file) = self.api.get_file(&video.file_id).await {
             if let Some(ref p) = file.file_path {
-                let dest = format!("/tmp/telegram_daemon_video_{}", p.rsplit('/').next().unwrap_or("video.mp4"));
+                let dest = format!(
+                    "/tmp/telegram_daemon_video_{}",
+                    p.rsplit('/').next().unwrap_or("video.mp4")
+                );
                 if self.api.download_file(p, &dest).await.is_ok() {
                     return Some(PathBuf::from(dest));
                 }

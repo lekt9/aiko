@@ -40,6 +40,10 @@ export * from "./gatewayRoutes/getNodeOutput.js";
 export * from "./gatewayRoutes/jumpToFrame.js";
 export * from "./gatewayRoutes/streamDevTools.js";
 export * from "./browser.js";
+export * from "./contractSignals.js";
+export * from "./contractLifecyclePolicy.js";
+export * from "./contractLifecycle.js";
+export * from "./contractWebhooks.js";
 // Type-only stubs reachable via `./*` that are NOT already transitively
 // re-exported through the JS modules above.
 export * from "./ServerOptions.js";
@@ -1539,3 +1543,5 @@ export function startServerEffect(opts = {}) {
 export function startServer(opts = {}) {
   return runSync(startServerEffect(opts));
 }
+
+export { createContractWebhookSurface, ContractWebhookError } from "./contractWebhooks.js";

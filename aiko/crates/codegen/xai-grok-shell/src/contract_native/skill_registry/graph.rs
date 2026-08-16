@@ -350,7 +350,8 @@ pub fn retain_isolated_local_skills(mut plan: ContractSkillPlan) -> ContractSkil
     if drop_ids.is_empty() {
         return plan;
     }
-    plan.selected.retain(|ranked| !drop_ids.contains(&ranked.id));
+    plan.selected
+        .retain(|ranked| !drop_ids.contains(&ranked.id));
     plan.children.retain(|child| {
         child
             .get("skill_id")

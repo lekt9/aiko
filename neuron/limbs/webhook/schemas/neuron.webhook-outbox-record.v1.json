@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.webhook-outbox-record/v1",
+  "description": "Append-only digest-only state. Raw body, credential and signature are forbidden.",
+  "type": "object",
+  "required": [
+    "schema",
+    "effect_id",
+    "status",
+    "plan_digest",
+    "body_digest",
+    "credential_handle",
+    "credential_generation",
+    "lease_fence"
+  ],
+  "properties": {
+    "schema": {
+      "const": "neuron.webhook-outbox-record/v1"
+    },
+    "effect_id": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "queued",
+        "crossing",
+        "reconciliation_required",
+        "acknowledged",
+        "dead_letter",
+        "cancelled",
+        "compensation_required"
+      ]
+    },
+    "plan_digest": {
+      "type": "string"
+    },
+    "body_digest": {
+      "type": "string"
+    },
+    "body_schema": {
+      "type": "string"
+    },
+    "destination": {
+      "type": "string"
+    },
+    "method": {
+      "type": "string"
+    },
+    "credential_handle": {
+      "type": "string"
+    },
+    "credential_generation": {
+      "type": "integer"
+    },
+    "execution": {
+      "type": "string"
+    },
+    "lease_fence": {
+      "type": "integer"
+    },
+    "http_status": {
+      "type": "integer"
+    },
+    "provider_receipt_digest": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "not": {
+    "anyOf": [
+      {
+        "required": [
+          "body"
+        ]
+      },
+      {
+        "required": [
+          "secret"
+        ]
+      },
+      {
+        "required": [
+          "signature"
+        ]
+      }
+    ]
+  },
+  "additionalProperties": true
+}

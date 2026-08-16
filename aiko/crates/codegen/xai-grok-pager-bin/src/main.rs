@@ -447,9 +447,8 @@ fn install_contract_worker_plist(plist: &std::path::Path) -> Result<()> {
             .replace('>', "&gt;")
             .replace('"', "&quot;")
     };
-    let path_xml = std::env::var("PATH").unwrap_or_else(|_| {
-        "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".into()
-    });
+    let path_xml = std::env::var("PATH")
+        .unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".into());
     let body = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -2107,9 +2106,58 @@ async fn run_workflow_command(command: workflow_cli::WorkflowCommand) -> Result<
     }
 
     let cwd = std::env::current_dir()?;
+    let raw_ingress = command.contract_ingress_stimulus();
     let request = command
         .service_request()
         .expect("schema returned before service dispatch");
+
+    // `aiko workflow` is a launch-capable composition root, not merely a
+    // parser. Bind its stimulus to the native authenticated account and make
+    // Contract admission complete before GraphHarness routing or submission.
+    let effective = xai_grok_shell::config::load_effective_config_disk_only()
+        .map_err(|error| anyhow::anyhow!("Failed to load config for workflow ingress: {error}"))?;
+    let agent_config = AgentConfig::new_from_toml_cfg(&effective)
+        .map_err(|error| anyhow::anyhow!("Failed to create workflow ingress config: {error}"))?;
+    let auth_manager = xai_grok_shell::auth::AuthManager::new(
+        &xai_grok_shell::util::grok_home::grok_home(),
+        agent_config.grok_com_config.clone(),
+    );
+    let authority =
+        xai_grok_shell::contract_native::ingress_routes::native_session_auth_from_manager(
+            &auth_manager,
+            "aiko.workflow",
+            &["workflow.invoke"],
+        )
+        .map_err(|error| anyhow::anyhow!("workflow authentication refused: {error:?}"))?;
+    xai_grok_shell::contract_native::ingress_routes::admit_public_ingress(
+        "cli",
+        xai_grok_shell::contract_native::ingress_routes::PublicIngressRequest {
+            auth: authority,
+            workspace: cwd.clone(),
+            raw_request: raw_ingress,
+            nonce_namespace: "cli:workflow".to_owned(),
+            idempotency_key: format!(
+                "{}:{}",
+                request.operation,
+                request
+                    .bundle_ref
+                    .as_deref()
+                    .or(request.goal.as_deref())
+                    .unwrap_or("request")
+            ),
+            plan: request
+                .goal
+                .clone()
+                .unwrap_or_else(|| format!("workflow {}", request.operation)),
+            contract_root: None,
+            contract_parent: None,
+        },
+    )
+    .map_err(|error| {
+        anyhow::anyhow!(
+            "workflow refused before composition root launch by Contract ingress: {error:?}"
+        )
+    })?;
     let operation = match request.operation {
         "route" => WorkflowOperation::Route,
         "submit" => WorkflowOperation::Submit,

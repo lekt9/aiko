@@ -15,9 +15,10 @@ recorded in [`docs/SOURCE-OF-TRUTH.md`](docs/SOURCE-OF-TRUTH.md).
 Most agents can complete a task. The hard problem is a process that runs every
 day, talks to people, waits for replies, and has to be *right* — because being
 wrong costs thirty-five phone calls and a missed vessel. Aiko is built for that
-second problem. The workflow substrate exists today; employee-account credential
-handoff and production Telethon/SAP adapters are the delivery plan below, not
-features this README pretends are already complete.
+second problem. Contract owns durable authority, Neuron owns admitted
+boundaries, and Smithers composes Contract control with the preserved Cell/runCell
+typed harness. Production Telethon/SAP provider integrations are not features
+this README pretends are already complete.
 
 > Spelled **Aiko**. Meeting notes and transcripts say "Ico"; that is a
 > transcription artifact.
@@ -30,12 +31,12 @@ The deployment model is an employment model. Where a platform hands you an
 integration checklist, Aiko onboards herself, the way a forward-deployed
 engineer would:
 
-- **Account credentials are the primary form of auth, not API keys.** An
-  employee is given a login and a seat, not a bag of per-service keys — and so
-  is Aiko. She acts through the same accounts and interfaces a person would,
-  so anything an employee can reach, she can reach, with the same audit trail.
-  (The managed credential vault is direction, not shipped — see
-  [Status](#status).)
+- **Account credentials are the intended primary form of auth, not API keys.**
+  The proven boundary accepts opaque, tenant/origin/account/action-scoped
+  handles and refuses raw secret fields. It does not establish that every
+  employee-reachable system is integrated. The OS-only envelope contract is
+  gated; a managed enterprise vault and browser-session handoff are not shipped
+  (see [Status](#status).)
 - **She builds the systems.** The processes she operates are systems she
   stands up herself — gated, witnessed, and refused when wrong (see
   [the one idea](#the-one-idea) below).
@@ -105,128 +106,27 @@ mean collapsing the layers into a monolith. A delivered workflow must continue
 to operate without a hard Aiko dependency; the standalone Neuron architecture
 below is the mechanical evidence for that promise.
 
-## Execution plan
+## Native ownership
 
-The executable form is
-[`docs/graph-engineering/aiko-fde.walk.json`](docs/graph-engineering/aiko-fde.walk.json);
-the expanded design record is
-[`docs/AIKO-FDE-PLAN.md`](docs/AIKO-FDE-PLAN.md). Contract's real graph planner
-accepts the walk with no cycles, unknown dependencies, write collisions,
-grounding gaps, or missing witnesses:
+The earlier Python FDE prototypes have been strangled by their native owners:
 
-```sh
-./zig-out/bin/aiko-doctor graph-plan docs/graph-engineering/aiko-fde.walk.json
-```
+- **Contract** owns durable context, lifecycle, delegation, recovery, and graph verdicts.
+- **Neuron** owns digest-admitted authoring and the Unbrowse and provider-effect limbs.
+- **Smithers** owns control by composing `ContractCell` with the native Contract driver.
+- **Cell/runCell remains the typed harness.** It is deliberately preserved and is
+  not a credential, context, readiness, or durable-control authority store.
 
-The plan is a chain at its current frontier, then fans out only where no data
-edge exists:
+There is no root `bind-workflow` or `workflow-control` authority and no Python
+credential/context/authoring/Unbrowse/Telethon authority under `cell/`. The
+negative ownership witness is `tests/no-duplicate-fde-primitives-gate.sh`; it
+also runs the Smithers Cell/runCell tests so cleanup cannot pass by deleting the
+harness. Replacement behavior is witnessed by the Contract gates,
+`neuron/tests/authored-gap-gate.sh`, `neuron/tests/unbrowse-limb-gate.sh`,
+`neuron/tests/telethon-limb-gate.sh`, and the Smithers Contract driver gates.
 
-```text
-0  source-build guard                                        SETTLED
-1  product contract + Cell self-wire increment               SETTLED
-2  credential envelope        ||  workflow binding (aiko-doctor bind-workflow) SETTLED
-3  context plane || native authoring loop || Unbrowse port
-4  Telethon employee pilot    ||  SAP sandbox pilot
-5  independent FDE judge
-6  documentation promotion
-```
-
-### 0 — Keep the source build honest (settled)
-
-`ledger.readAll` is again bounded at 16 MiB, while graph-admission deduplication
-streams past that limit. Lock-time compaction begins at 12 MiB, before capped
-whole-buffer readers can wedge. The Rust source-build instructions now say that
-Protocol Buffers generation needs `PROTOC`/`protoc`, or DotSlash for the
-repository's hermetic `bin/protoc` wrapper.
-
-**Witness:** both `cd contract/libcontract && zig build test` and root
-`zig build test` pass on the reported macOS ARM64 source build.
-
-### 1 — Freeze the product contract (written)
-
-[`docs/AI-FORWARD-DEPLOYED-ENGINEER.md`](docs/AI-FORWARD-DEPLOYED-ENGINEER.md)
-is the canonical boundary. It names the customer, first operational wedge,
-authority model, handoff lifecycle, and acceptance criteria, and separates
-every claim into **Proven**, **Designed**, or **Absent**. Telethon is the
-proposed first vertical; SAP remains a sandbox pilot until its own gate is
-green. Market-first stays **Absent**.
-
-The first Cell-native increment of the self-wire loop is
-`cell/patterns/fde/` (`account-handle → deploy-workflow → deploy-aiko`).
-Binding: [`docs/AIKO-WORKFLOW-BINDING.md`](docs/AIKO-WORKFLOW-BINDING.md).
-
-**Witness:** `tests/fde-workflow-gate.sh`.
-
-### 2 — Build the two foundations in parallel
-
-**Employee credential envelope.** Give workflows opaque, tenant-scoped handles,
-not passwords, cookies, or API keys. Secrets stay in the OS credential store and
-are injected locally at the destination boundary. The envelope owns account
-inventory, expiry, MFA handoff, revoke, rotate, logout, origin scope, and allowed
-actions. Raw secrets may never enter prompts, Cell inputs, ledger rows, evidence,
-telemetry, generated package digests, or git. There is no plaintext-file fallback
-for employee credentials.
-
-**Smithers → Cell → Aiko binding.** Smithers is the durable control, approval,
-pause, and resume surface; it is not a second scheduler. It authors a typed Cell
-workflow. `aiko-doctor bind-workflow` asks Cell to canonicalize that file and
-projects organelles/wiring into a Contract walk; `graph-plan` is the analyzer;
-`workflow-control` pauses and resumes the bound revision without becoming a
-second scheduler. Neuron still owns admitted execution.
-
-**Gates:** credential isolation/redaction/revocation and a workflow-control gate
-that proves pause/resume survives restart, code movement changes the digest, and
-Smithers, Cell, Contract, and Neuron cannot disagree about the active revision.
-
-### 3 — Join self-deployment, context, and existing systems
-
-Three independently writable branches follow once both foundations exist:
-
-1. **Context plane.** Context is minimal, tenant-isolated, cited lineage — not an
-   unlimited transcript. Every derived fact records its source digest and
-   `produced_by`; source movement invalidates dependants. The delivered workflow
-   retains the context it needs after handoff without retaining secrets.
-2. **Native authoring loop.** A capability gap may produce adapter code and a
-   Cell only through the existing lifecycle: write inert, build, test, admit by
-   digest, attach least authority, retry on the real path, and retain only after
-   independent success. Compilation alone retains nothing. Authoring stays
-   bounded to witnessed adapter families until a new family earns its own gate.
-3. **Unbrowse port.** Under the employee account, Unbrowse observes first-party
-   routes, compiles a sanitized route DAG, validates it by an independent replay,
-   promotes it locally, and demotes it on drift. Cookies, passwords, raw HAR,
-   filled auth holes, response bodies, and PII remain sealed locally. Unsafe
-   mutations dry-run and require approval from outside the invoking agent.
-
-**Gates:** citation invalidation and tenant isolation; generated-code
-admit/attach/revoke; cold browse → independent replay → promotion → drift
-demotion with no secret entering an admitted or published skill.
-
-### 4 — Prove two verticals without pretending they are generic
-
-**Telethon employee pilot.** Provision a dedicated Telegram account through
-phone/code/2FA, store only its opaque session handle, normalize incoming updates
-through Neuron's provider-neutral interface, enforce per-chat and per-recipient
-ACLs, send through the canonical outbox, and read the resulting Telegram state
-back independently. An amendment contacts only changed recipients; redrive never
-blindly resends a message that already crossed the boundary. Auth expiry or an
-unobservable send stays pending and escalates.
-
-The first workflow is the one already witnessed in parts here: staffing
-requirement → deterministic roster → confirmation messages → replies or timeout
-→ escalation → amended requirement → compensation over the changed workers.
-
-**SAP sandbox pilot.** Pick one customer-relevant business transaction rather
-than claiming universal SAP support. Provision a dedicated least-privilege SAP
-user, record its roles and segregation-of-duties constraints, observe the real
-employee flow through Unbrowse, build against the actual selected surface, admit
-the adapter, permission-gate the mutation, submit once, and read the SAP business
-document back by identifier. A timeout without read-back is uncertain, never
-complete. Do not claim RFC, BAPI, OData, or generic SAP support until that exact
-surface is built and witnessed.
-
-**Gates:** Telethon account auth + inbound/outbound + read-back + ACL + duplicate
-redrive refusal; SAP permission denial + one sandbox transaction + idempotency +
-uncertain timeout + document read-back + compensation.
+The executable delivery graph remains under `docs/graph-engineering/`; the
+public analyzer is `aiko-doctor graph-plan`. Contract analyzes declared walks,
+while the owning host executes them—Aiko does not grow a second scheduler.
 
 ### 5 — Judge across the boundary
 
@@ -249,10 +149,11 @@ until these independent witnesses agree.
 
 After the end-to-end gate passes, update the public README, vision, goal, product,
 risk, desktop, and implementation documents. Every capability statement must
-link to a green runnable gate or retain a **Designed**/**Absent** label. Until
-then, the honest status remains the table later in this README: the reactive,
-self-wiring substrate is proven; employee credential handoff, production
-Telethon, SAP, and an operator write UI are not.
+link to a green runnable gate or retain a **Designed**/**Absent** label. The honest status remains the table later in this README: the reactive,
+self-wiring substrate, OS-only credential envelope contract, cited context,
+bounded adapter authoring, learned read boundary, and Telethon policy contract
+are proven. Managed enterprise credential service, production Telethon, SAP, and
+an operator write UI are not.
 
 ---
 
@@ -495,17 +396,30 @@ the path the witnesses cover.
 **Gates are the acceptance criterion**, not the unit tests. Each drives the
 public CLI from an empty directory and asserts against durable state.
 
-```
-zig build gate     published-interface · redrive · authored-gap           # neuron
-                   skill-doc · escalation-ladder · staffing-engine        # neuron
-                   claim-deadline · interface-morphogenesis · meta-agent  # neuron
-                   observe-live · self-constructing-agent                 # neuron
-                   zig-doctrine · bridge · dispatch · tick                # root
-                   conformance · minimal-tree                              # root (via tests/conformance-gate.sh + minimal-tree-gate.sh)
-                   agent-entrypoint · universal-interface · conversation  # neuron (standalone)
-                   swarm-package · observability-retention                # neuron (standalone)
-                   + 12 limb conformance suites (python3 limbs/<limb>/tests/conformance.py)
-```
+`zig build gate` schedules exactly these distinct shell witnesses from the root
+`build.zig` (the self-check is also an install dependency):
+
+<!-- root-gate-inventory:start -->
+- `tests/aiko-self-check-gate.sh`
+- `tests/graph-harness-main-path-gate.sh`
+- `neuron/tests/published-interface-gate.sh`
+- `neuron/tests/redrive-gate.sh`
+- `neuron/tests/authored-gap-gate.sh`
+- `neuron/tests/skill-doc-gate.sh`
+- `tests/zig-doctrine-gate.sh`
+- `neuron/tests/escalation-ladder-gate.sh`
+- `neuron/tests/staffing-engine-gate.sh`
+- `neuron/tests/claim-deadline-gate.sh`
+- `tests/bridge-gate.sh`
+- `tests/dispatch-gate.sh`
+- `neuron/tests/interface-morphogenesis-gate.sh`
+- `neuron/tests/meta-agent-gate.sh`
+- `neuron/tests/self-constructing-agent-gate.sh`
+- `tests/tick-gate.sh`
+- `tests/graph-engineering-gate.sh`
+- `tests/cross-journal-retention-gate.sh`
+- `tests/no-duplicate-fde-primitives-gate.sh`
+<!-- root-gate-inventory:end -->
 
 ---
 
@@ -526,7 +440,10 @@ zig build gate     published-interface · redrive · authored-gap           # ne
 | **Staffing engine — deterministic roster, refuses a shortfall** | ✅ | `staffing-engine-gate` |
 | **Escalation ladder — notify → reply\|timeout → call → stop** | ✅ | `escalation-ladder-gate` |
 | One build, Linux-native, both layers linked | ✅ | `aiko-doctor` |
-| **Cell-native FDE self-wire** — account handle, not API key; Aiko seats Aiko | ✅ | `fde-workflow-gate` |
+| **Contract-backed Smithers Cell control** — typed harness preserved; no duplicate authority store | ✅ | `smithers-contract-driver-gate`, `no-duplicate-fde-primitives-gate` |
+| **Contract context and delegated capability** — cited, scoped durable authority | ✅ | `contract-hook-ingress-gate`, `contract-delegation-capability-gate` |
+| **Admitted Unbrowse and provider-effect boundaries** | ✅ | `unbrowse-limb-gate`, `telethon-limb-gate` |
+| **Bounded native adapter authoring** — inert bytes through judgment on the real path | ✅ | `authored-gap-gate` |
 
 Read-only live view (`telemetry serve`) exists and is gated by
 `observe-live-gate`. What does **not** exist:
@@ -535,7 +452,7 @@ Read-only live view (`telemetry serve`) exists and is gated by
 |---|---|
 | Operator UI — queues, roster edit, approvals | ⬜ not started. The live view is read-only by design |
 | OCR at the model edge | ⬜ open. The substrate is binary-safe; the MCP edge has no read tool (`ROADMAP.md` R11). An OCR *HTTP API* works today |
-| Employee credential vault / browser-session handoff | ⬜ absent; Phase 2 of the AI-FDE plan, and no account-auth claim is promoted before its isolation/redaction/revocation gate |
+| Managed enterprise credential vault / browser-session handoff | ⬜ absent. The gated envelope uses native OS vaults and has no plaintext fallback; its lifecycle witness is synthetic, not a managed enterprise service |
 | Constraint solver | 🟡 partial, and no more than that. `staffing-engine-gate` witnesses a **deterministic** rotational assignment — qualification filter, then `(last_worked, name)` as a total order, refusing rather than under-filling. That is rotation, not a solver: no shift-conflict resolution, no multi-constraint optimisation, no preference weighting. The determinism requirement is the part that generalises — anything richer must keep it, or the loop never settles |
 
 ---
@@ -601,10 +518,7 @@ clone path.
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | how to change this tree |
 | [`SECURITY.md`](SECURITY.md) | private vulnerability reports |
 | `docs/AI-FORWARD-DEPLOYED-ENGINEER.md` | product boundary (Proven / Designed / Absent) |
-| `docs/AIKO-WORKFLOW-BINDING.md` | Smithers/Cell/Aiko/Contract/Neuron binding |
-| `docs/AIKO-FDE-PLAN.md` | expanded AI Forward Deployed Engineer execution plan |
-| `docs/graph-engineering/aiko-fde.walk.json` | executable, skill-grounded delivery graph |
-| `docs/graph-engineering/aiko-fde-self-wire.walk.json` | Cell-native self-wire increment |
+| `docs/graph-engineering/AIKO-HOOK-ORGANISM.md` | native Contract/Neuron/Smithers ownership covenant |
 | `docs/graph-engineering/aiko-hoysan-finish.walk.json` | synthetic end-to-end self-wire and benchmark graph |
 | `docs/AIKO-HOYSAN-BENCHMARK.md` | synthetic performance receipt, fixed defects, and control-plane blocker |
 | `neuron/AGENTS.md` | normative architecture |

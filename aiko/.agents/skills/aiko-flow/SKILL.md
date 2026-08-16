@@ -31,8 +31,8 @@ Contract ledger ◄──W6H, occurrences── Neuron admitted limbs + outbox �
 - **Smithers** controls, never duplicates the ledger. Two entry points — both wired by the default plugin:
   - **MCP** `smithers` tools: `list_workflows`, `run_workflow`, `watch_run`, `get_run`, `list_pending_approvals`, `resolve_approval`, `ask_human`, …
   - **CLI** `smithers` (via `node bin/smithers.mjs` in the installed control limb)
-- **Cell** executes deterministic DAGs: `python3 cell/run.py run cell/patterns/fde/self-wire.cell.yaml --inputs '{...}'` or `aiko-doctor bind-workflow cell/patterns/fde/self-wire.cell.yaml --plan` then `workflow-control pause/resume` (durable file).
-- **Aiko** projects digest/ports/caps into Contract graph nodes; `aiko-doctor graph-plan walk.json` is the analyzer.
+- **Cell/runCell** executes deterministic typed DAGs; it keeps no credential, context, readiness, or durable-control truth.
+- **ContractCell** composes that typed harness with the native Contract driver for lifecycle and recovery. `aiko-doctor graph-plan walk.json` remains the read-only analyzer.
 
 ## Self-wire (Aiko seats Aiko)
 
@@ -42,7 +42,6 @@ The fractal harness: `deploy-workflow` authors a seat `Cell` whose only organell
 python3 cell/run.py run cell/patterns/fde/self-wire.cell.yaml \
   --inputs '{"account":{"tenant":"acme","origin":"https://ops.example","account_id":"aiko-ops"},"role":"ops-staffer","outcome":"own daily roster confirmation"}' \
   --out /tmp/fde
-./zig-out/bin/aiko-doctor bind-workflow cell/patterns/fde/self-wire.cell.yaml --plan
 ```
 
 On the Smithers surface, `Cell` is a native workflow element (same class as `Task`/`Sandbox`):
@@ -64,4 +63,4 @@ Disable only if you must: `aiko plugin disable smithers` (or `aiko plugin disabl
 
 ## Witness
 
-`tests/fde-workflow-gate.sh` + `cell/tests/gates/fde-self-wire.sh` (handle not API key, digest-pinned, authored harness wires `deploy-aiko`) and `tests/aiko-smithers-limb-gate.sh` (Aiko discovers `smithers` skill+MCP, `node bin/smithers.mjs --mcp` boots, Cell scheduled and resume does not refire). See `docs/AIKO-WORKFLOW-BINDING.md` and `docs/AI-FORWARD-DEPLOYED-ENGINEER.md`.
+`tests/no-duplicate-fde-primitives-gate.sh` preserves and smokes Cell/runCell while refusing the retired authority paths. `tests/smithers-contract-driver-gate.sh` and `tests/smithers-control-package-gate.sh` witness native Contract-backed control; `tests/recursive-aiko-organism-gate.sh` witnesses the composed Aiko path. See `docs/AI-FORWARD-DEPLOYED-ENGINEER.md`.

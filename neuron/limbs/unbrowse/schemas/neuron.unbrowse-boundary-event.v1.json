@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.unbrowse-boundary-event/v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "kind",
+    "route_id",
+    "route",
+    "method",
+    "credential_handle",
+    "source_firing_id",
+    "sealing"
+  ],
+  "properties": {
+    "schema": {
+      "const": "neuron.unbrowse-boundary-event/v1"
+    },
+    "kind": {
+      "enum": [
+        "observation",
+        "replay",
+        "drift"
+      ]
+    },
+    "route_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "route": {
+      "type": "object"
+    },
+    "method": {
+      "const": "GET"
+    },
+    "credential_handle": {
+      "type": "string",
+      "pattern": "^cred:"
+    },
+    "source_firing_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "response_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "response_schema": {
+      "type": "object"
+    },
+    "sealing": {
+      "type": "object",
+      "required": [
+        "raw_request_retained",
+        "raw_response_retained",
+        "secret_values_retained"
+      ],
+      "properties": {
+        "raw_request_retained": {
+          "const": false
+        },
+        "raw_response_retained": {
+          "const": false
+        },
+        "secret_values_retained": {
+          "const": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}

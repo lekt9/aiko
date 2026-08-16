@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "neuron.telethon-effect-plan/v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "effect_id",
+    "execution",
+    "conversation_id",
+    "recipient_id",
+    "payload_digest",
+    "credential_handle",
+    "expires_at"
+  ]
+}

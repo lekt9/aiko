@@ -1,24 +1,19 @@
-// Resolve the Smithers CLI to run, preferring a Smithers *source checkout*
-// over any installed copy.
+// Resolve the Smithers CLI without letting an installed plugin escape to a
+// mutable checkout or the network.
 //
-// Inside the smithers monorepo (this repo, a worktree of it, or any of its
-// subdirectories) every internal script must execute `apps/cli/src/index.js`
-// from the working tree. `bunx smthrs` does not do that: bunx
-// downloads and runs the published npm tarball, and only lands back on the
-// working tree by accident, via the published bin's `node_modules` delegation
-// — which silently does not fire in a fresh worktree, a slimmed checkout, or
-// any tree that has not been installed. Editing engine code and then watching
-// a run execute last week's published build is the failure that mode causes.
-//
-// Outside a checkout there is no source to prefer, so this falls back to
-// `bunx smthrs` — the behavior every published plugin user gets.
+// The native plugin loader supplies GROK_PLUGIN_ROOT (or CLAUDE_PLUGIN_ROOT).
+// When present, that packaged runtime is authoritative: it is checked before cwd
+// and AIKO_SMITHERS_RUNTIME, and an incomplete package is refused rather than
+// falling through to bunx. Outside an installed plugin, developers still get the
+// nearest source checkout and may explicitly select another checkout.
 //
 // Dependency-free (Node built-ins only): this module is copied verbatim into
 // every plugin directory that ships standalone. `scripts/check-local-smithers.mjs`
 // enforces that the copies stay byte-identical.
 
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, symlinkSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 /** Entry point of the CLI inside a source checkout, relative to the repo root. */
 export const SOURCE_CLI_ENTRY = "apps/cli/src/index.js";
@@ -60,11 +55,113 @@ export function findSmithersSourceRoot(from) {
   }
 }
 
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/** Refuse a packaged control surface whose pinned operational bytes moved. */
+function verifyPackagedIntegrity(pluginRoot) {
+  const receiptPath = join(pluginRoot, ".aiko-control-integrity.json");
+  let receipt;
+  try {
+    receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+  } catch (error) {
+    throw new Error(`installed Smithers integrity receipt is missing or invalid: ${error.message}`);
+  }
+  if (receipt?.format !== 1 || receipt?.name !== "control" || receipt?.abi !== "smithers-control/v1" || typeof receipt?.version !== "string") {
+    throw new Error("installed Smithers version/ABI receipt is incompatible");
+  }
+  const claimedDigest = receipt.digest;
+  const unsigned = { ...receipt };
+  delete unsigned.digest;
+  const receiptDigest = createHash("sha256").update(stableJson(unsigned)).digest("hex");
+  if (claimedDigest !== receiptDigest) throw new Error("installed Smithers integrity receipt digest mismatch");
+  if (!receipt.files || typeof receipt.files !== "object") throw new Error("installed Smithers integrity file pins are missing");
+  for (const [name, expected] of Object.entries(receipt.files)) {
+    if (isAbsolute(name)) throw new Error("installed Smithers integrity path is absolute");
+    const file = resolve(pluginRoot, name);
+    const rel = relative(resolve(pluginRoot), file);
+    if (rel === ".." || rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) {
+      throw new Error(`installed Smithers integrity path escapes package: ${name}`);
+    }
+    let actual;
+    try {
+      actual = createHash("sha256").update(readFileSync(file)).digest("hex");
+    } catch (error) {
+      throw new Error(`installed Smithers pinned file is missing (${name}): ${error.message}`);
+    }
+    if (actual !== expected) throw new Error(`installed Smithers pinned file was modified: ${name}`);
+  }
+  if (receipt.files["runtime/bun.lock"] !== receipt.dependency_lock_sha256) {
+    throw new Error("installed Smithers dependency lock is not pinned by the receipt");
+  }
+}
+
+/** Rebuild Bun's internal links from packaged topology, never external paths. */
+function ensurePackagedDependencyClosure(runtime) {
+  const manifestPath = join(runtime, ".aiko-node-links.json");
+  let links;
+  try {
+    links = JSON.parse(readFileSync(manifestPath, "utf8"));
+  } catch (error) {
+    throw new Error(`installed Smithers dependency manifest is missing or invalid: ${error.message}`);
+  }
+  if (!Array.isArray(links) || links.length === 0) {
+    throw new Error("installed Smithers dependency manifest is empty");
+  }
+  const runtimeRoot = resolve(runtime);
+  const inside = (path) => {
+    const rel = relative(runtimeRoot, path);
+    return rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`);
+  };
+  let pending = links;
+  while (pending.length > 0) {
+    const deferred = [];
+    for (const row of pending) {
+      if (typeof row?.path !== "string" || typeof row?.target !== "string" || isAbsolute(row.path) || isAbsolute(row.target)) {
+        throw new Error("installed Smithers dependency manifest contains an absolute or invalid link");
+      }
+      const link = resolve(runtimeRoot, row.path);
+      const target = resolve(dirname(link), row.target);
+      const dependencyPath = row.path.startsWith("node_modules/") || row.path.includes("/node_modules/");
+      if (!inside(link) || !inside(target) || !dependencyPath) {
+        throw new Error(`installed Smithers dependency link escapes runtime: ${row.path}`);
+      }
+      if (existsSync(link)) {
+        let current;
+        try {
+          current = lstatSync(link).isSymbolicLink() ? readlinkSync(link) : null;
+        } catch {
+          current = null;
+        }
+        if (current !== row.target) throw new Error(`installed Smithers dependency link was replaced: ${row.path}`);
+        continue;
+      }
+      // Some .bin links point through another packaged link. Materialize the
+      // target link first, then revisit this row without ever resolving outside.
+      if (!existsSync(target)) {
+        deferred.push(row);
+        continue;
+      }
+      mkdirSync(dirname(link), { recursive: true });
+      symlinkSync(row.target, link);
+    }
+    if (deferred.length === pending.length) {
+      throw new Error(`installed Smithers dependency targets are missing (${deferred[0].path})`);
+    }
+    pending = deferred;
+  }
+}
+
 /**
  * @typedef {object} ResolvedSmithersCli
  * @property {string} command Executable to spawn.
  * @property {string[]} args Leading arguments; append the CLI's own arguments.
- * @property {"workspace" | "published"} source Which copy of Smithers this runs.
+ * @property {"packaged" | "workspace"} source Which immutable or development copy this runs.
  * @property {string | null} root Source checkout root, when one was found.
  */
 
@@ -73,6 +170,21 @@ export function findSmithersSourceRoot(from) {
  * @returns {ResolvedSmithersCli}
  */
 export function resolveSmithersCli(from = process.cwd()) {
+  const pluginRoot = process.env.GROK_PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT;
+  if (pluginRoot) {
+    const packagedRuntime = join(pluginRoot, "runtime");
+    verifyPackagedIntegrity(pluginRoot);
+    if (!isSmithersSourceRoot(packagedRuntime)) {
+      throw new Error(`installed Smithers runtime is incomplete: ${packagedRuntime}`);
+    }
+    ensurePackagedDependencyClosure(packagedRuntime);
+    return {
+      command: "bun",
+      args: [join(packagedRuntime, SOURCE_CLI_ENTRY)],
+      source: "packaged",
+      root: packagedRuntime,
+    };
+  }
   const root = findSmithersSourceRoot(from);
   if (root) {
     return { command: "bun", args: [join(root, SOURCE_CLI_ENTRY)], source: "workspace", root };
@@ -86,19 +198,7 @@ export function resolveSmithersCli(from = process.cwd()) {
       root: explicitRuntime,
     };
   }
-  const pluginRoot = process.env.GROK_PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT;
-  if (pluginRoot) {
-    const packagedRuntime = join(pluginRoot, "runtime");
-    if (isSmithersSourceRoot(packagedRuntime)) {
-      return {
-        command: "bun",
-        args: [join(packagedRuntime, SOURCE_CLI_ENTRY)],
-        source: "workspace",
-        root: packagedRuntime,
-      };
-    }
-  }
-  return { command: "bunx", args: ["smthrs"], source: "published", root: null };
+  throw new Error("Smithers runtime not found; install the Aiko control package or run inside its source checkout");
 }
 
 /**

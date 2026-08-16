@@ -1,0 +1,40 @@
+name = "aiko-contract-webhook"
+main = "src/worker.ts"
+compatibility_date = "2026-01-01"
+workers_dev = true
+preview_urls = true
+routes = []
+
+# All authorities are named bindings. Values and credentials stay provider-managed.
+[[services]]
+binding = "ENDPOINT_MANIFESTS"
+service = "aiko-webhook-endpoint-manifests"
+
+[[services]]
+binding = "WEBHOOK_COORDINATOR"
+service = "aiko-webhook-coordinator"
+
+[[services]]
+binding = "WEBHOOK_SECRETS"
+service = "aiko-webhook-secret-broker"
+
+[[services]]
+binding = "AIKO_GATEWAY"
+service = "aiko-contract-gateway"
+
+[[queues.producers]]
+binding = "VERIFIED_INGRESS_QUEUE"
+queue = "verified-contract-ingress"
+
+[[queues.producers]]
+binding = "WEBHOOK_DLQ"
+queue = "aiko-webhook-dlq"
+
+[[queues.consumers]]
+queue = "verified-contract-ingress"
+dead_letter_queue = "aiko-webhook-dlq"
+max_retries = 8
+max_batch_size = 10
+max_batch_timeout = 5
+
+# This Worker currently has no Durable Object schema migrations.

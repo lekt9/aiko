@@ -1,0 +1,36 @@
+{
+  "schema": "typed-neuron.limb-manifest/v1",
+  "package": "typed-neuron/unbrowse",
+  "version": "0.1.0",
+  "description": "Sealed Unbrowse read boundary: cited observation and independent replay firings become a deterministic Contract promotion/demotion projection; credentials resolve only at the request boundary.",
+  "neurons": [
+    {
+      "id": "unbrowse",
+      "argv": [
+        "python3",
+        "neurons/unbrowse.py"
+      ],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "contract/projections/unbrowse/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 1,
+          "max_writes": 1,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 262144,
+          "max_depth": 1
+        }
+      }
+    }
+  ],
+  "budgets": {
+    "deadline_ms_per_firing": 10000
+  },
+  "schemas": {
+    "event": "neuron.unbrowse-boundary-event/v1",
+    "projection": "contract.unbrowse-route-projection/v1"
+  }
+}

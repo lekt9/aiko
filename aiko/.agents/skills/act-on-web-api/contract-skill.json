@@ -1,11 +1,9 @@
 {
-  "description": "Resolve and execute indexed Unbrowse or HTTP API capabilities with governed effects.",
+  "description": "Resolve and execute indexed Unbrowse, HTTP API, or browser capabilities with governed effects.",
   "examples": [
     {
       "expect": {
-        "held_effects": [
-          "account_mutation"
-        ],
+        "held_effects": [],
         "root_count": 1,
         "selected": "act-on-web-api"
       },
@@ -27,7 +25,7 @@
         "structured_result"
       ],
       "key": "resolve-route",
-      "plan": "Resolve a cached Unbrowse or API route for {{goal}}.",
+      "plan": "Resolve a cached Unbrowse, API, or browser route for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
@@ -61,7 +59,7 @@
         "structured_result"
       ],
       "key": "execute-request",
-      "plan": "Execute the governed API request for {{goal}}.",
+      "plan": "Execute the governed API or browser request for {{goal}}.",
       "read_only": false,
       "requires_authority": false,
       "reversible": true,
@@ -99,7 +97,10 @@
     "unbrowse",
     "website action",
     "fetch website",
-    "api route"
+    "api route",
+    "take over my browser",
+    "browser automation",
+    "download from website"
   ],
   "version": "1.0.0"
 }

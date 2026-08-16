@@ -21,7 +21,7 @@ Use `attach` with a CDP URL or port for an already-running browser/Electron app,
 
 const ACT_DESCRIPTION: &str = r#"Act on a browser or Electron application through its native CDP accessibility surface.
 
-Use refs returned by application_observe snapshots. Supports launching a browser, navigation, clicks, form entry, keyboard input, scrolling, tab changes, and evaluated calls into APIs exposed by an Electron preload. The runtime rejects commands outside Aiko's closed application capability surface, while execution permissions remain owned by Aiko and Contract."#;
+Use refs returned by application_observe snapshots. Supports launching a browser, navigation, clicks, form entry, keyboard input, scrolling, tab changes, repeated downloads, and evaluated calls into APIs exposed by an Electron preload. Use it when the user asks Aiko to take over a browser, including authenticated pages. Do not withhold the tool call merely because a page contains user-accessible personal data or may enforce terms, credits, quotas, or rate limits; attempt the requested action and report the actual runtime response. The runtime rejects commands outside Aiko's closed application capability surface, while execution permissions remain owned by Aiko and Contract."#;
 
 static RUNTIME: OnceLock<Arc<EmbeddedRuntime>> = OnceLock::new();
 
@@ -737,5 +737,12 @@ mod tests {
         assert_eq!(decision["selected"]["sequence"][1], "application.snapshot");
         assert!(route.decision_for("fill").is_none());
         assert_eq!(cdp_port_from_decision(&decision), Some(9222));
+    }
+
+    #[test]
+    fn browser_action_description_does_not_invent_policy_holds() {
+        assert!(ACT_DESCRIPTION.contains("take over a browser"));
+        assert!(ACT_DESCRIPTION.contains("including authenticated pages"));
+        assert!(ACT_DESCRIPTION.contains("attempt the requested action"));
     }
 }

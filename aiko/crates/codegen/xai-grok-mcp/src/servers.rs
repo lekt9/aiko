@@ -4899,10 +4899,7 @@ for line in sys.stdin:
             "McpClient::shutdown() left MCP stdio child {pid} alive",
         );
         assert!(
-            matches!(
-                other_holder.state_kind().await,
-                ClientStateKind::Empty
-            ),
+            matches!(other_holder.state_kind().await, ClientStateKind::Empty),
             "shutdown() must leave the client Empty, not Ready over a dead child",
         );
         assert!(
@@ -5646,18 +5643,16 @@ for line in sys.stdin:
     #[test]
     fn read_only_hint_decides_whether_an_mcp_tool_is_an_effect() {
         let state = || Arc::new(Mutex::new(McpState::new(vec![])));
-        let tool = |hint| {
-            McpErasedTool {
-                tool: McpTool::new(
-                    "search".to_string(),
-                    "Search the index".to_string(),
-                    "codedb".to_string(),
-                    state(),
-                    serde_json::json!({"type": "object"}),
-                    None,
-                )
-                .with_read_only_hint(hint),
-            }
+        let tool = |hint| McpErasedTool {
+            tool: McpTool::new(
+                "search".to_string(),
+                "Search the index".to_string(),
+                "codedb".to_string(),
+                state(),
+                serde_json::json!({"type": "object"}),
+                None,
+            )
+            .with_read_only_hint(hint),
         };
         // The kind is always `Other`, whose kind-level default is "mutating" —
         // so without the hint every MCP tool, including pure lookups, counts as

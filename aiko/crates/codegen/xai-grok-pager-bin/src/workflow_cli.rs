@@ -1,7 +1,7 @@
 //! Dependency-small parser for `aiko workflow`.
 //!
-//! Keep this file `std`-only: the acceptance witness compiles its exact source
-//! with `rustc --test`, without linking the full pager binary.
+//! It remains dependency-small, but its tests run through the compiled pager
+//! production crate so composition-root wiring cannot be replaced by a source-only green.
 
 use std::ffi::OsString;
 
@@ -38,6 +38,29 @@ pub struct ServiceRequestParts {
 }
 
 impl WorkflowCommand {
+    /// Canonical raw stimulus handed unchanged to the mandatory CLI ingress.
+    /// Authority is deliberately absent; it comes from the local authenticated
+    /// process/session boundary.
+    pub fn contract_ingress_stimulus(&self) -> Vec<u8> {
+        match self {
+            Self::Schema { operation } => {
+                format!("schema\0{}", operation.as_deref().unwrap_or("all")).into_bytes()
+            }
+            Self::Route { goal } => format!("route\0{goal}").into_bytes(),
+            Self::Submit {
+                goal,
+                acceptance_mode,
+                bundle_ref,
+            } => format!(
+                "submit\0{goal}\0{acceptance_mode}\0{}",
+                bundle_ref.as_deref().unwrap_or("")
+            )
+            .into_bytes(),
+            Self::Status { bundle_ref } => format!("status\0{bundle_ref}").into_bytes(),
+            Self::Inspect { bundle_ref } => format!("inspect\0{bundle_ref}").into_bytes(),
+        }
+    }
+
     /// Typed dispatch mapping consumed by the composition root. Schema is
     /// catalog-only and therefore has no workflow service request.
     pub fn service_request(&self) -> Option<ServiceRequestParts> {
@@ -404,5 +427,18 @@ mod tests {
             error_json("cli_parse", "workflow_cli_usage", "bad \"field\"\n"),
             "{\"api_version\":\"aiko.workflow/v1\",\"operation\":\"cli_parse\",\"ok\":false,\"error\":{\"code\":\"workflow_cli_usage\",\"message\":\"bad \\\"field\\\"\\n\",\"retryable\":false}}"
         );
+    }
+
+    #[test]
+    fn cli_ingress_stimulus_contains_no_authority_fields() {
+        let command = WorkflowCommand::Route {
+            goal: "tenant=forged role=admin".into(),
+        };
+        assert_eq!(
+            command.contract_ingress_stimulus(),
+            b"route\0tenant=forged role=admin"
+        );
+        // The bytes remain stimulus; no parser promotes payload hints to auth.
+        assert!(command.service_request().is_some());
     }
 }

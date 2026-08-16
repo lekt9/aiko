@@ -1258,6 +1258,18 @@ importers:
         specifier: ~6.0.3
         version: 6.0.3
 
+  packages/cloudflare-webhook:
+    devDependencies:
+      '@types/bun':
+        specifier: latest
+        version: 1.3.14
+      typescript:
+        specifier: ~6.0.3
+        version: 6.0.3
+      wrangler:
+        specifier: ^4.106.0
+        version: 4.106.0(@cloudflare/workers-types@4.20260701.1)
+
   packages/components:
     dependencies:
       '@smthrs/agents':

@@ -7,11 +7,13 @@ lock does not name is a refusal. Neuron must not require contract.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +28,72 @@ MANIFESTS = {
 
 def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def atomic_symlink(target: Path, link: Path) -> None:
+    link.parent.mkdir(parents=True, exist_ok=True)
+    temporary = link.with_name(f".{link.name}.new-{os.getpid()}")
+    if temporary.exists() or temporary.is_symlink():
+        temporary.unlink()
+    temporary.symlink_to(target, target_is_directory=True)
+    os.replace(temporary, link)
+
+
+def write_control_integrity(package_root: Path, lock: dict) -> None:
+    critical = [
+        ".mcp.json",
+        "bin/smithers.mjs",
+        "lib/resolve-smithers-cli.mjs",
+        "runtime/aiko-package.json",
+        "runtime/bun.lock",
+        "runtime/package.json",
+        "runtime/apps/cli/src/index.js",
+        "runtime/packages/components/package.json",
+        "runtime/packages/components/src/index.js",
+        "runtime/packages/components/src/index.d.ts",
+        "runtime/packages/components/src/components/ContractCell.js",
+        "runtime/packages/gateway-client/src/index.ts",
+        "runtime/packages/gateway-client/src/ContractLifecycleClient.ts",
+        "runtime/packages/smithers/package.json",
+        "runtime/packages/smithers/src/index.js",
+        "runtime/packages/smithers/src/index.d.ts",
+        "runtime/packages/smithers/src/contractDriver.js",
+        "runtime/packages/smithers/src/contractRecovery.js",
+        "runtime/packages/smithers/src/contractRecoveryPolicy.js",
+    ]
+    missing = [name for name in critical if not (package_root / name).is_file()]
+    if missing:
+        raise SystemExit(f"control package critical files missing: {', '.join(missing)}")
+    pin = (lock.get("packages") or {}).get("control") or {}
+    dependency_lock = package_root / "runtime" / "bun.lock"
+    expected_dependency_digest = pin.get("dependency_lock_sha256")
+    actual_dependency_digest = sha256_file(dependency_lock)
+    if actual_dependency_digest != expected_dependency_digest:
+        raise SystemExit(
+            f"control dependency lock digest {actual_dependency_digest} != stack pin {expected_dependency_digest}"
+        )
+    receipt = {
+        "format": 1,
+        "name": "control",
+        "version": pin.get("version"),
+        "abi": pin.get("abi"),
+        "stack": lock.get("stack"),
+        "dependency_lock_sha256": actual_dependency_digest,
+        "files": {name: sha256_file(package_root / name) for name in critical},
+    }
+    canonical = json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+    receipt["digest"] = hashlib.sha256(canonical).hexdigest()
+    (package_root / ".aiko-control-integrity.json").write_text(
+        json.dumps(receipt, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def version_file() -> str:
@@ -82,10 +150,19 @@ def check(lock: dict) -> list[str]:
     control = MANIFESTS["control"]
     if control.exists():
         ctl = load_json(control)
+        control_pin = pkgs.get("control") or {}
         if "cell" not in (ctl.get("requires") or []):
             errs.append("control must require cell")
         if "contract" in (ctl.get("requires") or []) or "neuron" in (ctl.get("requires") or []):
             errs.append("control must not import contract or neuron — Cell is the native harness")
+        if ctl.get("abi") != "smithers-control/v1" or control_pin.get("abi") != ctl.get("abi"):
+            errs.append(f"control ABI must be pinned to smithers-control/v1, got manifest={ctl.get('abi')!r} lock={control_pin.get('abi')!r}")
+        dependency_pin = control_pin.get("dependency_lock_sha256")
+        dependency_lock = ROOT / "aiko-flow" / "bun.lock"
+        if not isinstance(dependency_pin, str) or len(dependency_pin) != 64:
+            errs.append("control dependency lock digest is not pinned")
+        elif not dependency_lock.is_file() or sha256_file(dependency_lock) != dependency_pin:
+            errs.append("control bun.lock bytes do not match stack digest pin")
     return errs
 
 
@@ -137,61 +214,117 @@ def install(lock: dict, *, with_control: bool = False, aiko_bin: str | None = No
         ]
         if any(not path.is_file() for path in missing):
             raise SystemExit("control package is incomplete — refusing to install a Smithers limb that cannot boot")
-        control_version = (lock.get("packages") or {}).get("control", {}).get("version")
+        control_pin = (lock.get("packages") or {}).get("control") or {}
+        control_version = control_pin.get("version")
         if not control_version:
             raise SystemExit("control version missing from stack lock")
-        control_ver = dest_root / "control" / control_version
-        if control_ver.exists():
-            shutil.rmtree(control_ver)
-        shutil.copytree(
-            plugin_src,
-            control_ver,
-            ignore=shutil.ignore_patterns("node_modules", "*.log", ".DS_Store"),
-        )
-        runtime_dir = control_ver / "runtime"
-        shutil.copytree(
-            control_src,
-            runtime_dir,
-            ignore=shutil.ignore_patterns(
-                ".git", "smithers.db*", "node_modules", "dist", "coverage",
-                "*.log", ".DS_Store",
-            ),
-        )
-        # The workspace package set must be complete before its dependency tree is
-        # resolved. Never fall back to bunx: that would silently run different bytes.
-        source_modules = control_src / "node_modules"
-        if not source_modules.is_dir():
-            raise SystemExit("Smithers dependencies missing — run bun install --frozen-lockfile before packaging")
-        mcp_path = control_ver / ".mcp.json"
-        mcp = load_json(mcp_path)
-        server = mcp.get("mcpServers", {}).get("smithers")
-        if not isinstance(server, dict):
-            raise SystemExit("Smithers MCP declaration missing")
-        server.setdefault("env", {})["AIKO_SMITHERS_RUNTIME"] = str(control_src)
-        mcp_path.write_text(json.dumps(mcp, indent=2) + "\n", encoding="utf-8")
-        current_control = dest_root / "control" / "current"
-        if current_control.is_symlink() or current_control.exists():
-            if current_control.is_dir() and not current_control.is_symlink():
-                shutil.rmtree(current_control)
-            else:
-                current_control.unlink()
-        current_control.symlink_to(control_ver, target_is_directory=True)
+        control_parent = dest_root / "control"
+        control_parent.mkdir(parents=True, exist_ok=True)
+        control_ver = control_parent / control_version
+        stage = Path(tempfile.mkdtemp(prefix=f".{control_version}.staging-", dir=control_parent))
+        backup = control_parent / f".{control_version}.backup-{os.getpid()}"
+        deployed = False
+        try:
+            shutil.copytree(
+                plugin_src,
+                stage,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("node_modules", "*.log", ".DS_Store"),
+            )
+            runtime_dir = stage / "runtime"
+            shutil.copytree(
+                control_src,
+                runtime_dir,
+                ignore=shutil.ignore_patterns(
+                    ".git", "smithers.db*", "node_modules", "dist", "coverage",
+                    "*.log", ".DS_Store",
+                ),
+            )
+            # A source snapshot without its exact Bun dependency closure is not a runtime.
+            source_modules = control_src / "node_modules"
+            if not source_modules.is_dir():
+                raise SystemExit("Smithers dependencies missing — run bun install --frozen-lockfile before packaging")
+            shutil.copytree(
+                source_modules,
+                runtime_dir / "node_modules",
+                symlinks=True,
+                ignore=shutil.ignore_patterns("*.log", ".DS_Store"),
+            )
+            for workspace_modules in control_src.rglob("node_modules"):
+                if not workspace_modules.is_dir() or workspace_modules == source_modules or source_modules in workspace_modules.parents:
+                    continue
+                shutil.copytree(
+                    workspace_modules,
+                    runtime_dir / workspace_modules.relative_to(control_src),
+                    symlinks=True,
+                    dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("*.log", ".DS_Store"),
+                )
+            runtime_root = runtime_dir.resolve()
+            dependency_links: list[dict[str, str]] = []
+            for link in runtime_dir.rglob("*"):
+                if not link.is_symlink():
+                    continue
+                resolved = link.resolve(strict=False)
+                if not resolved.is_relative_to(runtime_root) or not resolved.exists():
+                    raise SystemExit(f"Smithers dependency closure escapes packaged runtime: {link} -> {os.readlink(link)}")
+                dependency_links.append({
+                    "path": link.relative_to(runtime_dir).as_posix(),
+                    "target": os.readlink(link),
+                })
+            (runtime_dir / ".aiko-node-links.json").write_text(
+                json.dumps(sorted(dependency_links, key=lambda row: row["path"]), separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+            mcp_path = stage / ".mcp.json"
+            mcp = load_json(mcp_path)
+            server = mcp.get("mcpServers", {}).get("smithers")
+            if not isinstance(server, dict):
+                raise SystemExit("Smithers MCP declaration missing")
+            env_block = server.get("env")
+            if isinstance(env_block, dict):
+                env_block.pop("AIKO_SMITHERS_RUNTIME", None)
+                if not env_block:
+                    server.pop("env", None)
+            mcp_path.write_text(json.dumps(mcp, indent=2) + "\n", encoding="utf-8")
+            write_control_integrity(stage, lock)
 
-        executable = aiko_bin or os.environ.get("AIKO_BIN") or shutil.which("aiko")
-        if not executable:
-            candidate = ROOT / "aiko" / "target" / "debug" / "aiko"
-            if candidate.is_file():
-                executable = str(candidate)
-        if not executable:
-            raise SystemExit("Aiko binary missing — set AIKO_BIN; control must install through Aiko's native plugin loader")
-        env = os.environ.copy()
-        env["AIKO_HOME"] = str(home())
-        env["GROK_HOME"] = str(home() / ".grok")
-        subprocess.run(
-            [executable, "plugin", "install", str(current_control), "--trust"],
-            env=env,
-            check=True,
-        )
+            executable = aiko_bin or os.environ.get("AIKO_BIN") or shutil.which("aiko")
+            if not executable:
+                candidate = ROOT / "aiko" / "target" / "debug" / "aiko"
+                if candidate.is_file():
+                    executable = str(candidate)
+            if not executable:
+                raise SystemExit("Aiko binary missing — set AIKO_BIN; control must install through Aiko's native plugin loader")
+            env = os.environ.copy()
+            env["AIKO_HOME"] = str(home())
+            env["GROK_HOME"] = str(home() / ".grok")
+            # Validate/native-install the complete staging tree before touching current.
+            subprocess.run([executable, "plugin", "install", str(stage), "--trust"], env=env, check=True)
+
+            if backup.exists():
+                shutil.rmtree(backup)
+            if control_ver.exists() or control_ver.is_symlink():
+                os.replace(control_ver, backup)
+            try:
+                os.replace(stage, control_ver)
+                atomic_symlink(control_ver, control_parent / "current")
+                deployed = True
+            except BaseException:
+                if control_ver.exists() or control_ver.is_symlink():
+                    if control_ver.is_dir() and not control_ver.is_symlink():
+                        shutil.rmtree(control_ver)
+                    else:
+                        control_ver.unlink()
+                if backup.exists():
+                    os.replace(backup, control_ver)
+                raise
+            if backup.exists():
+                shutil.rmtree(backup)
+        finally:
+            if not deployed and stage.exists():
+                shutil.rmtree(stage)
+
     return cell_ver, control_ver
 
 

@@ -31,20 +31,41 @@ Spelling: **Aiko**. Meeting notes that say “Ico” are a transcription artifac
 | `neuron/` | Firing primitive, membrane, `port`, `redrive`, admitted limbs | Yes (`zig build` installs its CLI as `zig-out/bin/aiko`) |
 | `contract/` | Durable interpreter: ledger, W6H, occurrences, validity windows | Yes (`libcontract`) |
 | `src/` | `aiko-doctor` — first binary that links **both** Zig layers | Yes |
-| `tests/` | Root witnesses (`bridge`, `dispatch`, `tick`, `zig-doctrine`, `conformance`, graph-engineering) | Driven by `zig build gate` |
+| `tests/` | Root witnesses; the exact `zig build gate` inventory is derived from `build.zig` and listed in the root README and `CLAUDE.md` | Driven by `zig build gate` |
 | `aiko/` | Rust host: TUI, desktop, ACP, MCP, packaging | **No** — compile from `aiko/` |
-| `cell/` | Fractal YAML/Python harness standard | **No** — standalone, does not import `contract/` or `neuron/` |
+| `aiko-flow/` | In-monorepo Smithers control/authoring surface; MIT-licensed source. Its root npm workspace is `private: true`, which prevents publishing that aggregate package; it does not make the tracked source private or unpublished. | **No** — standalone TypeScript workspace |
+| `cell/` | Fractal YAML/Python typed harness standard; it does not own credentials, context, admission, or durable control truth | **No** — standalone, does not import `contract/` or `neuron/` |
+| `neuron/limbs/unbrowse/` | Digest-admitted provider-neutral read boundary | Yes (standalone Neuron gate) |
+| `neuron/limbs/telethon/` | Digest-admitted provider-neutral effect boundary with synthetic conformance fixtures | Yes (standalone Neuron gate) |
+| `aiko-flow/packages/components/src/components/` | Smithers `Cell`/`runCell` typed harness plus Contract-backed `ContractCell`; not an authority store | No — standalone TypeScript workspace |
 | `docs/` | Cross-layer product docs (this tree) | n/a |
 | `aiko/apps/frontend` | Third-party submodule ([Simpleyyt/ai-manus](https://github.com/Simpleyyt/ai-manus), MIT) | No |
 
 **Direction is load-bearing:** `neuron` builds and tests with `contract`
 absent. Do not reverse that dependency.
 
+## AI-FDE claim boundary
+
+The following published witnesses are green in this tree:
+
+| Proven in-tree claim | Runnable witness |
+|---|---|
+| Contract-backed cited context and delegated authority | `tests/contract-hook-ingress-gate.sh`, `tests/contract-delegation-capability-gate.sh` |
+| Smithers typed Cell/runCell composed with Contract control | `tests/no-duplicate-fde-primitives-gate.sh`, `tests/smithers-contract-driver-gate.sh` |
+| Bounded native authoring through digest admission and real-path judgment | `neuron/tests/authored-gap-gate.sh` |
+| Admitted Unbrowse read boundary | `neuron/tests/unbrowse-limb-gate.sh` |
+| Admitted provider-neutral Telethon effect boundary | `neuron/tests/telethon-limb-gate.sh` |
+| Obsolete wrong-layer authority cannot return | `tests/no-duplicate-fde-primitives-gate.sh` |
+
+These witnesses do **not** establish a market-first claim, a managed enterprise
+credential vault, a production Telegram employee-account/provider integration,
+a production SAP adapter, or an operator write UI. Those remain **Absent** in
+[`AI-FORWARD-DEPLOYED-ENGINEER.md`](AI-FORWARD-DEPLOYED-ENGINEER.md).
+
 ## What is *not* in the published tree
 
 | Path | Status |
 |---|---|
-| `aiko-flow/` | Local control surface (Smithers). Durable Cell control plane: installs as `control` package requiring Cell only. Installed by default via `scripts/aiko-packages.py install` and default-enabled in Aiko's plugin discovery (`smithers`). |
 | `career-ops/` | Local unpublished workspace. |
 | `cell/hoysan-*`, `cell/data/hoysan-*` | Customer operational material. Must not be committed. |
 | Build outputs (`zig-out/`, `target/`, `.zig-cache/`) | Generated. Reproduce with `zig build` / `cargo`. |
@@ -74,8 +95,9 @@ In this monorepo the default walk already hits `aiko/../contract`.
 
 ## License
 
-Apache License 2.0. See [`LICENSE`](../LICENSE) and [`NOTICE`](../NOTICE).
-`aiko/apps/frontend` remains MIT (upstream).
+The monorepo is Apache License 2.0 except where a tracked component carries its
+own license. See [`LICENSE`](../LICENSE) and [`NOTICE`](../NOTICE). `aiko-flow/`
+and the `aiko/apps/frontend` upstream remain MIT.
 
 ## Documentation policy
 

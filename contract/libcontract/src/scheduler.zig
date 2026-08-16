@@ -9,6 +9,7 @@
 const std = @import("std");
 const ledger = @import("ledger.zig");
 const cache = @import("cache.zig");
+const execution_control = @import("execution_control.zig");
 
 pub const TriggerSpec = union(enum) {
     none,
@@ -49,12 +50,21 @@ pub const Claim = struct {
     cwd: []u8,
     due_unix: i64,
     lease_until_unix: i64,
+    lease_id: []u8,
+    owner_incarnation: []u8,
+    attempt: u32,
+    fence: u64,
+    graph_version: u64,
+    input_version: u64,
+    commit_ordinal: u64,
 
     pub fn deinit(self: *Claim, allocator: std.mem.Allocator) void {
         allocator.free(self.contract_id);
         allocator.free(self.occurrence);
         allocator.free(self.prompt);
         allocator.free(self.cwd);
+        allocator.free(self.lease_id);
+        allocator.free(self.owner_incarnation);
         self.* = undefined;
     }
 };
@@ -300,7 +310,14 @@ fn extractIntField(line: []const u8, key: []const u8) ?i64 {
 const ExecutionState = struct {
     settled: bool = false,
     claim_owner: ?[]const u8 = null,
+    owner_incarnation: ?[]const u8 = null,
+    lease_id: ?[]const u8 = null,
     lease_until_unix: i64 = 0,
+    attempt: u32 = 0,
+    fence: u64 = 0,
+    graph_version: u64 = 0,
+    input_version: u64 = 0,
+    commit_ordinal: u64 = 0,
 };
 
 fn executionState(body: []const u8, id: []const u8, occurrence: []const u8) ExecutionState {
@@ -316,7 +333,14 @@ fn executionState(body: []const u8, id: []const u8, occurrence: []const u8) Exec
         if (eventIs(bounds.line, "execution_claimed")) {
             state.settled = false;
             state.claim_owner = extractStringField(bounds.line, "owner");
+            state.owner_incarnation = extractStringField(bounds.line, "owner_incarnation");
+            state.lease_id = extractStringField(bounds.line, "lease_id");
             state.lease_until_unix = extractIntField(bounds.line, "lease_until_unix") orelse 0;
+            state.attempt = @intCast(@max(0, extractIntField(bounds.line, "attempt") orelse 0));
+            state.fence = @intCast(@max(0, extractIntField(bounds.line, "fence") orelse 0));
+            state.graph_version = @intCast(@max(0, extractIntField(bounds.line, "graph_version") orelse 0));
+            state.input_version = @intCast(@max(0, extractIntField(bounds.line, "input_version") orelse 0));
+            state.commit_ordinal = @intCast(@max(0, extractIntField(bounds.line, "commit_ordinal") orelse 0));
         } else if (eventIs(bounds.line, "execution_released")) {
             state.settled = false;
             state.claim_owner = null;
@@ -406,6 +430,55 @@ fn appendExecutionEvent(
     try row.append(allocator, '}');
     const path = try ledger.appendRow(allocator, env, row.items);
     allocator.free(path);
+}
+
+fn version64(text: []const u8) u64 {
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(text, &digest, .{});
+    return std.mem.readInt(u64, digest[0..8], .big);
+}
+
+fn nextCommitOrdinal(body: []const u8) u64 {
+    var count: u64 = 0;
+    var lines = std.mem.tokenizeScalar(u8, body, '\n');
+    while (lines.next()) |line| if (std.mem.indexOf(u8, line, "\"event\":\"execution_") != null) { count +|= 1; };
+    return count +| 1;
+}
+
+fn leaseDigest(id: []const u8, occurrence: []const u8, incarnation: []const u8, attempt: u32, fence: u64, ordinal: u64) [64]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    for ([_][]const u8{ "contract.execution.lease/v1", id, occurrence, incarnation }) |field| {
+        hash.update(std.mem.asBytes(&field.len)); hash.update(field);
+    }
+    hash.update(std.mem.asBytes(&attempt)); hash.update(std.mem.asBytes(&fence)); hash.update(std.mem.asBytes(&ordinal));
+    var raw: [32]u8 = undefined; hash.final(&raw);
+    return std.fmt.bytesToHex(raw, .lower);
+}
+
+fn appendFencedExecutionEvent(
+    allocator: std.mem.Allocator, env: std.process.Environ, event: []const u8,
+    id: []const u8, occurrence: []const u8, owner: []const u8, incarnation: []const u8,
+    lease_id: []const u8, attempt: u32, fence: u64, graph_version: u64, input_version: u64,
+    commit_ordinal: u64, now_unix: i64, deadline: ?i64, outcome: ?SettleOutcome, detail: ?[]const u8,
+) !void {
+    var row: std.ArrayList(u8) = .empty; defer row.deinit(allocator);
+    try row.appendSlice(allocator, "{\"event\":"); try appendJsonString(&row, allocator, event);
+    for ([_]struct { key: []const u8, value: []const u8 }{
+        .{ .key = "id", .value = id }, .{ .key = "occurrence", .value = occurrence },
+        .{ .key = "owner", .value = owner }, .{ .key = "owner_incarnation", .value = incarnation },
+        .{ .key = "lease_id", .value = lease_id },
+    }) |field| { try row.print(allocator, ",\"{s}\":", .{field.key}); try appendJsonString(&row, allocator, field.value); }
+    try row.print(allocator, ",\"attempt\":{d},\"fence\":{d},\"graph_version\":{d},\"input_version\":{d},\"commit_ordinal\":{d},\"ts_unix\":{d}",
+        .{ attempt, fence, graph_version, input_version, commit_ordinal, now_unix });
+    if (deadline) |value| {
+        if (std.mem.eql(u8, event, "execution_released"))
+            try row.print(allocator, ",\"retry_after_unix\":{d}", .{value})
+        else
+            try row.print(allocator, ",\"lease_until_unix\":{d}", .{value});
+    }
+    if (outcome) |value| { try row.appendSlice(allocator, ",\"outcome\":"); try appendJsonString(&row, allocator, @tagName(value)); }
+    if (detail) |value| { try row.appendSlice(allocator, ",\"detail\":"); try appendJsonString(&row, allocator, value); }
+    try row.append(allocator, '}'); const path = try ledger.appendRow(allocator, env, row.items); allocator.free(path);
 }
 
 /// Pure planner over JSONL. It performs no I/O and is therefore suitable for
@@ -541,10 +614,12 @@ pub fn claimDueAt(
     now_unix: i64,
     max_items: usize,
     owner: []const u8,
+    owner_incarnation: []const u8,
     lease_seconds: u32,
     scope_cwd: ?[]const u8,
 ) !ClaimBatch {
-    if (owner.len == 0 or lease_seconds == 0) return error.InvalidClaim;
+    if (owner.len == 0 or owner_incarnation.len != 64 or lease_seconds == 0 or
+        max_items > execution_control.MAX_CLAIM_BATCH) return error.InvalidClaim;
     const lock_fd = try ledger.acquireExclusive(allocator, env);
     defer ledger.releaseExclusive(lock_fd);
     const body = try ledger.readAll(allocator, env);
@@ -639,17 +714,17 @@ pub fn claimDueAt(
             next_wake = minDeadline(next_wake, now_unix);
             continue;
         }
-        try appendExecutionEvent(
-            allocator,
-            env,
-            "execution_claimed",
-            id,
-            key,
-            owner,
-            now_unix,
-            lease_until,
-            null,
-            null,
+        const attempt = state.attempt +| 1;
+        if (attempt == 0 or attempt > execution_control.MAX_ATTEMPTS) continue;
+        const fence = state.fence +| 1;
+        const graph_version = version64(line);
+        const input_version = version64(key);
+        const ordinal = nextCommitOrdinal(body) +| @as(u64, @intCast(claims.items.len));
+        const lease_id = leaseDigest(id, key, owner_incarnation, attempt, fence, ordinal);
+        try appendFencedExecutionEvent(
+            allocator, env, "execution_claimed", id, key, owner, owner_incarnation,
+            &lease_id, attempt, fence, graph_version, input_version, ordinal,
+            now_unix, lease_until, null, null,
         );
         try claims.append(allocator, .{
             .contract_id = try allocator.dupe(u8, id),
@@ -658,6 +733,10 @@ pub fn claimDueAt(
             .cwd = try allocator.dupe(u8, declared_cwd),
             .due_unix = due_unix,
             .lease_until_unix = lease_until,
+            .lease_id = try allocator.dupe(u8, &lease_id),
+            .owner_incarnation = try allocator.dupe(u8, owner_incarnation),
+            .attempt = attempt, .fence = fence, .graph_version = graph_version,
+            .input_version = input_version, .commit_ordinal = ordinal,
         });
     }
 
@@ -677,6 +756,12 @@ pub fn settleExecutionAt(
     id: []const u8,
     occurrence: []const u8,
     owner: []const u8,
+    owner_incarnation: []const u8,
+    lease_id: []const u8,
+    attempt: u32,
+    fence: u64,
+    graph_version: u64,
+    input_version: u64,
     outcome: SettleOutcome,
     detail: []const u8,
 ) !void {
@@ -685,26 +770,24 @@ pub fn settleExecutionAt(
     const body = try ledger.readAll(allocator, env);
     defer allocator.free(body);
     const state = executionState(body, id, occurrence);
-    if (state.settled) return;
+    if (state.settled) return error.AlreadySettled;
     const claimant = state.claim_owner orelse return error.NotClaimed;
-    if (!std.mem.eql(u8, claimant, owner)) return error.StaleClaim;
+    if (state.lease_until_unix <= now_unix or !std.mem.eql(u8, claimant, owner) or
+        state.owner_incarnation == null or !std.mem.eql(u8, state.owner_incarnation.?, owner_incarnation) or
+        state.lease_id == null or !std.mem.eql(u8, state.lease_id.?, lease_id) or
+        state.attempt != attempt or state.fence != fence) return error.StaleClaim;
+    if (state.graph_version != graph_version or state.input_version != input_version)
+        return error.StaleVersion;
     const event = if (outcome == .retry) "execution_released" else "execution_settled";
     const retry_after = if (outcome == .retry) blk: {
         const exponent = @min(retryCount(body, id, occurrence), 6);
         const backoff_seconds: i64 = @as(i64, 60) << @intCast(exponent);
         break :blk std.math.add(i64, now_unix, backoff_seconds) catch std.math.maxInt(i64);
     } else null;
-    try appendExecutionEvent(
-        allocator,
-        env,
-        event,
-        id,
-        occurrence,
-        owner,
-        now_unix,
-        retry_after,
-        outcome,
-        detail,
+    try appendFencedExecutionEvent(
+        allocator, env, event, id, occurrence, owner, owner_incarnation, lease_id,
+        attempt, fence, graph_version, input_version, nextCommitOrdinal(body),
+        now_unix, retry_after, outcome, detail,
     );
 }
 
@@ -717,6 +800,12 @@ pub fn renewExecutionAt(
     id: []const u8,
     occurrence: []const u8,
     owner: []const u8,
+    owner_incarnation: []const u8,
+    lease_id: []const u8,
+    attempt: u32,
+    fence: u64,
+    graph_version: u64,
+    input_version: u64,
     lease_seconds: u32,
 ) !i64 {
     if (lease_seconds == 0) return error.InvalidClaim;
@@ -727,20 +816,18 @@ pub fn renewExecutionAt(
     const state = executionState(body, id, occurrence);
     if (state.settled) return error.AlreadySettled;
     const claimant = state.claim_owner orelse return error.NotClaimed;
-    if (!std.mem.eql(u8, claimant, owner)) return error.StaleClaim;
+    if (state.lease_until_unix <= now_unix or !std.mem.eql(u8, claimant, owner) or
+        state.owner_incarnation == null or !std.mem.eql(u8, state.owner_incarnation.?, owner_incarnation) or
+        state.lease_id == null or !std.mem.eql(u8, state.lease_id.?, lease_id) or
+        state.attempt != attempt or state.fence != fence) return error.StaleClaim;
+    if (state.graph_version != graph_version or state.input_version != input_version)
+        return error.StaleVersion;
     const lease_until =
         std.math.add(i64, now_unix, @as(i64, lease_seconds)) catch std.math.maxInt(i64);
-    try appendExecutionEvent(
-        allocator,
-        env,
-        "execution_claimed",
-        id,
-        occurrence,
-        owner,
-        now_unix,
-        lease_until,
-        null,
-        "lease_renewed",
+    try appendFencedExecutionEvent(
+        allocator, env, "execution_claimed", id, occurrence, owner, owner_incarnation,
+        lease_id, attempt, fence, graph_version, input_version, nextCommitOrdinal(body),
+        now_unix, lease_until, null, "lease_renewed",
     );
     return lease_until;
 }
