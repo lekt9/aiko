@@ -1,0 +1,38 @@
+{
+  "schema": "typed-neuron.limb-manifest/v1",
+  "package": "typed-neuron/webhook",
+  "version": "0.1.0",
+  "description": "Provider-neutral HTTPS webhook effector with a pure pinned planner and a fenced durable boundary using exact-byte HMAC plus independent provider read-back.",
+  "neurons": [
+    {
+      "id": "webhook",
+      "argv": [
+        "python3",
+        "neurons/webhook.py"
+      ],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "artifact/webhook/outbox/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 1,
+          "max_writes": 1,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 262144,
+          "max_depth": 1
+        }
+      }
+    }
+  ],
+  "budgets": {
+    "deadline_ms_per_firing": 10000
+  },
+  "schemas": {
+    "request": "neuron.webhook-request/v1",
+    "plan": "neuron.webhook-plan/v1",
+    "outbox": "neuron.webhook-outbox-record/v1",
+    "status": "neuron.webhook-provider-status/v1"
+  }
+}

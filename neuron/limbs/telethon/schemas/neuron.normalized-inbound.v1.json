@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "neuron.normalized-inbound/v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "source_id",
+    "conversation_id",
+    "sender_id",
+    "body"
+  ]
+}

@@ -15,9 +15,9 @@ recorded in [`docs/SOURCE-OF-TRUTH.md`](docs/SOURCE-OF-TRUTH.md).
 Most agents can complete a task. The hard problem is a process that runs every
 day, talks to people, waits for replies, and has to be *right* — because being
 wrong costs thirty-five phone calls and a missed vessel. Aiko is built for that
-second problem. The workflow substrate and an OS-only opaque credential-envelope boundary exist
-today. The seven-point Telethon policy contract is witnessed with a hermetic
-provider journal; production Telethon/SAP provider integrations are not features
+second problem. Contract owns durable authority, Neuron owns admitted
+boundaries, and Smithers composes Contract control with the preserved Cell/runCell
+typed harness. Production Telethon/SAP provider integrations are not features
 this README pretends are already complete.
 
 > Spelled **Aiko**. Meeting notes and transcripts say "Ico"; that is a
@@ -106,133 +106,27 @@ mean collapsing the layers into a monolith. A delivered workflow must continue
 to operate without a hard Aiko dependency; the standalone Neuron architecture
 below is the mechanical evidence for that promise.
 
-## Execution plan
+## Native ownership
 
-The executable form is
-[`docs/graph-engineering/aiko-fde.walk.json`](docs/graph-engineering/aiko-fde.walk.json);
-the expanded design record is
-[`docs/AIKO-FDE-PLAN.md`](docs/AIKO-FDE-PLAN.md). Contract's real graph planner
-accepts the walk with no cycles, unknown dependencies, write collisions,
-grounding gaps, or missing witnesses:
+The earlier Python FDE prototypes have been strangled by their native owners:
 
-```sh
-./zig-out/bin/aiko-doctor graph-plan docs/graph-engineering/aiko-fde.walk.json
-```
+- **Contract** owns durable context, lifecycle, delegation, recovery, and graph verdicts.
+- **Neuron** owns digest-admitted authoring and the Unbrowse and provider-effect limbs.
+- **Smithers** owns control by composing `ContractCell` with the native Contract driver.
+- **Cell/runCell remains the typed harness.** It is deliberately preserved and is
+  not a credential, context, readiness, or durable-control authority store.
 
-The plan is a chain at its current frontier, then fans out only where no data
-edge exists:
+There is no root `bind-workflow` or `workflow-control` authority and no Python
+credential/context/authoring/Unbrowse/Telethon authority under `cell/`. The
+negative ownership witness is `tests/no-duplicate-fde-primitives-gate.sh`; it
+also runs the Smithers Cell/runCell tests so cleanup cannot pass by deleting the
+harness. Replacement behavior is witnessed by the Contract gates,
+`neuron/tests/authored-gap-gate.sh`, `neuron/tests/unbrowse-limb-gate.sh`,
+`neuron/tests/telethon-limb-gate.sh`, and the Smithers Contract driver gates.
 
-```text
-0  source-build guard                                        SETTLED
-1  product contract + Cell self-wire increment               SETTLED
-2  credential envelope        ||  workflow binding (aiko-doctor bind-workflow) SETTLED
-3  context plane || native authoring loop || Unbrowse port       SETTLED
-4  Telethon policy contract SETTLED || SAP sandbox pilot OPEN
-5  independent FDE judge                                      SETTLED
-6  documentation promotion                                    SETTLED
-```
-
-### 0 — Keep the source build honest (settled)
-
-`ledger.readAll` is again bounded at 16 MiB, while graph-admission deduplication
-streams past that limit. Lock-time compaction begins at 12 MiB, before capped
-whole-buffer readers can wedge. The Rust source-build instructions now say that
-Protocol Buffers generation needs `PROTOC`/`protoc`, or DotSlash for the
-repository's hermetic `bin/protoc` wrapper.
-
-**Witness:** both `cd contract/libcontract && zig build test` and root
-`zig build test` pass on the reported macOS ARM64 source build.
-
-### 1 — Freeze the product contract (written)
-
-[`docs/AI-FORWARD-DEPLOYED-ENGINEER.md`](docs/AI-FORWARD-DEPLOYED-ENGINEER.md)
-is the canonical boundary. It names the customer, first operational wedge,
-authority model, handoff lifecycle, and acceptance criteria, and separates
-every claim into **Proven**, **Designed**, or **Absent**. Telethon is the
-proposed first vertical; SAP remains a sandbox pilot until its own gate is
-green. Market-first stays **Absent**.
-
-The first Cell-native increment of the self-wire loop is
-`cell/patterns/fde/` (`account-handle → deploy-workflow → deploy-aiko`).
-Binding: [`docs/AIKO-WORKFLOW-BINDING.md`](docs/AIKO-WORKFLOW-BINDING.md).
-
-**Witness:** `tests/fde-workflow-gate.sh`.
-
-### 2 — Two foundations (proven)
-
-**Employee credential envelope.** Workflows receive opaque, tenant-scoped
-handles, not passwords, cookies, or API keys. The implementation stores records
-only through macOS Keychain or Linux Secret Service and refuses when neither is
-available; it has no plaintext-file fallback. Its lifecycle covers inventory,
-expiry, MFA handoff, revoke, rotate, logout, origin scope, and allowed actions.
-Public Cell inputs refuse raw secret-shaped fields. The gate uses an in-memory
-vault double for lifecycle evidence and separately checks that the production
-constructor is hard-wired to the native OS vault.
-
-**Cell → Aiko binding and root workflow control.** The published
-`aiko-doctor bind-workflow` asks Cell to canonicalize a typed workflow and
-projects organelles/wiring into a Contract walk; `graph-plan` is the analyzer;
-`workflow-control` durably pauses and resumes the bound revision without becoming
-a second scheduler. Smithers is the local unpublished authoring/control surface,
-not a shipped product surface. Neuron still owns admitted execution.
-
-**Gates:** `tests/credential-envelope-gate.sh` proves the OS-only boundary and
-synthetic lifecycle contract; `tests/fde-workflow-gate.sh` proves pause/resume
-survives restart, code movement changes the digest, and the bound Cell and
-Contract plan cannot disagree about the active revision.
-
-### 3 — Self-deployment, context, and existing systems (proven)
-
-Three independently writable branches are now in this tree:
-
-1. **Context plane.** Context is tenant-isolated cited lineage, not an
-   unlimited transcript. Every claim records citations to a stimulus, message,
-   or pinned read; source movement invalidates dependants. Its canonical JSON
-   artifact verifies after a cold-copy handoff without a running Aiko host.
-2. **Native authoring loop.** The witnessed worker-directory family is selected
-   only from a promoted response schema, then follows write inert, compile, real
-   behavior test, admit by digest, attach least authority, retry, and judgment.
-   Compilation alone retains nothing. Other adapter families remain outside the
-   proven claim until each earns its own bounded transform and gate.
-3. **Unbrowse read boundary.** The in-tree adapter observes a credentialed JSON
-   GET, retains only route shape/schema/digests, validates it by a second origin
-   read, promotes only on exact agreement, and demotes on schema drift. The
-   credential and raw response are excluded from learned state. Mutation learning
-   and approval are outside this proven read-only boundary.
-
-**Gates:** `tests/fde-context-gate.sh`, `tests/fde-authoring-gate.sh`, and
-`tests/unbrowse-aiko-gate.sh` respectively prove citation invalidation and tenant
-isolation; write-inert/test/admit/attach/retry/judge; and cold observation →
-independent replay → promotion → drift demotion without retaining secrets.
-
-### 4 — Prove bounded verticals without pretending they are production-generic
-
-**Telethon policy contract (proven with a hermetic provider journal).** The
-empty-state witness consumes phone/code/2FA authorization material without
-persisting it, retains only an opaque handle, normalizes provider-shaped inbound
-updates, enforces per-chat and per-recipient ACLs, sends through a durable outbox,
-and settles only after a separate provider journal agrees. An amendment contacts
-only changed recipients; redrive never blindly resends a message that already
-crossed the boundary. Auth expiry or an unobservable send stays pending and
-escalates. This is not a claim that a production Telegram account integration is
-present.
-
-The first workflow is the one already witnessed in parts here: staffing
-requirement → deterministic roster → confirmation messages → replies or timeout
-→ escalation → amended requirement → compensation over the changed workers.
-
-**SAP sandbox pilot.** Pick one customer-relevant business transaction rather
-than claiming universal SAP support. Provision a dedicated least-privilege SAP
-user, record its roles and segregation-of-duties constraints, observe the real
-employee flow through Unbrowse, build against the actual selected surface, admit
-the adapter, permission-gate the mutation, submit once, and read the SAP business
-document back by identifier. A timeout without read-back is uncertain, never
-complete. Do not claim RFC, BAPI, OData, or generic SAP support until that exact
-surface is built and witnessed.
-
-**Gates:** `tests/telethon-fde-gate.sh` is green for the seven-point policy
-contract using synthetic provider records. A production Telethon provider witness
-and the SAP permission/idempotency/read-back/compensation gate remain absent.
+The executable delivery graph remains under `docs/graph-engineering/`; the
+public analyzer is `aiko-doctor graph-plan`. Contract analyzes declared walks,
+while the owning host executes them—Aiko does not grow a second scheduler.
 
 ### 5 — Judge across the boundary
 
@@ -502,17 +396,30 @@ the path the witnesses cover.
 **Gates are the acceptance criterion**, not the unit tests. Each drives the
 public CLI from an empty directory and asserts against durable state.
 
-```
-zig build gate     published-interface · redrive · authored-gap           # neuron
-                   skill-doc · escalation-ladder · staffing-engine        # neuron
-                   claim-deadline · interface-morphogenesis · meta-agent  # neuron
-                   observe-live · self-constructing-agent                 # neuron
-                   zig-doctrine · bridge · dispatch · tick                # root
-                   conformance · minimal-tree                              # root (via tests/conformance-gate.sh + minimal-tree-gate.sh)
-                   agent-entrypoint · universal-interface · conversation  # neuron (standalone)
-                   swarm-package · observability-retention                # neuron (standalone)
-                   + 12 limb conformance suites (python3 limbs/<limb>/tests/conformance.py)
-```
+`zig build gate` schedules exactly these distinct shell witnesses from the root
+`build.zig` (the self-check is also an install dependency):
+
+<!-- root-gate-inventory:start -->
+- `tests/aiko-self-check-gate.sh`
+- `tests/graph-harness-main-path-gate.sh`
+- `neuron/tests/published-interface-gate.sh`
+- `neuron/tests/redrive-gate.sh`
+- `neuron/tests/authored-gap-gate.sh`
+- `neuron/tests/skill-doc-gate.sh`
+- `tests/zig-doctrine-gate.sh`
+- `neuron/tests/escalation-ladder-gate.sh`
+- `neuron/tests/staffing-engine-gate.sh`
+- `neuron/tests/claim-deadline-gate.sh`
+- `tests/bridge-gate.sh`
+- `tests/dispatch-gate.sh`
+- `neuron/tests/interface-morphogenesis-gate.sh`
+- `neuron/tests/meta-agent-gate.sh`
+- `neuron/tests/self-constructing-agent-gate.sh`
+- `tests/tick-gate.sh`
+- `tests/graph-engineering-gate.sh`
+- `tests/cross-journal-retention-gate.sh`
+- `tests/no-duplicate-fde-primitives-gate.sh`
+<!-- root-gate-inventory:end -->
 
 ---
 
@@ -533,12 +440,10 @@ zig build gate     published-interface · redrive · authored-gap           # ne
 | **Staffing engine — deterministic roster, refuses a shortfall** | ✅ | `staffing-engine-gate` |
 | **Escalation ladder — notify → reply\|timeout → call → stop** | ✅ | `escalation-ladder-gate` |
 | One build, Linux-native, both layers linked | ✅ | `aiko-doctor` |
-| **Cell-native FDE self-wire** — account handle, not API key; Aiko seats Aiko | ✅ | `fde-workflow-gate` |
-| **OS-only credential-envelope contract** — opaque scope, expiry, MFA, revoke, rotate, logout | ✅ | `credential-envelope-gate` |
-| **Cited context plane** — tenant isolation, source invalidation, cold handoff | ✅ | `fde-context-gate` |
-| **Unbrowse read boundary** — independent replay promotion, drift demotion, sealed state | ✅ | `unbrowse-aiko-gate` |
-| **Bounded native adapter authoring** — inert bytes through judgment on the real local path | ✅ | `fde-authoring-gate` |
-| **Telethon seven-point policy contract** — hermetic provider journal, not production Telegram | ✅ | `telethon-fde-gate` |
+| **Contract-backed Smithers Cell control** — typed harness preserved; no duplicate authority store | ✅ | `smithers-contract-driver-gate`, `no-duplicate-fde-primitives-gate` |
+| **Contract context and delegated capability** — cited, scoped durable authority | ✅ | `contract-hook-ingress-gate`, `contract-delegation-capability-gate` |
+| **Admitted Unbrowse and provider-effect boundaries** | ✅ | `unbrowse-limb-gate`, `telethon-limb-gate` |
+| **Bounded native adapter authoring** — inert bytes through judgment on the real path | ✅ | `authored-gap-gate` |
 
 Read-only live view (`telemetry serve`) exists and is gated by
 `observe-live-gate`. What does **not** exist:
@@ -613,10 +518,7 @@ clone path.
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | how to change this tree |
 | [`SECURITY.md`](SECURITY.md) | private vulnerability reports |
 | `docs/AI-FORWARD-DEPLOYED-ENGINEER.md` | product boundary (Proven / Designed / Absent) |
-| `docs/AIKO-WORKFLOW-BINDING.md` | Smithers/Cell/Aiko/Contract/Neuron binding |
-| `docs/AIKO-FDE-PLAN.md` | expanded AI Forward Deployed Engineer execution plan |
-| `docs/graph-engineering/aiko-fde.walk.json` | executable, skill-grounded delivery graph |
-| `docs/graph-engineering/aiko-fde-self-wire.walk.json` | Cell-native self-wire increment |
+| `docs/graph-engineering/AIKO-HOOK-ORGANISM.md` | native Contract/Neuron/Smithers ownership covenant |
 | `docs/graph-engineering/aiko-hoysan-finish.walk.json` | synthetic end-to-end self-wire and benchmark graph |
 | `docs/AIKO-HOYSAN-BENCHMARK.md` | synthetic performance receipt, fixed defects, and control-plane blocker |
 | `neuron/AGENTS.md` | normative architecture |

@@ -22,20 +22,28 @@ use xai_grok_sampling_types::{ContentPart, ConversationItem};
 use xai_grok_tools::notification::{ScheduledTaskFired, ToolNotificationHandle};
 
 mod activity_sensor;
+pub mod capability_tools;
 pub(crate) mod contract_events;
 mod contract_learning;
 pub mod contract_loop;
+pub mod delegation_capability;
 mod execution_control;
 pub mod graph_harness;
 mod graph_harness_cell;
 mod graph_harness_edge;
 mod graph_harness_orchestration;
+mod hook_ingress;
+pub mod ingress_routes;
 use graph_harness_edge::Rollout as GraphHarnessRollout;
+pub use smithers_driver::{
+    SmithersCellInvocation, SmithersExecutionPins, invoke_smithers_graph_harness_cell,
+};
 pub mod membrane;
 mod neuron_bridge;
 pub mod pair;
 mod reflex_policy;
 mod skill_registry;
+pub mod smithers_driver;
 
 use graph_harness_cell::{
     AcceptanceExecutionRequest, CellExecutionRequest, CellSidecar, PinnedFile, PinnedProgram,
@@ -143,6 +151,8 @@ type AbandonGraphFn = unsafe extern "C" fn(*const c_char) -> i32;
 type RetryFn = unsafe extern "C" fn(*const c_char) -> i32;
 type FreeFn = unsafe extern "C" fn(*mut c_char);
 type DelegateChildFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
+type DelegationIssueFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
+type DelegationAdoptFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 type GraphPlanFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 
 struct NativeContract {
@@ -188,6 +198,8 @@ struct NativeContract {
     retry: Option<RetryFn>,
     list_scheduled: Option<ListFn>,
     delegate_child: Option<DelegateChildFn>,
+    delegation_issue: Option<DelegationIssueFn>,
+    delegation_adopt: Option<DelegationAdoptFn>,
     graph_plan: Option<GraphPlanFn>,
     free: FreeFn,
 }
@@ -453,6 +465,16 @@ impl NativeContract {
                     },
                     delegate_child: if abi_version >= 12 {
                         Some(*library.get(b"contract_delegate_child\0").ok()?)
+                    } else {
+                        None
+                    },
+                    delegation_issue: if abi_version >= 13 {
+                        Some(*library.get(b"contract_delegation_issue_json\0").ok()?)
+                    } else {
+                        None
+                    },
+                    delegation_adopt: if abi_version >= 13 {
+                        Some(*library.get(b"contract_delegation_adopt_json\0").ok()?)
                     } else {
                         None
                     },
@@ -6415,6 +6437,15 @@ pub fn bind_active_tool_contract(
     else {
         return binding_or_policy(None, read_only, "no active Contract root");
     };
+    if delegation_capability::child_for_root(&root_id).is_some()
+        && !authorize_delegated_child_tool(&root_id, tool_name, read_only)
+    {
+        // A delegated child never falls back to ungoverned read-only. Its
+        // adopted grant is the sole authority for every tool dispatch.
+        return ToolContractBinding::Hold {
+            reason: "delegated capability adoption failed".to_owned(),
+        };
+    }
     let before = muscle_before_state(tool_name, raw_arguments);
     let plan = format!("Invoke {tool_name} with structural input {before}");
     let Some(native) = native_contract() else {
@@ -7064,10 +7095,7 @@ pub fn should_emit_capability_diagnostic(session_id: &str, plan_present: bool) -
         .is_ok_and(|mut sessions| sessions.insert(session_id.to_owned()))
 }
 
-/// Read the Contract root currently bound to a session, without consuming it
-/// (unlike `take_turn_contract_root`, which is single-shot per prompt). Used
-/// by the subagent coordinator to find the parent's root before delegating a
-/// child root to a spawning subagent.
+/// Read the Contract root currently bound to a session, without consuming it.
 pub fn active_root_for_session(session_id: &str) -> Option<String> {
     active_capability_plans()
         .lock()
@@ -7076,37 +7104,127 @@ pub fn active_root_for_session(session_id: &str) -> Option<String> {
         .and_then(|plan| plan.root_id.clone())
 }
 
-/// Delegate a subagent Contract root from the parent session. This is the
-/// runtime primitive for graph fan-out: subagents receive an attenuated child
-/// root that allows `bind_active_tool_contract` to succeed within their caps.
-///
-/// Returns the child root_id (e.g. "contract:child:<hex>") or None if the
-/// Contract substrate doesn't support delegation (ABI < 12) or the call fails.
-pub async fn delegate_subagent_root(
-    parent_root: &str,
-    plan: &str,
-    max_effects: u32,
-    read_only: bool,
+/// Bind authority supplied by the Contract driver after it has read the
+/// declared occurrence and current execution lease. This is the only ingress
+/// for parent delegation authority; lineage environment variables never enter
+/// the capability registry.
+pub fn bind_verified_delegation_parent(
+    session_id: &str,
+    authority: delegation_capability::BoundParentAuthority,
+    now_ms: u64,
+) -> Result<(), &'static str> {
+    let root = active_root_for_session(session_id).ok_or("no active Contract root")?;
+    delegation_capability::bind_verified_parent(session_id, &root, authority, now_ms)
+}
+
+fn unix_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Issue and immediately adopt an opaque delegated grant before materializing
+/// a child Contract row. The row id is routing identity; the adopted grant is
+/// the authority and remains server-side in this process.
+pub async fn delegate_subagent_capability(
+    parent_session_id: &str,
+    audience: &str,
+    purpose: &str,
 ) -> Option<String> {
-    let parent_root = parent_root.to_owned();
-    let plan = plan.to_owned();
-    let request = serde_json::json!({
-        "parent_root": parent_root,
-        "plan": plan,
-        "max_effects": max_effects,
-        "read_only": read_only,
-    })
-    .to_string();
+    let active_root = active_root_for_session(parent_session_id)?;
+    let binding = delegation_capability::parent_for_session(parent_session_id)?;
+    let now_ms = unix_now_ms();
+    delegation_capability::validate_parent_binding(&binding, &active_root, now_ms).ok()?;
+    let request =
+        delegation_capability::attenuate(&binding, audience.to_owned(), purpose.to_owned(), now_ms)
+            .ok()?;
+    let plan = purpose.to_owned();
     tokio::task::spawn_blocking(move || {
         let native = native_contract()?;
-        native.delegate_child.as_ref()?;
-        let c_request = std::ffi::CString::new(request).ok()?;
-        let ptr = unsafe { (native.delegate_child.as_ref().unwrap())(c_request.as_ptr()) };
-        native.take_string(ptr)
+        let issue = native.delegation_issue?;
+        let adopt = native.delegation_adopt?;
+        let issue_json = serde_json::to_string(&delegation_capability::IssueEnvelope {
+            verified_parent: &binding.parent,
+            request: &request,
+            policy: &binding.policy,
+            now_ms,
+        })
+        .ok()?;
+        let issue_json = CString::new(issue_json).ok()?;
+        let issued_raw = native.take_string(unsafe { issue(issue_json.as_ptr()) })?;
+        let issued: delegation_capability::IssuedRow = serde_json::from_str(&issued_raw).ok()?;
+        let adoption = delegation_capability::adoption_request(
+            &binding.parent,
+            &request,
+            issued.grant_id,
+            now_ms,
+        );
+        let adoption_json = CString::new(serde_json::to_string(&adoption).ok()?).ok()?;
+        let adopted_raw = native.take_string(unsafe { adopt(adoption_json.as_ptr()) })?;
+        let adopted: delegation_capability::AdoptedGrant =
+            serde_json::from_str(&adopted_raw).ok()?;
+        delegation_capability::validate_adoption(&adopted, &request).ok()?;
+
+        // Materialization occurs only after Contract independently reads back
+        // and adopts the opaque row. Its 8-hex id is routing metadata accepted
+        // by the existing prompt/session path, never the source of authority.
+        let child_root = native.declare_child(
+            &plan,
+            &format!("subagent:{}", request.audience),
+            &active_root,
+        )?;
+        delegation_capability::remember_child(
+            child_root.clone(),
+            delegation_capability::DelegatedChildAuthority {
+                adoption,
+                expected: request,
+            },
+        )
+        .ok()?;
+        Some(child_root)
     })
     .await
     .ok()
     .flatten()
+}
+
+/// Re-adopt a child grant immediately before a tool effect. A stale fence,
+/// revoked/expired row, tenant/root/audience mismatch, credential rotation, or
+/// exhausted effect budget all fail closed before tool dispatch.
+fn authorize_delegated_child_tool(root_id: &str, tool_name: &str, read_only: bool) -> bool {
+    let now_ms = unix_now_ms();
+    let Ok(child) = delegation_capability::adoption_for_effect(root_id, now_ms, !read_only) else {
+        return false;
+    };
+    if !delegation_capability::allows_tool(&child.expected, tool_name, read_only) {
+        return false;
+    };
+    let Some(native) = native_contract() else {
+        return false;
+    };
+    let Some(adopt) = native.delegation_adopt else {
+        return false;
+    };
+    let Ok(encoded) = serde_json::to_string(&child.adoption) else {
+        return false;
+    };
+    let Ok(json) = CString::new(encoded) else {
+        return false;
+    };
+    let Some(raw) = native.take_string(unsafe { adopt(json.as_ptr()) }) else {
+        return false;
+    };
+    let Ok(adopted) = serde_json::from_str::<delegation_capability::AdoptedGrant>(&raw) else {
+        return false;
+    };
+    if delegation_capability::validate_adoption(&adopted, &child.expected).is_err() {
+        return false;
+    }
+    if !read_only && delegation_capability::record_effect(root_id).is_err() {
+        return false;
+    }
+    true
 }
 
 /// Adapt the ephemeral `skill_registry::dry_run` shape for Contract's pure

@@ -1,0 +1,2089 @@
+{
+  "north_star": "Aiko is a system of authenticated, stateless interface projections over one Contract organism: verified transports project stimuli into existing W6H/CausalEvent occurrences; Contract owns root lineage, scoped cited context, readiness, invalidation and fenced semantic settlement; Smithers owns only cross-pinned operational scheduling; Cell is the pinned harness; Neuron owns admitted capabilities, effects, read-back, redrive and compensation; recursively spawned Aikos are capability-bounded descendants, never ambient-authority peers or unrestricted shared memory.",
+  "execute": true,
+  "milestones": [
+    "covenant",
+    "substrate",
+    "ingress",
+    "control",
+    "resilience",
+    "capabilities",
+    "organism",
+    "migration",
+    "acceptance"
+  ],
+  "meta": {
+    "agent_count": 48,
+    "peak_parallel_agents": 6,
+    "execution_requires": "explicit /graph approval",
+    "end_to_end_witness": "bash tests/smithers-control-package-gate.sh && bash tests/cloudflare-webhook-release-gate.sh && bash tests/aiko-webhook-self-wiring-gate.sh && bash tests/aiko-hook-organism-gate.sh && bash tests/aiko-hook-organism-correctness-judge.sh && bash tests/aiko-hook-organism-safety-judge.sh && bash tests/aiko-hook-organism-reproduction-judge.sh && bash tests/docs-quality-gate.sh",
+    "removal_policy": "strangler: replacements green before deletion",
+    "key_correction": "HookEventEnvelope is untrusted transport input, never authority or a second ledger. Mandatory Contract/authority/effect projections are built-in fail-closed choke points; generic observational hooks may remain fail-open.",
+    "delivery_claim": "at-least-once invocation + fenced single Contract settlement + outbox/read-back/compensation; never end-to-end exactly-once external effects",
+    "frontier_count": 17,
+    "validation": "28 nodes; 17 Kahn frontiers; peak width 6; 0 collisions/cycles/missing contracts/unresolved dependencies; 0 open amen gaps",
+    "webhook_scope": "Contract-owned inbound endpoint lifecycle + admitted outbound Neuron webhook limb + immutable Cloudflare Worker release; live deployment conditional on scoped account credentials",
+    "execution_approved": "explicit /skill:jesus-graph request for inbound/outbound webhook and Cloudflare self-wiring",
+    "complete": true
+  },
+  "children": [
+    {
+      "id": "contract-hook-covenant",
+      "who": "agent",
+      "what": "Specify projection and authority without new ledgers. Define VerifiedIngress emitted only by each transport auth boundary: authenticated subject, tenant, transport/audience, granted scopes, canonical request digest, nonce/idempotency namespace and verification evidence. HookEventEnvelope tenant/role/root/account/effect fields are untrusted hints. Define a non-conflated identity matrix (principal, tenant, Contract root/parent/occurrence, execution/run/session, lease fence, firing, logical effect and credential generation); canonical occurrence identity hashes the verified namespace/key/root tuple while separately pinning payload digest. Same tuple+digest is replay; changed bytes/subject/scope is conflict. Classify hooks: Contract declaration, authority and effects are ordered synchronous fail-closed choke points; only observational hooks may fail open. Fix order normalize/confine \u2192 authenticate \u2192 declare/adopt \u2192 scope/authorize \u2192 lease \u2192 invoke \u2192 read-back/evidence \u2192 settle/invalidate. Context is a Contract read projection; timestamps/transcripts never enter identity or authority. Webhook identity binds endpoint generation, verified tenant/principal, provider namespace, delivery id and raw-body digest; a repeated delivery with changed bytes conflicts. Endpoint creation/deployment is an authorized Contract occurrence, never prompt-granted ambient infrastructure authority.",
+      "why": "src:contract/libcontract/src/w6h.zig; src:contract/libcontract/src/event_schema.zig; src:aiko/crates/codegen/xai-grok-hooks/src/event.rs; src:aiko/crates/codegen/xai-grok-shell/src/contract_native.rs",
+      "how": "build",
+      "where": "docs/graph-engineering/AIKO-HOOK-ORGANISM.md",
+      "when": "one-shot",
+      "milestone": "covenant",
+      "witness": "bash tests/contract-hook-covenant-gate.sh",
+      "depends_on": [],
+      "reads": [
+        "contract/libcontract/src/w6h.zig",
+        "contract/libcontract/src/event_schema.zig",
+        "aiko/crates/codegen/xai-grok-hooks/src/event.rs",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native.rs",
+        "aiko/crates/codegen/xai-grok-hooks/src/dispatcher.rs",
+        "aiko-flow/packages/server/src/auth/"
+      ],
+      "writes": [
+        "docs/graph-engineering/AIKO-HOOK-ORGANISM.md",
+        "tests/contract-hook-covenant-gate.sh"
+      ],
+      "produces": [
+        "state/contract-hook-covenant.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "src:contract/libcontract/src/w6h.zig",
+        "src:contract/libcontract/src/event_schema.zig",
+        "src:aiko/crates/codegen/xai-grok-shell/src/contract_native.rs"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Introduce HookOccurrence/ContextEnvelope storage; authorize caller-supplied tenant/role/lineage; coalesce the same key across tenant/interface/digest; use timestamps as identity; or let a failed mandatory projection launch anything. Accept reserialized-body signatures, cross-endpoint replay, caller-chosen endpoint IDs, or prompt-only Cloudflare deployment authority.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "spawn-authority-membrane",
+      "who": "agent",
+      "what": "Create the process-spawn authority membrane used by Smithers Aiko agents: inheritEnv=false, explicit minimal env allowlist, canonical cwd confinement, yolo=false/non-bypass permission mode, exact account/provider generation, no quota/auth fallback, and redacted argv/env diagnostics. Capture and test the actual child process rather than constructor intent. Run the witness through the aiko-flow native package root; repository-root Bun path resolution is not the project runtime.",
+      "why": "src:aiko-flow/packages/agents/src/BaseCliAgent/BaseCliAgent.js; src:aiko-flow/packages/agents/src/AikoAgent.js; src:aiko-flow/.smithers/agents.ts",
+      "how": "build",
+      "where": "aiko-flow/packages/agents/src/SpawnAuthorityPolicy.js",
+      "when": "one-shot",
+      "milestone": "substrate",
+      "witness": "cd aiko-flow && bun test packages/agents/tests/spawnAuthority.test.js",
+      "depends_on": [
+        "contract-hook-covenant"
+      ],
+      "reads": [
+        "aiko-flow/packages/agents/src/BaseCliAgent/BaseCliAgent.js",
+        "aiko-flow/packages/agents/src/AikoAgent.js",
+        "aiko-flow/.smithers/agents.ts"
+      ],
+      "writes": [
+        "aiko-flow/packages/agents/src/SpawnAuthorityPolicy.js",
+        "aiko-flow/packages/agents/src/SpawnAuthorityPolicy.ts",
+        "aiko-flow/packages/agents/tests/spawnAuthority.test.js"
+      ],
+      "produces": [
+        "state/spawn-authority-membrane.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "aiko-flow/packages/agents/src/BaseCliAgent/BaseCliAgent.js",
+        "aiko-flow/packages/agents/src/AikoAgent.js",
+        "aiko-flow/.smithers/agents.ts"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Seed ambient API keys, HOME credentials, alternate accounts and malicious cwd symlinks; any child receipt, fallback, bypassPermissions or path escape makes the gate red.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "hook-data-membrane",
+      "who": "agent",
+      "what": "Separate arbitrary command/HTTP hooks from mandatory Contract projection. Default-deny and schema-minimize hook inputs; transcript paths, prompts, raw tool inputs/results, credentials, full env and sibling-tenant paths require explicit per-field capability. Sandbox command hooks, confine paths/symlinks, constrain HTTP destinations/egress, and redact HookRunResult/logs. Preserve generic fail-open only for non-authoritative observers.",
+      "why": "src:aiko/crates/codegen/xai-grok-hooks/src/runner/command.rs; src:aiko/crates/codegen/xai-grok-hooks/src/runner/http.rs; src:aiko/crates/codegen/xai-grok-hooks/src/event.rs",
+      "how": "build",
+      "where": "aiko/crates/codegen/xai-grok-hooks/src/data_membrane.rs",
+      "when": "one-shot",
+      "milestone": "substrate",
+      "witness": "cd aiko && cargo test -p xai-grok-hooks data_membrane -- --nocapture",
+      "depends_on": [
+        "contract-hook-covenant"
+      ],
+      "reads": [
+        "aiko/crates/codegen/xai-grok-hooks/src/runner/command.rs",
+        "aiko/crates/codegen/xai-grok-hooks/src/runner/http.rs",
+        "aiko/crates/codegen/xai-grok-hooks/src/event.rs",
+        "aiko/crates/codegen/xai-grok-hooks/src/trust.rs"
+      ],
+      "writes": [
+        "aiko/crates/codegen/xai-grok-hooks/src/data_membrane.rs",
+        "aiko/crates/codegen/xai-grok-hooks/src/runner/command_membrane.rs",
+        "aiko/crates/codegen/xai-grok-hooks/src/runner/http_membrane.rs",
+        "aiko/crates/codegen/xai-grok-hooks/tests/data_membrane.rs",
+        "aiko/crates/codegen/xai-grok-hooks/src/lib.rs",
+        "aiko/crates/codegen/xai-grok-hooks/src/runner/mod.rs",
+        "aiko/crates/codegen/xai-grok-hooks/src/runner/command.rs",
+        "aiko/crates/codegen/xai-grok-hooks/src/runner/http.rs"
+      ],
+      "produces": [
+        "state/hook-data-membrane.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "aiko/crates/codegen/xai-grok-hooks/src/runner/command.rs",
+        "aiko/crates/codegen/xai-grok-hooks/src/runner/http.rs",
+        "aiko/crates/codegen/xai-grok-hooks/src/event.rs",
+        "aiko/crates/codegen/xai-grok-hooks/src/trust.rs"
+      ],
+      "capability_gaps": [],
+      "falsifier": "A malicious trusted project/plugin hook exfiltrates canary env, transcript, raw payload or sibling files through stdin, HTTP, logs or results; or a symlink escapes workspace confinement. Merely compile path-included membrane modules while production command/http runners still serialize the full envelope or inherit ambient env; the gate must inspect and exercise the real runner path.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "contract-context-projection",
+      "who": "agent",
+      "what": "Implement context as a deterministic, versioned read model over existing Contract rows, graph input_bindings, settlements, archives and Neuron evidence citations. Filters consume VerifiedIngress/delegation capability, never payload claims. Visibility is purpose/audience and field scoped: explicitly delegated cited inputs only; exclude sibling-private rows, transcripts/prompts, raw tool payloads, credentials, stale/revoked/invalidated facts. Preserve resolvable citation digests/ordinals through session compaction without a durable context cache or database; source movement invalidates the projection.",
+      "why": "src:contract/libcontract/src/ledger.zig; src:contract/libcontract/src/skill_execution; src:neuron/src/redrive.zig",
+      "how": "build",
+      "where": "contract/libcontract/src/context_projection.zig",
+      "when": "one-shot",
+      "milestone": "substrate",
+      "witness": "cd contract/libcontract && zig build test --summary all",
+      "depends_on": [
+        "contract-hook-covenant"
+      ],
+      "reads": [
+        "state/contract-hook-covenant.json",
+        "contract/libcontract/src/ledger.zig",
+        "contract/libcontract/src/skill_execution",
+        "neuron/src/redrive.zig"
+      ],
+      "writes": [
+        "contract/libcontract/src/context_projection.zig",
+        "contract/libcontract/build.zig"
+      ],
+      "produces": [
+        "state/contract-context-projection.json"
+      ],
+      "invoke_skills": [],
+      "inspire_from": [
+        "src:contract/libcontract/src/ledger.zig",
+        "src:contract/libcontract/src/skill_execution",
+        "src:neuron/src/redrive.zig"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Any caller-asserted scope, transcript/sibling/secret leakage, durable context cache, stale fact after revocation, or citation that becomes unresolvable after session compaction makes the gate red. If build.zig does not compile/run context_projection.zig, the exact witness is not evidence and must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "native-credential-handle",
+      "who": "agent",
+      "what": "Move opaque account capabilities into native Aiko auth. Bind every handle to verified subject, tenant, Contract execution+lease fence, destination audience/host, operation/resource, generation, expiry/MFA/revoke and replay policy. Resolve account credentials\u2014not API-key payloads\u2014only after the admitted destination (including redirects) is fixed, and revalidate immediately before use. Contract/Smithers/Cell/Neuron retain only handle metadata and evidence; secret bytes never enter argv/env/stdin/prompt/tmp/logs.",
+      "why": "src:aiko/crates/codegen/xai-grok-shell/src/auth; src:contract/libcontract/src/workflow.zig; src:aiko/crates/codegen/xai-aiko-collective/src/identity.rs",
+      "how": "build",
+      "where": "aiko/crates/codegen/xai-grok-shell/src/auth",
+      "when": "one-shot",
+      "milestone": "substrate",
+      "witness": "cd aiko && cargo test -p xai-grok-shell credential_handle --lib -- --nocapture",
+      "depends_on": [
+        "contract-hook-covenant",
+        "spawn-authority-membrane"
+      ],
+      "reads": [
+        "state/contract-hook-covenant.json",
+        "aiko/crates/codegen/xai-grok-shell/src/auth",
+        "contract/libcontract/src/workflow.zig",
+        "cell/primitives/credential-envelope/vault.py"
+      ],
+      "writes": [
+        "aiko/crates/codegen/xai-grok-shell/src/auth/credential_handle.rs",
+        "aiko/crates/codegen/xai-grok-shell/src/auth/credential_handle_tests.rs",
+        "aiko/crates/codegen/xai-grok-shell/src/auth/mod.rs"
+      ],
+      "produces": [
+        "state/native-credential-handle.json"
+      ],
+      "invoke_skills": [],
+      "inspire_from": [
+        "src:aiko/crates/codegen/xai-grok-shell/src/auth",
+        "src:aiko/crates/codegen/xai-aiko-collective/src/identity.rs",
+        "src:contract/libcontract/src/workflow.zig"
+      ],
+      "capability_gaps": [
+        "enterprise-credential-vault-deployment"
+      ],
+      "falsifier": "Cross-subject/tenant/node/provider/redirect/operation replay, use after generation expiry/revoke, revoke-between-lease-and-effect, ambient API-key fallback, or SIGKILL residue outside OS auth storage makes the gate red.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "contract-execution-control-semantics",
+      "who": "agent",
+      "what": "Make Contract execution fencing authoritative. Every grant returns a unique lease_id/fence and owner incarnation under Contract time; renew/settle are CAS over execution, attempt, fence, graph/input version and current nonterminal control state. Expired/superseded workers cannot invoke or settle even with the same owner label. Define commit ordinal ordering, stale-invalidation refusal, hierarchical pause/cancel/deadline semantics, effect-key serialization and bounded claim batches. Cancellation stops claims, fences late settlement and distinguishes cancelled, timed_out_retryable and terminal died; crossed work becomes compensation.",
+      "why": "src:contract/libcontract/src/scheduler.zig; src:contract/libcontract/src/skill_execution/claim.zig; src:contract/libcontract/src/c_abi.zig",
+      "how": "build",
+      "where": "contract/libcontract/src/execution_control.zig",
+      "when": "one-shot",
+      "milestone": "substrate",
+      "witness": "bash tests/contract-execution-control-gate.sh",
+      "depends_on": [
+        "contract-hook-covenant"
+      ],
+      "reads": [
+        "contract/libcontract/src/scheduler.zig",
+        "contract/libcontract/src/skill_execution/claim.zig",
+        "contract/libcontract/src/skill_execution/settle.zig",
+        "contract/libcontract/src/obligation_fsm.zig",
+        "neuron/src/redrive.zig"
+      ],
+      "writes": [
+        "contract/libcontract/src/execution_control.zig",
+        "contract/libcontract/src/scheduler.zig",
+        "contract/libcontract/src/c_abi.zig",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native/execution_control.rs",
+        "tests/contract-execution-control-gate.sh",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native.rs"
+      ],
+      "produces": [
+        "state/contract-execution-control-semantics.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "contract/libcontract/src/scheduler.zig",
+        "contract/libcontract/src/skill_execution/claim.zig",
+        "contract/libcontract/src/skill_execution/settle.zig",
+        "contract/libcontract/src/obligation_fsm.zig"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Two workers reuse owner label; clocks jump; lease expires/reassigns; invalidation/revoke/cancel races settlement; old worker must fail every mutation and crossed work must not replay.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "contract-hook-ingress",
+      "who": "agent",
+      "what": "Route CLI/headless/ACP/MCP/plugin/Gateway/webhook/cron through one built-in fail-closed Contract ingress before any agent, workflow, tool or effect. Each adapter verifies its native auth, emits VerifiedIngress, canonicalizes workspace paths, then projects into existing declare-turn-context/W6H/CausalEvent operations. Missing/slow/crashed/malformed ABI or projection means no launch. Duplicate concurrent delivery adopts only an identical occurrence+payload digest; collisions refuse. Generic xai-grok observational hooks remain separate and may fail open. Every public adapter must appear in a mechanically checked route inventory.",
+      "why": "src:aiko/crates/codegen/xai-grok-hooks/src/event.rs; src:aiko/crates/codegen/xai-grok-shell/src/contract_native.rs; src:contract/libcontract/src/c_abi.zig",
+      "how": "build",
+      "where": "Aiko interface ingress + Contract ABI",
+      "when": "one-shot",
+      "milestone": "ingress",
+      "witness": "bash tests/contract-hook-ingress-gate.sh",
+      "depends_on": [
+        "contract-context-projection",
+        "native-credential-handle",
+        "hook-data-membrane",
+        "contract-execution-control-semantics"
+      ],
+      "reads": [
+        "state/contract-context-projection.json",
+        "state/native-credential-handle.json",
+        "aiko/crates/codegen/xai-grok-hooks/src/event.rs",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native.rs",
+        "contract/libcontract/src/c_abi.zig"
+      ],
+      "writes": [
+        "aiko/crates/codegen/xai-grok-hooks/src/contract_projection.rs",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native/hook_ingress.rs",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native.rs",
+        "aiko/crates/codegen/xai-grok-mcp/src/hook_contract_tools.rs",
+        "aiko/crates/codegen/xai-grok-pager-bin/src/workflow_cli.rs",
+        "tests/contract-hook-ingress-gate.sh",
+        "aiko/crates/codegen/xai-grok-hooks/src/criticality.rs",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native/ingress_routes.rs",
+        "aiko/crates/codegen/xai-grok-hooks/src/lib.rs",
+        "aiko/crates/codegen/xai-grok-shell/src/lib.rs",
+        "aiko/crates/codegen/xai-grok-shell/src/agent/mvp_agent/acp_agent.rs",
+        "aiko/crates/codegen/xai-grok-mcp/src/lib.rs",
+        "aiko/crates/codegen/xai-grok-pager-bin/src/main.rs"
+      ],
+      "produces": [
+        "state/contract-hook-ingress.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "src:aiko/crates/codegen/xai-grok-hooks/src/event.rs",
+        "src:aiko/crates/codegen/xai-grok-shell/src/contract_native.rs",
+        "src:contract/libcontract/src/c_abi.zig"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Bypass the shared ingress from any public face; forge tenant/role/account/root; reuse a key with changed principal/body; crash/timeout/misconfigure projection; or route mandatory policy through generic fail-open dispatch\u2014zero spawn/effect is required. A route inventory, stimulus helper, standalone rustc test, or path-included module that no production composition root calls is a false green. Current Rust CLI/headless/ACP/MCP/plugin faces must invoke the choke; Gateway/webhook/cron adapters must export typed calls consumed by their later implementation nodes.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "webhook-contract-surface",
+      "who": "agent",
+      "what": "Implement Contract-owned public webhook lifecycle: create/list/inspect/rotate/pause/revoke endpoint and accept delivery through Gateway/CLI/MCP. Endpoint IDs are opaque and generations bind verified tenant, principal, provider schema, audience/route, allowed methods/content type/body limit, secret-handle generation, replay window and downstream Contract template. Verify the exact raw request bytes before parsing; adopt identical delivery only, refuse same delivery ID with changed digest. Persist no secret/raw body; pin verification evidence and request digest. ACK only after Contract durable intake or Cloudflare queue receipt.",
+      "why": "src:aiko-flow/packages/server/src/IntegrationsConfig.ts; src:aiko-flow/packages/server/src/gateway.js; src:aiko/crates/codegen/xai-grok-mcp/src/hook_contract_tools.rs",
+      "how": "build",
+      "where": "aiko-flow/packages/server/src/contractWebhooks.js",
+      "when": "one-shot",
+      "milestone": "control",
+      "witness": "bash tests/webhook-contract-surface-gate.sh",
+      "depends_on": [
+        "contract-hook-ingress",
+        "webhook-endpoint-lifecycle-kernel"
+      ],
+      "reads": [
+        "aiko-flow/packages/server/src/IntegrationsConfig.ts",
+        "aiko-flow/packages/server/src/gateway.js",
+        "aiko-flow/packages/server/src/auth/",
+        "aiko/crates/codegen/xai-grok-mcp/src/hook_contract_tools.rs",
+        "aiko-flow/packages/server/src/contractWebhookLifecycle.js"
+      ],
+      "writes": [
+        "aiko-flow/packages/server/src/contractWebhooks.js",
+        "aiko-flow/packages/gateway/src/rpc/contractWebhooks.js",
+        "aiko-flow/packages/gateway-client/src/ContractWebhookClient.ts",
+        "aiko-flow/packages/protocol/src/contractWebhooks.ts",
+        "aiko-flow/packages/cli/src/commands/contract-webhooks.js",
+        "aiko/crates/codegen/xai-grok-mcp/src/contract_webhook_tools.rs",
+        "tests/webhook-contract-surface-gate.sh"
+      ],
+      "produces": [
+        "state/webhook-contract-surface.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "aiko-flow/packages/server/src/IntegrationsConfig.ts",
+        "aiko-flow/packages/server/src/gateway.js",
+        "aiko-flow/packages/server/src/auth/",
+        "aiko/crates/codegen/xai-grok-mcp/src/hook_contract_tools.rs"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Reserialize before HMAC, use caller-selected endpoint ID, replay across tenant/endpoint/generation, parse oversized/wrong-content input, ACK before durability, retain raw body/secret, or let revoked endpoint declare work.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "smithers-contract-driver",
+      "who": "agent",
+      "what": "Replace runCell/control.json with a Smithers driver for Contract work. Treat frontier signals as duplicate/missing/reordered hints carrying Contract commit ordinal; reread Contract, claim a fenced lease, and pin the immutable descriptor: root/occurrence/execution/attempt+fence, graph+node+input/source digests, Cell package/manifest, admitted limb+attachment generation, credential generation/scope, Neuron firing/effect identity, verified signal subject/scope/request digest. Invoke the pinned GraphHarness Cell and settle only after Contract revalidates every pin. Smithers owns timing/journal only. Invocation is at-least-once; settlement is single and fenced; effects rely on outbox/read-back/compensation.",
+      "why": "src:aiko-flow/packages/components/src/components/runCell.js; src:aiko/crates/codegen/xai-grok-shell/src/contract_native/graph_harness_cell.rs; src:contract/libcontract/src/skill_execution",
+      "how": "build",
+      "where": "aiko-flow Contract driver",
+      "when": "one-shot",
+      "milestone": "control",
+      "witness": "bash tests/smithers-contract-driver-gate.sh",
+      "depends_on": [
+        "contract-hook-ingress"
+      ],
+      "reads": [
+        "state/contract-hook-ingress.json",
+        "aiko-flow/packages/components/src/components/runCell.js",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native/graph_harness_cell.rs",
+        "contract/libcontract/src/skill_execution"
+      ],
+      "writes": [
+        "aiko-flow/packages/components/src/components/ContractCell.js",
+        "aiko-flow/packages/components/src/components/ContractCellProps.ts",
+        "aiko-flow/packages/smithers/src/contractDriver.js",
+        "aiko-flow/packages/server/src/contractSignals.js",
+        "aiko-flow/packages/components/tests/contractCell.test.js",
+        "aiko-flow/packages/server/tests/contractSignals.test.js",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native/smithers_driver.rs",
+        "tests/smithers-contract-driver-gate.sh",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native.rs"
+      ],
+      "produces": [
+        "state/smithers-contract-driver.json"
+      ],
+      "invoke_skills": [
+        "cell",
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "src:aiko/crates/codegen/xai-grok-shell/src/contract_native/graph_harness_cell.rs",
+        "src:contract/libcontract/src/skill_execution",
+        "src:aiko-flow/packages/scheduler"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Let Smithers invent readiness/settlement, trust signal arrival order, omit any descriptor pin, accept stale/revoked input/tool/credential, or claim external exactly-once. Duplicate/drop/reorder signals and crash around claim/Cell/settle must converge without false success.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "smithers-public-lifecycle",
+      "who": "agent",
+      "what": "Expose Contract-owned pause/resume/cancel/revoke and semantic rollback through existing Smithers Gateway RPC, protocol/client, CLI and Aiko MCP\u2014never direct DB APIs. Pause stops new claims and durably drains or parks in-flight work; resume preserves root/run and revalidates all pins; cancel is terminal. Tool/credential revoke is append-only generation CAS checked at claim and boundary. Semantic rollback creates a new Contract invalidation/compensation occurrence; Smithers rewind/time travel is only an operational fork and cannot erase settlement or resend crossed effects. Enforce tenant/owner and run:write.",
+      "why": "src:aiko-flow/packages/gateway/src/rpc/index.js; src:aiko-flow/packages/gateway-client/src/SmithersGatewayClient.ts; src:contract/libcontract/src/c_abi.zig",
+      "how": "build",
+      "where": "aiko-flow/packages/gateway/src/rpc/contractLifecycle.js",
+      "when": "one-shot",
+      "milestone": "control",
+      "witness": "bash tests/aiko-lifecycle-public-gate.sh",
+      "depends_on": [
+        "smithers-contract-driver",
+        "smithers-lifecycle-policy-kernel"
+      ],
+      "reads": [
+        "aiko-flow/packages/gateway/src/rpc/index.js",
+        "aiko-flow/packages/gateway-client/src/SmithersGatewayClient.ts",
+        "aiko-flow/packages/protocol/src/",
+        "aiko-flow/packages/time-travel/src/",
+        "contract/libcontract/src/c_abi.zig",
+        "aiko-flow/packages/server/src/contractLifecyclePolicy.js"
+      ],
+      "writes": [
+        "aiko-flow/packages/gateway/src/rpc/contractLifecycle.js",
+        "aiko-flow/packages/gateway-client/src/ContractLifecycleClient.ts",
+        "aiko-flow/packages/protocol/src/contractLifecycle.ts",
+        "aiko-flow/packages/server/src/contractLifecycle.js",
+        "aiko-flow/packages/cli/src/commands/contract-lifecycle.js",
+        "aiko/crates/codegen/xai-grok-mcp/src/contract_lifecycle_tools.rs",
+        "tests/aiko-lifecycle-public-gate.sh"
+      ],
+      "produces": [
+        "state/smithers-public-lifecycle.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "aiko-flow/packages/gateway/src/rpc/index.js",
+        "aiko-flow/packages/gateway-client/src/SmithersGatewayClient.ts",
+        "aiko-flow/packages/protocol/src/",
+        "aiko-flow/packages/time-travel/src/"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Direct DB mutation/read, claim after acknowledged pause, resume across drift, queued/boundary use after revoke, cross-tenant control, history deletion, or rewind/resend masquerading as rollback makes the public-only gate red.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "execution-retry-backpressure-recovery",
+      "who": "agent",
+      "what": "Bind Contract and Smithers recovery: classify retryable/permanent/uncertain failures; persist next_eligible with capped deterministic backoff, attempt budget, per-tenant/root concurrency and queue bounds, fairness and explicit overload refusal. Durably accept before ACK or return retryable refusal\u2014never ACK then drop. Uncertain effects enter read-back/reconciliation, not retry. Exercise crash points before/after claim, Smithers journal, Cell spawn/result, Neuron outbox, provider acceptance/read-back and Contract settlement; reconciliation derives truth from Contract plus Neuron, never Smithers alone.",
+      "why": "src:contract/libcontract/src/scheduler.zig; src:aiko-flow/packages/smithers/src/; src:neuron/src/delivery.zig",
+      "how": "build",
+      "where": "contract/libcontract/src/execution_recovery.zig",
+      "when": "one-shot",
+      "milestone": "resilience",
+      "witness": "bash tests/aiko-execution-recovery-gate.sh",
+      "depends_on": [
+        "smithers-contract-driver",
+        "contract-execution-control-semantics",
+        "smithers-retry-fairness-policy-kernel",
+        "contract-execution-recovery-kernel"
+      ],
+      "reads": [
+        "contract/libcontract/src/scheduler.zig",
+        "aiko-flow/packages/smithers/src/",
+        "neuron/src/delivery.zig",
+        "neuron/src/redrive.zig",
+        "aiko-flow/packages/smithers/src/contractRecoveryPolicy.js",
+        "contract/libcontract/src/execution_recovery.zig"
+      ],
+      "writes": [
+        "aiko-flow/packages/smithers/src/contractRecovery.js",
+        "aiko-flow/packages/smithers/tests/contractRecovery.test.js",
+        "tests/aiko-execution-recovery-gate.sh"
+      ],
+      "produces": [
+        "state/execution-retry-backpressure-recovery.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "contract/libcontract/src/scheduler.zig",
+        "aiko-flow/packages/smithers/src/",
+        "neuron/src/delivery.zig",
+        "neuron/src/redrive.zig"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Immediate/hot retry, unbounded queue, ACK-before-durability, blind uncertain-effect retry, poison-item blockage, tenant starvation, or any crash point producing false success/effect count >1 makes the gate red.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "smithers-control-package",
+      "who": "agent",
+      "what": "Produce and install a self-contained version/ABI/digest-pinned Smithers control artifact through scripts/aiko-packages.py. Export ContractCell/driver/lifecycle in JS and declarations, include runtime dependencies and lock pins, and make plugin MCP/CLI resolve installed bytes only. Pack/install under empty HOME, rename/unavailable checkout, unset AIKO_SMITHERS_RUNTIME/NODE_PATH/workspace links, then boot CLI, Gateway, MCP and a tiny ContractCell lifecycle. Tamper/version drift refuses; failed update atomically leaves the prior version bootable.",
+      "why": "src:scripts/aiko-packages.py; src:aiko-flow/claude-plugin/lib/resolve-smithers-cli.mjs; src:aiko-flow/packages/components/package.json",
+      "how": "build",
+      "where": "aiko-flow/aiko-package.json",
+      "when": "one-shot",
+      "milestone": "resilience",
+      "witness": "bash tests/smithers-control-package-gate.sh",
+      "depends_on": [
+        "smithers-public-lifecycle",
+        "execution-retry-backpressure-recovery",
+        "smithers-relocatable-runtime"
+      ],
+      "reads": [
+        "scripts/aiko-packages.py",
+        "aiko-flow/claude-plugin/lib/resolve-smithers-cli.mjs",
+        "aiko-flow/packages/components/package.json",
+        "sdk/registry/stack.lock.json"
+      ],
+      "writes": [
+        "aiko-flow/packages/components/src/index.js",
+        "aiko-flow/packages/components/src/index.d.ts",
+        "aiko-flow/packages/components/package.json",
+        "aiko-flow/aiko-package.json",
+        "sdk/registry/stack.lock.json",
+        "scripts/aiko-packages.py",
+        "aiko-flow/claude-plugin/lib/resolve-smithers-cli.mjs",
+        "tests/smithers-control-package-gate.sh"
+      ],
+      "produces": [
+        "state/smithers-control-package.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "scripts/aiko-packages.py",
+        "aiko-flow/claude-plugin/lib/resolve-smithers-cli.mjs",
+        "aiko-flow/packages/components/package.json",
+        "sdk/registry/stack.lock.json"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Delete/poison checkout and source node_modules after packing; any source path, missing export/type/dependency, mutable byte accepted, ABI mismatch, or failed update breaking prior install makes the gate red.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "admitted-tool-surface",
+      "who": "agent",
+      "what": "Project existing GraphHarness/Neuron admission into the live AikoAgent protocol tool surface\u2014not prompt guidance alone. Public list/admit/attach/use/revoke/detach/collect calls verify current digest, attachment/revocation generation, fenced Contract lease, verified subject/tenant, allowed effect/resource, credential audience and budget both at claim and immediately before dispatch. Bytes remain inert until admitted; revoked/unlisted direct calls refuse; generated tools get no ambient env/HOME.",
+      "why": "src:aiko/crates/codegen/xai-grok-shell/src/contract_native/graph_harness.rs; src:neuron/src/morphogenesis.zig; src:neuron/src/meta_agent.zig",
+      "how": "build",
+      "where": "GraphHarness/Neuron/Aiko tool projection",
+      "when": "one-shot",
+      "milestone": "capabilities",
+      "witness": "bash tests/admitted-tool-surface-gate.sh",
+      "depends_on": [
+        "smithers-control-package",
+        "neuron-capability-dispatch-policy",
+        "contract-delegation-capability"
+      ],
+      "reads": [
+        "state/smithers-contract-driver.json",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native/graph_harness.rs",
+        "neuron/src/morphogenesis.zig",
+        "neuron/src/meta_agent.zig",
+        "cell/adapters/authored/author.py",
+        "neuron/src/capability_dispatch_policy.zig"
+      ],
+      "writes": [
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native/capability_tools.rs",
+        "aiko/crates/codegen/xai-grok-mcp/src/graph_harness_tools.rs",
+        "neuron/tests/aiko-tool-lifecycle-gate.sh",
+        "tests/admitted-tool-surface-gate.sh",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native.rs",
+        "aiko/crates/codegen/xai-grok-mcp/src/lib.rs"
+      ],
+      "produces": [
+        "state/admitted-tool-surface.json"
+      ],
+      "invoke_skills": [],
+      "inspire_from": [
+        "src:aiko/crates/codegen/xai-grok-shell/src/contract_native/graph_harness.rs",
+        "src:neuron/src/morphogenesis.zig",
+        "src:neuron/src/meta_agent.zig"
+      ],
+      "capability_gaps": [],
+      "falsifier": "A revoked/unlisted tool remains callable, catalog hiding substitutes for boundary refusal, authority is cached across revocation, prompt text grants a tool, or generated bytes inherit ambient secrets.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "unbrowse-neuron-limb",
+      "who": "agent",
+      "what": "Rehome Unbrowse as an admitted Neuron boundary limb. Observation and independent replay are cited firings; Contract projects promotion/demotion; Aiko resolves the scoped credential only at the request boundary; raw traffic is not retained. Build and admit the standalone boundary now; later Smithers/tool-surface nodes attach the unchanged digest rather than being a build dependency.",
+      "why": "src:neuron/src/interface.zig; src:neuron/src/morphogenesis.zig; src:cell/adapters/unbrowse/unbrowse_port.py",
+      "how": "build",
+      "where": "neuron/limbs/unbrowse",
+      "when": "one-shot",
+      "milestone": "ingress",
+      "witness": "bash neuron/tests/unbrowse-limb-gate.sh",
+      "depends_on": [
+        "native-credential-handle",
+        "contract-execution-control-semantics"
+      ],
+      "reads": [
+        "neuron/src/interface.zig",
+        "neuron/src/morphogenesis.zig",
+        "cell/adapters/unbrowse/unbrowse_port.py"
+      ],
+      "writes": [
+        "neuron/limbs/unbrowse/",
+        "neuron/tests/unbrowse-limb-gate.sh"
+      ],
+      "produces": [
+        "state/unbrowse-neuron-limb.json"
+      ],
+      "invoke_skills": [
+        "unbrowse"
+      ],
+      "inspire_from": [
+        "src:neuron/src/interface.zig",
+        "src:neuron/src/morphogenesis.zig",
+        "src:skills/sp-unbrowse"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Promote on one observation, serve after drift, or persist credential/raw response bytes; the limb gate must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "provider-effect-limb",
+      "who": "agent",
+      "what": "Rehome the Telethon policy into a provider-neutral Neuron effect limb: normalized inbound, exact ACL, outbox, independent read-back, per-recipient amendment, pending expiry and compensation/no replay. Keep production Telegram outside the hermetic claim. Persist a privacy-safe DLQ linking original execution/effect, recipient, attempt/classification and evidence. Uncertain/accepted-without-ACK effects go to read-back, never blind retry; authorized requeue is a new linked Contract attempt and cannot mutate history. Build and admit the standalone boundary now; later Smithers/tool-surface nodes attach the unchanged digest rather than being a build dependency.",
+      "why": "src:neuron/src/delivery.zig; src:neuron/src/redrive.zig; src:cell/adapters/telethon/telethon_vertical.py",
+      "how": "build",
+      "where": "neuron/limbs/telethon",
+      "when": "one-shot",
+      "milestone": "ingress",
+      "witness": "bash neuron/tests/telethon-limb-gate.sh",
+      "depends_on": [
+        "native-credential-handle",
+        "contract-execution-control-semantics"
+      ],
+      "reads": [
+        "neuron/src/delivery.zig",
+        "neuron/src/redrive.zig",
+        "cell/adapters/telethon/telethon_vertical.py"
+      ],
+      "writes": [
+        "neuron/limbs/telethon/",
+        "neuron/tests/telethon-limb-gate.sh"
+      ],
+      "produces": [
+        "state/provider-effect-limb.json"
+      ],
+      "invoke_skills": [],
+      "inspire_from": [
+        "src:neuron/src/delivery.zig",
+        "src:neuron/src/redrive.zig",
+        "src:neuron/tests/escalation-ladder-gate.sh"
+      ],
+      "capability_gaps": [
+        "live-telegram-employee-account-witness"
+      ],
+      "falsifier": "Settle without read-back, aggregate recipients, or resend one crossed message; the gate must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "outbound-webhook-neuron-limb",
+      "who": "agent",
+      "what": "Add a provider-neutral admitted Neuron webhook effector. Destination host/path/method/schema, credential handle, redirect policy and logical effect idempotency key are digest-pinned before use. Resolve DNS and credential only at the boundary; deny private/link-local/metadata addresses and revalidate redirects. Enqueue durable outbox, sign exact bytes, send, and independently read back via provider receipt/status callback when available. Timeout/unknown acceptance enters uncertain reconciliation, never blind resend; amendment/revoke produces compensation or stops uncrossed work. This standalone Neuron boundary is independent of Smithers packaging; later driver/tool-surface nodes attach it without changing its admitted bytes.",
+      "why": "src:neuron/src/delivery.zig; src:neuron/src/redrive.zig; src:neuron/src/limb_ops.zig",
+      "how": "build",
+      "where": "neuron/limbs/webhook",
+      "when": "one-shot",
+      "milestone": "ingress",
+      "witness": "bash neuron/tests/webhook-limb-gate.sh",
+      "depends_on": [
+        "native-credential-handle",
+        "contract-execution-control-semantics"
+      ],
+      "reads": [
+        "neuron/src/delivery.zig",
+        "neuron/src/redrive.zig",
+        "neuron/src/limb_ops.zig",
+        "aiko/crates/codegen/xai-grok-shell/src/auth/credential_handle.rs"
+      ],
+      "writes": [
+        "neuron/limbs/webhook/",
+        "neuron/tests/webhook-limb-gate.sh"
+      ],
+      "produces": [
+        "state/outbound-webhook-neuron-limb.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "neuron/src/delivery.zig",
+        "neuron/src/redrive.zig",
+        "neuron/src/limb_ops.zig",
+        "aiko/crates/codegen/xai-grok-shell/src/auth/credential_handle.rs"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Permit SSRF/DNS rebinding, follow an unpinned redirect, leak secret/body, trust sender stdout as delivery, blindly retry uncertain acceptance, or resend a crossed effect after invalidation.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "cloudflare-webhook-edge",
+      "who": "agent",
+      "what": "Build a Cloudflare Worker edge adapter for Contract webhooks. A versioned endpoint manifest selects bounded provider verifiers and downstream Aiko Gateway audience; secrets are Worker secret bindings, never source/KV/plain vars. The Worker verifies raw bytes, timestamp and delivery ID, applies body/rate limits, and durably queues a minimized signed VerifiedIngress before success. Queue delivery is at-least-once with Contract digest dedupe, bounded retries and DLQ. It cannot mint tenant/root/effect scope beyond its signed manifest and cannot forward arbitrary destinations.",
+      "why": "src:aiko-flow/packages/cloudflare/src/index.js; src:aiko-flow/packages/server/src/IntegrationsConfig.ts; src:aiko-flow/packages/server/src/contractWebhooks.js",
+      "how": "build",
+      "where": "aiko-flow/packages/cloudflare-webhook",
+      "when": "one-shot",
+      "milestone": "capabilities",
+      "witness": "bash tests/cloudflare-webhook-edge-gate.sh",
+      "depends_on": [
+        "webhook-contract-surface",
+        "smithers-control-package",
+        "cloudflare-webhook-verifier-kernel",
+        "cloudflare-queue-delivery-kernel"
+      ],
+      "reads": [
+        "aiko-flow/packages/cloudflare/src/index.js",
+        "aiko-flow/packages/server/src/IntegrationsConfig.ts",
+        "aiko-flow/packages/server/src/contractWebhooks.js",
+        "aiko-flow/packages/cloudflare-webhook/src/manifest.ts",
+        "aiko-flow/packages/cloudflare-webhook/src/verifiers.ts",
+        "aiko-flow/packages/cloudflare-webhook/src/queue.ts"
+      ],
+      "writes": [
+        "aiko-flow/packages/cloudflare-webhook/src/worker.ts",
+        "aiko-flow/packages/cloudflare-webhook/tests/worker.test.ts",
+        "tests/cloudflare-webhook-edge-gate.sh"
+      ],
+      "produces": [
+        "state/cloudflare-webhook-edge.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "aiko-flow/packages/cloudflare/src/index.js",
+        "aiko-flow/packages/server/src/IntegrationsConfig.ts",
+        "aiko-flow/packages/server/src/contractWebhooks.js"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Accept bad/expired signatures, parse before raw verification, use plaintext secrets, 2xx before queue durability, widen signed scope, arbitrary forward URL, unbounded retry/body/rate, or lose poison delivery without DLQ.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "cloudflare-webhook-release",
+      "who": "agent",
+      "what": "Package the Worker as one immutable artifact and implement Cloudflare preview \u2192 staging \u2192 exact-version promotion \u2192 rollback receipts. Repository scripts capture git SHA, Worker name, bindings/routes/queues/migrations and uploaded version ID; production promotion never rebuilds. Dry-run and local Worker gates are hermetic. When scoped Cloudflare account credentials are present, publish a preview/staging version and smoke the real endpoint; otherwise emit an explicit live-deployment capability gap without weakening the artifact gate.",
+      "why": "src:aiko-flow/packages/cloudflare-webhook; src:/Users/lewis/.agents/skills/cloudflare-cicd/SKILL.md",
+      "how": "build",
+      "where": "aiko-flow/packages/cloudflare-webhook/scripts/release.mjs",
+      "when": "one-shot",
+      "milestone": "capabilities",
+      "witness": "bash tests/cloudflare-webhook-release-gate.sh",
+      "depends_on": [
+        "cloudflare-webhook-edge",
+        "cloudflare-release-promotion-kernel"
+      ],
+      "reads": [
+        "aiko-flow/packages/cloudflare-webhook/",
+        "aiko-flow/packages/cloudflare/src/index.js",
+        "aiko-flow/packages/cloudflare-webhook/src/release.ts"
+      ],
+      "writes": [
+        "aiko-flow/packages/cloudflare-webhook/scripts/release.mjs",
+        "aiko-flow/packages/cloudflare-webhook/wrangler.toml",
+        "aiko-flow/packages/cloudflare-webhook/package.json",
+        ".github/workflows/aiko-webhook-worker.yml",
+        "tests/cloudflare-webhook-release-gate.sh"
+      ],
+      "produces": [
+        "state/cloudflare-webhook-release.json"
+      ],
+      "invoke_skills": [
+        "cloudflare-cicd",
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "aiko-flow/packages/cloudflare-webhook/",
+        "aiko-flow/packages/cloudflare/src/index.js"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Rebuild between staging/promotion, infer Worker name, include secret in source/receipt/log, deploy dirty/detached production, report upload as working without smoke, or make live Cloudflare credentials a condition for hermetic correctness.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "contract-delegation-capability",
+      "who": "agent",
+      "what": "Replace lineage environment strings as authority with an opaque server-side delegated capability bound to verified subject/tenant, root+parent occurrence, parent lease fence, child audience/purpose, expiry, max effects and read-only/effect/resource scope. Child authority is the intersection of parent grant, request and policy; adoption validates row existence, root membership and current fence. Environment lineage may remain routing metadata only. Remove hardcoded max_effects=16/read_only=false widening. Register this through the production contract_native composition root and replace subagent-coordinator env/hardcoded authority; it no longer waits on Smithers packaging.",
+      "why": "src:aiko/crates/codegen/xai-grok-shell/src/contract_native.rs; src:aiko/crates/codegen/xai-grok-shell/src/contract_native/subagent_coordinator.rs; src:contract/libcontract/src/c_abi.zig",
+      "how": "build",
+      "where": "aiko/crates/codegen/xai-grok-shell/src/contract_native/delegation_capability.rs",
+      "when": "one-shot",
+      "milestone": "control",
+      "witness": "bash tests/contract-delegation-capability-gate.sh",
+      "depends_on": [
+        "smithers-contract-driver",
+        "contract-delegation-substrate",
+        "spawn-authority-membrane"
+      ],
+      "reads": [
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native.rs",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native/subagent_coordinator.rs",
+        "contract/libcontract/src/c_abi.zig",
+        "contract/libcontract/src/delegation_capability.zig"
+      ],
+      "writes": [
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native/delegation_capability.rs",
+        "tests/contract-delegation-capability-gate.sh",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native.rs",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native/subagent_coordinator.rs"
+      ],
+      "produces": [
+        "state/contract-delegation-capability.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native.rs",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native/subagent_coordinator.rs",
+        "contract/libcontract/src/c_abi.zig"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Guess valid IDs; forge root/depth/env/meta; use expired/revoked/wrong-tenant grant; reuse stale fence; or request write from read-only parent\u2014child must not reach model/tool execution.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "cross-journal-retention-compaction",
+      "who": "agent",
+      "what": "Define reachability and integrity across Contract roots/descendants, active leases, settlements, Smithers descriptor refs, Cell manifests, Neuron firing/effect evidence, DLQ and compensation. Contract compaction/archive preserves a digest+commit-ordinal chain and atomic checkpoint; pinned rows remain queryable and GC refuses while a live descendant/cross-pin refers to them. Session/model compaction retains only Contract citation IDs. Prove context and redrive equivalence before/after compaction, crash-safe rotation and archive tamper/loss refusal. Include Cloudflare queue/DLQ delivery refs, endpoint manifests/deployment versions and outbound webhook receipts in reachability. The settled Cloudflare retention projection supplies the abstract edge refs, so compaction no longer waits for Worker deployment plumbing; final edge/E2E validates concrete production emission.",
+      "why": "src:contract/libcontract/src/ledger.zig; src:contract/libcontract/src/context_projection.zig; src:neuron/src/redrive.zig",
+      "how": "build",
+      "where": "contract/libcontract/src/cross_journal_retention.zig",
+      "when": "one-shot",
+      "milestone": "control",
+      "witness": "bash tests/cross-journal-retention-gate.sh",
+      "depends_on": [
+        "contract-context-projection",
+        "execution-retry-backpressure-recovery",
+        "provider-effect-limb",
+        "outbound-webhook-neuron-limb",
+        "contract-retention-kernel",
+        "neuron-retention-projection-kernel",
+        "smithers-retention-projection-kernel",
+        "cloudflare-retention-projection-kernel",
+        "smithers-control-package"
+      ],
+      "reads": [
+        "contract/libcontract/src/ledger.zig",
+        "contract/libcontract/src/context_projection.zig",
+        "neuron/src/redrive.zig",
+        "aiko-flow/packages/smithers/src/contractRecovery.js",
+        "neuron/src/cross_journal_retention.zig",
+        "aiko-flow/packages/smithers/src/contractRetentionProjection.js",
+        "aiko-flow/packages/cloudflare-webhook/src/retention.ts"
+      ],
+      "writes": [
+        "contract/libcontract/src/cross_journal_retention.zig",
+        "contract/libcontract/src/ledger.zig",
+        "aiko-flow/packages/smithers/src/contractRetention.js",
+        "tests/cross-journal-retention-gate.sh"
+      ],
+      "produces": [
+        "state/cross-journal-retention-compaction.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "contract/libcontract/src/ledger.zig",
+        "contract/libcontract/src/context_projection.zig",
+        "neuron/src/redrive.zig",
+        "aiko-flow/packages/smithers/src/contractRecovery.js"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Compact with active references or lease; lose/tamper archive; crash mid-rotation; or change context/redrive verdict across compaction\u2014must refuse or recover without semantic loss.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "webhook-self-wiring",
+      "who": "agent",
+      "what": "Join the admitted surfaces: an authorized Aiko requests a bounded webhook endpoint, Contract authors and digest-admits its manifest, Cloudflare deployment returns a version/URL receipt, and later inbound delivery declares exactly one Contract occurrence. The same organism can invoke an admitted outbound webhook limb and correlate its independently verified callback/read-back. Rotation, pause, revoke, rollback and source invalidation propagate across Contract, Smithers, Worker endpoint generation and Neuron without replaying crossed effects. Generated endpoints remain inert until tests, admission and deployment approval pass.",
+      "why": "src:aiko-flow/packages/server/src/contractWebhooks.js; src:aiko-flow/packages/cloudflare-webhook; src:neuron/limbs/webhook",
+      "how": "build",
+      "where": "aiko-flow/.smithers/workflows/wire-webhook.tsx",
+      "when": "one-shot",
+      "milestone": "organism",
+      "witness": "bash tests/aiko-webhook-self-wiring-gate.sh",
+      "depends_on": [
+        "cloudflare-webhook-release",
+        "outbound-webhook-neuron-limb",
+        "cross-journal-retention-compaction"
+      ],
+      "reads": [
+        "aiko-flow/packages/server/src/contractWebhooks.js",
+        "aiko-flow/packages/cloudflare-webhook/",
+        "neuron/limbs/webhook/",
+        "aiko-flow/packages/components/src/components/ContractCell.js"
+      ],
+      "writes": [
+        "aiko-flow/.smithers/workflows/wire-webhook.tsx",
+        "tests/aiko-webhook-self-wiring-gate.sh",
+        "tests/fixtures/aiko-webhook-self-wiring/"
+      ],
+      "produces": [
+        "state/webhook-self-wiring.json"
+      ],
+      "invoke_skills": [
+        "cell",
+        "cloudflare-cicd",
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "aiko-flow/packages/server/src/contractWebhooks.js",
+        "aiko-flow/packages/cloudflare-webhook/",
+        "neuron/limbs/webhook/",
+        "aiko-flow/packages/components/src/components/ContractCell.js"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Prompt text alone deploys infrastructure; endpoint exists before admission; receipt lacks version/digest; duplicate inbound creates two roots; outbound trusts send; rotate/revoke leaves old generation live; or rollback resends a crossed effect.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "recursive-aiko-organism",
+      "who": "agent",
+      "what": "Make deploy-aiko real through hardened ContractAikoAgent: public Contract hook launches Aiko in Smithers with inheritEnv=false, explicit env allowlist, non-bypass permissions, fixed account/provider generation and no fallback. It retrieves purpose-scoped cited context, uses an admitted limb, authors a pinned Cell/workflow, and spawns one child using an opaque delegated Contract capability\u2014not lineage env strings. Child is a distinct execution/occurrence in the same root with authority intersection and only delegated citation IDs; no transcript, handoff blob, account config or global memory copying. Gate parent cancellation while queued, executing and after an external send.",
+      "why": "src:aiko-flow/.smithers/workflows/deploy-aiko.tsx; src:aiko/crates/codegen/xai-grok-shell/src/contract_native.rs; src:aiko-flow/.smithers/agents.ts",
+      "how": "build",
+      "where": "AikoAgent in Smithers",
+      "when": "one-shot",
+      "milestone": "organism",
+      "witness": "bash tests/recursive-aiko-organism-gate.sh",
+      "depends_on": [
+        "admitted-tool-surface",
+        "unbrowse-neuron-limb",
+        "provider-effect-limb",
+        "execution-retry-backpressure-recovery",
+        "cross-journal-retention-compaction",
+        "contract-delegation-capability",
+        "webhook-self-wiring"
+      ],
+      "reads": [
+        "state/admitted-tool-surface.json",
+        "state/unbrowse-neuron-limb.json",
+        "state/provider-effect-limb.json",
+        "aiko-flow/.smithers/workflows/deploy-aiko.tsx",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native.rs"
+      ],
+      "writes": [
+        "aiko-flow/.smithers/workflows/deploy-aiko.tsx",
+        "aiko-flow/packages/agents/src/ContractAikoAgent.js",
+        "aiko-flow/packages/agents/tests/ContractAikoAgent.test.js",
+        "tests/recursive-aiko-organism-gate.sh",
+        "aiko-flow/packages/agents/src/AikoAgentOptions.ts",
+        "aiko-flow/packages/agents/src/AikoAgent.js"
+      ],
+      "produces": [
+        "state/recursive-aiko-organism.json"
+      ],
+      "invoke_skills": [],
+      "inspire_from": [
+        "src:aiko/crates/codegen/xai-grok-shell/src/contract_native.rs",
+        "src:aiko-flow/.smithers/agents.ts",
+        "src:docs/AI-FORWARD-DEPLOYED-ENGINEER.md"
+      ],
+      "capability_gaps": [
+        "configured-account-for-live-agent-witness"
+      ],
+      "falsifier": "Use new AikoAgent({}), inherit env/HOME, bypass permissions, provider fallback, treat root/lineage IDs as authority, copy prompts/transcripts, widen read-only authority, or cancel-after-send without compensation.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "remove-duplicate-primitives",
+      "who": "agent",
+      "what": "After all native replacements pass, delete duplicate Python credential/context/authoring/Unbrowse/Telethon authority primitives and workflow_binding/control.json and their superseded gates. Update exports/manifests. Preserve Cell itself, Contract, Neuron and GraphHarness\u2014the actual owners. Preserve the native Smithers Cell/runCell implementation and its tests: it remains the typed harness underneath Cell and is not a duplicate authority store. Remove only direct legacy authority/export paths that bypass ContractCell, never the harness executor.",
+      "why": "src:docs/graph-engineering/repository-audit.md; src:cell/SPEC.md; src:docs/AIKO-WORKFLOW-BINDING.md",
+      "how": "build",
+      "where": "wrong-layer artifacts",
+      "when": "one-shot",
+      "milestone": "migration",
+      "witness": "bash tests/no-duplicate-fde-primitives-gate.sh",
+      "depends_on": [
+        "recursive-aiko-organism",
+        "credential-envelope-input-membrane-hardening"
+      ],
+      "reads": [
+        "state/recursive-aiko-organism.json",
+        "docs/graph-engineering/repository-audit.md",
+        "cell/SPEC.md",
+        "docs/AIKO-WORKFLOW-BINDING.md"
+      ],
+      "writes": [
+        "cell/primitives/context-plane/",
+        "cell/primitives/credential-envelope/",
+        "cell/patterns/fde/credential-envelope.cell.yaml",
+        "cell/adapters/authored/",
+        "cell/adapters/unbrowse/",
+        "cell/adapters/telethon/",
+        "cell/patterns/api-reveng/promote.cell.yaml",
+        "src/workflow_binding.zig",
+        "src/main.zig",
+        "tests/credential-envelope-gate.sh",
+        "tests/fde-context-gate.sh",
+        "tests/unbrowse-aiko-gate.sh",
+        "tests/fde-authoring-gate.sh",
+        "tests/telethon-fde-gate.sh",
+        "tests/fde-workflow-gate.sh",
+        "tests/no-duplicate-fde-primitives-gate.sh"
+      ],
+      "produces": [
+        "state/duplicate-fde-primitives-removed.json"
+      ],
+      "invoke_skills": [
+        "repo-cleanup"
+      ],
+      "inspire_from": [
+        "src:docs/graph-engineering/repository-audit.md",
+        "src:cell/SPEC.md"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Restore a deleted import or add durable context/readiness/credential truth to Cell or Smithers; the negative gate must fail. Deleting/breaking native Cell/runCell or its Smithers tests is also a failure.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "organism-e2e",
+      "who": "agent",
+      "what": "From empty HOME using only the installed public artifact: deliver authenticated hook duplicates/conflicts; observe one root; launch real least-authority Aiko; retrieve exact cited context; author/admit/attach/use a tool; delegate a bounded child; pause publicly with work in flight, kill/restart, resume without duplicate settlement; revoke queued tool and credential; move a cited source during execution; prove stale settlement refusal, selective recompute, and crossed compensation/no resend; request semantic rollback and prove append-only invalidation/compensation rather than Smithers rewind. Inject the declared crash matrix, dropped/reordered signals, duplicate storm, poison item and overload/fairness cases. Verdicts use CLI/MCP/Gateway\u2014not private DB/ledger files. Create, rotate and revoke a webhook endpoint through public APIs; drive duplicate/conflicting inbound webhook bytes through the Worker adapter; call an outbound webhook and correlate verified read-back; prove the pinned Cloudflare version/rollback receipt without turning absent live credentials into a false green.",
+      "why": "src:tests/graph-harness-main-path-gate.sh; src:tests/aiko-smithers-limb-gate.sh; src:neuron/tests/redrive-gate.sh",
+      "how": "build",
+      "where": "tests/aiko-hook-organism-gate.sh",
+      "when": "one-shot",
+      "milestone": "acceptance",
+      "witness": "bash tests/aiko-hook-organism-gate.sh",
+      "depends_on": [
+        "remove-duplicate-primitives",
+        "hook-covenant-live-reconciliation",
+        "e2e-ingress-webhook-scenario",
+        "e2e-recovery-lifecycle-scenario",
+        "e2e-recursive-capability-scenario"
+      ],
+      "reads": [
+        "state/duplicate-fde-primitives-removed.json",
+        "tests/graph-harness-main-path-gate.sh",
+        "tests/aiko-smithers-limb-gate.sh",
+        "neuron/tests/redrive-gate.sh",
+        "tests/smithers-control-package-gate.sh",
+        "aiko-flow/packages/gateway/src/",
+        "aiko-flow/packages/gateway-client/src/",
+        "tests/fixtures/aiko-hook-organism/ingress-webhook/",
+        "tests/fixtures/aiko-hook-organism/recovery-lifecycle/",
+        "tests/fixtures/aiko-hook-organism/recursive-capability/"
+      ],
+      "writes": [
+        "tests/aiko-hook-organism-gate.sh",
+        "tests/fixtures/aiko-hook-organism/"
+      ],
+      "produces": [
+        "state/aiko-hook-organism-e2e.json"
+      ],
+      "invoke_skills": [
+        "cell",
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "src:tests/graph-harness-main-path-gate.sh",
+        "src:tests/aiko-smithers-limb-gate.sh",
+        "src:neuron/tests/redrive-gate.sh"
+      ],
+      "capability_gaps": [
+        "configured-account-for-live-agent-witness"
+      ],
+      "falsifier": "Read private stores as acceptance truth; depend on checkout/runtime env; ACK before durable intake; duplicate an effect; settle under stale fence; erase history for rollback; leak authority/secret/context; or let overload starve another tenant.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "correctness-judge",
+      "who": "agent",
+      "what": "Independently mutate every identity and descriptor cross-pin from VerifiedIngress to Contract root/ordinal, fenced lease, Smithers run/node/attempt, Cell manifest, Neuron firing/evidence/effect and child delegation. Each mutant receipt names the applied mutation and the observed failing assertion.",
+      "why": "src:tests/aiko-hook-organism-gate.sh; src:docs/graph-engineering/MAIN-PATH.md",
+      "how": "eval",
+      "where": "independent judge receipt",
+      "when": "one-shot",
+      "milestone": "acceptance",
+      "witness": "bash tests/aiko-hook-organism-correctness-judge.sh",
+      "depends_on": [
+        "organism-e2e"
+      ],
+      "reads": [
+        "state/aiko-hook-organism-e2e.json",
+        "tests/aiko-hook-organism-gate.sh",
+        "docs/graph-engineering/MAIN-PATH.md"
+      ],
+      "writes": [
+        "tests/aiko-hook-organism-correctness-judge.sh"
+      ],
+      "produces": [
+        "state/correctness-judge.json"
+      ],
+      "invoke_skills": [],
+      "inspire_from": [
+        "src:tests/aiko-hook-organism-gate.sh",
+        "src:docs/graph-engineering/MAIN-PATH.md"
+      ],
+      "capability_gaps": [],
+      "falsifier": "The correct mutant must make this judge red.",
+      "children": [],
+      "lens": "correct",
+      "status": "settled"
+    },
+    {
+      "id": "safety-judge",
+      "who": "agent",
+      "what": "Adversarially test forged ingress/lineage, hook exfiltration, secret injection, tenant/sibling crossing, ambient authority, stale fences, authority widening, self-admission, revoke races, unobservable/uncertain effects, cancel-after-send, unauthorized DLQ replay, archive tamper and rollback-as-delete; refusal retains no success artifact. Mutate webhook signature bytes, replay namespace, endpoint generation, SSRF target, Worker manifest scope, queue ACK ordering and Cloudflare receipt version.",
+      "why": "src:tests/aiko-hook-organism-gate.sh; src:docs/graph-engineering/MAIN-PATH.md",
+      "how": "eval",
+      "where": "independent judge receipt",
+      "when": "one-shot",
+      "milestone": "acceptance",
+      "witness": "bash tests/aiko-hook-organism-safety-judge.sh",
+      "depends_on": [
+        "organism-e2e"
+      ],
+      "reads": [
+        "state/aiko-hook-organism-e2e.json",
+        "tests/aiko-hook-organism-gate.sh",
+        "docs/graph-engineering/MAIN-PATH.md"
+      ],
+      "writes": [
+        "tests/aiko-hook-organism-safety-judge.sh"
+      ],
+      "produces": [
+        "state/safety-judge.json"
+      ],
+      "invoke_skills": [],
+      "inspire_from": [
+        "src:tests/aiko-hook-organism-gate.sh",
+        "src:docs/graph-engineering/MAIN-PATH.md"
+      ],
+      "capability_gaps": [],
+      "falsifier": "The safe mutant must make this judge red.",
+      "children": [],
+      "lens": "safe",
+      "status": "settled"
+    },
+    {
+      "id": "reproduction-judge",
+      "who": "agent",
+      "what": "Pack then install the exact control artifact into empty HOME after the checkout is renamed/unavailable; unset AIKO_SMITHERS_RUNTIME/NODE_PATH/workspace links and remove source node_modules. Drive public hook/MCP/Gateway/CLI faces twice, including lifecycle, and reject nondeterministic identities, checkout paths, preseeded stores or ABI/digest drift. Rebuild the Worker artifact deterministically and run its local/public webhook lifecycle without checkout links.",
+      "why": "src:tests/aiko-hook-organism-gate.sh; src:docs/graph-engineering/MAIN-PATH.md",
+      "how": "eval",
+      "where": "independent judge receipt",
+      "when": "one-shot",
+      "milestone": "acceptance",
+      "witness": "bash tests/aiko-hook-organism-reproduction-judge.sh",
+      "depends_on": [
+        "organism-e2e"
+      ],
+      "reads": [
+        "state/aiko-hook-organism-e2e.json",
+        "tests/aiko-hook-organism-gate.sh",
+        "docs/graph-engineering/MAIN-PATH.md"
+      ],
+      "writes": [
+        "tests/aiko-hook-organism-reproduction-judge.sh"
+      ],
+      "produces": [
+        "state/reproduction-judge.json"
+      ],
+      "invoke_skills": [],
+      "inspire_from": [
+        "src:tests/aiko-hook-organism-gate.sh",
+        "src:docs/graph-engineering/MAIN-PATH.md"
+      ],
+      "capability_gaps": [],
+      "falsifier": "The reproduces mutant must make this judge red.",
+      "children": [],
+      "lens": "reproduces",
+      "status": "settled"
+    },
+    {
+      "id": "status-doctrine-judge",
+      "who": "agent",
+      "what": "Update doctrine only after all three judges: hooks are stateless Contract projections; context is a scoped ledger read model; Smithers journal is cross-pinned operational state; multiple Aikos are bounded descendants of one root, not one unrestricted memory. Remove obsolete claims and preserve live-provider/vault/market-first boundaries. Document inbound/outbound webhook self-wiring and Cloudflare artifact/release boundaries; never equate hermetic Worker evidence with a live production deployment.",
+      "why": "src:docs/AI-FORWARD-DEPLOYED-ENGINEER.md; src:docs/SOURCE-OF-TRUTH.md; src:CLAUDE.md",
+      "how": "eval",
+      "where": "docs + root acceptance",
+      "when": "one-shot",
+      "milestone": "acceptance",
+      "witness": "bash tests/docs-quality-gate.sh && bash tests/aiko-hook-organism-gate.sh && git diff --check",
+      "depends_on": [
+        "correctness-judge",
+        "safety-judge",
+        "reproduction-judge",
+        "repository-publication-integrity",
+        "hook-covenant-live-reconciliation"
+      ],
+      "reads": [
+        "state/correctness-judge.json",
+        "state/safety-judge.json",
+        "state/reproduction-judge.json",
+        "docs/AI-FORWARD-DEPLOYED-ENGINEER.md",
+        "docs/SOURCE-OF-TRUTH.md",
+        "CLAUDE.md"
+      ],
+      "writes": [
+        "docs/AI-FORWARD-DEPLOYED-ENGINEER.md",
+        "docs/AIKO-WORKFLOW-BINDING.md",
+        "docs/SOURCE-OF-TRUTH.md",
+        "docs/graph-engineering/ARCHITECTURE.md",
+        "README.md",
+        "CLAUDE.md",
+        "tests/docs-quality-gate.sh"
+      ],
+      "produces": [
+        "state/aiko-hook-organism-accepted.json"
+      ],
+      "invoke_skills": [],
+      "inspire_from": [
+        "src:docs/AI-FORWARD-DEPLOYED-ENGINEER.md",
+        "src:docs/SOURCE-OF-TRUTH.md",
+        "src:CLAUDE.md"
+      ],
+      "capability_gaps": [
+        "competitive-witness-for-market-first"
+      ],
+      "falsifier": "Claim hooks own durable state, one unrestricted global memory, production Telegram/vault, or market-first without live evidence; docs gate must fail.",
+      "children": [],
+      "lens": "claim-boundary",
+      "status": "settled"
+    },
+    {
+      "id": "smithers-relocatable-runtime",
+      "who": "agent",
+      "what": "Make the already-advertised Smithers control installation genuinely relocatable before its full Contract lifecycle is packaged: copy a complete immutable runtime dependency closure, resolve packaged bytes before any source override, remove the installed MCP source-path escape hatch, and boot CLI/MCP from empty HOME after renaming the checkout. This node owns relocation only; the later control-package node adds final ContractCell/lifecycle exports and atomic upgrade semantics.",
+      "why": "src:scripts/aiko-packages.py; src:aiko-flow/claude-plugin/lib/resolve-smithers-cli.mjs; finding:docs-code-flow-audit/P0",
+      "how": "build",
+      "where": "scripts/aiko-packages.py + resolver + relocation gate",
+      "when": "one-shot",
+      "milestone": "ingress",
+      "witness": "bash tests/smithers-relocatable-runtime-gate.sh",
+      "depends_on": [
+        "spawn-authority-membrane"
+      ],
+      "reads": [
+        "scripts/aiko-packages.py",
+        "aiko-flow/claude-plugin/lib/resolve-smithers-cli.mjs",
+        "aiko-flow/claude-plugin/.mcp.json",
+        "aiko-flow/bun.lock"
+      ],
+      "writes": [
+        "scripts/aiko-packages.py",
+        "aiko-flow/claude-plugin/lib/resolve-smithers-cli.mjs",
+        "tests/smithers-relocatable-runtime-gate.sh"
+      ],
+      "produces": [
+        "state/smithers-relocatable-runtime.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "scripts/aiko-packages.py",
+        "aiko-flow/claude-plugin/lib/resolve-smithers-cli.mjs",
+        "aiko-flow/claude-plugin/.mcp.json",
+        "aiko-flow/bun.lock"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Pack then rename the source checkout and clear AIKO_SMITHERS_RUNTIME/NODE_PATH/workspace links; any CLI/MCP boot that reads original source bytes, network-fetches bunx, or lacks its dependency closure makes the gate red.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "repository-publication-integrity",
+      "who": "agent",
+      "what": "Reconcile public repository doctrine with the actual Git tree: describe tracked aiko-flow as an in-monorepo MIT control surface rather than unpublished, replace obsolete closed-source Contract wording with the current no-standalone-package/no-customer-data policy, restore the missing aiko/apps/frontend gitlink mapping, and make the OSS docs gate mechanically compare publication claims, gitlinks and the real root acceptance inventory. Do not claim unsettled hook functionality.",
+      "why": "src:docs/SOURCE-OF-TRUTH.md; src:contract/NEVER-PUBLISH.md; finding:docs-code-core-audit/P0-P1",
+      "how": "build",
+      "where": "publication doctrine, .gitmodules, OSS docs gate",
+      "when": "one-shot",
+      "milestone": "ingress",
+      "witness": "bash tests/docs-oss-ready-gate.sh && git submodule status aiko/apps/frontend >/dev/null && git diff --check",
+      "depends_on": [
+        "contract-hook-covenant"
+      ],
+      "reads": [
+        "docs/SOURCE-OF-TRUTH.md",
+        "docs/AI-FORWARD-DEPLOYED-ENGINEER.md",
+        "README.md",
+        "CLAUDE.md",
+        "contract/NEVER-PUBLISH.md",
+        "build.zig",
+        "tests/docs-oss-ready-gate.sh"
+      ],
+      "writes": [
+        "docs/SOURCE-OF-TRUTH.md",
+        "docs/AI-FORWARD-DEPLOYED-ENGINEER.md",
+        "README.md",
+        "CLAUDE.md",
+        ".gitmodules",
+        "tests/docs-oss-ready-gate.sh"
+      ],
+      "produces": [
+        "state/repository-publication-integrity.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "docs/SOURCE-OF-TRUTH.md",
+        "docs/AI-FORWARD-DEPLOYED-ENGINEER.md",
+        "README.md",
+        "CLAUDE.md"
+      ],
+      "capability_gaps": [],
+      "falsifier": "A tracked aiko-flow path remains classified unpublished, Contract remains called closed-source, a gitlink lacks a mapping, or docs claim a gate inventory build.zig does not execute; the witness must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "cloudflare-webhook-verifier-kernel",
+      "who": "agent",
+      "what": "Build the pure Cloudflare webhook endpoint-manifest and provider-verification kernel before the Worker queue adapter: versioned digest-pinned manifests bind provider, endpoint generation, verified tenant/principal, audience, scopes, timestamp window, delivery-id namespace, body/rate limits and a fixed downstream destination. Verify signatures over original raw bytes using injected Worker-secret bindings, never parsed JSON or plaintext configuration. Emit a minimized signed VerifiedIngress-compatible projection, reject replay tuple conflicts and arbitrary forwarding. No network/deploy/live-provider claim.",
+      "why": "src:docs/graph-engineering/AIKO-HOOK-ORGANISM.md; src:aiko-flow/packages/cloudflare/src/index.js; src:aiko-flow/packages/server/src/IntegrationsConfig.ts",
+      "how": "build",
+      "where": "aiko-flow Cloudflare webhook verifier package",
+      "when": "one-shot",
+      "milestone": "ingress",
+      "witness": "cd aiko-flow && bun test packages/cloudflare-webhook/tests/verifiers.test.ts",
+      "depends_on": [
+        "contract-hook-covenant"
+      ],
+      "reads": [
+        "docs/graph-engineering/AIKO-HOOK-ORGANISM.md",
+        "aiko-flow/packages/cloudflare/src/index.js",
+        "aiko-flow/packages/server/src/IntegrationsConfig.ts"
+      ],
+      "writes": [
+        "aiko-flow/packages/cloudflare-webhook/src/manifest.ts",
+        "aiko-flow/packages/cloudflare-webhook/src/verifiers.ts",
+        "aiko-flow/packages/cloudflare-webhook/tests/verifiers.test.ts"
+      ],
+      "produces": [
+        "state/cloudflare-webhook-verifier-kernel.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "docs/graph-engineering/AIKO-HOOK-ORGANISM.md",
+        "aiko-flow/packages/cloudflare/src/index.js",
+        "aiko-flow/packages/server/src/IntegrationsConfig.ts"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Parse or reserialize before signature verification; accept expired/bad signatures, changed raw bytes under one delivery key, plaintext secrets, caller-supplied tenant/scope/destination, unbounded body/rate, or claim a deployed Worker; tests must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "contract-retention-kernel",
+      "who": "agent",
+      "what": "Build the Contract-owned retention/archive kernel independently of Smithers and edge adapters: compute reachability from roots/descendants, active fenced leases, settlements and cited context; refuse GC while live references exist; write an atomic checkpoint plus digest and commit-ordinal archive chain; recover crash-before/after-rename; reject tamper/loss; and prove Contract context projection equivalence before and after compaction. Later cross-journal retention extends this same kernel with Smithers, Neuron, DLQ, webhook and Cloudflare references.",
+      "why": "src:contract/libcontract/src/ledger.zig; src:contract/libcontract/src/context_projection.zig; src:contract/libcontract/src/execution_control.zig",
+      "how": "build",
+      "where": "Contract retention substrate",
+      "when": "one-shot",
+      "milestone": "ingress",
+      "witness": "bash tests/contract-retention-kernel-gate.sh",
+      "depends_on": [
+        "contract-context-projection",
+        "contract-execution-control-semantics"
+      ],
+      "reads": [
+        "contract/libcontract/src/ledger.zig",
+        "contract/libcontract/src/context_projection.zig",
+        "contract/libcontract/src/execution_control.zig",
+        "contract/libcontract/build.zig"
+      ],
+      "writes": [
+        "contract/libcontract/src/cross_journal_retention.zig",
+        "contract/libcontract/src/ledger.zig",
+        "contract/libcontract/build.zig",
+        "tests/contract-retention-kernel-gate.sh"
+      ],
+      "produces": [
+        "state/contract-retention-kernel.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "contract/libcontract/src/ledger.zig",
+        "contract/libcontract/src/context_projection.zig",
+        "contract/libcontract/src/execution_control.zig",
+        "contract/libcontract/build.zig"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Compact an active root/lease/citation, break context equivalence, accept reordered/missing/tampered archive links, or crash leaving neither prior nor new checkpoint readable; the gate must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "cloudflare-release-promotion-kernel",
+      "who": "agent",
+      "what": "Build the hermetic immutable Cloudflare release state machine independently of the final Worker bundle and CI wrapper: accept prebuilt artifact bytes plus pinned git SHA, manifest/bindings/migrations digests and a destination-bound credential handle; upload once; record provider version ID and artifact digest; promote preview to staging and production by exact version ID without rebuild; produce secret-free receipts; and roll back to a prior verified immutable version. Use an injected provider double for the hermetic gate and make no live deployment claim. The later release node binds this kernel to Wrangler, CI and optional scoped live smoke.",
+      "why": "src:aiko-flow/packages/cloudflare-webhook/src/manifest.ts; src:docs/graph-engineering/AIKO-HOOK-ORGANISM.md; finding:immutable-promotion-contract",
+      "how": "build",
+      "where": "Cloudflare release state machine",
+      "when": "one-shot",
+      "milestone": "ingress",
+      "witness": "cd aiko-flow && bun test packages/cloudflare-webhook/tests/release.test.ts",
+      "depends_on": [
+        "cloudflare-webhook-verifier-kernel",
+        "native-credential-handle"
+      ],
+      "reads": [
+        "aiko-flow/packages/cloudflare-webhook/src/manifest.ts",
+        "aiko/crates/codegen/xai-grok-shell/src/auth/credential_handle.rs"
+      ],
+      "writes": [
+        "aiko-flow/packages/cloudflare-webhook/src/release.ts",
+        "aiko-flow/packages/cloudflare-webhook/tests/release.test.ts"
+      ],
+      "produces": [
+        "state/cloudflare-release-promotion-kernel.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "aiko-flow/packages/cloudflare-webhook/src/manifest.ts",
+        "aiko/crates/codegen/xai-grok-shell/src/auth/credential_handle.rs"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Rebuild or accept changed bytes between environments; promote an unuploaded/wrong-account version; omit binding/migration/manifest/git digests; leak credentials; treat upload as smoke; or claim live deployment from the provider double; tests must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "credential-envelope-input-membrane-hardening",
+      "who": "agent",
+      "what": "Replace the credential-envelope public input exact-key secret denylist with operation-specific allowlisted request schemas and recursive rejection of unknown/nested fields, while preserving opaque cred: handles and OS-vault-only resolution. Cover common aliases and casing including access_token, refresh_token, client_secret, authToken, bearer, cookies, nested headers/authorization and encoded secret containers. The synthetic vault lifecycle claim stays hermetic; no managed enterprise vault claim.",
+      "why": "src:cell/primitives/credential-envelope/manage.py; src:tests/credential-envelope-gate.sh; finding:docs-code-core-audit/P1-security",
+      "how": "build",
+      "where": "Cell credential-envelope input membrane",
+      "when": "one-shot",
+      "milestone": "ingress",
+      "witness": "bash tests/credential-envelope-gate.sh",
+      "depends_on": [
+        "contract-hook-covenant"
+      ],
+      "reads": [
+        "cell/primitives/credential-envelope/manage.py",
+        "tests/credential-envelope-gate.sh",
+        "cell/primitives/credential-envelope/"
+      ],
+      "writes": [
+        "cell/primitives/credential-envelope/manage.py",
+        "tests/credential-envelope-gate.sh"
+      ],
+      "produces": [
+        "state/credential-envelope-input-membrane-hardening.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "cell/primitives/credential-envelope/manage.py",
+        "tests/credential-envelope-gate.sh",
+        "cell/primitives/credential-envelope/"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Pass access_token/refresh_token/client_secret/authToken/bearer/cookie/nested authorization or any unknown input field; reject a documented legitimate opaque-handle lifecycle request; or weaken OS-vault/no-plaintext assertions; the gate must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "webhook-endpoint-lifecycle-kernel",
+      "who": "agent",
+      "what": "Build the pure Contract-command kernel for inbound webhook endpoint lifecycle before public ingress adapters: create allocates an opaque endpoint ID; list/inspect project only tenant-scoped metadata; rotate increments endpoint and secret-handle generations under CAS; pause/revoke fence all older generations. Declarations bind verified subject/tenant, provider schema, fixed audience/route, methods/content type/body limit, secret credential handle generation, replay window and downstream Contract template. Use an injected Contract command/read interface\u2014no HookOccurrence, ContextEnvelope, raw-body or secret store. Later webhook-contract-surface binds these commands to Gateway/CLI/MCP and raw delivery admission.",
+      "why": "src:docs/graph-engineering/AIKO-HOOK-ORGANISM.md; src:aiko-flow/packages/server/src/IntegrationsConfig.ts; src:aiko/crates/codegen/xai-grok-shell/src/auth/credential_handle.rs",
+      "how": "build",
+      "where": "Smithers webhook endpoint lifecycle policy",
+      "when": "one-shot",
+      "milestone": "ingress",
+      "witness": "cd aiko-flow && bun test packages/server/tests/contractWebhookLifecycle.test.js",
+      "depends_on": [
+        "contract-hook-covenant",
+        "native-credential-handle",
+        "contract-execution-control-semantics"
+      ],
+      "reads": [
+        "docs/graph-engineering/AIKO-HOOK-ORGANISM.md",
+        "aiko-flow/packages/server/src/IntegrationsConfig.ts",
+        "aiko/crates/codegen/xai-grok-shell/src/auth/credential_handle.rs"
+      ],
+      "writes": [
+        "aiko-flow/packages/server/src/contractWebhookLifecycle.js",
+        "aiko-flow/packages/server/tests/contractWebhookLifecycle.test.js"
+      ],
+      "produces": [
+        "state/webhook-endpoint-lifecycle-kernel.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "docs/graph-engineering/AIKO-HOOK-ORGANISM.md",
+        "aiko-flow/packages/server/src/IntegrationsConfig.ts",
+        "aiko/crates/codegen/xai-grok-shell/src/auth/credential_handle.rs"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Accept caller-selected endpoint IDs, cross-tenant listing, stale generation CAS, rotate without credential-generation movement, old generation after pause/revoke, arbitrary route/method/content/body/template widening, or store a secret/raw body/second ledger; tests must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "smithers-retry-fairness-policy-kernel",
+      "who": "agent",
+      "what": "Build Smithers pure operational retry/backpressure policy before binding it to the Contract driver: closed failure classes retryable/permanent/uncertain; capped deterministic backoff from immutable attempt identity; attempt and queue budgets; per-tenant and per-root concurrency; fair selection that prevents hot-tenant starvation; explicit overload refusal; uncertain effects route only to read-back/reconciliation. Model durable-accept-before-ACK as a required transition and refuse ACK/drop. This kernel owns no semantic settlement and no second ledger; later execution recovery binds decisions to Contract and Neuron journals.",
+      "why": "src:contract/libcontract/src/scheduler.zig; src:aiko-flow/packages/smithers/src/; src:neuron/src/delivery.zig",
+      "how": "build",
+      "where": "Smithers retry and fairness policy",
+      "when": "one-shot",
+      "milestone": "ingress",
+      "witness": "cd aiko-flow && bun test packages/smithers/tests/contractRecoveryPolicy.test.js",
+      "depends_on": [
+        "contract-execution-control-semantics"
+      ],
+      "reads": [
+        "contract/libcontract/src/scheduler.zig",
+        "neuron/src/delivery.zig",
+        "neuron/src/redrive.zig"
+      ],
+      "writes": [
+        "aiko-flow/packages/smithers/src/contractRecoveryPolicy.js",
+        "aiko-flow/packages/smithers/tests/contractRecoveryPolicy.test.js"
+      ],
+      "produces": [
+        "state/smithers-retry-fairness-policy-kernel.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "contract/libcontract/src/scheduler.zig",
+        "neuron/src/delivery.zig",
+        "neuron/src/redrive.zig"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Retry uncertain/permanent work, jitter from wall clock/randomness, exceed attempts/queue/concurrency, starve a tenant/root, ACK before durable accept, silently drop overload, or claim semantic settlement from Smithers policy; tests must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "smithers-lifecycle-policy-kernel",
+      "who": "agent",
+      "what": "Build the pure Contract-owned lifecycle authorization/transition policy before public Gateway/CLI/MCP wiring: verified tenant/owner plus run:write; pause blocks new claims and yields drain-or-park instructions; resume preserves root/run and requires revalidation of graph/input/Cell/limb/credential pins; cancel is terminal; tool/credential revoke is append-only generation CAS; semantic rollback emits a new invalidation/compensation occurrence and never erases settlement or resends crossed effects. Smithers time travel remains an operational fork only. Use injected Contract commands/reads and no direct DB/state authority.",
+      "why": "src:contract/libcontract/src/execution_control.zig; src:aiko-flow/packages/time-travel/src/; src:aiko-flow/packages/gateway/src/rpc/index.js",
+      "how": "build",
+      "where": "Smithers lifecycle policy",
+      "when": "one-shot",
+      "milestone": "ingress",
+      "witness": "cd aiko-flow && bun test packages/server/tests/contractLifecyclePolicy.test.js",
+      "depends_on": [
+        "contract-execution-control-semantics"
+      ],
+      "reads": [
+        "contract/libcontract/src/execution_control.zig",
+        "aiko-flow/packages/time-travel/src/",
+        "aiko-flow/packages/gateway/src/rpc/index.js"
+      ],
+      "writes": [
+        "aiko-flow/packages/server/src/contractLifecyclePolicy.js",
+        "aiko-flow/packages/server/tests/contractLifecyclePolicy.test.js"
+      ],
+      "produces": [
+        "state/smithers-lifecycle-policy-kernel.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "contract/libcontract/src/execution_control.zig",
+        "aiko-flow/packages/time-travel/src/",
+        "aiko-flow/packages/gateway/src/rpc/index.js"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Cross tenant/owner or missing run:write; claim while paused; resume with moved pins; resume cancelled run; revoke without generation CAS; call rewind semantic rollback; erase settlement or resend crossed effects; or grant authority from Smithers DB; tests must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "contract-delegation-substrate",
+      "who": "agent",
+      "what": "Build Contract-owned opaque delegated-capability records and C ABI before Rust child-spawn integration: server-allocated unguessable grant ID; verified subject/tenant/root/parent occurrence; issuing parent execution, lease ID and current fence; child audience/purpose; expiry; max effects; read-only/effect/resource scopes; credential-handle generation. Grant is the intersection of parent authority, request and policy. Adoption validates durable row existence, root membership, current parent fence and generation; revoke is append-only; replay/wrong tenant/root/audience/expired/stale-fence/widening refuses. Lineage env remains non-authoritative routing metadata.",
+      "why": "src:contract/libcontract/src/execution_control.zig; src:contract/libcontract/src/lineage.zig; src:aiko/crates/codegen/xai-grok-shell/src/contract_native/subagent_coordinator.rs",
+      "how": "build",
+      "where": "Contract delegation substrate and ABI",
+      "when": "one-shot",
+      "milestone": "ingress",
+      "witness": "bash tests/contract-delegation-substrate-gate.sh",
+      "depends_on": [
+        "contract-execution-control-semantics",
+        "native-credential-handle"
+      ],
+      "reads": [
+        "contract/libcontract/src/execution_control.zig",
+        "contract/libcontract/src/lineage.zig",
+        "contract/libcontract/src/c_abi.zig",
+        "contract/libcontract/build.zig"
+      ],
+      "writes": [
+        "contract/libcontract/src/delegation_capability.zig",
+        "contract/libcontract/src/c_abi.zig",
+        "contract/libcontract/build.zig",
+        "tests/contract-delegation-substrate-gate.sh"
+      ],
+      "produces": [
+        "state/contract-delegation-substrate.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "contract/libcontract/src/execution_control.zig",
+        "contract/libcontract/src/lineage.zig",
+        "contract/libcontract/src/c_abi.zig",
+        "contract/libcontract/build.zig"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Guess IDs; forge env lineage; adopt absent/revoked/expired/wrong-tenant/root/audience grant; reuse stale parent fence; request write/effect/resource/credential generation outside parent intersection; tests must fail before child execution.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "neuron-retention-projection-kernel",
+      "who": "agent",
+      "what": "Build the Neuron-owned retention reachability projection against the settled Contract archive kernel: enumerate immutable firing/source citations, admitted limb/package+attachment/revocation generations, queued/crossed effect outbox records, provider read-back receipts, DLQ attempts/requeue lineage and compensation gaps. Emit only digest/ordinal/reference pins for Contract retention, never raw payloads/secrets; refuse collection while a redrive, uncertain reconciliation, DLQ requeue or compensation reference remains live; prove redrive verdict equivalence before/after archiving. Later cross-journal node joins this projection with Smithers and Cloudflare references.",
+      "why": "src:neuron/src/redrive.zig; src:neuron/src/delivery.zig; src:contract/libcontract/src/cross_journal_retention.zig; settled:provider-effect-limb,outbound-webhook-neuron-limb",
+      "how": "build",
+      "where": "Neuron retention projection",
+      "when": "one-shot",
+      "milestone": "ingress",
+      "witness": "bash neuron/tests/retention-projection-gate.sh",
+      "depends_on": [
+        "contract-retention-kernel",
+        "provider-effect-limb",
+        "outbound-webhook-neuron-limb",
+        "unbrowse-neuron-limb"
+      ],
+      "reads": [
+        "neuron/src/redrive.zig",
+        "neuron/src/delivery.zig",
+        "neuron/src/limb_ops.zig",
+        "neuron/limbs/webhook/",
+        "neuron/limbs/telethon/",
+        "contract/libcontract/src/cross_journal_retention.zig",
+        "neuron/build.zig"
+      ],
+      "writes": [
+        "neuron/src/cross_journal_retention.zig",
+        "neuron/build.zig",
+        "neuron/tests/retention-projection-gate.sh"
+      ],
+      "produces": [
+        "state/neuron-retention-projection-kernel.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "neuron/src/redrive.zig",
+        "neuron/src/delivery.zig",
+        "neuron/src/limb_ops.zig",
+        "neuron/limbs/webhook/"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Omit a live firing/source/package/attachment/effect/receipt/DLQ/requeue/compensation reference; retain raw payload/secret; collect uncertain or compensation-pending effect; or change redrive verdict after archive; gate must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "contract-execution-recovery-kernel",
+      "who": "agent",
+      "what": "Build the Contract-owned durable recovery state machine before Smithers journal binding: append failure classification and attempt records; derive capped deterministic next-eligible from Contract time/commit ordinal and immutable attempt identity; enforce attempt budgets and fenced claim transitions; classify uncertain crossed effects as reconciliation/read-back only; model crash points before/after claim and before/after settlement so recovery rereads Contract truth and never trusts sender ACK. Export production Zig module through Contract build. Later execution-retry node joins Smithers operational queue and Neuron/provider journals.",
+      "why": "src:contract/libcontract/src/execution_control.zig; src:contract/libcontract/src/scheduler.zig; src:aiko-flow/packages/smithers/src/contractRecoveryPolicy.js",
+      "how": "build",
+      "where": "Contract execution recovery substrate",
+      "when": "one-shot",
+      "milestone": "control",
+      "witness": "bash tests/contract-execution-recovery-kernel-gate.sh",
+      "depends_on": [
+        "contract-execution-control-semantics",
+        "smithers-retry-fairness-policy-kernel"
+      ],
+      "reads": [
+        "contract/libcontract/src/execution_control.zig",
+        "contract/libcontract/src/scheduler.zig",
+        "aiko-flow/packages/smithers/src/contractRecoveryPolicy.js",
+        "contract/libcontract/build.zig"
+      ],
+      "writes": [
+        "contract/libcontract/src/execution_recovery.zig",
+        "contract/libcontract/build.zig",
+        "tests/contract-execution-recovery-kernel-gate.sh"
+      ],
+      "produces": [
+        "state/contract-execution-recovery-kernel.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "contract/libcontract/src/execution_control.zig",
+        "contract/libcontract/src/scheduler.zig",
+        "aiko-flow/packages/smithers/src/contractRecoveryPolicy.js",
+        "contract/libcontract/build.zig"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Use wall-clock/random retry identity, exceed attempts, retry permanent/uncertain crossed effect, act under stale fence, ACK/drop without durable row, or let a Smithers hint override Contract recovery truth; gate must fail across crash-point mutations.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "cloudflare-queue-delivery-kernel",
+      "who": "agent",
+      "what": "Build the pure Cloudflare queue/delivery state machine before Worker routing: accept only the minimized verifier projection plus immutable endpoint-manifest digest; derive Contract replay identity from endpoint generation/provider namespace/delivery ID/raw digest; require durable queue enqueue before HTTP success; deliver at least once to the fixed manifest audience with bounded deterministic retries; treat duplicate identical delivery as adoption and changed digest as conflict; park uncertain downstream results for Contract read-back, poison/exhausted messages in a digest-only DLQ; ACK consumption only after downstream Contract durable-intake receipt. Use injected Queue/Contract clients, no arbitrary URL or live deployment claim.",
+      "why": "src:aiko-flow/packages/cloudflare-webhook/src/verifiers.ts; src:aiko-flow/packages/cloudflare-webhook/src/manifest.ts; src:contract/libcontract/src/execution_recovery.zig",
+      "how": "build",
+      "where": "Cloudflare queue delivery policy",
+      "when": "one-shot",
+      "milestone": "control",
+      "witness": "cd aiko-flow && bun test packages/cloudflare-webhook/tests/queue.test.ts",
+      "depends_on": [
+        "cloudflare-webhook-verifier-kernel",
+        "contract-execution-recovery-kernel"
+      ],
+      "reads": [
+        "aiko-flow/packages/cloudflare-webhook/src/verifiers.ts",
+        "aiko-flow/packages/cloudflare-webhook/src/manifest.ts",
+        "contract/libcontract/src/execution_recovery.zig"
+      ],
+      "writes": [
+        "aiko-flow/packages/cloudflare-webhook/src/queue.ts",
+        "aiko-flow/packages/cloudflare-webhook/tests/queue.test.ts"
+      ],
+      "produces": [
+        "state/cloudflare-queue-delivery-kernel.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "aiko-flow/packages/cloudflare-webhook/src/verifiers.ts",
+        "aiko-flow/packages/cloudflare-webhook/src/manifest.ts",
+        "contract/libcontract/src/execution_recovery.zig"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Return 2xx before durable enqueue; requeue poison/unbounded; blind retry uncertain Contract intake; ACK consumption without durable receipt; accept changed-body duplicate; retain raw body/secret; or forward outside manifest audience; tests must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "neuron-capability-dispatch-policy",
+      "who": "agent",
+      "what": "Build the Neuron-owned capability admission and dispatch decision kernel before Rust AikoAgent/MCP exposure: list/admit/attach/use/revoke/detach/collect transitions pin package digest, attachment and revocation generations; claim and immediate pre-dispatch checks require verified subject/tenant, current fenced Contract lease, allowed effect/resource, destination-bound credential audience/generation and remaining budget. Generated bytes stay inert until admission; revoked/unlisted/direct calls refuse; generated execution receives no ambient env/HOME. Emit deterministic refusal/decision records without importing Contract.",
+      "why": "src:neuron/src/morphogenesis.zig; src:neuron/src/meta_agent.zig; src:neuron/src/limb_ops.zig; src:aiko/crates/codegen/xai-grok-shell/src/contract_native/graph_harness.rs",
+      "how": "build",
+      "where": "Neuron capability admission and dispatch policy",
+      "when": "one-shot",
+      "milestone": "control",
+      "witness": "bash neuron/tests/capability-dispatch-policy-gate.sh",
+      "depends_on": [
+        "contract-execution-control-semantics",
+        "native-credential-handle"
+      ],
+      "reads": [
+        "neuron/src/morphogenesis.zig",
+        "neuron/src/meta_agent.zig",
+        "neuron/src/limb_ops.zig",
+        "neuron/build.zig",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native/graph_harness.rs"
+      ],
+      "writes": [
+        "neuron/src/capability_dispatch_policy.zig",
+        "neuron/build.zig",
+        "neuron/tests/capability-dispatch-policy-gate.sh"
+      ],
+      "produces": [
+        "state/neuron-capability-dispatch-policy.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "neuron/src/morphogenesis.zig",
+        "neuron/src/meta_agent.zig",
+        "neuron/src/limb_ops.zig",
+        "neuron/build.zig"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Invoke unlisted/revoked/wrong-digest generation; cache authority across revoke/fence/budget change; widen effect/resource/audience; accept prompt text as grant; or expose ambient env/HOME; mutation gate must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "smithers-retention-projection-kernel",
+      "who": "agent",
+      "what": "Build Smithers operational-retention projection against settled Contract/Neuron kernels: extract only digest/ordinal cross-pins from run/node descriptors, Contract root/occurrence/execution/attempt+fence, immutable Cell package/manifest, source/input/graph/node, admitted limb/attachment/credential, firing/effect and recovery journal positions. Smithers rows never make semantic reachability true by themselves: each emitted pin must be confirmed by injected Contract/Neuron readers; orphan/mismatched hints are quarantined. Active operational runs prevent local journal GC, while settled/archived runs may compact without changing Contract/Neuron verdict. No prompt/transcript/secret/raw result retention.",
+      "why": "src:aiko-flow/packages/smithers/src/contractDriver.js; src:aiko-flow/packages/smithers/src/contractRecovery.js; src:contract/libcontract/src/cross_journal_retention.zig; src:neuron/src/cross_journal_retention.zig",
+      "how": "build",
+      "where": "Smithers retention cross-pin projection",
+      "when": "one-shot",
+      "milestone": "control",
+      "witness": "cd aiko-flow && bun test packages/smithers/tests/contractRetentionProjection.test.js",
+      "depends_on": [
+        "smithers-contract-driver",
+        "execution-retry-backpressure-recovery",
+        "contract-retention-kernel",
+        "neuron-retention-projection-kernel"
+      ],
+      "reads": [
+        "aiko-flow/packages/smithers/src/contractDriver.js",
+        "aiko-flow/packages/smithers/src/contractRecovery.js",
+        "contract/libcontract/src/cross_journal_retention.zig",
+        "neuron/src/cross_journal_retention.zig"
+      ],
+      "writes": [
+        "aiko-flow/packages/smithers/src/contractRetentionProjection.js",
+        "aiko-flow/packages/smithers/tests/contractRetentionProjection.test.js"
+      ],
+      "produces": [
+        "state/smithers-retention-projection-kernel.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "aiko-flow/packages/smithers/src/contractDriver.js",
+        "aiko-flow/packages/smithers/src/contractRecovery.js",
+        "contract/libcontract/src/cross_journal_retention.zig",
+        "neuron/src/cross_journal_retention.zig"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Let a Smithers-only row retain/delete semantic truth; emit unconfirmed/mismatched pin; collect an active run; omit descriptor/Cell/effect/recovery ref; retain prompt/transcript/secret/raw result; or change Contract/Neuron verdict after local compaction; tests must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "cloudflare-retention-projection-kernel",
+      "who": "agent",
+      "what": "Build the Cloudflare-side retention projection before final Worker deployment: emit digest/ordinal pins for endpoint manifest+generation, verifier key generation/evidence, queue delivery identity, retry/poison DLQ state, fixed destination audience, immutable artifact/uploaded version/environment promotions/rollback target and secret-free receipts. Active queue/DLQ/reconciliation/deployment references block collection; settled replaced versions may compact only after Contract/Neuron confirmations. Never retain raw request, secret binding values or logs. Later cross-journal node joins these refs and final edge/release gates validate live artifact plumbing.",
+      "why": "src:aiko-flow/packages/cloudflare-webhook/src/manifest.ts; src:aiko-flow/packages/cloudflare-webhook/src/queue.ts; src:aiko-flow/packages/cloudflare-webhook/src/release.ts",
+      "how": "build",
+      "where": "Cloudflare retention projection",
+      "when": "one-shot",
+      "milestone": "control",
+      "witness": "cd aiko-flow && bun test packages/cloudflare-webhook/tests/retention.test.ts",
+      "depends_on": [
+        "cloudflare-webhook-verifier-kernel",
+        "cloudflare-queue-delivery-kernel",
+        "cloudflare-release-promotion-kernel"
+      ],
+      "reads": [
+        "aiko-flow/packages/cloudflare-webhook/src/manifest.ts",
+        "aiko-flow/packages/cloudflare-webhook/src/queue.ts",
+        "aiko-flow/packages/cloudflare-webhook/src/release.ts"
+      ],
+      "writes": [
+        "aiko-flow/packages/cloudflare-webhook/src/retention.ts",
+        "aiko-flow/packages/cloudflare-webhook/tests/retention.test.ts"
+      ],
+      "produces": [
+        "state/cloudflare-retention-projection-kernel.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "aiko-flow/packages/cloudflare-webhook/src/manifest.ts",
+        "aiko-flow/packages/cloudflare-webhook/src/queue.ts",
+        "aiko-flow/packages/cloudflare-webhook/src/release.ts"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Omit endpoint/key/queue/DLQ/audience/artifact/version/promotion/rollback/receipt ref; collect active delivery/reconciliation/deployment; trust unconfirmed provider ref; retain raw/secret/log; or let environment promotion change artifact identity; tests must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "hook-covenant-live-reconciliation",
+      "who": "agent",
+      "what": "Reconcile the settled design covenant with implemented native ingress without overclaiming external deployment: replace the obsolete single live_implemented=false assertion with separate mechanically checked statuses for native VerifiedIngress/shared Contract choke (implemented), public Aiko Rust composition faces (implemented), provider raw-byte webhook/Gateway surface (hermetic implementation), and authorized live Cloudflare/provider deployment (absent without credentials). Update covenant mutations/evidence to inspect production modules and keep HookEventEnvelope untrusted/no second ledger. Make ingress gate resolve project Cargo independent of PATH while retaining production-crate tests.",
+      "why": "src:docs/graph-engineering/AIKO-HOOK-ORGANISM.md; src:tests/contract-hook-covenant-gate.sh; src:tests/contract-hook-ingress-gate.sh; settled:contract-hook-ingress,cloudflare-webhook-release",
+      "how": "build",
+      "where": "hook covenant status and gates",
+      "when": "one-shot",
+      "milestone": "migration",
+      "witness": "bash tests/contract-hook-covenant-gate.sh && bash tests/contract-hook-ingress-gate.sh",
+      "depends_on": [
+        "contract-hook-ingress",
+        "cloudflare-webhook-release",
+        "remove-duplicate-primitives"
+      ],
+      "reads": [
+        "docs/graph-engineering/AIKO-HOOK-ORGANISM.md",
+        "tests/contract-hook-covenant-gate.sh",
+        "tests/contract-hook-ingress-gate.sh",
+        "aiko/crates/codegen/xai-grok-hooks/src/contract_projection.rs",
+        "aiko-flow/packages/cloudflare-webhook/src/worker.ts"
+      ],
+      "writes": [
+        "docs/graph-engineering/AIKO-HOOK-ORGANISM.md",
+        "tests/contract-hook-covenant-gate.sh",
+        "tests/contract-hook-ingress-gate.sh"
+      ],
+      "produces": [
+        "state/hook-covenant-live-reconciliation.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "docs/graph-engineering/AIKO-HOOK-ORGANISM.md",
+        "tests/contract-hook-covenant-gate.sh",
+        "tests/contract-hook-ingress-gate.sh",
+        "aiko/crates/codegen/xai-grok-hooks/src/contract_projection.rs"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Continue asserting VerifiedIngress absent; claim native ingress absent; conflate hermetic Worker with live deployment; weaken untrusted envelope/no-second-ledger/fail-closed rules; or require caller PATH for Cargo; gates must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "e2e-ingress-webhook-scenario",
+      "who": "agent",
+      "what": "Prepare and execute the E2E ingress/webhook scenario against current public source surfaces: authenticated duplicate/adopt and changed-byte conflict; opaque endpoint create/rotate/pause/revoke; raw-byte Worker verification and durable queue-before-ACK; one Contract occurrence; admitted outbound webhook crossing plus independent read-back; immutable version/rollback receipt and explicit no-live-deploy status. Emit only synthetic fixtures and a runnable test that final installed-artifact E2E reuses.",
+      "why": "src:tests/aiko-webhook-self-wiring-gate.sh; src:aiko-flow/packages/server/src/contractWebhooks.js; src:aiko-flow/packages/cloudflare-webhook/src/worker.ts",
+      "how": "build",
+      "where": "E2E ingress and webhook scenario fixture",
+      "when": "one-shot",
+      "milestone": "migration",
+      "witness": "cd aiko-flow && bun test ../tests/fixtures/aiko-hook-organism/ingress-webhook/scenario.test.ts",
+      "depends_on": [
+        "webhook-self-wiring",
+        "cloudflare-webhook-release",
+        "contract-hook-ingress"
+      ],
+      "reads": [
+        "tests/aiko-webhook-self-wiring-gate.sh",
+        "aiko-flow/packages/server/src/contractWebhooks.js",
+        "aiko-flow/packages/cloudflare-webhook/src/worker.ts"
+      ],
+      "writes": [
+        "tests/fixtures/aiko-hook-organism/ingress-webhook/"
+      ],
+      "produces": [
+        "state/e2e-ingress-webhook-scenario.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "tests/aiko-webhook-self-wiring-gate.sh",
+        "aiko-flow/packages/server/src/contractWebhooks.js",
+        "aiko-flow/packages/cloudflare-webhook/src/worker.ts"
+      ],
+      "capability_gaps": [],
+      "falsifier": "A duplicate creates two occurrences; changed bytes adopt; 2xx precedes queue durability; old endpoint generation stays live; outbound trusts send; version changes across promotion; or hermetic evidence claims live deploy; test must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "e2e-recovery-lifecycle-scenario",
+      "who": "agent",
+      "what": "Prepare and execute the E2E recovery/lifecycle scenario against current Contract+Smithers+Neuron surfaces: dropped/reordered/duplicate storm, all declared crash stages, poison item, bounded overload/fairness, public pause while in flight, kill/restart/resume without duplicate settlement, queued tool+credential revoke, cited-source movement causing stale refusal/selective recompute, crossed compensation/no resend, semantic rollback append-only. Final installed-artifact E2E reuses it.",
+      "why": "src:tests/aiko-execution-recovery-gate.sh; src:tests/aiko-lifecycle-public-gate.sh; src:tests/cross-journal-retention-gate.sh",
+      "how": "build",
+      "where": "E2E recovery and lifecycle scenario fixture",
+      "when": "one-shot",
+      "milestone": "migration",
+      "witness": "cd aiko-flow && bun test ../tests/fixtures/aiko-hook-organism/recovery-lifecycle/scenario.test.ts",
+      "depends_on": [
+        "execution-retry-backpressure-recovery",
+        "smithers-public-lifecycle",
+        "cross-journal-retention-compaction"
+      ],
+      "reads": [
+        "aiko-flow/packages/smithers/src/contractRecovery.js",
+        "aiko-flow/packages/server/src/contractLifecycle.js",
+        "aiko-flow/packages/smithers/src/contractRetention.js"
+      ],
+      "writes": [
+        "tests/fixtures/aiko-hook-organism/recovery-lifecycle/"
+      ],
+      "produces": [
+        "state/e2e-recovery-lifecycle-scenario.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "aiko-flow/packages/smithers/src/contractRecovery.js",
+        "aiko-flow/packages/server/src/contractLifecycle.js",
+        "aiko-flow/packages/smithers/src/contractRetention.js"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Any crash duplicates effect/settlement; reorder changes truth; overload ACK-drops; tenant starves; resume moves identity; revoke race dispatches; stale settles; crossed effect resends; rollback deletes; test must fail.",
+      "children": [],
+      "status": "settled"
+    },
+    {
+      "id": "e2e-recursive-capability-scenario",
+      "who": "agent",
+      "what": "Prepare and execute the E2E recursive/capability scenario: least-authority parent uses cited context, public admitted tool lifecycle, authors pinned Cell, delegates one distinct child by opaque Contract grant with authority intersection and citation IDs only, and proves queued/executing/after-send cancellation behavior. No prompt/transcript/account/global-memory copying. Final installed-artifact E2E reuses it.",
+      "why": "src:tests/recursive-aiko-organism-gate.sh; src:tests/admitted-tool-surface-gate.sh; src:tests/contract-delegation-capability-gate.sh",
+      "how": "build",
+      "where": "E2E recursive capability scenario fixture",
+      "when": "one-shot",
+      "milestone": "migration",
+      "witness": "cd aiko-flow && bun test ../tests/fixtures/aiko-hook-organism/recursive-capability/scenario.test.ts",
+      "depends_on": [
+        "recursive-aiko-organism",
+        "admitted-tool-surface",
+        "contract-delegation-capability"
+      ],
+      "reads": [
+        "aiko-flow/packages/agents/src/ContractAikoAgent.js",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native/capability_tools.rs"
+      ],
+      "writes": [
+        "tests/fixtures/aiko-hook-organism/recursive-capability/"
+      ],
+      "produces": [
+        "state/e2e-recursive-capability-scenario.json"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "aiko-flow/packages/agents/src/ContractAikoAgent.js",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native/capability_tools.rs"
+      ],
+      "capability_gaps": [],
+      "falsifier": "Child shares execution/occurrence, widens authority, sees transcript/account, direct tool bypasses admission/revoke, queued/executing cancellation spawns, or after-send cancels without compensation; test must fail.",
+      "children": [],
+      "status": "settled"
+    }
+  ],
+  "complete": true
+}

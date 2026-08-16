@@ -42,26 +42,34 @@ impl MvpAgent {
                                     ctx.parent_tool_snapshot =
                                         (!parent_tools.is_empty()).then_some(parent_tools);
                                 }
-                                // Fan-out authorization: if the parent has an active
-                                // Contract root, delegate an attenuated child root so
-                                // the subagent's own tool calls can bind against it
-                                // instead of failing closed with "no active Contract
-                                // root" (every subagent session otherwise starts with
-                                // no capability plan registered at all).
-                                if let Some(parent_root) =
-                                    crate::contract_native::active_root_for_session(&parent_sid)
+                                // A lineage/root string routes the child but never
+                                // authorizes it. If this parent is Contract-bound, issue
+                                // and independently adopt an opaque attenuated grant
+                                // before constructing the child model or exposing tools.
+                                if crate::contract_native::active_root_for_session(&parent_sid)
+                                    .is_some()
                                 {
-                                    let plan = format!(
+                                    let audience = format!("subagent:{}", request.subagent_type);
+                                    let purpose = format!(
                                         "Subagent '{}' ({}): {}",
                                         request.id, request.subagent_type, request.description
                                     );
-                                    ctx.contract_root = crate::contract_native::delegate_subagent_root(
-                                        &parent_root,
-                                        &plan,
-                                        16,
-                                        false,
-                                    )
-                                    .await;
+                                    let Some(child_root) =
+                                        crate::contract_native::delegate_subagent_capability(
+                                            &parent_sid,
+                                            &audience,
+                                            &purpose,
+                                        )
+                                        .await
+                                    else {
+                                        tracing::warn!(
+                                            parent_session_id = %parent_sid,
+                                            subagent_id = %request.id,
+                                            "refusing subagent before model/tool: delegated capability was not adopted",
+                                        );
+                                        return;
+                                    };
+                                    ctx.contract_root = Some(child_root);
                                 }
                                 crate::agent::subagent::handle_subagent_request(
                                     request,

@@ -24,13 +24,7 @@ On the Smithers control surface, `<Cell>` is a native workflow element
 (same class as `<Task>`). The Cell is a harness *inside* the agent
 workflow.
 
-Aiko binds this Cell in code, not by re-implementing it:
-
-```sh
-./zig-out/bin/aiko-doctor bind-workflow patterns/fde/self-wire.cell.yaml --plan
-```
-
-The control surface that pauses and approves the bound revision is
-`aiko-doctor workflow-control`. Smithers may drive that record; the
-unpublished local checkout must not be documented as a shipped product
-surface. See `docs/AIKO-WORKFLOW-BINDING.md` and `docs/SOURCE-OF-TRUTH.md`.
+Smithers preserves this typed harness through `Cell`/`runCell`; `ContractCell`
+composes it with native Contract lifecycle and recovery. Cell does not keep a
+second credential, context, readiness, or durable-control record. See
+`docs/SOURCE-OF-TRUTH.md` and `tests/no-duplicate-fde-primitives-gate.sh`.

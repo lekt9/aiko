@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.webhook-plan/v1",
+  "description": "Digest-pinned, secret-free effect plan. Same fields as webhook request plus schema discriminator.",
+  "allOf": [
+    {
+      "$ref": "neuron.webhook-request.v1.json"
+    },
+    {
+      "type": "object",
+      "required": [
+        "schema"
+      ],
+      "properties": {
+        "schema": {
+          "const": "neuron.webhook-plan/v1"
+        }
+      }
+    }
+  ]
+}

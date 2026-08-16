@@ -247,6 +247,7 @@ export {
   Saga,
   SagaStep,
   Cell,
+  ContractCell,
   findCellRunner,
   runCell,
   Sandbox,
@@ -541,3 +542,22 @@ export { syncZodTableSchema, zodSchemaColumns, zodToCreateTableSQL } from "@smth
 export { camelToSnake } from "@smthrs/db/utils/camelToSnake";
 export { unwrapZodType } from "@smthrs/db/unwrapZodType";
 export { zodSchemaToJsonExample } from "@smthrs/components/zod-to-example";
+
+// Contract-owned operational scheduling
+export { ContractLifecycleClient } from "@smthrs/gateway-client";
+export { createContractDriver, pinContractDescriptor, descriptorDigest } from "./contractDriver.js";
+
+export {
+  createExecutionRecovery,
+  CRASH_POINTS,
+} from "./contractRecovery.js";
+export {
+  FAILURE_CLASSES, RECEIPT_STATES, defineRecoveryLimits, classifyFailure,
+  immutableAttemptIdentity, deterministicBackoff, recoveryDecision,
+  admitToQueue, selectFair, receiptTransition,
+} from "./contractRecoveryPolicy.js";
+
+export {
+  CROSS_JOURNAL_RETENTION_SCHEMA, projectCrossJournalRetention, requireCrossJournalCollectible,
+  compactSessionCitations, requireCompactionEquivalence,
+} from "./contractRetention.js";

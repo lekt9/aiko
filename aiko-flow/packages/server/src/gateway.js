@@ -88,6 +88,10 @@ import {
 } from "@smthrs/gateway/rpc";
 import { hasGatewayScope, isGatewayScope } from "@smthrs/gateway/auth/scopes";
 import {
+  isContractWebhookRpcMethod, routeContractWebhookRpc,
+  isContractLifecycleRpcMethod, routeContractLifecycleRpc,
+} from "@smthrs/gateway";
+import {
   apiCollectionNames,
   serializeAccountRow,
   serializeApprovalRow,
@@ -2860,6 +2864,8 @@ export class Gateway {
     // CLI bind guard but isHostAllowed still 403s every non-loopback request.
     this.trustAnyHost = options.insecure === true;
     this.routes = typeof options.routes === "function" ? options.routes : null;
+    this.contractWebhooks = options.contractWebhooks ?? null;
+    this.contractLifecycle = options.contractLifecycle ?? null;
     // Host-injected "what happened" narrator (the smithers CLI wires a cheap
     // agent here). Null means the whatHappened RPC answers with the
     // deterministic fact summary only — the Gateway itself never calls an LLM.
@@ -5722,6 +5728,18 @@ a { color: var(--brand); }</style>
       }
       if ((req.method ?? "GET") === "GET" && url.pathname === "/v1/auth/session") {
         return this.handleAuthSession(req, res);
+      }
+      const contractWebhookMatch = url.pathname.match(/^\/v1\/contract-webhooks\/([^/]+)\/deliver$/);
+      if (contractWebhookMatch && this.contractWebhooks) {
+        try {
+          const rawBody = await readRawBody(req, this.maxBodyBytes);
+          const result = await this.contractWebhooks.deliver(null, decodeURIComponent(contractWebhookMatch[1]), {
+            method: req.method, headers: req.headers, rawBody,
+          });
+          return sendJson(res, 202, result);
+        } catch (error) {
+          return sendJson(res, Number(error?.status) || 400, { ok: false, error: { code: error?.code ?? "WEBHOOK_REFUSED", message: error instanceof Error ? error.message : "webhook refused" } });
+        }
       }
       if ((req.method ?? "GET") === "POST" && webhookMatch) {
         return this.handleWebhook(req, res, decodeURIComponent(webhookMatch[1]));
@@ -9143,6 +9161,23 @@ a { color: var(--brand); }</style>
       return this.routeExtensionRequest(connection, frame, params);
     }
     switch (frame.method) {
+      case "contractWebhooks.create":
+      case "contractWebhooks.list":
+      case "contractWebhooks.inspect":
+      case "contractWebhooks.rotate":
+      case "contractWebhooks.pause":
+      case "contractWebhooks.revoke":
+        if (!this.contractWebhooks || !isContractWebhookRpcMethod(frame.method)) return responseError(frame.id, "NOT_FOUND", "Contract webhook surface is not configured");
+        return responseOk(frame.id, await routeContractWebhookRpc(this.contractWebhooks, frame.method, connection, params));
+      case "contractLifecycle.inspect":
+      case "contractLifecycle.pause":
+      case "contractLifecycle.resume":
+      case "contractLifecycle.cancel":
+      case "contractLifecycle.revoke":
+      case "contractLifecycle.semanticRollback":
+      case "contractLifecycle.timeTravelFork":
+        if (!this.contractLifecycle || !isContractLifecycleRpcMethod(frame.method)) return responseError(frame.id, "NOT_FOUND", "Contract lifecycle surface is not configured");
+        return responseOk(frame.id, await routeContractLifecycleRpc(this.contractLifecycle, frame.method, connection, params));
       case "health":
         return responseOk(frame.id, {
           protocol: this.protocol,

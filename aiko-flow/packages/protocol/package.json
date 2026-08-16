@@ -29,6 +29,16 @@
       "types": "./src/index.d.ts",
       "import": "./src/*.js",
       "default": "./src/*.js"
+    },
+    "./contractWebhooks": {
+      "types": "./src/contractWebhooks.ts",
+      "import": "./src/contractWebhooks.ts",
+      "default": "./src/contractWebhooks.ts"
+    },
+    "./contractLifecycle": {
+      "types": "./src/contractLifecycle.ts",
+      "import": "./src/contractLifecycle.ts",
+      "default": "./src/contractLifecycle.ts"
     }
   },
   "files": [

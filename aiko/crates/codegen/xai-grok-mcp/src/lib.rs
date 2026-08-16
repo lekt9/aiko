@@ -29,8 +29,12 @@
 pub use rmcp;
 
 pub mod acp_transport;
+pub mod contract_lifecycle_tools;
+pub mod contract_webhook_tools;
 pub mod credentials;
+/// Workflow tools and the admitted AikoAgent capability lifecycle MCP server.
 pub mod graph_harness_tools;
+pub mod hook_contract_tools;
 pub mod liveness;
 pub mod mcp_http_client;
 pub mod oauth;

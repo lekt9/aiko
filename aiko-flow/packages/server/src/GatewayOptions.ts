@@ -7,6 +7,10 @@ import type { createBrowserSessionRegistry } from "./browser.js";
 import type { SmithersDb } from "@smthrs/db/adapter";
 
 export type GatewayOptions = {
+  /** Contract-owned execution lifecycle surface; authority comes only from authenticated Gateway context. */
+  contractLifecycle?: { rpc(method:string, context:unknown, params:unknown): Promise<unknown> };
+  /** Contract-owned webhook lifecycle and exact-byte delivery surface. */
+  contractWebhooks?: { rpc(method:string, context:unknown, params:unknown): Promise<unknown>; deliver(context:unknown, endpointId:string, request:unknown): Promise<unknown> };
   browser?: ReturnType<typeof createBrowserSessionRegistry>;
   protocol?: number;
   features?: string[];

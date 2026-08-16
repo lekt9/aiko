@@ -205,6 +205,61 @@ pub mod graph_harness_service {
         }).await
     }
 
+    /// Admit one authenticated MCP request before dispatching its workflow tool.
+    /// JSON-RPC params remain raw stimulus; authority is carried only by the
+    /// transport-created opaque adapter value.
+    pub async fn execute_authenticated_mcp(
+        tool_name: &str,
+        input: Value,
+        authenticated: xai_grok_mcp::hook_contract_tools::AuthenticatedMcpIngress,
+        cwd: &Path,
+        identity_scope: &str,
+        conversation: &[ConversationItem],
+        state_root: &Path,
+    ) -> Value {
+        let authority = match xai_grok_hooks::contract_projection::NativeAuthEvidence::verified(
+            authenticated.subject(),
+            authenticated.tenant(),
+            authenticated.audience(),
+            authenticated.scopes().iter().map(String::as_str),
+            authenticated.verification_evidence(),
+            authenticated.credential_generation(),
+        ) {
+            Ok(authority) => authority,
+            Err(error) => {
+                return json!({
+                    "api_version": API_VERSION, "ok": false,
+                    "error": {"code": "mcp_ingress_unauthenticated", "message": format!("{error:?}"), "retryable": false}
+                });
+            }
+        };
+        let request = contract_native::ingress_routes::PublicIngressRequest {
+            auth: authority,
+            workspace: cwd.to_path_buf(),
+            raw_request: authenticated.raw_request().to_vec(),
+            nonce_namespace: authenticated.nonce_namespace(),
+            idempotency_key: authenticated.idempotency_key().to_owned(),
+            plan: format!("MCP tool {tool_name}"),
+            contract_root: None,
+            contract_parent: None,
+        };
+        if let Err(error) = contract_native::ingress_routes::admit_public_ingress("mcp", request) {
+            return json!({
+                "api_version": API_VERSION, "ok": false,
+                "error": {"code": "mcp_contract_ingress_refused", "message": format!("{error:?}"), "retryable": false}
+            });
+        }
+        execute_mcp(
+            tool_name,
+            input,
+            cwd,
+            identity_scope,
+            conversation,
+            state_root,
+        )
+        .await
+    }
+
     /// Bind the production MCP server to this service with deployment-owned
     /// context. MCP callers can provide only the closed tool arguments; they
     /// cannot replace any captured path, identity, or Contract authority.
@@ -213,6 +268,15 @@ pub mod graph_harness_service {
         identity_scope: &str,
         conversation: &[ConversationItem],
         state_root: &Path,
+        authenticate: std::sync::Arc<
+            dyn Fn(
+                    &str,
+                    &Value,
+                )
+                    -> Result<xai_grok_mcp::hook_contract_tools::AuthenticatedMcpIngress, String>
+                + Send
+                + Sync,
+        >,
     ) -> xai_grok_mcp::graph_harness_tools::GraphHarnessMcpServer {
         let cwd = cwd.to_path_buf();
         let identity_scope = identity_scope.to_owned();
@@ -225,10 +289,22 @@ pub mod graph_harness_service {
                 let identity_scope = identity_scope.clone();
                 let conversation = conversation.clone();
                 let state_root = state_root.clone();
+                let authenticated = match authenticate(&tool_name, &input) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        return Box::pin(async move {
+                            json!({
+                                "api_version": API_VERSION, "ok": false,
+                                "error": {"code": "mcp_ingress_unauthenticated", "message": message, "retryable": false}
+                            })
+                        });
+                    }
+                };
                 Box::pin(async move {
-                    execute_mcp(
+                    execute_authenticated_mcp(
                         &tool_name,
                         input,
+                        authenticated,
                         &cwd,
                         &identity_scope,
                         &conversation,
@@ -676,6 +752,37 @@ pub mod graph_harness_service {
             assert_eq!(value["result"]["route"], "graph_harness_required");
         }
 
+        #[tokio::test]
+        #[ignore = "acceptance gate selects the built Contract dynamic library"]
+        async fn authenticated_mcp_composition_root_admits_before_dispatch() {
+            let library = std::env::var_os("AIKO_CONTRACT_LIBRARY")
+                .expect("gate must select the built Contract ABI");
+            assert!(Path::new(&library).is_file());
+            let cwd = tempfile::tempdir().unwrap();
+            let home = cwd.path().join("home");
+            std::fs::create_dir_all(&home).unwrap();
+            unsafe { std::env::set_var("HOME", &home) };
+            let authenticated = xai_grok_mcp::hook_contract_tools::AuthenticatedMcpIngress::from_authenticated_session(
+                "oauth:test-user", "tenant-test", "aiko.workflow", vec!["workflow.invoke".into()],
+                "test-native-session", "generation-1", "workflow-test-server", "request-1",
+                br#"{"jsonrpc":"2.0","id":"request-1","method":"tools/call"}"#.to_vec(),
+            ).unwrap();
+            let value = execute_authenticated_mcp(
+                "workflow_route",
+                json!({"api_version": API_VERSION, "goal": "join two results"}),
+                authenticated,
+                cwd.path(),
+                "authenticated-mcp-test",
+                &[],
+                cwd.path(),
+            )
+            .await;
+            assert_eq!(
+                value["result"]["route"], "graph_harness_required",
+                "{value}"
+            );
+        }
+
         #[test]
         fn unknown_authority_field_is_refused_by_deserializer() {
             let error = serde_json::from_value::<WorkflowOperationRequest>(json!({
@@ -686,6 +793,289 @@ pub mod graph_harness_service {
             }))
             .unwrap_err();
             assert!(error.to_string().contains("unknown field"));
+        }
+    }
+}
+
+/// Production composition root for the admitted AikoAgent capability protocol.
+///
+/// The MCP crate owns transport schemas. This shell module owns the mutable
+/// admission registry, fresh Contract/credential authority reads, and the
+/// effector. Request JSON can never provide those authorities.
+pub mod admitted_capability_service {
+    use std::sync::{Arc, Mutex};
+
+    use serde::Deserialize;
+    use serde_json::{Value, json};
+
+    use crate::contract_native::capability_tools::{
+        AikoAgentCapabilitySurface, CapabilityGrant, InertExecutionEnvelope, ToolUseRequest,
+        VerifiedDispatchAuthority,
+    };
+
+    pub type AuthorityProvider =
+        Arc<dyn Fn() -> Result<VerifiedDispatchAuthority, String> + Send + Sync>;
+    pub type CapabilityEffector =
+        Arc<dyn Fn(&[u8], &ToolUseRequest, &InertExecutionEnvelope) -> Value + Send + Sync>;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Request {
+        api_version: String,
+        name: String,
+        digest: String,
+        #[serde(default)]
+        package_bytes: Option<Vec<u8>>,
+        #[serde(default)]
+        grant: Option<CapabilityGrant>,
+        #[serde(default)]
+        effect: Option<String>,
+        #[serde(default)]
+        resource: Option<String>,
+        #[serde(default)]
+        cost: Option<u64>,
+    }
+
+    fn refusal(code: &str, message: impl Into<String>) -> Value {
+        json!({
+            "api_version": xai_grok_mcp::graph_harness_tools::ADMITTED_TOOL_API_VERSION,
+            "ok": false,
+            "error": {"code": code, "message": message.into(), "retryable": false}
+        })
+    }
+
+    /// Execute exactly one of the seven public lifecycle calls. `capability_use`
+    /// obtains authority once for claim and again immediately before dispatch;
+    /// the second read is deliberately inside `use_tool` so it cannot be
+    /// replaced by cached request or catalog state.
+    pub fn execute(
+        tool_name: &str,
+        input: Value,
+        surface: &Arc<Mutex<AikoAgentCapabilitySurface>>,
+        authority: &AuthorityProvider,
+        effector: &CapabilityEffector,
+    ) -> Value {
+        let request: Request = match serde_json::from_value(input) {
+            Ok(request) => request,
+            Err(error) => return refusal("invalid_request", error.to_string()),
+        };
+        if request.api_version != xai_grok_mcp::graph_harness_tools::ADMITTED_TOOL_API_VERSION {
+            return refusal("invalid_request", "unsupported api_version");
+        }
+        let mut surface = match surface.lock() {
+            Ok(surface) => surface,
+            Err(_) => return refusal("capability_registry_unavailable", "registry lock poisoned"),
+        };
+        let receipt = match tool_name {
+            "capability_list" => {
+                let Some(bytes) = request.package_bytes else {
+                    return refusal("invalid_request", "package_bytes is required");
+                };
+                serde_json::to_value(surface.list(&request.name, bytes, &request.digest))
+            }
+            "capability_admit" => {
+                serde_json::to_value(surface.admit(&request.name, &request.digest))
+            }
+            "capability_attach" => {
+                let Some(grant) = request.grant else {
+                    return refusal("invalid_request", "grant is required");
+                };
+                serde_json::to_value(surface.attach(&request.name, &request.digest, grant))
+            }
+            "capability_use" => {
+                let (Some(effect), Some(resource), Some(cost)) =
+                    (request.effect, request.resource, request.cost)
+                else {
+                    return refusal("invalid_request", "effect, resource, and cost are required");
+                };
+                let at_claim = match authority() {
+                    Ok(authority) => authority,
+                    Err(reason) => return refusal("authority_unavailable", reason),
+                };
+                let authority = Arc::clone(authority);
+                let effector = Arc::clone(effector);
+                return serde_json::to_value(surface.use_tool(
+                    &request.name,
+                    &request.digest,
+                    ToolUseRequest {
+                        effect,
+                        resource,
+                        cost,
+                    },
+                    at_claim,
+                    move || authority(),
+                    move |bytes, request, envelope| effector(bytes, request, envelope),
+                ))
+                .unwrap_or_else(|error| refusal("response_encoding_failed", error.to_string()));
+            }
+            "capability_revoke" => {
+                serde_json::to_value(surface.revoke(&request.name, &request.digest))
+            }
+            "capability_detach" => {
+                serde_json::to_value(surface.detach(&request.name, &request.digest))
+            }
+            "capability_collect" => {
+                serde_json::to_value(surface.collect(&request.name, &request.digest))
+            }
+            _ => {
+                return refusal(
+                    "capability_unlisted",
+                    "unknown or unlisted capability operation",
+                );
+            }
+        };
+        receipt
+            .map(|lifecycle| json!({"api_version": xai_grok_mcp::graph_harness_tools::ADMITTED_TOOL_API_VERSION, "ok": lifecycle["allowed"], "lifecycle": lifecycle}))
+            .unwrap_or_else(|error| refusal("response_encoding_failed", error.to_string()))
+    }
+
+    /// Register the seven calls as a real in-process MCP server. The captured
+    /// providers are the shell's production composition seam; there is no
+    /// default provider and therefore no ambient-authority fallback.
+    pub fn mcp_server(
+        surface: Arc<Mutex<AikoAgentCapabilitySurface>>,
+        authority: AuthorityProvider,
+        effector: CapabilityEffector,
+    ) -> xai_grok_mcp::graph_harness_tools::AdmittedCapabilityMcpServer {
+        xai_grok_mcp::graph_harness_tools::AdmittedCapabilityMcpServer::new(Arc::new(
+            move |tool_name, input| {
+                let tool_name = tool_name.to_owned();
+                let surface = Arc::clone(&surface);
+                let authority = Arc::clone(&authority);
+                let effector = Arc::clone(&effector);
+                Box::pin(async move { execute(&tool_name, input, &surface, &authority, &effector) })
+            },
+        ))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use sha2::{Digest, Sha256};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        fn authority(fence: u64) -> VerifiedDispatchAuthority {
+            VerifiedDispatchAuthority {
+                subject: "worker".into(),
+                tenant: "tenant".into(),
+                subject_verified: true,
+                tenant_verified: true,
+                lease_current: true,
+                lease_fence: fence,
+                credential_valid: true,
+                credential_audience: "api.example".into(),
+                credential_generation: 3,
+                remaining_budget: 2,
+            }
+        }
+
+        #[test]
+        fn production_composition_walks_seven_calls_and_refreshes_before_dispatch() {
+            let state = Arc::new(Mutex::new(AikoAgentCapabilitySurface::new()));
+            let reads = Arc::new(AtomicUsize::new(0));
+            let reads_for_provider = Arc::clone(&reads);
+            let provider: AuthorityProvider = Arc::new(move || {
+                reads_for_provider.fetch_add(1, Ordering::SeqCst);
+                Ok(authority(7))
+            });
+            let dispatched = Arc::new(AtomicUsize::new(0));
+            let dispatched_copy = Arc::clone(&dispatched);
+            let effector: CapabilityEffector = Arc::new(move |_, _, envelope| {
+                assert!(envelope.env.is_empty());
+                assert!(envelope.home.is_none());
+                dispatched_copy.fetch_add(1, Ordering::SeqCst);
+                json!("sent")
+            });
+            let bytes = b"generated".to_vec();
+            let digest = format!("{:x}", Sha256::digest(&bytes));
+            let base =
+                || json!({"api_version":"aiko.admitted-tools/v1","name":"tool","digest":digest});
+            let mut listed = base();
+            listed["package_bytes"] = json!(bytes);
+            assert!(
+                execute("capability_list", listed, &state, &provider, &effector)["ok"]
+                    .as_bool()
+                    .unwrap()
+            );
+            assert!(
+                execute("capability_admit", base(), &state, &provider, &effector)["ok"]
+                    .as_bool()
+                    .unwrap()
+            );
+            let mut attach = base();
+            attach["grant"] = json!({"subject":"worker","tenant":"tenant","effect":"send","resource_prefix":"https://api.example/t/","credential_audience":"api.example","credential_generation":3});
+            assert!(
+                execute("capability_attach", attach, &state, &provider, &effector)["ok"]
+                    .as_bool()
+                    .unwrap()
+            );
+            let mut use_request = base();
+            use_request["effect"] = json!("send");
+            use_request["resource"] = json!("https://api.example/t/1");
+            use_request["cost"] = json!(2);
+            assert!(execute("capability_use", use_request, &state, &provider, &effector)["lifecycle"]["allowed"].as_bool().unwrap());
+            assert_eq!(reads.load(Ordering::SeqCst), 2);
+            assert_eq!(dispatched.load(Ordering::SeqCst), 1);
+            assert!(
+                execute("capability_revoke", base(), &state, &provider, &effector)["ok"]
+                    .as_bool()
+                    .unwrap()
+            );
+            assert!(
+                execute("capability_detach", base(), &state, &provider, &effector)["ok"]
+                    .as_bool()
+                    .unwrap()
+            );
+            assert!(
+                execute("capability_collect", base(), &state, &provider, &effector)["ok"]
+                    .as_bool()
+                    .unwrap()
+            );
+            assert!(
+                !execute("capability_admit", base(), &state, &provider, &effector)["ok"]
+                    .as_bool()
+                    .unwrap()
+            );
+            // The exact state/provider/effector composition above is what is
+            // registered as the production in-process MCP server.
+            let _server = mcp_server(state, provider, effector);
+        }
+
+        #[test]
+        fn dispatch_refresh_cannot_be_replaced_by_claim_authority() {
+            let mut surface = AikoAgentCapabilitySurface::new();
+            let bytes = b"generated".to_vec();
+            let digest = format!("{:x}", Sha256::digest(&bytes));
+            assert!(surface.list("tool", bytes, &digest).allowed);
+            assert!(surface.admit("tool", &digest).allowed);
+            assert!(
+                surface
+                    .attach(
+                        "tool",
+                        &digest,
+                        CapabilityGrant {
+                            subject: "worker".into(),
+                            tenant: "tenant".into(),
+                            effect: "send".into(),
+                            resource_prefix: "r/".into(),
+                            credential_audience: "api.example".into(),
+                            credential_generation: 3
+                        }
+                    )
+                    .allowed
+            );
+            let surface = Arc::new(Mutex::new(surface));
+            let calls = Arc::new(AtomicUsize::new(0));
+            let calls_copy = Arc::clone(&calls);
+            let provider: AuthorityProvider = Arc::new(move || {
+                let call = calls_copy.fetch_add(1, Ordering::SeqCst);
+                Ok(authority(if call == 0 { 7 } else { 8 }))
+            });
+            let effector: CapabilityEffector = Arc::new(|_, _, _| panic!("stale fence dispatched"));
+            let input = json!({"api_version":"aiko.admitted-tools/v1","name":"tool","digest":digest,"effect":"send","resource":"r/1","cost":1});
+            let response = execute("capability_use", input, &surface, &provider, &effector);
+            assert_eq!(response["lifecycle"]["reason"], "stale_lease_fence");
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
         }
     }
 }

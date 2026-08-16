@@ -35,16 +35,33 @@ transcription artifact.
 ```sh
 zig build                 # → zig-out/bin/aiko  AND  contract/libcontract/zig-out/lib/libcontract.a
 zig build test            # both layers' suites
-zig build gate            # 15 witnesses + 12 limb suites — THIS is the acceptance criterion
-                          #   root: published-interface · redrive · authored-gap · skill-doc
-                          #         zig-doctrine · escalation-ladder · staffing-engine
-                          #         claim-deadline · bridge · dispatch · interface-morphogenesis
-                          #         meta-agent · observe-live · self-constructing-agent · tick
-                          #   + neuron standalone: gate · runtime · agent-entrypoint · universal-interface
-                          #     conversation · swarm-package · observability-retention · conformance
-                          #   + 12 limb conformance suites (auto-attacher, client-emitter, …)
+zig build gate            # 18 distinct shell witnesses scheduled by root build.zig
+                          # exact inventory below; THIS is the acceptance criterion
 ./zig-out/bin/aiko-doctor # prove both layers are linked in one process
 ```
+
+
+<!-- root-gate-inventory:start -->
+- `tests/aiko-self-check-gate.sh`
+- `tests/graph-harness-main-path-gate.sh`
+- `neuron/tests/published-interface-gate.sh`
+- `neuron/tests/redrive-gate.sh`
+- `neuron/tests/authored-gap-gate.sh`
+- `neuron/tests/skill-doc-gate.sh`
+- `tests/zig-doctrine-gate.sh`
+- `neuron/tests/escalation-ladder-gate.sh`
+- `neuron/tests/staffing-engine-gate.sh`
+- `neuron/tests/claim-deadline-gate.sh`
+- `tests/bridge-gate.sh`
+- `tests/dispatch-gate.sh`
+- `neuron/tests/interface-morphogenesis-gate.sh`
+- `neuron/tests/meta-agent-gate.sh`
+- `neuron/tests/self-constructing-agent-gate.sh`
+- `tests/tick-gate.sh`
+- `tests/graph-engineering-gate.sh`
+- `tests/cross-journal-retention-gate.sh`
+- `tests/no-duplicate-fde-primitives-gate.sh`
+<!-- root-gate-inventory:end -->
 
 **Gates are the acceptance criterion, not the unit tests.** Each gate drives the
 public CLI from an empty directory and asserts against durable state — never
@@ -279,6 +296,6 @@ as done without running its gate.
 | `docs/SOURCE-OF-TRUTH.md` | published-tree inventory (clone URL, layers, unpublished paths) |
 | `CONTRIBUTING.md` / `SECURITY.md` | public contribution and vulnerability process |
 
-`contract/NEVER-PUBLISH.md` applies: that subtree is closed-source. Do not paste
-customer operational data (worker names, NRIC, rosters) into this repository —
-it is not the place for it.
+`contract/NEVER-PUBLISH.md` applies: Contract is published in this monorepo, but
+the subtree is not a standalone npm package and must not contain customer
+operational data, wallet root keys, or private operator hosts.

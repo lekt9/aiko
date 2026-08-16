@@ -785,6 +785,18 @@ const HTTP_ROUTE_SCOPES = {
 };
 
 /** @type {readonly GatewayRpcDefinition[]} */
+
+const contractLifecycleRequestSchema = (method) => {
+  const runId = stringSchema("Contract execution run id.", 1);
+  const generation = integerSchema("Expected Contract lifecycle/capability generation.", 1);
+  if (method === "contractLifecycle.inspect") return objectSchema({ runId }, ["runId"]);
+  if (method === "contractLifecycle.pause" || method === "contractLifecycle.resume") return objectSchema({ runId, expectedGeneration: generation }, ["runId", "expectedGeneration"]);
+  if (method === "contractLifecycle.cancel") return objectSchema({ runId, expectedGeneration: generation, reason: stringSchema("Durable cancellation reason.", 1) }, ["runId", "expectedGeneration", "reason"]);
+  if (method === "contractLifecycle.revoke") return objectSchema({ runId, kind: { type:"string", enum:["tool","credential"] }, id:stringSchema("Pinned capability id.",1), expectedGeneration:generation, reason:stringSchema("Durable revocation reason.",1) }, ["runId","kind","id","expectedGeneration","reason"]);
+  if (method === "contractLifecycle.semanticRollback") return objectSchema({ runId, expectedGeneration:generation, targetOccurrenceId:stringSchema("Occurrence to invalidate.",1), reason:stringSchema("Durable rollback reason.",1) }, ["runId","expectedGeneration","targetOccurrenceId","reason"]);
+  return objectSchema({ runId, expectedGeneration:generation, frameNo:integerSchema("Operational fork frame.",0) }, ["runId","expectedGeneration","frameNo"]);
+};
+
 export const GATEWAY_RPC_DEFINITIONS = [
   {
     version: SMITHERS_API_VERSION,
@@ -2363,6 +2375,39 @@ export const GATEWAY_RPC_DEFINITIONS = [
     exampleRequest: {},
     exampleResponse: [browserSnapshotExample],
   },
+  ...[
+    ["contractWebhooks.create", "Create Contract Webhook", "run:write"],
+    ["contractWebhooks.list", "List Contract Webhooks", "run:read"],
+    ["contractWebhooks.inspect", "Inspect Contract Webhook", "run:read"],
+    ["contractWebhooks.rotate", "Rotate Contract Webhook", "run:write"],
+    ["contractWebhooks.pause", "Pause Contract Webhook", "run:write"],
+    ["contractWebhooks.revoke", "Revoke Contract Webhook", "run:write"],
+  ].map(([method, title, requiredScope]) => ({
+    version: SMITHERS_API_VERSION, method, title,
+    description: `${title} through the Contract-owned, tenant-scoped lifecycle.`,
+    maturity: "stable", transport: "http+websocket", requiredScope,
+    requestSchema: objectSchema({}, [], "Closed Contract webhook request; operation validators reject unknown authority fields.", true),
+    responseSchema: anyJsonSchema,
+    errors: ["InvalidRequest", "Unauthorized", "Forbidden", "Internal"],
+    exampleRequest: {}, exampleResponse: {},
+  })),
+  ...[
+    ["contractLifecycle.inspect", "Inspect Contract Run"],
+    ["contractLifecycle.pause", "Pause Contract Run"],
+    ["contractLifecycle.resume", "Resume Contract Run"],
+    ["contractLifecycle.cancel", "Cancel Contract Run"],
+    ["contractLifecycle.revoke", "Revoke Run Capability"],
+    ["contractLifecycle.semanticRollback", "Semantic Contract Rollback"],
+    ["contractLifecycle.timeTravelFork", "Operational Time Travel Fork"],
+  ].map(([method, title]) => ({
+    version: SMITHERS_API_VERSION, method, title,
+    description: `${title} through Contract commands and independently read projections.`,
+    maturity: "stable", transport: "http+websocket", requiredScope: "run:write",
+    requestSchema: contractLifecycleRequestSchema(method),
+    responseSchema: anyJsonSchema,
+    errors: ["InvalidRequest", "Unauthorized", "Forbidden", "Internal"],
+    exampleRequest: {}, exampleResponse: {},
+  })),
 ];
 
 /** @type {Map<string, GatewayRpcDefinition>} */
@@ -2429,3 +2474,6 @@ export function isGatewayRpcMethod(method) {
 export function getGatewayScopeValues() {
   return GATEWAY_SCOPE_VALUES;
 }
+
+export { CONTRACT_WEBHOOK_RPC_METHODS, isContractWebhookRpcMethod, routeContractWebhookRpc } from "./contractWebhooks.js";
+export { CONTRACT_LIFECYCLE_RPC_METHODS, isContractLifecycleRpcMethod, routeContractLifecycleRpc } from "./contractLifecycle.js";

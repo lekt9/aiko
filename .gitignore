@@ -66,3 +66,6 @@ cell/hoysan-*
 
 # Contains a pasted credential from a chat transcript — never commit (rotate the token).
 aiko/test.md
+# smithers local db
+smithers.db
+smithers.db-*

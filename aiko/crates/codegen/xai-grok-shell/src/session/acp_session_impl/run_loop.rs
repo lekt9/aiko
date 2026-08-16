@@ -95,7 +95,10 @@ mod mcp_teardown_tests {
         let drained = drain_owned_clients(&mut state);
         assert_eq!(drained.len(), 1);
         assert_eq!(drained[0].server_name(), "mine");
-        assert!(state.owned_clients.is_empty(), "owned clients must be taken");
+        assert!(
+            state.owned_clients.is_empty(),
+            "owned clients must be taken"
+        );
         assert_eq!(
             state.shared_clients.len(),
             1,

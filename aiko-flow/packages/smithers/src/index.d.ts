@@ -1,6 +1,6 @@
 import * as _smthrs_components from '@smthrs/components';
 import { Sequence, Parallel, MergeQueue, Branch, Loop, Ralph, ContinueAsNew, continueAsNew, Worktree, Timer, UI, TUI, ApprovalDecision as ApprovalDecision$1, OutputTarget as OutputTarget$1, ApprovalProps as ApprovalProps$2, DepsSpec as DepsSpec$2, InferDeps as InferDeps$1, SignalProps as SignalProps$2, TaskProps as TaskProps$2 } from '@smthrs/components';
-export { Approval, ApprovalGate, Aspects, BackpressurePlanning, Branch, CheckSuite, ClassifyAndRoute, ContentPipeline, ContinueAsNew, DC_EDIT_SIGNAL, DC_SKIP_PREVIEW_SIGNAL, DEFAULT_DELEGATION_V2_LIMITS, DEFAULT_TIER_ORDER, DELEGATION_V2_COMPILER_VERSION, DELEGATION_V2_PROGRAM_VERSION, DELEGATION_V2_PROTOCOL_VERSION, DELEGATION_V2_REGISTRY_VERSION, DELEGATION_V2_RUNTIME_VERSION, DELEGATION_V2_SETTLEMENT_VERSION, Debate, DecisionTable, DelegationChain, DelegationEditListener, DelegationExecution, DelegationPlanning, DelegationPreview, DelegationScoring, DeriskLoop, DriftDetector, EscalationChain, ForkFanOut, GatherAndSynthesize, GoalRefinement, HumanTask, Kanban, Loop, MONITOR_CONDITIONS, MONITOR_DEFAULT_AUTO_HEAL, MONITOR_TERMINAL_STATUSES, Memory, MergeQueue, Monitor, Optimizer, Panel, Parallel, Poller, Ralph, ReviewLoop, Runbook, Saga, SagaStep, Sandbox, ScanFixVerify, Sequence, Sidecar, Signal, Subflow, SuperSmithers, Supervisor, TUI, Task, Timer, Trellis, TryCatchFinally, UI, WaitForEvent, Workflow, Worktree, approvalDecisionSchema, approvalRankingSchema, approvalSelectionSchema, captureWorkingCopyCommit, compileDelegationV2Program, computeSidecarDelta, continueAsNew, dcApprovalSchema, dcBudgetSchema, dcDevPreviewSchema, dcEditSchema, dcExecSchema, dcForecastSchema, dcGatesSchema, dcGoalApprovalSchema, dcGoalSchema, dcPlanSchema, dcPollSchema, dcPreviewSchema, dcProbeSchema, dcQuestionSchema, dcReplanSchema, dcReviewSchema, dcScoreSchema, dcSkipSchema, delegationPrompts, delegationSchemas, delegationV2AssignmentDigest, delegationV2ProgramDigest, delegationV2Schemas, devPreviewKindSchema, enforceDelegationV2AuthorFuel, estimateSchema, gateSchema, monitorAuthorityRules, monitorEvidenceRules, monitorHealthSignals, monitorPrompt, monitorReadPathRules, partitionDelegationV2AuthorFuel, settleDelegationV2Envelope, tierSchema, trellisPrompts, validateWorkflowProgram, withCommitRange } from '@smthrs/components';
+export { Approval, ApprovalGate, Aspects, BackpressurePlanning, Branch, Cell, CheckSuite, ClassifyAndRoute, ContentPipeline, ContinueAsNew, ContractCell, DC_EDIT_SIGNAL, DC_SKIP_PREVIEW_SIGNAL, DEFAULT_DELEGATION_V2_LIMITS, DEFAULT_TIER_ORDER, DELEGATION_V2_COMPILER_VERSION, DELEGATION_V2_PROGRAM_VERSION, DELEGATION_V2_PROTOCOL_VERSION, DELEGATION_V2_REGISTRY_VERSION, DELEGATION_V2_RUNTIME_VERSION, DELEGATION_V2_SETTLEMENT_VERSION, Debate, DecisionTable, DelegationChain, DelegationEditListener, DelegationExecution, DelegationPlanning, DelegationPreview, DelegationScoring, DeriskLoop, DriftDetector, EscalationChain, ForkFanOut, GatherAndSynthesize, GoalRefinement, HumanTask, Kanban, Loop, MONITOR_CONDITIONS, MONITOR_DEFAULT_AUTO_HEAL, MONITOR_TERMINAL_STATUSES, Memory, MergeQueue, Monitor, Optimizer, Panel, Parallel, Poller, Ralph, ReviewLoop, Runbook, Saga, SagaStep, Sandbox, ScanFixVerify, Sequence, Sidecar, Signal, Subflow, SuperSmithers, Supervisor, TUI, Task, Timer, Trellis, TryCatchFinally, UI, WaitForEvent, Workflow, Worktree, approvalDecisionSchema, approvalRankingSchema, approvalSelectionSchema, captureWorkingCopyCommit, compileDelegationV2Program, computeSidecarDelta, continueAsNew, dcApprovalSchema, dcBudgetSchema, dcDevPreviewSchema, dcEditSchema, dcExecSchema, dcForecastSchema, dcGatesSchema, dcGoalApprovalSchema, dcGoalSchema, dcPlanSchema, dcPollSchema, dcPreviewSchema, dcProbeSchema, dcQuestionSchema, dcReplanSchema, dcReviewSchema, dcScoreSchema, dcSkipSchema, delegationPrompts, delegationSchemas, delegationV2AssignmentDigest, delegationV2ProgramDigest, delegationV2Schemas, devPreviewKindSchema, enforceDelegationV2AuthorFuel, estimateSchema, findCellRunner, gateSchema, monitorAuthorityRules, monitorEvidenceRules, monitorHealthSignals, monitorPrompt, monitorReadPathRules, partitionDelegationV2AuthorFuel, runCell, settleDelegationV2Envelope, tierSchema, trellisPrompts, validateWorkflowProgram, withCommitRange } from '@smthrs/components';
 import * as zod from 'zod';
 import { z } from 'zod';
 import * as _smthrs_graph_XmlNode from '@smthrs/graph/XmlNode';
@@ -54,6 +54,7 @@ import React from 'react';
 import { BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
 import { ApprovalProps as ApprovalProps$1 } from '@smthrs/components/components/ApprovalProps';
 import { DepsSpec as DepsSpec$1 } from '@smthrs/components/components/DepsSpec';
+import { CellProps } from '@smthrs/components/components/CellProps';
 import { SandboxProps as SandboxProps$1 } from '@smthrs/components/components/SandboxProps';
 import { SignalProps as SignalProps$1 } from '@smthrs/components/components/SignalProps';
 import { TaskProps as TaskProps$1 } from '@smthrs/components/components/TaskProps';
@@ -63,9 +64,10 @@ export { Gateway } from '@smthrs/server/gateway';
 import * as _smthrs_scorers from '@smthrs/scorers';
 export { aggregateScores, createScorer, estimateCostUsd, faithfulnessScorer, latencyScorer, llmJudge, modelTokenPrices, relevancyScorer, runScorersAsync, runScorersBatch, schemaAdherenceScorer, smithersScorers, toxicityScorer } from '@smthrs/scorers';
 import * as _smthrs_agents from '@smthrs/agents';
-export { AikoAgent, AmpAgent, AnthropicAgent, AntigravityAgent, ClaudeCodeAgent, CodexAgent, CursorAgent, DEFAULT_AGENT_CHECKPOINT_MAX_BYTES, ForgeAgent, GeminiAgent, HermesAgent, HermesCliAgent, KimiAgent, NanocodexAgent, OmpAgent, OpenAIAgent, OpenClawAgent, OpenCodeAgent, PiAgent, PoolAgent, VibeAgent, agentProducesCheckpoint, agentSupportsCheckpoint, cloneAgentCheckpoint, createAikoCapabilityRegistry, createHttpTool, createOmpCapabilityRegistry, fallbackAgents, hashAgentCheckpointCapabilities } from '@smthrs/agents';
+export { AmpAgent, AnthropicAgent, AntigravityAgent, ClaudeCodeAgent, CodexAgent, CursorAgent, DEFAULT_AGENT_CHECKPOINT_MAX_BYTES, ForgeAgent, GeminiAgent, HermesAgent, HermesCliAgent, KimiAgent, NanocodexAgent, OmpAgent, OpenAIAgent, OpenClawAgent, OpenCodeAgent, PiAgent, PoolAgent, VibeAgent, agentProducesCheckpoint, agentSupportsCheckpoint, cloneAgentCheckpoint, createHttpTool, createOmpCapabilityRegistry, fallbackAgents, hashAgentCheckpointCapabilities } from '@smthrs/agents';
 import * as _smthrs_agents_capability_registry from '@smthrs/agents/capability-registry';
 export { hashCapabilityRegistry } from '@smthrs/agents/capability-registry';
+export { ContractLifecycleClient } from '@smthrs/gateway-client';
 export { ERROR_REFERENCE_URL } from '@smthrs/errors/ERROR_REFERENCE_URL';
 export { Smithers, approveNode, closeSingleRunnerRuntime, denyNode, fragment, getRun, listRuns, renderFrame, reopenSingleRunnerRuntime, runWorkflow, workflow } from '@smthrs/engine';
 export { SmithersDb, loadOutputs, loadOutputsEffect } from '@smthrs/db';
@@ -227,6 +229,7 @@ type CreateSmithersApi$1<Schema = unknown> = {
     ContinueAsNew: typeof ContinueAsNew;
     continueAsNew: typeof continueAsNew;
     Worktree: typeof Worktree;
+    Cell: (props: CellProps) => React.ReactElement;
     Sandbox: (props: SandboxProps$1) => React.ReactElement;
     Signal: <SignalSchema extends z.ZodObject<z.ZodRawShape>>(props: SignalProps$1<SignalSchema>) => React.ReactElement;
     Timer: typeof Timer;
@@ -588,6 +591,233 @@ declare const tools: {
   bash: typeof bash;
 };
 
+declare function descriptorDigest(descriptor: any): string;
+declare function pinContractDescriptor(claim: any): any;
+/**
+ * Smithers is only an operational wake/lease loop. The supplied `contract`
+ * adapter owns readiness, descriptors, pin revalidation and settlement. The
+ * supplied native route must invoke GraphHarness' pinned Cell adapter.
+ */
+declare function createContractDriver({ contract, graphHarnessCell, owner, leaseSeconds }: {
+    contract: any;
+    graphHarnessCell: any;
+    owner: any;
+    leaseSeconds?: number | undefined;
+}): Readonly<{
+    handleSignal: (signal: any) => Promise<{
+        signalOrder: string;
+        reread: boolean;
+        results: {
+            workId: any;
+            status: string;
+        }[];
+    }>;
+}>;
+
+/**
+ * Recovery coordinator over the two authoritative journals. Contract owns
+ * acceptance, claims, evidence and settlement; Neuron owns outbox/provider
+ * evidence. Smithers' journal is operational telemetry and is never consulted
+ * while deciding whether an effect happened or a Contract settled.
+ */
+declare function createExecutionRecovery({ contract, neuron, cell, smithersJournal, limits: limitsInput, crash }: {
+    contract: any;
+    neuron: any;
+    cell: any;
+    smithersJournal: any;
+    limits?: {} | undefined;
+    crash?: (() => Promise<void>) | undefined;
+}): Readonly<{
+    accept: (envelope: any, acknowledge: any) => Promise<Readonly<{
+        accepted: false;
+        retryable: true;
+        reason: any;
+    }> | Readonly<{
+        accepted: true;
+        acknowledged: boolean;
+        receiptId: any;
+    }>>;
+    choose: (queue: any, active?: any[], cursor?: {}) => Readonly<{
+        selected: null;
+        reason: "global_concurrency_full";
+        cursor: Readonly<{}>;
+    }> | Readonly<{
+        selected: any;
+        index: number;
+        reason: "selected";
+        cursor: Readonly<{
+            tenantId: any;
+            roots: any;
+        }>;
+    }> | Readonly<{
+        selected: null;
+        reason: "concurrency_full";
+        cursor: Readonly<{}>;
+    }>;
+    execute: (item: any) => Promise<Readonly<{
+        status: "unknown";
+    }> | Readonly<{
+        status: "settled" | "lost_fence";
+    }> | Readonly<{
+        status: "retry_scheduled";
+    }> | Readonly<{
+        status: "reconciliation_required";
+    }> | Readonly<{
+        status: "resumable";
+    }> | Readonly<{
+        status: "refused";
+        reason: any;
+    }> | Readonly<{
+        status: "not_claimed";
+    }>>;
+    fail: (operationId: any, failureClass: any) => Promise<Readonly<{
+        status: "settled" | "lost_fence";
+    }> | Readonly<{
+        status: "retry_scheduled";
+    }> | Readonly<{
+        status: "reconciliation_required";
+    }> | Readonly<{
+        status: "resumable";
+    }> | Readonly<{
+        status: "unknown" | "settled";
+    }> | Readonly<{
+        status: "refused";
+        reason: any;
+    }>>;
+    reconcile: (operationId: any) => Promise<Readonly<{
+        status: "unknown";
+    }> | Readonly<{
+        status: "settled" | "lost_fence";
+    }> | Readonly<{
+        status: "retry_scheduled";
+    }> | Readonly<{
+        status: "reconciliation_required";
+    }> | Readonly<{
+        status: "resumable";
+    }>>;
+    limits: Readonly<{
+        maxAttempts: any;
+        maxQueue: any;
+        maxInFlight: any;
+        maxTenantInFlight: any;
+        maxRootInFlight: any;
+        baseDelayMs: any;
+        maxDelayMs: any;
+    }>;
+}>;
+declare const CRASH_POINTS: readonly string[];
+
+declare function defineRecoveryLimits(input?: {}): Readonly<{
+    maxAttempts: any;
+    maxQueue: any;
+    maxInFlight: any;
+    maxTenantInFlight: any;
+    maxRootInFlight: any;
+    baseDelayMs: any;
+    maxDelayMs: any;
+}>;
+declare function classifyFailure(value: any): Readonly<{
+    accepted: false;
+    reason: "unknown_failure_class";
+}> | Readonly<{
+    accepted: true;
+    failureClass: any;
+}>;
+declare function immutableAttemptIdentity(input: any): Readonly<{
+    tenantId: string;
+    rootId: string;
+    operationId: string;
+    attempt: any;
+}>;
+declare function deterministicBackoff(attemptInput: any, limitsInput?: {}): number;
+declare function recoveryDecision(failureClass: any, attemptInput: any, limitsInput?: {}): Readonly<{
+    accepted: false;
+    reason: "unknown_failure_class";
+}> | Readonly<{
+    action: "reconcile";
+    method: "read_back";
+    reason: "effect_uncertain";
+}> | Readonly<{
+    action: "refuse_retry";
+    reason: "permanent_failure";
+}> | Readonly<{
+    action: "refuse_retry";
+    reason: "attempt_budget_exhausted";
+}> | Readonly<{
+    action: "retry";
+    nextAttempt: any;
+    delayMs: number;
+}>;
+declare function admitToQueue(queue: any, item: any, limitsInput?: {}): Readonly<{
+    accepted: false;
+    reason: "queue_overloaded";
+    queue: any[];
+}> | Readonly<{
+    accepted: true;
+    queue: readonly any[];
+}>;
+/**
+ * Hierarchical round-robin: tenant first, then root within that tenant.
+ * Cursors are returned to the caller and must be persisted with its own
+ * operational state; selection itself performs no writes.
+ */
+declare function selectFair(queue: any, active?: any[], limitsInput?: {}, cursor?: {}): Readonly<{
+    selected: null;
+    reason: "global_concurrency_full";
+    cursor: Readonly<{}>;
+}> | Readonly<{
+    selected: any;
+    index: number;
+    reason: "selected";
+    cursor: Readonly<{
+        tenantId: any;
+        roots: any;
+    }>;
+}> | Readonly<{
+    selected: null;
+    reason: "concurrency_full";
+    cursor: Readonly<{}>;
+}>;
+declare function receiptTransition(state: any, event: any): Readonly<{
+    accepted: false;
+    reason: "unknown_receipt_state";
+    state: any;
+}> | Readonly<{
+    accepted: false;
+    reason: "drop_forbidden";
+    state: any;
+}> | Readonly<{
+    accepted: false;
+    reason: "durable_accept_required";
+    state: any;
+}> | Readonly<{
+    accepted: true;
+    state: "acknowledged";
+}> | Readonly<{
+    accepted: true;
+    state: "durably_accepted";
+}> | Readonly<{
+    accepted: false;
+    reason: "invalid_receipt_transition";
+    state: any;
+}>;
+/**
+ * Pure operational recovery policy for the Smithers/Contract boundary.
+ *
+ * This module decides admission, scheduling, and transport recovery only. It
+ * deliberately has no journal writer and cannot interpret task outcomes.
+ */
+declare const FAILURE_CLASSES: Readonly<{
+    RETRYABLE: "retryable";
+    PERMANENT: "permanent";
+    UNCERTAIN: "uncertain";
+}>;
+declare const RECEIPT_STATES: Readonly<{
+    RECEIVED: "received";
+    DURABLY_ACCEPTED: "durably_accepted";
+    ACKNOWLEDGED: "acknowledged";
+}>;
+
 type AgentCapabilityRegistry = _smthrs_agents_capability_registry.AgentCapabilityRegistry;
 type AgentCheckpoint = _smthrs_agents.AgentCheckpoint;
 type AgentCheckpointCapability = _smthrs_agents.AgentCheckpointCapability;
@@ -762,4 +992,4 @@ type InferDeps<D extends DepsSpec$2> = InferDeps$1<D>;
 type SignalProps<Schema extends z.ZodObject<z.ZodRawShape> = z.ZodObject<z.ZodRawShape>> = SignalProps$2<Schema>;
 type TaskProps<Row, Output extends OutputTarget$1 = OutputTarget$1, D extends DepsSpec$2 = {}> = TaskProps$2<Row, Output, D>;
 
-export { type AgentCapabilityRegistry, type AgentCheckpoint, type AgentCheckpointCapability, type AgentCheckpointContinuationOptions, type AgentCheckpointFormat, type AgentCheckpointJsonArray, type AgentCheckpointJsonObject, type AgentCheckpointJsonPrimitive, type AgentCheckpointJsonValue, type AgentCheckpointMode, type AgentCheckpointPublisher, type AgentCheckpointResult, type AgentFileChange, type AgentFileChangeKind, type AgentGenerateOptions, type AgentLike, type AgentToolDescriptor, type AggregateOptions, type AggregateScore, type AnthropicAgentOptions, type ApprovalAutoApprove, type ApprovalDecision, type ApprovalMode, type ApprovalOption, type ApprovalProps, type ApprovalRanking, type ApprovalRequest, type ApprovalSelection, type ColumnDef, type ConnectRequest, type ContinueAsNewProps, type CreateScorerConfig, type CreateSmithersApi, type CreateSmithersOptions, type CursorAgentOptions, type DepsSpec, type EventFrame, type ExternalSmithersConfig, type GatewayAuthConfig, type GatewayDefaults, type GatewayOperatorUiConfig, type GatewayOptions, type GatewayRegisterOptions, type GatewayTokenGrant, type GatewayUiConfig, type GatewayWebhookConfig, type GatewayWebhookRunConfig, type GatewayWebhookSignalConfig, type GraphSnapshot, type HelloResponse, type HermesAgentOptions, type HermesCliAgentOptions, type HindsightMemoryStoreOptions, type HostContainer, type HostNodeJson, type InferDeps, type InferOutputEntry, type InferRow, type JjRevertResult, type KanbanProps, type KnownSmithersErrorCode, type LlmJudgeConfig, type MemoryFact, type MemoryLayerConfig, type MemoryMessage, type MemoryNamespace, type MemoryNamespaceKind, type MemoryProcessor, type MemoryProcessorConfig, type MemoryProps, type MemoryServiceApi, type MemoryStore, type MemoryThread, type MessageHistoryConfig, type MigrateSmithersStoreOptions, type MonitorCondition, type MonitorProps, type NanocodexAgentOptions, type NanocodexAuth, type NanocodexGenerateOptions, type NanocodexReasoningMode, type NanocodexThinking, type OmpAgentOptions, type OpenAIAgentOptions, type OpenApiAuth, type OpenApiSpec, type OpenApiToolsOptions, type OpenClawAgentOptions, type OpenCodeAgentOptions, type OpenSmithersBackendOptions, type OutputAccessor, type OutputKey, type OutputTarget, type PiAgentOptions, type PiExtensionUiRequest, type PiExtensionUiResponse, type PollerProps, type PoolAgentOptions, type ProofBinding, type RequestFrame, type ResolvedSmithersObservabilityOptions, type ResponseFrame, type RevertOptions, type RevertResult, type RunJjOptions, type RunJjResult, type RunOptions, type RunResult, type RunStartedBy, type RunStatus, type SagaProps, type SagaStepDef, type SagaStepProps, type SamplingConfig, type SandboxProps, type SandboxRuntime, type SandboxVolumeMount, type SandboxWorkspaceSpec, type SchemaRegistryEntry, type ScoreResult, type ScoreRow, type Scorer, type ScorerBinding, type ScorerContext, type ScorerFn, type ScorerInput, type ScorersMap, type SemanticRecallConfig, type SerializedCtx, type ServeOptions, type ServerOptions, type SignalProps, type SmithersAlertLabels, type SmithersAlertPolicy, type SmithersAlertPolicyDefaults, type SmithersAlertPolicyRule, type SmithersAlertReaction, type SmithersAlertReactionKind, type SmithersAlertReactionRef, type SmithersAlertSeverity, type SmithersCtx, type SmithersError, type SmithersErrorCode, type SmithersErrorReport, type SmithersEvent, type SmithersLogFormat, type SmithersMigrationResult, type SmithersObservabilityOptions, type SmithersObservabilityService, type SmithersWorkflow, type SmithersWorkflowOptions, type TUIProps, type TaskDescriptor, type TaskMemoryConfig, type TaskProps, type TimeTravelOptions, type TimeTravelResult, type TimerProps, type TrellisProps, type TryCatchFinallyProps, type UIProps, type VibeAgentOptions, type WaitForEventProps, type WorkflowViewBootProps, type WorkflowViewProps, type WorkingMemoryConfig, type WorkspaceAddOptions, type WorkspaceInfo, type WorkspaceResult, type XmlElement, type XmlNode, type XmlText, bash, createExternalSmithers, createSmithers, createSmithersCloudflare, createSmithersPostgres, defineTool, edit, getDefinedToolMetadata, grep, mdxPlugin, migrateSmithersStore, openSmithersBackend, openSmithersStore, read, resolveSmithersBackendChoice, resolveSmithersBackendPreference, tools, write };
+export { type AgentCapabilityRegistry, type AgentCheckpoint, type AgentCheckpointCapability, type AgentCheckpointContinuationOptions, type AgentCheckpointFormat, type AgentCheckpointJsonArray, type AgentCheckpointJsonObject, type AgentCheckpointJsonPrimitive, type AgentCheckpointJsonValue, type AgentCheckpointMode, type AgentCheckpointPublisher, type AgentCheckpointResult, type AgentFileChange, type AgentFileChangeKind, type AgentGenerateOptions, type AgentLike, type AgentToolDescriptor, type AggregateOptions, type AggregateScore, type AnthropicAgentOptions, type ApprovalAutoApprove, type ApprovalDecision, type ApprovalMode, type ApprovalOption, type ApprovalProps, type ApprovalRanking, type ApprovalRequest, type ApprovalSelection, CRASH_POINTS, type ColumnDef, type ConnectRequest, type ContinueAsNewProps, type CreateScorerConfig, type CreateSmithersApi, type CreateSmithersOptions, type CursorAgentOptions, type DepsSpec, type EventFrame, type ExternalSmithersConfig, FAILURE_CLASSES, type GatewayAuthConfig, type GatewayDefaults, type GatewayOperatorUiConfig, type GatewayOptions, type GatewayRegisterOptions, type GatewayTokenGrant, type GatewayUiConfig, type GatewayWebhookConfig, type GatewayWebhookRunConfig, type GatewayWebhookSignalConfig, type GraphSnapshot, type HelloResponse, type HermesAgentOptions, type HermesCliAgentOptions, type HindsightMemoryStoreOptions, type HostContainer, type HostNodeJson, type InferDeps, type InferOutputEntry, type InferRow, type JjRevertResult, type KanbanProps, type KnownSmithersErrorCode, type LlmJudgeConfig, type MemoryFact, type MemoryLayerConfig, type MemoryMessage, type MemoryNamespace, type MemoryNamespaceKind, type MemoryProcessor, type MemoryProcessorConfig, type MemoryProps, type MemoryServiceApi, type MemoryStore, type MemoryThread, type MessageHistoryConfig, type MigrateSmithersStoreOptions, type MonitorCondition, type MonitorProps, type NanocodexAgentOptions, type NanocodexAuth, type NanocodexGenerateOptions, type NanocodexReasoningMode, type NanocodexThinking, type OmpAgentOptions, type OpenAIAgentOptions, type OpenApiAuth, type OpenApiSpec, type OpenApiToolsOptions, type OpenClawAgentOptions, type OpenCodeAgentOptions, type OpenSmithersBackendOptions, type OutputAccessor, type OutputKey, type OutputTarget, type PiAgentOptions, type PiExtensionUiRequest, type PiExtensionUiResponse, type PollerProps, type PoolAgentOptions, type ProofBinding, RECEIPT_STATES, type RequestFrame, type ResolvedSmithersObservabilityOptions, type ResponseFrame, type RevertOptions, type RevertResult, type RunJjOptions, type RunJjResult, type RunOptions, type RunResult, type RunStartedBy, type RunStatus, type SagaProps, type SagaStepDef, type SagaStepProps, type SamplingConfig, type SandboxProps, type SandboxRuntime, type SandboxVolumeMount, type SandboxWorkspaceSpec, type SchemaRegistryEntry, type ScoreResult, type ScoreRow, type Scorer, type ScorerBinding, type ScorerContext, type ScorerFn, type ScorerInput, type ScorersMap, type SemanticRecallConfig, type SerializedCtx, type ServeOptions, type ServerOptions, type SignalProps, type SmithersAlertLabels, type SmithersAlertPolicy, type SmithersAlertPolicyDefaults, type SmithersAlertPolicyRule, type SmithersAlertReaction, type SmithersAlertReactionKind, type SmithersAlertReactionRef, type SmithersAlertSeverity, type SmithersCtx, type SmithersError, type SmithersErrorCode, type SmithersErrorReport, type SmithersEvent, type SmithersLogFormat, type SmithersMigrationResult, type SmithersObservabilityOptions, type SmithersObservabilityService, type SmithersWorkflow, type SmithersWorkflowOptions, type TUIProps, type TaskDescriptor, type TaskMemoryConfig, type TaskProps, type TimeTravelOptions, type TimeTravelResult, type TimerProps, type TrellisProps, type TryCatchFinallyProps, type UIProps, type VibeAgentOptions, type WaitForEventProps, type WorkflowViewBootProps, type WorkflowViewProps, type WorkingMemoryConfig, type WorkspaceAddOptions, type WorkspaceInfo, type WorkspaceResult, type XmlElement, type XmlNode, type XmlText, admitToQueue, bash, classifyFailure, createContractDriver, createExecutionRecovery, createExternalSmithers, createSmithers, createSmithersCloudflare, createSmithersPostgres, defineRecoveryLimits, defineTool, descriptorDigest, deterministicBackoff, edit, getDefinedToolMetadata, grep, immutableAttemptIdentity, mdxPlugin, migrateSmithersStore, openSmithersBackend, openSmithersStore, pinContractDescriptor, read, receiptTransition, recoveryDecision, resolveSmithersBackendChoice, resolveSmithersBackendPreference, selectFair, tools, write };

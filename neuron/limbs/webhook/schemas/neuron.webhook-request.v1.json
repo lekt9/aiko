@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.webhook-request/v1",
+  "type": "object",
+  "required": [
+    "effect_id",
+    "body_schema",
+    "body_digest",
+    "method",
+    "destination",
+    "resolved_ips",
+    "credential",
+    "execution",
+    "lease_fence",
+    "status"
+  ],
+  "properties": {
+    "effect_id": {
+      "type": "string",
+      "minLength": 16
+    },
+    "body_schema": {
+      "type": "string",
+      "minLength": 1
+    },
+    "body_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "method": {
+      "enum": [
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE"
+      ]
+    },
+    "destination": {
+      "type": "string",
+      "pattern": "^https://"
+    },
+    "resolved_ips": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "credential": {
+      "type": "object",
+      "required": [
+        "handle",
+        "generation",
+        "audience",
+        "destination_host",
+        "operation",
+        "resource"
+      ],
+      "properties": {
+        "handle": {
+          "type": "string",
+          "minLength": 8
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "audience": {
+          "type": "string"
+        },
+        "destination_host": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "resource": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "string"
+    },
+    "lease_fence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "type": "string",
+      "pattern": "^https://"
+    },
+    "redirects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "url",
+          "method",
+          "resolved_ips"
+        ]
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -591,10 +591,7 @@ mod tests {
         grok.apply_builtin_login_profile(BuiltinLoginProvider::Grok);
         let grok_oauth = grok.oauth2.as_ref().unwrap();
         assert_eq!(grok_oauth.issuer, GROK_OAUTH2_ISSUER);
-        assert_eq!(
-            grok_oauth.client_id,
-            grok_oauth2_client_id()
-        );
+        assert_eq!(grok_oauth.client_id, grok_oauth2_client_id());
         assert!(
             grok_oauth
                 .scopes

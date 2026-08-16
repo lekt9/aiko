@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "neuron.webhook-provider-status/v1",
+  "type": "object",
+  "required": [
+    "effect_id",
+    "body_digest",
+    "status"
+  ],
+  "properties": {
+    "effect_id": {
+      "type": "string"
+    },
+    "body_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "status": {
+      "enum": [
+        "accepted",
+        "rejected",
+        "unknown"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

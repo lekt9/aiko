@@ -501,13 +501,16 @@ async fn auth_status() -> Response {
             );
         }
     };
-    let agent_config =
-        match xai_grok_shell::agent::config::Config::new_from_toml_cfg(&raw_config) {
-            Ok(config) => config,
-            Err(error) => {
-                return api_error(StatusCode::INTERNAL_SERVER_ERROR, "config_unavailable", &error);
-            }
-        };
+    let agent_config = match xai_grok_shell::agent::config::Config::new_from_toml_cfg(&raw_config) {
+        Ok(config) => config,
+        Err(error) => {
+            return api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "config_unavailable",
+                &error,
+            );
+        }
+    };
     let grok_com = &agent_config.grok_com_config;
     let scope = grok_com.auth_scope();
     let auth_path = xai_grok_shell::util::grok_home::grok_home().join("auth.json");

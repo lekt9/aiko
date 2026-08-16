@@ -4,10 +4,11 @@ use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 
 use crate::config::HookSpec;
+use crate::data_membrane::{CAPABILITY_ENV, HookDataPolicy, minimize_envelope, redact_text};
 use crate::event::HookEventEnvelope;
 use crate::result::HookDecision;
 
-use super::{HookRunnerResult, RunContext};
+use super::{HookRunnerResult, RunContext, command_membrane};
 
 /// Maximum bytes to capture from hook stdout or stderr (64 KB).
 const MAX_OUTPUT_BYTES: usize = 64 * 1024;
@@ -43,9 +44,16 @@ pub async fn run_command_hook(
         );
     };
     let command_str = command.to_string_lossy();
+    let policy = HookDataPolicy::parse(spec.extra_env.get(CAPABILITY_ENV).map(String::as_str));
+    let forwarded_env = spec
+        .extra_env
+        .iter()
+        .filter(|(name, _)| name.as_str() != CAPABILITY_ENV && policy.allows_env(name))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect::<std::collections::HashMap<_, _>>();
 
-    // Serialize envelope to JSON.
-    let stdin_json = match serde_json::to_string(envelope) {
+    // Arbitrary compatibility hooks receive only the minimized projection.
+    let stdin_json = match serde_json::to_string(&minimize_envelope(envelope, &policy)) {
         Ok(j) => j,
         Err(e) => {
             let elapsed = start.elapsed();
@@ -85,9 +93,15 @@ pub async fn run_command_hook(
         || command_str.starts_with('~');
 
     let mut cmd = if is_shell_command {
+        if !command_membrane::shell_allowed(&policy) {
+            return (
+                HookRunnerResult::Failed("shell commands require command:shell capability".into()),
+                start.elapsed(),
+            );
+        }
         // Refuse to spawn when the command interpolates an env var that
-        // we can't resolve from any of: the runner's always-set vars, the
-        // per-hook extra_env (plugin vars), or Grok's own process env. The
+        // we can't resolve from the runner's fixed identity vars or an
+        // explicitly capability-scoped per-hook env declaration. The
         // alternative is letting sh expand the var to empty -- which then
         // produces a broken command, exits 127, and (for PreToolUse hooks)
         // fails closed with an opaque "exit code 127" reason. Catching it
@@ -97,7 +111,7 @@ pub async fn run_command_hook(
         // Vars with a parameter-expansion modifier (`${VAR:-default}`,
         // `${VAR-x}`, `${VAR:=x}`, `${VAR:?msg}`, `${VAR:+x}`, etc.) are
         // NOT flagged: the user has explicitly handled the unset case.
-        let unresolved = find_unresolved_env_vars(&command_str, &spec.extra_env);
+        let unresolved = find_unresolved_env_vars(&command_str, &forwarded_env);
         if !unresolved.is_empty() {
             let elapsed = start.elapsed();
             let list = unresolved
@@ -132,13 +146,14 @@ pub async fn run_command_hook(
         } else {
             spec.source_dir.join(command)
         };
-        if !command_path.exists() {
-            let elapsed = start.elapsed();
-            return (
-                HookRunnerResult::Failed(format!("command not found: {}", command_path.display())),
-                elapsed,
-            );
-        }
+        let command_path = match command_membrane::confined_command(
+            &command_path,
+            std::path::Path::new(ctx.workspace_root),
+            &policy,
+        ) {
+            Ok(path) => path,
+            Err(reason) => return (HookRunnerResult::Failed(reason), start.elapsed()),
+        };
         tokio::process::Command::new(command_path)
     };
 
@@ -161,22 +176,22 @@ pub async fn run_command_hook(
     // See the `runner_injected_vars_override_extra_env_at_spawn`
     // regression test in `tests/integration.rs` and the rustdoc on
     // `HookSpec::extra_env`.
+    if policy.allows("path:workspace") {
+        cmd.env("GROK_WORKSPACE_ROOT", ctx.workspace_root)
+            .env("CLAUDE_PROJECT_DIR", ctx.workspace_root);
+    }
     let mut child = match cmd
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .current_dir(ctx.workspace_root)
-        // 1. user/plugin extra_env first (lowest precedence).
-        .envs(&spec.extra_env)
-        // 2. runner-injected vars last (highest precedence -- always win).
+        // Hooks do not inherit the host process. Only explicitly capability-scoped
+        // declaration values and fixed non-secret identity fields cross the membrane.
+        .env_clear()
+        .envs(&forwarded_env)
         .env("GROK_HOOK_EVENT", envelope.hook_event_name.to_string())
         .env("GROK_HOOK_NAME", &spec.name)
         .env("GROK_SESSION_ID", ctx.session_id)
-        .env("GROK_WORKSPACE_ROOT", ctx.workspace_root)
-        // Compatibility alias for external hooks that read this env name.
-        // Same value as `GROK_WORKSPACE_ROOT`; native `.grok` hooks should use
-        // `GROK_WORKSPACE_ROOT`.
-        .env("CLAUDE_PROJECT_DIR", ctx.workspace_root)
         .kill_on_drop(true)
         .spawn()
     {
@@ -257,9 +272,29 @@ pub async fn run_command_hook(
             }
 
             // Blocking hook: parse decision from stdout.
-            parse_blocking_result(&stdout, exit_code, &spec.name, elapsed)
+            redact_runner_result(parse_blocking_result(
+                &stdout, exit_code, &spec.name, elapsed,
+            ))
         }
     }
+}
+
+fn redact_runner_result(result: (HookRunnerResult, Duration)) -> (HookRunnerResult, Duration) {
+    let (result, elapsed) = result;
+    let output_policy = HookDataPolicy::default();
+    let result = match result {
+        HookRunnerResult::Decision(HookDecision::Deny { reason, hook_name }) => {
+            HookRunnerResult::Decision(HookDecision::Deny {
+                reason: redact_text(&reason, &output_policy),
+                hook_name,
+            })
+        }
+        HookRunnerResult::Failed(error) => {
+            HookRunnerResult::Failed(redact_text(&error, &output_policy))
+        }
+        other => other,
+    };
+    (result, elapsed)
 }
 
 /// Env vars the runner sets unconditionally on every spawned hook.
@@ -285,9 +320,7 @@ pub(crate) const RUNNER_ALWAYS_SET_ENV: &[&str] = &[
 /// names that aren't resolvable from any of:
 ///
 /// * the runner's always-set env vars (see [`RUNNER_ALWAYS_SET_ENV`]),
-/// * the per-hook `extra_env` map (set by the plugin adapter for plugin
-///   hooks),
-/// * the Grok process's own environment (which is inherited by the child),
+/// * the capability-filtered per-hook `extra_env` map,
 /// * local shell assignments inside the command itself (e.g. an
 ///   `INPUT=$(cat)` earlier in the string defines `INPUT` for the rest of
 ///   the command).
@@ -319,9 +352,6 @@ fn find_unresolved_env_vars(
             continue;
         }
         if extra_env.contains_key(r.name) {
-            continue;
-        }
-        if std::env::var_os(r.name).is_some() {
             continue;
         }
         if locally_assigned.contains(r.name) {
@@ -735,7 +765,10 @@ mod tests {
             url_raw: None,
             timeout_ms: 5000,
             source_dir: std::env::temp_dir(),
-            extra_env: std::collections::HashMap::new(),
+            extra_env: std::collections::HashMap::from([(
+                CAPABILITY_ENV.to_string(),
+                "command:shell,path:workspace,env:*".to_string(),
+            )]),
         }
     }
 

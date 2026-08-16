@@ -1,0 +1,39 @@
+{
+  "version": "aiko.cloudflare-webhook.endpoint.v1",
+  "endpointId": "wh_fixture_0000000001",
+  "endpointGeneration": "1",
+  "provider": {
+    "id": "fixture-provider",
+    "nonceNamespace": "fixture-v1",
+    "signatureHeader": "x-fixture-signature",
+    "timestampHeader": "x-fixture-timestamp",
+    "deliveryIdHeader": "x-fixture-delivery",
+    "signaturePrefix": "sha256=",
+    "verifier": "hmac-sha256.timestamp-delivery-raw-body.v1"
+  },
+  "authority": {
+    "verifiedTenant": "tenant-fixture",
+    "authenticatedSubject": "operator-fixture",
+    "audience": "https://hooks.example.invalid",
+    "grantedScopes": [
+      "webhook:provision"
+    ]
+  },
+  "credential": {
+    "binding": "WEBHOOK_SECRET",
+    "generation": "1"
+  },
+  "destination": {
+    "queue": "fixture-inbound"
+  },
+  "bounds": {
+    "maxBodyBytes": 65536,
+    "maxDeliveryIdBytes": 128,
+    "maxAgeSeconds": 300,
+    "maxFutureSkewSeconds": 30,
+    "rate": {
+      "requests": 20,
+      "windowSeconds": 60
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contract.unbrowse-route-projection/v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "contract",
+    "route_id",
+    "route",
+    "method",
+    "credential_handle",
+    "status",
+    "sealing"
+  ],
+  "properties": {
+    "schema": {
+      "const": "contract.unbrowse-route-projection/v1"
+    },
+    "contract": {
+      "const": "unbrowse/read-route/v1"
+    },
+    "status": {
+      "enum": [
+        "observed",
+        "promoted",
+        "demoted"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

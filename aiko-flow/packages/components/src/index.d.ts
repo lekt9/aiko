@@ -1889,6 +1889,50 @@ type CheckSuiteProps$2 = {
     skipIf?: boolean;
 };
 
+type ContractFrontierSignal = {
+    commitOrdinal: number;
+} & Record<string, unknown>;
+type ContractDriver = {
+    handleSignal(signal: ContractFrontierSignal): Promise<unknown>;
+};
+type ContractCellProps$1<D extends DepsSpec$1 = {}> = {
+    id: string;
+    driver: ContractDriver;
+    signal: ContractFrontierSignal | ((deps: unknown) => ContractFrontierSignal);
+    output: OutputTarget$1;
+    deps?: D;
+    skipIf?: boolean;
+    label?: string;
+    meta?: Record<string, unknown>;
+    smithersContext?: React__default.Context<SmithersCtx$1<unknown> | null>;
+};
+
+type CellProps$2<Row = Record<string, unknown>, Output extends OutputTarget$1 = OutputTarget$1, D extends DepsSpec$1 = {}> = {
+    key?: string;
+    id: string;
+    /** Path to a `*.cell.yaml`. Resolved from the run cwd. */
+    cell: string;
+    /** Membrane inputs. A function receives resolved `deps`. */
+    inputs?: Record<string, unknown> | ((deps: InferDeps$1<D>) => Record<string, unknown>);
+    output: Output;
+    /** Select one membrane output as the persisted row; otherwise all outputs are returned. */
+    outputPort?: string;
+    dependsOn?: string[];
+    needs?: Record<string, string>;
+    deps?: D;
+    depsOptional?: boolean;
+    skipIf?: boolean;
+    timeoutMs?: number;
+    retries?: number;
+    retryPolicy?: RetryPolicy$1;
+    continueOnFail?: boolean;
+    cache?: CachePolicy$1;
+    label?: string;
+    meta?: Record<string, unknown>;
+    /** @internal Bound by createSmithers(). */
+    smithersContext?: React__default.Context<SmithersCtx$1<unknown> | null>;
+};
+
 type BranchProps$2 = {
     if: boolean;
     then: React__default.ReactElement;
@@ -2113,6 +2157,9 @@ declare function renderPromptToText(prompt: unknown): string;
  * (`node:child_process`-backed) classes into a browser bundle.
  */
 declare const Task: <Row, Output, D>(props: TaskProps<Row, Output, D>) => React.ReactElement | null;
+
+/** A Smithers task whose execution authority is the Contract driver, never control.json. */
+declare function ContractCell(props: any): React__default.FunctionComponentElement<TaskProps$2<unknown, unknown, unknown>> | null;
 
 /** @typedef {import("./SequenceProps.ts").SequenceProps} SequenceProps */
 /**
@@ -3852,6 +3899,57 @@ declare const delegationV2Prompts_renderWorkerPrompt: typeof renderWorkerPrompt;
 declare namespace delegationV2Prompts {
   export { delegationV2Prompts_CORE_PATTERN_INDEX as CORE_PATTERN_INDEX, delegationV2Prompts_DELEGATION_V2_PATTERN_INDEX_VERSION as DELEGATION_V2_PATTERN_INDEX_VERSION, delegationV2Prompts_DELEGATION_V2_PLAYBOOK_VERSION as DELEGATION_V2_PLAYBOOK_VERSION, delegationV2Prompts_DELEGATION_V2_PROMPT_CONTRACT_VERSION as DELEGATION_V2_PROMPT_CONTRACT_VERSION, DELEGATION_V2_PROTOCOL_VERSION$1 as DELEGATION_V2_PROTOCOL_VERSION, type delegationV2Prompts_DelegationV2Authority as DelegationV2Authority, delegationV2Prompts_renderContinuationAuthorPrompt as renderContinuationAuthorPrompt, delegationV2Prompts_renderDelegationV2SystemPrompt as renderDelegationV2SystemPrompt, delegationV2Prompts_renderInitialAuthorPrompt as renderInitialAuthorPrompt, delegationV2Prompts_renderPatternIndexPrompt as renderPatternIndexPrompt, delegationV2Prompts_renderRepairAuthorPrompt as renderRepairAuthorPrompt, delegationV2Prompts_renderWorkKindPlaybook as renderWorkKindPlaybook, delegationV2Prompts_renderWorkerPrompt as renderWorkerPrompt };
 }
+
+/**
+ * Locate Cell's canonical runner. Pin with `AIKO_CELL_RUNNER`.
+ * Never invent a second builder.
+ * @param {{ cwd?: string }} [opts]
+ * @returns {string}
+ */
+declare function findCellRunner(opts?: {
+    cwd?: string;
+}): string;
+/**
+ * Fire a Cell as a Smithers harness step. Returns membrane outputs plus
+ * the Merkle manifest. Secrets in Cell inputs are Cell's problem — this
+ * wrapper does not add a second auth path.
+ *
+ * @param {{
+ *   cell: string;
+ *   inputs?: Record<string, unknown>;
+ *   timeoutMs?: number;
+ *   cwd?: string;
+ * }} opts
+ * @returns {Promise<{
+ *   outputs: Record<string, unknown>;
+ *   manifest: unknown;
+ *   digest: string | null;
+ *   cell: string;
+ * }>}
+ */
+declare function runCell(opts: {
+    cell: string;
+    inputs?: Record<string, unknown>;
+    timeoutMs?: number;
+    cwd?: string;
+}): Promise<{
+    outputs: Record<string, unknown>;
+    manifest: unknown;
+    digest: string | null;
+    cell: string;
+}>;
+
+/**
+ * Native Smithers element: a Cell harness inside the workflow.
+ *
+ * Compiles to a compute `Task` so Sequence/Parallel/deps/pause/resume
+ * apply. Cell stays the typed DAG; Smithers is the durable control
+ * surface. Not a second scheduler.
+ *
+ * @param {CellProps} props
+ */
+declare function Cell(props: CellProps$1): React__default.FunctionComponentElement<TaskProps$2<unknown, unknown, unknown>> | null;
+type CellProps$1 = CellProps$2;
 
 /** @typedef {import("./LoopProps.ts").LoopProps} LoopProps */
 /**
@@ -6194,6 +6292,8 @@ type ApprovalRequest = ApprovalRequest$1;
 type ApprovalSelection = ApprovalSelection$1;
 type AspectsProps = AspectsProps$2;
 type BranchProps = BranchProps$2;
+type CellProps = CellProps$2;
+type ContractCellProps = ContractCellProps$1;
 type CategoryConfig = CategoryConfig$1;
 type CheckConfig = CheckConfig$1;
 type CheckSuiteProps = CheckSuiteProps$2;
@@ -6362,4 +6462,4 @@ type XmlElement = _smthrs_graph.XmlElement;
 type XmlNode = _smthrs_graph.XmlNode;
 type XmlText = _smthrs_graph.XmlText;
 
-export { Approval, type ApprovalAutoApprove, type ApprovalDecision, ApprovalGate, type ApprovalGateProps, type ApprovalMode, type ApprovalOption, type ApprovalProps, type ApprovalRanking, type ApprovalRequest, type ApprovalSelection, Aspects, type AspectsProps, BackpressurePlanning, type BackpressurePlanningProps, Branch, type BranchProps, type CachePolicy, type CategoryConfig, type CheckConfig, CheckSuite, type CheckSuiteProps, ClassifyAndRoute, type ClassifyAndRouteProps, type ColumnDef, ContentPipeline, type ContentPipelineProps, type ContentPipelineStage, ContinueAsNew, type ContinueAsNewProps, DC_EDIT_SIGNAL, DC_SKIP_PREVIEW_SIGNAL, DEFAULT_DELEGATION_V2_LIMITS, DEFAULT_TIER_ORDER, DELEGATION_V2_COMPILER_VERSION, DELEGATION_V2_PROGRAM_VERSION, DELEGATION_V2_PROTOCOL_VERSION, DELEGATION_V2_REGISTRY_VERSION, DELEGATION_V2_RUNTIME_VERSION, DELEGATION_V2_SETTLEMENT_VERSION, type DcApprovalRow, type DcBudgetRow, type DcDevPreviewRow, type DcEditRow, type DcExecRow, type DcForecastRow, type DcGatesRow, type DcGoalApprovalRow, type DcGoalRow, type DcPlanRow, type DcPollRow, type DcPreviewRow, type DcProbeRow, type DcQuestionRow, type DcReplanRow, type DcReviewRow, type DcScoreRow, type DcSkipRow, Debate, type DebateProps, type DecisionRule, DecisionTable, type DecisionTableProps, type DelegationAgents, type DelegationBudget, DelegationChain, type DelegationChainProps, DelegationEditListener, type DelegationEditListenerProps, DelegationExecution, type DelegationExecutionProps, type DelegationOutputs, DelegationPlanning, type DelegationPlanningProps, DelegationPreview, type DelegationPreviewProps, type DelegationScorers, DelegationScoring, type DelegationScoringProps, type DelegationSharedProps, type DepsSpec, DeriskLoop, type DeriskLoopProps, type DevPreviewKind, DriftDetector, type DriftDetectorProps, type EngineDecision, EscalationChain, type EscalationChainProps, type EscalationLevel, type Estimate, type ExtractOptions, ForkFanOut, type ForkFanOutProps, type ForkFanOutTask, type ForkFanOutTaskOptions, type Gate, GatherAndSynthesize, type GatherAndSynthesizeProps, GoalRefinement, type GoalRefinementProps, type HostElement, type HostNode, type HostText, HumanTask, type HumanTaskProps, type InferDeps, type InferOutputEntry, type InferRow, Kanban, type KanbanProps, Loop, type LoopProps, MONITOR_CONDITIONS, MONITOR_DEFAULT_AUTO_HEAL, MONITOR_TERMINAL_STATUSES, Memory, type MemoryProps, MergeQueue, type MergeQueueProps, Monitor, type MonitorCondition, type MonitorProps, Optimizer, type OptimizerProps, type OutputAccessor, type OutputKey, type OutputTarget, Panel, type PanelProps, type PanelistConfig, Parallel, type ParallelProps, Poller, type PollerProps, Ralph, type RalphProps, type RenderContext, type RetryPolicy, ReviewLoop, type ReviewLoopProps, type RunAuthContext, type RunOptions, type RunResult, Runbook, type RunbookProps, type RunbookStep, SMITHERS_WORKFLOW_VIEW_KIND, Saga, type SagaProps, SagaStep, type SagaStepDef, type SagaStepProps, Sandbox, type SandboxEgressConfig, type SandboxProps, type SandboxRuntime, type SandboxVolumeMount, type SandboxWorkspaceSpec, ScanFixVerify, type ScanFixVerifyProps, type SchemaRegistryEntry, type ScorersMap, Sequence, type SequenceProps, Sidecar, type SidecarDelta, type SidecarProps, Signal, type SignalProps, type SmithersAlertLabels, type SmithersAlertPolicy, type SmithersAlertPolicyDefaults, type SmithersAlertPolicyRule, type SmithersAlertReaction, type SmithersAlertReactionKind, type SmithersAlertReactionRef, type SmithersAlertSeverity, type SmithersCtx, type SmithersErrorCode, type SmithersWorkflow, type SmithersWorkflowDriverOptions, type SmithersWorkflowOptions, type SourceDef, Subflow, type SubflowProps, SuperSmithers, type SuperSmithersProps, Supervisor, type SupervisorProps, TUI, type TUIProps, Task, type TaskDescriptor, type TaskProps$1 as TaskProps, type Tier, Timer, type TimerProps, Trellis, type TrellisProps, TryCatchFinally, type TryCatchFinallyProps, UI, type UIProps, WaitForEvent, type WaitForEventProps, type WaitReason, Workflow, type WorkflowFileRef, type WorkflowGraph, type WorkflowProps, type WorkflowRuntime, type WorkflowSession, type WorkflowViewBootProps, type WorkflowViewProps, Worktree, type WorktreeProps, type XmlElement, type XmlNode, type XmlText, actualTotals, agentForTier, approvalDecisionSchema, approvalRankingSchema, approvalSelectionSchema, captureWorkingCopyCommit, chunkGateFailures, compileDelegationV2Program, computeSidecarDelta, continueAsNew, dcApprovalSchema, dcBudgetSchema, dcDevPreviewSchema, dcEditSchema, dcExecSchema, dcForecastSchema, dcGatesSchema, dcGoalApprovalSchema, dcGoalSchema, dcPlanSchema, dcPollSchema, dcPreviewSchema, dcProbeSchema, dcQuestionSchema, dcReplanSchema, dcReviewSchema, dcScoreSchema, dcSkipSchema, delegationPrompts, delegationSchemas, delegationV2AssignmentDigest, delegationV2ProgramDigest, delegationV2Schemas, dependentsOf, devPreviewKindSchema, devPreviewNodeId, enforceDelegationV2AuthorFuel, estimateSchema, executionComplete, foldGates, foldPlans, frontierLeaves, gateSchema, leafAttemptState, leafComplete, leavesUnder, markdownComponents, monitorAuthorityRules, monitorEvidenceRules, monitorHealthSignals, monitorPrompt, monitorReadPathRules, nodeIndex, partitionDelegationV2AuthorFuel, pendingTriggers, physicalId, planOwnerOf, planningComplete, probeIdFor, probesRequested, renderMdx, renderPromptToText, replanCountFor, settleDelegationV2Envelope, splitGates, synthesizeDelegationEvents, tierSchema, delegationV2Prompts as trellisPrompts, triggerTargetOf, unplannedChunks, validateWorkflowProgram, withCommitRange, zodSchemaToJsonExample };
+export { Approval, type ApprovalAutoApprove, type ApprovalDecision, ApprovalGate, type ApprovalGateProps, type ApprovalMode, type ApprovalOption, type ApprovalProps, type ApprovalRanking, type ApprovalRequest, type ApprovalSelection, Aspects, type AspectsProps, BackpressurePlanning, type BackpressurePlanningProps, Branch, type BranchProps, type CachePolicy, type CategoryConfig, Cell, type CellProps, type CheckConfig, CheckSuite, type CheckSuiteProps, ClassifyAndRoute, type ClassifyAndRouteProps, type ColumnDef, ContentPipeline, type ContentPipelineProps, type ContentPipelineStage, ContinueAsNew, type ContinueAsNewProps, ContractCell, type ContractCellProps, DC_EDIT_SIGNAL, DC_SKIP_PREVIEW_SIGNAL, DEFAULT_DELEGATION_V2_LIMITS, DEFAULT_TIER_ORDER, DELEGATION_V2_COMPILER_VERSION, DELEGATION_V2_PROGRAM_VERSION, DELEGATION_V2_PROTOCOL_VERSION, DELEGATION_V2_REGISTRY_VERSION, DELEGATION_V2_RUNTIME_VERSION, DELEGATION_V2_SETTLEMENT_VERSION, type DcApprovalRow, type DcBudgetRow, type DcDevPreviewRow, type DcEditRow, type DcExecRow, type DcForecastRow, type DcGatesRow, type DcGoalApprovalRow, type DcGoalRow, type DcPlanRow, type DcPollRow, type DcPreviewRow, type DcProbeRow, type DcQuestionRow, type DcReplanRow, type DcReviewRow, type DcScoreRow, type DcSkipRow, Debate, type DebateProps, type DecisionRule, DecisionTable, type DecisionTableProps, type DelegationAgents, type DelegationBudget, DelegationChain, type DelegationChainProps, DelegationEditListener, type DelegationEditListenerProps, DelegationExecution, type DelegationExecutionProps, type DelegationOutputs, DelegationPlanning, type DelegationPlanningProps, DelegationPreview, type DelegationPreviewProps, type DelegationScorers, DelegationScoring, type DelegationScoringProps, type DelegationSharedProps, type DepsSpec, DeriskLoop, type DeriskLoopProps, type DevPreviewKind, DriftDetector, type DriftDetectorProps, type EngineDecision, EscalationChain, type EscalationChainProps, type EscalationLevel, type Estimate, type ExtractOptions, ForkFanOut, type ForkFanOutProps, type ForkFanOutTask, type ForkFanOutTaskOptions, type Gate, GatherAndSynthesize, type GatherAndSynthesizeProps, GoalRefinement, type GoalRefinementProps, type HostElement, type HostNode, type HostText, HumanTask, type HumanTaskProps, type InferDeps, type InferOutputEntry, type InferRow, Kanban, type KanbanProps, Loop, type LoopProps, MONITOR_CONDITIONS, MONITOR_DEFAULT_AUTO_HEAL, MONITOR_TERMINAL_STATUSES, Memory, type MemoryProps, MergeQueue, type MergeQueueProps, Monitor, type MonitorCondition, type MonitorProps, Optimizer, type OptimizerProps, type OutputAccessor, type OutputKey, type OutputTarget, Panel, type PanelProps, type PanelistConfig, Parallel, type ParallelProps, Poller, type PollerProps, Ralph, type RalphProps, type RenderContext, type RetryPolicy, ReviewLoop, type ReviewLoopProps, type RunAuthContext, type RunOptions, type RunResult, Runbook, type RunbookProps, type RunbookStep, SMITHERS_WORKFLOW_VIEW_KIND, Saga, type SagaProps, SagaStep, type SagaStepDef, type SagaStepProps, Sandbox, type SandboxEgressConfig, type SandboxProps, type SandboxRuntime, type SandboxVolumeMount, type SandboxWorkspaceSpec, ScanFixVerify, type ScanFixVerifyProps, type SchemaRegistryEntry, type ScorersMap, Sequence, type SequenceProps, Sidecar, type SidecarDelta, type SidecarProps, Signal, type SignalProps, type SmithersAlertLabels, type SmithersAlertPolicy, type SmithersAlertPolicyDefaults, type SmithersAlertPolicyRule, type SmithersAlertReaction, type SmithersAlertReactionKind, type SmithersAlertReactionRef, type SmithersAlertSeverity, type SmithersCtx, type SmithersErrorCode, type SmithersWorkflow, type SmithersWorkflowDriverOptions, type SmithersWorkflowOptions, type SourceDef, Subflow, type SubflowProps, SuperSmithers, type SuperSmithersProps, Supervisor, type SupervisorProps, TUI, type TUIProps, Task, type TaskDescriptor, type TaskProps$1 as TaskProps, type Tier, Timer, type TimerProps, Trellis, type TrellisProps, TryCatchFinally, type TryCatchFinallyProps, UI, type UIProps, WaitForEvent, type WaitForEventProps, type WaitReason, Workflow, type WorkflowFileRef, type WorkflowGraph, type WorkflowProps, type WorkflowRuntime, type WorkflowSession, type WorkflowViewBootProps, type WorkflowViewProps, Worktree, type WorktreeProps, type XmlElement, type XmlNode, type XmlText, actualTotals, agentForTier, approvalDecisionSchema, approvalRankingSchema, approvalSelectionSchema, captureWorkingCopyCommit, chunkGateFailures, compileDelegationV2Program, computeSidecarDelta, continueAsNew, dcApprovalSchema, dcBudgetSchema, dcDevPreviewSchema, dcEditSchema, dcExecSchema, dcForecastSchema, dcGatesSchema, dcGoalApprovalSchema, dcGoalSchema, dcPlanSchema, dcPollSchema, dcPreviewSchema, dcProbeSchema, dcQuestionSchema, dcReplanSchema, dcReviewSchema, dcScoreSchema, dcSkipSchema, delegationPrompts, delegationSchemas, delegationV2AssignmentDigest, delegationV2ProgramDigest, delegationV2Schemas, dependentsOf, devPreviewKindSchema, devPreviewNodeId, enforceDelegationV2AuthorFuel, estimateSchema, executionComplete, findCellRunner, foldGates, foldPlans, frontierLeaves, gateSchema, leafAttemptState, leafComplete, leavesUnder, markdownComponents, monitorAuthorityRules, monitorEvidenceRules, monitorHealthSignals, monitorPrompt, monitorReadPathRules, nodeIndex, partitionDelegationV2AuthorFuel, pendingTriggers, physicalId, planOwnerOf, planningComplete, probeIdFor, probesRequested, renderMdx, renderPromptToText, replanCountFor, runCell, settleDelegationV2Envelope, splitGates, synthesizeDelegationEvents, tierSchema, delegationV2Prompts as trellisPrompts, triggerTargetOf, unplannedChunks, validateWorkflowProgram, withCommitRange, zodSchemaToJsonExample };

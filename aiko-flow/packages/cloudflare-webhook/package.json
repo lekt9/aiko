@@ -1,0 +1,39 @@
+{
+  "name": "@smthrs/cloudflare-webhook",
+  "version": "0.1.0",
+  "description": "Fail-closed Cloudflare Worker adapter for Contract webhook ingress",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./worker": {
+      "types": "./src/worker.ts",
+      "import": "./src/worker.ts",
+      "default": "./src/worker.ts"
+    }
+  },
+  "files": [
+    "src/",
+    "scripts/release.mjs",
+    "wrangler.toml"
+  ],
+  "scripts": {
+    "test": "bun test tests",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "deploy:dry": "node scripts/release.mjs dry-run",
+    "deploy:preview": "node scripts/release.mjs preview",
+    "deploy:staging": "node scripts/release.mjs staging",
+    "deploy:promote": "node scripts/release.mjs promote",
+    "deploy:rollback": "node scripts/release.mjs rollback",
+    "deploy:capability": "node scripts/release.mjs capability"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "~6.0.3",
+    "wrangler": "^4.106.0"
+  }
+}

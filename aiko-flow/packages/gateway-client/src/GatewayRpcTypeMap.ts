@@ -75,6 +75,8 @@ import type {
   ListBrowserSessionsResponse,
 } from "@smthrs/protocol/gateway-rpc";
 import type { GatewayCronRow } from "./sync/GatewayCronRow.ts";
+import type { ContractWebhookRpcRequestMap, ContractWebhookRpcResponseMap } from "@smthrs/protocol/contractWebhooks";
+import type { ContractLifecycleRpcRequestMap, ContractLifecycleRpcResponseMap } from "@smthrs/protocol/contractLifecycle";
 import type { UsageReport } from "@smthrs/usage";
 
 export type { UsageReport, UsageWindow } from "@smthrs/usage";
@@ -127,7 +129,7 @@ export type GatewayRpcRequestMap = {
   browserPick: BrowserPickRequest;
   closeBrowserSession: CloseBrowserSessionRequest;
   listBrowserSessions: Record<string, never>;
-};
+} & ContractWebhookRpcRequestMap & ContractLifecycleRpcRequestMap;
 
 export type GatewayRpcResponseMap = {
   launchRun: LaunchRunResponse;
@@ -174,7 +176,7 @@ export type GatewayRpcResponseMap = {
   browserPick: BrowserPickResponse;
   closeBrowserSession: CloseBrowserSessionResponse;
   listBrowserSessions: ListBrowserSessionsResponse;
-};
+} & ContractWebhookRpcResponseMap & ContractLifecycleRpcResponseMap;
 
 export type GatewayRpcParams<Method extends GatewayRpcMethod> = GatewayRpcRequestMap[Method];
 

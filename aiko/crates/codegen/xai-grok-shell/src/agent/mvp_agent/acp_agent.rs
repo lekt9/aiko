@@ -2320,6 +2320,52 @@ impl acp::Agent for MvpAgent {
                 .unwrap_or(false),
             _ => false,
         });
+        // The ACP request body is stimulus only. Authority comes from the native
+        // authenticated session, and Contract admission must finish before the
+        // existing ground_turn composition root may launch a reasoning worker.
+        let native_auth = self.auth_manager.current().ok_or_else(|| {
+            acp::Error::internal_error().data(
+                "Authenticated native session unavailable; refusing turn before Contract ingress",
+            )
+        })?;
+        let face = match self.cfg.borrow().mode {
+            crate::agent::config::AgentMode::Headless => "headless",
+            crate::agent::config::AgentMode::Tui | crate::agent::config::AgentMode::Leader => "cli",
+            crate::agent::config::AgentMode::Stdio
+            | crate::agent::config::AgentMode::Serve
+            | crate::agent::config::AgentMode::Generic => "acp",
+        };
+        let authority = crate::contract_native::ingress_routes::native_session_auth(
+            &native_auth,
+            "aiko.turn",
+            &["turn.invoke"],
+        ).map_err(|error| acp::Error::internal_error().data(format!(
+            "Native authentication was not admissible for Contract ingress: {error:?}"
+        )))?;
+        let raw_request = serde_json::to_vec(&arguments.prompt).map_err(|error| {
+            acp::Error::internal_error().data(format!("Could not canonicalize turn stimulus: {error}"))
+        })?;
+        let ingress_plan = arguments.prompt.iter().filter_map(|block| match block {
+            acp::ContentBlock::Text(text) => Some(text.text.as_str()),
+            _ => None,
+        }).collect::<Vec<_>>().join("\n");
+        crate::contract_native::ingress_routes::admit_public_ingress(
+            face,
+            crate::contract_native::ingress_routes::PublicIngressRequest {
+                auth: authority,
+                workspace: std::path::PathBuf::from(&handle.info.cwd),
+                raw_request,
+                nonce_namespace: format!("{face}:turn"),
+                idempotency_key: prompt_id.clone(),
+                plan: ingress_plan,
+                // ACP metadata and environment lineage are not authority.
+                contract_root: None,
+                contract_parent: None,
+            },
+        ).map_err(|error| acp::Error::internal_error().data(format!(
+            "Mandatory Contract ingress refused the turn before ground_turn: {error:?}"
+        )))?;
+
         let grounded = crate::contract_native::ground_turn_with_facts(
             &arguments.prompt,
             std::path::Path::new(&handle.info.cwd),

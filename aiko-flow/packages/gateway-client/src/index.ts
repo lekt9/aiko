@@ -90,3 +90,6 @@ export { gatewayKeys } from "./data/gatewayKeys.ts";
 export { smithersCollectionKeys } from "./data/smithersCollectionKeys.ts";
 export { smithersElectricCollectionOptions } from "./data/smithersElectricCollectionOptions.ts";
 export { smithersLocalCollectionOptions } from "./data/smithersLocalCollectionOptions.ts";
+
+export { ContractWebhookClient } from "./ContractWebhookClient.ts";
+export { ContractLifecycleClient } from "./ContractLifecycleClient.ts";

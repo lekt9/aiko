@@ -4,7 +4,8 @@
   "abi": {
     "contract": 13,
     "cell": "cell/v0",
-    "neuron_standalone": true
+    "neuron_standalone": true,
+    "control": "smithers-control/v1"
   },
   "packages": {
     "neuron": {
@@ -39,7 +40,9 @@
         "cell"
       ],
       "optional": false,
-      "source": "aiko-flow"
+      "source": "aiko-flow",
+      "abi": "smithers-control/v1",
+      "dependency_lock_sha256": "72d09420746b3395f5be509a3ef167458b84b5f90a1bcb142bdbf6435b079783"
     }
   }
 }

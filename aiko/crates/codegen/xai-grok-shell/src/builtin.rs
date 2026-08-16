@@ -9,8 +9,7 @@ const IMAGINE_SKILL_MD: &str = include_str!("../skills/imagine/SKILL.md");
 const CONTRACT_SKILL_MD: &str = include_str!("../skills/contract/SKILL.md");
 const TELEGRAM_CONTRACTS_SKILL_MD: &str =
     include_str!("../../../../.agents/skills/telegram-contracts/SKILL.md");
-const AIKO_FLOW_SKILL_MD: &str =
-    include_str!("../../../../.agents/skills/aiko-flow/SKILL.md");
+const AIKO_FLOW_SKILL_MD: &str = include_str!("../../../../.agents/skills/aiko-flow/SKILL.md");
 macro_rules! contract_native_skill {
     ($constant:ident, $directory:literal) => {
         const $constant: &str = include_str!(concat!(

@@ -1,0 +1,38 @@
+{
+  "schema": "typed-neuron.limb-manifest/v1",
+  "package": "typed-neuron/telethon-effect",
+  "version": "0.1.0",
+  "description": "Provider-neutral effect policy with durable outbox, independent recipient read-back and compensation.",
+  "neurons": [
+    {
+      "id": "effect",
+      "argv": [
+        "python3",
+        "neurons/effect.py"
+      ],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "artifact/telethon/outbox/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 1,
+          "max_writes": 1,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 131072,
+          "max_depth": 1
+        }
+      }
+    }
+  ],
+  "budgets": {
+    "deadline_ms_per_firing": 10000
+  },
+  "schemas": {
+    "request": "neuron.telethon-effect-request/v1",
+    "plan": "neuron.telethon-effect-plan/v1",
+    "record": "neuron.telethon-effect-record/v1",
+    "inbound": "neuron.normalized-inbound/v1"
+  }
+}

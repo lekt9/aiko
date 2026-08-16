@@ -7,6 +7,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+/// Contract-owned reachability/checkpoint kernel used by ledger storage adapters.
+pub const retention = @import("cross_journal_retention.zig");
+
 const c = std.c;
 const is_windows = builtin.os.tag == .windows;
 

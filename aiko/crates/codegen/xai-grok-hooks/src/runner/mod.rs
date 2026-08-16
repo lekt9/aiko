@@ -1,5 +1,7 @@
 pub mod command;
+pub mod command_membrane;
 pub mod http;
+pub mod http_membrane;
 
 use std::time::Duration;
 

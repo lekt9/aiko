@@ -31,6 +31,7 @@ const workflow = @import("workflow.zig");
 const graph_plan = @import("graph_plan.zig");
 const graph_harness_attestation = @import("graph_harness_attestation.zig");
 const obligation_fsm = @import("obligation_fsm.zig");
+const delegation_capability = @import("delegation_capability.zig");
 
 const gpa = std.heap.c_allocator;
 pub const ABI_VERSION: u32 = neuron.ABI_VERSION;
@@ -2152,6 +2153,65 @@ export fn contract_free(p: ?[*:0]u8) void {
         const full = ptr[0 .. slice.len + 1];
         gpa.free(full);
     }
+}
+
+fn delegationStrings(a: std.mem.Allocator, o: std.json.ObjectMap, key: []const u8) ![]const []const u8 {
+    const value = o.get(key) orelse return error.InvalidRequest;
+    if (value != .array or value.array.items.len > delegation_capability.MAX_SCOPE_ITEMS) return error.InvalidRequest;
+    var out = try a.alloc([]const u8, value.array.items.len);
+    for (value.array.items, 0..) |item, i| { if (item != .string) { a.free(out); return error.InvalidRequest; } out[i] = item.string; }
+    return out;
+}
+fn delegationU64(o: std.json.ObjectMap, key: []const u8) ?u64 { const n=objectInt(o,key) orelse return null; return if(n>=0) @intCast(n) else null; }
+fn delegationBool(o: std.json.ObjectMap, key: []const u8) ?bool { const v=o.get(key) orelse return null; return if(v==.bool)v.bool else null; }
+
+/// Issue and append one delegated capability. The `parent` block is accepted
+/// only at this internal ABI after the host has obtained it from Contract's
+/// declared-occurrence/current-lease verifier; env lineage is never read.
+export fn contract_delegation_issue_json(request_json: [*:0]const u8) ?[*:0]u8 {
+    var parsed=std.json.parseFromSlice(std.json.Value,gpa,cstr(request_json),.{}) catch return null; defer parsed.deinit();
+    if(parsed.value!=.object)return null; const top=parsed.value.object;
+    const pv=top.get("verified_parent") orelse return null; const rv=top.get("request") orelse return null; const qv=top.get("policy") orelse return null;
+    if(pv!=.object or rv!=.object or qv!=.object)return null; const po=pv.object; const ro=rv.object; const qo=qv.object;
+    const pe=delegationStrings(gpa,po,"effect_scopes") catch return null; defer gpa.free(pe); const pr=delegationStrings(gpa,po,"resource_scopes") catch return null; defer gpa.free(pr);
+    const re=delegationStrings(gpa,ro,"effect_scopes") catch return null; defer gpa.free(re); const rr=delegationStrings(gpa,ro,"resource_scopes") catch return null; defer gpa.free(rr);
+    const qe=delegationStrings(gpa,qo,"effect_scopes") catch return null; defer gpa.free(qe); const qr=delegationStrings(gpa,qo,"resource_scopes") catch return null; defer gpa.free(qr);
+    const parent:delegation_capability.VerifiedParent=.{.subject=objectString(po,"subject") orelse return null,.tenant=objectString(po,"tenant") orelse return null,.root_id=objectString(po,"root_id") orelse return null,.parent_occurrence=objectString(po,"parent_occurrence") orelse return null,.execution_id=objectString(po,"execution_id") orelse return null,.lease_id=objectString(po,"lease_id") orelse return null,.fence=delegationU64(po,"fence") orelse return null,.expires_at_ms=delegationU64(po,"expires_at_ms") orelse return null,.max_effects=delegationU64(po,"max_effects") orelse return null,.read_only=delegationBool(po,"read_only") orelse return null,.effect_scopes=pe,.resource_scopes=pr,.credential_generation=delegationU64(po,"credential_generation") orelse return null};
+    const req:delegation_capability.Request=.{.audience=objectString(ro,"audience") orelse return null,.purpose=objectString(ro,"purpose") orelse return null,.expires_at_ms=delegationU64(ro,"expires_at_ms") orelse return null,.max_effects=delegationU64(ro,"max_effects") orelse return null,.read_only=delegationBool(ro,"read_only") orelse return null,.effect_scopes=re,.resource_scopes=rr,.credential_generation=delegationU64(ro,"credential_generation") orelse return null};
+    const pol:delegation_capability.Policy=.{.max_expires_at_ms=delegationU64(qo,"max_expires_at_ms") orelse return null,.max_effects=delegationU64(qo,"max_effects") orelse return null,.force_read_only=delegationBool(qo,"force_read_only") orelse false,.effect_scopes=qe,.resource_scopes=qr,.max_credential_generation=delegationU64(qo,"max_credential_generation") orelse return null};
+    const durable=ledger.readAll(gpa,extEnv()) catch return null; defer gpa.free(durable);
+    delegation_capability.verifyCurrentExecution(gpa,durable,parent,(delegationU64(top,"now_ms") orelse return null)/1000) catch return null;
+    var grant=delegation_capability.issue(gpa,parent,req,pol,delegationU64(top,"now_ms") orelse return null) catch return null; defer delegation_capability.deinitGrant(gpa,&grant);
+    var w=std.Io.Writer.Allocating.init(gpa); defer w.deinit();
+    std.json.Stringify.value(.{.schema=delegation_capability.SCHEMA,.event="issued",.grant_id=grant.id[0..],.subject=grant.subject,.tenant=grant.tenant,.root_id=grant.root_id,.parent_occurrence=grant.parent_occurrence,.issuing_execution_id=grant.issuing_execution_id,.issuing_lease_id=grant.issuing_lease_id,.issuing_fence=grant.issuing_fence,.audience=grant.audience,.purpose=grant.purpose,.expires_at_ms=grant.expires_at_ms,.max_effects=grant.max_effects,.read_only=grant.read_only,.effect_scopes=grant.effect_scopes,.resource_scopes=grant.resource_scopes,.credential_generation=grant.credential_generation},.{},&w.writer) catch return null;
+    const path=ledger.appendRow(gpa,extEnv(),w.written()) catch return null; gpa.free(path);
+    return returned(w.written());
+}
+
+fn delegationId(text: []const u8) ?[64]u8 {
+    if(text.len!=64)return null; var out:[64]u8=undefined; for(text,0..) |c,i| { if(!((c>='0' and c<='9') or (c>='a' and c<='f')))return null; out[i]=c; } return out;
+}
+fn delegationAdoption(o: std.json.ObjectMap) ?delegation_capability.Adoption {
+    return .{.subject=objectString(o,"subject") orelse return null,.tenant=objectString(o,"tenant") orelse return null,.root_id=objectString(o,"root_id") orelse return null,.parent_occurrence=objectString(o,"parent_occurrence") orelse return null,.audience=objectString(o,"audience") orelse return null,.now_ms=delegationU64(o,"now_ms") orelse return null,.current_execution_id=objectString(o,"current_execution_id") orelse return null,.current_lease_id=objectString(o,"current_lease_id") orelse return null,.current_fence=delegationU64(o,"current_fence") orelse return null,.credential_generation=delegationU64(o,"credential_generation") orelse return null,.effects_already_used=delegationU64(o,"effects_already_used") orelse 0};
+}
+/// Adoption always replays Contract's durable ledger; a grant copied from env
+/// or a caller's request is insufficient authority.
+export fn contract_delegation_adopt_json(request_json:[*:0]const u8) ?[*:0]u8 {
+    var parsed=std.json.parseFromSlice(std.json.Value,gpa,cstr(request_json),.{}) catch return null; defer parsed.deinit(); if(parsed.value!=.object)return null; const o=parsed.value.object;
+    const id=delegationId(objectString(o,"grant_id") orelse return null) orelse return null; const adoption=delegationAdoption(o) orelse return null;
+    const body=ledger.readAll(gpa,extEnv()) catch return null; defer gpa.free(body); var grant=delegation_capability.adoptJournal(gpa,body,id,adoption) catch return null; defer delegation_capability.deinitGrant(gpa,&grant);
+    var w=std.Io.Writer.Allocating.init(gpa); defer w.deinit();
+    std.json.Stringify.value(.{.schema="contract.delegation-adoption/v1",.grant_id=grant.id[0..],.audience=grant.audience,.purpose=grant.purpose,.read_only=grant.read_only,.max_effects=grant.max_effects,.effect_scopes=grant.effect_scopes,.resource_scopes=grant.resource_scopes,.credential_generation=grant.credential_generation},.{},&w.writer) catch return null; return returned(w.written());
+}
+/// Append a revocation only after adopting the current grant under the same
+/// tenant/root/parent/fence/generation. The issued row remains untouched.
+export fn contract_delegation_revoke_json(request_json:[*:0]const u8) c_int {
+    var parsed=std.json.parseFromSlice(std.json.Value,gpa,cstr(request_json),.{}) catch return 1; defer parsed.deinit(); if(parsed.value!=.object)return 1; const o=parsed.value.object;
+    const id=delegationId(objectString(o,"grant_id") orelse return 1) orelse return 1; const adoption=delegationAdoption(o) orelse return 1;
+    const body=ledger.readAll(gpa,extEnv()) catch return 1; defer gpa.free(body); var grant=delegation_capability.adoptJournal(gpa,body,id,adoption) catch return 1; defer delegation_capability.deinitGrant(gpa,&grant);
+    var w=std.Io.Writer.Allocating.init(gpa); defer w.deinit();
+    std.json.Stringify.value(.{.schema=delegation_capability.SCHEMA,.event="revoked",.grant_id=grant.id[0..],.subject=grant.subject,.tenant=grant.tenant,.root_id=grant.root_id,.revoked_at_ms=adoption.now_ms},.{},&w.writer) catch return 1;
+    const path=ledger.appendRow(gpa,extEnv(),w.written()) catch return 1; gpa.free(path); return 0;
 }
 
 test "outcome metadata keeps strings numbers and structured schemas" {
