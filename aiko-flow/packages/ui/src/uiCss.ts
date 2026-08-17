@@ -37,7 +37,8 @@ import { plansTasksQueuesCss } from "./agentic/plansTasksQueuesCss";
 import { approvalsCss } from "./approvals/approvalsCss";
 import { sourcesCitationsCss } from "./agentic/sourcesCitationsCss";
 import { agentsCss } from "./agents/agentsCss";
-import { artifactsCss } from "./artifacts/artifactsCss";
+// DISABLED 2026-08-17: ./artifacts sources were never committed; see index.ts.
+const artifactsCss = "";
 import { sandboxCss } from "./sandbox/sandboxCss";
 import { canvasCss } from "./canvas/canvasCss";
 import { calendarCss } from "./calendar/calendarCss";

@@ -175,6 +175,7 @@ sha2="0.10"
 thiserror="2"
 tempfile="3"
 tokio={version="1",features=["macros","rt"]}
+ed25519-dalek="2.2"
 TOML
 AIKO_EMBEDDED_CORE_MANIFEST="$ROOT/aiko/.agents/skills/aiko-meta-agent/contract-skill.json" \
 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=1 cargo test --manifest-path "$WORK/Cargo.toml" \

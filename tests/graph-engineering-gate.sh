@@ -136,7 +136,10 @@ fi
 python3 - "$PROMPT_ENTRY" <<'PY'
 import pathlib, sys
 source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-admit = source.index("let grounded = crate::contract_native::ground_turn(")
+# Anchor on the call-site prefix, not the full argument list: the grounding
+# entry point has already been renamed once (ground_turn -> ground_turn_with_facts)
+# and the property under witness is the ORDER, not the arity.
+admit = source.index("let grounded = crate::contract_native::ground_turn")
 dispatch = source.index(".send(SessionCommand::Prompt {", admit)
 assert admit < dispatch, "reasoning worker dispatch moved before native graph admission"
 PY

@@ -99,6 +99,39 @@ code_for() { # method path [data] [extra curl args...]
 # This is the only document the operator authors. Nothing below re-states an
 # id, a route, a method or a schema: each is read back out of the goal, so a
 # gate that passed while serving some *other* contract is not reachable.
+#
+# The R2 witness (section 5) needs a SECOND source address, because the port
+# names a peer by source IP (deliberately port-independent). Linux brings the
+# whole 127/8 up on lo, so 127.0.0.2 always binds there; stock macOS configures
+# only 127.0.0.1, so probe for any other loopback alias the host carries
+# instead of hardcoding one. No usable second address is a hard FAIL, never a
+# skip — the two-peer property must be witnessed, not waived. The probed
+# address goes INTO the goal document, exactly as an operator would name a
+# real peer.
+second_peer_addr="$(python3 - <<'PY'
+import socket, subprocess, sys
+candidates = ["127.0.0.2"]
+try:
+    listing = subprocess.run(["ifconfig"], capture_output=True, text=True).stdout
+except OSError:
+    listing = ""
+for token in listing.split():
+    if token.startswith("127.") and token != "127.0.0.1":
+        candidates.append(token)
+for candidate in candidates:
+    probe = socket.socket()
+    try:
+        probe.bind((candidate, 0))
+    except OSError:
+        continue
+    finally:
+        probe.close()
+    print(candidate)
+    sys.exit(0)
+sys.exit(1)
+PY
+)" || fail "no second loopback source address is bindable — add one (e.g. sudo ifconfig lo0 alias 127.0.0.2) so the two-peer property can be witnessed"
+
 cat >"$gate_root/goal.json" <<'JSON'
 {
   "schema": "gate.api-goal/v1",
@@ -113,9 +146,16 @@ cat >"$gate_root/goal.json" <<'JSON'
   "handler_neuron": "greeter",
   "subject": "ada",
   "answer": "hello ada",
-  "callers": ["ip4:127.0.0.1", "ip4:127.0.0.2"]
+  "callers": ["ip4:127.0.0.1", "ip4:SECOND_PEER_ADDR"]
 }
 JSON
+python3 - "$gate_root/goal.json" "$second_peer_addr" <<'PY'
+import json, sys
+path, addr = sys.argv[1], sys.argv[2]
+goal = json.load(open(path))
+goal["callers"] = ["ip4:127.0.0.1", "ip4:" + addr]
+json.dump(goal, open(path, "w"), indent=2)
+PY
 eval "$(python3 - "$gate_root/goal.json" <<'PY'
 import json, sys
 goal = json.load(open(sys.argv[1]))
@@ -460,6 +500,17 @@ grep -q "agents/greeter/ports/00" "$log" || fail "the port attachment was not jo
 grep -q "agents/greeter/interfaces/" "$log" &&
     fail "a port attachment landed in the outbound chain namespace"
 
+# A second surface listing ONLY 127.0.0.1, for the unlisted-caller witness
+# (section 11): the second peer is refused here while being served on the main
+# route, so the 403 can only be the caller list — not an unreachable address.
+# This needs no third loopback alias, which stock macOS does not have.
+write_read_manifest "$gate_root/solo.json" "$greeter_digest" "/solo" \
+    '{"mode": "listed", "peers": ["ip4:127.0.0.1"]}' "gate/solo"
+solo_hex="$("$binary" port publish "$node" "$gate_root/solo.json" --json |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["published"])')"
+"$binary" port attach "$node" greeter --published "$solo_hex" \
+    --handler "$gate_root/greeter" --json >/dev/null
+
 # --- 4. the goal answered: a real HTTP client, a correct typed answer -------
 start_server
 route="/agents/greeter$goal_route"
@@ -485,7 +536,9 @@ grep -qi '^X-Neuron-Status: replayed' "$gate_root/h2.txt" ||
     fail "a duplicate request re-fired instead of replaying"
 
 # --- 5. R2: one caller key, two peers, two firings -------------------------
-other="$(curl -s -X "$goal_method" --data '{"name":"mallory"}' --interface 127.0.0.2 \
+# The second source address was probed before the goal document was written,
+# and the goal names it in callers — see the probe at the top of this gate.
+other="$(curl -s -X "$goal_method" --data '{"name":"mallory"}' --interface "$second_peer_addr" \
     -H 'X-Neuron-Idempotency-Key: shared-key' "http://127.0.0.1:$http_port$route")"
 echo "$other" | grep -q '"greeting": "hello mallory"' ||
     fail "a second peer reusing another peer's caller key read the first peer's result: $other"
@@ -509,7 +562,13 @@ PY
 [ $? = 0 ] || fail "the two peers shared one firing identity"
 
 # --- 11 (peers). a caller outside the list is refused ----------------------
-[ "$(code_for "$goal_method" "$route" '{"name":"x"}' --interface 127.0.0.3 \
+# The solo route lists only 127.0.0.1, so the second peer — served on the main
+# route moments ago — must be refused HERE, and the listed peer must still be
+# served. The positive control keeps the 403 from being a broken route.
+[ "$(code_for "$goal_method" /agents/greeter/solo '{"name":"x"}' \
+    -H 'X-Neuron-Idempotency-Key: k9')" = 200 ] ||
+    fail "the listed caller was refused on the solo route: the unlisted-caller witness would be vacuous"
+[ "$(code_for "$goal_method" /agents/greeter/solo '{"name":"x"}' --interface "$second_peer_addr" \
     -H 'X-Neuron-Idempotency-Key: k9')" = 403 ] ||
     fail "an unlisted caller was admitted"
 

@@ -23,6 +23,10 @@ async-openai = { workspace = true }
 async-trait = { workspace = true }
 blake3 = { workspace = true }
 bm25 = "2.3"
+# In-process Ed25519 admission verification (graph_harness). The previous
+# subprocess pin (/usr/bin/openssl) is LibreSSL on stock macOS, which lacks
+# Ed25519 entirely — admission authentication failed closed on every Mac.
+ed25519-dalek = "2.2"
 bytes = { workspace = true }
 chrono = { workspace = true }
 indexmap = { workspace = true, features = ["serde"] }

@@ -96,7 +96,6 @@ pub const Projection = struct {
             .pins = self.entries,
         }, .{});
     }
-
 };
 
 pub const Error = error{
@@ -126,8 +125,7 @@ fn validatePin(pin: Pin) Error!void {
 
 fn isLive(state: State) bool {
     return switch (state) {
-        .redrive_pending, .uncertain_reconciliation, .dead_letter,
-        .requeue_pending, .compensation_pending => true,
+        .redrive_pending, .uncertain_reconciliation, .dead_letter, .requeue_pending, .compensation_pending => true,
         else => false,
     };
 }
@@ -135,11 +133,9 @@ fn isLive(state: State) bool {
 fn validateLifecycle(r: Record) Error!void {
     switch (r.kind) {
         .source_citation => if (r.cites == null or r.parent == null) return Error.InvalidLifecycle,
-        .attachment_generation, .revocation_generation, .provider_receipt,
-        .dlq_attempt, .requeue_lineage, .compensation_gap => if (r.parent == null) return Error.InvalidLifecycle,
+        .attachment_generation, .revocation_generation, .provider_receipt, .dlq_attempt, .requeue_lineage, .compensation_gap => if (r.parent == null) return Error.InvalidLifecycle,
         .effect_outbox => switch (r.state) {
-            .queued, .crossed, .uncertain_reconciliation, .dead_letter,
-            .requeue_pending, .compensation_pending, .settled => {},
+            .queued, .crossed, .uncertain_reconciliation, .dead_letter, .requeue_pending, .compensation_pending, .settled => {},
             else => return Error.InvalidLifecycle,
         },
         else => {},
@@ -172,10 +168,19 @@ pub fn project(allocator: std.mem.Allocator, records: []const Record) Error!Proj
         changed = false;
         for (entries, 0..) |e, i| {
             if (e.retained) {
-                if (e.parent) |x| if (!entries[x].retained) { entries[x].retained = true; changed = true; };
-                if (e.cites) |x| if (!entries[x].retained) { entries[x].retained = true; changed = true; };
+                if (e.parent) |x| if (!entries[x].retained) {
+                    entries[x].retained = true;
+                    changed = true;
+                };
+                if (e.cites) |x| if (!entries[x].retained) {
+                    entries[x].retained = true;
+                    changed = true;
+                };
             }
-            if (e.parent) |x| if (entries[x].retained and !entries[i].retained) { entries[i].retained = true; changed = true; };
+            if (e.parent) |x| if (entries[x].retained and !entries[i].retained) {
+                entries[i].retained = true;
+                changed = true;
+            };
         }
     }
     return .{ .allocator = allocator, .entries = entries };
@@ -199,63 +204,72 @@ const hex_f = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 
 fn fixture() [10]Record {
     return .{
-        .{ .kind=.firing, .state=.redrive_pending, .pin=.{.reference="firing/42",.commit_ordinal=1,.digest=hex_a} },
-        .{ .kind=.source_citation, .pin=.{.reference="citation/42/0",.commit_ordinal=2,.digest=hex_b}, .parent=0, .cites=2 },
-        .{ .kind=.package_generation, .pin=.{.reference="source/order/g7",.commit_ordinal=3,.digest=hex_c} },
-        .{ .kind=.attachment_generation, .pin=.{.reference="limb/webhook/attach/3",.commit_ordinal=4,.digest=hex_d}, .parent=2 },
-        .{ .kind=.revocation_generation, .state=.revoked, .pin=.{.reference="limb/webhook/revoke/4",.commit_ordinal=5,.digest=hex_e}, .parent=2 },
-        .{ .kind=.effect_outbox, .state=.crossed, .pin=.{.reference="outbox/effect/9",.commit_ordinal=6,.digest=hex_f}, .parent=0 },
-        .{ .kind=.provider_receipt, .pin=.{.reference="provider/receipt/91",.commit_ordinal=7,.digest=hex_a}, .parent=5 },
-        .{ .kind=.dlq_attempt, .state=.dead_letter, .pin=.{.reference="dlq/effect/9/attempt/3",.commit_ordinal=8,.digest=hex_b}, .parent=5 },
-        .{ .kind=.requeue_lineage, .state=.requeue_pending, .pin=.{.reference="requeue/effect/9/1",.commit_ordinal=9,.digest=hex_c}, .parent=7 },
-        .{ .kind=.compensation_gap, .state=.compensation_pending, .pin=.{.reference="compensation/effect/9",.commit_ordinal=10,.digest=hex_d}, .parent=5 },
+        .{ .kind = .firing, .state = .redrive_pending, .pin = .{ .reference = "firing/42", .commit_ordinal = 1, .digest = hex_a } },
+        .{ .kind = .source_citation, .pin = .{ .reference = "citation/42/0", .commit_ordinal = 2, .digest = hex_b }, .parent = 0, .cites = 2 },
+        .{ .kind = .package_generation, .pin = .{ .reference = "source/order/g7", .commit_ordinal = 3, .digest = hex_c } },
+        .{ .kind = .attachment_generation, .pin = .{ .reference = "limb/webhook/attach/3", .commit_ordinal = 4, .digest = hex_d }, .parent = 2 },
+        .{ .kind = .revocation_generation, .state = .revoked, .pin = .{ .reference = "limb/webhook/revoke/4", .commit_ordinal = 5, .digest = hex_e }, .parent = 2 },
+        .{ .kind = .effect_outbox, .state = .crossed, .pin = .{ .reference = "outbox/effect/9", .commit_ordinal = 6, .digest = hex_f }, .parent = 0 },
+        .{ .kind = .provider_receipt, .pin = .{ .reference = "provider/receipt/91", .commit_ordinal = 7, .digest = hex_a }, .parent = 5 },
+        .{ .kind = .dlq_attempt, .state = .dead_letter, .pin = .{ .reference = "dlq/effect/9/attempt/3", .commit_ordinal = 8, .digest = hex_b }, .parent = 5 },
+        .{ .kind = .requeue_lineage, .state = .requeue_pending, .pin = .{ .reference = "requeue/effect/9/1", .commit_ordinal = 9, .digest = hex_c }, .parent = 7 },
+        .{ .kind = .compensation_gap, .state = .compensation_pending, .pin = .{ .reference = "compensation/effect/9", .commit_ordinal = 10, .digest = hex_d }, .parent = 5 },
     };
 }
 
 test "projection pins every retention family and contains no raw content field" {
-    var records=fixture();
+    var records = fixture();
     // Digests must be unique even when fixtures span all record families.
-    var generated:[10][64]u8=undefined;
-    for (&generated,0..) |*d,i| { @memset(d,@intCast('0'+i)); records[i].pin.digest=d; }
-    var p=try project(std.testing.allocator,&records); defer p.deinit();
-    try std.testing.expectEqual(@as(usize,10),p.entries.len);
+    var generated: [10][64]u8 = undefined;
+    for (&generated, 0..) |*d, i| {
+        @memset(d, @intCast('0' + i));
+        records[i].pin.digest = d;
+    }
+    var p = try project(std.testing.allocator, &records);
+    defer p.deinit();
+    try std.testing.expectEqual(@as(usize, 10), p.entries.len);
     for (p.entries) |e| try std.testing.expect(e.retained);
-    const out=try p.jsonAlloc(std.testing.allocator); defer std.testing.allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8,out,"payload") == null);
-    try std.testing.expect(std.mem.indexOf(u8,out,"secret") == null);
-    try std.testing.expect(std.mem.indexOf(u8,out,"provider_receipt") != null);
-    try std.testing.expect(std.mem.indexOf(u8,out,"compensation_gap") != null);
+    const out = try p.jsonAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "payload") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "secret") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "provider_receipt") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "compensation_gap") != null);
 }
 
 test "collection refuses every live obligation and its reachability closure" {
-    const records=[_]Record{
-        .{.kind=.package_generation,.pin=.{.reference="package/g1",.commit_ordinal=1,.digest=hex_a}},
-        .{.kind=.attachment_generation,.pin=.{.reference="attachment/g2",.commit_ordinal=2,.digest=hex_b},.parent=0},
-        .{.kind=.effect_outbox,.state=.uncertain_reconciliation,.pin=.{.reference="effect/3",.commit_ordinal=3,.digest=hex_c},.parent=1},
-        .{.kind=.provider_receipt,.pin=.{.reference="receipt/4",.commit_ordinal=4,.digest=hex_d},.parent=2},
+    const records = [_]Record{
+        .{ .kind = .package_generation, .pin = .{ .reference = "package/g1", .commit_ordinal = 1, .digest = hex_a } },
+        .{ .kind = .attachment_generation, .pin = .{ .reference = "attachment/g2", .commit_ordinal = 2, .digest = hex_b }, .parent = 0 },
+        .{ .kind = .effect_outbox, .state = .uncertain_reconciliation, .pin = .{ .reference = "effect/3", .commit_ordinal = 3, .digest = hex_c }, .parent = 1 },
+        .{ .kind = .provider_receipt, .pin = .{ .reference = "receipt/4", .commit_ordinal = 4, .digest = hex_d }, .parent = 2 },
     };
-    var p=try project(std.testing.allocator,&records); defer p.deinit();
-    for (0..records.len) |i| try std.testing.expectError(Error.LiveReference,p.requireCollectible(i));
+    var p = try project(std.testing.allocator, &records);
+    defer p.deinit();
+    for (0..records.len) |i| try std.testing.expectError(Error.LiveReference, p.requireCollectible(i));
 }
 
 test "redrive verdict is identical from live facts and archived pins" {
-    const records=[_]Record{
-        .{.kind=.effect_outbox,.state=.crossed,.pin=.{.reference="effect/crossed",.commit_ordinal=1,.digest=hex_a}},
-        .{.kind=.effect_outbox,.state=.uncertain_reconciliation,.pin=.{.reference="effect/uncertain",.commit_ordinal=2,.digest=hex_b}},
-        .{.kind=.firing,.state=.settled,.pin=.{.reference="firing/settled",.commit_ordinal=3,.digest=hex_c}},
+    const records = [_]Record{
+        .{ .kind = .effect_outbox, .state = .crossed, .pin = .{ .reference = "effect/crossed", .commit_ordinal = 1, .digest = hex_a } },
+        .{ .kind = .effect_outbox, .state = .uncertain_reconciliation, .pin = .{ .reference = "effect/uncertain", .commit_ordinal = 2, .digest = hex_b } },
+        .{ .kind = .firing, .state = .settled, .pin = .{ .reference = "firing/settled", .commit_ordinal = 3, .digest = hex_c } },
     };
-    var p=try project(std.testing.allocator,&records); defer p.deinit();
-    for (records,0..) |r,i| try std.testing.expectEqual(verdict(r.kind,r.state),try p.redriveVerdict(i));
-    try std.testing.expectEqual(Verdict.compensate,try p.redriveVerdict(0));
-    try std.testing.expectEqual(Verdict.escalate,try p.redriveVerdict(1));
-    try std.testing.expectEqual(Verdict.redrive,try p.redriveVerdict(2));
+    var p = try project(std.testing.allocator, &records);
+    defer p.deinit();
+    for (records, 0..) |r, i| try std.testing.expectEqual(verdict(r.kind, r.state), try p.redriveVerdict(i));
+    try std.testing.expectEqual(Verdict.compensate, try p.redriveVerdict(0));
+    try std.testing.expectEqual(Verdict.escalate, try p.redriveVerdict(1));
+    try std.testing.expectEqual(Verdict.redrive, try p.redriveVerdict(2));
 }
 
 test "projection rejects payload-shaped refs, invalid digests and dangling edges" {
-    var bad=Record{.kind=.firing,.pin=.{.reference="Bearer secret",.commit_ordinal=1,.digest=hex_a}};
-    try std.testing.expectError(Error.RawDataReference,project(std.testing.allocator,&.{bad}));
-    bad.pin.reference="firing/1"; bad.pin.digest="abc";
-    try std.testing.expectError(Error.InvalidDigest,project(std.testing.allocator,&.{bad}));
-    bad.pin.digest=hex_a; bad.parent=9;
-    try std.testing.expectError(Error.InvalidReference,project(std.testing.allocator,&.{bad}));
+    var bad = Record{ .kind = .firing, .pin = .{ .reference = "Bearer secret", .commit_ordinal = 1, .digest = hex_a } };
+    try std.testing.expectError(Error.RawDataReference, project(std.testing.allocator, &.{bad}));
+    bad.pin.reference = "firing/1";
+    bad.pin.digest = "abc";
+    try std.testing.expectError(Error.InvalidDigest, project(std.testing.allocator, &.{bad}));
+    bad.pin.digest = hex_a;
+    bad.parent = 9;
+    try std.testing.expectError(Error.InvalidReference, project(std.testing.allocator, &.{bad}));
 }

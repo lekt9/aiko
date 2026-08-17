@@ -152,6 +152,11 @@ pub fn build(b: *std.Build) void {
         "neuron/tests/product-forge-gate.sh",
         "tests/contract-library-pin-gate.sh",
         "tests/layer-lock-gate.sh",
+        // Doc gates are witnesses too: prose that contradicts the tree is a
+        // defect the build must catch, not a review nicety. Both are cheap
+        // (seconds, no compile) so they ride in the default gate step.
+        "tests/docs-oss-ready-gate.sh",
+        "tests/docs-quality-gate.sh",
         // self-check is already covered via install — skip here to avoid a
         // duplicate run inside gate (the dependency through install is enough).
     }) |witness| {
@@ -164,4 +169,11 @@ pub fn build(b: *std.Build) void {
         gate_step.dependOn(&g.step);
     }
     gate_step.dependOn(&self_check.step);
+
+    // Conformance re-runs the witness inventory against CONFORMANCE.md's
+    // recorded verdicts — it deliberately re-executes gates, so it lives in
+    // its own step rather than doubling every witness inside `zig build gate`.
+    const conformance = b.addSystemCommand(&.{ "bash", "tests/conformance-gate.sh" });
+    conformance.step.dependOn(b.getInstallStep());
+    b.step("conformance", "Reproduce every CONFORMANCE.md verdict against the tree").dependOn(&conformance.step);
 }

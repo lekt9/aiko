@@ -40,6 +40,8 @@ zig build gate            # the distinct shell witnesses scheduled by root build
 ./zig-out/bin/aiko-doctor # prove both layers are linked in one process
 ```
 
+The block below is generated from `build.zig` by
+`scripts/gen-gate-inventory.py` — never hand-edit it.
 
 <!-- root-gate-inventory:start -->
 - `tests/aiko-self-check-gate.sh`
@@ -64,6 +66,9 @@ zig build gate            # the distinct shell witnesses scheduled by root build
 - `neuron/tests/product-forge-gate.sh`
 - `tests/contract-library-pin-gate.sh`
 - `tests/layer-lock-gate.sh`
+- `tests/docs-oss-ready-gate.sh`
+- `tests/docs-quality-gate.sh`
+- `tests/conformance-gate.sh`
 <!-- root-gate-inventory:end -->
 
 **Gates are the acceptance criterion, not the unit tests.** Each gate drives the

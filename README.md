@@ -397,7 +397,9 @@ the path the witnesses cover.
 public CLI from an empty directory and asserts against durable state.
 
 `zig build gate` schedules exactly these distinct shell witnesses from the root
-`build.zig` (the self-check is also an install dependency):
+`build.zig` (the self-check is also an install dependency). The block below is
+generated — edit `build.zig`, then run `python3 scripts/gen-gate-inventory.py`;
+`tests/docs-oss-ready-gate.sh` fails the build if it drifts:
 
 <!-- root-gate-inventory:start -->
 - `tests/aiko-self-check-gate.sh`
@@ -422,6 +424,9 @@ public CLI from an empty directory and asserts against durable state.
 - `neuron/tests/product-forge-gate.sh`
 - `tests/contract-library-pin-gate.sh`
 - `tests/layer-lock-gate.sh`
+- `tests/docs-oss-ready-gate.sh`
+- `tests/docs-quality-gate.sh`
+- `tests/conformance-gate.sh`
 <!-- root-gate-inventory:end -->
 
 ---

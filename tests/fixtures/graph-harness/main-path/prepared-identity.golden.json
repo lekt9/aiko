@@ -1,7 +1,7 @@
 {
   "api_version": "graph-harness/v1",
-  "subject_digest": "c87ad9cf775598fd7aceeee79a98ed418fd937239e18d5f1806789c7d89d814c",
-  "transitive_digest": "178097e08fb70405b8cdeb062e5f231e0f8c672f9b9c3dd5fc134fa058ee814f",
+  "subject_digest": "84d8886abd9ba49019290187854eaf5746ed206160194ad583015ec5daa8e958",
+  "transitive_digest": "82b00d139f106ee4cfe0bcb09c57b132d77cb825d7631b6f26cdfda17ad7144b",
   "adapter_version": "aiko.graph-harness-contract/v1",
-  "bundle_digest": "b98d411789d83e638ec88e830ce16d067d89e9c572f66cd1f21180a3eb8012a4"
+  "bundle_digest": "ae247b4f8c809919988c42d0a7ffe35a79cd0a658b891648e6d056385e4212c7"
 }

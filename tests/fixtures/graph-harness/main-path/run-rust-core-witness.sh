@@ -24,6 +24,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
 thiserror = "2"
 tempfile = "3"
+ed25519-dalek = "2.2"
 EOF
 AIKO_GRAPH_HARNESS_FIXTURES="$repo/tests/fixtures/graph-harness/main-path" \
 AIKO_EMBEDDED_CORE_MANIFEST="$repo/aiko/.agents/skills/aiko-meta-agent/contract-skill.json" \
