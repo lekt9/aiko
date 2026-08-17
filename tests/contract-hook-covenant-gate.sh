@@ -140,6 +140,14 @@ for name, q in mutations:
 
 # Inspect actual cited repository facts. These checks bind the covenant to the
 # current implementation surface rather than treating the document as evidence.
+scheduler = (root / "contract/libcontract/src/scheduler.zig").read_text()
+assert "fn collectDeadIds" in scheduler, "tick/plan regained per-id isDead scans"
+assert scheduler.index("fn collectDeadIds") < scheduler.index("if (dead.contains(id))"), "dead-id index is unused"
+ledger_src = (root / "contract/libcontract/src/ledger.zig").read_text()
+acq = ledger_src.index("pub fn acquireExclusive")
+house = ledger_src.index("pub fn housekeep")
+assert "maybeCompact(allocator, env);" not in ledger_src[acq:acq+400], "declare lock regained inline compact"
+assert house > 0 and "maybeCompact(allocator, env);" in ledger_src[house:house+200]
 w6h = (root / "contract/libcontract/src/w6h.zig").read_text()
 assert "pub const W6H = struct" in w6h and all((x + ":") in w6h for x in ("who", "what", "when", "where", "why", "how"))
 assert "fromDeclaredRow" in w6h and "MissingWho" in w6h and "MissingHow" in w6h

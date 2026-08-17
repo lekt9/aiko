@@ -1457,6 +1457,9 @@ export fn contract_tick_json(request_json: [*:0]const u8) ?[*:0]u8 {
         cwd,
     ) catch return null;
     defer batch.deinit(gpa);
+    // Compact only after the claim lock is released. Inline compact under
+    // acquireExclusive made every turn declare wait on a 12 MiB rewrite.
+    ledger.housekeep(gpa, extEnv());
 
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(gpa);
