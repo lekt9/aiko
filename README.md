@@ -519,7 +519,8 @@ clone path.
 | [`SECURITY.md`](SECURITY.md) | private vulnerability reports |
 | `docs/AI-FORWARD-DEPLOYED-ENGINEER.md` | product boundary (Proven / Designed / Absent) |
 | `docs/graph-engineering/AIKO-HOOK-ORGANISM.md` | native Contract/Neuron/Smithers ownership covenant |
-| `docs/graph-engineering/aiko-hoysan-finish.walk.json` | synthetic end-to-end self-wire and benchmark graph |
+| `docs/graph-engineering/aiko-drop-in.walk.json` | **live** — preferred drop-in skill (9 pending, 7 layers): breakpoint taxonomy → harness → delegated spawn → Hoysan pilot |
+| `docs/graph-engineering/AIKO-DROP-IN-PRIMITIVE-MAP.md` | reuse map: every drop-in node composes a frozen primitive (cell/primitives·patterns, neuron/limbs, contract) |
 | `docs/AIKO-HOYSAN-BENCHMARK.md` | synthetic performance receipt, fixed defects, and control-plane blocker |
 | `neuron/AGENTS.md` | normative architecture |
 | `neuron/IMPLEMENTATION.md` | what exists today, and known limits |

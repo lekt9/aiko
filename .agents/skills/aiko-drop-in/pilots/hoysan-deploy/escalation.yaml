@@ -1,0 +1,2 @@
+# 5:00 WA → 5:30 no-reply → call → blue→NTS (fanout narrowed + escalation-ladder termination)
+rungs: [whatsapp, call, replacement]

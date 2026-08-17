@@ -130,8 +130,7 @@ This gate runs the real Contract dylib witness, the complete Cell gate, the stan
 - [HARNESS-REVIEW.md](HARNESS-REVIEW.md) — independent adversarial findings, repairs, witnesses, and accepted limits.
 - [MIGRATION.md](MIGRATION.md) — move serial or implicit flows onto declared graph contracts.
 - [EXAMPLES.md](EXAMPLES.md) — runnable chain, fan-out, refusal, gap, invalidation, and compensation examples.
-- [video-analysis.md](video-analysis.md) and [video-transcript.md](video-transcript.md) — source-grounded Andrew Ng/Laurence Moroney lecture material and its provenance boundary.
-- [base44-video-analysis.md](base44-video-analysis.md) and [base44-video-transcript.md](base44-video-transcript.md) — source-grounded analysis of the 56-second Base44 advertisement and the derived graph-native requirements it does not itself claim.
+- `video-analysis.md`/`video-transcript.md` and `base44-video-*.md` — removed 2026-08-17 (5.9k lines). Source lectures distilled into `AIKO-HOOK-ORGANISM.md` and `AIKO-DROP-IN-PRIMITIVE-MAP.md`; raw transcripts retained no gate and duplicated every W6H claim at 10× size.
 - [repository-audit.md](repository-audit.md) — the pre-implementation audit; its “gaps” section is a dated snapshot, not the current feature list.
 
 ## Source vs. synthesis

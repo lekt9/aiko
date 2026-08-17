@@ -1,0 +1,20 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: hoysan-deploy-pilot
+  description: pre-shift cascade via fanout + outbox-drainer + telethon + escalation ladder
+spec:
+  membrane:
+    inputs:
+      roster: { schema: object }
+    outputs:
+      chase: { schema: object }
+    caps: {}
+  organelles:
+    - name: chase
+      cell: ../../../../cell/patterns/fde/deploy-workflow.cell.yaml
+  wiring:
+    - from: membrane.roster
+      to: chase.handle
+    - from: chase.digest
+      to: membrane.chase

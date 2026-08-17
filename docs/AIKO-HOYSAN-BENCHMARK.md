@@ -66,4 +66,4 @@ The benchmark-specific gates are green. A full `zig build gate` was also attempt
 
 ## Other FDE limits
 
-The broader `aiko-fde.walk.json` still honestly marks OS-only employee credential lifecycle, tenant-isolated context selection, Unbrowse attachment, and live Telethon/SAP pilots pending. This benchmark does not promote them.
+The broader `aiko-fde.walk.json` is removed 2026-08-17 (stale walk). The live walk is `aiko-drop-in.walk.json` (9 nodes: covenant→inventory→skill→harness→pilot→verify, `execute:false` until `/graph` arm). OS-only credential lifecycle, tenant-isolated context projection, Unbrowse attachment, and live Telethon/SAP pilots remain honestly pending — this benchmark does not promote them.
