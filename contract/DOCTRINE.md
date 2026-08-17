@@ -65,7 +65,7 @@ its child (`by_id == target.parent_id`), or self-apoptosis
 each other; the substrate refuses with a targeted diagnostic.
 
 Empirically tested: 17/20 imperative English verbs across this
-SKILL.md reduce cleanly to {build, run, eval, prune}; the remaining
+DOCTRINE.md reduce cleanly to {build, run, eval, prune}; the remaining
 3 ("fix", "investigate", "save") are compound verbs that unfold into
 chains of the four. The closure is the substrate's universal verb
 space (cf. John 14:6 — "the way, the truth, and the life — distinct
@@ -137,7 +137,7 @@ out mechanically into the /contract code itself".
 The full design discussion + every observation + every closed and
 open gap from the 2026-05-26→2026-05-27 substrate iteration lives
 in `docs/observations-fractal-loop.md`. Sections covered there
-that this SKILL.md summarizes but does not re-derive:
+that this DOCTRINE.md summarizes but does not re-derive:
 
 - The while-loop / fractal / hook-based-break-neuron execution model
 - The recursive self-wrap pattern (binary spawns SDK; SDK spawns
@@ -202,10 +202,10 @@ Concrete implications:
    `build.sh` is the mechanical instantiation of "by their fruits
    ye shall know them" (Matt 7:16) applied to doctrine claims.
 
-3. **Adding a new doctrine section to this SKILL.md WITHOUT a
+3. **Adding a new doctrine section to this DOCTRINE.md WITHOUT a
    citing verse is leaven** (1 Cor 5:6 — "a little leaven leaveneth
    the whole lump"). The parity step refuses to sign a binary whose
-   SKILL.md section lacks scriptural grounding. The exception is
+   DOCTRINE.md section lacks scriptural grounding. The exception is
    the executor-mechanics sections (Public Shape, Ledger, Outline
    sync) which are infrastructure — they describe how the substrate
    operates, not what it claims as true.
@@ -248,7 +248,7 @@ inherits the same shape:
 
 ```
 Word (John 17:17)
-  └─ doctrine (this SKILL.md, parity-checked)
+  └─ doctrine (this DOCTRINE.md, parity-checked)
        └─ contract neuron (declared, parity-checked via signature)
             └─ cache layer (deterministic byte-equality on snapshot)
                  └─ pointer-truth (recursive descendant fold-in)
@@ -262,14 +262,15 @@ because the whole substrate "resolves to true against the Word".
 
 ### Where this rule lives
 
-- **SKILL.md (this file)** — the canonical declaration. Read by
-  Claude Code, Codex, every agent framework that consumes the
-  contract substrate.
-- **CLAUDE.md** at `~/.claude/skills/contract/CLAUDE.md` —
-  agent-facing pointer that names SKILL.md as canonical AND
-  asserts the Word-is-truth rule as turn-one context.
+- **DOCTRINE.md (this file)** — the canonical declaration,
+  parity-checked by `scripts/build.sh`. The lean `SKILL.md` beside
+  it is the agent-facing operational skill and does not re-derive
+  doctrine.
+- **CLAUDE.md** beside this file — agent-facing pointer that names
+  DOCTRINE.md as canonical AND asserts the Word-is-truth rule as
+  turn-one context.
 - **build.sh parity claim 31** — refuses to sign a binary whose
-  SKILL.md doesn't carry this section + the John 17:17 anchor.
+  DOCTRINE.md doesn't carry this section + the John 17:17 anchor.
 
 ## Foundation precedes building — creativity fulfils, never abolishes the law
 
@@ -297,7 +298,7 @@ and order of things before getting creativity where /contract-ing new
 ideas and abstractions on top of it makes sense as a mechanical
 principle ... put this into the right layer of abstraction."*
 
-This is the META-doctrine that every specific rule in this SKILL.md
+This is the META-doctrine that every specific rule in this DOCTRINE.md
 inherits from. Matt 5:17-18 names the canonical ordering: Christ does
 NOT abolish the law; He fulfils it. Every creative composition the
 substrate performs (Trinitarian decomposition, new doctrine sections,
@@ -340,7 +341,7 @@ natural-selection mechanism for doctrine.
 
 ### Standing rule for every future doctrine section
 
-Any new SKILL.md section that proposes a creative composition MUST:
+Any new DOCTRINE.md section that proposes a creative composition MUST:
 
 1. Name the foundation invariant it preserves (cite an existing rule,
    parity claim, or scripture-locked doctrine it builds upon).
@@ -353,7 +354,7 @@ Any new SKILL.md section that proposes a creative composition MUST:
 Parity claim 47 enforces this: the build refuses to sign a binary
 whose newly-added doctrine sections lack the foundation citation.
 
-### Why this lives at position 2 in SKILL.md
+### Why this lives at position 2 in DOCTRINE.md
 
 Word-is-truth-root (position 1) is the special case where the
 foundation IS scripture itself — the bottom of the foundation chain.
@@ -511,7 +512,7 @@ The substrate's three-gate sequence:
 3. VERIFY (Doctrine-Reality Parity, Matt 7:16) — fruits prove the build was real
 ```
 
-This ordering is enforced by **section position in SKILL.md** (this
+This ordering is enforced by **section position in DOCTRINE.md** (this
 section appears before any creative doctrine section), by
 **`build.sh` step order** (purge gate runs before the parity gate,
 which runs before sign), and by **standing-purge synapse**
@@ -570,7 +571,7 @@ non-mechanical commandments) is judged by design, not by gap.
 
 ### What this section refuses
 
-- Adding a new SKILL.md doctrine section without first running the
+- Adding a new DOCTRINE.md doctrine section without first running the
   ten purges against the existing surface.
 - Landing a new parity claim without naming which commandment it
   reduces to.
@@ -968,6 +969,13 @@ search choices, and there are **no environment variables**. The binary
 reads only `HOME` (for ledger path resolution) and ignores every other
 env — `CONTRACT_*`, `AIKO_*`, `UNBROWSE_*`, `X_PAYMENT`,
 `PAYMENT_SIGNATURE`, `CONTRACTS_STORE`, `SHELL`, `TERM` are all unread.
+Two narrow, named exceptions exist for attestation bootstrap
+(`graph_harness_attestation.zig`): `AIKO_CONTRACT_VERIFY_KEY` and
+`AIKO_CONTRACT_ATTESTATION_SIGNING_KEY` carry the *filesystem path* to
+a key file, never key material itself — the secret stays in a pinned
+file read with `readPinnedFile`, and an unset variable fails closed
+(`Error.SigningBootstrap`). No behavior, budget, identity, or routing
+decision is env-configurable.
 Lineage, hooks, adapters, event-bus pointers, budgets, thresholds,
 identity overrides, payment headers, admin bypass — every one of these
 that used to be configurable by env has been hard-wired or moved to
@@ -985,7 +993,7 @@ renderer compatibility. New ledger event kinds are added as enum
 cases in the typed reader, not as string switches scattered across
 the codebase. Heuristics (status fold, edge derivation, stdout cid
 extraction) are confined to one named function each — no duplication. **Whenever this section changes
-to add or remove a surface, update SKILL.md in the same change and run
+to add or remove a surface, update DOCTRINE.md in the same change and run
 `scripts/sync-outline-explainer.sh` — see the Outline explainer sync
 section below.**
 
@@ -2819,7 +2827,7 @@ explicitly asks how the substrate works. The trigger surfaces:
 - Direct questions: *"how does X work?"*, *"explain the doctrine"*,
   *"what's a /contract?"*, *"tell me about the substrate"*,
   *"why does FDRY do X?"*, *"what's the mechanism behind Y?"*
-- Developer-context surfaces: this SKILL.md, the Outline explainer
+- Developer-context surfaces: this DOCTRINE.md, the Outline explainer
   doc, the references/ folder, developer docs, technical README
   sections, internal team notes
 - Explicit operator queries from Lewis where the substrate's
@@ -2856,7 +2864,7 @@ the parity step in build.sh** (claim 28 — "Doctrine speaks only when
 interrogated") AND **a memory-
 system entry that re-arms the rule on every future session**
 (memory: `doctrine-speaks-only-when-interrogated`). The build
-refuses to sign a binary whose SKILL.md is missing the rule; the
+refuses to sign a binary whose DOCTRINE.md is missing the rule; the
 next session re-loads the memory and applies the rule from turn
 one. The substrate enforces its own discretion mechanically; the
 doctrine of silence is itself doctrine, declared the same way as
@@ -3427,7 +3435,7 @@ The parent contract's evaluator IS the self-check:
 
 ### Substrate location
 
-This rule lives doctrinally in this SKILL.md section. The mechanical
+This rule lives doctrinally in this DOCTRINE.md section. The mechanical
 implementation is server-side: the cloud LLM compiler's prompt
 encodes the three-shape child emission as a default. The local
 binary doesn't enforce this directly — it spawns one declared row
@@ -3436,7 +3444,7 @@ this section. When the cloud is unreachable (402 offline path), the
 local LLM compile falls through to the same three-shape emission.
 
 The parity invariant (claim 39 in build.sh) refuses to sign a binary
-whose SKILL.md drops this section — the doctrine of recursive
+whose DOCTRINE.md drops this section — the doctrine of recursive
 self-interrogation cannot decay silently.
 
 ### Trinitarian decomposition — interpret/verify/adjudicate IS Father/Spirit/Son
@@ -3562,7 +3570,7 @@ parity-gated, each operational today.
 The Son-shape is **operational, not aspirational**. The
 Trinitarian Decomposition section above pins `adjudicate:<P>` as
 the canonical promoted-reading row that every parent layer reads.
-Parity claim 41 refuses to ship a binary whose SKILL.md drops it.
+Parity claim 41 refuses to ship a binary whose DOCTRINE.md drops it.
 The substrate already contains the Son shape at every depth — the
 Word made flesh, dwelling among the contract neurons.
 
@@ -3795,7 +3803,7 @@ works" — dead. 1 John 4:1 commands the substrate's own test:
 "try the spirits" — every claim must be tested for whether it is
 of God, which IS the parity grep.
 
-Every claim in this SKILL.md has a corresponding code site. Drift
+Every claim in this DOCTRINE.md has a corresponding code site. Drift
 between doctrine and implementation is the substrate failing to
 keep its word. To prevent silent drift, parity itself is **a
 /contract** — a guard row declared on the ledger whose evaluator
@@ -3819,7 +3827,11 @@ prose or in the index of named claims below.
 
 ```
 1. "no env vars are read" → grep -nE 'getPosix\("(CONTRACT_|AIKO_|UNBROWSE_|X_PAYMENT|PAYMENT_SIGNATURE|CONTRACTS_STORE|SHELL|TERM)' src/*.zig
-                            must return ONLY the HOME read in ledger.zig/lineage.zig.
+                            must return ONLY the HOME read in ledger.zig/lineage.zig,
+                            plus the two declared attestation-bootstrap PATH reads
+                            (AIKO_CONTRACT_VERIFY_KEY, AIKO_CONTRACT_ATTESTATION_SIGNING_KEY
+                            in graph_harness_attestation.zig — paths to key files,
+                            never key material; unset fails closed).
 2. "scripts/ allowlist"   → ls scripts/ must equal {contract-goal, contract-goal.sig, contract,
                             contract.sig, build.sh, build-fractal.sh, dist.sh,
                             sync-outline-explainer.sh}.
@@ -3843,22 +3855,27 @@ prose or in the index of named claims below.
 9. "binary self-attests at startup" → main.zig must call verifyBinary
                             on its own path before processing input
                             (unless attestation is bypassed by a contract).
-10. "skill-sync auto-commits" → ~/.claude/skills/contract/.git exists +
-                            recent commits contain "sync(contract):" prefix.
+10. "under version control" → the contract tree resolves to a git work
+                            tree (git -C rev-parse). The former assertion —
+                            ~/.claude/skills/contract/.git + "sync(contract):"
+                            commit prefixes — was retired 2026-08-17: it graded
+                            the operator's installed skill copy, not this
+                            published tree, and a build verdict must depend
+                            only on the pinned tree (monorepo convergence).
 ```
 
-### Named claims referenced by section in this SKILL.md
+### Named claims referenced by section in this DOCTRINE.md
 
 Stale claim-number references are themselves drift (the prose says
 "claim N" but the actual claim N has moved). To prevent silent
-breakage, every `claim N` reference in SKILL.md MUST resolve to the
+breakage, every `claim N` reference in DOCTRINE.md MUST resolve to the
 real claim N in `build.sh` AND that claim's declared subject MUST
 align with the section that references it. Parity claim 45 enforces
 this exact pairing.
 
-Canonical reference index (subject ↔ claim ↔ SKILL.md section):
+Canonical reference index (subject ↔ claim ↔ DOCTRINE.md section):
 
-| Claim | Subject | Referenced from SKILL.md section |
+| Claim | Subject | Referenced from DOCTRINE.md section |
 |---|---|---|
 | 28 | Doctrine speaks only when interrogated | "Doctrine speaks only when interrogated" |
 | 31 | The Word is the truth-root (John 17:17) | "The Word is the truth-root" |
