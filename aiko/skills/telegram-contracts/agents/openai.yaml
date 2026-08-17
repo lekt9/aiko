@@ -1,4 +1,0 @@
-interface:
-  display_name: "Telegram Contracts"
-  short_description: "Wrap Telegram API behavior as contract-native capabilities"
-  default_prompt: "Use $telegram-contracts to wrap this Telegram behavior as a bounded contract graph."

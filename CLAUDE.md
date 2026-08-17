@@ -339,7 +339,7 @@ as done without running its gate.
 | `neuron/reference/ROADMAP.md` | unsettled work only |
 | `contract/DOCTRINE.md` | the substrate's doctrine and parity spec |
 | `contract/docs/AGENCY-SUBSTRATE.md` | schema, migration, adversarial evidence |
-| `PLAN-aiko-convergence.md` | the T1–T4 convergence plan. **All four are landed**; kept for the reasoning, not as a worklist |
+| `archive/plans/PLAN-aiko-convergence.md` | the T1–T4 convergence plan. **All four are landed**; kept for the reasoning, not as a worklist |
 | `docs/SOURCE-OF-TRUTH.md` | published-tree inventory (clone URL, layers, unpublished paths) |
 | `CONTRIBUTING.md` / `SECURITY.md` | public contribution and vulnerability process |
 

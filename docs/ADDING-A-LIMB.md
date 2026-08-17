@@ -186,4 +186,4 @@ Copy the decision logic into `SKILL.md`+code; do not `npx skills add` them as ru
 - Substrate doctrine: `contract/DOCTRINE.md`, `contract/docs/AGENCY-SUBSTRATE.md`.
 - Published-tree inventory: `docs/SOURCE-OF-TRUTH.md` (+ `build.zig`).
 - Never-publish subtree: `contract/NEVER-PUBLISH.md`.
-- Convergence reasoning: `PLAN-aiko-convergence.md` (historical, not a worklist).
+- Convergence reasoning: `archive/plans/PLAN-aiko-convergence.md` (historical, not a worklist).

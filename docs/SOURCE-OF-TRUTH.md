@@ -114,7 +114,7 @@ and the `aiko/apps/frontend` upstream remain MIT.
 |---|---|
 | Product README, install, architecture | Must match this file and the commands above |
 | Gate-backed claims (`CONFORMANCE.md`) | Keep; they are already mechanically checked |
-| Historical plans (`PLAN.md`, `PLAN-aiko-convergence.md`, `aiko/plan*.md`) | Banner as historical; do not present as current worklists |
+| Historical plans (`archive/plans/`, `aiko/plan*.md`) | Live under `archive/` where possible; banner as historical; never present as current worklists |
 | Limb `SKILL.md` inside `neuron/limbs/` | **Do not rewrite** — they sit inside the package digest |
 | Changelogs, prompt templates, vendor docs | Leave unless they leak secrets or customer data |
 | `contract/docs/*` due-diligence / thesis | Internal design notes, not the product README |

@@ -534,7 +534,7 @@ clone path.
 | `neuron/IMPLEMENTATION.md` | what exists today, and known limits |
 | `neuron/reference/ROADMAP.md` | unsettled work only |
 | `contract/DOCTRINE.md` | substrate doctrine and parity spec |
-| `PLAN-aiko-convergence.md` | **historical** — T1–T4 already landed |
+| `archive/plans/PLAN-aiko-convergence.md` | **historical** — T1–T4 already landed |
 
 ## License
 
