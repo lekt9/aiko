@@ -151,6 +151,7 @@ pub fn build(b: *std.Build) void {
         "tests/no-duplicate-fde-primitives-gate.sh",
         "neuron/tests/product-forge-gate.sh",
         "tests/contract-library-pin-gate.sh",
+        "tests/layer-lock-gate.sh",
         // self-check is already covered via install — skip here to avoid a
         // duplicate run inside gate (the dependency through install is enough).
     }) |witness| {

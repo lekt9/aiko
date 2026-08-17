@@ -48,6 +48,11 @@ Spelling: **Aiko**. Meeting notes that say “Ico” are a transcription artifac
 **Direction is load-bearing:** `neuron` builds and tests with `contract`
 absent. Do not reverse that dependency.
 
+**Control vs compute:** Smithers starts a Cell; the Cell computes; a Worker
+projects the product; Contract is the ledger. Implementing
+`POST /api/smithers/run` as business logic, or labeling it `aiko-flow-local`,
+inverts the layers — refused by `tests/layer-lock-gate.sh`.
+
 ## AI-FDE claim boundary
 
 The following published witnesses are green in this tree:

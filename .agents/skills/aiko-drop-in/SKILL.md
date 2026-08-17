@@ -31,7 +31,7 @@ Spawned Aikos are **capability-bounded descendants**, not ambient peers.
 
 - Child authority = `delegation_capability` opaque handle (verified subject/tenant + root/parent/fence + audience/purpose + expiry/max_effects + scope). **Never** `CONTRACT_ROOT=` env-string lineage.
 - Context = **Contract read projection** over cited rows + graph `input_bindings` + settlements + Neuron `evidence[].sources` — narrow reads, not transcript dump.
-- Smithers is scheduler only; Contract owns lineage, readiness, settlement, invalidation. No second ledger.
+- Smithers is control only (start/pause/approve/resume — never compute); Contract owns lineage, readiness, settlement, invalidation. No second ledger.
 
 `shared memory` → *delegated citations*. Any implementation that copies `~/.aiko`, transcripts, or `HOME`/`API_KEY` into the child is **refused** by the gate.
 
@@ -47,9 +47,10 @@ human inbox (WhatsApp/Sheets/Excel/paper/phone)
   → settle or invalidate → compensation (never blind resend of crossed effect)
 ```
 
-* Primitives are **frozen**: `cell/primitives/account-handle` is the seat identity (`cred:tenant/origin/account`, refuses raw tokens); reuse it before inventing a credential cell.
+* Primitives are **frozen**: `cell/primitives/account-handle.cell.yaml` is the seat identity (`cred:tenant/origin/account`, refuses raw tokens); reuse it before inventing a credential cell.
 * `cell/patterns/fde/self-wire.cell.yaml` (`account-handle → deploy-workflow → deploy-aiko` = “Aiko seats Aiko”) is the harness parent. This skill composes it, not rebuilds it.
 * `cell/patterns/hoysan-draft/hoysan-draft.cell.yaml` is the existing Hoysan roster engine (`synthetic-safe, infeasible→refuse→retain nothing`) — extend its request schema, do not fork.
+* **Layer lock:** Cell computes, Smithers only starts the Cell, a Worker projects the product, Contract is the ledger. Never implement `POST /api/smithers/run` and never call a Worker handler `aiko-flow-local`.
 * Input alias: same receptor validates under `poll` vs `webhook` vs `hook` (`cell/patterns/input-sources/harness.cell.yaml`). Second interface (Sheets vs WA) = rewire one organelle.
 
 ## Dispatch (preferred)

@@ -25,8 +25,8 @@ The seven core nodes are embedded in the Aiko binary from
 
 | Concern | Mechanical owner |
 |---|---|
-| Typed firing and decision admission | Contract ABI v12 `contract_neuron_fire_json` |
-| Dependency-ready node lease and settlement | Contract ABI v12 node claim/settle |
+| Typed firing and decision admission | Contract ABI v13 `contract_neuron_fire_json` |
+| Dependency-ready node lease and settlement | Contract ABI v13 node claim/settle |
 | Durable identity, authoritative evidence, replay, contradiction | Contract ledger |
 | Default topology and policy | Embedded `aiko-meta-agent` Skill |
 | Task-specific behavior | Matched, manifest-validated Neuron Skills |
@@ -81,7 +81,7 @@ separate authority.
 
 Every consequential Aiko tool call commits a canonical tool-effect decision
 before `dispatch_tool`. After the named adapter returns, Aiko settles that
-exact outbox effect through ABI v12. Replay does not dispatch again.
+exact outbox effect through ABI v13. Replay does not dispatch again.
 Uncertainty remains `reconciliation_required`; it is not converted into an
 automatic retry.
 
@@ -117,7 +117,7 @@ bash scripts/witness-meta-agent-neuron-graph.sh
 ```
 
 The witnesses validate the Skill package, prove route/verify limb composition,
-exercise ABI v12 dependency-wave leasing, authoritative evidence/replay, exact host
+exercise ABI v13 dependency-wave leasing, authoritative evidence/replay, exact host
 adapters, live/durable admission parity, fail-closed node bounds, and reject the
 opaque agent action:
 

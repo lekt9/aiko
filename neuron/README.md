@@ -260,20 +260,24 @@ and cross-repository conformance paths, not a Neuron runtime dependency.
 Aiko is the production host. It imports generated Rust wire bindings, obtains
 a canonical decision from each admitted node, commits consequential tool
 effects to Contract's canonical outbox before dispatch, and then acknowledges
-the exact effect. Contract ABI 12 records the firing and node settlement in
+the exact effect. Contract ABI 13 records the firing and node settlement in
 one append-only transaction.
 
 ## Source layout and building Contract
 
-Neuron is published as its own repo (`Unbrowse/neuron`).
+Neuron and Contract are layers of one published monorepo
+([`github.com/lekt9/aiko`](https://github.com/lekt9/aiko)): this directory is
+`neuron/`, and Contract (the production substrate and `contract` CLI) is the
+in-tree sibling `contract/`. See `../docs/SOURCE-OF-TRUTH.md` for the full
+layer inventory. From the monorepo root, `zig build` builds both layers and
+installs this CLI as `zig-out/bin/aiko`.
 
-Contract (the production substrate and `contract` CLI) is in `Unbrowse/contract`.
+Contract imports the canonical `typed_neuron` package from this in-tree
+directory, pinned by content via `contract/libcontract/typed-neuron.lock.json`
+— not via a git dependency or a manual sibling checkout. See
+`../contract/README.md` for its build commands.
 
-Contract now depends on the published neuron package via git (not a manual sibling checkout). See the "Building from source (single clone)" section in the Contract README for the exact commands:
-
-https://gitea/.../Unbrowse/contract (or your local clone) → README.md
-
-For the standalone neuron reference runtime only (this repo):
+For the standalone neuron reference runtime only (this directory):
 
 ```sh
 zig build test

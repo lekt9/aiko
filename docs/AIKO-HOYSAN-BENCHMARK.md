@@ -56,7 +56,7 @@ The new gates cover exact gang composition, global worker uniqueness, WAH and ex
 
 ## Honest remaining blocker
 
-The Smithers control plane is now the default distribution (Cell + `control` package). The `aiko-packages` installer auto-installs `smithers` as an Aiko plugin when `aiko-flow/` and its `node_modules` are present, and `DiscoveryConfig::populate_plugin_lists` default-enables the installed `smithers` plugin so no manual `aiko plugin enable` or integration flag is needed. A bare source tree without `aiko-flow/node_modules` falls back to a Cell-only install with a warning — this accommodates the public `github.com/lekt9/aiko` clone path where `aiko-flow` may be absent, and should not be confused with an intentional opt-in surface.
+The Smithers control plane is now the default distribution (Cell + `control` package). The `aiko-packages` installer auto-installs `smithers` as an Aiko plugin when `aiko-flow/` and its `node_modules` are present, and `DiscoveryConfig::populate_plugin_lists` default-enables the installed `smithers` plugin so no manual `aiko plugin enable` or integration flag is needed. A bare source tree without `aiko-flow/node_modules` falls back to a Cell-only install with a warning — this accommodates the public `github.com/lekt9/aiko` clone path where `aiko-flow/node_modules` may be absent (the `aiko-flow/` source is tracked in the monorepo; its dependencies are not installed by default), and should not be confused with an intentional opt-in surface.
 
 The remaining unproved boundary is durable Smithers scheduling/resume witness coverage on real gateway-run surfaces, not whether the harness is installed. Inventing upstream scheduler internals here would be a fabricated green.
 
@@ -66,4 +66,4 @@ The benchmark-specific gates are green. A full `zig build gate` was also attempt
 
 ## Other FDE limits
 
-The broader `aiko-fde.walk.json` is removed 2026-08-17 (stale walk). The live walk is `aiko-drop-in.walk.json` (9 nodes: covenant→inventory→skill→harness→pilot→verify, `execute:false` until `/graph` arm). OS-only credential lifecycle, tenant-isolated context projection, Unbrowse attachment, and live Telethon/SAP pilots remain honestly pending — this benchmark does not promote them.
+The broader `aiko-fde.walk.json` is removed 2026-08-17 (stale walk). The live walk is `aiko-drop-in.walk.json` (9 nodes: covenant→inventory→skill→harness→pilot→verify, `execute:false` until `/graph` arm). The live OS-vault credential lifecycle (the envelope contract itself is gated with a synthetic witness), tenant-isolated context projection, Unbrowse attachment, and live Telethon/SAP pilots remain honestly pending — this benchmark does not promote them.

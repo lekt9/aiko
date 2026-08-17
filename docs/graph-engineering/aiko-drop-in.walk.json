@@ -83,7 +83,7 @@
       "where": "docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md",
       "when": "one-shot",
       "milestone": "inventory",
-      "witness": "test -s docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md && grep -q 'breakpoint' docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md && grep -q '5-consecutive' docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md && grep -q 'PSA' docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md && grep -q 'hoysan-draft' docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md && test -s PRODUCT_BRIEF-hoysan.md",
+      "witness": "test -s docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md && grep -q 'breakpoint' docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md && grep -q '5-consecutive' docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md && grep -q 'PSA' docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md && grep -q 'hoysan-draft' docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md && test -s PRODUCT_BRIEF.md",
       "depends_on": [],
       "reads": [
         "/Users/lewis/Downloads/hoysan/prompt.md.rtf",
@@ -97,8 +97,8 @@
       ],
       "writes": [
         "docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md",
-        "PRODUCT_BRIEF-hoysan.md",
-        "DESIGN-hoysan.md",
+        "PRODUCT_BRIEF.md",
+        "DESIGN.md",
         "state/hoysan-inventory.json"
       ],
       "produces": [

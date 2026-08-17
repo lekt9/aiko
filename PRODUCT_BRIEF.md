@@ -12,4 +12,4 @@
 
 **CRUD:** Full C/R/U/D on workers, roster, roster-cells, shifts, LD ledger — not seed-only. Eligibility before ranking (5-day fence, 2-week night ban, NTS dormitory, 16-shift quota + headcount gates rank).
 
-**Non-goals:** Live PSA / Sheets / WA provider tokens; managed enterprise credential vault; SAP — remain Designed per `docs/SOURCE-OF-TRUTH.md` honest wall.
+**Non-goals:** Live PSA / Sheets / WA provider tokens; managed enterprise credential vault; SAP — remain outside the claim boundary per the `docs/AI-FORWARD-DEPLOYED-ENGINEER.md` honest wall (live provider surfaces are Designed; the SAP adapter and enterprise vault are Absent).

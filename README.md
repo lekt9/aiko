@@ -97,7 +97,7 @@ only after a runnable witness proves it.
 | **Who** | One tenant-scoped Aiko role identity operating through dedicated employee or service accounts, never a borrowed personal session |
 | **What** | A controllable, digest-pinned workflow, native adapters, cited context lineage, and independently settled effects |
 | **When** | On an event, cadence, reply, invalidation, or explicit approval; uncertain work remains pending |
-| **Where** | Smithers controls; Cell describes; Aiko plans; Contract remembers; Neuron executes; Unbrowse learns existing web systems |
+| **Where** | Smithers controls; the Cell computes; Aiko plans; Contract remembers; Neuron executes; Unbrowse learns existing web systems |
 | **Why** | To enter a real operating loop and leave behind a workflow that can be inspected, handed off, and trusted without trusting Aiko's own report |
 | **How** | Observe → write inert → test → admit by digest → attach least authority → act through the outbox → read back independently → settle or compensate |
 
@@ -419,6 +419,9 @@ public CLI from an empty directory and asserts against durable state.
 - `tests/graph-engineering-gate.sh`
 - `tests/cross-journal-retention-gate.sh`
 - `tests/no-duplicate-fde-primitives-gate.sh`
+- `neuron/tests/product-forge-gate.sh`
+- `tests/contract-library-pin-gate.sh`
+- `tests/layer-lock-gate.sh`
 <!-- root-gate-inventory:end -->
 
 ---

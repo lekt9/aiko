@@ -35,7 +35,7 @@ transcription artifact.
 ```sh
 zig build                 # → zig-out/bin/aiko  AND  contract/libcontract/zig-out/lib/libcontract.a
 zig build test            # both layers' suites
-zig build gate            # 18 distinct shell witnesses scheduled by root build.zig
+zig build gate            # the distinct shell witnesses scheduled by root build.zig
                           # exact inventory below; THIS is the acceptance criterion
 ./zig-out/bin/aiko-doctor # prove both layers are linked in one process
 ```
@@ -63,6 +63,7 @@ zig build gate            # 18 distinct shell witnesses scheduled by root build.
 - `tests/no-duplicate-fde-primitives-gate.sh`
 - `neuron/tests/product-forge-gate.sh`
 - `tests/contract-library-pin-gate.sh`
+- `tests/layer-lock-gate.sh`
 <!-- root-gate-inventory:end -->
 
 **Gates are the acceptance criterion, not the unit tests.** Each gate drives the
@@ -88,6 +89,12 @@ something happened when it didn't.**
 
 This is why it can reduce setup: not by magic self-configuration, but by making
 "done" mechanically checkable, so re-checking stops being rational.
+
+## Layer lock
+
+Cell computes. Smithers starts/pauses the Cell. A Worker projects the product.
+Contract is the ledger. **Never** `POST /api/smithers/run` that does the math,
+and **never** label that handler `aiko-flow-local`. Witness: `tests/layer-lock-gate.sh`.
 
 ## Reactive: the invalidation loop
 

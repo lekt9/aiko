@@ -48,7 +48,7 @@ malformed/cyclic/path-traversal/effect-laundering cases, the native binary, and
 the desktop build. Set `AIKO_SKILL_TEST_FAST=1` for manifest-only checks while
 authoring.
 
-Contract ABI v12 materializes each admitted node with an exact worker kind,
+Contract ABI v13 materializes each admitted node with an exact worker kind,
 named adapter or relative script path, script digest, input bindings, effect
 scope, evidence keys, and activation provenance. Dependency-ready waves are
 leased and settled individually. The credential-rejecting canonical evidence

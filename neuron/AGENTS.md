@@ -1372,7 +1372,7 @@ named like a Skill is not evidence of that lifecycle (§30, §34). Current statu
   Git revision, because this directory is not its own repository). Its `src/neuron.zig`
   is a JSON and durable-ledger adapter that re-exports the canonical validator and
   identities; settlement appends atomically before artifact materialization. The
-  production C ABI is version 12. One append-only `neuron_transaction` carries the
+  production C ABI is version 13. One append-only `neuron_transaction` carries the
   canonical firing, authoritative evidence payload, node settlement, and pending effect
   outbox; that append is the sole linearization point. Evidence blobs materialize after
   commit as a reconstructible cache. Duplicate firings replay the existing result; a

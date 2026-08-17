@@ -31,6 +31,6 @@ Source: `/Users/lewis/Downloads/hoysan` — `prompt.md.rtf` (55k transcript), `H
 
 ## Muscle-memory (product brief pointer)
 
-Primary surface is the **Excel itself**: frozen panes, day 1-31 columns, `X` marks, fills, COUNTIF/SUM totals — not a SaaS card wall. See `PRODUCT_BRIEF-hoysan.md` + `DESIGN-hoysan.md` and `docs/graph-engineering/AIKO-DROP-IN-PRIMITIVE-MAP.md` for reuse map.
+Primary surface is the **Excel itself**: frozen panes, day 1-31 columns, `X` marks, fills, COUNTIF/SUM totals — not a SaaS card wall. See `PRODUCT_BRIEF.md` + `DESIGN.md` and `docs/graph-engineering/AIKO-DROP-IN-PRIMITIVE-MAP.md` for reuse map.
 
-*Inventory version: hoysan/1 — 2026-08-17. Witness: `tests/hoysan-inventory-gate.sh` (breakpoint + 5-consecutive + PSA + hoysan-draft + PRODUCT_BRIEF-hoysan.md).*
+*Inventory version: hoysan/1 — 2026-08-17. Witness: `tests/hoysan-inventory-gate.sh` (breakpoint + 5-consecutive + PSA + hoysan-draft + PRODUCT_BRIEF.md).*
