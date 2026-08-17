@@ -33,6 +33,15 @@ const graph_harness_attestation = @import("graph_harness_attestation.zig");
 const obligation_fsm = @import("obligation_fsm.zig");
 const delegation_capability = @import("delegation_capability.zig");
 
+// abi_options.enable_rank gates the four semantic-router exports below (the
+// only path that reaches bge.zig's 33.5MB @embedFile'd weights). The full
+// library keeps them; the `contract-ledger` slim artifact drops them so a
+// ledger-only consumer never carries the transformer. Zig's lazy analysis
+// does the rest: with the exports unreferenced, the weights are never
+// embedded. Witness: tests/contract-slim-ledger-gate.sh (BGEW magic must be
+// absent from the slim artifact and present in the full one).
+const abi_options = @import("abi_options");
+
 const gpa = std.heap.c_allocator;
 pub const ABI_VERSION: u32 = neuron.ABI_VERSION;
 extern fn time(timer: ?*i64) i64;
@@ -1334,11 +1343,23 @@ export fn contract_gate(
     return out.ptr;
 }
 
+// The four rank exports are registered comptime so the slim ledger build can
+// omit them (see abi_options above). Same names, same bodies, same ABI in the
+// full library — only the registration moved.
+comptime {
+    if (abi_options.enable_rank) {
+        @export(&contractRecommendImpl, .{ .name = "contract_recommend" });
+        @export(&contractRecommendCapabilitiesImpl, .{ .name = "contract_recommend_capabilities" });
+        @export(&contractRecommendPlanImpl, .{ .name = "contract_recommend_plan" });
+        @export(&contractWarmRouterImpl, .{ .name = "contract_warm_router" });
+    }
+}
+
 /// The LEARNED router + self-documented usage: given a goal, return JSON
 /// {"binary":..,"example":<the nearest proven command>,"score":..} — the tool to try
 /// plus the exact past command that satisfied a similar goal. NULL when nothing learned.
 /// Caller frees with contract_free.
-export fn contract_recommend(context: [*:0]const u8) ?[*:0]u8 {
+fn contractRecommendImpl(context: [*:0]const u8) callconv(.c) ?[*:0]u8 {
     const j = (contract.recommend(gpa, extEnv(), cstr(context)) catch return null) orelse return null;
     defer gpa.free(j);
     const out = gpa.allocSentinel(u8, j.len, 0) catch return null;
@@ -1348,10 +1369,10 @@ export fn contract_recommend(context: [*:0]const u8) ?[*:0]u8 {
 
 /// Typed capability shortlist: verified learned route plus available cold
 /// descriptors. Cold descriptors never become ledger successes.
-export fn contract_recommend_capabilities(
+fn contractRecommendCapabilitiesImpl(
     context: [*:0]const u8,
     availability_json: [*:0]const u8,
-) ?[*:0]u8 {
+) callconv(.c) ?[*:0]u8 {
     const learned = contract.recommend(gpa, extEnv(), cstr(context)) catch null;
     defer if (learned) |j| gpa.free(j);
     const json = capability_cells.recommendJson(
@@ -1392,11 +1413,11 @@ export fn contract_list_capabilities(filter_json: [*:0]const u8) ?[*:0]u8 {
 
 /// Rank the dynamic FECH catalog and return the conservative v1 plan shape.
 /// Live availability is version-qualified and supplied by Aiko per prompt.
-export fn contract_recommend_plan(
+fn contractRecommendPlanImpl(
     context: [*:0]const u8,
     availability_json: [*:0]const u8,
     limit: u32,
-) ?[*:0]u8 {
+) callconv(.c) ?[*:0]u8 {
     if (cstr(context).len == 0 or limit == 0) return null;
     // Episodic evidence improves ranking, but it is not the capability
     // catalog. A corrupt, oversized, or temporarily unavailable ledger must
@@ -1413,7 +1434,7 @@ export fn contract_recommend_plan(
 
 /// Incrementally warm verified route embeddings inside the resident process.
 /// Returns the number of completed passes.
-export fn contract_warm_router(passes: u32) u32 {
+fn contractWarmRouterImpl(passes: u32) callconv(.c) u32 {
     var completed: u32 = 0;
     const bounded = @min(passes, 64);
     while (completed < bounded) : (completed += 1) {

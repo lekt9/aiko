@@ -9,6 +9,15 @@ pub fn build(b: *std.Build) void {
     });
     const typed_neuron = typed_neuron_dep.module("typed_neuron");
 
+    // abi_options gates the semantic-router exports (the only path to
+    // bge.zig's 33.5MB embedded weights). Full artifacts keep rank; the
+    // contract-ledger slim artifact below drops it. Two Options instances
+    // because an Options step is a generated file a module imports once.
+    const rank_on = b.addOptions();
+    rank_on.addOption(bool, "enable_rank", true);
+    const rank_off = b.addOptions();
+    rank_off.addOption(bool, "enable_rank", false);
+
     // ── libcontract.a ────────────────────────────────────────────────────
     // Static library exposing the C ABI declared in src/c_abi.zig.
     const lib_mod = b.createModule(.{
@@ -19,6 +28,7 @@ pub fn build(b: *std.Build) void {
     });
     lib_mod.addEmbedPath(b.path("data"));
     lib_mod.addImport("typed_neuron", typed_neuron);
+    lib_mod.addOptions("abi_options", rank_on);
     const lib = b.addLibrary(.{
         .name = "contract",
         .linkage = .static,
@@ -39,6 +49,7 @@ pub fn build(b: *std.Build) void {
     });
     dylib_mod.addEmbedPath(b.path("data"));
     dylib_mod.addImport("typed_neuron", typed_neuron);
+    dylib_mod.addOptions("abi_options", rank_on);
     const dylib = b.addLibrary(.{
         .name = "contract",
         .linkage = .dynamic,
@@ -47,6 +58,28 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(dylib);
     const contract_library_step = b.step("contract-library", "Build the full Contract shared library");
     contract_library_step.dependOn(&b.addInstallArtifact(dylib, .{}).step);
+
+    // ── libcontract_ledger.a — the slim decomposition witness ───────────
+    // The identical ABI root minus the rank exports: a ledger-only consumer
+    // links the journal/W6H/outbox surface without carrying a 33.5MB BERT.
+    // Its own step (not the default install) so the default build cost does
+    // not double; tests/contract-slim-ledger-gate.sh builds and asserts it.
+    const ledger_mod = b.createModule(.{
+        .root_source_file = b.path("src/c_abi.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    ledger_mod.addEmbedPath(b.path("data"));
+    ledger_mod.addImport("typed_neuron", typed_neuron);
+    ledger_mod.addOptions("abi_options", rank_off);
+    const ledger_lib = b.addLibrary(.{
+        .name = "contract_ledger",
+        .linkage = .static,
+        .root_module = ledger_mod,
+    });
+    const ledger_step = b.step("ledger-library", "Build the rank-free ledger-only static library");
+    ledger_step.dependOn(&b.addInstallArtifact(ledger_lib, .{}).step);
 
     // Portable deterministic Collective-only ABI. It deliberately excludes
     // the legacy filesystem ledger so cross-platform desktop packages can
@@ -239,6 +272,9 @@ pub fn build(b: *std.Build) void {
         // if the file isn't referenced).
         mod.addEmbedPath(b.path("data"));
         mod.addImport("typed_neuron", typed_neuron);
+        if (std.mem.eql(u8, tf, "src/c_abi.zig")) {
+            mod.addOptions("abi_options", rank_on);
+        }
         if (std.mem.eql(u8, tf, "src/client.zig")) {
             const contract_mod = b.createModule(.{
                 .root_source_file = b.path("src/contract.zig"),

@@ -423,6 +423,7 @@ generated — edit `build.zig`, then run `python3 scripts/gen-gate-inventory.py`
 - `tests/no-duplicate-fde-primitives-gate.sh`
 - `neuron/tests/product-forge-gate.sh`
 - `tests/contract-library-pin-gate.sh`
+- `tests/contract-slim-ledger-gate.sh`
 - `tests/layer-lock-gate.sh`
 - `tests/docs-oss-ready-gate.sh`
 - `tests/docs-quality-gate.sh`

@@ -2,7 +2,7 @@
     .name = .cell,
     .version = "0.1.0",
     .fingerprint = 0xcb8787e26eb089a1,
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{},
     .paths = .{ "src", "build.zig", "build.zig.zon", "SPEC.md", "README.md" },
 }
