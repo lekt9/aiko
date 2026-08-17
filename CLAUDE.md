@@ -65,6 +65,7 @@ The block below is generated from `build.zig` by
 - `tests/no-duplicate-fde-primitives-gate.sh`
 - `neuron/tests/product-forge-gate.sh`
 - `tests/contract-library-pin-gate.sh`
+- `tests/aiko-embedded-contract-gate.sh`
 - `tests/contract-slim-ledger-gate.sh`
 - `tests/layer-lock-gate.sh`
 - `tests/docs-oss-ready-gate.sh`

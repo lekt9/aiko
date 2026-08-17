@@ -132,6 +132,16 @@ build_aiko_only() {
     fi
     (
         cd "$AIKO_ROOT"
+        # Embed the just-built Contract runtime INTO the aiko binary. The
+        # shipped host then extracts and dlopens its own runtime before
+        # consulting ~/.aiko/lib, so a seat can never pair a new host with a
+        # stale helper (the gbear skew). When no dylib was built in this
+        # invocation, the build script's own release-tree discovery applies.
+        if [ -n "${CONTRACT_DYLIB:-}" ] && [ -f "${CONTRACT_DYLIB:-}" ]; then
+            AIKO_EMBED_CONTRACT_LIB="$CONTRACT_DYLIB"
+            export AIKO_EMBED_CONTRACT_LIB
+            echo "Embedding Contract runtime from $CONTRACT_DYLIB"
+        fi
         CARGO_INCREMENTAL=${CARGO_INCREMENTAL:-0} \
             CARGO_TARGET_DIR="$AIKO_TARGET_DIR" \
             cargo build --profile "$AIKO_PROFILE" -p xai-grok-pager-bin --bin aiko $CROSS_ARGS

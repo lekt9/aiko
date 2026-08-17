@@ -151,6 +151,7 @@ pub fn build(b: *std.Build) void {
         "tests/no-duplicate-fde-primitives-gate.sh",
         "neuron/tests/product-forge-gate.sh",
         "tests/contract-library-pin-gate.sh",
+        "tests/aiko-embedded-contract-gate.sh",
         "tests/contract-slim-ledger-gate.sh",
         "tests/layer-lock-gate.sh",
         // Doc gates are witnesses too: prose that contradicts the tree is a

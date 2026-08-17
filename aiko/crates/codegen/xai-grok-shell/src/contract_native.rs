@@ -60,6 +60,16 @@ use neuron_bridge::{
     skill_node_decision, supported_contract_abi,
 };
 
+/// The Contract runtime the packaging pipeline built THIS binary against,
+/// carried inside the binary itself. NativeContract extracts it to a
+/// content-addressed path and dlopens it before consulting any installed
+/// helper, so a seat can never pair a new host with a stale ~/.aiko/lib
+/// library — the exact skew that stranded gbear on an old ABI with no Zig
+/// toolchain to rebuild from. Debug builds without the embed keep today's
+/// discovery order unchanged.
+#[cfg(bundle_contract)]
+static EMBEDDED_CONTRACT_LIBRARY: &[u8] = include_bytes!(env!("AIKO_CONTRACT_EMBED_FILE"));
+
 const LOCAL_COMMAND_TIMEOUT: Duration = Duration::from_millis(800);
 const MAX_CONTEXT_BYTES: usize = 14_000;
 const CONTEXT_DISABLED_ENV: &str = "AIKO_MACHINE_CONTEXT";
@@ -234,6 +244,32 @@ impl NativeContract {
         }
     }
 
+    /// Extract the embedded Contract runtime to a content-addressed path and
+    /// return it. Idempotent: the digest names the directory, so a matching
+    /// extraction is reused and a partial write can never be dlopened (the
+    /// bytes land under a temp name and are renamed into place).
+    #[cfg(bundle_contract)]
+    fn embedded_library() -> Option<PathBuf> {
+        let digest = format!("{:x}", Sha256::digest(EMBEDDED_CONTRACT_LIBRARY));
+        let dir = dirs::home_dir()?
+            .join(".aiko/lib/embedded")
+            .join(&digest[..16]);
+        let path = dir.join(env!("AIKO_CONTRACT_EMBED_NAME"));
+        if path.is_file() {
+            return Some(path);
+        }
+        std::fs::create_dir_all(&dir).ok()?;
+        let staging = dir.join(format!(".extract-{}", std::process::id()));
+        std::fs::write(&staging, EMBEDDED_CONTRACT_LIBRARY).ok()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755));
+        }
+        std::fs::rename(&staging, &path).ok()?;
+        Some(path)
+    }
+
     fn candidates() -> Vec<PathBuf> {
         // A pin is a pin. If the operator named a library and it cannot
         // load, fall-through to ~/.aiko/lib or a random zig-out is how
@@ -243,6 +279,12 @@ impl NativeContract {
         }
 
         let mut paths = Vec::new();
+        // The runtime this binary was built against outranks every installed
+        // copy: it is the only candidate that cannot skew.
+        #[cfg(bundle_contract)]
+        if let Some(embedded) = Self::embedded_library() {
+            paths.push(embedded);
+        }
         if let Ok(executable) = std::env::current_exe()
             && let Some(bin_dir) = executable.parent()
         {
