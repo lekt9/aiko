@@ -724,7 +724,12 @@ impl TelegramBot {
     async fn begin_contract_task(&self, goal: &str, evidence_key: &str) -> Option<ContractTask> {
         let evidence_path = evidence_dir().join(format!("{evidence_key}.json"));
         let check = format!("test -s {}", evidence_path.to_string_lossy());
-        let output = Command::new("contract")
+        let contract_bin = std::env::var_os("AIKO_CONTRACT_BIN")
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("bin").join("contract")))
+            .filter(|p| p.is_file())
+            .unwrap_or_else(|| std::path::PathBuf::from("contract"));
+        let output = Command::new(&contract_bin)
             .args(["task", "begin", goal, "--check", &check])
             .output()
             .await
@@ -738,7 +743,12 @@ impl TelegramBot {
     }
 
     async fn verify_contract_task(&self, id: &str) -> bool {
-        Command::new("contract")
+        let contract_bin = std::env::var_os("AIKO_CONTRACT_BIN")
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("bin").join("contract")))
+            .filter(|p| p.is_file())
+            .unwrap_or_else(|| std::path::PathBuf::from("contract"));
+        Command::new(&contract_bin)
             .args(["task", "verify", id])
             .output()
             .await
