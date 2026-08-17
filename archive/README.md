@@ -9,6 +9,7 @@ an inventory, or an authority — for those, start at
 |---|---|
 | `plans/PLAN.md` | pre-monorepo on-chain commons plan |
 | `plans/PLAN-aiko-convergence.md` | the T1–T4 convergence plan — all four landed; kept for the reasoning |
+| `plans/aiko-plan*.md`, `plans/aiko-newplan.md`, `plans/aiko-contract-native-skills-plan.md` | the `aiko/` host's working plans (receptor mesh, PHOTON/POSITRON, native skills) — landed or abandoned; the witnesses they scheduled either live on in `aiko/scripts/` or were deleted with them |
 | `smithers-tickets/` | the `aiko-flow/.smithers/tickets` work-ticket history (the path convention is still live; these are the closed artifacts) |
 | `aiko-flow-audit/` | point-in-time audit reports that drove past burndowns |
 
