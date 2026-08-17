@@ -24,6 +24,10 @@ Internal mirror (not the public clone URL): `gitea:Unbrowse/commons.git`
 
 Spelling: **Aiko**. Meeting notes that say “Ico” are a transcription artifact.
 
+## Single source of truth
+
+**Contract (`contract/libcontract`) is the SSOT.** All durable work — Aiko turns, Telegram occurrences, Smithers runs, evidence — lives in its ledger (`contracts.jsonl` via `libcontract.dylib`). The Telegram offset file (`~/.aiko/telegram/offset`), `~/.aiko/native/api.json` token, Smithers `/tmp/smithers-gateway/*.json` runtime file, and `docs/graph-engineering/*.walk.json` execution plans are **ephemeral cursors/projections**, never second ledgers. See `DOCTRINE.md` + `contract-hook-covenant-gate.sh` `forbidden_ledgers == ["HookOccurrence","ContextEnvelope"]`.
+
 ## Layers (one monorepo)
 
 | Path | What it is | In the Zig root build? |

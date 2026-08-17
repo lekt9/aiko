@@ -1,6 +1,12 @@
 //! Long-running daemon: polls Telegram for updates, dispatches to the bot,
 //! and survives transient failures.
 //!
+//! SSOT is the Contract ledger (contract/libcontract) — the Telegram offset
+//! file is an ephemeral cursor, NOT a ledger. The only durable fact is the
+//! Contract task + evidence under `contract task begin/verify`; the offset
+//! merely avoids redundant getUpdates after a restart. Never promote the
+//! offset, message text, or local history into a second durable store.
+//!
 //! Self-updating contract: the Telegram offset (next update_id) is persisted to
 //! ~/.aiko/telegram/offset — the same file watcher.sh uses — so a daemon
 //! restart or a native leader rotation (new ~/.aiko/native/api.json pid/token)
