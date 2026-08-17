@@ -2,7 +2,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-AIKO="${AIKO_BIN:-$HOME/bin/aiko}"
+AIKO="${AIKO_BIN:-$HOME/.local/bin/aiko}"
 REPORT="$ROOT/docs/AIKO-CAPABILITY-VERIFICATION.md"
 CONTRACT="$ROOT/../contract/scripts/contract"
 RESULTS=()

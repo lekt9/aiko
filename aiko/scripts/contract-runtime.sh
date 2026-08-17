@@ -47,7 +47,7 @@ Environment:
                       Cargo target directory (default: ./target)
   CARGO_INCREMENTAL   Cargo incremental mode (default: 0 for reliable packages)
   AIKO_HOME           Runtime home (default: ~/.aiko)
-  AIKO_BIN_DIR        Installed binary directory (default: ~/bin)
+  AIKO_BIN_DIR        Installed binary directory (default: ~/.local/bin)
   AIKO_CROSS_TARGET   Rust target triple for cross-compilation (e.g. aarch64-unknown-linux-gnu)
   AIKO_ZIG_TARGET     Zig target for cross-compilation (e.g. aarch64-linux-gnu)
   AIKO_PLATFORM       Platform name for cross-compilation (e.g. linux-aarch64)

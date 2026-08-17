@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "product-forge.crud-spec/v1",
+  "title": "ProductForgeCrudSpec",
+  "description": "CRUD spec derived from archetype entities.",
+  "type": "object",
+  "required": ["schema", "project", "archetype", "entities"],
+  "properties": {
+    "schema": {"type": "string", "const": "product-forge.crud-spec/v1"},
+    "project": {"type": "string"},
+    "archetype": {"type": "string"},
+    "entities": {"type": "array", "items": {"type": "object"}}
+  }
+}

@@ -61,6 +61,8 @@ zig build gate            # 18 distinct shell witnesses scheduled by root build.
 - `tests/graph-engineering-gate.sh`
 - `tests/cross-journal-retention-gate.sh`
 - `tests/no-duplicate-fde-primitives-gate.sh`
+- `neuron/tests/product-forge-gate.sh`
+- `tests/contract-library-pin-gate.sh`
 <!-- root-gate-inventory:end -->
 
 **Gates are the acceptance criterion, not the unit tests.** Each gate drives the
@@ -276,6 +278,39 @@ also what a ladder that messaged the wrong people six times produces.
 - **Test with an interface ATTACHED.** Both defects above passed on a fresh
   substrate and failed on a real one. A gate over an empty node does not
   exercise the topology, which is where classification lives.
+
+## Adding a native limb (the recipe)
+
+To turn a business capability into a gated, admitted, deterministic limb —
+see `docs/ADDING-A-LIMB.md` for the full checklist and `neuron/limbs/product-forge`
+as the worked example. In short:
+
+1. **Create the package** — `neuron/limbs/<name>/` with `neuron.json` (Caps,
+   `write_prefix`, `budget`), `SKILL.md` (inside the digest — `expect_contains`
+   must be falsifiable, not a string a do-nothing handler could echo), `schemas/`,
+   and `neurons/<neuron>.py` (pure: stdin `Stimulus` → stdout `Decision`/`Rejection`).
+   Import via `sys.path.insert(..., "../../shared")` from `_neuron` — `..` (one dot)
+   is wrong; two levels up from `neurons/` is `limbs/shared`. Checked by admission,
+   invisible on macOS if you only test the gate with the interface attached.
+2. **Make it bounded, gap-blind, deterministic** — the classifier/catalogue never
+   reads `expect_contains` (authored-gap bound) or a wall clock (`now_ms` is
+   inside the firing identity → `FiringMismatch` on replay; use `0`). Same pinned
+   read bytes → byte-identical effects (`sort_keys=True`, no `set`/`hash()` —
+   CPython hash randomisation is the realistic break). Cite `sources: [<read id>]`
+   or staleness is blind to the dependency (`redrive` needs `produced_by` +
+   `evidence[].sources`).
+3. **Wire the gate** — `neuron/tests/<name>-gate.sh` driving the public CLI
+   from an empty dir, asserting against durable state, never stdout resemblance.
+   Prove falsifiability: removing the feature must make the gate go red. Add it
+   to `build.zig`'s `gate` step list (the inventory above is auto-checked).
+4. **Evidence over stdout** — gates read `substrate.log` artifacts by id, not
+   aggregated counts — six messages is also what messaging the wrong people six
+   times produces.
+
+Reference: `docs/ADDING-A-LIMB.md`. Prior art borrowed-and-rebuilt:
+`nextlevelbuilder/ui-ux-pro-max (318K)`, `mattpocock/to-prd (364K)`,
+`anthropics/frontend-design (783K)` — heuristics copied into bounded code, not
+installed as deps.
 
 ## House style
 

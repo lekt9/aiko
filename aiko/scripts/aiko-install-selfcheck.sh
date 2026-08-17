@@ -28,7 +28,7 @@ if [ "${AIKO_SKIP_SELFCHECK:-0}" = "1" ]; then
 fi
 
 AIKO_HOME=${AIKO_HOME:-"$HOME/.aiko"}
-AIKO_BIN_DIR=${AIKO_BIN_DIR:-"$HOME/bin"}
+AIKO_BIN_DIR=${AIKO_BIN_DIR:-"$HOME/.local/bin"}
 AIKO=${AIKO:-"$AIKO_BIN_DIR/aiko"}
 POST_DIR="$AIKO_HOME/postmortem"
 LEDGER="$POST_DIR/install-selfcheck.jsonl"

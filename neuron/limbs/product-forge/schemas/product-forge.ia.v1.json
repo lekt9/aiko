@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "product-forge.ia/v1",
+  "title": "ProductForgeIA",
+  "description": "Information architecture derived from business requirements.",
+  "type": "object",
+  "required": ["schema", "project", "archetype", "nav", "primary_surface"],
+  "properties": {
+    "schema": {"type": "string", "const": "product-forge.ia/v1"},
+    "project": {"type": "string"},
+    "archetype": {"type": "string"},
+    "nav": {"type": "array", "items": {"type": "object"}},
+    "primary_surface": {"type": "string"},
+    "auth": {"type": "object"}
+  }
+}

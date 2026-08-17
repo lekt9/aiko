@@ -220,11 +220,29 @@ impl NativeContract {
         }
     }
 
-    fn candidates() -> Vec<PathBuf> {
-        let mut paths = Vec::new();
-        if let Some(path) = std::env::var_os("AIKO_CONTRACT_LIBRARY") {
-            paths.push(path.into());
+    fn explicit_library() -> Option<PathBuf> {
+        std::env::var_os("AIKO_CONTRACT_LIBRARY").map(PathBuf::from)
+    }
+
+    fn dev_contract_lib_allowed() -> bool {
+        // Release seats must not silently pick a sibling checkout's zig-out.
+        // Debug `cargo test` / `cargo run` still may; that is how the tree
+        // develops without an install step.
+        match std::env::var("AIKO_ALLOW_DEV_CONTRACT_LIB") {
+            Ok(value) => matches!(value.as_str(), "1" | "true" | "yes"),
+            Err(_) => cfg!(debug_assertions),
         }
+    }
+
+    fn candidates() -> Vec<PathBuf> {
+        // A pin is a pin. If the operator named a library and it cannot
+        // load, fall-through to ~/.aiko/lib or a random zig-out is how
+        // 0.2.118 hosts started talking to August 15 dylibs.
+        if let Some(path) = Self::explicit_library() {
+            return vec![path];
+        }
+
+        let mut paths = Vec::new();
         if let Ok(executable) = std::env::current_exe()
             && let Some(bin_dir) = executable.parent()
         {
@@ -239,28 +257,29 @@ impl NativeContract {
                 paths.push(home.join(".aiko/lib").join(name));
             }
         }
-        for name in Self::library_names() {
-            paths.push(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../../../contract/libcontract/zig-out/lib")
-                    .join(name),
-            );
-        }
-        // contract-core fallback (~/Unbrowse/contract-core and sibling ../contract-core)
-        if let Some(home) = dirs::home_dir() {
+        if Self::dev_contract_lib_allowed() {
             for name in Self::library_names() {
                 paths.push(
-                    home.join("Unbrowse/contract-core/libcontract/zig-out/lib")
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../../../contract/libcontract/zig-out/lib")
                         .join(name),
                 );
             }
-        }
-        for name in Self::library_names() {
-            paths.push(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../../../contract-core/libcontract/zig-out/lib")
-                    .join(name),
-            );
+            if let Some(home) = dirs::home_dir() {
+                for name in Self::library_names() {
+                    paths.push(
+                        home.join("Unbrowse/contract-core/libcontract/zig-out/lib")
+                            .join(name),
+                    );
+                }
+            }
+            for name in Self::library_names() {
+                paths.push(
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../../../contract-core/libcontract/zig-out/lib")
+                        .join(name),
+                );
+            }
         }
         paths
     }
@@ -269,7 +288,7 @@ impl NativeContract {
         for path in Self::candidates() {
             // SAFETY: every symbol is copied as a function pointer while the
             // owning Library is retained for the process lifetime.
-            let Ok(library) = (unsafe { libloading::Library::new(path) }) else {
+            let Ok(library) = (unsafe { libloading::Library::new(&path) }) else {
                 continue;
             };
             let Ok(abi_version) =
@@ -281,6 +300,11 @@ impl NativeContract {
             if !supported_contract_abi(library_abi) {
                 continue;
             }
+            tracing::info!(
+                path = %path.display(),
+                library_abi,
+                "loaded native Contract library"
+            );
             // Speak the highest ABI both sides know. A library ahead of this
             // build keeps every feature this build can address instead of
             // disabling Contract entirely.
@@ -8212,6 +8236,20 @@ pub async fn ground_turn_with_facts_and_prepared(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_contract_library_is_the_only_candidate() {
+        let pin = "/tmp/aiko-test-missing-libcontract.dylib";
+        let previous = std::env::var_os("AIKO_CONTRACT_LIBRARY");
+        // SAFETY: process-global env, but this pin must not fall through.
+        unsafe { std::env::set_var("AIKO_CONTRACT_LIBRARY", pin) };
+        let paths = NativeContract::candidates();
+        match previous {
+            Some(value) => unsafe { std::env::set_var("AIKO_CONTRACT_LIBRARY", value) },
+            None => unsafe { std::env::remove_var("AIKO_CONTRACT_LIBRARY") },
+        }
+        assert_eq!(paths, vec![std::path::PathBuf::from(pin)]);
+    }
 
     #[test]
     fn telegram_transport_metadata_preserves_lineage_and_conversation_identity() {

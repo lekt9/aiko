@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "product-forge.request/v1",
+  "title": "ProductForgeRequest",
+  "description": "Business requirements brief for the product-forge limb — free-form business description plus project slug.",
+  "type": "object",
+  "required": ["brief", "project"],
+  "properties": {
+    "brief": {"type": "string", "minLength": 10, "description": "Free-form business requirements"},
+    "project": {"type": "string", "minLength": 1, "description": "Project slug"}
+  },
+  "additionalProperties": false
+}

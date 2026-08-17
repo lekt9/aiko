@@ -149,6 +149,8 @@ pub fn build(b: *std.Build) void {
         "tests/graph-engineering-gate.sh",
         "tests/cross-journal-retention-gate.sh",
         "tests/no-duplicate-fde-primitives-gate.sh",
+        "neuron/tests/product-forge-gate.sh",
+        "tests/contract-library-pin-gate.sh",
         // self-check is already covered via install — skip here to avoid a
         // duplicate run inside gate (the dependency through install is enough).
     }) |witness| {

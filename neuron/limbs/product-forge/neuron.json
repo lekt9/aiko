@@ -1,0 +1,39 @@
+{
+  "schema": "typed-neuron.limb-manifest/v1",
+  "package": "typed-neuron/product-forge",
+  "version": "0.1.0",
+  "description": "Business-requirements to product forge: booking, crm, inventory archetypes become PRD, IA, design tokens, and CRUD spec in one deterministic firing — no product or UX spec required.",
+  "neurons": [
+    {
+      "id": "forge",
+      "accepts": ["product-forge.request/v1"],
+      "emits": ["product-forge.prd/v1", "product-forge.ia/v1", "product-forge.design-tokens/v1", "product-forge.crud-spec/v1"],
+      "argv": ["python3", "neurons/forge.py"],
+      "caps_request": {
+        "allow_write": true,
+        "write_prefix": "artifact/product-forge/",
+        "allow_send": false,
+        "allow_spawn": false,
+        "budget": {
+          "max_effects": 8,
+          "max_writes": 6,
+          "max_messages": 0,
+          "max_spawns": 0,
+          "max_bytes": 131072,
+          "max_depth": 1,
+          "max_turns": 4
+        }
+      }
+    }
+  ],
+  "budgets": {
+    "deadline_ms_per_firing": 30000
+  },
+  "schemas": {
+    "request": "product-forge.request/v1",
+    "prd": "product-forge.prd/v1",
+    "ia": "product-forge.ia/v1",
+    "tokens": "product-forge.design-tokens/v1",
+    "crud": "product-forge.crud-spec/v1"
+  }
+}

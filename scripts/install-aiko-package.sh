@@ -328,7 +328,12 @@ if [ "$(uname -s)" = "Darwin" ] && [ "${AIKO_SKIP_BACKGROUND_WORKER:-0}" != 1 ];
     trap - EXIT HUP INT TERM
     DOMAIN="gui/$(id -u)"
     launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
-    launchctl bootstrap "$DOMAIN" "$PLIST"
-    launchctl kickstart -k "$DOMAIN/$LABEL"
-    echo "Installed and started Contract background worker: $LABEL"
+    # SSH / non-Aqua sessions cannot always talk to gui/<uid> (bootstrap
+    # error 5). The stack is already installed; the worker is optional.
+    if launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null \
+        && launchctl kickstart -k "$DOMAIN/$LABEL" 2>/dev/null; then
+        echo "Installed and started Contract background worker: $LABEL"
+    else
+        echo "Contract worker plist written to $PLIST (launchd bootstrap skipped: no GUI session)" >&2
+    fi
 fi

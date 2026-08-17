@@ -72,7 +72,7 @@ if [ "$ACTUAL_CONTRACT_CLI" != "$EXPECTED_CONTRACT_CLI" ]; then
 fi
 
 AIKO_HOME=${AIKO_HOME:-"$HOME/.aiko"}
-AIKO_BIN_DIR=${AIKO_BIN_DIR:-"$HOME/bin"}
+AIKO_BIN_DIR=${AIKO_BIN_DIR:-"$HOME/.local/bin"}
 AIKO_LIB_DIR="$AIKO_HOME/lib"
 mkdir -p "$AIKO_BIN_DIR" "$AIKO_LIB_DIR"
 mkdir -p "$AIKO_HOME/skills" "$AIKO_HOME/sdk/registry/bin"
@@ -182,7 +182,7 @@ SKIP_WORKER=0
 if [ "${AIKO_SKIP_WORKER:-0}" = "1" ]; then
     SKIP_WORKER=1
     echo "Skipped Contract worker registration (AIKO_SKIP_WORKER=1)"
-elif [ "$AIKO_BIN_DIR" != "$HOME/bin" ] || [ "$AIKO_HOME" != "$HOME/.aiko" ]; then
+elif [ "$AIKO_BIN_DIR" != "$HOME/.local/bin" ] || [ "$AIKO_HOME" != "$HOME/.aiko" ]; then
     SKIP_WORKER=1
     echo "Skipped Contract worker registration: non-default prefix" \
          "(bin=$AIKO_BIN_DIR home=$AIKO_HOME) would hijack the machine-global agent." >&2

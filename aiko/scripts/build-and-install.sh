@@ -25,7 +25,7 @@ echo "    building from commit $COMMIT"
 "$AIKO_ROOT/scripts/contract-runtime.sh" install
 
 echo "==> verify installed binary"
-VERSION_OUT=$("$HOME/bin/aiko" --version 2>&1)
+VERSION_OUT=$("${AIKO_BIN_DIR:-$HOME/.local/bin}/aiko" --version 2>&1)
 echo "    aiko --version: $VERSION_OUT"
 echo "    repo commit:    $COMMIT"
 printf '%s\n' "$VERSION_OUT" | grep -q "$COMMIT" || {
