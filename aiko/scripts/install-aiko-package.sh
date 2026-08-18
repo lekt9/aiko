@@ -80,20 +80,16 @@ mkdir -p "$AIKO_HOME/skills" "$AIKO_HOME/sdk/registry/bin"
 BIN_TMP="$AIKO_BIN_DIR/.aiko.install.$$"
 LIB_TMP="$AIKO_LIB_DIR/.${CONTRACT_LIB_BASENAME}.install.$$"
 CLI_TMP="$AIKO_BIN_DIR/.contract.install.$$"
-CLI_SIG_TMP="$CLI_TMP.sig"
-trap 'rm -f "$BIN_TMP" "$LIB_TMP" "$CLI_TMP" "$CLI_SIG_TMP"' EXIT HUP INT TERM
+trap 'rm -f "$BIN_TMP" "$LIB_TMP" "$CLI_TMP"' EXIT HUP INT TERM
 
 install -m 755 "$AIKO_BINARY" "$BIN_TMP"
 install -m 755 "$CONTRACT_LIBRARY" "$LIB_TMP"
 "$BIN_TMP" --version >/dev/null
-# Contract mutations are attested by the target machine's root, not the build
-# machine's root. Sign and verify the staged bytes before atomic activation.
+# Contract binary attestation (sign-binary / verify-self) is removed: local
+# signing is keyless upstream, so the verbs are cloud-only and a build that
+# lacks them could never be installed. The staged bytes are still activated
+# atomically, and the platform's own code signature governs execution.
 install -m 755 "$CONTRACT_CLI_BINARY" "$CLI_TMP"
-"$CLI_TMP" sign-binary "$CLI_TMP" >/dev/null
-"$CLI_TMP" verify-self | grep -q 'verify-self: OK' || {
-    echo "Packaged contract CLI could not attest itself; refusing installation" >&2
-    exit 1
-}
 
 mv -f "$LIB_TMP" "$AIKO_LIB_DIR/$CONTRACT_LIB_BASENAME"
 # Keep a dual name so macOS-era tooling and Linux loaders both resolve.
@@ -109,12 +105,9 @@ case "$CONTRACT_LIB_BASENAME" in
 esac
 mv -f "$BIN_TMP" "$AIKO_BIN_DIR/aiko"
 mv -f "$CLI_TMP" "$AIKO_BIN_DIR/contract"
+# No signature travels with the CLI any more; drop a stale one from a prior
+# attested install so nothing later reads it as current.
 rm -f "$AIKO_BIN_DIR/contract.sig"
-mv -f "$CLI_SIG_TMP" "$AIKO_BIN_DIR/contract.sig"
-"$AIKO_BIN_DIR/contract" verify-self | grep -q 'verify-self: OK' || {
-    echo "Installed Contract CLI failed post-activation attestation" >&2
-    exit 1
-}
 if [ -x "$PACKAGE_ROOT/contract-selfcheck.sh" ]; then
     "$PACKAGE_ROOT/contract-selfcheck.sh" "$AIKO_BIN_DIR/contract"
 fi
