@@ -8,4 +8,6 @@
 
 **Secondary flows:** Pre-shift cascade board (5:00→5:30→call→blue→NTS ladder via fanout), LD panel (`$60` vs last-minute weekly email verification), paper-master `streak_table` view.
 
+**Stack:** Instrument Sans + Newsreader, hallmark chrome, dense roster sheet with frozen panes and day columns — ops workbench, not landing.
+
 **Reuse:** `cell/patterns/dashboard/render.cell.yaml` for sheet render; `cell/patterns/hoysan-draft` for the deterministic engine; `neuron/limbs/telethon` ladder for chase.

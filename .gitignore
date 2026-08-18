@@ -88,3 +88,4 @@ aiko/test.md
 # smithers local db
 smithers.db
 smithers.db-*
+.wrangler/
