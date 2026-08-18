@@ -1,13 +1,13 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 
-type Msg = { who: "user" | "aiko"; text: string; code?: string };
+type Msg = { who: "user" | "aiko"; text: string; code?: string; goal?: string };
 
 // Aiko lives in the editor — n8n's assistant slot, backed by what is real here:
 // the firings DB, the discovered cells, and inert-until-admitted proposals.
 // The chat does NOT run a model; drafting is the engine's own `run.py draft`
 // verb (gated by cell/tests/gates/draft-verb.sh). Agent turns stay at the edge.
-export default function AikoPanel({ activeCell, onClose }: { activeCell: string; onClose: () => void }) {
+export default function AikoPanel({ activeCell, onClose, onCreated }: { activeCell: string; onClose: () => void; onCreated?: (rel: string) => void }) {
   const [firings, setFirings] = useState<any[]>([]);
   const [msgs, setMsgs] = useState<Msg[]>([{
     who: "aiko",
@@ -39,6 +39,7 @@ export default function AikoPanel({ activeCell, onClose }: { activeCell: string;
           who: "aiko",
           text: `Engine draft "${p.name}" · proposal ${String(p.proposal_digest).slice(0, 8)} — ${p.admission}. The stub refuses to run until implemented, so nothing is retained on compilation alone.`,
           code: p.files?.[`${p.name}.cell.yaml`],
+          goal: text,
         }]);
       } else {
         setMsgs(m => [...m, { who: "aiko", text: `The engine refused this draft: ${j.error}` }]);
@@ -75,6 +76,18 @@ export default function AikoPanel({ activeCell, onClose }: { activeCell: string;
           <div key={i} className={`nx-chatmsg ${m.who === "user" ? "nx-chatmsg--user" : "nx-chatmsg--aiko"}`}>
             {m.text}
             {m.code && <pre>{m.code}</pre>}
+            {m.goal && (
+              <button className="nx-btn nx-btn--primary" style={{ marginTop: 8 }} onClick={async () => {
+                const r = await fetch("/api/draft", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ goal: m.goal, kind: "python", write: true }) });
+                const j = await r.json();
+                if (j.ok && j.written) {
+                  setMsgs(ms => [...ms, { who: "aiko", text: `Created ${j.written} (inert). Opening it — implement the neuron, then build + check to admit.` }]);
+                  onCreated?.(j.written);
+                } else {
+                  setMsgs(ms => [...ms, { who: "aiko", text: `The engine refused to write: ${j.error}` }]);
+                }
+              }}>Create workflow</button>
+            )}
           </div>
         ))}
       </div>

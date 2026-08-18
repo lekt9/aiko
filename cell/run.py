@@ -638,12 +638,15 @@ def cmd_run(root: str, inputs_path: str | None, out: str | None) -> int:
             _validate_port_values(data, result, "outputs", path)
             for k, v in result.items():
                 _atomic_json(out_base / f"{k}.json", v)
-            _atomic_json(out_base / "manifest.json", _manifest_entry(path, data, inputs, result, []))
+            manifest = _manifest_entry(path, data, inputs, result, [])
+            _atomic_json(out_base / "manifest.json", manifest)
+            _journal_firing(manifest, path)
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
             result = run_composite(path, inputs, out_base)
             for k, v in result.items():
                 _atomic_json(out_base / f"{k}.json", v)
+            _journal_firing(json.loads((out_base / "manifest.json").read_text(encoding="utf-8")), path)
             print(json.dumps(result, ensure_ascii=False, indent=2))
     except Exception as e:
         import traceback
@@ -678,6 +681,134 @@ def cmd_check(root: str, inputs_path: str | None) -> int:
     finally:
         shutil.rmtree(first, ignore_errors=True)
         shutil.rmtree(second, ignore_errors=True)
+def _cell_root() -> pathlib.Path:
+    return pathlib.Path(__file__).resolve().parent
+
+def _journal_firing(manifest: dict, cell_path: pathlib.Path) -> None:
+    """Append-only firing index under out/ (gitignored). Identity
+    (produced_by) stays deterministic; timing lives on the journal record,
+    outside identity. No swallow: a firing the journal cannot index is a
+    failed firing, matching the manifest-write doctrine above."""
+    import time
+    journal = _cell_root() / "out" / "firings.jsonl"
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    rec = {
+        "id": manifest.get("produced_by"),
+        "cell": str(cell_path),
+        "ports": sorted((manifest.get("outputs") or {}).keys()),
+        "manifest_digest": manifest.get("digest"),
+        "committed_at_ms": int(time.time() * 1000),
+    }
+    with journal.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, sort_keys=True, ensure_ascii=False) + "\n")
+
+def cmd_firings(limit: int) -> int:
+    import datetime
+    journal = _cell_root() / "out" / "firings.jsonl"
+    latest: dict[str, dict] = {}
+    if journal.exists():
+        for line in journal.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("id"):
+                latest[rec["id"]] = rec  # dedupe by identity, keep the newest record
+    rows = sorted(latest.values(), key=lambda r: r.get("committed_at_ms", 0), reverse=True)[:limit]
+    for r in rows:
+        ms = r.get("committed_at_ms")
+        if ms is not None:
+            r["created_at"] = datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc).isoformat()
+    print(json.dumps({"firings": rows}, sort_keys=True, ensure_ascii=False, indent=2))
+    return 0
+
+def _resolve_in_root(rel: str) -> pathlib.Path:
+    root = _cell_root()
+    p = pathlib.Path(rel)
+    p = (p if p.is_absolute() else root / p).resolve()
+    if p != root and root not in p.parents:
+        raise ValueError(f"path {rel!r} escapes the cell root")
+    return p
+
+def cmd_save(rel: str) -> int:
+    """Validator-bound write: the engine refuses to persist a cell it would
+    refuse to fire. Content arrives on stdin; the write is atomic."""
+    try:
+        target = _resolve_in_root(rel)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if not target.name.endswith(".cell.yaml"):
+        print("error: save target must end with .cell.yaml", file=sys.stderr)
+        return 1
+    content = sys.stdin.read()
+    if not content.strip():
+        print("error: refusing to save empty content", file=sys.stderr)
+        return 1
+    if yaml is None:
+        print("error: pyyaml required: pip install pyyaml", file=sys.stderr)
+        return 1
+    try:
+        data = yaml.safe_load(content)
+    except Exception as exc:
+        print(f"error: yaml parse failed: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(data, dict):
+        print("error: top-level must be a mapping", file=sys.stderr)
+        return 1
+    errs = validate_cell(data, str(target))
+    if not errs and "organelles" in (data.get("spec") or {}):
+        errs = validate_graph(target, data)
+    if errs:
+        for e in errs:
+            print(f"error: {e}", file=sys.stderr)
+        return 1
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
+    print(json.dumps({"path": str(target.relative_to(_cell_root())), "digest": cell_digest(data)}, sort_keys=True))
+    return 0
+
+def cmd_remove(rel: str) -> int:
+    """A cell referenced by another cell's organelles may not be removed —
+    deleting an organelle out from under a composite is the composability
+    break this verb exists to refuse."""
+    try:
+        target = _resolve_in_root(rel)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if not target.name.endswith(".cell.yaml"):
+        print("error: remove target must end with .cell.yaml", file=sys.stderr)
+        return 1
+    if not target.exists():
+        print(f"error: no such cell: {rel}", file=sys.stderr)
+        return 1
+    root = _cell_root()
+    skip = {"node_modules", ".git", "out", ".cell-cas", "web", "zig-out"}
+    referrers: list[str] = []
+    for p in root.rglob("*.cell.yaml"):
+        if any(part in skip for part in p.parts) or p.resolve() == target:
+            continue
+        try:
+            data = load_cell(p)
+        except Exception:
+            continue
+        for org in ((data.get("spec") or {}).get("organelles") or []):
+            ref = org.get("cell") if isinstance(org, dict) else None
+            if isinstance(ref, str) and (p.parent / ref).resolve() == target:
+                referrers.append(str(p.relative_to(root)))
+    if referrers:
+        print(f"error: refusing to remove {rel!r} — referenced by: {', '.join(sorted(set(referrers)))}", file=sys.stderr)
+        return 1
+    target.unlink()
+    print(json.dumps({"removed": str(target.relative_to(root))}, sort_keys=True))
+    return 0
+
 DRAFT_KINDS = ("python", "exec", "http")
 
 def _draft_slug(goal: str) -> str:
@@ -813,6 +944,12 @@ def main() -> None:
     p_draft.add_argument("--kind", default="python")
     p_draft.add_argument("--name", default=None)
     p_draft.add_argument("--write", default=None)
+    p_firings = sub.add_parser("firings")
+    p_firings.add_argument("--limit", type=int, default=50)
+    p_save = sub.add_parser("save")
+    p_save.add_argument("path")
+    p_remove = sub.add_parser("remove")
+    p_remove.add_argument("path")
     args = ap.parse_args()
     if args.cmd == "build":
         raise SystemExit(cmd_build(args.root))
@@ -822,6 +959,12 @@ def main() -> None:
         raise SystemExit(cmd_check(args.root, args.inputs))
     elif args.cmd == "draft":
         raise SystemExit(cmd_draft(args.goal, args.kind, args.name, args.write))
+    elif args.cmd == "firings":
+        raise SystemExit(cmd_firings(args.limit))
+    elif args.cmd == "save":
+        raise SystemExit(cmd_save(args.path))
+    elif args.cmd == "remove":
+        raise SystemExit(cmd_remove(args.path))
     else:
         ap.print_help()
         raise SystemExit(1)

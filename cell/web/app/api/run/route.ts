@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
-import { getDb } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 function cellRoot(){ return path.resolve(process.cwd(),".."); }
@@ -52,11 +51,8 @@ export async function POST(req: Request) {
     }
   } catch {}
 
-  // record the firing so Executions reflects every run, not only the seed
-  if (result.code === 0 && manifest?.produced_by) {
-    try { getDb().recordFiring(manifest.produced_by, cellPath, manifest, outputs); } catch {}
-  }
-
+  // The engine journals every firing itself now (run.py _journal_firing) —
+  // this route no longer keeps a second, web-only ledger.
   return NextResponse.json({
     cell: cellPath, outDir: outDir.replace(root+"/",""),
     code: result.code,

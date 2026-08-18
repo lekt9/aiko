@@ -13,6 +13,7 @@ export async function POST(req: Request) {
   const kind = String(body.kind ?? "python");
   const args = ["run.py", "draft", goal, "--kind", kind];
   if (body.name) args.push("--name", String(body.name));
+  if (body.write) args.push("--write", "drafts");   // materialize inert under cell/drafts/
   const root = cellRoot();
   const result: any = await new Promise((resolve) => {
     const p = spawn("python3", args, { cwd: root });
@@ -27,7 +28,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, code: result.code, error: String(result.stderr).slice(0, 2000) });
   }
   try {
-    return NextResponse.json({ ok: true, proposal: JSON.parse(result.stdout) });
+    const proposal = JSON.parse(result.stdout);
+    return NextResponse.json({ ok: true, proposal, written: body.write ? `drafts/${proposal.name}.cell.yaml` : null });
   } catch {
     return NextResponse.json({ ok: false, code: 0, error: "unparseable engine output" });
   }

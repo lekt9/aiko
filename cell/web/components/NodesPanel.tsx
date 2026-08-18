@@ -10,17 +10,20 @@ const LEAF_TEMPLATES = [
 // n8n signature — right-side nodes panel with search; cells are the node catalog.
 // Leaf generation goes through the engine's `run.py draft` verb via /api/draft —
 // the panel never re-implements templates.
-export default function NodesPanel({ cells, active, onPick, onClose }: { cells: any[]; active: string; onPick: (p: string) => void; onClose: () => void }) {
+export default function NodesPanel({ cells, active, onPick, onCreated, onClose }: { cells: any[]; active: string; onPick: (p: string) => void; onCreated?: (rel: string) => void; onClose: () => void }) {
   const [q, setQ] = useState("");
-  const [proposal, setProposal] = useState<{ text: string; error?: boolean } | null>(null);
-  async function draft(kind: string) {
+  const [goal, setGoal] = useState("");
+  const [proposal, setProposal] = useState<{ text: string; kind?: string; goal?: string; error?: boolean } | null>(null);
+  async function draft(kind: string, write = false) {
+    const g = (write ? proposal?.goal : goal.trim()) || `new ${kind} leaf step`;
     try {
-      const r = await fetch("/api/draft", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ goal: `new ${kind} leaf step`, kind }) });
+      const r = await fetch("/api/draft", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ goal: g, kind, write }) });
       const j = await r.json();
       if (j.ok) {
         const p = j.proposal;
-        setProposal({ text: `# ${p.name} · proposal ${String(p.proposal_digest).slice(0, 8)}\n${p.files?.[`${p.name}.cell.yaml`] ?? ""}` });
-      } else setProposal({ text: `engine refused: ${j.error}`, error: true });
+        if (write && j.written) { onCreated?.(j.written); return; }
+        setProposal({ text: `# ${p.name} · proposal ${String(p.proposal_digest).slice(0, 8)}\n${p.files?.[`${p.name}.cell.yaml`] ?? ""}`, kind, goal: g });
+      } else setProposal({ text: `engine refused: ${j.error}`, kind, goal: g, error: true });
     } catch (e: any) {
       setProposal({ text: `draft failed: ${String(e.message ?? e)}`, error: true });
     }
@@ -45,6 +48,7 @@ export default function NodesPanel({ cells, active, onPick, onClose }: { cells: 
           </button>
         ))}
         <div className="nx-section">Generate a new leaf · inert until admitted</div>
+        <input className="nx-search" placeholder="Goal for the new step… (names the draft)" value={goal} onChange={e => setGoal(e.target.value)} />
         {LEAF_TEMPLATES.map(t => (
           <button key={t.kind} className="nx-item" onClick={() => draft(t.kind)}>
             <span className="nx-item__icon">{t.icon}</span>
@@ -58,7 +62,10 @@ export default function NodesPanel({ cells, active, onPick, onClose }: { cells: 
           <div>
             <div className="nx-section">Engine proposal — write inert → admit by digest → attach</div>
             <pre className="nx-pre" style={{ maxHeight: 220, ...(proposal.error ? { color: "var(--nx-error)" } : {}) }}>{proposal.text}</pre>
-            <div className="nx-item__sub" style={{ marginTop: 6 }}>Nothing is auto-attached: build + check must pass before this cell exists.</div>
+            {!proposal.error && proposal.kind && (
+              <button className="nx-btn nx-btn--primary" style={{ marginTop: 8 }} onClick={() => draft(proposal.kind!, true)}>Create workflow (writes inert to drafts/)</button>
+            )}
+            <div className="nx-item__sub" style={{ marginTop: 6 }}>Nothing is auto-attached: build + check must pass before this cell fires; the stub refuses until implemented.</div>
           </div>
         )}
       </div>

@@ -42,12 +42,16 @@ export async function GET(req: Request) {
   let dashboard: any = null;
   try { dashboard = collectBlocks({ cellPath: rel }); } catch {}
 
+  // raw YAML source for the editor drawer — saved back only via the engine's save verb
+  let source: string | null = null;
+  try { source = fs.readFileSync(path.join(cellRoot(), rel), "utf-8"); } catch {}
+
   return NextResponse.json({
     cell: rel, name: cell.name, description: cell.description,
     membrane: cell.membrane, organelles: cell.organelles, wiring: cell.wiring,
     isLeaf: cell.isLeaf, run: cell.run,
     manifest, outputs, inputs, inputsRaw,
     nodes, edges,
-    dashboard,
+    dashboard, source,
   });
 }
