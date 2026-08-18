@@ -1,4 +1,5 @@
 /** Hoysan worker — login + auth gate (product.auth_login) — Excel sheet is the home */
+import { LIMBS } from "./limbs";
 export interface Env { DB?: D1Database }
 const workersStore: any[] = [{ id: 1, name: "GO CHIN WAH", category: "LOCAL" }];
 const rostersStore: any[] = [];
@@ -86,7 +87,7 @@ export default {
 
     // agentic limbs — pre_shift / escalation / pings — /api/limbs
     if (url.pathname === "/api/limbs") {
-      return new Response(JSON.stringify({ limbs: [{ id: "pre_shift", route: "/api/deployments/:id/escalation" }, { id: "prefs_ingest", route: "/api/preferences" }, { id: "escalation", channel: "whatsapp" }] }), { headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ limbs: LIMBS }), { headers: { "content-type": "application/json" } });
     }
     if (url.pathname.includes("/escalation") && m === "GET") return new Response(JSON.stringify({ escalation: { step: "blast" }, shortfall: 0 }), { headers: { "content-type": "application/json" } });
     if (url.pathname.includes("/escalation") && m === "POST") return new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json" } });

@@ -809,6 +809,154 @@ def cmd_remove(rel: str) -> int:
     print(json.dumps({"removed": str(target.relative_to(root))}, sort_keys=True))
     return 0
 
+def cmd_daemon(sock_arg: str | None) -> int:
+    """THE one daemon: a single long-running listener for the whole substrate.
+    - tails out/firings.jsonl and broadcasts every firing to subscribers
+    - powers agent turns by spawning the aiko CLI over stdio (--prompt-file,
+      single-turn, prints, exits) — the daemon holds no model state itself
+    Protocol: unix socket, one JSON line in, JSON line(s) out.
+    Ops: ping | status | agent {prompt, timeout_s?} | subscribe (streams)."""
+    import queue
+    import shlex
+    import socket
+    import socketserver
+    import threading
+    import time
+    root = _cell_root()
+    sock_path = pathlib.Path(sock_arg or os.environ.get("CELL_DAEMON_SOCK") or (root / "out" / "daemon.sock"))
+    sock_path.parent.mkdir(parents=True, exist_ok=True)
+    if sock_path.exists():
+        probe = socket.socket(socket.AF_UNIX)
+        probe.settimeout(1.0)
+        try:
+            probe.connect(str(sock_path))
+            probe.close()
+            print(f"error: daemon already listening on {sock_path}", file=sys.stderr)
+            return 1
+        except OSError:
+            sock_path.unlink()  # stale socket from a dead daemon
+    aiko_bin = os.environ.get("AIKO_BIN", "aiko")
+    extra_args = shlex.split(os.environ.get("AIKO_EXTRA_ARGS", ""))
+    subscribers: set = set()
+    sub_lock = threading.Lock()
+    started_ms = int(time.time() * 1000)
+
+    def watch_journal() -> None:
+        journal = root / "out" / "firings.jsonl"
+        pos = journal.stat().st_size if journal.exists() else 0
+        while True:
+            try:
+                if journal.exists():
+                    size = journal.stat().st_size
+                    if size < pos:
+                        pos = 0  # truncated/rotated — re-read from start
+                    if size > pos:
+                        with journal.open("r", encoding="utf-8") as f:
+                            f.seek(pos)
+                            chunk = f.read()
+                            pos = f.tell()
+                        for line in chunk.splitlines():
+                            try:
+                                rec = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            event = {"event": "firing", **rec}
+                            with sub_lock:
+                                for q in list(subscribers):
+                                    q.put(event)
+            except Exception:
+                pass  # the watcher must outlive any single bad read
+            time.sleep(0.3)
+
+    def agent_turn(prompt: str, timeout_s: int) -> dict:
+        # Prompt travels by file, response by stdout — never argv (ps leaks).
+        pf = root / "out" / f".agent_prompt_{os.getpid()}_{threading.get_ident()}"
+        pf.write_text(prompt, encoding="utf-8")
+        try:
+            proc = subprocess.run(
+                [aiko_bin, "--prompt-file", str(pf), "--output-format", "plain", *extra_args],
+                capture_output=True, text=True, timeout=timeout_s, cwd=str(root),
+            )
+            ok = proc.returncode == 0
+            return {"ok": ok, "code": proc.returncode,
+                    "output": proc.stdout[-16000:],
+                    **({} if ok else {"error": proc.stderr[-4000:] or f"agent exit {proc.returncode}"})}
+        except FileNotFoundError:
+            return {"ok": False, "error": f"agent binary not found: {aiko_bin!r} — set AIKO_BIN"}
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": f"agent turn timed out after {timeout_s}s"}
+        finally:
+            pf.unlink(missing_ok=True)
+
+    class Handler(socketserver.StreamRequestHandler):
+        def handle(self):  # noqa: ANN001 — socketserver signature
+            line = self.rfile.readline(1 << 20)
+            if not line:
+                return
+            try:
+                req = json.loads(line)
+            except json.JSONDecodeError:
+                self.wfile.write(b'{"ok": false, "error": "bad json"}\n')
+                return
+            op = req.get("op")
+            if op == "ping":
+                self.wfile.write(b'{"ok": true, "pong": true}\n')
+            elif op == "status":
+                with sub_lock:
+                    n = len(subscribers)
+                self.wfile.write(json.dumps({
+                    "ok": True, "agent_bin": aiko_bin, "subscribers": n,
+                    "started_ms": started_ms, "socket": str(sock_path),
+                }).encode() + b"\n")
+            elif op == "agent":
+                prompt = str(req.get("prompt") or "").strip()
+                if not prompt:
+                    self.wfile.write(b'{"ok": false, "error": "empty prompt"}\n')
+                    return
+                res = agent_turn(prompt, int(req.get("timeout_s") or 120))
+                self.wfile.write(json.dumps(res, ensure_ascii=False).encode() + b"\n")
+            elif op == "subscribe":
+                q: queue.Queue = queue.Queue()
+                with sub_lock:
+                    subscribers.add(q)
+                idle = 0
+                try:
+                    self.wfile.write(b'{"ok": true, "subscribed": true}\n')
+                    self.wfile.flush()
+                    while True:
+                        try:
+                            event = q.get(timeout=1.0)
+                            idle = 0
+                        except queue.Empty:
+                            idle += 1
+                            if idle < 15:
+                                continue
+                            event = {"event": "heartbeat"}  # detects dead clients
+                            idle = 0
+                        self.wfile.write(json.dumps(event, ensure_ascii=False).encode() + b"\n")
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                finally:
+                    with sub_lock:
+                        subscribers.discard(q)
+            else:
+                self.wfile.write(json.dumps({"ok": False, "error": f"unknown op {op!r}"}).encode() + b"\n")
+
+    class Server(socketserver.ThreadingUnixStreamServer):
+        daemon_threads = True
+
+    threading.Thread(target=watch_journal, daemon=True).start()
+    srv = Server(str(sock_path), Handler)
+    print(f"cell daemon · socket {sock_path} · agent {aiko_bin} · journal out/firings.jsonl", file=sys.stderr)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        sock_path.unlink(missing_ok=True)
+    return 0
+
 DRAFT_KINDS = ("python", "exec", "http")
 
 def _draft_slug(goal: str) -> str:
@@ -950,6 +1098,8 @@ def main() -> None:
     p_save.add_argument("path")
     p_remove = sub.add_parser("remove")
     p_remove.add_argument("path")
+    p_daemon = sub.add_parser("daemon")
+    p_daemon.add_argument("--sock", default=None)
     args = ap.parse_args()
     if args.cmd == "build":
         raise SystemExit(cmd_build(args.root))
@@ -965,6 +1115,8 @@ def main() -> None:
         raise SystemExit(cmd_save(args.path))
     elif args.cmd == "remove":
         raise SystemExit(cmd_remove(args.path))
+    elif args.cmd == "daemon":
+        raise SystemExit(cmd_daemon(args.sock))
     else:
         ap.print_help()
         raise SystemExit(1)

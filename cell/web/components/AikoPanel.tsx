@@ -3,56 +3,76 @@ import { useEffect, useRef, useState } from "react";
 
 type Msg = { who: "user" | "aiko"; text: string; code?: string; goal?: string };
 
-// Aiko lives in the editor — n8n's assistant slot, backed by what is real here:
-// the firings DB, the discovered cells, and inert-until-admitted proposals.
-// The chat does NOT run a model; drafting is the engine's own `run.py draft`
-// verb (gated by cell/tests/gates/draft-verb.sh). Agent turns stay at the edge.
+// Aiko lives in the editor — n8n's assistant slot. Chat is a REAL agent turn
+// through THE daemon (run.py daemon → aiko CLI over stdio). When the daemon is
+// down, the panel says so and falls back to the engine's deterministic draft
+// verb — never silently pretending a model answered.
 export default function AikoPanel({ activeCell, onClose, onCreated }: { activeCell: string; onClose: () => void; onCreated?: (rel: string) => void }) {
   const [firings, setFirings] = useState<any[]>([]);
+  const [daemon, setDaemon] = useState<{ up: boolean; agent?: string } | null>(null);
+  const [busy, setBusy] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([{
     who: "aiko",
-    text: "I'm resident in this editor. Every workflow here is a *.cell.yaml I can fire, watch, and extend. Describe a step and I'll draft the cell via the engine's draft verb — deterministic, and inert until admitted by digest.",
+    text: "I'm resident in this editor. With the daemon running, this chat is a real aiko turn over stdio; without it, I fall back to the engine's deterministic draft verb — inert until admitted by digest either way.",
   }]);
   const [input, setInput] = useState("");
   const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const load = () => fetch("/api/firings").then(r => r.json()).then(j => setFirings(j.firings ?? [])).catch(() => {});
-    load();
-    const t = setInterval(load, 5000);
+    const pollDaemon = () => fetch("/api/aiko").then(r => r.json()).then(j => setDaemon({ up: !!(j.daemon && j.ok), agent: j.agent_bin })).catch(() => setDaemon({ up: false }));
+    load(); pollDaemon();
+    const t = setInterval(() => { load(); pollDaemon(); }, 5000);
     return () => clearInterval(t);
   }, []);
 
   useEffect(() => { bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight }); }, [msgs]);
 
+  async function draftFallback(text: string, prefix: string) {
+    const r = await fetch("/api/draft", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ goal: text, kind: "python" }) });
+    const j = await r.json();
+    if (j.ok) {
+      const p = j.proposal;
+      setMsgs(m => [...m, {
+        who: "aiko",
+        text: `${prefix}Engine draft "${p.name}" · proposal ${String(p.proposal_digest).slice(0, 8)} — ${p.admission}. The stub refuses to run until implemented.`,
+        code: p.files?.[`${p.name}.cell.yaml`],
+        goal: text,
+      }]);
+    } else {
+      setMsgs(m => [...m, { who: "aiko", text: `${prefix}The engine refused this draft: ${j.error}` }]);
+    }
+  }
+
   async function send() {
     const text = input.trim();
-    if (!text) return;
+    if (!text || busy) return;
     setInput("");
     setMsgs(m => [...m, { who: "user", text }]);
+    setBusy(true);
     try {
-      const r = await fetch("/api/draft", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ goal: text, kind: "python" }) });
+      const r = await fetch("/api/aiko", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: `You are Aiko, resident in the cell workflow editor. Active workflow: ${activeCell}. The user says: ${text}` }) });
       const j = await r.json();
-      if (j.ok) {
-        const p = j.proposal;
-        setMsgs(m => [...m, {
-          who: "aiko",
-          text: `Engine draft "${p.name}" · proposal ${String(p.proposal_digest).slice(0, 8)} — ${p.admission}. The stub refuses to run until implemented, so nothing is retained on compilation alone.`,
-          code: p.files?.[`${p.name}.cell.yaml`],
-          goal: text,
-        }]);
+      if (j.daemon === false) {
+        await draftFallback(text, "Daemon offline (start: python3 cell/run.py daemon) — falling back to the deterministic engine draft. ");
+      } else if (j.ok) {
+        setMsgs(m => [...m, { who: "aiko", text: j.output || "(empty reply)" }]);
       } else {
-        setMsgs(m => [...m, { who: "aiko", text: `The engine refused this draft: ${j.error}` }]);
+        setMsgs(m => [...m, { who: "aiko", text: `Agent turn failed: ${j.error}` }]);
       }
     } catch (e: any) {
-      setMsgs(m => [...m, { who: "aiko", text: `Draft failed: ${String(e.message ?? e)}` }]);
+      setMsgs(m => [...m, { who: "aiko", text: `Agent turn failed: ${String(e.message ?? e)}` }]);
     }
+    setBusy(false);
   }
 
   return (
     <div className="nx-drawer" role="dialog" aria-label="Aiko">
       <div className="nx-drawer__head">
         <span className="nx-drawer__title">🤖 Aiko · resident agent</span>
+        <span className="nx-tag" title={daemon?.up ? `daemon up · agent ${daemon.agent}` : "daemon down — chat falls back to engine drafts"}>
+          <span className={`dot ${daemon?.up ? "ok" : "off"}`} style={{ marginRight: 4 }} />daemon {daemon?.up ? "on" : "off"}
+        </span>
         <span className="nx-tag">{activeCell}</span>
         <button className="nx-btn" onClick={onClose}>✕</button>
       </div>
@@ -92,8 +112,8 @@ export default function AikoPanel({ activeCell, onClose, onCreated }: { activeCe
         ))}
       </div>
       <div style={{ display: "flex", gap: 8, padding: 12, borderTop: "1px solid var(--nx-hairline)" }}>
-        <input className="nx-search" placeholder="Describe a step… (drafts an inert cell)" value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter") send(); }} />
-        <button className="nx-btn nx-btn--primary" onClick={send}>Send</button>
+        <input className="nx-search" placeholder={daemon?.up ? "Ask Aiko… (real agent turn via daemon)" : "Describe a step… (daemon off — engine draft)"} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter") send(); }} disabled={busy} />
+        <button className="nx-btn nx-btn--primary" onClick={send} disabled={busy}>{busy ? "…" : "Send"}</button>
       </div>
     </div>
   );
