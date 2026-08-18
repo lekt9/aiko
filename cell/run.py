@@ -6,6 +6,7 @@ Usage:
   python run.py build  <root.cell.yaml>
   python run.py run    <root.cell.yaml> --inputs inputs.json --out out/
   python run.py check  <root.cell.yaml> --inputs inputs.json
+  python run.py draft  "<goal>" --kind python|exec|http [--name slug] [--write dir/]
 """
 from __future__ import annotations
 import argparse, hashlib, json, os, pathlib, re, shutil, subprocess, sys, tempfile
@@ -677,6 +678,124 @@ def cmd_check(root: str, inputs_path: str | None) -> int:
     finally:
         shutil.rmtree(first, ignore_errors=True)
         shutil.rmtree(second, ignore_errors=True)
+DRAFT_KINDS = ("python", "exec", "http")
+
+def _draft_slug(goal: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", goal.lower()).strip("-")[:32].strip("-")
+    return slug
+
+def _draft_files(name: str, kind: str, goal: str) -> dict[str, str]:
+    """Bounded catalog written ahead of time. The goal is identity (name,
+    description) only — it never selects behavior, exactly the authored-gap
+    bound: prose as input identity, never as decision procedure."""
+    desc = goal.replace("'", "''")
+    head = (
+        "apiVersion: cell/v0\n"
+        "kind: Cell\n"
+        "metadata:\n"
+        f"  name: {name}\n"
+        f"  description: '{desc}'\n"
+        "spec:\n"
+        "  membrane:\n"
+        "    inputs:\n"
+        "      data: { schema: object }\n"
+        "    outputs:\n"
+        "      result: { schema: object }\n"
+        "    caps: {}\n"
+    )
+    files: dict[str, str] = {}
+    if kind == "python":
+        files[f"{name}.cell.yaml"] = head + (
+            "  policy:\n"
+            "    determinism: required\n"
+            "  run:\n"
+            "    kind: python\n"
+            f"    entry: neurons/{name}.py\n"
+        )
+        files[f"neurons/{name}.py"] = (
+            "def run(inputs, ctx):\n"
+            "    # Drafted stub — inert by design. An echo here would let a do-nothing\n"
+            "    # handler pass admission; refusing keeps this un-admittable until implemented.\n"
+            f"    raise NotImplementedError('implement before admission: {desc}')\n"
+        )
+    elif kind == "exec":
+        files[f"{name}.cell.yaml"] = head + (
+            "  policy:\n"
+            "    determinism: required\n"
+            "  run:\n"
+            "    kind: exec\n"
+            f"    command: [\"python3\", \"neurons/{name}.py\"]\n"
+        )
+        files[f"neurons/{name}.py"] = (
+            "import sys\n"
+            "# Drafted stub — refuses so nothing is retained on compilation alone.\n"
+            f"sys.stderr.write('implement before admission: {desc}\\n')\n"
+            "sys.exit(1)\n"
+        )
+    elif kind == "http":
+        # allow_net stays empty: the boundary is denied until the author grants a host.
+        files[f"{name}.cell.yaml"] = head.replace("    caps: {}\n", "    caps: { allow_net: [] }\n") + (
+            "  run:\n"
+            "    kind: http\n"
+            "    http:\n"
+            "      method: GET\n"
+            "      url: https://api.example.com/v1/data\n"
+        )
+    else:
+        raise ValueError(f"unknown draft kind {kind!r}; expected one of {DRAFT_KINDS}")
+    return files
+
+def cmd_draft(goal: str, kind: str, name: str | None, write: str | None) -> int:
+    goal = (goal or "").strip()
+    if not goal:
+        print("error: draft requires a non-empty goal", file=sys.stderr)
+        return 1
+    if kind not in DRAFT_KINDS:
+        print(f"error: draft kind must be one of {'|'.join(DRAFT_KINDS)}, got {kind!r}", file=sys.stderr)
+        return 1
+    slug = name or _draft_slug(goal)
+    if not re.fullmatch(r"[a-z0-9-]{1,32}", slug or ""):
+        print(f"error: derived name {slug!r} is not kebab-lower 1-32 chars; pass --name", file=sys.stderr)
+        return 1
+    if yaml is None:
+        print("error: pyyaml required for draft self-check: pip install pyyaml", file=sys.stderr)
+        return 1
+    try:
+        files = _draft_files(slug, kind, goal)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    # The engine refuses to propose what its own validator would reject.
+    cell_yaml = files[f"{slug}.cell.yaml"]
+    errs = validate_cell(yaml.safe_load(cell_yaml), f"<draft:{slug}>")
+    if errs:
+        for e in errs:
+            print(f"error: draft failed self-validation: {e}", file=sys.stderr)
+        return 1
+    proposal = {
+        "name": slug,
+        "kind": kind,
+        "goal": goal,
+        "files": files,
+        "proposal_digest": _digest({"files": files, "kind": kind, "name": slug}),
+        "admission": (
+            f"inert — admit via: python3 run.py build {slug}.cell.yaml"
+            f" && python3 run.py check {slug}.cell.yaml --inputs <inputs.json>"
+        ),
+    }
+    if write:
+        base = pathlib.Path(write)
+        target = base / f"{slug}.cell.yaml"
+        if target.exists():
+            print(f"error: refusing to clobber existing {target}", file=sys.stderr)
+            return 1
+        for rel, content in sorted(files.items()):
+            p = base / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+    print(json.dumps(proposal, sort_keys=True, ensure_ascii=False, indent=2))
+    return 0
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="cell")
     sub = ap.add_subparsers(dest="cmd")
@@ -689,6 +808,11 @@ def main() -> None:
     p_check = sub.add_parser("check")
     p_check.add_argument("root")
     p_check.add_argument("--inputs", default=None)
+    p_draft = sub.add_parser("draft")
+    p_draft.add_argument("goal")
+    p_draft.add_argument("--kind", default="python")
+    p_draft.add_argument("--name", default=None)
+    p_draft.add_argument("--write", default=None)
     args = ap.parse_args()
     if args.cmd == "build":
         raise SystemExit(cmd_build(args.root))
@@ -696,6 +820,8 @@ def main() -> None:
         raise SystemExit(cmd_run(args.root, args.inputs, args.out))
     elif args.cmd == "check":
         raise SystemExit(cmd_check(args.root, args.inputs))
+    elif args.cmd == "draft":
+        raise SystemExit(cmd_draft(args.goal, args.kind, args.name, args.write))
     else:
         ap.print_help()
         raise SystemExit(1)
