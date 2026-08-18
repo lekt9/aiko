@@ -16,6 +16,7 @@ const RG_VER: &str = "15.0.0";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     embed_contract_library()?;
+    emit_build_id();
     // Only bundle in release builds to avoid slowing down cargo check.
     println!("cargo:rerun-if-env-changed=GROK_SHELL_BUNDLE_RG_PATH");
     println!("cargo:rerun-if-env-changed=GROK_SHELL_RG_DOWNLOAD_BASE");
@@ -236,4 +237,31 @@ fn is_bazel_build(manifest_dir: &Path) -> bool {
         || env::var_os("BAZEL_OUTPUT_BASE").is_some()
         || manifest_dir_str.contains("/execroot/")
         || manifest_dir_str.contains("/bazel-out/")
+}
+
+/// Stamp the build's git short hash so the graph-harness root receipt can name
+/// the code that derived it. The crate version alone is too coarse: two builds
+/// of one version (e.g. a rebuild at a later commit) legitimately re-derive a
+/// different graph for the same root id, and a version-only generation makes
+/// that upgrade indistinguishable from nondeterminism — so the receipt refuses
+/// instead of superseding. Falling back to "src" keeps unversioned checkouts
+/// working; it only means two such builds share a generation, which is the
+/// conservative side (refuse) rather than the unsafe one.
+fn emit_build_id() {
+    println!("cargo:rerun-if-changed=.git/HEAD");
+    if let Ok(head) = std::fs::read_to_string(".git/HEAD") {
+        if let Some(ref_path) = head.trim().strip_prefix("ref: ") {
+            println!("cargo:rerun-if-changed=.git/{ref_path}");
+        }
+    }
+    let commit = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "src".to_string());
+    println!("cargo:rustc-env=AIKO_GRAPH_BUILD_ID={commit}");
 }

@@ -4263,7 +4263,16 @@ async fn expand_turn_root(
         // only comparable within one generation: the same deterministic root id
         // legitimately re-derives different digests when the binary or the
         // Contract ABI underneath it changed.
-        let generation = format!("{}/abi{}", env!("CARGO_PKG_VERSION"), result.1);
+        // The generation must name the BUILD, not just the version: two builds
+        // of one version re-derive a different graph for the same root id after
+        // any code change, and a version-only key makes that ordinary upgrade
+        // indistinguishable from nondeterminism (refusal instead of supersede).
+        let generation = format!(
+            "{}+{}/abi{}",
+            env!("CARGO_PKG_VERSION"),
+            option_env!("AIKO_GRAPH_BUILD_ID").unwrap_or("src"),
+            result.1
+        );
         let index = json!({
             "schema": "aiko.graph-harness-root/v1",
             "root_id": turn.id,
@@ -4323,12 +4332,17 @@ async fn expand_turn_root(
                                 .and_then(Value::as_str)
                                 .map(str::to_owned)
                         });
-                    if stale_generation.as_deref() == Some(generation.as_str()) {
-                        return Err(
-                            "graph_harness_root_index_failed: cached Contract root receipt differs"
-                                .into(),
-                        );
-                    }
+                    // A same-generation difference is superseded too, not
+                    // refused. The root id is the contract id — derived from the
+                    // goal — while the graph digest also covers the workspace
+                    // and node set. So one goal re-asked after any edit
+                    // legitimately derives a different graph, and a stored
+                    // digest alone cannot tell that apart from a
+                    // nondeterministic derivation: refusing punished the common
+                    // case and blocked the turn outright. The prior receipt is
+                    // archived (never erased) and the supersession is logged, so
+                    // repeated supersessions for one root id remain visible as
+                    // evidence.
                     // Archived OUTSIDE roots/: the bounded roots scan refuses any
                     // entry that is not a receipt file, so the archive must not
                     // add entries there.
@@ -4356,11 +4370,13 @@ async fn expand_turn_root(
                     std::fs::File::open(&roots)
                         .and_then(|directory| directory.sync_all())
                         .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
+                    let same_generation = stale_generation.as_deref() == Some(generation.as_str());
                     tracing::info!(
                         root_id = %turn.id,
                         stale_generation = stale_generation.as_deref().unwrap_or("pre-generation"),
                         generation = %generation,
-                        "superseded prior-generation Contract root receipt"
+                        same_generation,
+                        "superseded prior Contract root receipt"
                     );
                 }
             }
