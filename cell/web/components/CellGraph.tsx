@@ -40,6 +40,15 @@ function OrganelleNode({ data }: any) {
         {st === "err" && <span className="nx-badge err">!</span>}
         {st === "running" && <span className="nx-badge run" />}
         {data.isComposite && <span className="nx-badge agent">AGENT</span>}
+        {/* A node that reaches a system does so through a harness, and the canvas
+            says which system — otherwise a value from a live API and a value from
+            a stub look identical on screen. */}
+        {data.harness && (
+          <span className="nx-badge harness" title={`harness · ${data.harness.surface} · ${data.harness.system} · ${(data.harness.tools ?? []).join(", ")}`}>
+            🔌
+          </span>
+        )}
+        {data.witness && <span className="nx-badge witness" title={`settles on: ${data.witness}`}>⊨</span>}
         <Handle type="source" position={Position.Right} className="nx-handle" />
       </div>
       <div className="nx-node__label">{data.label}</div>
@@ -106,6 +115,7 @@ export default function CellGraph({ cellPath, onPickCell, onFired }: { cellPath:
         id: nd.id, type: "organelle", position: { x: 0, y: 0 },
         data: {
           label: nd.label ?? nd.id, sub, icon: iconFor(String(nd.id)), hue: hueFor(String(nd.id)), isComposite, cellPath: nd.cell,
+          harness: nd.harness ?? null, witness: nd.witness ?? null, writes: nd.writes ?? [],
           runState: rs === "running" ? "running" : (rs === "ok" ? "ok" : (hasOutput ? "ok" : "idle")),
           onOpen: () => { if (isComposite && nd.cell) { onPickCell?.(nd.cell); } else { setNdv(nd.id); } },
         },

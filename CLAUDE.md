@@ -93,6 +93,9 @@ something happened when it didn't.**
 | "nothing retained on compilation alone" | a generated limb that compiled but never satisfied its gap |
 | `SKILL.md` (`neuron/src/limb_ops.zig`) | a package that cannot say what it is for, or whose declaration sits outside its own digest and is therefore free to drift |
 | `redrive` case 3 | re-crossing a boundary already crossed |
+| `policy.writes` (`cell/run.py`) | two nodes unordered by the graph both claiming one write — a result that depends on node naming only looks deterministic |
+| `policy.witness` (`cell/run.py`) | settling a node on the fact that it ran; firing is not settling |
+| `spec.harness` (`cell/run.py`) | an agent reaching a system it has not attached to — the probe runs before the node fires, so a value never produced against an absent system |
 
 This is why it can reduce setup: not by magic self-configuration, but by making
 "done" mechanically checkable, so re-checking stops being rational.

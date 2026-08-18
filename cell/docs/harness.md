@@ -30,3 +30,59 @@ This file maps that doctrine onto `cell`.
 3. **Context** — see `docs/context.md`.
 4. **Constraints** — see `docs/constraints.md`.
 5. **Eval** — `python run.py check <root> --inputs <json>` is the gate. Add a gate per mistake.
+
+---
+
+## Audit against `harness-creator` (2026-08-19)
+
+Scored with `walkinglabs/learn-harness-engineering@harness-creator`
+(`node ~/.claude/skills/harness-creator/scripts/validate-harness.mjs --target .`),
+run from the repository root. **32/100, bottleneck `state`.**
+
+Read it with one correction: the validator scores by *filename* — it looks for
+`feature_list.json`, `progress.md`, `init.sh`, `session-handoff.md`. This repo
+answers several of those subsystems in a different shape (gates, the engine's
+SQLite firing store, `CLAUDE.md`), so part of the deficit is naming, not absence.
+
+What survives that correction, and what it changed here:
+
+| Subsystem | Score | Honest reading |
+|---|---|---|
+| verification | 3/5 | It found the test and build commands and the recorded evidence. The gap it names — no single entrypoint — is real but cheap. |
+| scope | 1/5 | **Real.** Nothing declared what a unit of work was allowed to touch. Closed at the cell layer by `policy.writes` (SPEC §7.1); still open at the repo layer. |
+| state | 1/5 | **Real, and the bottleneck.** There is no machine-readable answer to "what is in flight, what is done, what is next" — every session rebuilds it from `git log` and this file. Any fix must be *derived* from gates and git, not hand-maintained prose: a hand-written status file is a declaration outside the digest, and this repo already knows how those end. |
+| instructions | 2/5 | `CLAUDE.md` exists and is strong on doctrine; it does not state a startup path or a definition of done in the form a fresh agent can follow mechanically. |
+| lifecycle | 1/5 | Mostly filename matching. |
+
+The skill's five-subsystem model independently arrived at the same two fields
+this repo added to the cell spec on the same day — verification is `witness`,
+scope is `writes`. That agreement is why the audit is recorded rather than
+dismissed.
+
+**Note on the word.** `harness-creator` means *harness* as agent-reliability
+scaffolding for a repository. `spec.harness` in SPEC §7.2 means the adapter that
+connects an agent node to an external system. Same word, two different things —
+do not wire one expecting the other.
+
+## codegraff as an agent inside the graph
+
+[`justrach/codegraff`](https://github.com/justrach/codegraff) (`graff`) is a Zig
+agentic coding harness — multi-provider models, MCP over stdio and Streamable
+HTTP, sub-agents, a one-shot `-p` mode, and `--json` for structured stdio.
+
+It is wired here as `cell/primitives/graff-agent.cell.yaml`: an agent node whose
+reach into a target system runs through an MCP server registered with graff, and
+whose attachment the engine verifies before the node fires (SPEC §7.2, §7.3).
+`graff --schema` is what makes this derivable rather than asserted — a boundary
+that publishes its own interface is one a harness can be built against.
+
+Two things not to confuse:
+
+* **`justrach/codedb`** is a *different* tool by the same author — a code
+  intelligence MCP server, 1.4K★, blogged on the same `codegraff.com` domain.
+  It is installed on this machine and its hooks are active in this repo; its
+  MCP server is deliberately disabled in `~/.claude.json` (the `~/bin/codedb`
+  shim refuses `mcp` by default after an FD leak caused `ENFILE`, unless
+  `CODEDB_ALLOW_MCP=1`). The CLI works: `codedb search "<text>"`.
+* **`harness-creator`** means harness as *agent-reliability scaffolding*.
+  `spec.harness` means the *adapter to an external system*. Same word.

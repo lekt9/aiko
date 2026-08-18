@@ -137,6 +137,11 @@ body{ overflow-x:clip; @apply bg-os-bg font-mono text-os-text antialiased; backg
 .nx-badge.err{ background:var(--nx-error); color:#2b0505; }
 .nx-badge.agent{ top:-7px; right:auto; left:-7px; background:var(--nx-panel); border:1px solid var(--nx-primary); color:var(--nx-primary); font-size:8px; padding:0 5px; letter-spacing:0.06em; }
 .nx-badge.run{ background:transparent; border:2px solid var(--nx-running); border-top-color:transparent; width:14px; height:14px; animation:nx-spin 0.8s linear infinite; }
+/* Node contract badges sit on the bottom edge so they never fight the run-state
+   badge for the top-right corner: 🔌 the node reaches a system through a
+   verified harness, ⊨ the node settles against its own runnable witness. */
+.nx-badge.harness{ top:auto; bottom:-7px; right:-7px; background:var(--nx-panel); border:1px solid var(--nx-primary); font-size:9px; }
+.nx-badge.witness{ top:auto; bottom:-7px; right:auto; left:-7px; background:var(--nx-panel); border:1px solid var(--nx-success); color:var(--nx-success); font-size:10px; }
 @keyframes nx-spin{ to{ transform:rotate(360deg); } }
 .nx-handle{ width:9px !important; height:9px !important; background:var(--nx-text-3) !important; border:2px solid var(--nx-canvas) !important; }
 /* execute pill */

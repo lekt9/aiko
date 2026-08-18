@@ -146,6 +146,42 @@ def validate_cell(data: dict, path: str = "<root>") -> list[str]:
                     errs.append(f"{path}: membrane.{direction}.{port} requires schema")
         if "caps" in membrane and not isinstance(membrane.get("caps"), dict):
             errs.append(f"{path}: membrane.caps must be a mapping")
+    policy = spec.get("policy") or {}
+    if not isinstance(policy, dict):
+        errs.append(f"{path}: spec.policy must be a mapping")
+        policy = {}
+    # A cell is a graph node: it declares what it may modify, and the runnable
+    # check that says it is done. Firing is not settling.
+    writes = policy.get("writes", [])
+    if not isinstance(writes, list) or not all(isinstance(w, str) for w in writes):
+        errs.append(f"{path}: policy.writes must be a list of path strings")
+    for w in (writes if isinstance(writes, list) else []):
+        if not isinstance(w, str) or pathlib.Path(w).is_absolute() or ".." in pathlib.Path(w).parts:
+            errs.append(f"{path}: policy.writes entry {w!r} must be a relative path without '..'")
+    if "witness" in policy and not (isinstance(policy["witness"], str) and policy["witness"].strip()):
+        errs.append(f"{path}: policy.witness must be a non-empty command string")
+    if "grade_min" in policy and not isinstance(policy["grade_min"], int):
+        errs.append(f"{path}: policy.grade_min must be an integer")
+
+    harness = spec.get("harness")
+    if harness is not None:
+        if not isinstance(harness, dict):
+            errs.append(f"{path}: spec.harness must be a mapping")
+        else:
+            for field in ("system", "attach"):
+                if not (isinstance(harness.get(field), str) and harness[field].strip()):
+                    errs.append(f"{path}: spec.harness.{field} must be a non-empty string")
+            if harness.get("surface") not in ("mcp", "skill", "http"):
+                errs.append(f"{path}: spec.harness.surface must be one of mcp, skill, http")
+            tools = harness.get("tools")
+            # A harness exposing nothing is a claim of connection with no operation
+            # behind it — the same emptiness an acceptance-free SKILL.md is refused for.
+            if not isinstance(tools, list) or not tools or not all(
+                    isinstance(x, str) and x.strip() for x in tools):
+                errs.append(f"{path}: spec.harness.tools must be a non-empty list of operation names")
+            for key in set(harness) - {"system", "surface", "attach", "tools"}:
+                errs.append(f"{path}: spec.harness has unknown field {key!r}")
+
     has_run = "run" in spec
     has_orgs = "organelles" in spec
     if has_run == has_orgs:
@@ -468,6 +504,57 @@ def _validate_port_values(data: dict, values: dict, direction: str, cell_path: p
                 resolved = str((cell_path.resolve().parent / schema).resolve())
             helpers.validate(value, resolved)
 
+WITNESS_TIMEOUT_S = 300
+def _cell_policy(cell: dict) -> dict:
+    policy = (cell.get("spec") or {}).get("policy") or {}
+    return policy if isinstance(policy, dict) else {}
+def _run_check(name: str, command: str, cell_path: pathlib.Path, workdir: pathlib.Path,
+               failure: str, extra_env: dict[str, str] | None = None) -> dict:
+    env = dict(os.environ)
+    env["CELL_NODE"] = name
+    env["CELL_WORKDIR"] = str(workdir)
+    env.update(extra_env or {})
+    try:
+        proc = subprocess.run(["/bin/sh", "-c", command], cwd=str(cell_path.parent),
+                              env=env, capture_output=True, text=True, timeout=WITNESS_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        raise ValueError(f"{name}: {failure} — check exceeded {WITNESS_TIMEOUT_S}s")
+    if proc.returncode != 0:
+        tail = [ln for ln in (proc.stderr or proc.stdout or "").strip().splitlines() if ln][-3:]
+        detail = (": " + " / ".join(tail)) if tail else ""
+        raise ValueError(f"{name}: {failure} — check exited {proc.returncode}{detail}")
+    return {"command": command, "exit": 0}
+def _attach_harness(name: str, cell: dict, cell_path: pathlib.Path, workdir: pathlib.Path) -> dict | None:
+    """A harness attaches an agent to a system, and attachment is verified, not asserted.
+
+    The probe runs BEFORE the node fires. A node whose system did not answer must
+    not fire at all — a node that fired against an absent system still hands a
+    value downstream, and every consumer then treats it as though it came from
+    the system. Refusing at attach is what keeps that value from existing.
+    """
+    harness = (cell.get("spec") or {}).get("harness")
+    if not harness:
+        return None
+    # The probe is written against the declaration, so the declaration is what it
+    # gets. Interpolating the system name by hand invites `grep -q ""`, which
+    # matches every line and passes without the system being there at all.
+    record = _run_check(name, harness["attach"], cell_path, workdir,
+                        f"harness for system {harness['system']!r} did not attach",
+                        {"CELL_HARNESS_SYSTEM": harness["system"],
+                         "CELL_HARNESS_SURFACE": harness["surface"],
+                         "CELL_HARNESS_TOOLS": " ".join(harness["tools"])})
+    return {"system": harness["system"], "surface": harness["surface"],
+            "tools": sorted(harness["tools"]), "attached": True, **record}
+def _witness_node(name: str, cell: dict, cell_path: pathlib.Path, workdir: pathlib.Path) -> dict | None:
+    """Firing is not settling. A node that declares a witness settles only on exit 0.
+
+    Without this the engine records that a node ran, which is not the same claim
+    as the node being done — exactly the substitution the whole substrate refuses.
+    """
+    command = _cell_policy(cell).get("witness")
+    if not command:
+        return None
+    return {**_run_check(name, command, cell_path, workdir, "fired but did not settle"), "settled": True}
 def run_composite(root_path: pathlib.Path, inputs: dict, out_base: pathlib.Path) -> dict:
     data = load_cell(root_path)
     errs = validate_graph(root_path, data)
@@ -503,6 +590,19 @@ def run_composite(root_path: pathlib.Path, inputs: dict, out_base: pathlib.Path)
         frontier = sorted(nxt)
     if sum(map(len, frontiers)) != len(org_map):
         raise ValueError(f"{root_path}: cycle detected in wiring")
+    # Two organelles in one frontier are unordered by the graph. If both declare
+    # the same write, the graph does not say which write survives — the executor's
+    # lexical order is an accident, not a declared one. Refuse rather than let a
+    # run whose result depends on node naming look deterministic.
+    for level in frontiers:
+        claimed: dict[str, str] = {}
+        for name in level:
+            for w in _cell_policy(org_map[name][1]).get("writes", []) or []:
+                if w in claimed:
+                    raise ValueError(
+                        f"{root_path}: write collision — organelles {claimed[w]!r} and {name!r} "
+                        f"are unordered in the same frontier and both declare writes {w!r}")
+                claimed[w] = name
     produced: dict[str, dict] = {}
     child_manifests: dict[str, dict] = {}
     def inputs_for(name: str) -> dict:
@@ -525,6 +625,7 @@ def run_composite(root_path: pathlib.Path, inputs: dict, out_base: pathlib.Path)
         workdir = out_base / f"_work_{name}"
         if workdir.exists(): shutil.rmtree(workdir)
         workdir.mkdir(parents=True, exist_ok=True)
+        attachment = _attach_harness(name, child, cell_path, workdir)
         if "run" in (child.get("spec") or {}):
             result = fire_leaf(child, leaf_inputs, workdir, cell_path)
             _declared_outputs(child, result, name)
@@ -534,6 +635,11 @@ def run_composite(root_path: pathlib.Path, inputs: dict, out_base: pathlib.Path)
         else:
             result = run_composite(cell_path, leaf_inputs, workdir)
             manifest = json.loads((workdir / "manifest.json").read_text(encoding="utf-8"))
+        record = _witness_node(name, child, cell_path, workdir)
+        if record is not None or attachment is not None:
+            if record is not None: manifest["witness"] = record
+            if attachment is not None: manifest["harness"] = attachment
+            _atomic_json(workdir / "manifest.json", manifest)
         return name, result, manifest
     for current in frontiers:
         prepared = {name: inputs_for(name) for name in current}
@@ -1166,8 +1272,29 @@ def cmd_inspect(root: str) -> int:
     if not ports:
         print("error: cell has no input or output ports", file=sys.stderr)
         return 1
-    organelles = [{"name": o.get("name"), "cell": o.get("cell")}
-                  for o in (spec.get("organelles") or []) if isinstance(o, dict)]
+    # Organelles carry their node contract, so the canvas can show what a node
+    # writes, what settles it, and which system it reaches — the three facts that
+    # separate "this ran" from "this is done and it talked to the real thing".
+    organelles = []
+    for o in (spec.get("organelles") or []):
+        if not isinstance(o, dict):
+            continue
+        entry = {"name": o.get("name"), "cell": o.get("cell")}
+        if o.get("cell"):
+            try:
+                child = load_cell((path.parent / o["cell"]).resolve())
+            except Exception:
+                child = {}
+            child_spec = child.get("spec") or {}
+            child_policy = _cell_policy(child)
+            entry["writes"] = child_policy.get("writes", [])
+            entry["witness"] = child_policy.get("witness")
+            harness = child_spec.get("harness")
+            if isinstance(harness, dict):
+                entry["harness"] = {"system": harness.get("system"),
+                                    "surface": harness.get("surface"),
+                                    "tools": harness.get("tools") or []}
+        organelles.append(entry)
     wiring = [{"from": w.get("from"), "to": w.get("to")}
               for w in (spec.get("wiring") or []) if isinstance(w, dict)]
     print(json.dumps({
@@ -1175,6 +1302,9 @@ def cmd_inspect(root: str) -> int:
         "description": meta.get("description"),
         "cell": str(path),
         "isLeaf": "run" in spec,
+        "writes": _cell_policy(data).get("writes", []),
+        "witness": _cell_policy(data).get("witness"),
+        "harness": spec.get("harness"),
         "ports": ports,
         "organelles": organelles,
         "wiring": wiring,
