@@ -28,6 +28,16 @@ export default function Page() {
   }, [active]);
   useEffect(() => { loadCells(true); }, []);
 
+  // The engine opens the canvas with ?cell=<path> when a deploy fires; land on
+  // that workflow instead of the default one.
+  useEffect(() => {
+    const want = new URLSearchParams(window.location.search).get("cell");
+    if (!want) return;
+    const rel = want.split("/cell/").pop() ?? want;
+    setActive(rel);
+    setTab("editor");
+  }, []);
+
   const loadFirings = useCallback(() => {
     fetch("/api/firings").then(r => r.json()).then(j => setFirings(j.firings ?? [])).catch(() => {});
   }, []);
@@ -121,6 +131,11 @@ export default function Page() {
                 <span style={{ fontWeight: 600 }}>{String(f.cell).split("/").pop()}</span>
                 <span style={{ color: "var(--nx-text-3)" }}>digest {String(f.id).slice(0, 8)}</span>
                 <span style={{ color: "var(--nx-text-3)" }}>{(f.ports ?? []).join(", ")}</span>
+                {!!(f.nodes ?? []).length && (
+                  <span style={{ color: "var(--nx-text-3)" }} title={(f.nodes ?? []).map((n: any) => `${n.node} · ${String(n.produced_by ?? "").slice(0, 8)}`).join("\n")}>
+                    {(f.nodes ?? []).length} nodes
+                  </span>
+                )}
                 <span style={{ marginLeft: "auto", color: "var(--nx-text-3)" }}>{f.created_at}</span>
               </div>
             ))}

@@ -93,8 +93,19 @@ def render_template(obj, inputs: dict, env=None):
         return [render_template(v, inputs, env) for v in obj]
     return obj
 
+def _render_label(key: str) -> str:
+    """Humanised port/field label. Adopted from @smthrs/cell-ui, which had this
+    and the engine did not — a view without labels makes the consumer invent
+    them, which is how two renderers of one schema start to disagree."""
+    return " ".join(word[:1].upper() + word[1:] for word in str(key).replace("_", " ").split())
+
 def infer_render(schema: dict) -> dict:
-    """One schema -> one default json-render view. Override via port.render when present."""
+    """One schema -> one default json-render view. Override via port.render when present.
+
+    This is the ONLY render inference in the substrate. A second copy in a UI
+    drifts from the one that actually fires: the TypeScript port capped no
+    columns and the engine capped eight, so the same schema rendered two
+    different tables depending on who asked."""
     if not isinstance(schema, dict):
         return {"type": "raw", "schema": schema}
     t = schema.get("type")
@@ -103,16 +114,21 @@ def infer_render(schema: dict) -> dict:
         # array of objects -> table, else list
         if isinstance(item, dict) and item.get("type") == "object":
             cols = list((item.get("properties") or {}).keys())[:8]
-            return {"type": "table", "columns": [{"key": c} for c in cols] or [{"key": "value"}]}
+            return {"type": "table",
+                    "columns": [{"key": c, "label": _render_label(c)} for c in cols]
+                    or [{"key": "value", "label": "Value"}]}
         return {"type": "list", "item": item}
     if t == "object":
-        req = schema.get("required") or list((schema.get("properties") or {}).keys())[:4]
-        return {"type": "form", "fields": [{"key": k, "required": k in (schema.get("required") or [])} for k in (schema.get("properties") or {}).keys()]}
-    if t in ("string","integer","number","boolean"):
+        required = schema.get("required") or []
+        return {"type": "form",
+                "fields": [{"key": k, "label": _render_label(k), "required": k in required}
+                           for k in (schema.get("properties") or {}).keys()]}
+    if t in ("string", "integer", "number", "boolean"):
         return {"type": "field", "fieldType": t}
     # fallback: form over properties if present
     if "properties" in schema:
-        return {"type": "form", "fields": [{"key": k} for k in schema["properties"].keys()]}
+        return {"type": "form",
+                "fields": [{"key": k, "label": _render_label(k)} for k in schema["properties"].keys()]}
     return {"type": "raw", "schema": schema}
 
 def render_for_port(schema_path: str, data=None, explicit_render=None):

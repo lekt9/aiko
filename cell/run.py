@@ -587,7 +587,7 @@ def cmd_build(root: str) -> int:
     print(canon)
     print(f"\n# digest:{cell_digest(data)}  organelles:{len(tree['children'])}", file=sys.stderr)
     return 0
-def cmd_run(root: str, inputs_path: str | None, out: str | None) -> int:
+def cmd_run(root: str, inputs_path: str | None, out: str | None, open_ui: bool = False) -> int:
     path = pathlib.Path(root).resolve()
     data = load_cell(path)
     errs = validate_graph(path, data)
@@ -648,6 +648,10 @@ def cmd_run(root: str, inputs_path: str | None, out: str | None) -> int:
                 _atomic_json(out_base / f"{k}.json", v)
             _journal_firing(json.loads((out_base / "manifest.json").read_text(encoding="utf-8")), path)
             print(json.dumps(result, ensure_ascii=False, indent=2))
+        # The daemon opens the canvas when it is watching; this covers the plain
+        # CLI so a deploy surfaces its workflow even with no daemon running.
+        if open_ui or _is_deploy_cell(str(path)):
+            _open_ui(str(path), "requested" if open_ui else "deploy fired")
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -684,43 +688,179 @@ def cmd_check(root: str, inputs_path: str | None) -> int:
 def _cell_root() -> pathlib.Path:
     return pathlib.Path(__file__).resolve().parent
 
-def _journal_firing(manifest: dict, cell_path: pathlib.Path) -> None:
-    """Append-only firing index under out/ (gitignored). Identity
-    (produced_by) stays deterministic; timing lives on the journal record,
-    outside identity. No swallow: a firing the journal cannot index is a
-    failed firing, matching the manifest-write doctrine above."""
-    import time
-    journal = _cell_root() / "out" / "firings.jsonl"
-    journal.parent.mkdir(parents=True, exist_ok=True)
-    rec = {
-        "id": manifest.get("produced_by"),
-        "cell": str(cell_path),
-        "ports": sorted((manifest.get("outputs") or {}).keys()),
-        "manifest_digest": manifest.get("digest"),
-        "committed_at_ms": int(time.time() * 1000),
-    }
-    with journal.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(rec, sort_keys=True, ensure_ascii=False) + "\n")
+ENGINE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS firings (
+  seq              INTEGER PRIMARY KEY AUTOINCREMENT,
+  id               TEXT NOT NULL UNIQUE,
+  cell             TEXT NOT NULL,
+  ports            TEXT NOT NULL,
+  manifest_digest  TEXT,
+  committed_at_ms  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS node_runs (
+  firing_id   TEXT NOT NULL,
+  node        TEXT NOT NULL,
+  cell_digest TEXT,
+  produced_by TEXT,
+  PRIMARY KEY (firing_id, node)
+);
+CREATE TABLE IF NOT EXISTS occurrences (
+  seq            INTEGER PRIMARY KEY AUTOINCREMENT,
+  firing_id      TEXT NOT NULL,
+  cell           TEXT NOT NULL,
+  observed_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS firings_cell ON firings(cell);
+CREATE INDEX IF NOT EXISTS occurrences_firing ON occurrences(firing_id);
+"""
 
-def cmd_firings(limit: int) -> int:
-    import datetime
-    journal = _cell_root() / "out" / "firings.jsonl"
-    latest: dict[str, dict] = {}
-    if journal.exists():
-        for line in journal.read_text(encoding="utf-8").splitlines():
+def _engine_db():
+    """The engine's own store: one sqlite file, append-only by discipline —
+    INSERT OR IGNORE keyed on the deterministic firing identity, never UPDATE
+    or DELETE. A row is evidence that a firing happened; nothing may rewrite
+    it. Replaces the earlier firings.jsonl (migrated on first open) so every
+    caller — CLI, UI, daemon, agent — reads one indexed store instead of
+    re-parsing a growing text file."""
+    import sqlite3
+    override = os.environ.get("CELL_ENGINE_DB")
+    if override:
+        # A witness must be able to exercise the store without writing into the
+        # one a live daemon is following.
+        path = pathlib.Path(override)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        out = path.parent
+    else:
+        out = _cell_root() / "out"
+        out.mkdir(parents=True, exist_ok=True)
+        path = out / "engine.db"
+    db = sqlite3.connect(path, timeout=10)
+    db.row_factory = sqlite3.Row
+    db.executescript(ENGINE_SCHEMA)
+    legacy = out / "firings.jsonl"
+    # Migration belongs to the real store only; a witness store starts empty.
+    if not override and legacy.exists():
+        for line in legacy.read_text(encoding="utf-8").splitlines():
             try:
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 continue
             if rec.get("id"):
-                latest[rec["id"]] = rec  # dedupe by identity, keep the newest record
-    rows = sorted(latest.values(), key=lambda r: r.get("committed_at_ms", 0), reverse=True)[:limit]
-    for r in rows:
-        ms = r.get("committed_at_ms")
-        if ms is not None:
-            r["created_at"] = datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc).isoformat()
+                db.execute(
+                    "INSERT OR IGNORE INTO firings (id, cell, ports, manifest_digest, committed_at_ms)"
+                    " VALUES (?,?,?,?,?)",
+                    (rec["id"], rec.get("cell", ""), json.dumps(rec.get("ports") or []),
+                     rec.get("manifest_digest"), int(rec.get("committed_at_ms") or 0)),
+                )
+        db.commit()
+        legacy.rename(out / "firings.jsonl.migrated")
+    return db
+
+def _journal_firing(manifest: dict, cell_path: pathlib.Path) -> None:
+    """Index the firing in the engine store. Identity (produced_by) stays
+    deterministic; timing lives on the row, outside identity. Per-node rows
+    come from the manifest's own children, so the UI can show which node
+    produced what without a second execution model. No swallow: a firing the
+    engine cannot index is a failed firing, matching the manifest-write
+    doctrine above."""
+    import time
+    fid = manifest.get("produced_by")
+    if not fid:
+        raise ValueError("firing has no produced_by identity to index")
+    db = _engine_db()
+    try:
+        db.execute(
+            "INSERT OR IGNORE INTO firings (id, cell, ports, manifest_digest, committed_at_ms)"
+            " VALUES (?,?,?,?,?)",
+            (fid, str(cell_path), json.dumps(sorted((manifest.get("outputs") or {}).keys())),
+             manifest.get("digest"), int(time.time() * 1000)),
+        )
+        # The identity dedupes: the same pinned inputs are the same firing. But
+        # each RUN is a real occurrence — the substrate's own word for "this
+        # happened again" — so it gets its own append-only row. Without this a
+        # re-fire is invisible to anything following the store, which is both a
+        # lie by omission in the UI and a watcher that waits forever.
+        db.execute(
+            "INSERT INTO occurrences (firing_id, cell, observed_at_ms) VALUES (?,?,?)",
+            (fid, str(cell_path), int(time.time() * 1000)),
+        )
+        for node, child in sorted((manifest.get("children") or {}).items()):
+            db.execute(
+                "INSERT OR IGNORE INTO node_runs (firing_id, node, cell_digest, produced_by)"
+                " VALUES (?,?,?,?)",
+                (fid, node, child.get("digest"), child.get("produced_by")),
+            )
+        db.commit()
+    finally:
+        db.close()
+
+def cmd_firings(limit: int) -> int:
+    """Project the engine store. Identity is the primary key, so dedupe is the
+    schema's job rather than a re-scan; per-node rows travel with each firing so
+    a caller can show which node produced what."""
+    import datetime
+    db = _engine_db()
+    try:
+        rows = []
+        for r in db.execute(
+            "SELECT * FROM firings ORDER BY committed_at_ms DESC, seq DESC LIMIT ?", (limit,)
+        ).fetchall():
+            nodes = [
+                {"node": n["node"], "cell_digest": n["cell_digest"], "produced_by": n["produced_by"]}
+                for n in db.execute(
+                    "SELECT node, cell_digest, produced_by FROM node_runs WHERE firing_id = ? ORDER BY node",
+                    (r["id"],),
+                ).fetchall()
+            ]
+            occ = db.execute(
+                "SELECT COUNT(*) n, MAX(observed_at_ms) last FROM occurrences WHERE firing_id = ?",
+                (r["id"],),
+            ).fetchone()
+            rows.append({
+                "occurrences": occ["n"],
+                "last_observed_ms": occ["last"],
+                "id": r["id"],
+                "cell": r["cell"],
+                "ports": json.loads(r["ports"]),
+                "manifest_digest": r["manifest_digest"],
+                "committed_at_ms": r["committed_at_ms"],
+                "created_at": datetime.datetime.fromtimestamp(
+                    r["committed_at_ms"] / 1000, datetime.timezone.utc
+                ).isoformat(),
+                "nodes": nodes,
+            })
+    finally:
+        db.close()
     print(json.dumps({"firings": rows}, sort_keys=True, ensure_ascii=False, indent=2))
     return 0
+
+# A deploy is what the drop-in protocol calls seating Aiko: the fde/self-wire
+# composition (account-handle -> deploy-workflow -> deploy-aiko) and its limbs.
+DEPLOY_CELL_MARKERS = ("self-wire", "deploy-workflow", "deploy-aiko")
+
+def _is_deploy_cell(cell: str) -> bool:
+    name = pathlib.Path(cell).name
+    return any(marker in name for marker in DEPLOY_CELL_MARKERS)
+
+def _ui_url(cell: str | None = None) -> str:
+    base = os.environ.get("CELL_UI_URL", "http://127.0.0.1:3100").rstrip("/")
+    return f"{base}/?cell={cell}" if cell else base + "/"
+
+def _open_ui(cell: str | None, reason: str) -> None:
+    """Open the canvas on the workflow that just fired. Best-effort by design:
+    a deploy that succeeded must not be reported as failed because no browser
+    or no UI was there to look at it."""
+    url = _ui_url(cell)
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    try:
+        done = subprocess.run([opener, url], check=False, capture_output=True, timeout=5)
+        if done.returncode == 0:
+            print(f"ui: opened {url} ({reason})", file=sys.stderr)
+        else:
+            # Say what happened. Reporting "opened" on a non-zero opener is the
+            # same false claim the substrate refuses everywhere else.
+            print(f"ui: {url} not opened ({reason}); {opener} exit {done.returncode}", file=sys.stderr)
+    except Exception as exc:
+        print(f"ui: could not open {url} ({reason}): {exc}", file=sys.stderr)
 
 def _resolve_in_root(rel: str) -> pathlib.Path:
     root = _cell_root()
@@ -841,29 +981,47 @@ def cmd_daemon(sock_arg: str | None) -> int:
     sub_lock = threading.Lock()
     started_ms = int(time.time() * 1000)
 
+    auto_open = os.environ.get("CELL_UI_AUTO_OPEN", "1") not in ("0", "false", "no")
+
     def watch_journal() -> None:
-        journal = root / "out" / "firings.jsonl"
-        pos = journal.stat().st_size if journal.exists() else 0
+        """Follow the engine store by monotonic seq — the schema gives a cursor,
+        so there is no byte offset to lose across truncation or concurrent
+        writers. A deploy firing also opens the canvas on that workflow."""
+        seq = 0
+        try:
+            db = _engine_db()
+            row = db.execute("SELECT COALESCE(MAX(seq), 0) AS s FROM occurrences").fetchone()
+            seq = row["s"]
+            db.close()
+        except Exception:
+            pass
         while True:
             try:
-                if journal.exists():
-                    size = journal.stat().st_size
-                    if size < pos:
-                        pos = 0  # truncated/rotated — re-read from start
-                    if size > pos:
-                        with journal.open("r", encoding="utf-8") as f:
-                            f.seek(pos)
-                            chunk = f.read()
-                            pos = f.tell()
-                        for line in chunk.splitlines():
-                            try:
-                                rec = json.loads(line)
-                            except json.JSONDecodeError:
-                                continue
-                            event = {"event": "firing", **rec}
-                            with sub_lock:
-                                for q in list(subscribers):
-                                    q.put(event)
+                db = _engine_db()
+                try:
+                    rows = db.execute(
+                        "SELECT o.seq, o.firing_id AS id, o.cell, o.observed_at_ms AS committed_at_ms,"
+                        "       f.ports, f.manifest_digest"
+                        "  FROM occurrences o LEFT JOIN firings f ON f.id = o.firing_id"
+                        " WHERE o.seq > ? ORDER BY o.seq",
+                        (seq,),
+                    ).fetchall()
+                finally:
+                    db.close()
+                for r in rows:
+                    seq = r["seq"]
+                    event = {
+                        "event": "firing", "id": r["id"], "cell": r["cell"],
+                        "ports": json.loads(r["ports"] or "[]"),
+                        "manifest_digest": r["manifest_digest"],
+                        "committed_at_ms": r["committed_at_ms"],
+                        "deploy": _is_deploy_cell(r["cell"]),
+                    }
+                    with sub_lock:
+                        for q in list(subscribers):
+                            q.put(event)
+                    if auto_open and event["deploy"]:
+                        _open_ui(r["cell"], "deploy fired")
             except Exception:
                 pass  # the watcher must outlive any single bad read
             time.sleep(0.3)
@@ -955,6 +1113,72 @@ def cmd_daemon(sock_arg: str | None) -> int:
         pass
     finally:
         sock_path.unlink(missing_ok=True)
+    return 0
+
+def cmd_inspect(root: str) -> int:
+    """Project one cell as a typed visual membrane — the shared contract both
+    UIs read. Ports carry the render spec AND how it was decided (`renderVia`:
+    explicit when the cell declared `port.render`, inferred when the engine
+    derived it), adopted from @smthrs/cell-ui so a consumer never has to guess
+    whether a view was authored or inferred.
+
+    A cell with no ports fails closed rather than rendering an empty membrane."""
+    sys.path.insert(0, str(_cell_root()))
+    import helpers  # type: ignore
+    path = pathlib.Path(root).resolve()
+    data = load_cell(path)
+    errs = validate_cell(data, str(path))
+    if errs:
+        for e in errs:
+            print(f"error: {e}", file=sys.stderr)
+        return 1
+    meta = data.get("metadata") or {}
+    spec = data.get("spec") or {}
+    ports = []
+    for direction in ("input", "output"):
+        for name, declaration in (_port_map(data, f"{direction}s") or {}).items():
+            decl = declaration if isinstance(declaration, dict) else {"schema": declaration}
+            raw = decl.get("schema")
+            # A port's schema is a primitive name, an inline object, or a path to
+            # a schema file. Resolve the file: leaving it unresolved rendered
+            # every real cell as "raw", which is a view that tells you nothing.
+            primitives = {"string", "object", "array", "integer", "number", "boolean", "null"}
+            if isinstance(raw, str) and raw in primitives:
+                schema = {"type": raw}
+            elif isinstance(raw, str):
+                ref = pathlib.Path(raw)
+                ref = ref if ref.is_absolute() else (path.parent / ref)
+                try:
+                    schema = json.loads(ref.read_text(encoding="utf-8"))
+                except Exception:
+                    schema = {"$ref": raw}
+            else:
+                schema = raw if isinstance(raw, dict) else {}
+            explicit = decl.get("render")
+            ports.append({
+                "name": name,
+                "direction": direction,
+                "schema": schema,
+                "render": explicit if explicit is not None else helpers.infer_render(schema),
+                "renderVia": "explicit" if explicit is not None else "inferred",
+                "required": decl.get("required", True) is not False,
+            })
+    if not ports:
+        print("error: cell has no input or output ports", file=sys.stderr)
+        return 1
+    organelles = [{"name": o.get("name"), "cell": o.get("cell")}
+                  for o in (spec.get("organelles") or []) if isinstance(o, dict)]
+    wiring = [{"from": w.get("from"), "to": w.get("to")}
+              for w in (spec.get("wiring") or []) if isinstance(w, dict)]
+    print(json.dumps({
+        "name": meta.get("name") or "Cell",
+        "description": meta.get("description"),
+        "cell": str(path),
+        "isLeaf": "run" in spec,
+        "ports": ports,
+        "organelles": organelles,
+        "wiring": wiring,
+    }, sort_keys=True, ensure_ascii=False, indent=2))
     return 0
 
 DRAFT_KINDS = ("python", "exec", "http")
@@ -1084,6 +1308,7 @@ def main() -> None:
     p_run.add_argument("root")
     p_run.add_argument("--inputs", default=None)
     p_run.add_argument("--out", default="out")
+    p_run.add_argument("--open", action="store_true", help="open the canvas on this workflow after it fires")
     p_check = sub.add_parser("check")
     p_check.add_argument("root")
     p_check.add_argument("--inputs", default=None)
@@ -1092,6 +1317,8 @@ def main() -> None:
     p_draft.add_argument("--kind", default="python")
     p_draft.add_argument("--name", default=None)
     p_draft.add_argument("--write", default=None)
+    p_inspect = sub.add_parser("inspect")
+    p_inspect.add_argument("root")
     p_firings = sub.add_parser("firings")
     p_firings.add_argument("--limit", type=int, default=50)
     p_save = sub.add_parser("save")
@@ -1104,11 +1331,13 @@ def main() -> None:
     if args.cmd == "build":
         raise SystemExit(cmd_build(args.root))
     elif args.cmd == "run":
-        raise SystemExit(cmd_run(args.root, args.inputs, args.out))
+        raise SystemExit(cmd_run(args.root, args.inputs, args.out, args.open))
     elif args.cmd == "check":
         raise SystemExit(cmd_check(args.root, args.inputs))
     elif args.cmd == "draft":
         raise SystemExit(cmd_draft(args.goal, args.kind, args.name, args.write))
+    elif args.cmd == "inspect":
+        raise SystemExit(cmd_inspect(args.root))
     elif args.cmd == "firings":
         raise SystemExit(cmd_firings(args.limit))
     elif args.cmd == "save":
