@@ -16,6 +16,7 @@ const RG_VER: &str = "15.0.0";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     embed_contract_library()?;
+    embed_contract_cli()?;
     emit_build_id();
     // Only bundle in release builds to avoid slowing down cargo check.
     println!("cargo:rerun-if-env-changed=GROK_SHELL_BUNDLE_RG_PATH");
@@ -264,4 +265,49 @@ fn emit_build_id() {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "src".to_string());
     println!("cargo:rustc-env=AIKO_GRAPH_BUILD_ID={commit}");
+}
+
+/// Embed the Contract CLI executable so `aiko contract …` needs no second
+/// installed artifact. Same shape as `embed_contract_library`: the packaging
+/// pipeline names the file, release builds fall back to the in-tree zig-out
+/// build, and anything else compiles without it (the subcommand then reports
+/// that this build carries no CLI rather than silently running a stray one).
+fn embed_contract_cli() -> Result<(), Box<dyn std::error::Error>> {
+    println!("cargo:rerun-if-env-changed=AIKO_EMBED_CONTRACT_CLI");
+    println!("cargo:rustc-check-cfg=cfg(bundle_contract_cli)");
+
+    let source = match env::var("AIKO_EMBED_CONTRACT_CLI") {
+        Ok(value) if value == "skip" => return Ok(()),
+        Ok(value) => {
+            let path = PathBuf::from(value);
+            if !path.is_file() {
+                return Err(format!(
+                    "AIKO_EMBED_CONTRACT_CLI names a missing file: {}",
+                    path.display()
+                )
+                .into());
+            }
+            path
+        }
+        Err(_) => {
+            if env::var("PROFILE").as_deref() != Ok("release") {
+                return Ok(());
+            }
+            let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
+            let candidate = manifest_dir.join("../../../../contract/zig/zig-out/bin/contract-zig");
+            if !candidate.is_file() {
+                return Ok(());
+            }
+            candidate
+        }
+    };
+
+    println!("cargo:rerun-if-changed={}", source.display());
+    let out_dir = PathBuf::from(env::var("OUT_DIR")?);
+    let dest = out_dir.join("embedded_contract_cli.bin");
+    let _ = fs::remove_file(&dest);
+    fs::copy(&source, &dest)?;
+    println!("cargo:rustc-cfg=bundle_contract_cli");
+    println!("cargo:rustc-env=AIKO_CONTRACT_CLI_EMBED_FILE={}", dest.display());
+    Ok(())
 }

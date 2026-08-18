@@ -140,6 +140,12 @@ build_aiko_only() {
         if [ -n "${CONTRACT_DYLIB:-}" ] && [ -f "${CONTRACT_DYLIB:-}" ]; then
             AIKO_EMBED_CONTRACT_LIB="$CONTRACT_DYLIB"
             export AIKO_EMBED_CONTRACT_LIB
+            # Carry the CLI inside the binary too, so `aiko contract …` needs
+            # no separately installed executable to drift out of step.
+            if [ -n "$CONTRACT_CLI" ] && [ -x "$CONTRACT_CLI" ]; then
+                AIKO_EMBED_CONTRACT_CLI="$CONTRACT_CLI"
+                export AIKO_EMBED_CONTRACT_CLI
+            fi
             echo "Embedding Contract runtime from $CONTRACT_DYLIB"
         fi
         CARGO_INCREMENTAL=${CARGO_INCREMENTAL:-0} \

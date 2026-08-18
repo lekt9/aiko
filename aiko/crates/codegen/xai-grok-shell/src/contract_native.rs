@@ -70,6 +70,46 @@ use neuron_bridge::{
 #[cfg(bundle_contract)]
 static EMBEDDED_CONTRACT_LIBRARY: &[u8] = include_bytes!(env!("AIKO_CONTRACT_EMBED_FILE"));
 
+/// The Contract CLI the packaging pipeline built THIS binary against, carried
+/// inside the binary itself so `aiko contract …` needs no separately installed
+/// 40 MB executable. Extracted content-addressed and exec'd, exactly as the
+/// runtime above is extracted and dlopened: one shipped artifact, one version,
+/// nothing on PATH to drift out of step with the host that speaks to it.
+#[cfg(bundle_contract_cli)]
+static EMBEDDED_CONTRACT_CLI: &[u8] = include_bytes!(env!("AIKO_CONTRACT_CLI_EMBED_FILE"));
+
+/// Materialize the embedded Contract CLI and return its path. `None` when this
+/// build carries no CLI — the caller reports that rather than reaching for a
+/// stray binary on PATH, which is the skew this embedding exists to end.
+pub fn embedded_contract_cli() -> Option<PathBuf> {
+    #[cfg(not(bundle_contract_cli))]
+    {
+        None
+    }
+    #[cfg(bundle_contract_cli)]
+    {
+        let digest = format!("{:x}", Sha256::digest(EMBEDDED_CONTRACT_CLI));
+        let dir = dirs::home_dir()?
+            .join(".aiko/lib/embedded-cli")
+            .join(&digest[..16]);
+        let path = dir.join("contract");
+        if path.is_file() {
+            return Some(path);
+        }
+        std::fs::create_dir_all(&dir).ok()?;
+        let staging = dir.join(format!(".extract-{}", std::process::id()));
+        std::fs::write(&staging, EMBEDDED_CONTRACT_CLI).ok()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755));
+        }
+        // Rename into place so a partial write is never executable.
+        std::fs::rename(&staging, &path).ok()?;
+        Some(path)
+    }
+}
+
 const LOCAL_COMMAND_TIMEOUT: Duration = Duration::from_millis(800);
 const MAX_CONTEXT_BYTES: usize = 14_000;
 const CONTEXT_DISABLED_ENV: &str = "AIKO_MACHINE_CONTEXT";
