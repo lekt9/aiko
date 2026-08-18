@@ -26,13 +26,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "resolve-channel",
       "plan": "Resolve an available notification channel for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -43,13 +45,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "prepare-message",
       "plan": "Prepare a bounded notification payload for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -60,13 +64,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "send-message",
       "plan": "Send the authorized notification for {{goal}}.",
       "read_only": false,
-      "requires_authority": false,
-      "reversible": true,
+      "requires_authority": true,
+      "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -77,13 +83,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "delivery-evidence",
       "plan": "Verify channel delivery evidence for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     }
   ],
   "output_schema": {

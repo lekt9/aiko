@@ -735,11 +735,15 @@ mod tests {
     fn discovery_generation_respects_the_graph_node_budget() {
         let temporary = tempfile::tempdir().unwrap();
         write_discovery_limb(temporary.path());
-        // Core is 7 nodes, the limb is 1, so a budget of 9 leaves room for
-        // exactly one of the two requested discoveries.
-        let planned = plan_bounded("xyzzy discovery for the demo", temporary.path(), 9);
+        // Core is 8 nodes (observe, recall, route, act, capture, verify, judge,
+        // settle) and the limb is 1, so a budget of 10 leaves room for exactly
+        // one of the two requested discoveries. This arithmetic went stale when
+        // the capture node joined the connectome, so keep it beside the count it
+        // depends on.
+        let budget = 10;
+        let planned = plan_bounded("xyzzy discovery for the demo", temporary.path(), budget);
         assert!(planned.core_admitted);
-        assert!(planned.children.len() <= 9);
+        assert!(planned.children.len() <= budget);
         let discoveries = planned
             .children
             .iter()

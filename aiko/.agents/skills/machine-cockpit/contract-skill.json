@@ -1,16 +1,81 @@
 {
-  "schema_version": 1,
-  "id": "machine-cockpit",
-  "version": "1.0.0",
   "description": "Wire a fresh macOS seat so a non-technical teammate can chat with Aiko in browser and pair Telegram.",
-  "platforms": ["macos"],
-  "triggers": ["wire", "cockpit", "telegram setup", "new mac", "gbear", "machine setup", "friendly ui"],
-  "input_schema": {"type": "object", "additionalProperties": true},
-  "output_schema": {"type": "object", "additionalProperties": true},
+  "examples": [
+    {
+      "expect": {
+        "held_effects": [
+          "external_message"
+        ],
+        "root_count": 1,
+        "selected": "machine-cockpit"
+      },
+      "name": "default",
+      "prompt": "Wire a fresh macOS seat so a teammate can chat with Aiko in the browser and pair Telegram."
+    }
+  ],
+  "id": "machine-cockpit",
+  "input_schema": {
+    "additionalProperties": true,
+    "type": "object"
+  },
   "nodes": [
-    {"key": "ship-aiko", "plan": "Ship and install the portable Aiko stack onto the target host.", "worker": "aiko", "depends_on": [], "timeout_ms": 300000, "effect": "external_message", "requires_authority": true},
-    {"key": "ship-cockpit", "plan": "Ship the browser chat UI, cockpit server, and telegram-daemon.", "worker": "aiko", "depends_on": ["ship-aiko"], "timeout_ms": 120000, "effect": "external_message", "requires_authority": true},
-    {"key": "launch", "plan": "Launch the cockpit on :8787 and verify native + cockpit health.", "worker": "aiko", "depends_on": ["ship-cockpit"], "timeout_ms": 60000, "effect": "read_only"},
-    {"key": "verify", "plan": "Run the gate: native health, cockpit health, aiko version, launchd, desktop file.", "worker": "aiko", "depends_on": ["launch"], "timeout_ms": 30000, "effect": "read_only"}
-  ]
+    {
+      "depends_on": [],
+      "effect": "external_message",
+      "key": "ship-aiko",
+      "plan": "Ship and install the portable Aiko stack onto the target host.",
+      "requires_authority": true,
+      "timeout_ms": 300000,
+      "worker": "aiko"
+    },
+    {
+      "depends_on": [
+        "ship-aiko"
+      ],
+      "effect": "external_message",
+      "key": "ship-cockpit",
+      "plan": "Ship the browser chat UI, cockpit server, and telegram-daemon.",
+      "requires_authority": true,
+      "timeout_ms": 120000,
+      "worker": "aiko"
+    },
+    {
+      "depends_on": [
+        "ship-cockpit"
+      ],
+      "effect": "read_only",
+      "key": "launch",
+      "plan": "Launch the cockpit on :8787 and verify native + cockpit health.",
+      "timeout_ms": 60000,
+      "worker": "aiko"
+    },
+    {
+      "depends_on": [
+        "launch"
+      ],
+      "effect": "read_only",
+      "key": "verify",
+      "plan": "Run the gate: native health, cockpit health, aiko version, launchd, desktop file.",
+      "timeout_ms": 30000,
+      "worker": "aiko"
+    }
+  ],
+  "output_schema": {
+    "additionalProperties": true,
+    "type": "object"
+  },
+  "platforms": [
+    "macos"
+  ],
+  "schema_version": 1,
+  "triggers": [
+    "wire",
+    "cockpit",
+    "telegram setup",
+    "new mac",
+    "gbear",
+    "machine setup",
+    "friendly ui"
+  ],
+  "version": "1.0.0"
 }

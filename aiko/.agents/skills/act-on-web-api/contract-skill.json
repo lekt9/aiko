@@ -24,13 +24,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "resolve-route",
       "plan": "Resolve a cached Unbrowse, API, or browser route for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -41,13 +43,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "prepare-request",
       "plan": "Prepare sanitized structured API parameters for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -58,13 +62,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "execute-request",
       "plan": "Execute the governed API or browser request for {{goal}}.",
       "read_only": false,
       "requires_authority": false,
       "reversible": true,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -75,13 +81,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "verify-response",
       "plan": "Verify response status and declared output shape for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     }
   ],
   "output_schema": {

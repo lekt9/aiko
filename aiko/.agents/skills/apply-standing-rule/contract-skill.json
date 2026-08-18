@@ -26,13 +26,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "parse-rule",
       "plan": "Parse the explicit standing rule in {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -43,13 +45,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "classify-effect",
       "plan": "Classify effect scope and durable authority for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -60,13 +64,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "register-rule",
       "plan": "Register the governed standing rule for {{goal}}.",
       "read_only": false,
-      "requires_authority": false,
+      "requires_authority": true,
       "reversible": true,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     }
   ],
   "output_schema": {

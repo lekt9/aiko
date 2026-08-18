@@ -26,13 +26,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "resolve-media",
       "plan": "Resolve explicitly selected local media for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -43,13 +45,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "preview-media",
       "plan": "Prepare media metadata preview for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -60,13 +64,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "control-media",
       "plan": "Invoke the enabled platform media adapter for {{goal}}.",
       "read_only": false,
-      "requires_authority": false,
+      "requires_authority": true,
       "reversible": true,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     }
   ],
   "output_schema": {

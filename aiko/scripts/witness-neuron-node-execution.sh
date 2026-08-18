@@ -156,7 +156,10 @@ graph = call("contract_expand_json", {
     "agent": "skill:aiko-meta-agent@1.0.0",
     "children": children,
 })
-assert graph["abi_version"] == 12 and len(graph["waves"]) == 2
+# ABI floor, not a pin: the host itself feature-gates forward (abi >= 13
+# enables the attestation issue path), so a hard == pins this witness to
+# one release and breaks it on every ABI bump for no property gained.
+assert graph["abi_version"] >= 12 and len(graph["waves"]) == 2
 claim = {
     "schema": "contract.neuron-skill-node.claim/v1",
     "root_id": "caf00d91",
