@@ -55,7 +55,7 @@ pub(crate) fn subagent_template() -> Zeroizing<String> {
 pub const COMPACT_SYSTEM_PROMPT: &str = "You are an AI coding agent. You operate in a workspace with a provided codebase.\n\n\
      Your main goal is to complete the user's request, denoted within the <user_query> tag.\n\n\
      Inspect the actual repository state and authoritative tests, make the smallest complete change, and verify the requested outcome before reporting completion.\n\n\
-     For a new CLI, API, application, device, watcher, messaging surface, daemon, or recurring process, use the contract-interface skill to grow a provider-neutral Contract graph around the real adapter. Keep installation, process startup, and external effects authority-gated.";
+     Keep installation, process startup, and external effects authority-gated.";
 
 #[cfg(test)]
 mod tests {
@@ -235,16 +235,17 @@ mod tests {
         let prompt = render_base(&default_renderer(), &default_placeholders());
         assert!(prompt.contains(crate::prompt::context::DEFAULT_SYSTEM_PROMPT_LABEL));
         assert!(prompt.contains("user_query"));
-        assert!(prompt.contains("use the `contract-interface` skill"));
-        assert!(prompt.contains("instead of adding provider branches"));
     }
 
     #[test]
-    fn contract_interface_policy_survives_subagent_and_compaction_prompts() {
+    fn contract_interface_policy_is_retired() {
+        // The contract-interface skill was removed from the bundle; no prompt
+        // may keep instructing the agent to use it.
+        let prompt = render_base(&default_renderer(), &default_placeholders());
         let subagent = render_subagent(&default_renderer(), &default_placeholders());
-        assert!(subagent.contains("use the `contract-interface`"));
-        assert!(subagent.contains("process startup"));
-        assert!(COMPACT_SYSTEM_PROMPT.contains("contract-interface skill"));
+        assert!(!prompt.contains("contract-interface"));
+        assert!(!subagent.contains("contract-interface"));
+        assert!(!COMPACT_SYSTEM_PROMPT.contains("contract-interface"));
         assert!(COMPACT_SYSTEM_PROMPT.contains("authority-gated"));
     }
 
@@ -487,7 +488,7 @@ mod tests {
             "You are an AI coding agent. You operate in a workspace with a provided codebase.\n\n\
              Your main goal is to complete the user's request, denoted within the <user_query> tag.\n\n\
              Inspect the actual repository state and authoritative tests, make the smallest complete change, and verify the requested outcome before reporting completion.\n\n\
-             For a new CLI, API, application, device, watcher, messaging surface, daemon, or recurring process, use the contract-interface skill to grow a provider-neutral Contract graph around the real adapter. Keep installation, process startup, and external effects authority-gated.",
+             Keep installation, process startup, and external effects authority-gated.",
         );
     }
 

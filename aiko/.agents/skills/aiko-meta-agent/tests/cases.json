@@ -19,14 +19,5 @@
       "control": "hold_or_candidate",
       "generated_state": "inert"
     }
-  },
-  {
-    "name": "provider-neutral-growth",
-    "prompt": "Connect this filesystem watcher and notification command as a durable interface.",
-    "expect": {
-      "core": "aiko-meta-agent",
-      "generator": "contract-interface",
-      "provider_branch_in_core": false
-    }
   }
 ]
