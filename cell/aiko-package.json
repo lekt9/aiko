@@ -1,6 +1,6 @@
 {
   "name": "cell",
-  "version": "0.2.119",
+  "version": "0.2.120",
   "api": "cell/v0",
   "kind": "harness",
   "standalone": true,

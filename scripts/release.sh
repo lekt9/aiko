@@ -111,7 +111,9 @@ PY
   for _man in \
     "$ROOT/cell/aiko-package.json" \
     "$ROOT/neuron/aiko-package.json" \
-    "$ROOT/contract/aiko-package.json"
+    "$ROOT/contract/aiko-package.json" \
+    "$ROOT/aiko/apps/aiko-app/package.json" \
+    "$ROOT/aiko/apps/aiko-app/src-tauri/tauri.conf.json"
   do
     [ -f "$_man" ] || continue
     python3 - "$_man" "$new" <<'PY'
@@ -122,7 +124,15 @@ man["version"] = ver
 open(path, "w", encoding="utf-8").write(json.dumps(man, indent=2) + "\n")
 PY
   done
-  ok "Bumped VERSION, Cargo.toml, locks, stack, layer manifests → $new"
+  _tauri_cargo="$ROOT/aiko/apps/aiko-app/src-tauri/Cargo.toml"
+  if [[ -f "$_tauri_cargo" ]]; then
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      sed -i '' -E "s/^version = \".*\"/version = \"$new\"/" "$_tauri_cargo"
+    else
+      sed -i -E "s/^version = \".*\"/version = \"$new\"/" "$_tauri_cargo"
+    fi
+  fi
+  ok "Bumped VERSION, Cargo.toml, locks, stack, layer manifests, desktop app → $new"
 }
 
 do_release(){
@@ -177,7 +187,9 @@ except ImportError:
   # Stage
   git -C "$ROOT" add VERSION sdk/registry/versions.lock aiko/sdk/registry/versions.lock \
     sdk/registry/stack.lock.json scripts/release.sh "${CARGO_FILES[@]#$ROOT/}" \
-    cell/aiko-package.json neuron/aiko-package.json contract/aiko-package.json
+    cell/aiko-package.json neuron/aiko-package.json contract/aiko-package.json \
+    aiko/apps/aiko-app/package.json aiko/apps/aiko-app/src-tauri/tauri.conf.json \
+    aiko/apps/aiko-app/src-tauri/Cargo.toml
   # Cargo.lock may have changed
   git -C "$ROOT" add aiko/Cargo.lock 2>/dev/null || true
 

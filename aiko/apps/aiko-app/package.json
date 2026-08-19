@@ -1,8 +1,8 @@
 {
   "name": "aiko-app",
   "private": true,
-  "version": "0.2.116",
-  "description": "Aiko App — native desktop workbench for the embedded Aiko CLI",
+  "version": "0.2.120",
+  "description": "Aiko App \u2014 native desktop workbench for the embedded Aiko CLI",
   "author": "RongleCat",
   "license": "MIT",
   "repository": {
