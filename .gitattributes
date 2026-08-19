@@ -9,3 +9,6 @@ aiko/apps/desktop/src-tauri/resources/** filter=lfs diff=lfs merge=lfs -text
 deploy/wrangler/**/workerd filter=lfs diff=lfs merge=lfs -text
 **/workerd filter=lfs diff=lfs merge=lfs -text
 aiko/apps/desktop/src-tauri/resources/contract/* filter=lfs diff=lfs merge=lfs -text
+installers/** filter=lfs diff=lfs merge=lfs -text
+*.pkg filter=lfs diff=lfs merge=lfs -text
+*.dmg filter=lfs diff=lfs merge=lfs -text
