@@ -6,9 +6,6 @@ const HELP_SKILL_MD: &str = include_str!("../skills/help/SKILL.md");
 const CREATE_SKILL_MD: &str = include_str!("../skills/create-skill/SKILL.md");
 const CODE_REVIEW_SKILL_MD: &str = include_str!("../skills/code-review/SKILL.md");
 const IMAGINE_SKILL_MD: &str = include_str!("../skills/imagine/SKILL.md");
-const CONTRACT_SKILL_MD: &str = include_str!("../skills/contract/SKILL.md");
-const TELEGRAM_CONTRACTS_SKILL_MD: &str =
-    include_str!("../../../../.agents/skills/telegram-contracts/SKILL.md");
 const AIKO_FLOW_SKILL_MD: &str = include_str!("../../../../.agents/skills/aiko-flow/SKILL.md");
 macro_rules! contract_native_skill {
     ($constant:ident, $directory:literal) => {
@@ -29,7 +26,6 @@ contract_native_skill!(ACT_ON_WEB_API_SKILL_MD, "act-on-web-api");
 contract_native_skill!(SEND_NOTIFICATION_SKILL_MD, "send-notification");
 contract_native_skill!(CONTROL_LOCAL_MEDIA_SKILL_MD, "control-local-media");
 contract_native_skill!(ISSUE_TO_PATCH_SKILL_MD, "issue-to-patch");
-contract_native_skill!(CONTRACT_INTERFACE_SKILL_MD, "contract-interface");
 /// Compiled-in SKILL.md content for `/check-work` (available to headless mode).
 pub const CHECK_SKILL_MD: &str = include_str!("../skills/check-work/SKILL.md");
 /// Compiled-in SKILL.md content for headless `--best-of-n` (not extracted as
@@ -64,7 +60,17 @@ pub const BEST_OF_N_SKILL_MD: &str = include_str!("../skills/best-of-n/SKILL.md"
 ///   them for many releases.
 /// - After the rename has had time to propagate, you **may** clean old
 ///   strings out of this list for hygiene.
-const LEGACY_BUNDLED_SKILL_NAMES: &[&str] = &["check", "best-of-n", "docx", "pptx", "xlsx"];
+const LEGACY_BUNDLED_SKILL_NAMES: &[&str] = &[
+    "check",
+    "best-of-n",
+    "docx",
+    "pptx",
+    "xlsx",
+    // Contract-related skills retired 2026-08 — purge extracted copies on startup.
+    "contract",
+    "contract-interface",
+    "telegram-contracts",
+];
 
 /// All bundled skill SKILL.md files. Single source of truth used by both
 /// the full extraction path (version bump) and the missing-file fast path
@@ -82,8 +88,6 @@ const BUNDLED_SKILLS: &[(&str, &str)] = &[
     ("code-review", CODE_REVIEW_SKILL_MD),
     ("imagine", IMAGINE_SKILL_MD),
     ("check-work", CHECK_SKILL_MD),
-    ("contract", CONTRACT_SKILL_MD),
-    ("telegram-contracts", TELEGRAM_CONTRACTS_SKILL_MD),
     ("aiko-flow", AIKO_FLOW_SKILL_MD),
     ("inspect-project", INSPECT_PROJECT_SKILL_MD),
     ("build-and-test-project", BUILD_TEST_SKILL_MD),
@@ -95,7 +99,6 @@ const BUNDLED_SKILLS: &[(&str, &str)] = &[
     ("send-notification", SEND_NOTIFICATION_SKILL_MD),
     ("control-local-media", CONTROL_LOCAL_MEDIA_SKILL_MD),
     ("issue-to-patch", ISSUE_TO_PATCH_SKILL_MD),
-    ("contract-interface", CONTRACT_INTERFACE_SKILL_MD),
 ];
 
 /// Resources belonging to compiled-in skills. Paths are relative to that
@@ -124,51 +127,6 @@ const BUNDLED_SKILL_RESOURCES: &[(&str, &str, &[u8])] = &[
     contract_native_resources!("send-notification"),
     contract_native_resources!("control-local-media"),
     contract_native_resources!("issue-to-patch"),
-    contract_native_resources!("contract-interface"),
-    (
-        "contract-interface",
-        "agents/openai.yaml",
-        include_bytes!("../../../../.agents/skills/contract-interface/agents/openai.yaml"),
-    ),
-    (
-        "contract-interface",
-        "references/receptor.schema.json",
-        include_bytes!(
-            "../../../../.agents/skills/contract-interface/references/receptor.schema.json"
-        ),
-    ),
-    (
-        "contract-interface",
-        "scripts/grow.py",
-        include_bytes!("../../../../.agents/skills/contract-interface/scripts/grow.py"),
-    ),
-    (
-        "contract-interface",
-        "scripts/conform.py",
-        include_bytes!("../../../../.agents/skills/contract-interface/scripts/conform.py"),
-    ),
-    (
-        "telegram-contracts",
-        "agents/openai.yaml",
-        include_bytes!("../../../../.agents/skills/telegram-contracts/agents/openai.yaml"),
-    ),
-    (
-        "telegram-contracts",
-        "assets/capabilities.json",
-        include_bytes!("../../../../.agents/skills/telegram-contracts/assets/capabilities.json"),
-    ),
-    (
-        "telegram-contracts",
-        "references/telegram-api.md",
-        include_bytes!("../../../../.agents/skills/telegram-contracts/references/telegram-api.md"),
-    ),
-    (
-        "telegram-contracts",
-        "scripts/build_contract_pack.py",
-        include_bytes!(
-            "../../../../.agents/skills/telegram-contracts/scripts/build_contract_pack.py"
-        ),
-    ),
 ];
 
 /// True when a discovered skill is the copy `extract_bundled_files` wrote to
@@ -401,60 +359,25 @@ mod tests {
     }
 
     #[test]
-    fn contract_skill_is_bundled() {
+    fn contract_skills_are_retired() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
 
-        extract_bundled_files(home);
-
-        let skill = std::fs::read_to_string(home.join("skills/contract/SKILL.md")).unwrap();
-        assert!(skill.contains("contract task begin"));
-        assert!(skill.contains("contract task verify"));
-        assert!(skill.contains("application_observe"));
-        assert!(skill.contains("application_act"));
-    }
-
-    #[test]
-    fn telegram_contracts_skill_and_resources_are_bundled() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = tmp.path();
+        // Extracted copies left behind by an older binary…
+        for name in ["contract", "contract-interface", "telegram-contracts"] {
+            std::fs::create_dir_all(home.join(format!("skills/{name}"))).unwrap();
+            std::fs::write(home.join(format!("skills/{name}/SKILL.md")), "old").unwrap();
+        }
 
         extract_bundled_files(home);
 
-        let root = home.join("skills/telegram-contracts");
-        let skill = std::fs::read_to_string(root.join("SKILL.md")).unwrap();
-        assert!(skill.contains("Declare every inbound update before filtering"));
-        assert!(root.join("agents/openai.yaml").is_file());
-        assert!(root.join("assets/capabilities.json").is_file());
-        assert!(root.join("references/telegram-api.md").is_file());
-        assert!(root.join("scripts/build_contract_pack.py").is_file());
-
-        // Same-version startup repairs a missing resource just like SKILL.md.
-        std::fs::remove_file(root.join("assets/capabilities.json")).unwrap();
-        extract_bundled_files(home);
-        assert!(root.join("assets/capabilities.json").is_file());
-    }
-
-    #[test]
-    fn contract_interface_skill_and_generator_are_bundled() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = tmp.path();
-
-        extract_bundled_files(home);
-
-        let root = home.join("skills/contract-interface");
-        let skill = std::fs::read_to_string(root.join("SKILL.md")).unwrap();
-        assert!(skill.contains("temporary phenotype"));
-        assert!(root.join("contract-skill.json").is_file());
-        assert!(root.join("agents/openai.yaml").is_file());
-        assert!(root.join("references/receptor.schema.json").is_file());
-        assert!(root.join("scripts/grow.py").is_file());
-        assert!(root.join("scripts/conform.py").is_file());
-
-        // Same-version repair must restore operational assets, not only prose.
-        std::fs::remove_file(root.join("scripts/grow.py")).unwrap();
-        extract_bundled_files(home);
-        assert!(root.join("scripts/grow.py").is_file());
+        // …are purged on startup and never re-created.
+        for name in ["contract", "contract-interface", "telegram-contracts"] {
+            assert!(
+                !home.join(format!("skills/{name}")).exists(),
+                "{name} must be retired, not bundled"
+            );
+        }
     }
 
     #[tokio::test]

@@ -165,7 +165,7 @@ lives in `libcontract/src/shape.zig` / `libcontract/src/pattern.zig` /
 | surface | where | what |
 |---|---|---|
 | CLI | `zig/src/main.zig` → installed as `scripts/contract` (signed, `scripts/contract.sig`) | declaration/resolution plus read-only `status`, `events`, `watch`, and `explain` |
-| C ABI | `libcontract/src/c_abi.zig` | ABI v12 (older symbols preserved) plus canonical Neuron firing imported from the sibling `typed_neuron` Zig package, immutable Skill stage/admit/activate/retire/rollback projection, stateless-worker lineage, typed Skill-graph expansion, dependency-ready node claim/lease/settle, canonical effect-outbox acknowledgement, digest-pinned adapters/scripts, private evidence, binary muscle observation/recall/prediction, durable tick/lease/settle/signal, agency validation, and trust verdicts |
+| C ABI | `libcontract/src/c_abi.zig` | ABI v13 (older symbols preserved) plus canonical Neuron firing imported from the sibling `typed_neuron` Zig package, immutable Skill stage/admit/activate/retire/rollback projection, stateless-worker lineage, typed Skill-graph expansion, dependency-ready node claim/lease/settle, canonical effect-outbox acknowledgement, digest-pinned adapters/scripts, private evidence, binary muscle observation/recall/prediction, durable tick/lease/settle/signal, agency validation, and trust verdicts |
 | dylib + FFI | `libcontract.dylib` (same `c_abi.zig`, dynamic) | Aiko loads it in-process from Rust and calls the C ABI without a subprocess |
 | MCP | `libcontract/src/mcp_server.zig` | the same core over stdio for agent frameworks |
 

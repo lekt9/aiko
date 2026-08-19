@@ -256,6 +256,24 @@ fn isDead(body: []const u8, id: []const u8) bool {
     return false;
 }
 
+/// One pass over the ledger. Callers that walk every declared id must not
+/// invoke `isDead` per id: that is O(rows²) and holds the exclusive lock on
+/// the turn-declare path (observed: 34k-row ~/.contracts store wedged
+/// ingress past the 10s ProjectionTimeout).
+fn collectDeadIds(allocator: std.mem.Allocator, body: []const u8) !std.StringHashMap(void) {
+    var dead = std.StringHashMap(void).init(allocator);
+    errdefer dead.deinit();
+    var start: usize = 0;
+    while (start < body.len) {
+        const bounds = lineBounds(body, start);
+        defer start = bounds.next;
+        if (!(eventIs(bounds.line, "died") or eventIs(bounds.line, "purged"))) continue;
+        const id = extractStringField(bounds.line, "id") orelse continue;
+        try dead.put(id, {});
+    }
+    return dead;
+}
+
 fn latestOccurrence(body: []const u8, id: []const u8) ?[]const u8 {
     var result: ?[]const u8 = null;
     var start: usize = 0;
@@ -498,6 +516,8 @@ pub fn planDueFromJson(
 
     var seen: std.StringHashMap(void) = .init(allocator);
     defer seen.deinit();
+    var dead = try collectDeadIds(allocator, body);
+    defer dead.deinit();
     var due: std.ArrayList(Occurrence) = .empty;
     errdefer {
         for (due.items) |*occurrence| occurrence.deinit(allocator);
@@ -513,7 +533,7 @@ pub fn planDueFromJson(
         const id = extractStringField(line, "id") orelse continue;
         if (seen.contains(id)) continue;
         try seen.put(id, {});
-        if (isDead(body, id)) continue;
+        if (dead.contains(id)) continue;
 
         const action = extractStringField(line, "action") orelse "";
         const plan = extractStringField(line, "plan") orelse "";
@@ -633,6 +653,8 @@ pub fn claimDueAt(
     }
     var seen: std.StringHashMap(void) = .init(allocator);
     defer seen.deinit();
+    var dead = try collectDeadIds(allocator, body);
+    defer dead.deinit();
     var claims: std.ArrayList(Claim) = .empty;
     errdefer {
         for (claims.items) |*claim| claim.deinit(allocator);
@@ -648,7 +670,7 @@ pub fn claimDueAt(
         const id = extractStringField(line, "id") orelse continue;
         if (seen.contains(id)) continue;
         try seen.put(id, {});
-        if (isDead(body, id)) continue;
+        if (dead.contains(id)) continue;
         if (scope_cwd) |required_cwd| {
             const declared_cwd = extractStringField(line, "cwd") orelse continue;
             if (!std.mem.eql(u8, declared_cwd, required_cwd)) continue;
@@ -873,6 +895,8 @@ pub fn listScheduledJson(
     }
     var seen: std.StringHashMap(void) = .init(allocator);
     defer seen.deinit();
+    var dead = try collectDeadIds(allocator, body);
+    defer dead.deinit();
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
     try out.append(allocator, '[');
@@ -884,7 +908,7 @@ pub fn listScheduledJson(
         const id = extractStringField(line, "id") orelse continue;
         if (seen.contains(id)) continue;
         try seen.put(id, {});
-        if (isDead(body, id)) continue;
+        if (dead.contains(id)) continue;
         const action = extractStringField(line, "action") orelse "";
         const plan = extractStringField(line, "plan") orelse "";
         switch (triggerForText(action, plan)) {
@@ -1074,6 +1098,32 @@ test "recurring occurrence is bucket-idempotent and dead contracts stay dead" {
     try std.testing.expectEqualStrings("alive", next_bucket.occurrences[0].contract_id);
     try std.testing.expectEqualStrings("repeat:10:5", next_bucket.occurrences[0].key);
     try std.testing.expectEqual(@as(?i64, 60), next_bucket.next_wake_unix);
+}
+
+test "planDueFromJson stays linear over a large declared ledger" {
+    // Falsifier: calling isDead per declared id is O(rows²) and takes
+    // seconds on a 34k-row store. One-pass collectDeadIds must keep this
+    // under a tenth of a second even at a few thousand rows.
+    const allocator = std.testing.allocator;
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(allocator);
+    var i: usize = 0;
+    while (i < 4000) : (i += 1) {
+        try body.print(allocator, "{{\"event\":\"declared\",\"id\":\"{d:0>8}\",\"action\":\"neuron\",\"plan\":\"idle\"}}\n", .{i});
+        if (i % 2 == 0) {
+            try body.print(allocator, "{{\"event\":\"died\",\"id\":\"{d:0>8}\"}}\n", .{i});
+        }
+    }
+    try body.appendSlice(allocator,
+        \\{"event":"declared","id":"live0001","action":"repeat:10s poll","plan":""}
+        \\
+    );
+    var plan = try planDueFromJson(allocator, body.items, 50, 8);
+    defer plan.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), plan.occurrences.len);
+    try std.testing.expectEqualStrings("live0001", plan.occurrences[0].contract_id);
+    try std.testing.expect(isDead(body.items, "00000000"));
+    try std.testing.expect(!isDead(body.items, "00000001"));
 }
 
 test "execution state releases retries and rejects settled occurrences" {

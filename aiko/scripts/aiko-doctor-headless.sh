@@ -3,7 +3,7 @@
 # Composes install selfcheck + optional login/mcp smokes (soft).
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-AIKO_BIN_DIR=${AIKO_BIN_DIR:-$HOME/bin}
+AIKO_BIN_DIR=${AIKO_BIN_DIR:-$HOME/.local/bin}
 export AIKO_BIN_DIR
 export AIKO="${AIKO:-$AIKO_BIN_DIR/aiko}"
 

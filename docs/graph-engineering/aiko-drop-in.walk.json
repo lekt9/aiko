@@ -1,0 +1,431 @@
+{
+  "north_star": "Aiko Drop-In: identify any human observe\u2192decide\u2192effect breakpoint, shadow the person on their real interfaces (WhatsApp/Sheets/paper/phone), generate a typed Cell/Neuron harness via frozen primitives that already exist, spawn a capability-bounded child Aiko sharing only delegated citations, and operate as a drop-in through the same channels \u2014 no ambient shared memory, no prompt-granted authority. Hoysan PSA prime-mover roster+deployment is the reference pilot that proves reuse. Every drop-in node must compose at least one already-gated primitive.",
+  "execute": false,
+  "grade_min": 7,
+  "milestones": [
+    "covenant",
+    "inventory",
+    "skill",
+    "harness",
+    "pilot",
+    "verify"
+  ],
+  "meta": {
+    "skill_id": "aiko-drop-in",
+    "preferred_triggers": [
+      "drop into this role",
+      "wire into this breakpoint",
+      "take over this loop",
+      "replace this person",
+      "adopt this inbox",
+      "spawn a seat"
+    ],
+    "beats": [
+      "contract-interface",
+      "machine-cockpit"
+    ],
+    "reference_pilot": "/Users/lewis/Downloads/hoysan",
+    "cell": "observe \u2192 normalize \u2192 authorize \u2192 prepare \u2192 execute \u2192 sense \u2192 evaluate \u2192 settle",
+    "compose_first": "reuse before generation (SMP-24): search admitted limbs/primitives/patterns before authoring",
+    "primitive_map": "docs/graph-engineering/AIKO-DROP-IN-PRIMITIVE-MAP.md",
+    "existing_hoysan_limb": "cell/patterns/hoysan-draft/hoysan-draft.cell.yaml (reuse, do not fork)",
+    "agent_count": 6,
+    "peak_parallel_agents": 3,
+    "end_to_end_witness": "bash tests/aiko-drop-in-gate.sh && python3 tools/check_reuse.py --walk docs/graph-engineering/aiko-drop-in.walk.json && bash tests/hoysan-roster-engine-gate.sh",
+    "north_star_digest": "spawned Aikos are capability-bounded descendants sharing only delegated Contract citations, never ambient memory"
+  },
+  "children": [
+    {
+      "id": "drop-in-covenant",
+      "who": "agent",
+      "what": "Specify the drop-in covenant: what a breakpoint is, VerifiedIngress as sole authority, delegation_capability vs env-string lineage, fenced leases, digest-pinned context projection, and where shared-memory is explicitly forbidden. Pin dispatch through the same interfaces the human used. Reference the hook-organism covenant and SMP-14/SMP-24.",
+      "why": "src:docs/graph-engineering/AIKO-HOOK-ORGANISM.md; src:contract/libcontract/src/delegation_capability.zig; src:neuron/AGENTS.md#SMP-14",
+      "how": "build",
+      "where": "docs/graph-engineering/AIKO-DROP-IN-COVENANT.md",
+      "when": "one-shot",
+      "milestone": "covenant",
+      "witness": "test -s docs/graph-engineering/AIKO-DROP-IN-COVENANT.md && grep -q 'VerifiedIngress' docs/graph-engineering/AIKO-DROP-IN-COVENANT.md && grep -q 'delegation_capability' docs/graph-engineering/AIKO-DROP-IN-COVENANT.md && grep -q 'breakpoint' docs/graph-engineering/AIKO-DROP-IN-COVENANT.md && grep -q 'SMP' docs/graph-engineering/AIKO-DROP-IN-COVENANT.md",
+      "depends_on": [],
+      "reads": [
+        "docs/graph-engineering/AIKO-HOOK-ORGANISM.md",
+        "contract/libcontract/src/delegation_capability.zig",
+        "contract/libcontract/src/context_projection.zig",
+        "docs/AI-FORWARD-DEPLOYED-ENGINEER.md",
+        "neuron/AGENTS.md"
+      ],
+      "writes": [
+        "docs/graph-engineering/AIKO-DROP-IN-COVENANT.md",
+        "docs/graph-engineering/AIKO-DROP-IN-COVENANT.json",
+        "tests/drop-in-covenant-gate.sh"
+      ],
+      "produces": [
+        "state/drop-in-covenant.json",
+        "drop-in-covenant-doc"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "src:docs/graph-engineering/AIKO-HOOK-ORGANISM.md",
+        "src:neuron/AGENTS.md"
+      ],
+      "capability_gaps": [],
+      "status": "settled",
+      "grade": 9,
+      "graded_by": "covenant-gate"
+    },
+    {
+      "id": "hoysan-breakpoint-inventory",
+      "who": "agent",
+      "what": "Inventory Hoysan end-to-end from /Users/lewis/Downloads/hoysan (prompt.md.rtf transcript, Roster Excels DAY/NIGHT/NTS + COUNTIF/SUM formulas + yellow/green/blue fills, Requirements PDF, roster photos): map every human breakpoint, its ingress bytes, auth boundary, decision rule, effect + idempotency key, muscle-memory surface, and which existing limb/primitive already covers it. Produce loss-less catalog + brief, citing hoysan-draft as the existing roster engine rather than proposing a new one.",
+      "why": "src:/Users/lewis/Downloads/hoysan/prompt.md.rtf; src:cell/patterns/hoysan-draft/hoysan-draft.cell.yaml; src:neuron/limbs/telethon/SKILL.md",
+      "how": "build",
+      "where": "docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md",
+      "when": "one-shot",
+      "milestone": "inventory",
+      "witness": "test -s docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md && grep -q 'breakpoint' docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md && grep -q '5-consecutive' docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md && grep -q 'PSA' docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md && grep -q 'hoysan-draft' docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md && test -s PRODUCT_BRIEF.md",
+      "depends_on": [],
+      "reads": [
+        "/Users/lewis/Downloads/hoysan/prompt.md.rtf",
+        "/Users/lewis/Downloads/hoysan/HOYSAN Roster Aug 26.xlsx",
+        "/Users/lewis/Downloads/hoysan/HOYSAN Roster Sep 26.xlsx",
+        "/Users/lewis/Downloads/hoysan/Requirements Gathering PM.pdf",
+        "cell/patterns/hoysan-draft/hoysan-draft.cell.yaml",
+        "neuron/limbs/telethon/SKILL.md",
+        "neuron/limbs/unbrowse/SKILL.md",
+        "docs/graph-engineering/AIKO-HOOK-ORGANISM.md"
+      ],
+      "writes": [
+        "docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md",
+        "PRODUCT_BRIEF.md",
+        "DESIGN.md",
+        "state/hoysan-inventory.json"
+      ],
+      "produces": [
+        "hoysan-breakpoint-catalog",
+        "hoysan-brief",
+        "hoysan-muscle-memory"
+      ],
+      "invoke_skills": [],
+      "inspire_from": [
+        "src:cell/patterns/hoysan-draft/hoysan-draft.cell.yaml",
+        "src:neuron/limbs/telethon/SKILL.md",
+        "skills/jesus-graph/PRODUCT_ONESHOT.md"
+      ],
+      "capability_gaps": [],
+      "status": "settled",
+      "grade": 9,
+      "graded_by": "hoysan-inventory-gate"
+    },
+    {
+      "id": "drop-in-receptor-spec",
+      "who": "agent",
+      "what": "Write the provider-neutral receptor spec for a generic human breakpoint (ingress/cursor + events[] + effects[] with requires_authority/ttl/evidence/variants). Prove the same spec validates Hoysan preference ingest under poll vs webhook vs hook input-sources (one harness alias), without provider branches.",
+      "why": "src:.agents/skills/contract-interface/references/receptor.schema.json; src:cell/patterns/input-sources/harness.cell.yaml; src:docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md",
+      "how": "build",
+      "where": ".agents/skills/aiko-drop-in/references/receptor.json",
+      "when": "one-shot",
+      "milestone": "skill",
+      "witness": "python3 -m json.tool .agents/skills/aiko-drop-in/references/receptor.json >/dev/null && python3 .aiko/skills/contract-interface/scripts/conform.py .agents/skills/aiko-drop-in/references/receptor.json 2>&1 | grep -q 'conform'",
+      "depends_on": [
+        "hoysan-breakpoint-inventory"
+      ],
+      "reads": [
+        "docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md",
+        ".agents/skills/contract-interface/references/receptor.schema.json",
+        "docs/graph-engineering/AIKO-DROP-IN-COVENANT.md",
+        "cell/patterns/input-sources/harness.cell.yaml",
+        "cell/patterns/input-sources/poll.cell.yaml",
+        "cell/patterns/input-sources/webhook.cell.yaml"
+      ],
+      "writes": [
+        ".agents/skills/aiko-drop-in/references/receptor.json",
+        ".agents/skills/aiko-drop-in/references/receptor.schema.json",
+        ".agents/skills/aiko-drop-in/docs/receptor.md"
+      ],
+      "produces": [
+        "drop-in-receptor-spec",
+        "receptor-conformance",
+        "input-source-alias-proof"
+      ],
+      "invoke_skills": [
+        "contract-interface"
+      ],
+      "inspire_from": [
+        "src:.agents/skills/contract-interface/references/receptor.schema.json",
+        "src:cell/patterns/input-sources/harness.cell.yaml"
+      ],
+      "capability_gaps": [],
+      "status": "settled",
+      "grade": 8,
+      "graded_by": "receptor-conform"
+    },
+    {
+      "id": "drop-in-skill-scaffold",
+      "who": "agent",
+      "what": "Scaffold preferred skill aiko-drop-in: SKILL.md (inside digest, expect_contains a no-op cannot print), contract-skill.json (5-node graph), breakpoint catalog, docs/drop-in-protocol.md, and system-prompt nudge so 'wire into this role / take over this inbox' routes here before contract-interface. Compose from machine-cockpit + FDE primitives, not from scratch.",
+      "why": "src:docs/graph-engineering/AIKO-DROP-IN-COVENANT.md; src:.agents/skills/machine-cockpit/SKILL.md; src:cell/patterns/fde/self-wire.cell.yaml",
+      "how": "build",
+      "where": ".agents/skills/aiko-drop-in/SKILL.md",
+      "when": "one-shot",
+      "milestone": "skill",
+      "witness": "test -s .agents/skills/aiko-drop-in/SKILL.md && grep -q 'expect_contains' .agents/skills/aiko-drop-in/SKILL.md && test -s .agents/skills/aiko-drop-in/contract-skill.json && python3 -m json.tool .agents/skills/aiko-drop-in/contract-skill.json >/dev/null && grep -q 'SMP-24' .agents/skills/aiko-drop-in/SKILL.md",
+      "depends_on": [
+        "drop-in-covenant"
+      ],
+      "reads": [
+        "docs/graph-engineering/AIKO-DROP-IN-COVENANT.md",
+        ".agents/skills/contract-interface/SKILL.md",
+        ".agents/skills/machine-cockpit/SKILL.md",
+        "cell/patterns/fde/self-wire.cell.yaml"
+      ],
+      "writes": [
+        ".agents/skills/aiko-drop-in/SKILL.md",
+        ".agents/skills/aiko-drop-in/contract-skill.json",
+        ".agents/skills/aiko-drop-in/docs/breakpoint-catalog.md",
+        ".agents/skills/aiko-drop-in/docs/drop-in-protocol.md"
+      ],
+      "produces": [
+        "aiko-drop-in-skill",
+        "contract-skill-graph"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "src:cell/patterns/fde/self-wire.cell.yaml",
+        "src:.agents/skills/contract-interface/SKILL.md"
+      ],
+      "capability_gaps": [],
+      "status": "settled",
+      "grade": 8,
+      "graded_by": "scaffold-gate"
+    },
+    {
+      "id": "harness-generator-integration",
+      "who": "agent",
+      "what": "Integrate harness generator by composing fde/self-wire.cell.yaml (account-handle \u2192 deploy-workflow \u2192 deploy-aiko) with reusable contract-interface grow.py as the build membrane, plus thin shadow.py (application_observe/Unbrowse capture). Emit inert Cell + admitted limb pack via stage\u2192admit\u2192activate (never file-copy). Prove the same generator builds Hoysan roster and a second unlike interface (Sheets or Telegram) by rewiring input-sources, not by branching core.",
+      "why": "src:cell/patterns/fde/self-wire.cell.yaml; src:cell/primitives/account-handle.cell.yaml; src:cell/patterns/input-sources/harness.cell.yaml",
+      "how": "build",
+      "where": ".agents/skills/aiko-drop-in/scripts/shadow.py",
+      "when": "one-shot",
+      "milestone": "harness",
+      "witness": "test -x .agents/skills/aiko-drop-in/scripts/shadow.py && python3 .agents/skills/aiko-drop-in/scripts/conform.py --help 2>&1 | grep -q 'conform'",
+      "depends_on": [
+        "drop-in-receptor-spec",
+        "drop-in-skill-scaffold"
+      ],
+      "reads": [
+        ".agents/skills/aiko-drop-in/references/receptor.json",
+        ".agents/skills/aiko-drop-in/contract-skill.json",
+        ".aiko/skills/contract-interface/scripts/grow.py",
+        "cell/SPEC.md",
+        "cell/patterns/fde/self-wire.cell.yaml",
+        "cell/primitives/account-handle.cell.yaml",
+        "cell/patterns/input-sources/harness.cell.yaml"
+      ],
+      "writes": [
+        ".agents/skills/aiko-drop-in/scripts/shadow.py",
+        ".agents/skills/aiko-drop-in/scripts/conform.py",
+        ".agents/skills/aiko-drop-in/scripts/build-self.py"
+      ],
+      "produces": [
+        "harness-generator",
+        "shadow-capture",
+        "fde-self-wire-composition"
+      ],
+      "invoke_skills": [
+        "contract-interface",
+        "cell"
+      ],
+      "inspire_from": [
+        "src:cell/patterns/fde/self-wire.cell.yaml",
+        "src:cell/primitives/account-handle.cell.yaml"
+      ],
+      "capability_gaps": [],
+      "status": "settled",
+      "grade": 8,
+      "graded_by": "harness-spawn-gate"
+    },
+    {
+      "id": "delegated-spawn-membrane",
+      "who": "agent",
+      "what": "Implement capability-bounded child spawn: inheritEnv=false via SpawnAuthorityPolicy, fenced lease via execution_control, delegated citations only (no transcript/HOME/API-key copy), purpose/audience-scoped opaque handle. Child shares root, distinct execution/occurrence; no ambient memory ledger. Prove reply-park without allow_send (conversation limb SMP-33) and citation survival across compact via cross_journal_retention.",
+      "why": "src:contract/libcontract/src/execution_control.zig; src:contract/libcontract/src/delegation_capability.zig; src:neuron/limbs/conversation/SKILL.md",
+      "how": "build",
+      "where": "aiko/crates/codegen/xai-grok-shell/src/contract_native/drop_in_spawn.rs",
+      "when": "one-shot",
+      "milestone": "harness",
+      "witness": "bash tests/drop-in-spawn-gate.sh",
+      "depends_on": [
+        "drop-in-skill-scaffold",
+        "drop-in-covenant"
+      ],
+      "reads": [
+        "docs/graph-engineering/AIKO-DROP-IN-COVENANT.md",
+        ".agents/skills/aiko-drop-in/contract-skill.json",
+        "contract/libcontract/src/delegation_capability.zig",
+        "contract/libcontract/src/cross_journal_retention.zig",
+        "neuron/limbs/conversation/neuron.json",
+        "aiko-flow/packages/agents/src/SpawnAuthorityPolicy.js"
+      ],
+      "writes": [
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native/drop_in_spawn.rs",
+        "tests/drop-in-spawn-gate.sh",
+        "docs/graph-engineering/DROP-IN-SPAWN.md"
+      ],
+      "produces": [
+        "delegated-spawn",
+        "spawn-gate"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "src:neuron/limbs/conversation/SKILL.md",
+        "src:contract/libcontract/src/cross_journal_retention.zig"
+      ],
+      "capability_gaps": [],
+      "status": "settled",
+      "grade": 8,
+      "graded_by": "harness-spawn-gate"
+    },
+    {
+      "id": "hoysan-pilot-roster-pack",
+      "who": "agent",
+      "what": "Extend hoysan-draft limb (cell/patterns/hoysan-draft/) into roster pilot: ingest normalization via input-sources alias (poll\u2194webhook\u2194hook), deterministic engine via hoysan_draft.py (reuse \u2014 add NTS flexi + blue pool + 40/42 contracted-vs-WA actual + 16-shift headcount quota if needed), Excel parity via dashboard render membrane + COUNTIF/SUM formulas, grounded preference evidence via confirm.cell, ranking via energy-router eligibility\u2192rank. Do not fork the limb \u2014 extend its request schema.",
+      "why": "src:cell/patterns/hoysan-draft/hoysan-draft.cell.yaml; src:neuron/src/redrive.zig; src:cell/patterns/confirm/confirm.cell.yaml",
+      "how": "build",
+      "where": ".agents/skills/aiko-drop-in/pilots/hoysan-roster/",
+      "when": "one-shot",
+      "milestone": "pilot",
+      "witness": "bash tests/hoysan-roster-engine-gate.sh",
+      "depends_on": [
+        "harness-generator-integration",
+        "delegated-spawn-membrane",
+        "hoysan-breakpoint-inventory"
+      ],
+      "reads": [
+        "docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md",
+        ".agents/skills/aiko-drop-in/references/receptor.json",
+        ".agents/skills/aiko-drop-in/scripts/shadow.py",
+        "/Users/lewis/Downloads/hoysan/HOYSAN Roster Aug 26.xlsx",
+        "cell/patterns/hoysan-draft/hoysan-draft.cell.yaml",
+        "cell/patterns/confirm/confirm.cell.yaml",
+        "cell/patterns/dashboard/dashboard.cell.yaml",
+        "neuron/limbs/energy-router/neuron.json"
+      ],
+      "writes": [
+        ".agents/skills/aiko-drop-in/pilots/hoysan-roster/receptor.json",
+        ".agents/skills/aiko-drop-in/pilots/hoysan-roster/cell.yaml",
+        ".agents/skills/aiko-drop-in/pilots/hoysan-roster/hoysan-draft-request.patch.json",
+        "tests/hoysan-roster-engine-gate.sh"
+      ],
+      "produces": [
+        "hoysan-roster-pack",
+        "roster-engine-witness"
+      ],
+      "invoke_skills": [
+        "contract-interface",
+        "cell"
+      ],
+      "inspire_from": [
+        "src:cell/patterns/hoysan-draft/hoysan-draft.cell.yaml",
+        "src:cell/patterns/confirm/confirm.cell.yaml",
+        "src:neuron/limbs/energy-router/neuron.json"
+      ],
+      "capability_gaps": [],
+      "status": "settled",
+      "grade": 8,
+      "graded_by": "pilot-gate"
+    },
+    {
+      "id": "hoysan-pilot-deploy-pack",
+      "who": "agent",
+      "what": "Generate daily-deployment pilot using fanout + outbox-drainer + telethon limbs: pre-shift WA cascade (5am/pm send \u2192 5:30 call \u2192 blue\u2192NTS replacement) via fanout narrowed delegations + escalation-ladder termination, paper-master digitization as fence ground truth, ferry headcount read-back, shift-handover citations, PSA shortfall\u2192LD calc (informed $60 vs last-minute, weekly LD email verification).",
+      "why": "src:neuron/limbs/fanout/neuron.json; src:neuron/limbs/outbox-drainer/neuron.json; src:neuron/limbs/telethon/SKILL.md",
+      "how": "build",
+      "where": ".agents/skills/aiko-drop-in/pilots/hoysan-deploy/",
+      "when": "one-shot",
+      "milestone": "pilot",
+      "witness": "bash tests/hoysan-deploy-gate.sh",
+      "depends_on": [
+        "hoysan-pilot-roster-pack"
+      ],
+      "reads": [
+        "docs/graph-engineering/HOYSAN-BREAKPOINT-INVENTORY.md",
+        ".agents/skills/aiko-drop-in/references/receptor.json",
+        "neuron/limbs/fanout/neuron.json",
+        "neuron/limbs/outbox-drainer/neuron.json",
+        "neuron/limbs/telethon/SKILL.md",
+        "neuron/tests/escalation-ladder-gate.sh"
+      ],
+      "writes": [
+        ".agents/skills/aiko-drop-in/pilots/hoysan-deploy/receptor.json",
+        ".agents/skills/aiko-drop-in/pilots/hoysan-deploy/cell.yaml",
+        ".agents/skills/aiko-drop-in/pilots/hoysan-deploy/escalation.yaml",
+        "tests/hoysan-deploy-gate.sh"
+      ],
+      "produces": [
+        "hoysan-deploy-pack",
+        "deploy-witness"
+      ],
+      "invoke_skills": [
+        "contract-interface",
+        "cell"
+      ],
+      "inspire_from": [
+        "src:neuron/limbs/fanout/neuron.json",
+        "src:neuron/limbs/outbox-drainer/neuron.json"
+      ],
+      "capability_gaps": [],
+      "status": "settled",
+      "grade": 8,
+      "graded_by": "pilot-gate"
+    },
+    {
+      "id": "drop-in-verify",
+      "who": "agent",
+      "what": "Verify the whole drop-in loop: runnable gate proves (1) same namespace+key+root+digest=replay, same key+changed bytes=conflict, (2) revoked/unlisted limb refused, (3) crossed effect \u2192 compensation not resend via redrive case-3, (4) confirm diff for roster prefs, (5) dashboard render Excel parity, (6) deterministic re-fire + compact survival, (7) second unlike interface via input-sources alias. Plus reuse check: every node cites \u22651 reads under cell/primitives|patterns|neuron/limbs|contract/libcontract.",
+      "why": "src:docs/graph-engineering/AIKO-DROP-IN-COVENANT.md; src:neuron/src/redrive.zig; src:cell/patterns/confirm/confirm.cell.yaml",
+      "how": "eval",
+      "where": "tests/aiko-drop-in-gate.sh",
+      "when": "one-shot",
+      "milestone": "verify",
+      "witness": "bash tests/aiko-drop-in-gate.sh && python3 tools/check_reuse.py --walk docs/graph-engineering/aiko-drop-in.walk.json",
+      "depends_on": [
+        "hoysan-pilot-deploy-pack",
+        "hoysan-pilot-roster-pack"
+      ],
+      "reads": [
+        ".agents/skills/aiko-drop-in/pilots/hoysan-roster/cell.yaml",
+        ".agents/skills/aiko-drop-in/pilots/hoysan-deploy/cell.yaml",
+        "aiko/crates/codegen/xai-grok-shell/src/contract_native/drop_in_spawn.rs",
+        "neuron/src/redrive.zig",
+        "neuron/src/observability.zig",
+        "cell/patterns/confirm/confirm.cell.yaml"
+      ],
+      "writes": [
+        "tests/aiko-drop-in-gate.sh",
+        "tools/check_reuse.py",
+        "docs/graph-engineering/AIKO-DROP-IN-RECEIPT.md"
+      ],
+      "produces": [
+        "drop-in-verdict",
+        "receipt",
+        "reuse-proof"
+      ],
+      "invoke_skills": [
+        "harness-engineering"
+      ],
+      "inspire_from": [
+        "src:neuron/src/redrive.zig",
+        "src:cell/patterns/confirm/confirm.cell.yaml"
+      ],
+      "capability_gaps": [],
+      "status": "settled",
+      "grade": 8,
+      "graded_by": "aiko-drop-in-gate+reuse"
+    }
+  ]
+}

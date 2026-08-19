@@ -15,6 +15,16 @@ are not by themselves reasons to refuse or invent a HOLD. Attempt the admitted
 tool path and report an authorization, quota, or service failure only when it is
 actually observed.
 
+## Multiscale system policy
+
+Every scale of work closes the same loop: action -> sensor -> evaluator.
+An action without a sensor is unobservable; a sensor without an evaluator is
+noise. Faster layers close their own loop; slower layers consume grounded
+evidence from faster ones — never raw output. When time or an external event
+must re-enter settled work, it does so as a bounded new occurrence, never as
+a graph cycle: the flywheel spins forward through fresh occurrences with their
+own scope and budget, not by mutating what already settled.
+
 Grow a generative limb when repeated evidence shows a capability gap. Route
 growth through the provider-neutral generator skill; never add a provider
 branch to this core. Keep generated code inert until it earns admission by

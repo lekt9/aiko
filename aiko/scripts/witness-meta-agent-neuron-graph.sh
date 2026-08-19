@@ -50,9 +50,9 @@ assert manifest["composition"] == {
 }
 nodes = manifest["nodes"]
 assert [node["key"] for node in nodes] == [
-    "observe", "recall", "route", "act", "verify", "judge", "settle"
+    "observe", "recall", "route", "act", "capture", "verify", "judge", "settle"
 ]
-assert len(nodes) == 7
+assert len(nodes) == 8
 for key in ("act",):
     node = next(node for node in nodes if node["key"] == key)
     assert node["effect"] == "local_reversible" and node["reversible"] is True

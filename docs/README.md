@@ -34,8 +34,8 @@ tree.
 | [`providers/README.md`](providers/README.md) | BYOK / provider gateway |
 | [`../CONFORMANCE.md`](../CONFORMANCE.md) | Gate-backed architecture verdicts |
 | [`../VISION.md`](../VISION.md) | Requirements and deletions (still current intent) |
-| [`../PLAN.md`](../PLAN.md) | **Historical** on-chain commons plan — not a worklist |
-| [`../PLAN-aiko-convergence.md`](../PLAN-aiko-convergence.md) | **Historical** convergence plan — T1–T4 already landed |
+| [`../archive/plans/PLAN.md`](../archive/plans/PLAN.md) | **Historical** on-chain commons plan — not a worklist |
+| [`../archive/plans/PLAN-aiko-convergence.md`](../archive/plans/PLAN-aiko-convergence.md) | **Historical** convergence plan — T1–T4 already landed |
 
 ## Open-source files
 

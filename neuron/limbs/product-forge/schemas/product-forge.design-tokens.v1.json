@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "product-forge.design-tokens/v1",
+  "title": "ProductForgeDesignTokens",
+  "description": "Design tokens derived from archetype without a UX spec.",
+  "type": "object",
+  "required": ["schema", "project", "archetype", "palette", "type"],
+  "properties": {
+    "schema": {"type": "string", "const": "product-forge.design-tokens/v1"},
+    "project": {"type": "string"},
+    "archetype": {"type": "string"},
+    "palette": {"type": "object"},
+    "type": {"type": "object"},
+    "radii": {"type": "object"},
+    "signature": {"type": "string"}
+  }
+}

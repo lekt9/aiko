@@ -24,13 +24,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "detect",
       "plan": "Use inspect-project evidence to detect the toolchain for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -41,13 +43,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "build",
       "plan": "Run the declared bounded build for {{goal}}.",
       "read_only": false,
       "requires_authority": false,
       "reversible": true,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -58,13 +62,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "test",
       "plan": "Run the declared bounded tests for {{goal}}.",
       "read_only": false,
       "requires_authority": false,
       "reversible": true,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -76,13 +82,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "verify",
       "plan": "Verify build and test exit evidence for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     }
   ],
   "output_schema": {

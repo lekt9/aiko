@@ -1,0 +1,96 @@
+{
+  "schema_version": 2,
+  "id": "aiko-drop-in-receptor",
+  "description": "Provider-neutral v2 receptor (ingress+events+effects) for any human observe\u2192decide\u2192effect breakpoint. Hoysan preference ingest is validated as the canonical event (preference-ingest) \u2014 poll vs webhook vs hook are interchangeable wiring aliases into cell/patterns/input-sources/harness.cell.yaml, not provider branches. The harness cell's route chooses the input source by wiring, not by branching the receptor spec.",
+  "triggers": [
+    "wire into this role",
+    "take over this loop",
+    "preference ingest",
+    "pre-shift cascade"
+  ],
+  "ingress": {
+    "modes": [
+      "poll",
+      "local_listener",
+      "provider_webhook"
+    ],
+    "delivery": "at_least_once",
+    "signature": "adapter_declared",
+    "max_body_bytes": 1048576,
+    "privacy": "redacted"
+  },
+  "cursor": {
+    "identity_fields": [
+      "worker_id",
+      "date"
+    ],
+    "change_token_fields": [
+      "payload_digest"
+    ],
+    "ttl_ms": 86400000
+  },
+  "events": [
+    {
+      "id": "preference-ingest",
+      "kind": "object"
+    },
+    {
+      "id": "roster-delta",
+      "kind": "object"
+    },
+    {
+      "id": "shift-tick",
+      "kind": "object"
+    }
+  ],
+  "effects": [
+    {
+      "id": "normalize",
+      "effect": "local_reversible",
+      "variants": [
+        "poll",
+        "webhook",
+        "hook"
+      ],
+      "requires_authority": false,
+      "evidence": [
+        "input_bytes_digest"
+      ]
+    },
+    {
+      "id": "level-roster",
+      "effect": "local_reversible",
+      "variants": [
+        "deterministic"
+      ],
+      "requires_authority": false,
+      "evidence": [
+        "request_digest",
+        "roster_digest"
+      ]
+    },
+    {
+      "id": "notify-shift",
+      "effect": "external_message",
+      "variants": [
+        "send"
+      ],
+      "requires_authority": true,
+      "evidence": [
+        "outbox_commit",
+        "delivery_receipt"
+      ]
+    }
+  ],
+  "harness": "cell/patterns/input-sources/harness.cell.yaml",
+  "input_sources": {
+    "harness": "cell/patterns/input-sources/harness.cell.yaml",
+    "aliases": [
+      "poll",
+      "webhook",
+      "hook"
+    ],
+    "alias_kind": "wiring",
+    "no_provider_branch": true
+  }
+}

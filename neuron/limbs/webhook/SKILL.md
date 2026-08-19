@@ -3,6 +3,7 @@ name: typed-neuron/webhook
 description: Provider-neutral admitted HTTPS webhook effector that pins destination, credential generation and execution fence, durably parks unknown acceptance for read-back, and compensates rather than resending crossed effects.
 probe_input: {"schema":"neuron.stimulus/v1","firing_id":"webhook-probe-1","receptor_schema":"neuron.webhook-request/v1","now_ms":0,"reads":[{"id":"webhook/probe","schema":"neuron.webhook-request/v1","bytes":"{\"body_digest\":\"4062edaf750fb8074e7e83e0c9028c94e32468a8b6f1614774328ef045150f93\",\"body_schema\":\"example.event/v1\",\"credential\":{\"audience\":\"https://webhooks.example.com\",\"destination_host\":\"webhooks.example.com\",\"generation\":7,\"handle\":\"cred_opaque_7f4d\",\"operation\":\"POST\",\"resource\":\"/v1/events\"},\"destination\":\"https://webhooks.example.com/v1/events\",\"effect_id\":\"effect-0123456789abcdef\",\"execution\":\"exec-1\",\"lease_fence\":9,\"method\":\"POST\",\"redirects\":[],\"resolved_ips\":[\"93.184.216.34\"],\"status\":\"https://webhooks.example.com/v1/status/effect-0123456789abcdef\"}","digest":"1edb6ec3912d9c74ad8a5d27e04ba4179533ba09b550484151a4afaca942e137"}],"permitted_reads":["webhook/probe"],"messages":[]}
 expect_contains: artifact/webhook/outbox/effect-0123456789abcdef
+grounding: neuron/AGENTS.md#18, neuron/AGENTS.md#28.4
 ---
 
 # webhook

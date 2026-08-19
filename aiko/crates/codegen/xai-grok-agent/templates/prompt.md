@@ -25,10 +25,6 @@ Weigh actions by reversibility and effect reach. Local, reversible work such as 
 The native runtime may inject standing orders, reusable verified actions, and open durable goals. Treat executed evidence as already done, reuse matching proof before creating more work, and continue matching open work instead of duplicating it. For substantive durable work, register a real executable check with `contract task begin` and finish with `contract task verify`. Never use `contract declare`. Bookkeeping must not displace the user's task.
 </contract_substrate>
 
-<contract_interfaces>
-When a request connects a new CLI, API, application, device, watcher, messaging surface, daemon, or recurring process, use the `contract-interface` skill. Grow a provider-neutral receptor and Contract graph around the real adapter instead of adding provider branches to the harness. Observe inputs before filtering; give each effect its own authority, idempotency, lifecycle, and evidence boundary. Generation is reversible local work, but installing, starting processes, or causing external effects requires the applicable user authority.
-</contract_interfaces>
-
 <aiko_flow>
 Aiko Flow is the **default durable harness** — Cell + Smithers control plane, installed and enabled by default (no flag). For any long-running, multi-step, crash-safe, pause/resume, approval, retry, or agentic workflow, **load `aiko-flow` first** — it triggers the Smithers plugin (MCP `smithers:*` + CLI `smithers`) and the Cell self-wire patterns under `cell/patterns/fde/`. Prefer `smithers oneshot "<goal>"` for one clear goal (even repo-wide, ~300k tokens); author a full `.smithers/workflows/<id>.tsx` only when ordered phases, approvals, loops, or reuse are required. Trivial single-file edits run directly. Disable only with `aiko plugin disable smithers`.
 </aiko_flow>

@@ -24,6 +24,10 @@ Internal mirror (not the public clone URL): `gitea:Unbrowse/commons.git`
 
 Spelling: **Aiko**. Meeting notes that say “Ico” are a transcription artifact.
 
+## Single source of truth
+
+**Contract (`contract/libcontract`) is the SSOT.** All durable work — Aiko turns, Telegram occurrences, Smithers runs, evidence — lives in its ledger (`contracts.jsonl` via `libcontract.dylib`). The Telegram offset file (`~/.aiko/telegram/offset`), `~/.aiko/native/api.json` token, Smithers `/tmp/smithers-gateway/*.json` runtime file, and `docs/graph-engineering/*.walk.json` execution plans are **ephemeral cursors/projections**, never second ledgers. See `DOCTRINE.md` + `contract-hook-covenant-gate.sh` `forbidden_ledgers == ["HookOccurrence","ContextEnvelope"]`.
+
 ## Layers (one monorepo)
 
 | Path | What it is | In the Zig root build? |
@@ -43,6 +47,11 @@ Spelling: **Aiko**. Meeting notes that say “Ico” are a transcription artifac
 
 **Direction is load-bearing:** `neuron` builds and tests with `contract`
 absent. Do not reverse that dependency.
+
+**Control vs compute:** Smithers starts a Cell; the Cell computes; a Worker
+projects the product; Contract is the ledger. Implementing
+`POST /api/smithers/run` as business logic, or labeling it `aiko-flow-local`,
+inverts the layers — refused by `tests/layer-lock-gate.sh`.
 
 ## AI-FDE claim boundary
 
@@ -105,7 +114,7 @@ and the `aiko/apps/frontend` upstream remain MIT.
 |---|---|
 | Product README, install, architecture | Must match this file and the commands above |
 | Gate-backed claims (`CONFORMANCE.md`) | Keep; they are already mechanically checked |
-| Historical plans (`PLAN.md`, `PLAN-aiko-convergence.md`, `aiko/plan*.md`) | Banner as historical; do not present as current worklists |
+| Historical plans (`archive/plans/`, `aiko/plan*.md`) | Live under `archive/` where possible; banner as historical; never present as current worklists |
 | Limb `SKILL.md` inside `neuron/limbs/` | **Do not rewrite** — they sit inside the package digest |
 | Changelogs, prompt templates, vendor docs | Leave unless they leak secrets or customer data |
 | `contract/docs/*` due-diligence / thesis | Internal design notes, not the product README |

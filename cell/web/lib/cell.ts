@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { spawnSync } from "child_process";
 
 /** Generic Cell parser — not haulio-specific. Any *.cell.yaml becomes a DAG. */
 export type CellMembrane = { inputs: Record<string,{schema:string}>; outputs: Record<string,{schema:string}>; caps?: any };
@@ -59,6 +60,16 @@ function parseYamlCell(filePath: string): ParsedCell {
     if (both && !fm) wiring.push({ from: both[1], to: both[2] });
   }
   return { path: filePath, name, description, membrane, organelles, wiring, isLeaf, run };
+}
+
+// The node contract (writes / witness / harness) is read from the engine, never
+// re-parsed here. A second parser is a second answer to "what does this node
+// declare", and the two drift the moment the spec grows a field.
+export function inspectCell(relOrAbs: string): any | null {
+  const abs = path.isAbsolute(relOrAbs) ? relOrAbs : path.join(cellRoot(), relOrAbs);
+  const r = spawnSync("python3", [path.join(cellRoot(), "run.py"), "inspect", abs], { encoding: "utf-8" });
+  if (r.status !== 0) return null;
+  try { return JSON.parse(r.stdout); } catch { return null; }
 }
 
 export function discoverCells(): ParsedCell[] {

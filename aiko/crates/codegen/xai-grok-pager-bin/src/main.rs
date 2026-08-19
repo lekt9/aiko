@@ -152,6 +152,33 @@ fn init_tracing_simple(app_entrypoint: &'static str) {
     );
 }
 
+/// Dispatch for `aiko contract …` — the Contract CLI carried inside this
+/// binary. Extracted content-addressed, then exec'd with the caller's argv so
+/// stdio, exit status, and signals belong to the CLI exactly as they would to a
+/// separately installed one. Refuses rather than falling back to a `contract`
+/// on PATH: reaching for a stray binary is the version skew the embedding ends.
+fn run_embedded_contract(args: &[String]) -> Result<()> {
+    let Some(cli) = xai_grok_shell::contract_native::embedded_contract_cli() else {
+        anyhow::bail!(
+            "this aiko build carries no embedded Contract CLI (built without AIKO_EMBED_CONTRACT_CLI)"
+        );
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let error = std::process::Command::new(&cli).args(args).exec();
+        Err(anyhow::anyhow!(
+            "could not exec embedded Contract CLI at {}: {error}",
+            cli.display()
+        ))
+    }
+    #[cfg(not(unix))]
+    {
+        let status = std::process::Command::new(&cli).args(args).status()?;
+        std::process::exit(status.code().unwrap_or(1));
+    }
+}
+
 /// Dispatch for `aiko contract-pair` — paired contracts (work + witness).
 fn run_contract_pair(action: ContractPairAction) -> Result<()> {
     match action {
@@ -2360,6 +2387,10 @@ async fn async_main() -> Result<()> {
             Command::Mcp(mcp_args) => {
                 init_tracing_simple("cli");
                 return xai_grok_pager::mcp_cmd::run(mcp_args).await;
+            }
+            Command::Contract { args } => {
+                init_tracing_simple("cli");
+                return run_embedded_contract(&args);
             }
             Command::ContractPair { action } => {
                 init_tracing_simple("cli");

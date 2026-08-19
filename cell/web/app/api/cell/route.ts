@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCellByPath, discoverCells, latestManifest, latestOutputs } from "@/lib/cell";
+import { getCellByPath, discoverCells, latestManifest, latestOutputs, inspectCell } from "@/lib/cell";
 import { collectBlocks } from "@/lib/dashboard";
 import fs from "node:fs";
 import path from "node:path";
@@ -33,7 +33,18 @@ export async function GET(req: Request) {
     const rawPath = path.join(cellRoot(),"haulio-inputs.json");
     if (fs.existsSync(rawPath)) inputsRaw = JSON.parse(fs.readFileSync(rawPath,"utf-8"));
   } catch {}
-  const nodes = cell.organelles.map((o,i)=>({ id:o.name, label:o.name, cell:o.cell, isLeaf: !o.cell?.endsWith(".cell.yaml") ? false : undefined }));
+  // Node contracts come from the engine's own projection, so the canvas shows
+  // what the runtime will actually enforce rather than a second reading of it.
+  const inspected = inspectCell(rel);
+  const contract: Record<string, any> = {};
+  for (const o of (inspected?.organelles ?? [])) if (o?.name) contract[o.name] = o;
+  const nodes = cell.organelles.map((o,i)=>({
+    id:o.name, label:o.name, cell:o.cell,
+    isLeaf: !o.cell?.endsWith(".cell.yaml") ? false : undefined,
+    writes: contract[o.name]?.writes ?? [],
+    witness: contract[o.name]?.witness ?? null,
+    harness: contract[o.name]?.harness ?? null,
+  }));
   const edges = cell.wiring.filter(w=>!w.from.startsWith("membrane.")&&!w.to.startsWith("membrane.")).map(w=>{
     const s=w.from.split(".")[0]; const t=w.to.split(".")[0];
     return { id:`${s}->${t}`, source:s, target:t, from:w.from, to:w.to };
@@ -42,12 +53,16 @@ export async function GET(req: Request) {
   let dashboard: any = null;
   try { dashboard = collectBlocks({ cellPath: rel }); } catch {}
 
+  // raw YAML source for the editor drawer — saved back only via the engine's save verb
+  let source: string | null = null;
+  try { source = fs.readFileSync(path.join(cellRoot(), rel), "utf-8"); } catch {}
+
   return NextResponse.json({
     cell: rel, name: cell.name, description: cell.description,
     membrane: cell.membrane, organelles: cell.organelles, wiring: cell.wiring,
     isLeaf: cell.isLeaf, run: cell.run,
     manifest, outputs, inputs, inputsRaw,
     nodes, edges,
-    dashboard,
+    dashboard, source,
   });
 }

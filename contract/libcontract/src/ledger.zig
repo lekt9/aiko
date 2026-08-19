@@ -214,8 +214,12 @@ fn maybeCompact(allocator: std.mem.Allocator, env: std.process.Environ) void {
 /// serialization, and only the cache-check+append seam in declare() pays
 /// the serialization cost. Used by contract.declare() to make the
 /// findCachedDeclared+appendRow seam atomic against concurrent declares.
+///
+/// Compaction is deliberately not inline. A store just over
+/// COMPACT_THRESHOLD that is mostly keep-rows rewrites the whole file
+/// without shrinking; running that under this lock made every turn
+/// declare wait past the 10s ingress ProjectionTimeout.
 pub fn acquireExclusive(allocator: std.mem.Allocator, env: std.process.Environ) !c_int {
-    maybeCompact(allocator, env);
     const path = try resolvePath(allocator, env);
     defer allocator.free(path);
 
@@ -610,6 +614,12 @@ fn writeAllFd(fd: c_int, bytes: []const u8) !void {
         if (n <= 0) return error.WriteFailed;
         off += @intCast(n);
     }
+}
+
+/// Housekeeping for writers that are not on the turn-declare path.
+/// Tick calls this after releasing the claim lock.
+pub fn housekeep(allocator: std.mem.Allocator, env: std.process.Environ) void {
+    maybeCompact(allocator, env);
 }
 
 /// Compact the resolved store if it has outgrown COMPACT_THRESHOLD.

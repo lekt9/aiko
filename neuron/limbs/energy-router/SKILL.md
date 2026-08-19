@@ -3,6 +3,7 @@ name: typed-neuron/energy-router
 description: Scores routing candidates with the deterministic firingEnergy function (grounding, evidence confidence, normalized cost, settlement distance, violations) and branches to the lowest-energy candidate, or spawns a narrow sub-EBM when the winner declares wants_sub_ebm. Use when a firing must choose among candidate limbs, contexts, or actions and the choice has to be replayable and content-addressed rather than model-judged.
 probe_input: {"schema":"neuron.stimulus/v1","firing_id":"probe-energy-1","receptor_schema":"energy.candidate/v1","reads":[{"id":"cands","schema":"energy.candidate/v1","bytes":"[{\"id\":\"router-heuristic\",\"grounding_ok\":true,\"evidence_conf_milli\":710,\"normalized_cost\":0.35,\"settlement_distance\":1.2},{\"id\":\"spawn-micro-ebm\",\"grounding_ok\":true,\"evidence_conf_milli\":880,\"normalized_cost\":0.25,\"settlement_distance\":0.1,\"wants_sub_ebm\":true},{\"id\":\"context-narrow\",\"grounding_ok\":true,\"evidence_conf_milli\":920,\"normalized_cost\":0.15,\"settlement_distance\":0.4}]","digest":"b66adddeff468f045e3a11d39bcdfd5e742b5a4001cde0ba5d858d459ffb12b8"}],"permitted_reads":["cands"],"messages":[]}
 expect_contains: context-narrow|1.02
+grounding: neuron/AGENTS.md#30, neuron/src/energy_router.zig
 ---
 
 <!--

@@ -152,7 +152,7 @@ An occurrence is materialized once. A new occurrence invalidates cached truth
 and sends the contract back through the same resolver. There is no separate
 cron/pod execution path. Dependency occurrences bind to the dependency's
 latest satisfied proof. Named events bind to a workspace-scoped `signal` row.
-Native hosts use ABI v12's canonical Neuron firing, immutable Skill admission
+Native hosts use ABI v13's canonical Neuron firing, immutable Skill admission
 lifecycle, worker lineage, typed Skill-graph expansion, dependency-ready node
 claim/lease/settle, digest-pinned worker adapters and scripts,
 credential-rejecting authoritative evidence plus reconstructible
@@ -178,7 +178,7 @@ It contains the canonical firing, authoritative evidence payload, node
 settlement, and pending effect-outbox rows. The transaction is the
 linearization point: evidence blobs written afterward are reconstructible
 caches, not a second truth. Aiko commits a consequential tool effect to this
-outbox before dispatch and acknowledges that exact effect through ABI v12
+outbox before dispatch and acknowledges that exact effect through ABI v13
 after the adapter returns. Replays do not redispatch; uncertain outcomes remain
 parked for reconciliation.
 

@@ -1,0 +1,8 @@
+name = "hoysan-drop-in"
+main = "src/worker.ts"
+compatibility_date = "2024-01-01"
+# D1 binding — Neon Postgres via Workers is preferred override per PRODUCT_BRIEF
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "hoysan"
+# database_id = "replace-with-real-id"

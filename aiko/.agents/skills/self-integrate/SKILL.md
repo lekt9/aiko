@@ -116,7 +116,7 @@ is a wire with a known edge.
 the client cannot perform is worse than silence, because the next reader — human
 or model — plans against it and discovers the hole at the boundary, at runtime,
 with a user watching. This repository already contains one instance:
-`.agents/skills/telegram-contracts/SKILL.md:21` named `sendVoice` as an available
+the retired `telegram-contracts` skill named `sendVoice` as an available
 effect child while an exhaustive grep across `packages/telegram/**` and
 `packages/integrations/**` matched zero files for `sendPhoto`, `sendVideo`,
 `sendAudio`, `sendVoice`, `sendVideoNote`, `sendAnimation`, `sendSticker`,

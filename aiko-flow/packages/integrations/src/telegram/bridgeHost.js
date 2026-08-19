@@ -19,6 +19,9 @@
 //   bun packages/integrations/src/telegram/bridgeHost.js --db ./smithers.db
 //   (reads $TELEGRAM_BOT_TOKEN; override the name with --token-env NAME)
 
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Schedule } from "effect";
 import { SmithersDb } from "@smthrs/db/adapter";
 import { ensureSmithersTables } from "@smthrs/db/ensure";
@@ -31,21 +34,53 @@ import { makeTelegramSource } from "./TelegramSource.js";
 export const DEFAULT_TELEGRAM_TOKEN_ENV = "TELEGRAM_BOT_TOKEN";
 
 /**
- * Read the bot token from the environment by NAME. The name may be logged;
- * the value never is.
+ * Read the bot token from ~/.aiko/user-settings.json when the env var is
+ * absent. Never throws for missing file — returns undefined so the caller
+ * can decide. This is the same native store `aiko native telegram set-token`
+ * writes to.
+ * @returns {string | undefined}
+ */
+function readNativeTelegramToken() {
+  try {
+    const raw = readFileSync(join(homedir(), ".aiko", "user-settings.json"), "utf8");
+    const parsed = JSON.parse(raw);
+    const token = parsed?.telegram?.botToken;
+    if (typeof token === "string" && token.trim().length > 0) {
+      return token.trim();
+    }
+  } catch {
+    // absent / unparsable — no native token
+  }
+  return undefined;
+}
+
+/**
+ * Read the bot token from the environment by NAME, falling back to the
+ * native file at ~/.aiko/user-settings.json. The env var name may be
+ * logged; the value never is. This makes `aiko native telegram set-token`
+ * the default — no export required.
  * @param {string} [envName]
  * @returns {string}
  */
 export function readTelegramBotToken(envName = DEFAULT_TELEGRAM_TOKEN_ENV) {
-  const value = process.env[envName]?.trim();
-  if (!value) {
-    throw new SmithersError(
-      "INVALID_INPUT",
-      `No Telegram bot token in the environment: export ${envName}=... before starting the source host.`,
-      { envName },
-    );
+  const envValue = process.env[envName]?.trim();
+  if (envValue) {
+    return envValue;
   }
-  return value;
+  const native = readNativeTelegramToken();
+  if (native) {
+    return native;
+  }
+  // Also accept the generic Smithers env as a secondary fallback
+  const smithersEnv = process.env.SMITHERS_TELEGRAM_BOT_TOKEN?.trim();
+  if (smithersEnv) {
+    return smithersEnv;
+  }
+  throw new SmithersError(
+    "INVALID_INPUT",
+    `No Telegram bot token found. Run \`aiko native telegram set-token --token <TOKEN>\` or export ${envName}=... before starting the source host.`,
+    { envName },
+  );
 }
 
 /**

@@ -24,13 +24,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "applications",
       "plan": "Observe privacy-safe foreground and running application identity for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": true,
@@ -39,13 +41,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "visual",
       "plan": "Prepare an explicitly requested desktop visual for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -57,13 +61,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "verify",
       "plan": "Verify desktop evidence contains no title, content, keystroke, or credential payload.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     }
   ],
   "output_schema": {

@@ -1,0 +1,13 @@
+[
+  {
+    "expect": {
+      "held_effects": [
+        "external_message"
+      ],
+      "root_count": 1,
+      "selected": "machine-cockpit"
+    },
+    "name": "default",
+    "prompt": "Wire a fresh macOS seat so a teammate can chat with Aiko in the browser and pair Telegram."
+  }
+]

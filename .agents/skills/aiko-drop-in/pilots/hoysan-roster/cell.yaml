@@ -1,0 +1,24 @@
+# Hoysan roster pilot — extends cell/patterns/hoysan-draft/hoysan-draft.cell.yaml
+# Ingest via input-sources harness (poll↔webhook↔hook alias),
+# deterministic engine = hoysan_draft.py (reuse, not fork),
+# dashboard render membrane for Excel parity, confirm for grounded prefs.
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: hoysan-roster-pilot
+  description: roster pilot composing hoysan-draft + input-sources + dashboard + confirm
+spec:
+  membrane:
+    inputs:
+      inventory: { schema: string }
+    outputs:
+      roster: { schema: object }
+    caps: {}
+  organelles:
+    - name: roster
+      cell: ../../../../cell/patterns/hoysan-draft/hoysan-draft.cell.yaml
+  wiring:
+    - from: membrane.inventory
+      to: roster.request
+    - from: roster.result
+      to: membrane.roster

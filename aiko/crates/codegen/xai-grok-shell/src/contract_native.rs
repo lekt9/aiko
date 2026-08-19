@@ -60,6 +60,56 @@ use neuron_bridge::{
     skill_node_decision, supported_contract_abi,
 };
 
+/// The Contract runtime the packaging pipeline built THIS binary against,
+/// carried inside the binary itself. NativeContract extracts it to a
+/// content-addressed path and dlopens it before consulting any installed
+/// helper, so a seat can never pair a new host with a stale ~/.aiko/lib
+/// library — the exact skew that stranded gbear on an old ABI with no Zig
+/// toolchain to rebuild from. Debug builds without the embed keep today's
+/// discovery order unchanged.
+#[cfg(bundle_contract)]
+static EMBEDDED_CONTRACT_LIBRARY: &[u8] = include_bytes!(env!("AIKO_CONTRACT_EMBED_FILE"));
+
+/// The Contract CLI the packaging pipeline built THIS binary against, carried
+/// inside the binary itself so `aiko contract …` needs no separately installed
+/// 40 MB executable. Extracted content-addressed and exec'd, exactly as the
+/// runtime above is extracted and dlopened: one shipped artifact, one version,
+/// nothing on PATH to drift out of step with the host that speaks to it.
+#[cfg(bundle_contract_cli)]
+static EMBEDDED_CONTRACT_CLI: &[u8] = include_bytes!(env!("AIKO_CONTRACT_CLI_EMBED_FILE"));
+
+/// Materialize the embedded Contract CLI and return its path. `None` when this
+/// build carries no CLI — the caller reports that rather than reaching for a
+/// stray binary on PATH, which is the skew this embedding exists to end.
+pub fn embedded_contract_cli() -> Option<PathBuf> {
+    #[cfg(not(bundle_contract_cli))]
+    {
+        None
+    }
+    #[cfg(bundle_contract_cli)]
+    {
+        let digest = format!("{:x}", Sha256::digest(EMBEDDED_CONTRACT_CLI));
+        let dir = dirs::home_dir()?
+            .join(".aiko/lib/embedded-cli")
+            .join(&digest[..16]);
+        let path = dir.join("contract");
+        if path.is_file() {
+            return Some(path);
+        }
+        std::fs::create_dir_all(&dir).ok()?;
+        let staging = dir.join(format!(".extract-{}", std::process::id()));
+        std::fs::write(&staging, EMBEDDED_CONTRACT_CLI).ok()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755));
+        }
+        // Rename into place so a partial write is never executable.
+        std::fs::rename(&staging, &path).ok()?;
+        Some(path)
+    }
+}
+
 const LOCAL_COMMAND_TIMEOUT: Duration = Duration::from_millis(800);
 const MAX_CONTEXT_BYTES: usize = 14_000;
 const CONTEXT_DISABLED_ENV: &str = "AIKO_MACHINE_CONTEXT";
@@ -220,10 +270,60 @@ impl NativeContract {
         }
     }
 
+    fn explicit_library() -> Option<PathBuf> {
+        std::env::var_os("AIKO_CONTRACT_LIBRARY").map(PathBuf::from)
+    }
+
+    fn dev_contract_lib_allowed() -> bool {
+        // Release seats must not silently pick a sibling checkout's zig-out.
+        // Debug `cargo test` / `cargo run` still may; that is how the tree
+        // develops without an install step.
+        match std::env::var("AIKO_ALLOW_DEV_CONTRACT_LIB") {
+            Ok(value) => matches!(value.as_str(), "1" | "true" | "yes"),
+            Err(_) => cfg!(debug_assertions),
+        }
+    }
+
+    /// Extract the embedded Contract runtime to a content-addressed path and
+    /// return it. Idempotent: the digest names the directory, so a matching
+    /// extraction is reused and a partial write can never be dlopened (the
+    /// bytes land under a temp name and are renamed into place).
+    #[cfg(bundle_contract)]
+    fn embedded_library() -> Option<PathBuf> {
+        let digest = format!("{:x}", Sha256::digest(EMBEDDED_CONTRACT_LIBRARY));
+        let dir = dirs::home_dir()?
+            .join(".aiko/lib/embedded")
+            .join(&digest[..16]);
+        let path = dir.join(env!("AIKO_CONTRACT_EMBED_NAME"));
+        if path.is_file() {
+            return Some(path);
+        }
+        std::fs::create_dir_all(&dir).ok()?;
+        let staging = dir.join(format!(".extract-{}", std::process::id()));
+        std::fs::write(&staging, EMBEDDED_CONTRACT_LIBRARY).ok()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755));
+        }
+        std::fs::rename(&staging, &path).ok()?;
+        Some(path)
+    }
+
     fn candidates() -> Vec<PathBuf> {
+        // A pin is a pin. If the operator named a library and it cannot
+        // load, fall-through to ~/.aiko/lib or a random zig-out is how
+        // 0.2.118 hosts started talking to August 15 dylibs.
+        if let Some(path) = Self::explicit_library() {
+            return vec![path];
+        }
+
         let mut paths = Vec::new();
-        if let Some(path) = std::env::var_os("AIKO_CONTRACT_LIBRARY") {
-            paths.push(path.into());
+        // The runtime this binary was built against outranks every installed
+        // copy: it is the only candidate that cannot skew.
+        #[cfg(bundle_contract)]
+        if let Some(embedded) = Self::embedded_library() {
+            paths.push(embedded);
         }
         if let Ok(executable) = std::env::current_exe()
             && let Some(bin_dir) = executable.parent()
@@ -239,28 +339,29 @@ impl NativeContract {
                 paths.push(home.join(".aiko/lib").join(name));
             }
         }
-        for name in Self::library_names() {
-            paths.push(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../../../contract/libcontract/zig-out/lib")
-                    .join(name),
-            );
-        }
-        // contract-core fallback (~/Unbrowse/contract-core and sibling ../contract-core)
-        if let Some(home) = dirs::home_dir() {
+        if Self::dev_contract_lib_allowed() {
             for name in Self::library_names() {
                 paths.push(
-                    home.join("Unbrowse/contract-core/libcontract/zig-out/lib")
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../../../contract/libcontract/zig-out/lib")
                         .join(name),
                 );
             }
-        }
-        for name in Self::library_names() {
-            paths.push(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../../../contract-core/libcontract/zig-out/lib")
-                    .join(name),
-            );
+            if let Some(home) = dirs::home_dir() {
+                for name in Self::library_names() {
+                    paths.push(
+                        home.join("Unbrowse/contract-core/libcontract/zig-out/lib")
+                            .join(name),
+                    );
+                }
+            }
+            for name in Self::library_names() {
+                paths.push(
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../../../contract-core/libcontract/zig-out/lib")
+                        .join(name),
+                );
+            }
         }
         paths
     }
@@ -269,7 +370,7 @@ impl NativeContract {
         for path in Self::candidates() {
             // SAFETY: every symbol is copied as a function pointer while the
             // owning Library is retained for the process lifetime.
-            let Ok(library) = (unsafe { libloading::Library::new(path) }) else {
+            let Ok(library) = (unsafe { libloading::Library::new(&path) }) else {
                 continue;
             };
             let Ok(abi_version) =
@@ -281,6 +382,11 @@ impl NativeContract {
             if !supported_contract_abi(library_abi) {
                 continue;
             }
+            tracing::info!(
+                path = %path.display(),
+                library_abi,
+                "loaded native Contract library"
+            );
             // Speak the highest ABI both sides know. A library ahead of this
             // build keeps every feature this build can address instead of
             // disabling Contract entirely.
@@ -4197,7 +4303,16 @@ async fn expand_turn_root(
         // only comparable within one generation: the same deterministic root id
         // legitimately re-derives different digests when the binary or the
         // Contract ABI underneath it changed.
-        let generation = format!("{}/abi{}", env!("CARGO_PKG_VERSION"), result.1);
+        // The generation must name the BUILD, not just the version: two builds
+        // of one version re-derive a different graph for the same root id after
+        // any code change, and a version-only key makes that ordinary upgrade
+        // indistinguishable from nondeterminism (refusal instead of supersede).
+        let generation = format!(
+            "{}+{}/abi{}",
+            env!("CARGO_PKG_VERSION"),
+            option_env!("AIKO_GRAPH_BUILD_ID").unwrap_or("src"),
+            result.1
+        );
         let index = json!({
             "schema": "aiko.graph-harness-root/v1",
             "root_id": turn.id,
@@ -4257,12 +4372,17 @@ async fn expand_turn_root(
                                 .and_then(Value::as_str)
                                 .map(str::to_owned)
                         });
-                    if stale_generation.as_deref() == Some(generation.as_str()) {
-                        return Err(
-                            "graph_harness_root_index_failed: cached Contract root receipt differs"
-                                .into(),
-                        );
-                    }
+                    // A same-generation difference is superseded too, not
+                    // refused. The root id is the contract id — derived from the
+                    // goal — while the graph digest also covers the workspace
+                    // and node set. So one goal re-asked after any edit
+                    // legitimately derives a different graph, and a stored
+                    // digest alone cannot tell that apart from a
+                    // nondeterministic derivation: refusing punished the common
+                    // case and blocked the turn outright. The prior receipt is
+                    // archived (never erased) and the supersession is logged, so
+                    // repeated supersessions for one root id remain visible as
+                    // evidence.
                     // Archived OUTSIDE roots/: the bounded roots scan refuses any
                     // entry that is not a receipt file, so the archive must not
                     // add entries there.
@@ -4290,11 +4410,13 @@ async fn expand_turn_root(
                     std::fs::File::open(&roots)
                         .and_then(|directory| directory.sync_all())
                         .map_err(|error| format!("graph_harness_root_index_failed: {error}"))?;
+                    let same_generation = stale_generation.as_deref() == Some(generation.as_str());
                     tracing::info!(
                         root_id = %turn.id,
                         stale_generation = stale_generation.as_deref().unwrap_or("pre-generation"),
                         generation = %generation,
-                        "superseded prior-generation Contract root receipt"
+                        same_generation,
+                        "superseded prior Contract root receipt"
                     );
                 }
             }
@@ -8212,6 +8334,20 @@ pub async fn ground_turn_with_facts_and_prepared(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_contract_library_is_the_only_candidate() {
+        let pin = "/tmp/aiko-test-missing-libcontract.dylib";
+        let previous = std::env::var_os("AIKO_CONTRACT_LIBRARY");
+        // SAFETY: process-global env, but this pin must not fall through.
+        unsafe { std::env::set_var("AIKO_CONTRACT_LIBRARY", pin) };
+        let paths = NativeContract::candidates();
+        match previous {
+            Some(value) => unsafe { std::env::set_var("AIKO_CONTRACT_LIBRARY", value) },
+            None => unsafe { std::env::remove_var("AIKO_CONTRACT_LIBRARY") },
+        }
+        assert_eq!(paths, vec![std::path::PathBuf::from(pin)]);
+    }
 
     #[test]
     fn telegram_transport_metadata_preserves_lineage_and_conversation_identity() {

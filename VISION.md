@@ -165,10 +165,10 @@ claim verbs are what produce evidence.
 |---|---|
 | OCR ingestion (Step 1) | no read tool at the MCP edge; an OCR HTTP API works today |
 | Operator UI | not started; the live view is read-only by design |
-| Credential passing | none, in any layer — and R2 depends on it |
+| Credential passing | opaque account-handle envelope is gated (`contract-hook-ingress-gate`, `contract-delegation-capability-gate`); managed enterprise vault, browser-session handoff, and a live OS-vault lifecycle remain absent — and R2 depends on those |
 | Constraint solving beyond rotation | no shift-conflict resolution, no multi-constraint optimisation |
 
-R2 (zero setup) is **blocked on credential passing**, not on architecture. That
+R2 (zero setup) is **blocked on the un-shipped live credential surface**, not on architecture. That
 is the gap between this repository and the meeting's headline promise, and no
 amount of graph design closes it.
 

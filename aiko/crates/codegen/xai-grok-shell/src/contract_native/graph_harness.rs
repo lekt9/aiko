@@ -13,7 +13,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 pub const ROUTE_API_VERSION: &str = "aiko-workflow-route/v1";
 pub const GRAPH_API_VERSION: &str = "graph-harness/v1";
@@ -49,7 +48,74 @@ pub fn deterministic_host_adapter(adapter: &str) -> bool {
 }
 const MAX_IJSON_INTEGER: u64 = 9_007_199_254_740_991;
 const MAX_VERIFY_KEY_BYTES: u64 = 65_536;
-const OPENSSL: &str = "/usr/bin/openssl";
+// RFC 8410 SubjectPublicKeyInfo header for Ed25519: SEQUENCE, AlgorithmIdentifier
+// (id-Ed25519), BIT STRING with zero unused bits. The 32 raw key bytes follow.
+// Verification is in-process (ed25519-dalek) — the previous design shelled out
+// to a pinned /usr/bin/openssl, which on stock macOS is LibreSSL without
+// Ed25519 or `pkeyutl -rawin`, so every admission authentication failed closed
+// with VerifierUnavailable. No subprocess also means no binary to pin.
+const ED25519_SPKI_PREFIX: [u8; 12] = [
+    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+];
+
+/// Strict RFC 4648 base64 (standard alphabet). Whitespace is tolerated only
+/// because PEM wraps lines; every other deviation — bad symbol, interior
+/// padding, wrong length — refuses. No external decoder to trust.
+fn base64_decode_strict(text: &str) -> Option<Vec<u8>> {
+    let symbol = |b: u8| -> Option<u32> {
+        match b {
+            b'A'..=b'Z' => Some(u32::from(b - b'A')),
+            b'a'..=b'z' => Some(u32::from(b - b'a') + 26),
+            b'0'..=b'9' => Some(u32::from(b - b'0') + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    };
+    let cleaned: Vec<u8> = text
+        .bytes()
+        .filter(|b| !matches!(b, b' ' | b'\n' | b'\r' | b'\t'))
+        .collect();
+    if cleaned.is_empty() || cleaned.len() % 4 != 0 {
+        return None;
+    }
+    let chunk_count = cleaned.len() / 4;
+    let mut out = Vec::with_capacity(chunk_count * 3);
+    for (index, chunk) in cleaned.chunks(4).enumerate() {
+        let pads = chunk.iter().rev().take_while(|&&b| b == b'=').count();
+        if pads > 2 || (pads > 0 && index + 1 != chunk_count) {
+            return None;
+        }
+        let mut acc = 0u32;
+        for &b in &chunk[..4 - pads] {
+            acc = (acc << 6) | symbol(b)?;
+        }
+        acc <<= 6 * pads as u32;
+        let bytes = acc.to_be_bytes();
+        out.extend_from_slice(&bytes[1..4 - pads]);
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let mut acc = 0u32;
+        for (index, &byte) in chunk.iter().enumerate() {
+            acc |= u32::from(byte) << (16 - 8 * index);
+        }
+        for slot in 0..4 {
+            if slot <= chunk.len() {
+                out.push(ALPHABET[(acc >> (18 - 6 * slot)) as usize & 63] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1913,7 +1979,7 @@ pub struct GraphHarnessAttestation {
 }
 
 pub struct DeploymentVerifier {
-    pem: Vec<u8>,
+    verifying_key: ed25519_dalek::VerifyingKey,
     key_id: String,
 }
 impl DeploymentVerifier {
@@ -1969,51 +2035,32 @@ impl DeploymentVerifier {
                 "verifier requires public-only SPKI PEM",
             ));
         }
-        let temp = tempfile::tempdir().map_err(|e| {
-            GraphHarnessRefusal::new(RefusalCode::VerifierUnavailable, e.to_string())
-        })?;
-        let der = temp.path().join("key.der");
-        let openssl_meta = fs::symlink_metadata(OPENSSL).map_err(|error| {
-            GraphHarnessRefusal::new(RefusalCode::VerifierUnavailable, error.to_string())
-        })?;
-        if openssl_meta.file_type().is_symlink() || !openssl_meta.is_file() {
-            return Err(GraphHarnessRefusal::new(
+        let body: String = text
+            .lines()
+            .filter(|line| !line.starts_with("-----"))
+            .collect();
+        let der = base64_decode_strict(&body).ok_or_else(|| {
+            GraphHarnessRefusal::new(
                 RefusalCode::VerifierUnavailable,
-                "fixed OpenSSL verifier is not a regular non-symlink file",
-            ));
-        }
-        let status = Command::new(OPENSSL)
-            .args(["pkey", "-pubin", "-in"])
-            .arg(path)
-            .args(["-outform", "DER", "-out"])
-            .arg(&der)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|e| {
-                GraphHarnessRefusal::new(RefusalCode::VerifierUnavailable, e.to_string())
-            })?;
-        if !status.success() {
-            return Err(GraphHarnessRefusal::new(
-                RefusalCode::VerifierUnavailable,
-                "OpenSSL refused deployment public key",
-            ));
-        }
-        let der = fs::read(der).map_err(|e| {
-            GraphHarnessRefusal::new(RefusalCode::VerifierUnavailable, e.to_string())
+                "verification key PEM body is not strict base64",
+            )
         })?;
-        const PREFIX: &[u8] = &[
-            0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
-        ];
-        if der.len() != 44 || !der.starts_with(PREFIX) {
+        if der.len() != 44 || !der.starts_with(&ED25519_SPKI_PREFIX) {
             return Err(GraphHarnessRefusal::new(
                 RefusalCode::VerifierUnavailable,
                 "deployment public key is not Ed25519 SPKI",
             ));
         }
+        let mut key_bytes = [0u8; 32];
+        key_bytes.copy_from_slice(&der[12..]);
+        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&key_bytes).map_err(|_| {
+            GraphHarnessRefusal::new(
+                RefusalCode::VerifierUnavailable,
+                "deployment public key is not a valid Ed25519 point",
+            )
+        })?;
         Ok(Self {
-            pem,
+            verifying_key,
             key_id: format!("sha256:{}", sha256_hex(&der)),
         })
     }
@@ -2082,35 +2129,22 @@ impl DeploymentVerifier {
                 )
             })?;
         let bytes = canonical_json(&statement)?;
-        let temp = tempfile::tempdir().map_err(|e| {
-            GraphHarnessRefusal::new(RefusalCode::VerifierUnavailable, e.to_string())
-        })?;
-        let key = temp.path().join("key.pem");
-        let msg = temp.path().join("statement.json");
-        let sig = temp.path().join("signature.bin");
-        write_sync(&key, &self.pem).map_err(bundle_io)?;
-        write_sync(&msg, &bytes).map_err(bundle_io)?;
-        write_sync(&sig, &signature).map_err(bundle_io)?;
-        let status = Command::new(OPENSSL)
-            .args(["pkeyutl", "-verify", "-pubin", "-rawin", "-inkey"])
-            .arg(key)
-            .args(["-in"])
-            .arg(msg)
-            .args(["-sigfile"])
-            .arg(sig)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|e| {
-                GraphHarnessRefusal::new(RefusalCode::VerifierUnavailable, e.to_string())
-            })?;
-        if !status.success() {
-            return Err(GraphHarnessRefusal::new(
+        let signature = ed25519_dalek::Signature::from_slice(&signature).map_err(|_| {
+            GraphHarnessRefusal::new(
                 RefusalCode::AttestationInvalid,
-                "Ed25519 verification failed",
-            ));
-        }
+                "Ed25519 signature must be 64 bytes",
+            )
+        })?;
+        // verify_strict additionally refuses small-order and mixed-order
+        // components that plain verify would accept.
+        self.verifying_key
+            .verify_strict(&bytes, &signature)
+            .map_err(|_| {
+                GraphHarnessRefusal::new(
+                    RefusalCode::AttestationInvalid,
+                    "Ed25519 verification failed",
+                )
+            })?;
         Ok(())
     }
 }
@@ -3234,26 +3268,23 @@ mod tests {
         let prepared_dir = state.path().join("prepared").join(&prepared.bundle_digest);
         EmbeddedCompiler::persist_atomic(&prepared, &prepared_dir).unwrap();
 
-        let private_key = state.path().join("deployment-private.pem");
+        // Fixed seed: the fixture key must be deterministic — same key, same
+        // signature bytes, every run on every machine. Never a real key.
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&[0x42; 32]);
         let public_key = state.path().join("deployment-public.pem");
-        assert!(
-            Command::new(OPENSSL)
-                .args(["genpkey", "-algorithm", "ED25519", "-out"])
-                .arg(&private_key)
-                .status()
-                .unwrap()
-                .success()
-        );
-        assert!(
-            Command::new(OPENSSL)
-                .args(["pkey", "-in"])
-                .arg(&private_key)
-                .args(["-pubout", "-out"])
-                .arg(&public_key)
-                .status()
-                .unwrap()
-                .success()
-        );
+        let spki: Vec<u8> = ED25519_SPKI_PREFIX
+            .iter()
+            .copied()
+            .chain(signing_key.verifying_key().as_bytes().iter().copied())
+            .collect();
+        fs::write(
+            &public_key,
+            format!(
+                "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----\n",
+                base64_encode(&spki)
+            ),
+        )
+        .unwrap();
         let verifier = DeploymentVerifier::load(&public_key).unwrap();
 
         let mut expected = Vec::<(String, ImplementationIdentity)>::new();
@@ -3338,27 +3369,13 @@ mod tests {
                 value: String::new(),
             },
         };
-        let statement_path = state.path().join("statement.json");
-        let signature_path = state.path().join("signature.bin");
-        fs::write(
-            &statement_path,
-            canonical_json(&serde_json::to_value(&attestation).unwrap()).unwrap(),
-        )
-        .unwrap();
-        assert!(
-            Command::new(OPENSSL)
-                .args(["pkeyutl", "-sign", "-rawin", "-inkey"])
-                .arg(&private_key)
-                .args(["-in"])
-                .arg(&statement_path)
-                .args(["-out"])
-                .arg(&signature_path)
-                .status()
-                .unwrap()
-                .success()
-        );
-        attestation.authentication.value = fs::read(signature_path)
-            .unwrap()
+        let statement_bytes = canonical_json(&serde_json::to_value(&attestation).unwrap()).unwrap();
+        let signature = {
+            use ed25519_dalek::Signer as _;
+            signing_key.sign(&statement_bytes)
+        };
+        attestation.authentication.value = signature
+            .to_bytes()
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();

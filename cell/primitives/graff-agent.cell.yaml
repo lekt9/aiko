@@ -1,0 +1,34 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: graff-agent
+  description: >-
+    An agent node backed by codegraff (justrach/codegraff) in one-shot mode.
+    The agent reaches its target system only through an MCP server registered
+    with graff, declared here as the node's harness.
+spec:
+  membrane:
+    inputs:
+      task:   { schema: string }
+      system: { schema: string }
+    outputs:
+      answer: { schema: string }
+    caps: { exec: true }
+  # graff drives a model, so this node is NOT a deterministic producer. It sits
+  # at the edge: its output must never feed a recompute path, because a model
+  # re-deriving a different answer invalidates its own dependants and never
+  # reaches a fixpoint. `witness` is therefore the only thing that can settle it.
+  policy:
+    determinism: none
+  harness:
+    system: mcp-server
+    surface: mcp
+    # Proves BOTH halves of the connection before the agent fires: the harness
+    # binary exists and answers, and the named server is actually registered
+    # with it. Either half alone lets the agent claim a reach it does not have.
+    attach: "graff --version >/dev/null && graff mcp 2>&1 | grep -q \"$CELL_HARNESS_SYSTEM\""
+    tools: [one_shot]
+  run:
+    kind: exec
+    command: ["python3", "neurons/graff_agent.exec.py"]
+    timeout_ms: 300000

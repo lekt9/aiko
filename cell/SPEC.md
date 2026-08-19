@@ -260,9 +260,98 @@ policy:
   determinism: required
   budget: { max_ms: 30000, max_writes: 8, max_depth: 8 }
   retain: on_success   # on_success | always | never
+  writes:  [roster.json]                    # paths this node may modify
+  witness: "grep -q ORD-7 roster.json"      # the runnable check that says it is done
 ```
 
 No `loop` in policy — loops are patterns (python loops), not spec. No ledger, no signing, no chain for v0. Each can be a standard organelle later without changing this spec.
+
+### 7.1 `writes` and `witness` — a cell is a graph node
+
+Firing a node and settling it are different claims, and conflating them is how a
+graph reports green while nothing landed.
+
+* **`writes`** — relative paths, no `..`, no absolute paths. Two organelles in the
+  **same Kahn frontier** are unordered by the graph; if both declare the same
+  write, the run is **refused**. Lexical execution order is an accident of node
+  naming, not a declared order, and a result that depends on it only looks
+  deterministic. Ordering the two with a real edge admits the same writes.
+* **`witness`** — a shell command run **after** the node fires, from the cell's own
+  directory, with `$CELL_NODE` and `$CELL_WORKDIR` exported. Exit 0 settles the
+  node and records `witness.settled` on its manifest; anything else refuses the
+  whole run. Point it at what the node **declared it would write** — a witness the
+  node's own success can satisfy without producing anything grades itself.
+
+Witness: `tests/gates/node-settlement.sh`.
+
+---
+
+## 7.2 `harness` — how an agent reaches a system
+
+An agent node touches an external system only through a declared harness, and
+attachment is **verified against the live system before the node fires**.
+
+```yaml
+spec:
+  harness:
+    system: haulio-tms          # what it attaches to
+    surface: mcp                # mcp | skill | http
+    attach: "curl -sf $SYS_URL/health"   # proves the system answers, now
+    tools: [list_orders]        # the operations this harness exposes
+```
+
+The probe runs **before** the handler, not after. A node that fired against an
+absent system still hands a value downstream, and every consumer then treats it
+as though the system produced it — refusing at attach is what keeps that value
+from existing at all. The attachment lands on the node manifest (`harness.system`,
+`surface`, `tools`, `attached`), so a reader can ask which system a value came
+from instead of inferring it.
+
+Fails closed at build time: no `attach` (attachment would be self-asserted), an
+empty `tools` (a connection claim with no operation behind it — the same
+emptiness an acceptance-free `SKILL.md` is refused for), an unknown `surface`,
+or any unknown field.
+
+The declaration is exported to its own probe as `$CELL_HARNESS_SYSTEM`,
+`$CELL_HARNESS_SURFACE`, `$CELL_HARNESS_TOOLS`. Interpolating the system name by
+hand is how these fail open — `grep -q ""` matches every line, so a probe whose
+name never arrived attaches to anything that prints output.
+
+Witness: `tests/gates/harness-attach.sh`.
+
+### 7.3 Worked example — codegraff as the agent
+
+`primitives/graff-agent.cell.yaml` is an agent node backed by
+[codegraff](https://github.com/justrach/codegraff) (`graff`), a Zig agentic
+harness with multi-provider models, MCP, and a one-shot `-p` mode. It reaches
+its target system **only** through an MCP server registered with graff:
+
+```yaml
+harness:
+  system: mcp-server
+  surface: mcp
+  attach: "graff --version >/dev/null && graff mcp 2>&1 | grep -q \"$CELL_HARNESS_SYSTEM\""
+  tools: [one_shot]
+```
+
+The probe checks **both halves** — the harness binary answers, and the named
+server is actually registered with it. Either half alone certifies a reach the
+agent does not have.
+
+`graff --schema` publishes a machine-readable interface, which is what makes a
+harness derivable rather than hand-asserted — the same shape `morphogenesis.zig`
+requires of a boundary before it will build against it.
+
+**This node declares `determinism: none` and that is not a shortcut.** graff
+drives a model, and a model on the recompute path re-derives a different answer,
+invalidates its own dependants, and never reaches a fixpoint. An agent node
+belongs at the edge; its `witness` is the only thing that can settle it, and its
+output must not feed a deterministic producer.
+
+Witness: `tests/gates/graff-agent.sh` (skips cleanly when graff is not installed).
+
+**Not to be confused with `justrach/codedb`** — the same author's code-intelligence
+MCP server, blogged on the same `codegraff.com` domain. Different tool.
 
 ---
 

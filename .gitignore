@@ -54,6 +54,25 @@ career-ops/
 cell/data/hoysan*
 cell/hoysan-*
 
+# Personal / generated run residue at the repo root (untracked 2026-08-17).
+# output/ held generated personal cover-letter PDFs; tmp-e2e/ held e2e
+# screenshots; base/probe/execution were host-specific build/debug artifacts;
+# state/ is walk runtime state, never source.
+/output/
+/tmp-e2e/
+/base
+/probe
+/execution
+/state/
+
+# Committed binaries are a second source of truth that drifts (untracked 2026-08-17)
+contract/scripts/contract
+contract/libcontract/probe
+
+# Offload symlinks tracked as files (zig-out/ dir pattern does not match symlinks)
+/cell/zig-out
+/cell/.zig-cache
+
 # OS noise
 .DS_Store
 
@@ -69,3 +88,4 @@ aiko/test.md
 # smithers local db
 smithers.db
 smithers.db-*
+.wrangler/

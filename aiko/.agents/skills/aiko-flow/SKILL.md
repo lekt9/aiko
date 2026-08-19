@@ -28,6 +28,27 @@ Aiko host ──materializes frontier───────────┤
 Contract ledger ◄──W6H, occurrences── Neuron admitted limbs + outbox → Unbrowse/local adapters
 ```
 
+## Layer lock (do not invert)
+
+These are four different things. Mixing them is how Hoysan grew `POST /api/smithers/run` that did roster math and called itself `aiko-flow-local`.
+
+| Layer | Owns | Must not |
+|---|---|---|
+| **Cell** | Deterministic product (`cell/run.py`, `runCell`) | HTTP, credentials, a ledger, the name Smithers |
+| **Smithers** | Start / pause / approve / resume the Cell | Smithers does not compute the product; do not `fetch` a Worker to do Cell work |
+| **Worker / UI** | Project the last Cell product for humans | Implement `/api/smithers/run`, claim `engine: "aiko-flow-local"` |
+| **Contract** | Lineage, W6H, settlement | Live in wrangler memory |
+
+Refusals (a gate fails the tree if these appear as implementations):
+
+- Do not add `POST /api/smithers/run` that runs business logic.
+- Do not label an in-process handler `aiko-flow-local`.
+- Do not write a Smithers workflow whose only task is `fetch(…/api/smithers/run)`.
+- Do not `smithers init` a product app and keep the seeded whole-foods / federation pack.
+- Do not fork `cell/patterns/hoysan-draft` into a new TypeScript engine.
+
+One-shot without creds = run the **Cell**. Smithers is optional control around that Cell. A Worker may *host* the Cell (`POST /api/cell/run`) or *apply* a product (`POST /api/projections/apply`). That is not Smithers.
+
 - **Smithers** controls, never duplicates the ledger. Two entry points — both wired by the default plugin:
   - **MCP** `smithers` tools: `list_workflows`, `run_workflow`, `watch_run`, `get_run`, `list_pending_approvals`, `resolve_approval`, `ask_human`, …
   - **CLI** `smithers` (via `node bin/smithers.mjs` in the installed control limb)

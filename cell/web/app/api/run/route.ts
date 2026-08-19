@@ -51,6 +51,8 @@ export async function POST(req: Request) {
     }
   } catch {}
 
+  // The engine journals every firing itself now (run.py _journal_firing) —
+  // this route no longer keeps a second, web-only ledger.
   return NextResponse.json({
     cell: cellPath, outDir: outDir.replace(root+"/",""),
     code: result.code,

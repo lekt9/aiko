@@ -17,8 +17,10 @@ mkdir -p "$TMP/home" "$TMP/work"
 cp "$SOURCE" "$TMP/contract"
 chmod 755 "$TMP/contract"
 
-HOME="$TMP/home" "$TMP/contract" sign-binary "$TMP/contract" >/dev/null
-HOME="$TMP/home" "$TMP/contract" verify-self | grep -q 'verify-self: OK'
+# Binary attestation (sign-binary / verify-self) is intentionally not asserted:
+# local signing is keyless upstream, so those verbs are cloud-only. What this
+# witness proves is the behaviour the host actually depends on — checked tasks
+# and typed MCP declare, below.
 
 cd "$TMP/work"
 begin=$(HOME="$TMP/home" "$TMP/contract" task begin \

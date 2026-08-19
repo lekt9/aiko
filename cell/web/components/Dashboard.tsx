@@ -264,7 +264,7 @@ export default function Dashboard({ cellPath }: { cellPath: string; onPickCell?:
                                   onClick={() => { setActivePort(r.port); setSelectedId(r.id); }}
                                   className="whitespace-nowrap rounded-full border border-os-border bg-os-bg px-3 py-1.5 font-mono text-[11px] outline-none transition-[border-color,color] duration-[var(--dur-short)] hover:border-[var(--border-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] focus-visible:outline-offset-2 active:opacity-80"
                                 >
-                                  {r.label} <span className="opacity-60">\u00B7 {titleForPort(r.port)}</span>
+                                  {r.label} <span className="opacity-60">· {titleForPort(r.port)}</span>
                                 </button>
                               ))}
                             </div>

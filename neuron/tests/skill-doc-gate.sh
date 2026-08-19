@@ -65,13 +65,14 @@ cat > "$pkg/neuron.json" <<'JSON'
 }
 JSON
 
-write_doc() {  # write_doc <expect_contains> <body-text>
+write_doc() {  # write_doc <expect_contains> <body-text> [grounding]
     cat > "$pkg/SKILL.md" <<EOF
 ---
 name: typed-neuron/skill-doc-probe
 description: Fixture limb used by the SKILL.md binding gate. Fires on a probe stimulus.
 probe_input: hello
 expect_contains: $1
+grounding: ${3-neuron/AGENTS.md#30}
 ---
 
 # skill-doc-probe
@@ -160,6 +161,50 @@ if skill.get("expect_contains") != want:
     sys.exit(1)
 print("  declared acceptance is durable in the ledger: %r" % skill["expect_contains"])
 PY
+
+# --- 6. a package with NO grounding is refused -----------------------------
+# `expect_contains` says what the package claims. `grounding` says where the
+# claim came from. Without it a package has no provenance to re-check when the
+# doctrine it was built against moves, so drift is silent by construction.
+write_doc "probe-ack-6" "Body for the grounding assertion." " "
+if "$aiko" limb admit "$pkg" "$state" >/dev/null 2>&1; then
+    fail "a package declaring NO grounding was admitted — its claim has no provenance to re-check"
+fi
+err=$("$aiko" limb admit "$pkg" "$state" 2>&1 || true)
+case "$err" in
+    *Ungrounded*|*ungrounded*) : ;;
+    *) fail "refused, but not as ungrounded: $err" ;;
+esac
+
+# --- 7. EVERY shipped limb's grounding RESOLVES ----------------------------
+# This is what stops the field being decoration. A citation is only worth
+# something if it can be wrong: delete the file it names, or renumber the
+# section, and this goes red. That is the same rot `zig-doctrine-gate.sh`
+# catches in prose about the language, pointed at prose about provenance.
+python3 - "$repo" <<'PYEOF' || fail "a shipped limb cites grounding that does not resolve"
+import pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+bad, n = [], 0
+for doc in sorted((root / "limbs").glob("*/SKILL.md")):
+    n += 1
+    m = re.search(r"^grounding:\s*(.+)$", doc.read_text(encoding="utf-8"), re.M)
+    if not m or not m.group(1).strip():
+        bad.append(f"{doc.parent.name}: no grounding"); continue
+    for entry in (e.strip() for e in m.group(1).split(",")):
+        if entry.startswith("skill:"):
+            continue  # a named external skill; not resolvable from this tree
+        path, _, section = entry.partition("#")
+        target = root.parent / path
+        if not target.is_file():
+            bad.append(f"{doc.parent.name}: cites missing file {path}")
+        elif section and not re.search(r"^#+\s*" + re.escape(section) + r"[.\s]",
+                                       target.read_text(encoding="utf-8"), re.M):
+            bad.append(f"{doc.parent.name}: cites unresolved section {entry}")
+assert n, "no limb SKILL.md files discovered — the check found nothing to check"
+if bad:
+    print("\n".join("  " + b for b in bad)); sys.exit(1)
+print(f"  every citation in {n} limb SKILL.md files resolves")
+PYEOF
 
 # --- 5. the pin covers EVERY file, not a curated list ----------------------
 # An adversarial audit found that the digest hashed an allowlist — neuron.json,

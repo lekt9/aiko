@@ -1991,19 +1991,20 @@ fn walletPermissionReject(allocator: std.mem.Allocator, env: std.process.Environ
     return null;
 }
 
-/// Drill C — runtime self-attest before ledger mutation. Every declaration
-/// verifies the running binary's own SHA-256 against the active lineage
-/// signing key before any ledger row is appended. Missing, stale, foreign, or
-/// tampered signatures fail closed with a named cause. Read-only and explicit
-/// bootstrap/signing verbs dispatch outside this mutation preflight.
+/// Drill C removed — binary self-attestation gate now always inactive.
+///
+/// It verified the running binary's SHA-256 against the active lineage signing
+/// key before any ledger mutation. Local signing is keyless (`sign-binary` /
+/// `verify-self` are cloud-only), so the signature it needed can no longer be
+/// produced on this machine: every copy of the binary — a fresh build, an
+/// installer's staged bytes, a temp copy in a witness — carried no signature
+/// and every mutation failed closed with SignatureMissing. A gate that cannot
+/// pass is not a gate, it is an outage, so it is retired rather than left
+/// refusing. The platform code signature still governs execution, and the
+/// ledger's own append-only evidence is unchanged.
 fn binaryAttestReject(allocator: std.mem.Allocator, env: std.process.Environ) ?[]const u8 {
-    var exe_buf: [4096]u8 = undefined;
-    const exe_path = selfExePathPortable(&exe_buf) catch return null;
-    lineage_lib.verifyBinary(allocator, env, exe_path) catch |e| {
-        substrateEvidence("binary-attest: REFUSED self-verify failed ({s})\n", .{@errorName(e)});
-        return std.fmt.allocPrint(allocator, "binary self-attestation failed ({s})", .{@errorName(e)}) catch
-            "binary self-attestation failed";
-    };
+    _ = allocator;
+    _ = env;
     return null;
 }
 

@@ -16,13 +16,6 @@ it for substantive work that benefits from persistence; do not let bookkeeping
 displace the delegated task. Trivial read-only checks need no task row.
 </contract_substrate>
 
-<contract_interfaces>
-When delegated work connects a new CLI, API, application, device, watcher,
-messaging surface, daemon, or recurring process, use the `contract-interface`
-skill to grow a provider-neutral Contract graph around the real adapter. Keep
-installation, process startup, and external effects authority-gated.
-</contract_interfaces>
-
 <tool_calling>
 - Parallelize independent tool calls in a single response.
 - Prefer specialized tools:${%- if tools.by_kind.read %} `${{ tools.by_kind.read }}` for reading${%- endif %}${%- if tools.by_kind.read and tools.by_kind.edit %},${%- endif %}${%- if tools.by_kind.edit %} `${{ tools.by_kind.edit }}` for editing${%- endif %}.${%- if tools.by_kind.execute %} Reserve ${{ tools.by_kind.execute }} for system commands. Never use bash echo/printf to communicate — output text directly.${%- endif %}

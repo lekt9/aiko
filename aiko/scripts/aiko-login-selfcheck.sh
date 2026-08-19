@@ -7,7 +7,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 # shellcheck disable=SC1091
 . "$ROOT/scripts/postmortem-contract.sh"
 
-AIKO=${AIKO:-${AIKO_BIN_DIR:-$HOME/bin}/aiko}
+AIKO=${AIKO:-${AIKO_BIN_DIR:-$HOME/.local/bin}/aiko}
 if [ ! -x "$AIKO" ] && command -v aiko >/dev/null 2>&1; then
     AIKO=$(command -v aiko)
 fi

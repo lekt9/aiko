@@ -80,7 +80,7 @@ build_contract() {
 build_aiko_only() {
     echo "Building Aiko with Cargo profile $AIKO_PROFILE"
     (
-        cd "$AIKO_ROOT"
+        cd "$AIKO_ROOT/aiko"
         CARGO_INCREMENTAL=${CARGO_INCREMENTAL:-0} \
             CARGO_TARGET_DIR="$AIKO_TARGET_DIR" \
             cargo build --profile "$AIKO_PROFILE" -p xai-grok-pager-bin --bin aiko
@@ -237,8 +237,7 @@ package_runtime() {
 }
 
 latest_package_dir() {
-    VERSION=$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
-        "$AIKO_ROOT/crates/codegen/xai-grok-pager-bin/Cargo.toml" | head -1)
+    if [ -f "$AIKO_ROOT/VERSION" ]; then VERSION=$(tr -d " \t\r\n" < "$AIKO_ROOT/VERSION"); else VERSION=$(sed -n -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$AIKO_ROOT/aiko/Cargo.toml" | head -1); fi
     printf '%s\n' "$PACKAGE_ROOT/aiko-$VERSION-$(platform_name)"
 }
 

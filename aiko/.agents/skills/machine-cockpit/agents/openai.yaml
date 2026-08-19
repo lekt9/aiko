@@ -1,0 +1,4 @@
+interface:
+  display_name: "Machine Cockpit"
+  short_description: "Wire a fresh macOS seat for browser chat and Telegram pairing"
+  default_prompt: "Use $machine-cockpit to wire this seat safely."

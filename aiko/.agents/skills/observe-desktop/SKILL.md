@@ -14,4 +14,5 @@ with an untracked action.
 
 Read `contract-skill.json` for the executable graph, effects, evidence, and
 examples. Treat consequential nodes as preparation-only until Contract reports
-applicable authority. Settle completion only from the declared evidence.
+applicable authority. A direct user request is applicable task authority for
+actions within its stated scope. Settle completion only from observed evidence.

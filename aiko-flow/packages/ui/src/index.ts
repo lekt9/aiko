@@ -477,88 +477,10 @@ export {
 } from "./agents/ContextUsage";
 
 // lane:coding-artifacts
-export {
-  Artifact,
-  ArtifactHeader,
-  ArtifactTitle,
-  ArtifactDescription,
-  ArtifactActions,
-  ArtifactAction,
-  ArtifactClose,
-  ArtifactContent,
-  type ArtifactActionProps,
-  type ArtifactCloseProps,
-} from "./artifacts/Artifact";
-export { Snippet, type SnippetProps } from "./artifacts/Snippet";
-export { PackageInfo, type PackageInfoProps } from "./artifacts/PackageInfo";
-export { SchemaDisplay, type SchemaDisplayProps } from "./artifacts/SchemaDisplay";
-export {
-  StackTrace,
-  StackFrame,
-  parseStackTrace,
-  type StackTraceProps,
-  type StackFrameProps,
-  type StackFrameData,
-} from "./artifacts/StackTrace";
-export {
-  TestResults,
-  TestResultsHeader,
-  TestResultsSummary,
-  TestResultsDuration,
-  TestResultsProgress,
-  TestResultsContent,
-  TestSuite,
-  TestSuiteName,
-  TestSuiteStats,
-  TestSuiteContent,
-  TestRow,
-  TestStatus,
-  TestName,
-  testCaseStatusToStatus,
-  formatTestDuration,
-  type TestResultsProps,
-  type TestResultsDurationProps,
-  type TestSuiteProps,
-  type TestRowProps,
-  type TestStatusProps,
-  type TestCaseStatus,
-  type TestCaseModel,
-  type TestSuiteModel,
-} from "./artifacts/TestResults";
-export {
-  Commit,
-  CommitHeader,
-  CommitAuthor,
-  CommitInfo,
-  CommitMessage,
-  CommitMetadata,
-  CommitHash,
-  CommitTimestamp,
-  CommitActions,
-  CommitFiles,
-  CommitFile,
-  CommitFileStatus,
-  CommitFilePath,
-  useCommitModel,
-  type CommitProps,
-  type CommitModel,
-  type CommitFileModel,
-  type CommitFileStatusKind,
-  type CommitHashProps,
-  type CommitTimestampProps,
-  type CommitFileProps,
-  type CommitFileStatusProps,
-  type CommitFilePathProps,
-} from "./artifacts/Commit";
-export { ChangeSummary, type ChangeSummaryProps } from "./artifacts/ChangeSummary";
-export {
-  EnvironmentVariables,
-  EnvironmentVariable,
-  type EnvironmentVariablesProps,
-  type EnvironmentVariableProps,
-  type EnvironmentVariableModel,
-} from "./artifacts/EnvironmentVariables";
-export { SecretField, type SecretFieldProps } from "./artifacts/SecretField";
+// DISABLED 2026-08-17: the ./artifacts/* source files were never committed
+// (index.ts referenced them dangling, breaking every gateway UI bundle with
+// "Could not resolve" errors). Restore this block when the artifacts lane's
+// sources actually land in packages/ui/src/artifacts/.
 
 // lane:sandbox-previews
 export {

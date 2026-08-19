@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "product-forge.prd/v1",
+  "title": "ProductForgePRD",
+  "description": "Pinned PRD derived from business requirements by the product-forge limb.",
+  "type": "object",
+  "required": ["schema", "project", "archetype", "problem", "goals", "functional"],
+  "properties": {
+    "schema": {"type": "string", "const": "product-forge.prd/v1"},
+    "project": {"type": "string"},
+    "archetype": {"type": "string", "enum": ["booking", "crm", "inventory"]},
+    "problem": {"type": "string"},
+    "goals": {"type": "array", "items": {"type": "string"}},
+    "functional": {"type": "array", "items": {"type": "object"}},
+    "acceptance": {"type": "array", "items": {"type": "string"}}
+  }
+}

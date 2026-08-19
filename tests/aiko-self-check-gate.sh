@@ -174,11 +174,18 @@ if [ -f cell/web/package.json ]; then
     grep -q "expect_contains" tests/fixtures/graph-harness/skills/agent-browser/SKILL.md || fail "agent-browser SKILL.md missing expect_contains"
     echo "    agent-browser skill grounded (frontend via CDP/accessibility)"
   fi
-  # The frontend contract: layout + page + canvas components + API linkage
-  for f in cell/web/app/page.tsx cell/web/app/layout.tsx cell/web/components/CellCanvas.tsx cell/web/lib/db.ts; do
+  # The frontend contract: layout + page + canvas components + durable-store linkage.
+  # The store used to be cell/web/lib/db.ts. It is now the engine's, and the web
+  # reads it over /api/firings — so this asserts the linkage, not a second ledger.
+  for f in cell/web/app/page.tsx cell/web/app/layout.tsx cell/web/components/CellCanvas.tsx cell/web/app/api/firings/route.ts; do
     [ -f "$f" ] || fail "frontend file missing: $f"
   done
-  echo "    frontend files present (page, layout, CellCanvas, db)"
+  grep -q "CREATE TABLE IF NOT EXISTS firings" cell/run.py || fail "engine no longer owns the firing store schema"
+  # One store, one schema. A web-side CREATE TABLE is the duplicate coming back.
+  if grep -rl "CREATE TABLE" cell/web/app cell/web/lib 2>/dev/null | grep -q .; then
+    fail "web declares its own SQL schema — the firing store is the engine's"
+  fi
+  echo "    frontend files present (page, layout, CellCanvas, engine-backed firings API)"
   # Verify frontend consumes API layer (page imports from lib that hits /api/*)
   if grep -q "api/cell\|/api/\|fetch" cell/web/app/page.tsx 2>/dev/null || grep -rq "api" cell/web/app --include="*.ts" --include="*.tsx" | grep -q .; then
     echo "    frontend -> api linkage present (frontend tests both layers)"

@@ -97,6 +97,7 @@ name: gate/roster
 description: Publishes a roster artifact and notifies its workers. Fires on a roster stimulus in the redrive gate.
 probe_input: roster-probe
 expect_contains: artifact/roster/
+grounding: neuron/AGENTS.md#30, neuron/tests/redrive-gate.sh
 ---
 
 # gate/roster

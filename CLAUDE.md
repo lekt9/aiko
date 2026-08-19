@@ -35,11 +35,13 @@ transcription artifact.
 ```sh
 zig build                 # → zig-out/bin/aiko  AND  contract/libcontract/zig-out/lib/libcontract.a
 zig build test            # both layers' suites
-zig build gate            # 18 distinct shell witnesses scheduled by root build.zig
+zig build gate            # the distinct shell witnesses scheduled by root build.zig
                           # exact inventory below; THIS is the acceptance criterion
 ./zig-out/bin/aiko-doctor # prove both layers are linked in one process
 ```
 
+The block below is generated from `build.zig` by
+`scripts/gen-gate-inventory.py` — never hand-edit it.
 
 <!-- root-gate-inventory:start -->
 - `tests/aiko-self-check-gate.sh`
@@ -61,6 +63,14 @@ zig build gate            # 18 distinct shell witnesses scheduled by root build.
 - `tests/graph-engineering-gate.sh`
 - `tests/cross-journal-retention-gate.sh`
 - `tests/no-duplicate-fde-primitives-gate.sh`
+- `neuron/tests/product-forge-gate.sh`
+- `tests/contract-library-pin-gate.sh`
+- `tests/aiko-embedded-contract-gate.sh`
+- `tests/contract-slim-ledger-gate.sh`
+- `tests/layer-lock-gate.sh`
+- `tests/docs-oss-ready-gate.sh`
+- `tests/docs-quality-gate.sh`
+- `tests/conformance-gate.sh`
 <!-- root-gate-inventory:end -->
 
 **Gates are the acceptance criterion, not the unit tests.** Each gate drives the
@@ -83,9 +93,18 @@ something happened when it didn't.**
 | "nothing retained on compilation alone" | a generated limb that compiled but never satisfied its gap |
 | `SKILL.md` (`neuron/src/limb_ops.zig`) | a package that cannot say what it is for, or whose declaration sits outside its own digest and is therefore free to drift |
 | `redrive` case 3 | re-crossing a boundary already crossed |
+| `policy.writes` (`cell/run.py`) | two nodes unordered by the graph both claiming one write — a result that depends on node naming only looks deterministic |
+| `policy.witness` (`cell/run.py`) | settling a node on the fact that it ran; firing is not settling |
+| `spec.harness` (`cell/run.py`) | an agent reaching a system it has not attached to — the probe runs before the node fires, so a value never produced against an absent system |
 
 This is why it can reduce setup: not by magic self-configuration, but by making
 "done" mechanically checkable, so re-checking stops being rational.
+
+## Layer lock
+
+Cell computes. Smithers starts/pauses the Cell. A Worker projects the product.
+Contract is the ledger. **Never** `POST /api/smithers/run` that does the math,
+and **never** label that handler `aiko-flow-local`. Witness: `tests/layer-lock-gate.sh`.
 
 ## Reactive: the invalidation loop
 
@@ -169,6 +188,22 @@ are asserted by `neuron/tests/skill-doc-gate.sh`:
 3. **The declaration reaches the ledger.** The admission row carries the
    `skill` block, so a reader can ask what a package claimed at the moment it
    was pinned without trusting a file that may have been edited since.
+4. **A package says what it was built FROM.** `grounding` is a comma-separated
+   list of citations — `path`, `path#section`, or `skill:<name>`. Every
+   non-`skill:` entry must **resolve**: the file must exist and the section
+   must be a real heading in it. `expect_contains` says what the package
+   claims; `grounding` says where the claim came from, so when the doctrine a
+   limb was authored against moves, there is something to re-check instead of
+   silent drift. Empty grounding is refused at admission
+   (`SkillDocUngrounded`); an unresolvable citation is refused by the gate.
+
+   **The bound is the same one the prose body has: cited, never
+   re-interpreted.** Grounding exists to be *checked*, not consulted. A limb
+   that re-read its grounding and decided afresh each pass would be
+   non-deterministic, and `redrive` refuses exactly that. This is also why
+   external skills are wired in at *authoring* time and copied into bounded
+   code — never installed as a runtime dep. See `neuron/limbs/product-forge`,
+   whose grounding names the three borrowed skills it was rebuilt from.
 
 **The bound, and it is the same one authoring has.** The prose body is
 **cited by digest, never re-interpreted on the recompute path.** A producer
@@ -277,6 +312,39 @@ also what a ladder that messaged the wrong people six times produces.
   substrate and failed on a real one. A gate over an empty node does not
   exercise the topology, which is where classification lives.
 
+## Adding a native limb (the recipe)
+
+To turn a business capability into a gated, admitted, deterministic limb —
+see `docs/ADDING-A-LIMB.md` for the full checklist and `neuron/limbs/product-forge`
+as the worked example. In short:
+
+1. **Create the package** — `neuron/limbs/<name>/` with `neuron.json` (Caps,
+   `write_prefix`, `budget`), `SKILL.md` (inside the digest — `expect_contains`
+   must be falsifiable, not a string a do-nothing handler could echo), `schemas/`,
+   and `neurons/<neuron>.py` (pure: stdin `Stimulus` → stdout `Decision`/`Rejection`).
+   Import via `sys.path.insert(..., "../../shared")` from `_neuron` — `..` (one dot)
+   is wrong; two levels up from `neurons/` is `limbs/shared`. Checked by admission,
+   invisible on macOS if you only test the gate with the interface attached.
+2. **Make it bounded, gap-blind, deterministic** — the classifier/catalogue never
+   reads `expect_contains` (authored-gap bound) or a wall clock (`now_ms` is
+   inside the firing identity → `FiringMismatch` on replay; use `0`). Same pinned
+   read bytes → byte-identical effects (`sort_keys=True`, no `set`/`hash()` —
+   CPython hash randomisation is the realistic break). Cite `sources: [<read id>]`
+   or staleness is blind to the dependency (`redrive` needs `produced_by` +
+   `evidence[].sources`).
+3. **Wire the gate** — `neuron/tests/<name>-gate.sh` driving the public CLI
+   from an empty dir, asserting against durable state, never stdout resemblance.
+   Prove falsifiability: removing the feature must make the gate go red. Add it
+   to `build.zig`'s `gate` step list (the inventory above is auto-checked).
+4. **Evidence over stdout** — gates read `substrate.log` artifacts by id, not
+   aggregated counts — six messages is also what messaging the wrong people six
+   times produces.
+
+Reference: `docs/ADDING-A-LIMB.md`. Prior art borrowed-and-rebuilt:
+`nextlevelbuilder/ui-ux-pro-max (318K)`, `mattpocock/to-prd (364K)`,
+`anthropics/frontend-design (783K)` — heuristics copied into bounded code, not
+installed as deps.
+
 ## House style
 
 Match the surrounding code. Comments explain *why a refusal exists*, not what a
@@ -292,7 +360,7 @@ as done without running its gate.
 | `neuron/reference/ROADMAP.md` | unsettled work only |
 | `contract/DOCTRINE.md` | the substrate's doctrine and parity spec |
 | `contract/docs/AGENCY-SUBSTRATE.md` | schema, migration, adversarial evidence |
-| `PLAN-aiko-convergence.md` | the T1–T4 convergence plan. **All four are landed**; kept for the reasoning, not as a worklist |
+| `archive/plans/PLAN-aiko-convergence.md` | the T1–T4 convergence plan. **All four are landed**; kept for the reasoning, not as a worklist |
 | `docs/SOURCE-OF-TRUTH.md` | published-tree inventory (clone URL, layers, unpublished paths) |
 | `CONTRIBUTING.md` / `SECURITY.md` | public contribution and vulnerability process |
 

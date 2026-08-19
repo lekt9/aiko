@@ -30,7 +30,7 @@ META="$ROOT/.agents/skills/aiko-meta-agent/SKILL.md"
 
 printf '=== first-principles witness (aiko integration) ===\n'
 need_file "$DOC"
-need_file "$ROOT/plan3.md"
+need_file "$ROOT/../archive/plans/aiko-plan3.md"
 
 # The mirror must contain the complete law map, not merely an upstream pointer.
 need_rg "ontology and identity" '^## 1\. Ontology and identity' "$DOC"

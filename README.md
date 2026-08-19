@@ -97,7 +97,7 @@ only after a runnable witness proves it.
 | **Who** | One tenant-scoped Aiko role identity operating through dedicated employee or service accounts, never a borrowed personal session |
 | **What** | A controllable, digest-pinned workflow, native adapters, cited context lineage, and independently settled effects |
 | **When** | On an event, cadence, reply, invalidation, or explicit approval; uncertain work remains pending |
-| **Where** | Smithers controls; Cell describes; Aiko plans; Contract remembers; Neuron executes; Unbrowse learns existing web systems |
+| **Where** | Smithers controls; the Cell computes; Aiko plans; Contract remembers; Neuron executes; Unbrowse learns existing web systems |
 | **Why** | To enter a real operating loop and leave behind a workflow that can be inspected, handed off, and trusted without trusting Aiko's own report |
 | **How** | Observe → write inert → test → admit by digest → attach least authority → act through the outbox → read back independently → settle or compensate |
 
@@ -397,7 +397,9 @@ the path the witnesses cover.
 public CLI from an empty directory and asserts against durable state.
 
 `zig build gate` schedules exactly these distinct shell witnesses from the root
-`build.zig` (the self-check is also an install dependency):
+`build.zig` (the self-check is also an install dependency). The block below is
+generated — edit `build.zig`, then run `python3 scripts/gen-gate-inventory.py`;
+`tests/docs-oss-ready-gate.sh` fails the build if it drifts:
 
 <!-- root-gate-inventory:start -->
 - `tests/aiko-self-check-gate.sh`
@@ -419,6 +421,14 @@ public CLI from an empty directory and asserts against durable state.
 - `tests/graph-engineering-gate.sh`
 - `tests/cross-journal-retention-gate.sh`
 - `tests/no-duplicate-fde-primitives-gate.sh`
+- `neuron/tests/product-forge-gate.sh`
+- `tests/contract-library-pin-gate.sh`
+- `tests/aiko-embedded-contract-gate.sh`
+- `tests/contract-slim-ledger-gate.sh`
+- `tests/layer-lock-gate.sh`
+- `tests/docs-oss-ready-gate.sh`
+- `tests/docs-quality-gate.sh`
+- `tests/conformance-gate.sh`
 <!-- root-gate-inventory:end -->
 
 ---
@@ -519,13 +529,14 @@ clone path.
 | [`SECURITY.md`](SECURITY.md) | private vulnerability reports |
 | `docs/AI-FORWARD-DEPLOYED-ENGINEER.md` | product boundary (Proven / Designed / Absent) |
 | `docs/graph-engineering/AIKO-HOOK-ORGANISM.md` | native Contract/Neuron/Smithers ownership covenant |
-| `docs/graph-engineering/aiko-hoysan-finish.walk.json` | synthetic end-to-end self-wire and benchmark graph |
+| `docs/graph-engineering/aiko-drop-in.walk.json` | **live** — preferred drop-in skill (9 pending, 7 layers): breakpoint taxonomy → harness → delegated spawn → Hoysan pilot |
+| `docs/graph-engineering/AIKO-DROP-IN-PRIMITIVE-MAP.md` | reuse map: every drop-in node composes a frozen primitive (cell/primitives·patterns, neuron/limbs, contract) |
 | `docs/AIKO-HOYSAN-BENCHMARK.md` | synthetic performance receipt, fixed defects, and control-plane blocker |
 | `neuron/AGENTS.md` | normative architecture |
 | `neuron/IMPLEMENTATION.md` | what exists today, and known limits |
 | `neuron/reference/ROADMAP.md` | unsettled work only |
 | `contract/DOCTRINE.md` | substrate doctrine and parity spec |
-| `PLAN-aiko-convergence.md` | **historical** — T1–T4 already landed |
+| `archive/plans/PLAN-aiko-convergence.md` | **historical** — T1–T4 already landed |
 
 ## License
 

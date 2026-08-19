@@ -3,6 +3,7 @@ name: typed-neuron/pipeline
 description: Moves independently-keyed items forward one stage at a time under a declared in-flight budget; fires on a pipeline.stage-request/v1 stimulus, writing one progress artifact per admitted item and leaving the overflow queued for the next firing.
 probe_input: {"firing_id":"probe-stage","messages":[],"now_ms":0,"permitted_reads":["pipe-req"],"reads":[{"bytes":"{\"in_flight_budget\":2,\"items\":[{\"key\":\"task-0\",\"payload\":\"work-0\"},{\"key\":\"task-1\",\"payload\":\"work-1\"},{\"key\":\"task-2\",\"payload\":\"work-2\"},{\"key\":\"task-3\",\"payload\":\"work-3\"},{\"key\":\"task-4\",\"payload\":\"work-4\"}],\"stage\":\"build\"}","digest":"b6f6257c761cb19d09500516e5e019348334777b91283f27597a47be2a2382eb","id":"pipe-req","schema":"pipeline.stage-request/v1"}],"receptor_schema":"pipeline.stage-request/v1","schema":"neuron.stimulus/v1"}
 expect_contains: artifact/pipeline/build/task-1","schema":"pipeline.progress/v1"},"kind":"write"}],"evidence":[{"claim":"processed 2 items in stage build","method":"pipeline-stage","sources":["pipe-req"]}]
+grounding: neuron/AGENTS.md#30
 ---
 
 # typed-neuron/pipeline

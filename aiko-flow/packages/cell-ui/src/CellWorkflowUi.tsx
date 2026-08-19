@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect, useState, type ComponentType } from "react";
 import { CellPortView, type CellRenderComponentProps } from "./CellPortView.tsx";
-import { normalizeCellVisualMembrane, type CellPort } from "./model.ts";
+import { parseCellMembrane, type CellPort } from "./model.ts";
 
 export type CellPortKey = string | `${CellPort["direction"]}:${string}`;
 export type CellWorkflowUiProps = {
@@ -130,7 +130,7 @@ function LivePort({
 }
 
 export function CellWorkflowUi({ cell, runId, nodeIds = {}, title, values = {}, RenderSpec }: CellWorkflowUiProps) {
-  const membrane = normalizeCellVisualMembrane(cell);
+  const membrane = parseCellMembrane(cell);
   return (
     <main className="workflow-shell cell-workflow-ui">
       <style>{`.cell-workflow-ui{font:14px/1.5 system-ui,sans-serif;color:#17202a;padding:24px}.cell-workflow-ui .topbar{display:flex;align-items:end;justify-content:space-between;margin-bottom:20px}.cell-workflow-ui h1{margin:0;font-size:24px}.cell-workflow-ui .meta{color:#667085}.cell-membrane{display:grid;gap:16px}.cell-port{border:1px solid #d0d5dd;border-radius:10px;padding:16px;background:#fff}.cell-port .section-head{display:flex;justify-content:space-between;font-weight:600;margin-bottom:12px}.cell-port .pill{font-size:11px;text-transform:uppercase;color:#475467}.cell-port-table{width:100%;border-collapse:collapse}.cell-port-table th,.cell-port-table td{text-align:left;border-bottom:1px solid #eaecf0;padding:8px}.cell-port-fields{display:grid;gap:8px}.cell-port-field{display:grid;grid-template-columns:minmax(120px,1fr) 2fr}.alert.err{color:#b42318}.empty,.cell-port-empty{color:#667085}`}</style>

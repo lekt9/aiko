@@ -3,6 +3,7 @@ name: typed-neuron/telethon-effect
 description: Provider-neutral admitted messaging effect policy with exact tuple ACLs, durable digest-only outbox, independent per-recipient read-back, linked requeue and compensation without replay.
 probe_input: {"schema":"neuron.stimulus/v1","firing_id":"telethon-probe","receptor_schema":"neuron.telethon-effect-request/v1","reads":[{"id":"telethon/probe","schema":"neuron.telethon-effect-request/v1","digest":"54296802830d00d295311e371770020de159a8569509dcf9ca45a56f62cebaa4","bytes":"{\"conversation_id\":\"chat-A\",\"credential_handle\":\"cred:synthetic\",\"effect_id\":\"effect-0000000001\",\"execution\":\"exec-1\",\"expires_at\":100,\"payload_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"recipient_id\":\"worker-1\"}"}],"permitted_reads":["telethon/probe"],"messages":[]}
 expect_contains: artifact/telethon/outbox/effect-0000000001
+grounding: neuron/AGENTS.md#18, neuron/AGENTS.md#28.4
 ---
 
 # Telethon effect policy

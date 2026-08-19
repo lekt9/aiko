@@ -8,8 +8,7 @@ export {
   type CellPortOutputState,
 } from "./CellWorkflowUi.tsx";
 export {
-  inferCellRender,
-  normalizeCellVisualMembrane,
+  parseCellMembrane,
   type CellJsonSchema,
   type CellPort,
   type CellRenderSpec,

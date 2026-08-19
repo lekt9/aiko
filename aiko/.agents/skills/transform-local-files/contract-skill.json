@@ -26,13 +26,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "scope",
       "plan": "Resolve explicitly scoped non-sensitive files for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -43,13 +45,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "preview",
       "plan": "Prepare a reversible patch preview for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -60,13 +64,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "apply",
       "plan": "Apply the approved local file transformation for {{goal}}.",
       "read_only": false,
-      "requires_authority": false,
+      "requires_authority": true,
       "reversible": true,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -77,13 +83,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "verify",
       "plan": "Verify the post-edit state and rollback metadata for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     }
   ],
   "output_schema": {

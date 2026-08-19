@@ -3,9 +3,7 @@
   "examples": [
     {
       "expect": {
-        "held_effects": [
-          "local_write"
-        ],
+        "held_effects": [],
         "root_count": 1,
         "selected": "schedule-follow-up"
       },
@@ -26,46 +24,49 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "parse-cadence",
       "plan": "Parse explicit deadline and recurrence semantics for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
       "depends_on": [
         "parse-cadence"
       ],
-      "input_bindings": {
-        "cadence": "parse-cadence.structured_result"
-      },
       "effect": "read_only",
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {
+        "cadence": "parse-cadence.structured_result"
+      },
       "key": "deduplicate",
       "plan": "Check equivalent durable future contracts for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
       "depends_on": [
         "deduplicate"
       ],
-      "input_bindings": {
-        "deduplication": "deduplicate.structured_result"
-      },
       "effect": "local_reversible",
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {
+        "deduplication": "deduplicate.structured_result"
+      },
       "key": "schedule",
       "plan": "Create the governed future contract for {{goal}}.",
       "read_only": false,

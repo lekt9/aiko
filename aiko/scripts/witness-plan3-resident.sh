@@ -14,11 +14,11 @@ fail() { say "FAIL  $*"; FAIL=1; }
 say "=== plan3 resident witness ==="
 say "aiko root: $ROOT"
 
-# 1. Plan + runtime docs
-if [[ -f "$ROOT/plan3.md" ]]; then
-  pass "plan3.md present"
+# 1. Plan + runtime docs (the plan is archived process history, not a worklist)
+if [[ -f "$ROOT/../archive/plans/aiko-plan3.md" ]]; then
+  pass "archived plan3 present"
 else
-  fail "plan3.md missing"
+  fail "archive/plans/aiko-plan3.md missing"
 fi
 
 if [[ -n "${CONTRACT_ROOT:-}" && -f "$CONTRACT_ROOT/docs/PHOTON-POSITRON-RUNTIME.md" ]]; then

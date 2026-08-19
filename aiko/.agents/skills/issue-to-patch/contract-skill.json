@@ -27,13 +27,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "inspect",
       "plan": "Inspect the issue and repository integration points for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -44,13 +46,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "patch",
       "plan": "Prepare and apply the narrow verified patch for {{goal}}.",
       "read_only": false,
-      "requires_authority": false,
+      "requires_authority": true,
       "reversible": true,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -61,13 +65,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "test",
       "plan": "Run focused regression checks for {{goal}}.",
       "read_only": false,
       "requires_authority": false,
       "reversible": true,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -78,13 +84,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "prepare-publication",
       "plan": "Prepare commit or pull-request metadata for {{goal}}.",
       "read_only": true,
       "requires_authority": false,
       "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     },
     {
       "can_parallel": false,
@@ -95,13 +103,15 @@
       "evidence": [
         "structured_result"
       ],
+      "input_bindings": {},
       "key": "publish",
       "plan": "Publish the authorized commit or pull request for {{goal}}.",
       "read_only": false,
-      "requires_authority": false,
-      "reversible": true,
+      "requires_authority": true,
+      "reversible": false,
       "timeout_ms": 30000,
-      "worker": "aiko"
+      "worker": "aiko",
+      "writes": []
     }
   ],
   "output_schema": {

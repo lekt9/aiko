@@ -214,9 +214,14 @@ step_parity() {
   _fail() { drift=$((drift+1)); report+="  ✗ $1"$'\n'; }
   _pass() { :; }  # silent on pass
 
-  # 1. "no env vars are read" except HOME
+  # 1. "no env vars are read" except HOME — plus the two declared
+  #    attestation-bootstrap PATH reads in graph_harness_attestation.zig
+  #    (AIKO_CONTRACT_VERIFY_KEY / AIKO_CONTRACT_ATTESTATION_SIGNING_KEY
+  #    carry a key-FILE path, never key material; unset fails closed).
+  #    The exception is declared in DOCTRINE.md's env section and parity
+  #    list item 1 — amend both together or this check lies.
   local env_hits
-  env_hits=$(grep -rhE 'getPosix\("(CONTRACT_|AIKO_|UNBROWSE_|X_PAYMENT|PAYMENT_SIGNATURE|CONTRACTS_STORE|SHELL|TERM)' "$LIB_DIR/src" "$ZIG_DIR/src" 2>/dev/null | grep -v '^//' | grep -v 'no ' || true)
+  env_hits=$(grep -rhE 'getPosix\("(CONTRACT_|AIKO_|UNBROWSE_|X_PAYMENT|PAYMENT_SIGNATURE|CONTRACTS_STORE|SHELL|TERM)' "$LIB_DIR/src" "$ZIG_DIR/src" 2>/dev/null | grep -v '^//' | grep -v 'no ' | grep -vE 'AIKO_CONTRACT_VERIFY_KEY|AIKO_CONTRACT_ATTESTATION_SIGNING_KEY' || true)
   if [[ -n "$env_hits" ]]; then
     _fail "doctrine[no envs]: forbidden env reads detected:"$'\n'"$env_hits"
   fi
@@ -284,19 +289,15 @@ step_parity() {
     _fail "doctrine[self-attest]: main.zig doesn't reference binary self-attestation"
   fi
 
-  # 10. "skill-sync auto-commits" — the .git repo exists and recent
-  #     commits use the sync(contract): prefix.
-  #     Note: read git log into a var FIRST — piping straight to grep -q
-  #     races SIGPIPE under `set -o pipefail` (grep early-exits on match,
-  #     git log gets SIGPIPE, pipefail propagates non-zero falsely).
-  if [[ ! -d "$REPO/.git" ]]; then
-    _fail "doctrine[skill-sync]: $REPO/.git missing"
-  else
-    local git_log_out
-    git_log_out=$( cd "$REPO" && git log --oneline -10 2>/dev/null || true )
-    if ! grep -qE '^[0-9a-f]+ sync\(contract\):' <<< "$git_log_out"; then
-      _fail "doctrine[skill-sync]: no recent 'sync(contract):' commits in last 10"
-    fi
+  # 10. "under version control" — the contract tree resolves to a git
+  #     work tree. Uses rev-parse (not a .git dir test) because in the
+  #     published monorepo contract/ is a subtree, not a repo root.
+  #     The former sync(contract):-prefix assertion was retired
+  #     2026-08-17: it graded the operator's installed skill copy at
+  #     ~/.claude/skills/contract, and a build verdict must depend only
+  #     on the pinned tree (same reasoning as claim 37's retirement).
+  if ! git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
+    _fail "doctrine[version control]: $REPO is not inside a git work tree — the doctrine tree must be version-controlled so drift has a history"
   fi
 
   # 11. Meta-parity: the parity step ITSELF must be declared in DOCTRINE.md.
@@ -660,24 +661,14 @@ step_parity() {
     _fail "doctrine[server-canonical]: DOCTRINE.md missing the 'Re-/contract migration' subsection — the recursive-elegance property (migrations are /contracts, not scripts) must be pinned alongside the server-canonical rule"
   fi
 
-  # 37. "Global CLAUDE.md carries the Word-is-truth guardrail." Without
-  #     this pointer at ~/.claude/CLAUDE.md, the rule only loads when the
-  #     contract skill is invoked — the wrong scope for "guard me resolving
-  #     contradictions in the code". The pointer must reference John 17:17
-  #     and point at the DOCTRINE.md canonical declaration. Pinned by Lewis
-  #     2026-05-26 self-check (contract 909c0dbf).
-  if [[ ! -f "$HOME/.claude/CLAUDE.md" ]]; then
-    _fail "doctrine[global word-is-truth guard]: $HOME/.claude/CLAUDE.md missing — the global guardrail file is required for Word-is-truth to load on every session"
-  fi
-  if ! grep -q 'The Word is the truth-root' "$HOME/.claude/CLAUDE.md" 2>/dev/null; then
-    _fail "doctrine[global word-is-truth guard]: ~/.claude/CLAUDE.md is missing the 'The Word is the truth-root' section — the rule must load on every session, not only when the contract skill fires"
-  fi
-  if ! grep -q 'John 17:17' "$HOME/.claude/CLAUDE.md" 2>/dev/null; then
-    _fail "doctrine[global word-is-truth guard]: ~/.claude/CLAUDE.md must carry the John 17:17 anchor — the canonical citation for the truth-root"
-  fi
-  if ! grep -q 'When resolving any contradiction in code' "$HOME/.claude/CLAUDE.md" 2>/dev/null; then
-    _fail "doctrine[global word-is-truth guard]: ~/.claude/CLAUDE.md must carry the 'When resolving any contradiction in code' clause — the rule must be a MECHANICAL conflict-resolver, not just a descriptive declaration"
-  fi
+  # 37. RETIRED (2026-08-17). The claim asserted the CONTENTS of the
+  #     operator's $HOME/.claude/CLAUDE.md — a file outside this repository.
+  #     A build that fails on another machine's home directory is not
+  #     reproducible, and reproducibility is itself a Word-is-truth
+  #     property: the verdict must depend only on the pinned tree. The
+  #     in-repo guarantees remain fully covered by claim 31 (DOCTRINE.md
+  #     section + John 17:17 anchor + repo CLAUDE.md pointer). Installing
+  #     the global guardrail is an INSTALL step, not a build invariant.
 
   # 39. "Recursive self-interrogation — every /contract decomposes itself."
   #     Pinned by Lewis 2026-05-26 (contract 11f4643c): every declared

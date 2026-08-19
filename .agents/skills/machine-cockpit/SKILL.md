@@ -59,11 +59,18 @@ python3 .agents/skills/machine-cockpit/scripts/build-self.py  # refreshes self.j
 
 ### A — build & ship Aiko
 
+**Never `scp` `~/bin/aiko` (or any lone host binary).** Aiko natively
+`dlopen`s `~/.aiko/lib/libcontract.dylib` (ABI 13). A new host against an
+old library is an admission failure, not an update. Ship the portable
+tarball (`aiko` + `libcontract` + neuron + cell + limbs) and run its
+`install.sh`. Use `scripts/ship-package.sh <host>` when the tarball
+already exists.
+
 ```sh
 pip3 install --break-system-packages pyyaml 2>&1 | tail -2
 AIKO_PACKAGE_ONLY=1 bash -c 'source scripts/lib/aiko-env.sh; aiko_env_init; source scripts/lib/assemble-portable.sh; assemble_portable_tarball' 2>&1 | tail -3
-sshpass ... scp -F /dev/null target/aiko-package/*.tar.gz gbear@HOST:/tmp/aiko-package.tar.gz
-sshpass ... ssh ... gbear@HOST "mkdir -p ~/src/aiko-package && tar -xzf /tmp/aiko-package.tar.gz -C ~/src/aiko-package && bash ~/src/aiko-package/aiko-*/install.sh"
+# isolated child — do not scp from the admitting shell if a ControlMaster is open
+.agents/skills/machine-cockpit/scripts/ship-package.sh gbear
 ```
 
 ### B — ship cockpit + provider daemon

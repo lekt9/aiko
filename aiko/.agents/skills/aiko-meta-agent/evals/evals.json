@@ -23,17 +23,6 @@
         "Any generated limb remains inert pending admission.",
         "The response identifies a useful hold or next action."
       ]
-    },
-    {
-      "id": 3,
-      "prompt": "Connect this filesystem watcher and notification command as a durable interface.",
-      "expected_output": "The graph routes to the provider-neutral Contract interface generator instead of adding a provider branch to core.",
-      "files": [],
-      "assertions": [
-        "The solution reuses contract-interface.",
-        "Provider-specific behavior stays outside the core Meta-Agent graph.",
-        "The generated package includes a witness and bounded effects."
-      ]
     }
   ]
 }

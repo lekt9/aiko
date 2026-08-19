@@ -339,6 +339,15 @@ pub enum Command {
         #[arg(skip)]
         devbox: bool,
     },
+    /// Run the embedded Contract CLI (`aiko contract task begin …`).
+    ///
+    /// The CLI ships inside this binary, so there is no separately installed
+    /// `contract` executable to drift out of step with the host.
+    Contract {
+        /// Arguments forwarded verbatim to the Contract CLI.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Create or verify paired contracts (work + witness).
     ContractPair {
         #[command(subcommand)]

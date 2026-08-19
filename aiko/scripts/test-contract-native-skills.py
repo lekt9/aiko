@@ -26,6 +26,7 @@ HOST_ADAPTERS = {
     "aiko.meta.observe/v1",
     "aiko.meta.recall/v1",
     "aiko.meta.route/v1",
+    "aiko.meta.capture/v1",
     "aiko.meta.settle/v1",
 }
 
@@ -176,17 +177,18 @@ def main() -> int:
     bad = copy.deepcopy(base); bad["nodes"][0]["input_bindings"] = {"stolen": "missing.result"}; attacks.append((bad, directory))
     bad = copy.deepcopy(base); bad["nodes"][0].update(worker="host", adapter="unknown/v1"); attacks.append((bad, directory))
     bad = copy.deepcopy(base); bad["nodes"][0].update(worker="tool", adapter=None); attacks.append((bad, directory))
-    script_manifest, script_directory = next(
-        item for item in manifests if item[0]["id"] == "contract-interface"
+    # Script-worker attacks, synthesized on the base manifest (the skill that
+    # used to carry a real script node — contract-interface — is retired).
+    bad = copy.deepcopy(base)
+    bad["nodes"][0].update(
+        worker="script", adapter="aiko.neuron-json-stdio/v1", script="scripts/probe.py",
+        effect="read_only", read_only=True, reversible=False,
     )
-    bad = copy.deepcopy(script_manifest)
-    script_node = next(node for node in bad["nodes"] if node["worker"] == "script")
-    script_node.update(effect="read_only", read_only=True, reversible=False)
-    attacks.append((bad, script_directory))
-    bad = copy.deepcopy(script_manifest)
-    script_node = next(node for node in bad["nodes"] if node["worker"] == "script")
-    script_node.pop("script", None)
-    attacks.append((bad, script_directory))
+    attacks.append((bad, directory))
+    bad = copy.deepcopy(base)
+    bad["nodes"][0].update(worker="script", adapter="aiko.neuron-json-stdio/v1")
+    bad["nodes"][0].pop("script", None)
+    attacks.append((bad, directory))
     assert all(reject(attack, attack_directory) is not None for attack, attack_directory in attacks)
 
     print(f"validated {len(manifests)} contract-native skills and {len(attacks)} adversarial cases")

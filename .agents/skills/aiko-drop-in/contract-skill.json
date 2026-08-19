@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "id": "aiko-drop-in",
+  "version": "1.0.0",
+  "description": "Drop into a human-operated comms breakpoint: shadow the person, build a typed Cell harness, spawn a capability-bounded child Aiko sharing only delegated Contract citations, and operate through the same interfaces the human used. Preferred for 'wire into this role / take over this inbox / replace this person / spawn a seat'. Covenant: SMP-14 typed harness + SMP-24 reuse-before-generation; compose account-handle \u2192 deploy-workflow \u2192 deploy-aiko via cell/patterns/fde/self-wire.cell.yaml; reuse cell/patterns/hoysan-draft/hoysan-draft.cell.yaml (extend, not fork); input alias poll\u2194webhook\u2194hook via cell/patterns/input-sources/harness.cell.yaml.",
+  "platforms": [
+    "all"
+  ],
+  "triggers": [
+    "wire into this role",
+    "drop into this inbox",
+    "take over this loop",
+    "replace this person",
+    "adopt this inbox",
+    "spawn a seat",
+    "wire herself",
+    "breakpoint"
+  ],
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "nodes": [
+    {
+      "key": "map-breakpoint",
+      "plan": "Shadow the human: inventory every interface, auth boundary, and decision rule for {{goal}} (application_observe + Unbrowse capture \u2192 breakpoint catalog). SMP-14/SMP-24 covenant.",
+      "worker": "aiko",
+      "depends_on": [],
+      "timeout_ms": 120000,
+      "effect": "read_only",
+      "requires_authority": false
+    },
+    {
+      "key": "specify-receptor",
+      "plan": "Write one provider-neutral receptor JSON (ingress/cursor + events/effects) for {{goal}}; prove poll vs webhook vs hook alias via input-sources harness.",
+      "worker": "aiko",
+      "depends_on": [
+        "map-breakpoint"
+      ],
+      "timeout_ms": 120000,
+      "effect": "local_reversible",
+      "requires_authority": false
+    },
+    {
+      "key": "build-harness",
+      "plan": "Generate Cell/Neuron pack: compose fde/self-wire (account-handle \u2192 deploy-workflow \u2192 deploy-aiko) via grow.py; emit inert digest-admitted pack for {{goal}}. Reuse hoysan-draft roster engine (cell/patterns/hoysan-draft/hoysan-draft.cell.yaml). SMP-14/SMP-24.",
+      "worker": "script",
+      "adapter": "aiko.neuron-json-stdio/v1",
+      "script": "scripts/build.py",
+      "depends_on": [
+        "specify-receptor"
+      ],
+      "input_bindings": {
+        "receptor_spec": "specify-receptor.receptor_spec"
+      },
+      "timeout_ms": 120000,
+      "effect": "local_reversible",
+      "requires_authority": false
+    },
+    {
+      "key": "spawn-seat",
+      "plan": "Spawn child Aiko via Contract delegation_capability with fenced lease and cited context for {{goal}} (inheritEnv=false, opaque handle, purpose-scoped citations).",
+      "worker": "aiko",
+      "depends_on": [
+        "build-harness"
+      ],
+      "input_bindings": {
+        "generated_pack": "build-harness.generated_pack"
+      },
+      "timeout_ms": 120000,
+      "effect": "permission_change",
+      "requires_authority": true
+    },
+    {
+      "key": "attach-verify",
+      "plan": "Admit/attach pack, start supervised runtime, and prove replay/conflict + revocation + ALREADY_SENT\u2192compensation for {{goal}}.",
+      "worker": "aiko",
+      "depends_on": [
+        "spawn-seat"
+      ],
+      "input_bindings": {
+        "generated_pack": "build-harness.generated_pack",
+        "spawn_receipt": "spawn-seat.spawn_receipt"
+      },
+      "timeout_ms": 120000,
+      "effect": "read_only",
+      "requires_authority": false
+    }
+  ],
+  "examples": [
+    {
+      "name": "hoysan-roster-breakpoint",
+      "prompt": "Wire into the Hoysan roster seat and take over the monthly roster leveling through the same Sheets/Excel and WhatsApp the human uses.",
+      "expect": {
+        "selected": "aiko-drop-in",
+        "root_count": 1,
+        "held_effects": [
+          "permission_change"
+        ]
+      }
+    }
+  ]
+}
