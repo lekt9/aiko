@@ -3,6 +3,7 @@ name: typed-neuron/fanout
 description: Turns one fanout.request/v1 read into N spawn effects whose child identities are deterministic in (partition, key, seq), each carrying a grant narrowed to that item's write prefix. Use when a single firing must split work across independent children and a redelivered coordinator must not double-spawn them.
 probe_input: {"schema":"neuron.stimulus/v1","firing_id":"probe-fan-1","receptor_schema":"fanout.request/v1","reads":[{"id":"fan-req","schema":"fanout.request/v1","bytes":"{\"partition\":\"tasks\",\"items\":[{\"key\":\"add-task\",\"kind\":\"custom-worker\",\"write_prefix\":\"artifact/fanout/add-task/v2/\"},{\"key\":\"notify-user\"}],\"max_fanout\":8,\"seq\":7}","digest":"136f450266488ab0133ee1c52d3063375dc4a5c28552d169e767d82a145a26f4"}],"permitted_reads":["fan-req"],"messages":[]}
 expect_contains: fanout/tasks/add-task/7","kind":"custom-worker"}},{"kind":"spawn","neuron":{"grant":{"allow_write":true,"budget":{"max_bytes":4096,"max_depth":1,"max_effects":1,"max_messages":0,"max_spawns":0,"max_writes":1},"write_prefix":"artifact/fanout/notify-user/"},"id":"fanout/tasks/notify-user/7","kind":"fanout-worker"}}]
+grounding: neuron/AGENTS.md#2, neuron/AGENTS.md#24, neuron/AGENTS.md#26, neuron/AGENTS.md#30
 ---
 
 <!--

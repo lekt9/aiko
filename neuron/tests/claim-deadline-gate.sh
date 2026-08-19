@@ -101,6 +101,7 @@ name: gate/claim-deadline
 description: Registers a claim with a refutation condition and an ordinal deadline, confirms it on evidence, and contradicts it when the deadline passes unmet. Fires on register, observe and settle events.
 probe_input: register c1 expect_by=2
 expect_contains: "refuted_by": "no reply by shift", "state": "contradicted"
+grounding: neuron/AGENTS.md#30, neuron/tests/claim-deadline-gate.sh
 ---
 
 # gate/claim-deadline

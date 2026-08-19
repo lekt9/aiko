@@ -152,6 +152,7 @@ name: gate/staffing-ladder
 description: Walks a worker through notify, follow-up and a terminal call, branching on whether a reply arrived. Fires on a roster stimulus and on each due event.
 probe_input: roster w1,w2,w3
 expect_contains: outbox/staffing/w3
+grounding: neuron/AGENTS.md#28.4, neuron/tests/escalation-ladder-gate.sh
 ---
 
 # gate/staffing-ladder

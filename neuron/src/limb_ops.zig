@@ -28,6 +28,7 @@ pub const SkillDocError = error{
     SkillDocMissing,
     SkillDocMalformed,
     SkillDocUnfalsifiable,
+    SkillDocUngrounded,
 };
 
 /// The machine-read half of a package's SKILL.md.
@@ -44,6 +45,17 @@ pub const SkillDoc = struct {
     description: []const u8,
     probe_input: []const u8,
     expect_contains: []const u8,
+    /// What this package was authored FROM, as resolvable citations.
+    ///
+    /// `expect_contains` says what the package claims; this says where the
+    /// claim came from. Both sit inside the digest, so neither can be edited
+    /// to say something new while the pin stays put — which is exactly how a
+    /// package and the doctrine it was built against drift apart.
+    ///
+    /// Cited, never re-interpreted. A producer that re-reads its grounding and
+    /// decides afresh each pass is non-deterministic and `redrive` refuses it.
+    /// This field exists to be *checked*, not consulted.
+    grounding: []const u8,
 
     /// Parse the frontmatter. The body is deliberately NOT returned: prose is
     /// evidence to be cited by digest, never a decision procedure re-read on
@@ -57,7 +69,7 @@ pub const SkillDoc = struct {
             return SkillDocError.SkillDocMalformed;
         const front = rest[0..end];
 
-        var doc: SkillDoc = .{ .name = "", .description = "", .probe_input = "", .expect_contains = "" };
+        var doc: SkillDoc = .{ .name = "", .description = "", .probe_input = "", .expect_contains = "", .grounding = "" };
         var lines = std.mem.splitScalar(u8, front, '\n');
         while (lines.next()) |line| {
             const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
@@ -71,12 +83,19 @@ pub const SkillDoc = struct {
                 doc.probe_input = val;
             } else if (std.mem.eql(u8, key, "expect_contains")) {
                 doc.expect_contains = val;
+            } else if (std.mem.eql(u8, key, "grounding")) {
+                doc.grounding = val;
             }
         }
         if (doc.name.len == 0 or doc.description.len == 0)
             return SkillDocError.SkillDocMalformed;
         // The generalized refusal. See the doc comment on this type.
         if (doc.expect_contains.len == 0) return SkillDocError.SkillDocUnfalsifiable;
+        // A package that cannot say what it was built from is a claim with no
+        // provenance: nothing to re-check when the thing it was built against
+        // moves. Whether each citation still resolves is the gate's job — this
+        // only refuses the empty case, the one no reader could ever chase.
+        if (doc.grounding.len == 0) return SkillDocError.SkillDocUngrounded;
         return doc;
     }
 };
@@ -182,9 +201,10 @@ pub fn admit(allocator: Allocator, io: std.Io, package_dir: []const u8, state_di
     const skill_name = try std.json.Stringify.valueAlloc(a, skill.name, .{});
     const skill_desc = try std.json.Stringify.valueAlloc(a, skill.description, .{});
     const skill_expect = try std.json.Stringify.valueAlloc(a, skill.expect_contains, .{});
+    const skill_grounding = try std.json.Stringify.valueAlloc(a, skill.grounding, .{});
     const record_bytes = try std.fmt.allocPrint(a,
-        \\{{"schema":"{s}","package":{s},"digest":"{s}","skill":{{"name":{s},"description":{s},"expect_contains":{s}}}}}
-    , .{ ADMISSION_SCHEMA, manifest_str, &hex, skill_name, skill_desc, skill_expect });
+        \\{{"schema":"{s}","package":{s},"digest":"{s}","skill":{{"name":{s},"description":{s},"expect_contains":{s},"grounding":{s}}}}}
+    , .{ ADMISSION_SCHEMA, manifest_str, &hex, skill_name, skill_desc, skill_expect, skill_grounding });
 
     const firing_id = try std.fmt.allocPrint(a, "admission/{s}", .{&hex});
     const write_id = try std.fmt.allocPrint(a, ADMISSION_PREFIX ++ "{s}", .{&hex});

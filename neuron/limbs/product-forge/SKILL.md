@@ -3,6 +3,7 @@ name: typed-neuron/product-forge
 description: Turns a business-requirements brief into a pinned product — PRD, IA, design tokens, and CRUD spec — with no product or UX spec required. Fires on a product-forge.request/v1 stimulus.
 probe_input: {"firing_id":"probe-forge","messages":[],"now_ms":0,"permitted_reads":["forge-req"],"reads":[{"bytes":"{\"brief\":\"run a neighbourhood bike shop — bookings for repairs, inventory of bikes and parts, roster of mechanics, customer history\",\"project\":\"bike-shop\"}","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","id":"forge-req","schema":"product-forge.request/v1"}],"receptor_schema":"product-forge.request/v1","schema":"neuron.stimulus/v1"}
 expect_contains: product-forge.prd/v1
+grounding: neuron/AGENTS.md#30, skill:nextlevelbuilder/ui-ux-pro-max, skill:mattpocock/to-prd, skill:anthropics/frontend-design
 ---
 
 # typed-neuron/product-forge

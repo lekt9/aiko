@@ -84,6 +84,7 @@ name: gate/staffing-engine
 description: Turns a shift order plus a worker database into a role-assigned roster, by qualification and least-recently-worked rotation. Fires on an order stimulus. Refuses rather than under-fill.
 probe_input: crane:2,lash:1
 expect_contains: crane=ben,gus;lash=fay
+grounding: neuron/AGENTS.md#30, neuron/tests/staffing-engine-gate.sh
 ---
 
 # gate/staffing-engine

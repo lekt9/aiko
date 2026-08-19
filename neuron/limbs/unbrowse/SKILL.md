@@ -3,6 +3,7 @@ name: typed-neuron/unbrowse
 description: Sealed read boundary that admits a route only after a cited observation and separate cited replay agree, projects drift as demotion, and never retains credentials or raw traffic.
 probe_input: '{"kind":"observation","credential_handle":"cred:opaque-probe"}'
 expect_contains: observation-projected
+grounding: neuron/AGENTS.md#18, neuron/AGENTS.md#28.4
 ---
 
 # Unbrowse boundary limb

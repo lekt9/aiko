@@ -188,6 +188,22 @@ are asserted by `neuron/tests/skill-doc-gate.sh`:
 3. **The declaration reaches the ledger.** The admission row carries the
    `skill` block, so a reader can ask what a package claimed at the moment it
    was pinned without trusting a file that may have been edited since.
+4. **A package says what it was built FROM.** `grounding` is a comma-separated
+   list of citations — `path`, `path#section`, or `skill:<name>`. Every
+   non-`skill:` entry must **resolve**: the file must exist and the section
+   must be a real heading in it. `expect_contains` says what the package
+   claims; `grounding` says where the claim came from, so when the doctrine a
+   limb was authored against moves, there is something to re-check instead of
+   silent drift. Empty grounding is refused at admission
+   (`SkillDocUngrounded`); an unresolvable citation is refused by the gate.
+
+   **The bound is the same one the prose body has: cited, never
+   re-interpreted.** Grounding exists to be *checked*, not consulted. A limb
+   that re-read its grounding and decided afresh each pass would be
+   non-deterministic, and `redrive` refuses exactly that. This is also why
+   external skills are wired in at *authoring* time and copied into bounded
+   code — never installed as a runtime dep. See `neuron/limbs/product-forge`,
+   whose grounding names the three borrowed skills it was rebuilt from.
 
 **The bound, and it is the same one authoring has.** The prose body is
 **cited by digest, never re-interpreted on the recompute path.** A producer

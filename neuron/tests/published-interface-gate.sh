@@ -180,6 +180,7 @@ name: gate/greeter
 description: Answers a typed greeting request. Fires on the served goal schema in the published-interface gate.
 probe_input: greeting-probe
 expect_contains: agents/
+grounding: neuron/AGENTS.md#7, neuron/tests/published-interface-gate.sh
 ---
 
 # gate/greeter
@@ -194,6 +195,7 @@ name: gate/commander
 description: Commits a consequential request to the outbox. Fires on gate.order-request/v1.
 probe_input: order-probe
 expect_contains: outbox/served/
+grounding: neuron/AGENTS.md#28.4, neuron/tests/published-interface-gate.sh
 ---
 
 # gate/commander
@@ -209,6 +211,7 @@ name: gate/planter
 description: Writes one artifact outside any served namespace. Fires on gate.plant/v1.
 probe_input: plant-probe
 expect_contains: gate.secret/v1
+grounding: neuron/AGENTS.md#18, neuron/tests/published-interface-gate.sh
 ---
 
 # gate/planter

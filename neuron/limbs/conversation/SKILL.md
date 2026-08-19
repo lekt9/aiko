@@ -3,6 +3,7 @@ name: typed-neuron/conversation
 description: Bidirectional correlated exchange between neurons — an asker opens a conversation and parks on the answer, a responder answers any peer using only the return address stamped into its own stimulus. Fires when one neuron must ask another something and wait for the reply, and when a neuron holding no send capability must still be able to answer the peer that asked it.
 probe_input: {"schema":"neuron.stimulus/v1","firing_id":"probe-1","receptor_schema":"conv.ask/v1","messages":[{"to":"neuron/responder","schema":"conv.ask/v1","payload":"{\"question\":\"how long is this?\"}","from":"neuron/asker","correlation":"conv-probe-1","reply_to":"neuron/asker-inbox","turn":1}]}
 expect_contains: {"correlation":"conv-probe-1","payload":"{\"answer\":17,\"question\":\"how long is this?\"}","schema":"conv.answer/v1","to":"neuron/asker-inbox"}
+grounding: neuron/AGENTS.md#2, neuron/AGENTS.md#10.1, neuron/src/runtime.zig
 ---
 
 # typed-neuron/conversation
