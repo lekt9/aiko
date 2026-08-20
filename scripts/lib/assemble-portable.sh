@@ -43,7 +43,15 @@ resolve_portable_contract_lib() {
         printf '%s\n' "$AIKO_PORTABLE_CONTRACT_LIB"; return 0
     fi
     _name=${AIKO_CONTRACT_LIB_NAME:-libcontract.so}
-    set -- "${AIKO_CONTRACT_LIBRARY:-}" "$AIKO_LIB_DIR/$_name"         "$AIKO_ROOT/contract/libcontract/zig-out/lib/$_name"         "$AIKO_ROOT/../commons/contract/libcontract/zig-out/lib/$_name"         "$HOME/work/commons/contract/libcontract/zig-out/lib/$_name"
+    _ledger=$(printf '%s' "$_name" | sed 's/libcontract/libcontract_ledger/')
+    set -- "${AIKO_CONTRACT_LIBRARY:-}" \
+        "$AIKO_ROOT/contract/libcontract/zig-out/lib/$_ledger" \
+        "$AIKO_LIB_DIR/$_name" \
+        "$AIKO_ROOT/contract/libcontract/zig-out/lib/$_name" \
+        "$AIKO_ROOT/../commons/contract/libcontract/zig-out/lib/$_ledger" \
+        "$AIKO_ROOT/../commons/contract/libcontract/zig-out/lib/$_name" \
+        "$HOME/work/commons/contract/libcontract/zig-out/lib/$_ledger" \
+        "$HOME/work/commons/contract/libcontract/zig-out/lib/$_name"
     for _p in "$@"; do
         [ -n "$_p" ] && [ -f "$_p" ] && _aiko_lib_is_native "$_p" || continue
         printf '%s\n' "$_p"; return 0
@@ -133,6 +141,12 @@ assemble_portable_package() {
         install -m 755 "$AIKO_ROOT/zig-out/bin/aiko-doctor" "$_dest/bin/aiko-doctor"
     fi
     install -m 755 "$_contract_lib" "$_dest/lib/$_lib_name"
+    if command -v strip >/dev/null 2>&1; then
+        strip --strip-unneeded "$_dest/bin/aiko" 2>/dev/null || true
+        strip --strip-unneeded "$_dest/bin/neuron" 2>/dev/null || true
+        [ ! -x "$_dest/bin/aiko-doctor" ] || strip --strip-unneeded "$_dest/bin/aiko-doctor" 2>/dev/null || true
+        strip --strip-unneeded "$_dest/lib/$_lib_name" 2>/dev/null || true
+    fi
     if [ "$_lib_name" = libcontract.so ]; then
         ln -sfn libcontract.so "$_dest/lib/libcontract.dylib"
     else
@@ -149,8 +163,9 @@ assemble_portable_package() {
         [ ! -d "$_cell_dir/$_dir" ] || cp -R "$_cell_dir/$_dir" "$_dest/share/cell/$_dir"
     done
     cp -R "$_yaml_dir" "$_dest/share/cell/vendor/yaml"
-    find "$_dest/share/cell/vendor/yaml" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
-    find "$_dest/share/cell/vendor/yaml" -type f \( -name '*.pyc' -o -name '*.so' -o -name '*.dylib' \) -delete 2>/dev/null || true
+    find "$_dest/share/cell" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+    find "$_dest/share/cell" -type f \( -name '*.pyc' -o -name '*.so' -o -name '*.dylib' \) -delete 2>/dev/null || true
+    # cell/web (Next.js + node_modules) is a local cockpit, not the portable runtime.
 
     cat > "$_dest/bin/cell" <<'CELL'
 #!/bin/sh

@@ -11,6 +11,17 @@ has an external cost. It is hired into one tenant-scoped role, with least
 privilege and an outcome, rather than installed as a bag of integrations.
 “The first AI FDE” remains **Absent**: there is no competitive witness.
 
+This document is not a product-oneshot. A seat roster, dispatch board,
+Company OS sheet, or any other invented operator spreadsheet is not the
+FDE surface. Those defaults come from an unrelated product pack; they do not
+apply here. Self-wiring means digest-admitted harnesses (Cell organelles,
+Neuron limbs, delegated seats via `deploy-aiko`), not a CRUD grid of roles.
+
+DeepSeek Harness is cited, not fused. Official DSH, Creator Mode,
+`dsh-agent-teams`, and `dsh-continual-evolve` are reference checkouts only.
+See [`DSH-HARNESS-MAP.md`](DSH-HARNESS-MAP.md). They are not a published
+Aiko layer and must not appear as a live Worker claiming to be the FDE.
+
 ## W6H role contract
 
 | Question | Binding answer |
@@ -66,11 +77,13 @@ runs the Smithers Cell/runCell tests so deletion of the harness cannot satisfy i
 | Telethon-shaped effects use a provider-neutral admitted Neuron limb and synthetic fixtures | `neuron/tests/telethon-limb-gate.sh` |
 | Deterministic staffing refuses a shortfall; escalation terminates | `neuron/tests/staffing-engine-gate.sh`, `neuron/tests/escalation-ladder-gate.sh` |
 | Redrive distinguishes recomputation, agent goals, and compensation | `neuron/tests/redrive-gate.sh` |
+| FDE work is not replaced by a product-oneshot seat roster | `tests/docs-oss-ready-gate.sh` |
 
 ### Designed
 
 Live provider and customer-specific surfaces remain Designed until their own
-bounded implementation and independent witness exist.
+bounded implementation and independent witness exist. Official DSH may be
+read as `inspire_from`; a live DSH profile is not an Aiko runtime.
 
 ### Absent
 
@@ -81,9 +94,12 @@ bounded implementation and independent witness exist.
 | Production SAP adapter | No customer-surface gate |
 | Operator write UI | The observed surface does not establish operational write authority |
 | Managed enterprise credential vault | No enterprise-vault witness |
+| Official DSH as Aiko’s production loop | Creator Mode can evaluate model-written JavaScript against the live Cordis tree. Checkouts are reference-only (`/home/deck/work/dsh-refs`). |
+| Company OS / seat-roster FDE product | Invented by applying product-oneshot spreadsheet defaults to this document. Torn down. The gate above refuses its return. |
 
 ## Acceptance
 
 This document stays valid only while every capability is classified and the
 negative ownership gate prevents the retired wrong-layer authorities from
-returning without breaking the native replacement gates.
+returning without breaking the native replacement gates. A green
+product-oneshot roster is not acceptance of this document.

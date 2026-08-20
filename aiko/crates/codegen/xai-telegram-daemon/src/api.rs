@@ -380,6 +380,10 @@ impl TelegramApi {
     // ── Long-polling ────────────────────────────────────────────
 
     /// Get updates via long-polling. Blocks until updates arrive or timeout.
+    /// Hardened: Telegram occasionally returns non-JSON (502 HTML, empty body,
+    /// nginx errors) which previously surfaced as "error decoding response body"
+    /// every 3s. This now reads the body as text, logs a snippet, and treats
+    /// empty/transient HTML as an empty poll rather than a hard decode error.
     pub async fn get_updates(
         &self,
         offset: Option<i64>,
@@ -393,18 +397,60 @@ impl TelegramApi {
         if let Some(o) = offset {
             params.push(("offset", o.to_string()));
         }
-        let resp: GetUpdatesResponse = self
+        let http_resp = self
             .client
             .post(self.endpoint("getUpdates"))
             .form(&params)
             .send()
-            .await?
-            .json()
             .await?;
-        if resp.ok {
-            Ok(resp.result)
-        } else {
-            Err(TelegramError::ApiError("getUpdates failed".into()))
+        let status = http_resp.status();
+        let body = http_resp.text().await.map_err(|e| {
+            TelegramError::ApiError(format!("getUpdates read body failed: {e}"))
+        })?;
+        // Attempt to parse the body as JSON; Telegram always returns JSON on success.
+        match serde_json::from_str::<GetUpdatesResponse>(&body) {
+            Ok(parsed) => {
+                if parsed.ok {
+                    Ok(parsed.result)
+                } else {
+                    let desc = parsed
+                        .description
+                        .unwrap_or_else(|| format!("getUpdates failed: HTTP {}", status));
+                    // 409 Conflict means another getUpdates holder (e.g. leaked token
+                    // being polled elsewhere). Treat as transient empty poll with
+                    // jitter — don't spin a tight 3s error loop and don't lose offset.
+                    if desc.contains("Conflict") || status.as_u16() == 409 {
+                        // Another getUpdates holder (self-wire Smithers host,
+                        // desktop bridge, or a leaked token elsewhere) owns
+                        // the slot. Sleep before the daemon loops or we tight-
+                        // poll 409s and starve the inbox.
+                        tracing::warn!("getUpdates Conflict (another poller holds slot) — backing off 15s");
+                        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+                        return Ok(Vec::new());
+                    }
+                    Err(TelegramError::ApiError(desc))
+                }
+            }
+            Err(parse_err) => {
+                let snippet: String = body.chars().take(400).collect();
+                tracing::warn!(
+                    "getUpdates non-JSON body (status {}): snippet={:?} parse_err={}",
+                    status,
+                    snippet,
+                    parse_err
+                );
+                // Empty body or HTML gateway errors are transient — treat as empty poll
+                // so the daemon doesn't spin a tight error loop. Real API errors
+                // (invalid token etc.) will be JSON with ok=false and are handled above.
+                if body.trim().is_empty() || body.trim_start().starts_with('<') {
+                    Ok(Vec::new())
+                } else {
+                    Err(TelegramError::ApiError(format!(
+                        "getUpdates decode failed (status {}): {} — snippet: {}",
+                        status, parse_err, snippet
+                    )))
+                }
+            }
         }
     }
 

@@ -14344,6 +14344,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "xai-channel-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "xai-chat-state"
 version = "0.1.0"
 dependencies = [

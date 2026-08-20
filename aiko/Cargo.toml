@@ -69,6 +69,7 @@ members = [
     "crates/codegen/xai-token-estimation",
     "crates/codegen/xai-tracing-macros",
     "crates/codegen/xai-telegram-daemon",
+    "crates/codegen/xai-channel-core",
     "crates/codegen/xai-tty-utils",
     "crates/common/xai-circuit-breaker",
     "crates/common/xai-application-runtime",
@@ -324,6 +325,7 @@ xai-tool-runtime = { path = "crates/common/xai-tool-runtime" }
 xai-tool-types = { path = "crates/common/xai-tool-types" }
 xai-tracing = { path = "crates/common/xai-tracing" }
 xai-telegram-daemon = { path = "crates/codegen/xai-telegram-daemon" }
+xai-channel-core = { path = "crates/codegen/xai-channel-core" }
 xai-tty-utils = { path = "crates/codegen/xai-tty-utils" }
 zbus = { version = "5" }
 zstd = "0.13"

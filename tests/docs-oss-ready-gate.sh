@@ -151,6 +151,21 @@ for document, text in (("README.md", readme), ("CLAUDE.md", claude)):
             f"missing={sorted(actual - claimed)} extra={sorted(claimed - actual)}"
         )
 print(f"ok: publication tree, {len(gitlinks)} gitlink mapping, and {len(actual)} root gates agree")
+
+# Product-oneshot spreadsheet defaults must not replace the FDE document
+# with a seat roster / Company OS Worker. That substitution already shipped
+# once; this block is the refusal that catches it coming back.
+if (root / "aiko/plugins/aiko-company").exists():
+    raise SystemExit(
+        "FAIL: aiko/plugins/aiko-company is a product-oneshot roster, not the FDE"
+    )
+if "aiko-company.lewis-6d8.workers.dev" in combined:
+    raise SystemExit("FAIL: torn-down Company OS URL is still claimed")
+if "Company OS operator roster" in combined:
+    raise SystemExit("FAIL: Company OS roster is claimed as an FDE surface")
+if "not a product-oneshot" not in fde:
+    raise SystemExit("FAIL: FDE lost the product-oneshot refusal")
+print("ok: FDE is not a product-oneshot seat roster")
 PY
 
 forbid_grep README.md 'gitea:Unbrowse/commons'

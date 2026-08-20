@@ -183,16 +183,9 @@ where
             continue;
         }
         if let Some(error) = message.get("error") {
-            let detail = error
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown ACP error");
-            let code = error
-                .pointer("/data/code")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
+            let (detail, code) = format_acp_error(error);
             return Err(AgentMailError::Protocol {
-                message: detail.to_string(),
+                message: detail,
                 code,
             });
         }
@@ -300,6 +293,16 @@ pub async fn prompt(
         load?;
     }
 
+    // Pin only a real 8-hex Contract id. Ephemeral telegram ids used to go
+    // out as depth=1 descendants; native declare_turn refused them and ACP
+    // returned Internal error with the reason stuffed in error.data.
+    let pinned = contract_parent_id.filter(|id| valid_contract_id(id));
+    let mut prompt_meta = json!({ "aikoConversationId": conversation_id });
+    if let Some(parent) = pinned {
+        prompt_meta["aikoContractParentId"] = json!(parent);
+        prompt_meta["aikoContractRootId"] = json!(parent);
+        prompt_meta["aikoContractDepth"] = json!(1);
+    }
     let result = request(
         &mut socket,
         4,
@@ -309,12 +312,7 @@ pub async fn prompt(
             "prompt": [{
                 "type": "text",
                 "text": text,
-                "_meta": {
-                    "aikoContractParentId": contract_parent_id,
-                    "aikoContractRootId": contract_parent_id,
-                    "aikoContractDepth": 1,
-                    "aikoConversationId": conversation_id
-                }
+                "_meta": prompt_meta
             }],
             "_meta": {
                 "clientIdentifier": "aiko-telegram",
@@ -322,27 +320,186 @@ pub async fn prompt(
             }
         }),
     )
-    .await?;
-    typed_terminal_response(&result)
+    .await;
+    match result {
+        Ok(value) => typed_terminal_response(&value),
+        Err(err) => {
+            if should_retry_without_pin(&err) {
+                tracing::warn!("agent_mail: ingress/pin rejected ({err}) — retrying without pin");
+                let plain = request(
+                    &mut socket,
+                    5,
+                    "session/prompt",
+                    json!({
+                        "sessionId": session_id,
+                        "prompt": [{"type": "text", "text": text, "_meta": { "aikoConversationId": conversation_id }}],
+                        "_meta": {
+                            "clientIdentifier": "aiko-telegram",
+                            "outputSchema": response_schema
+                        }
+                    }),
+                )
+                .await?;
+                return typed_terminal_response(&plain);
+            }
+            Err(err)
+        }
+    }
 }
 
+fn valid_contract_id(id: &str) -> bool {
+    id.len() == 8 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn should_retry_without_pin(err: &AgentMailError) -> bool {
+    let msg = err.to_string();
+    msg.contains("Contract")
+        || msg.contains("graph_harness")
+        || msg.contains("ledger")
+        || msg.contains("Internal error")
+        || msg.contains("ingress")
+        || msg.contains("disconnected")
+}
+
+/// ACP hides the useful reason in `error.data` (string or object) while
+/// `error.message` is the generic "Internal error". The no-pin retry used to
+/// key only on the generic message and therefore never fired.
+fn format_acp_error(error: &Value) -> (String, Option<String>) {
+    let detail = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown ACP error");
+    let code = error
+        .pointer("/data/code")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let data = match error.get("data") {
+        Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+        Some(Value::Object(map)) => map
+            .get("details")
+            .or_else(|| map.get("message"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| Some(Value::Object(map.clone()).to_string())),
+        Some(other) if !other.is_null() => Some(other.to_string()),
+        _ => None,
+    };
+    let message = match data {
+        Some(data) if !data.is_empty() && !detail.contains(data.as_str()) => {
+            format!("{detail}: {data}")
+        }
+        _ => detail.to_string(),
+    };
+    (message, code)
+}
+
+/// Extract a typed terminal response, with a graceful fallback for bare-text turns.
+/// Strict providers require every `kind/text/path/caption` field; some Aiko
+/// turns (e.g. contracted sub-agents, older builds) return plain prose without
+/// structuredOutput. Treat that as `kind=text` with the prose as `text` so the
+/// Contract can verify and the user still receives a reply instead of the
+/// generic "I couldn't complete that request" retry hole.
 fn typed_terminal_response(result: &Value) -> Result<Value, AgentMailError> {
-    if result.get("stopReason").and_then(Value::as_str) != Some("end_turn")
-        || result
-            .pointer("/_meta/structuredOutputError")
-            .is_some_and(|value| !value.is_null())
+    let stop = result.get("stopReason").and_then(Value::as_str);
+    // Only `end_turn` is a settlement; cancelled/errored turns are not typed.
+    if stop != Some("end_turn") {
+        return Err(AgentMailError::InvalidResponse);
+    }
+    // A structuredOutputError means the schema check already failed.
+    if result
+        .pointer("/_meta/structuredOutputError")
+        .is_some_and(|value| !value.is_null())
     {
         return Err(AgentMailError::InvalidResponse);
     }
-    result
-        .pointer("/_meta/structuredOutput")
-        .cloned()
-        .ok_or(AgentMailError::InvalidResponse)
+    if let Some(typed) = result.pointer("/_meta/structuredOutput").cloned() {
+        // Validate it looks like the schema; otherwise fall through to prose.
+        if typed.get("kind").and_then(Value::as_str).is_some() {
+            return Ok(typed);
+        }
+    }
+    // Fallback: harvest streamed prose from the ACP result envelope.
+    // Different Aiko builds use `output`, `response`, or `content` keys.
+    if let Some(prose) = harvest_plain_text(result) {
+        if !prose.trim().is_empty() {
+            tracing::warn!("agent_mail: falling back to plain-text terminal response (len {})", prose.len());
+            return Ok(json!({"kind": "text", "text": prose, "path": null, "caption": null}));
+        }
+    }
+    Err(AgentMailError::InvalidResponse)
+}
+
+fn harvest_plain_text(result: &Value) -> Option<String> {
+    // Try the common ACP prose locations in order.
+    for pointer in [
+        "/output",
+        "/response",
+        "/content",
+        "/_meta/output",
+        "/_meta/response",
+    ] {
+        if let Some(v) = result.pointer(pointer) {
+            if let Some(s) = v.as_str() {
+                if !s.trim().is_empty() {
+                    return Some(s.to_string());
+                }
+            }
+            // Array of content blocks [{type:"text", text:"..."}]
+            if let Some(arr) = v.as_array() {
+                let mut out = String::new();
+                for item in arr {
+                    if let Some(t) = item.get("text").and_then(Value::as_str) {
+                        if !out.is_empty() { out.push('\n'); }
+                        out.push_str(t);
+                    }
+                }
+                if !out.trim().is_empty() {
+                    return Some(out);
+                }
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acp_error_data_is_joined_into_the_protocol_message() {
+        let (msg, code) = format_acp_error(&json!({
+            "code": -32603,
+            "message": "Internal error",
+            "data": "Mandatory Contract ingress refused the turn before ground_turn"
+        }));
+        assert!(msg.contains("Internal error"));
+        assert!(msg.contains("Mandatory Contract ingress"));
+        assert!(code.is_none());
+        assert!(should_retry_without_pin(&AgentMailError::Protocol {
+            message: msg,
+            code: None,
+        }));
+
+        let (msg, code) = format_acp_error(&json!({
+            "message": "Internal error",
+            "data": {"code": "FS_NOT_FOUND", "details": "Path not found"}
+        }));
+        assert!(msg.contains("Path not found"));
+        assert_eq!(code.as_deref(), Some("FS_NOT_FOUND"));
+    }
+
+    #[test]
+    fn generic_internal_error_retries_without_pin() {
+        let hidden = AgentMailError::Protocol {
+            message: "Internal error".into(),
+            code: None,
+        };
+        assert!(should_retry_without_pin(&hidden));
+        assert!(!should_retry_without_pin(&protocol("model overloaded")));
+        assert!(valid_contract_id("caf00d01"));
+        assert!(!valid_contract_id("ephemeral-1"));
+    }
 
     #[test]
     fn session_fallback_is_narrow() {

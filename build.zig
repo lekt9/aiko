@@ -59,6 +59,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .strip = optimize != .Debug,
     });
     doctor_mod.addImport("typed_neuron", neuron.module("typed_neuron"));
     doctor_mod.addImport("contract", contract.module("contract"));

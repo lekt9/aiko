@@ -140,6 +140,18 @@ impl GroundedTurn {
     pub(crate) fn graph_root_id(&self) -> Option<&str> {
         self.graph_root_id.as_deref()
     }
+
+    /// Stimulus only. Used when Contract ingress / graph_harness / continuation
+    /// refuse — the worker still runs. Contract is a ledger, not a kill switch.
+    pub fn passthrough(prompt: Vec<acp::ContentBlock>) -> Self {
+        Self {
+            prompt,
+            contract: None,
+            capability_route: None,
+            continuation: None,
+            graph_root_id: None,
+        }
+    }
 }
 
 /// Compact per-turn feedback card written to the ledger feedback log and
@@ -220,7 +232,7 @@ struct NativeContract {
     mark_satisfied: MarkSatisfiedFn,
     mark_grounded_satisfied: Option<MarkSatisfiedFn>,
     iterate: IterateFn,
-    recommend_capabilities: RecommendCapabilitiesFn,
+    recommend_capabilities: Option<RecommendCapabilitiesFn>,
     register_capabilities: Option<RegisterCapabilitiesFn>,
     list_capabilities: Option<ListCapabilitiesFn>,
     recommend_plan: Option<RecommendPlanFn>,
@@ -235,7 +247,7 @@ struct NativeContract {
     expand_graph: Option<ExpandGraphFn>,
     issue_graph_harness_attestation: Option<IssueGraphHarnessAttestationFn>,
     recommend_proven: Option<RecommendProvenFn>,
-    warm_router: WarmRouterFn,
+    warm_router: Option<WarmRouterFn>,
     fractal_context: FractalContextFn,
     tick: Option<TickFn>,
     settle_execution: Option<SettleExecutionFn>,
@@ -457,9 +469,10 @@ impl NativeContract {
                         None
                     },
                     iterate: *library.get(b"contract_iterate\0").ok()?,
-                    recommend_capabilities: *library
+                    recommend_capabilities: library
                         .get(b"contract_recommend_capabilities\0")
-                        .ok()?,
+                        .ok()
+                        .map(|symbol| *symbol),
                     register_capabilities: library
                         .get(b"contract_register_capabilities\0")
                         .ok()
@@ -525,7 +538,10 @@ impl NativeContract {
                         None
                     },
                     recommend_proven: library.get(b"contract_recommend\0").ok().map(|s| *s),
-                    warm_router: *library.get(b"contract_warm_router\0").ok()?,
+                    warm_router: library
+                        .get(b"contract_warm_router\0")
+                        .ok()
+                        .map(|symbol| *symbol),
                     fractal_context: *library.get(b"contract_get_fractal_context\0").ok()?,
                     tick: if abi_version >= 3 {
                         Some(*library.get(b"contract_tick_json\0").ok()?)
@@ -681,11 +697,10 @@ impl NativeContract {
         goal: &str,
         availability_json: &str,
     ) -> Option<serde_json::Value> {
+        let recommend = self.recommend_capabilities?;
         let goal = CString::new(goal).ok()?;
         let availability = CString::new(availability_json).ok()?;
-        let raw = self.take_string(unsafe {
-            (self.recommend_capabilities)(goal.as_ptr(), availability.as_ptr())
-        })?;
+        let raw = self.take_string(unsafe { recommend(goal.as_ptr(), availability.as_ptr()) })?;
         serde_json::from_str(&raw).ok()
     }
 
@@ -861,7 +876,10 @@ impl NativeContract {
     }
 
     fn warm(&self, passes: u32) -> u32 {
-        unsafe { (self.warm_router)(passes) }
+        let Some(warm_router) = self.warm_router else {
+            return 0;
+        };
+        unsafe { warm_router(passes) }
     }
 
     fn tick(&self, request: &ContractTickRequest<'_>) -> Option<ContractTick> {
@@ -8347,6 +8365,15 @@ mod tests {
             None => unsafe { std::env::remove_var("AIKO_CONTRACT_LIBRARY") },
         }
         assert_eq!(paths, vec![std::path::PathBuf::from(pin)]);
+    }
+
+    #[test]
+    fn contract_refusal_does_not_hold_the_worker() {
+        let grounded =
+            GroundedTurn::passthrough(vec![acp::ContentBlock::Text(acp::TextContent::new("asdf"))]);
+        assert!(grounded.contract.is_none());
+        assert!(grounded.continuation.is_none());
+        assert_eq!(grounded.prompt.len(), 1);
     }
 
     #[test]

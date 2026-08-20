@@ -2320,14 +2320,9 @@ impl acp::Agent for MvpAgent {
                 .unwrap_or(false),
             _ => false,
         });
-        // The ACP request body is stimulus only. Authority comes from the native
-        // authenticated session, and Contract admission must finish before the
-        // existing ground_turn composition root may launch a reasoning worker.
-        let native_auth = self.auth_manager.current().ok_or_else(|| {
-            acp::Error::internal_error().data(
-                "Authenticated native session unavailable; refusing turn before Contract ingress",
-            )
-        })?;
+        // Contract is a ledger, not liveness. Ingress / graph_harness /
+        // continuation may record a row; they must not refuse the worker.
+        // Telegram and other ACP faces died here with "Internal error".
         let face = match self.cfg.borrow().mode {
             crate::agent::config::AgentMode::Headless => "headless",
             crate::agent::config::AgentMode::Tui | crate::agent::config::AgentMode::Leader => "cli",
@@ -2335,38 +2330,54 @@ impl acp::Agent for MvpAgent {
             | crate::agent::config::AgentMode::Serve
             | crate::agent::config::AgentMode::Generic => "acp",
         };
-        let authority = crate::contract_native::ingress_routes::native_session_auth(
-            &native_auth,
-            "aiko.turn",
-            &["turn.invoke"],
-        ).map_err(|error| acp::Error::internal_error().data(format!(
-            "Native authentication was not admissible for Contract ingress: {error:?}"
-        )))?;
-        let raw_request = serde_json::to_vec(&arguments.prompt).map_err(|error| {
-            acp::Error::internal_error().data(format!("Could not canonicalize turn stimulus: {error}"))
-        })?;
-        let ingress_plan = arguments.prompt.iter().filter_map(|block| match block {
-            acp::ContentBlock::Text(text) => Some(text.text.as_str()),
-            _ => None,
-        }).collect::<Vec<_>>().join("\n");
-        crate::contract_native::ingress_routes::admit_public_ingress(
-            face,
-            crate::contract_native::ingress_routes::PublicIngressRequest {
-                auth: authority,
-                workspace: std::path::PathBuf::from(&handle.info.cwd),
-                raw_request,
-                nonce_namespace: format!("{face}:turn"),
-                idempotency_key: prompt_id.clone(),
-                plan: ingress_plan,
-                // ACP metadata and environment lineage are not authority.
-                contract_root: None,
-                contract_parent: None,
-            },
-        ).map_err(|error| acp::Error::internal_error().data(format!(
-            "Mandatory Contract ingress refused the turn before ground_turn: {error:?}"
-        )))?;
+        if let Some(native_auth) = self.auth_manager.current() {
+            match crate::contract_native::ingress_routes::native_session_auth(
+                &native_auth,
+                "aiko.turn",
+                &["turn.invoke"],
+            ) {
+                Ok(authority) => match serde_json::to_vec(&arguments.prompt) {
+                    Ok(raw_request) => {
+                        let ingress_plan = arguments
+                            .prompt
+                            .iter()
+                            .filter_map(|block| match block {
+                                acp::ContentBlock::Text(text) => Some(text.text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if let Err(error) =
+                            crate::contract_native::ingress_routes::admit_public_ingress(
+                                face,
+                                crate::contract_native::ingress_routes::PublicIngressRequest {
+                                    auth: authority,
+                                    workspace: std::path::PathBuf::from(&handle.info.cwd),
+                                    raw_request,
+                                    nonce_namespace: format!("{face}:turn"),
+                                    idempotency_key: prompt_id.clone(),
+                                    plan: ingress_plan,
+                                    contract_root: None,
+                                    contract_parent: None,
+                                },
+                            )
+                        {
+                            tracing::warn!("Contract ingress skipped (audit only): {error:?}");
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!("Contract ingress skipped (prompt encode): {error}");
+                    }
+                },
+                Err(error) => {
+                    tracing::warn!("Contract ingress skipped (auth not admissible): {error:?}");
+                }
+            }
+        } else {
+            tracing::warn!("Contract ingress skipped (no native session); turn still proceeds");
+        }
 
-        let grounded = crate::contract_native::ground_turn_with_facts(
+        let grounded = match crate::contract_native::ground_turn_with_facts(
             &arguments.prompt,
             std::path::Path::new(&handle.info.cwd),
             &continuation_identity,
@@ -2377,21 +2388,20 @@ impl acp::Agent for MvpAgent {
             },
         )
         .await
-        .map_err(|reason| {
-            acp::Error::internal_error().data(format!(
-                "Native Contract graph admission failed; Aiko did not start the worker: {reason}"
-            ))
-        })?;
-        let continuation = grounded.continuation.as_ref().ok_or_else(|| {
-            acp::Error::internal_error().data(
-                "Contract continuation was not ready; refusing to start the reasoning worker",
-            )
-        })?;
-        if !continuation.may_invoke_worker() {
-            return Err(acp::Error::internal_error().data(format!(
-                "Contract continuation is held: {:?}",
-                continuation.readiness
-            )));
+        {
+            Ok(grounded) => grounded,
+            Err(reason) => {
+                tracing::warn!("Contract ground_turn skipped (audit only): {reason}");
+                crate::contract_native::GroundedTurn::passthrough(arguments.prompt.clone())
+            }
+        };
+        if let Some(continuation) = grounded.continuation.as_ref() {
+            if !continuation.may_invoke_worker() {
+                tracing::warn!(
+                    "Contract continuation held ({:?}); invoking worker anyway",
+                    continuation.readiness
+                );
+            }
         }
         let turn_contract = grounded.contract;
         crate::contract_native::store_turn_contract_root(

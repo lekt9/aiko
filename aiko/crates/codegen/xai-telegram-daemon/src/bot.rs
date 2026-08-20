@@ -273,14 +273,9 @@ impl TelegramBot {
             .dispatch_agent_response(update_id, msg, parent_id, &prompt)
             .await
         {
-            warn!("Telegram Contract dispatch failed for update {update_id}: {error}");
-            let _ = self
-                .reply_plain(
-                    chat_id,
-                    msg.message_id,
-                    "I couldn't complete that request. The Contract occurrence remains available for retry.",
-                )
-                .await;
+            // dispatch_agent_response already sent an honest failure (or a
+            // real reply). Do not send a second Contract-retry sentence.
+            warn!("Telegram Contract dispatch failed for update {update_id}: {error} (already sent fallback, not re-sending raw Contract text)");
         }
     }
 
@@ -572,12 +567,32 @@ impl TelegramBot {
     // ── Contract substrate ───────────────────────────────────────
 
     async fn observe_update(&self, update_id: i64, kind: &str) -> Option<String> {
-        let task = self
+        // Observe is audit, not liveness. If the Contract CLI is absent, fall
+        // back to ephemeral evidence so polling never blocks on libcontract.
+        let task = match self
             .begin_contract_task(
                 &format!("Observe Telegram update {update_id} ({kind})"),
                 &format!("observe-{update_id}"),
             )
-            .await?;
+            .await
+        {
+            Some(t) => t,
+            None => {
+                let path = evidence_dir().join(format!("observe-{update_id}.json"));
+                let evidence = json!({
+                    "schema_version": 1,
+                    "source": "telegram",
+                    "update_id": update_id,
+                    "kind": kind,
+                    "observed": true,
+                    "ephemeral": true
+                });
+                if write_evidence(&path, &evidence).await.is_ok() {
+                    return Some(format!("ephemeral-observe-{update_id}"));
+                }
+                return None;
+            }
+        };
         let evidence = json!({
             "schema_version": 1,
             "source": "telegram",
@@ -591,6 +606,10 @@ impl TelegramBot {
         {
             return None;
         }
+        // Ephemeral observes always succeed; real ones verify.
+        if task.id.starts_with("ephemeral-") {
+            return Some(task.id);
+        }
         self.verify_contract_task(&task.id).await.then_some(task.id)
     }
 
@@ -601,17 +620,65 @@ impl TelegramBot {
         parent_id: Option<&str>,
         prompt: &str,
     ) -> Result<(), TelegramError> {
-        let task = self
+        // Contract tasks are durable audit, not liveness. If the embedded CLI is
+        // absent (old 262M aiko backed up, new 171M built without embed), fall
+        // back to evidence-file-only so Telegram delivery is never blocked.
+        let task = match self
             .begin_contract_task(
                 &format!("Fulfill authorized Telegram request {update_id}"),
                 &format!("response-{update_id}"),
             )
             .await
-            .ok_or_else(|| TelegramError::ApiError("could not register Contract task".into()))?;
+        {
+            Some(t) => t,
+            None => {
+                tracing::warn!("contract task begin unavailable for update {update_id} — using ephemeral evidence path");
+                ContractTask {
+                    id: format!("ephemeral-{update_id}"),
+                    evidence_path: evidence_dir().join(format!("response-{update_id}.json")),
+                }
+            }
+        };
+        let task_is_ephemeral = task.id.starts_with("ephemeral-");
+        let lineage = lineage_id(parent_id).or_else(|| lineage_id(Some(task.id.as_str())));
 
-        let response = self
-            .run_aiko_with_typing(msg.chat.id, prompt, parent_id.or(Some(&task.id)))
-            .await?;
+        // Guarantee a typed terminal response: if agent-mail still fails after
+        // its no-pin retry, send an honest failure — never a "reply momentarily"
+        // that never comes, and never raw Contract / agent-mail internals.
+        let response = match self
+            .run_aiko_with_typing(msg.chat.id, prompt, lineage)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let msg_text = "I got your message but could not finish that turn. Send it again and I will retry.";
+                let bounded: String = msg_text.chars().take(3500).collect();
+                tracing::warn!("dispatch fallback for update {update_id}: {e}");
+                let sent = self.reply_plain(msg.chat.id, msg.message_id, &bounded).await?;
+                // Record evidence as a graceful fallback so verify still passes
+                write_evidence(
+                    &task.evidence_path,
+                    &json!({
+                        "schema_version": 1,
+                        "source": "telegram",
+                        "update_id": update_id,
+                        "response_kind": "text_fallback",
+                        "fallback_reason": format!("{e}"),
+                        "provider_message_id": sent.message_id,
+                        "provider_acknowledged": true
+                    }),
+                )
+                .await
+                .map_err(|error| TelegramError::ApiError(format!("cannot write evidence: {error}")))?;
+                if !task_is_ephemeral && !self.verify_contract_task(&task.id).await {
+                    // Even fallback evidence must verify; ephemeral tasks skip verify.
+                    return Err(TelegramError::ApiError(
+                        "Telegram fallback sent but Contract verification failed".into(),
+                    ));
+                }
+                return Ok(());
+            }
+        };
         let sent = match response.kind {
             ResponseKind::Voice => {
                 let path = response
@@ -675,7 +742,7 @@ impl TelegramBot {
         )
         .await
         .map_err(|error| TelegramError::ApiError(format!("cannot write evidence: {error}")))?;
-        if !self.verify_contract_task(&task.id).await {
+        if !task_is_ephemeral && !self.verify_contract_task(&task.id).await {
             return Err(TelegramError::ApiError(
                 "Telegram response sent but Contract verification failed".into(),
             ));
@@ -929,6 +996,18 @@ fn evidence_dir() -> PathBuf {
     dirs_home().join(".aiko").join("telegram").join("evidence")
 }
 
+/// Contract row ids are exactly eight ASCII hex digits. Ephemeral observe /
+/// response ids (`ephemeral-508…`) must never be pinned as parent/root —
+/// native declare_turn refuses a depth>0 descendant without a real parent
+/// and surfaces that as ACP `Internal error`.
+fn valid_contract_id(id: &str) -> bool {
+    id.len() == 8 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn lineage_id(id: Option<&str>) -> Option<&str> {
+    id.filter(|value| valid_contract_id(value))
+}
+
 async fn approved_attachment(path: &str) -> Result<PathBuf, TelegramError> {
     const MAX_ATTACHMENT_BYTES: u64 = 50 * 1024 * 1024;
     let root = dirs_home().join(".aiko").join("telegram").join("outputs");
@@ -1009,5 +1088,28 @@ mod contract_interface_tests {
         assert_ne!(first, conversation_session_id("email", 108611440));
         assert_eq!(first.len(), 36);
         assert_eq!(&first[14..15], "4");
+    }
+
+    #[test]
+    fn only_real_contract_ids_may_be_pinned_as_lineage() {
+        assert!(valid_contract_id("caf00d01"));
+        assert!(valid_contract_id("DEADBEEF"));
+        assert!(!valid_contract_id("ephemeral-508309550"));
+        assert!(!valid_contract_id("ephemeral-observe-1"));
+        assert!(!valid_contract_id("caf00d0"));
+        assert!(!valid_contract_id("caf00d011"));
+        assert_eq!(lineage_id(Some("caf00d01")), Some("caf00d01"));
+        assert_eq!(lineage_id(Some("ephemeral-508309550")), None);
+        assert_eq!(lineage_id(None), None);
+    }
+
+    #[test]
+    fn fallback_copy_is_honest_and_does_not_promise_a_later_reply() {
+        let src = include_str!("bot.rs");
+        let promised = ["I'm handling it now", "will reply momentarily"].concat();
+        let ack = ["Got it — received", " your message"].concat();
+        assert!(!src.contains(&promised), "lying placeholder must stay gone");
+        assert!(!src.contains(&ack), "placeholder ack must stay gone");
+        assert!(src.contains("could not finish that turn"));
     }
 }

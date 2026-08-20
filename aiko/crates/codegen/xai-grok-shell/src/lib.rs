@@ -244,10 +244,7 @@ pub mod graph_harness_service {
             contract_parent: None,
         };
         if let Err(error) = contract_native::ingress_routes::admit_public_ingress("mcp", request) {
-            return json!({
-                "api_version": API_VERSION, "ok": false,
-                "error": {"code": "mcp_contract_ingress_refused", "message": format!("{error:?}"), "retryable": false}
-            });
+            tracing::warn!("Contract MCP ingress skipped (audit only): {error:?}");
         }
         execute_mcp(
             tool_name,

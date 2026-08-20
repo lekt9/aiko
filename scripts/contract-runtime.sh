@@ -10,14 +10,17 @@ TYPED_NEURON_ROOT="$AIKO_ROOT/neuron"
 case "$(uname -s)" in
     Darwin)
         CONTRACT_DYLIB="$CONTRACT_ROOT/zig-out/lib/libcontract.dylib"
+        CONTRACT_LEDGER_DYLIB="$CONTRACT_ROOT/zig-out/lib/libcontract_ledger.dylib"
         CONTRACT_INSTALL_NAME=libcontract.dylib
         ;;
     Linux)
         CONTRACT_DYLIB="$CONTRACT_ROOT/zig-out/lib/libcontract.so"
+        CONTRACT_LEDGER_DYLIB="$CONTRACT_ROOT/zig-out/lib/libcontract_ledger.so"
         CONTRACT_INSTALL_NAME=libcontract.so
         ;;
     *)
         CONTRACT_DYLIB="$CONTRACT_ROOT/zig-out/lib/libcontract.so"
+        CONTRACT_LEDGER_DYLIB="$CONTRACT_ROOT/zig-out/lib/libcontract_ledger.so"
         CONTRACT_INSTALL_NAME=libcontract.so
         ;;
 esac
@@ -71,8 +74,26 @@ build_contract() {
     require_contract
     echo "Building Contract from $CONTRACT_ROOT"
     (cd "$CONTRACT_ROOT" && zig build -Doptimize=ReleaseFast)
+    (cd "$CONTRACT_ROOT" && zig build ledger-library -Doptimize=ReleaseFast)
     if [ ! -f "$CONTRACT_DYLIB" ]; then
         echo "Contract build did not produce $CONTRACT_DYLIB" >&2
+        exit 1
+    fi
+    if [ ! -f "$CONTRACT_LEDGER_DYLIB" ]; then
+        echo "Contract slim ledger build did not produce $CONTRACT_LEDGER_DYLIB" >&2
+        exit 1
+    fi
+}
+
+build_neuron() {
+    if [ ! -f "$TYPED_NEURON_ROOT/build.zig" ]; then
+        echo "Neuron source not found at $TYPED_NEURON_ROOT" >&2
+        exit 1
+    fi
+    echo "Building Neuron from $TYPED_NEURON_ROOT"
+    (cd "$TYPED_NEURON_ROOT" && zig build -Doptimize=ReleaseFast)
+    if [ ! -x "$TYPED_NEURON_ROOT/zig-out/bin/neuron" ]; then
+        echo "Neuron build did not produce $TYPED_NEURON_ROOT/zig-out/bin/neuron" >&2
         exit 1
     fi
 }
@@ -107,13 +128,13 @@ dev_link() {
     build_contract
     LIB_DIR=$(runtime_lib_dir)
     mkdir -p "$LIB_DIR"
-    ln -sfn "$CONTRACT_DYLIB" "$LIB_DIR/$CONTRACT_INSTALL_NAME"
+    ln -sfn "$CONTRACT_LEDGER_DYLIB" "$LIB_DIR/$CONTRACT_INSTALL_NAME"
     # Keep alternate extension so older package layouts still resolve.
     if [ "$CONTRACT_INSTALL_NAME" = "libcontract.so" ]; then
         ln -sfn libcontract.so "$LIB_DIR/libcontract.dylib"
     fi
     echo "Linked $LIB_DIR/$CONTRACT_INSTALL_NAME"
-    echo "    -> $CONTRACT_DYLIB"
+    echo "    -> $CONTRACT_LEDGER_DYLIB (rank-free ledger)"
     echo "Rebuild Contract and the next Aiko process will load it automatically."
 }
 
@@ -123,7 +144,7 @@ sync_contract() {
     mkdir -p "$LIB_DIR"
     TMP="$LIB_DIR/.${CONTRACT_INSTALL_NAME}.sync.$$"
     trap 'rm -f "$TMP"' EXIT HUP INT TERM
-    install -m 755 "$CONTRACT_DYLIB" "$TMP"
+    install -m 755 "$CONTRACT_LEDGER_DYLIB" "$TMP"
     if [ "$(uname -s)" = "Darwin" ]; then
         codesign --force --sign - "$TMP"
     fi
@@ -132,7 +153,7 @@ sync_contract() {
         ln -sfn libcontract.so "$LIB_DIR/libcontract.dylib"
     fi
     trap - EXIT HUP INT TERM
-    echo "Synced Contract runtime to $LIB_DIR/$CONTRACT_INSTALL_NAME"
+    echo "Synced Contract runtime to $LIB_DIR/$CONTRACT_INSTALL_NAME (rank-free ledger)"
 }
 
 watch_contract() {
@@ -204,6 +225,12 @@ package_runtime() {
             # On small hosts, skip rebuild if a release aiko already exists.
             if [ "${AIKO_SKIP_BUILD_IF_PRESENT:-1}" = "1" ] && [ -x "$(aiko_binary)" ]; then
                 echo "Using existing Aiko binary at $(aiko_binary) (AIKO_SKIP_BUILD_IF_PRESENT=1)"
+                if [ ! -f "$CONTRACT_LEDGER_DYLIB" ]; then
+                    build_contract
+                fi
+                if [ ! -x "$TYPED_NEURON_ROOT/zig-out/bin/neuron" ]; then
+                    build_neuron
+                fi
             else
                 # Prefer full-ABI contract from commons when sibling is legacy.
                 if ! command -v nm >/dev/null 2>&1 || \
@@ -212,6 +239,7 @@ package_runtime() {
                 else
                     build_contract
                 fi
+                build_neuron
                 build_aiko_only
             fi
         fi
@@ -224,6 +252,12 @@ package_runtime() {
     . "$AIKO_ROOT/scripts/lib/assemble-portable.sh"
     aiko_env_init
     export AIKO_PORTABLE_AIKO_BIN="${AIKO_PORTABLE_AIKO_BIN:-$(aiko_binary)}"
+    if [ -f "$CONTRACT_LEDGER_DYLIB" ]; then
+        export AIKO_PORTABLE_CONTRACT_LIB="$CONTRACT_LEDGER_DYLIB"
+    fi
+    if [ -x "$TYPED_NEURON_ROOT/zig-out/bin/neuron" ]; then
+        export AIKO_PORTABLE_NEURON_BIN="$TYPED_NEURON_ROOT/zig-out/bin/neuron"
+    fi
     if [ ! -x "$AIKO_PORTABLE_AIKO_BIN" ] && [ -x "$HOME/.local/bin/aiko" ]; then
         AIKO_PORTABLE_AIKO_BIN="$HOME/.local/bin/aiko"
     fi

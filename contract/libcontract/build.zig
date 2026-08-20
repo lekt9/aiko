@@ -25,6 +25,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .strip = optimize != .Debug,
     });
     lib_mod.addEmbedPath(b.path("data"));
     lib_mod.addImport("typed_neuron", typed_neuron);
@@ -46,6 +47,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .strip = optimize != .Debug,
     });
     dylib_mod.addEmbedPath(b.path("data"));
     dylib_mod.addImport("typed_neuron", typed_neuron);
@@ -69,6 +71,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .strip = optimize != .Debug,
     });
     ledger_mod.addEmbedPath(b.path("data"));
     ledger_mod.addImport("typed_neuron", typed_neuron);
@@ -78,8 +81,26 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
         .root_module = ledger_mod,
     });
-    const ledger_step = b.step("ledger-library", "Build the rank-free ledger-only static library");
+    // Shared slim artifact is what the portable install copies to
+    // ~/.aiko/lib/libcontract.so — ledger verbs without the 33.5MB BERT.
+    const ledger_dylib_mod = b.createModule(.{
+        .root_source_file = b.path("src/c_abi.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .strip = optimize != .Debug,
+    });
+    ledger_dylib_mod.addEmbedPath(b.path("data"));
+    ledger_dylib_mod.addImport("typed_neuron", typed_neuron);
+    ledger_dylib_mod.addOptions("abi_options", rank_off);
+    const ledger_dylib = b.addLibrary(.{
+        .name = "contract_ledger",
+        .linkage = .dynamic,
+        .root_module = ledger_dylib_mod,
+    });
+    const ledger_step = b.step("ledger-library", "Build the rank-free ledger-only static and shared libraries");
     ledger_step.dependOn(&b.addInstallArtifact(ledger_lib, .{}).step);
+    ledger_step.dependOn(&b.addInstallArtifact(ledger_dylib, .{}).step);
 
     // Portable deterministic Collective-only ABI. It deliberately excludes
     // the legacy filesystem ledger so cross-platform desktop packages can

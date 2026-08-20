@@ -57,7 +57,11 @@ impl DeclareTurnProjection for NativeDeclareProjection {
 
 pub(crate) fn shared_ingress() -> &'static IngressChokePoint<NativeDeclareProjection> {
     static SHARED: OnceLock<IngressChokePoint<NativeDeclareProjection>> = OnceLock::new();
+    // Telegram + heavy Contract graphs can exceed 10s on cold libcontract load
+    // or under contention (the mutex covers projection). 30s keeps the daemon
+    // responsive while avoiding the "ProjectionTimeout → Internal error" hole
+    // that previously surfaced as the user-visible Contract retry message.
     SHARED.get_or_init(|| {
-        IngressChokePoint::new(Arc::new(NativeDeclareProjection), Duration::from_secs(10))
+        IngressChokePoint::new(Arc::new(NativeDeclareProjection), Duration::from_secs(30))
     })
 }

@@ -29,6 +29,7 @@ pub fn build(b: *std.Build) void {
             // this was invisible there; every other target must ask for it or
             // the build fails at the first `std.c` reference.
             .link_libc = true,
+            .strip = optimize != .Debug,
         }),
     });
     exe.root_module.addOptions("build_options", options);

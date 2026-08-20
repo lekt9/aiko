@@ -20,7 +20,12 @@ pub struct Update {
 #[derive(Debug, Clone, Deserialize)]
 pub struct GetUpdatesResponse {
     pub ok: bool,
+    #[serde(default)]
     pub result: Vec<Update>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub error_code: Option<i64>,
 }
 
 // ── Message ────────────────────────────────────────────────────────
@@ -349,12 +354,22 @@ impl<T> ApiResponse<T> {
         if self.ok {
             self.result.ok_or(TelegramError::MissingResult)
         } else {
-            Err(TelegramError::ApiError(
-                self.description
-                    .unwrap_or_else(|| "unknown API error".into()),
-            ))
+            // Surface Telegram's description, including HTTP status hints.
+            // Keep the message bounded (~400 chars) for log readability.
+            let raw = self
+                .description
+                .unwrap_or_else(|| "unknown API error".into());
+            let bounded: String = raw.chars().take(400).collect();
+            Err(TelegramError::ApiError(bounded))
         }
     }
+}
+
+/// Lightweight check: does a raw HTTP body look like a GetUpdates JSON envelope?
+/// Used to distinguish transient non-JSON (gateway HTML) from real API errors.
+pub fn is_likely_get_updates_json(body: &str) -> bool {
+    let trimmed = body.trim();
+    trimmed.starts_with('{') && trimmed.contains("\"ok\"")
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -64,6 +64,24 @@ carries its value, and nothing carries it into a row.** See
 (`process.env[name]`), and `:611`/`:1040` (resolved inside the effect, at the
 moment of the call, never returned into an output).
 
+## Exclusive poller (Telegram)
+
+Telegram allows **exactly one** `getUpdates` holder per bot token. A second
+long-poll — `curl …/getUpdates`, `bridgeHost.js`, a Smithers Loop that polls,
+or the desktop Remote IM channel — returns `409 Conflict` and the inbox
+becomes a coin flip.
+
+If any of these already own the slot, **attach; do not start a second host**:
+
+- `systemctl --user is-active aiko-telegram` is `active`
+- `pgrep -x telegram-daemon` finds `~/.local/bin/telegram-daemon`
+- cockpit `/api/telegram/self-aware` reports the bridge running
+
+Then: one `getMe` (identity only). **Do NOT curl getUpdates.** **Do NOT start
+`bridgeHost.js`.** Restart or authorize chats on the existing daemon if needed.
+Claiming "wired" after standing up a second poller is the bug this section
+exists to prevent.
+
 ## 2. Verify read-only, exactly once
 
 Every boundary has an identity call: `getMe`, `auth.test`, `GET /me`, `whoami`, a
@@ -73,7 +91,7 @@ neither is the raw response body.
 
 This step is correct and necessary: you should not build against a credential you
 have not confirmed. It is also the *only* read you are entitled to before wiring
-starts.
+starts. For Telegram, that one read is `getMe` — never `getUpdates`.
 
 ## 3. Stop probing. A chat quiz is not integration
 
