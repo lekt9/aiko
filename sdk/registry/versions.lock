@@ -7,9 +7,9 @@
 #
 # Format: package=version
 
-contract=0.2.120
-neuron=0.2.120
-cell=0.2.120
-aiko=0.2.120
-neuron-limbs=0.2.120
+contract=0.2.121
+neuron=0.2.121
+cell=0.2.121
+aiko=0.2.121
+neuron-limbs=0.2.121
 control=0.33.1

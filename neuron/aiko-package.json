@@ -1,6 +1,6 @@
 {
   "name": "neuron",
-  "version": "0.2.120",
+  "version": "0.2.121",
   "kind": "firing-primitive",
   "standalone": true,
   "requires": [],

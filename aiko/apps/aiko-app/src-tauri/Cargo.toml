@@ -2,7 +2,7 @@
 
 [package]
 name = "aiko-app"
-version = "0.2.120"
+version = "0.2.121"
 description = "Aiko App — native desktop workbench for the embedded Aiko CLI"
 authors = ["RongleCat"]
 edition = "2021"
