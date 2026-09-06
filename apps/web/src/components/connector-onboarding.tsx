@@ -36,12 +36,28 @@ const suggestedApps: DrawerApp[] = [
   { name: "Spotify", domain: "spotify.com" },
   { name: "GitHub", domain: "github.com" },
 ];
-function AppTileIcon({ name }: { name: string }) {
+function AppTileIcon({ name, domain }: { name: string; domain?: string }) {
   const color =
     [...name].reduce((sum, letter) => sum + letter.charCodeAt(0), 0) % 6;
+  const [broken, setBroken] = useState(false);
+  const host = domain ? websiteDomain(domain) : undefined;
+  // Favicons come from the app's own site, never a third-party icon proxy that
+  // could observe which apps an owner views. Letters remain the fallback.
+  const src = host ? `https://${host}/favicon.ico` : undefined;
   return (
     <span className={`drawer-app-icon app-tone-${color}`} aria-hidden="true">
-      {name.slice(0, 2).toUpperCase()}
+      {!broken && src ? (
+        <img
+          className="drawer-app-favicon"
+          src={src}
+          alt=""
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setBroken(true)}
+        />
+      ) : (
+        name.slice(0, 2).toUpperCase()
+      )}
     </span>
   );
 }
@@ -52,6 +68,13 @@ function connectionName(connection: ConnectorConnection) {
     suggestedApps.find((app) => app.domain === domain)?.name ??
     domain
   );
+}
+/** The site a favicon can be fetched from first-party: browser connections name
+ * their website; Arcade app ids do not carry one, so those keep letter tiles. */
+function faviconDomainOf(connection: ConnectorConnection) {
+  return connection.connectorId.startsWith("browser:")
+    ? connection.connectorId.slice("browser:".length)
+    : undefined;
 }
 
 export function ConnectorOnboarding() {
@@ -694,7 +717,7 @@ export function ConnectorOnboarding() {
                 aria-label={`${connectionName(connection)} — ${connection.status === "connected" ? "connected" : connection.status === "pending" ? "finish sign-in" : "needs attention"}. Manage connection`}
               >
                 <span className="drawer-icon-wrap">
-                  <AppTileIcon name={connectionName(connection)} />
+                  <AppTileIcon name={connectionName(connection)} domain={faviconDomainOf(connection)} />
                   {connection.status === "connected" && (
                     <span className="drawer-connected-badge">
                       <Check size={12} aria-hidden="true" />
@@ -772,7 +795,7 @@ export function ConnectorOnboarding() {
                 onClick={() => void openApp(app)}
                 aria-label={`Connect ${app.name}`}
               >
-                <AppTileIcon name={app.name} />
+                <AppTileIcon name={app.name} domain={app.domain} />
                 <span className="drawer-tile-name">{app.name}</span>
                 <span className="drawer-tile-status">
                   {"Add login"}
@@ -892,7 +915,7 @@ export function ConnectorOnboarding() {
           }}
         >
           <div className="credential-identity">
-            <AppTileIcon name={connectionName(selected)} />
+            <AppTileIcon name={connectionName(selected)} domain={faviconDomainOf(selected)} />
             <div>
               <h3>{connectionName(selected)}</h3>
               <p>
