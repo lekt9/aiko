@@ -1,5 +1,5 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": { "types": ["node"] },
-  "include": ["tests/backend/**/*.ts"]
+  "include": ["tests/backend/**/*.ts", "tests/harness-learn.test.ts"]
 }

@@ -212,10 +212,10 @@ async function mineTrace(file) {
         run,
         file,
         detail: excerpt(
-          `${d.reason ?? d.error ?? ""} attempt=${d.attempt ?? "?"}`.trim(),
+          `${d.reason || d.error || ""} attempt=${d.attempt ?? "?"}`.trim(),
         ),
         fingerprintInput: `${d.ev}::${normalize(
-          `${d.reason ?? ""}${d.error ?? ""}`,
+          `${d.reason || ""}${d.error || ""}`,
         )}`,
       });
   });

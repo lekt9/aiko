@@ -85,13 +85,25 @@ if [ "${SELFLEARN_SKIP_INSTALL:-0}" != "1" ]; then
 fi
 
 # ---------- 4. fixer agent ----------
+# Freeze the live checkout: any change here while the agent runs (the agent
+# editing its own orchestrator, or a peer session) means a moving tree — abort.
+MAIN_FREEZE="$(git status --porcelain | sha1sum | cut -d' ' -f1)"
+
 REPORT="docs/harness-learn/${STAMP}.md"
 GUARDRAILS="Autonomy guardrails (hard requirements):
 - No user is available; do not ask questions, decide and act.
 - You may modify only: apps/**, packages/**, tests/**, docs/**, scripts/**.
 - Never read or modify: .graff/**, artifacts/**, .env*, *.key, *.pem, *.sqlite*, codedb.snapshot, any *.session.json. If a file contains credentials, stop touching it and say so.
 - Do not run git commit, git push, or git branch; the orchestrator owns version control.
-- Keep the diff minimal: no drive-by refactors, no dependency changes, no formatting-only churn."
+- Stay inside your worktree: do not cd to or modify any absolute path outside it. In particular never modify scripts/harness-selflearn.sh or scripts/harness-learn.mjs — they are the running loop infrastructure, and editing a running shell script corrupts it.
+- Keep the diff minimal: no drive-by refactors, no dependency changes, no formatting-only churn.
+
+Tool-usage recovery notes — these exact failure patterns recurred in past runs; do not repeat them:
+- read_file: pass a non-empty literal \`contains\` string, and never combine \`contains\` with start_line, end_line or compact (use the line range alone for a sized window).
+- After a failed edit_file span in a batched call, earlier spans may already have applied: re-read the file and re-derive the remaining spans instead of retrying blindly.
+- If the same tool call fails twice, change the arguments or the approach; an identical repeat fails identically. Check the error text for the recovery hint it already gives.
+- Do not shell out to cat/grep for source (the codedb guard blocks them); use the codedb tool.
+- Before finishing, complete or explicitly cancel every open todo item and re-run the self-check commands."
 
 PROMPT="You are the harness-fixer agent for this repository (the Aiko/Unbrowse monorepo). A self-learning loop mined this repo's .graff agent logs and found recurring failure patterns. Your mission: make the harness stop repeating them.
 
@@ -123,6 +135,13 @@ echo "graff fixer exited rc=${GRAFF_RC} (log: ${GRAFF_LOG})"
 tail -n 20 "$GRAFF_LOG" || true
 [ "$GRAFF_RC" -eq 0 ] || [ "$GRAFF_RC" -eq 124 ] || fail "graff fixer failed (rc=${GRAFF_RC}); log kept at ${GRAFF_LOG}"
 
+MAIN_FREEZE_NOW="$(git status --porcelain | sha1sum | cut -d' ' -f1)"
+if [ "$MAIN_FREEZE_NOW" != "$MAIN_FREEZE" ]; then
+  trap - EXIT   # keep worktree + log for inspection
+  fail "main checkout changed while the fixer agent ran (self-modification or peer session) — refusing to build a PR on a moving tree.
+Worktree kept: ${WORKTREE}"
+fi
+
 # ---------- 5. review the diff ----------
 echo "-- reviewing diff --"
 CHANGED="$(cd "$WORKTREE" && git status --porcelain | awk '{print $2}')"
@@ -136,7 +155,7 @@ ${DENIED}
 Worktree kept for inspection: ${WORKTREE}"
 fi
 
-FORBIDDEN="$(printf '%s\n' $CHANGED | grep -E '(^|/)(\.env|\.graff/|artifacts/|codedb\.snapshot|.*\.(key|pem|sqlite)$)' || true)"
+FORBIDDEN="$(printf '%s\n' $CHANGED | grep -E '(^|/)(\.env|\.graff/|artifacts/|codedb\.snapshot|.*\.(key|pem|sqlite)$|scripts/harness-selflearn\.sh$|scripts/harness-learn\.mjs$)' || true)"
 if [ -n "$FORBIDDEN" ]; then
   trap - EXIT
   fail "agent touched forbidden paths:

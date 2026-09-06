@@ -75,6 +75,24 @@ Only then does the script commit, push, and open a PR whose body embeds the
 lessons table, the fixer's summary, and verification output. After the PR
 opens, fingerprints are marked fixed so the next mining run starts clean.
 
+### First-run hardening (2026-09-06)
+
+The inaugural run taught the loop its own first lesson: the fixer agent edited
+`scripts/harness-selflearn.sh` — while bash was executing it — because nothing
+forbade touching the loop's live infrastructure. The orchestrator died on the
+mid-run script edit (the agent's work survived in the checkout and was landed
+by hand). The loop now enforces two guards learned from that incident:
+
+- **Loop-infrastructure denial** — the fixer may not modify
+  `scripts/harness-selflearn.sh` / `scripts/harness-learn.mjs`; the diff review
+  rejects them outright.
+- **Main-checkout freeze** — `git status` is snapshotted before the agent runs
+  and re-checked after; any drift (self-modification or a peer session
+  committing mid-run) aborts the PR path instead of building on a moving tree.
+- **Recovery notes in the fixer prompt** — mined tool-error patterns
+  (`read_file contains` misuse, partial batched edits, identical-call retries)
+  are fed back as explicit do-not-repeat guidance.
+
 ## Knobs
 
 | variable | default | purpose |
