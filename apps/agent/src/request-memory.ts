@@ -55,7 +55,7 @@ function vector(value: readonly number[], size: number): number[] {
   const norm = Math.hypot(...value); if (!norm || !Number.isFinite(norm)) throw new Error("Empty embedding");
   return value.map(v => v / norm);
 }
-function artifact(definition: NetworkToolDefinition) {
+export function artifact(definition: NetworkToolDefinition) {
   const d = validateNetworkToolDefinition(definition);
   // Vault/session execution belongs to the host's separately authorized connector path.
   if (d.inputs.some(i => i.source !== "caller") || d.steps.some(s => Object.keys(s.headers).length)) throw new Error("Session replay unavailable");

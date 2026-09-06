@@ -3,7 +3,7 @@
 Open the existing Aiko host's **`/control`** page, unlock it with an operator or account token, then choose **Node graph**. No new service, public dashboard, or model tool is required.
 
 - **Account knowledge:** current observations, compiled pages, pinned citations, corrections, relationships and referenced source status. Select a node to inspect its metadata. A stale page remains visibly stale; suppressed evidence and its dependent nodes disappear on the next successful read.
-- **Browser indexing:** native recorded request DAGs, request dependencies, pending evidence, indexing receipts and failures. These are historical events, not an assertion that the pointer still exists or can currently replay.
+- **Browser indexing:** native recorded request DAGs, request dependencies, pending evidence, indexing receipts and failures. These are historical events, not an assertion that the pointer still exists or can currently replay. After `AikoRequestMemoryIndexed`, public GET/HEAD DAGs also appear in the tool router as `observed_network_run` skills and execute on host HTTP without opening Chromium.
 - Use **Filter loaded nodes**, **Show list / Show diagram**, **Next window**, and **First window**. Keyboard users can navigate tabs and activate ordinary node buttons; the relationship list names edge direction. Narrow screens initially use the list.
 - The existing five-second refresh rereads the selected window. Windows are not accumulated or silently treated as complete. Advance through a long history to reach later browser events. A failed graph refresh clears the previous graph, rather than presenting stale private data as current.
 

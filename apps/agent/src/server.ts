@@ -37,6 +37,11 @@ import { validateLearningInput } from "./learning.ts";
 import { learningFromBrowserTrace } from "./unbrowse-learning.ts";
 import { controlApi } from "./control-api.ts";
 import { requestMemoryEventKey } from "./request-memory-events.ts";
+import { observedActionEventKey } from "./observed-network.ts";
+import { ensureUnlockSession } from "./unlock-session.ts";
+import { createActionApprovals } from "./action-approval.ts";
+import { Effect } from "effect";
+import { EventLog, withWatermark } from "tardie/core/log";
 import { CONTROL_HTML } from "./control.ts";
 import { envelopeOf } from "tardie/core/communication/envelope";
 import { linkOf } from "tardie/core/communication/link";
@@ -159,7 +164,7 @@ export async function createService(
     if(!controller){controller=new WorkflowController(owner,`user-${owner}`,{store:createWorkflowStore(sqliteWorkflowKV(workflowDb??=new Database(privateDatabaseFile(join(config.stateDir,"workflows.sqlite"))))),dispatcher:workflowDispatcher({owner,engine:connectorsFor(owner),redact,readEvents:()=>host.read(`user-${owner}`),read:overrides.webRead}),guard:validateRouterInput},redact);workflowControllers.set(owner,controller);}
     return controller;
   };
-  const routerBinding = (owner: string) => ({ owner, engine: connectorsFor(owner), redact, readOwnedEvents: () => host.read(`user-${owner}`), listWorkflows:()=>workflowsFor(owner).engine.list() });
+  const routerBinding = (owner: string) => ({ owner, engine: connectorsFor(owner), redact, readOwnedEvents: () => host.read(`user-${owner}`), listWorkflows:()=>workflowsFor(owner).engine.list(), vaultDomains: async () => Object.keys(config.connectorVault?.accounts[owner]?.connections ?? {}) });
   const routeFor = (owner: string) => routerCaller(routerBinding(owner), () => host);
   const telegram =
     config.botToken && config.webhookSecret
@@ -248,6 +253,7 @@ export async function createService(
       secretaryEventKey(e) ??
       browserTraceKeys.keyOf(e) ??
       requestMemoryEventKey(e) ??
+      observedActionEventKey(e) ??
       harKeys.keyOf(e) ??
       telegramEventKey(e) ??
       routerEventKey(e) ??
@@ -326,7 +332,8 @@ export async function createService(
                   background: true,
                   workflow: workflowsFor(owner).component(),
                   toolRouter: { owner, thread, redact, readRouter: () => host.read(`router-${owner}`) },
-                  capabilityBuilder: { owner, thread, redact, checkArcade: async domain => (await connectorsFor(owner).search(domain)).fallbackAllowed },
+                  capabilityBuilder: { owner, thread, redact, checkArcade: async domain => (await connectorsFor(owner).search(domain)).fallbackAllowed,
+                    session: (origin, signal) => ensureUnlockSession({ owner, origin, config: config.connectorVault, search: domain => connectorsFor(owner).search(domain), signal, renew: true }) },
                   connectors: { owner, thread, engine: connectorsFor(owner), deliverConnection: async (input, signal) => {
                     if (!ownedTelegram || input.owner !== owner) return { status: "rejected" as const };
                     const wording = compose ? await compose(input.text, signal) : undefined;
@@ -768,6 +775,7 @@ export async function createService(
         "/v1/cancel",
         "/v1/browser",
         "/v1/browser/approval",
+        "/v1/observed-actions/approval",
       ].includes(url.pathname)
     )
       url.pathname = url.pathname.replace("/v1/", "/api/");
@@ -821,6 +829,14 @@ export async function createService(
           observations: [],
         },
       );
+    if (url.pathname === "/api/observed-actions/approval" && request.method === "POST") {
+      const thread = `user-${owner}`;
+      const log = withWatermark({
+        read: Effect.promise(() => host.read(thread)),
+        append: events => Effect.promise(async () => { for (const event of events) await host.commitRoot(host.self(thread), event); }),
+      });
+      return Effect.runPromise(createActionApprovals({ owner, thread }).handleDecision(request, () => Effect.succeed({ owner, subject: `account:${owner}`, authenticated: true as const })).pipe(Effect.provideService(EventLog, log)));
+    }
     if (url.pathname === "/api/browser/approval" && request.method === "POST") {
       if (!request.headers.get("content-type")?.startsWith("application/json"))
         return json({ error: "json_required" }, 415);

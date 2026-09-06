@@ -1,4 +1,5 @@
 import { fixedNetworkReads } from "./capability-builder-network.ts";
+import type { UnlockSessionGrant } from "./unlock-session.ts";
 import { createHash } from "node:crypto";
 import { Effect } from "effect";
 import { EventLog } from "tardie/core/log";
@@ -16,6 +17,8 @@ export interface CapabilityBuilderBinding {
   checkArcade?: (domain: string) => Promise<boolean>;
   /** Host transport must preserve pinned public DNS, bounded responses, no ambient auth. */
   read?: (url: string, signal: AbortSignal) => Promise<PublicPage>;
+  /** Host-only Unlock session grant for session-bound observed actions. Cookies never enter artifacts or receipts. */
+  session?: (origin: string, signal: AbortSignal) => Promise<UnlockSessionGrant | undefined>;
 }
 export type CapabilityEvidence = { id: string; owner: string; source: "owned-log" | "public-doc"; reference: string; method: "GET"; url: string };
 export type BuiltCapability = { id: string; owner: string; version: 1; method: "GET"; url: string; evidence: CapabilityEvidence };

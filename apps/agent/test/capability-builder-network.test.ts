@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Event } from "tardie/core/event";
 import { BrowserLearning } from "../src/browser-learning.ts";
-import { fixedNetworkReads, ownedNetworkDefinitions } from "../src/capability-builder-network.ts";
+import { executableObservedReads, fixedNetworkReads, ownedNetworkDefinitions } from "../src/capability-builder-network.ts";
 import { ownedApiEvidence } from "../src/capability-builder.ts";
 async function observed(query = "") {
   const events: Event[] = []; let sequence = 0;
@@ -23,6 +23,13 @@ test("real native browser compiler evidence is reusable only with its graph and 
   expect(ownedNetworkDefinitions([{ type: "ToolReturned", result: prepared }])).toEqual([]);
   const altered = events.map(e => e === prepared ? { ...e, toolDigest: `sha256:${"0".repeat(64)}` } : e);
   expect(ownedNetworkDefinitions(altered)).toEqual([]);
+});
+test("indexed Merkle DAGs with caller bindings become host-executable skills; session-free compile is not enough", async () => {
+  const events = await observed("?locale=en");
+  const prepared = events.find(e => e.type === "BrowserNetworkToolPrepared")!;
+  expect(executableObservedReads(events)).toEqual([]);
+  expect(executableObservedReads([...events, { type: "AikoRequestMemoryIndexed", toolDigest: prepared.toolDigest }])).toHaveLength(1);
+  expect(executableObservedReads(events.filter(e => e.type !== "NetworkGraphCheckpointPrepared").concat([{ type: "AikoRequestMemoryIndexed", toolDigest: prepared.toolDigest }]))).toEqual([]);
 });
 test("native caller bindings and credential dependencies never become fixed public reads", async () => {
   const caller = await observed("?locale=en");

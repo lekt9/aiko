@@ -1,5 +1,5 @@
 import { canonicalStringify, sha256 } from "@unbrowse/browser-harness/har";
-import { ownedNetworkDefinitions } from "./capability-builder-network.ts";
+import { executableObservedReads, ownedNetworkDefinitions, ownedObservedActions } from "./capability-builder-network.ts";
 import { createHash } from "node:crypto";
 import { Effect, Schema } from "effect";
 import { actor } from "tardie";
@@ -14,7 +14,7 @@ import type { ConnectorEngine } from "./connectors.ts";
 import { replayCapabilities } from "./capability-builder.ts";
 import { validateWorkflowDefinition, type WorkflowRecord } from "./tool-workflows.ts";
 
-export const ROUTER_VERSION = "aiko-tool-router/4";
+export const ROUTER_VERSION = "aiko-tool-router/6";
 export type RouterMethod = "discover" | "describe" | "route" | "status";
 export type RouteState = "ready" | "needs_connection" | "needs_discovery" | "catalog_unavailable";
 export type AtomicTask = { id: string; query: string; domain?: string; arguments?: Record<string, unknown> };
@@ -24,6 +24,8 @@ export interface ToolRouterBinding {
   /** Trusted host reads exactly this owner's foreground log. Text/nested tool results are never authoritative history. */
   readOwnedEvents?: () => Promise<readonly Event[]>;
   listWorkflows?: () => Promise<WorkflowRecord[]>;
+  /** Host-approved Unlock vault domains for this owner. Never session material. */
+  vaultDomains?: () => Promise<readonly string[]>;
   redact?: (text: string) => string;
 }
 type Candidate = {
@@ -106,7 +108,7 @@ function rank(task: AtomicTask, candidates: Candidate[], history: ReturnType<typ
   }).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
 }
 async function snapshot(binding: ToolRouterBinding) {
-  const [catalog, connections, events] = await Promise.all([binding.engine.listCatalog(), binding.engine.connections(), binding.readOwnedEvents?.() ?? Promise.resolve([])]);
+  const [catalog, connections, events, vaultDomains] = await Promise.all([binding.engine.listCatalog(), binding.engine.connections(), binding.readOwnedEvents?.() ?? Promise.resolve([]), binding.vaultDomains?.() ?? Promise.resolve([])]);
   if (!Array.isArray(catalog) || !catalog.length || catalog.length > 30000) throw new Error("Catalog unavailable");
   const redact = binding.redact ?? (text => text);
   const candidates: Candidate[] = [];
@@ -123,20 +125,53 @@ async function snapshot(binding: ToolRouterBinding) {
   const capabilities = replayCapabilities({ owner: binding.owner, thread: `user-${binding.owner}`, redact }, events);
   const uniqueCapabilities = [...new Map(capabilities.map(c => [c.url, c])).values()];
   const generated: Candidate[] = uniqueCapabilities.map(c => ({ id: c.id, name: `GET ${c.url}`, description: `Read ${c.url}`, parent: "owned-capability", provider: "generated", domains: [new URL(c.url).hostname], inputSchema: { type: "object", properties: {}, additionalProperties: false }, requirements: {}, connected: true, evidenceId: c.evidence.id }));
-  const observed: Candidate[] = ownedNetworkDefinitions(events).map(e => ({
-    id: e.toolId, name: e.actionId, description: e.definition.steps.map(s => `${s.method} ${s.origin}${s.path}`).join("; "), parent: "owned-network", provider: "observed", domains: [...new Set(e.definition.steps.map(s => new URL(s.origin).hostname))],
+  const learned = executableObservedReads(events);
+  const learnedDigests = new Set(learned.map(e => e.toolDigest));
+  const observedCandidate = (e: (typeof learned)[number], ready: boolean): Candidate => ({
+    id: e.toolId, name: e.actionId, description: e.definition.steps.map(s => `${s.method} ${s.origin}${s.path}`).join("; "), parent: "owned-network", provider: "observed",
+    domains: [...new Set(e.definition.steps.map(s => new URL(s.origin).hostname))],
     inputSchema: { type: "object", properties: Object.fromEntries(e.definition.inputs.filter(i => i.source === "caller").map(i => [i.name, i.type === "json" ? {} : { type: i.type }])), required: e.definition.inputs.filter(i => i.required && i.source === "caller").map(i => i.name), additionalProperties: false },
-    requirements: { sessionRequirements: e.definition.sessionRequirements, vaultInputs: e.definition.inputs.filter(i => i.source === "vault").map(i => i.name), approval: "review_required", executable: false }, connected: false, reviewRequired: true, evidenceId: e.toolDigest,
-  }));
+    requirements: ready
+      ? { executeWith: "observed_network_run", merkle: e.toolDigest, sourceTraceDigest: e.sourceTraceDigest, reauthorizeEveryRun: true, execution: { tool: "observed_network_run", arguments: { toolDigest: e.toolDigest }, inputParameter: "inputs", inputEncoding: "json" } }
+      : { sessionRequirements: e.definition.sessionRequirements, vaultInputs: e.definition.inputs.filter(i => i.source === "vault").map(i => i.name), approval: "review_required", executable: false },
+    connected: ready, reviewRequired: !ready, evidenceId: e.toolDigest,
+  });
+  for (const e of learned) {
+    const candidate = observedCandidate(e, true);
+    if (redact(JSON.stringify(candidate)) !== JSON.stringify(candidate) || ids.has(candidate.id)) continue;
+    ids.add(candidate.id);
+    candidates.push(candidate);
+  }
+  const observed: Candidate[] = ownedNetworkDefinitions(events).filter(e => !learnedDigests.has(e.toolDigest)).map(e => observedCandidate(e, false));
+  for (const action of ownedObservedActions(events)) {
+    const domains = [...new Set(action.artifact.allowedOrigins.map(origin => new URL(origin).hostname))];
+    const candidate: Candidate = {
+      id: action.artifactDigest, name: action.actionId,
+      description: action.artifact.actions.flatMap(a => a.steps.map(s => `${s.method} ${s.origin}${s.path}`)).join("; "),
+      parent: "owned-network", provider: "observed",
+      domains,
+      inputSchema: { type: "object", properties: Object.fromEntries((action.artifact.actions[0]?.inputs ?? []).map(i => [i.name, i.type === "json" ? {} : { type: i.type }])), required: (action.artifact.actions[0]?.inputs ?? []).filter(i => i.required).map(i => i.name), additionalProperties: false },
+      requirements: {
+        executeWith: "observed_network_run", merkle: action.artifactDigest, sourceTraceDigest: action.importDigest, reauthorizeEveryRun: true,
+        effect: action.effect, session: action.sessionRequired ? "unlock-vault" : "none",
+        execution: { tool: "observed_network_run", arguments: { artifactDigest: action.artifactDigest }, inputParameter: "inputs", inputEncoding: "json" },
+        ...(action.effect === "write" ? { approval: "owner_required" } : {}),
+      },
+      connected: !action.sessionRequired || domains.every(d => vaultDomains.includes(d)), reviewRequired: action.effect === "write", evidenceId: action.artifactDigest,
+    };
+    if (redact(JSON.stringify(candidate)) !== JSON.stringify(candidate) || ids.has(candidate.id)) continue;
+    ids.add(candidate.id);
+    candidates.push(candidate);
+  }
   const history = historyFor(binding.owner, events);
   for(const record of await binding.listWorkflows?.()??[]) {
     if(record.owner!==binding.owner||record.reusable!==true||!record.provenance?.runId)continue;
     try { if(hashCanonicalWorkflow(record.definition)!==record.digest)continue; } catch { continue; }
-    const stepTools=record.definition.steps.map(step=>[...candidates,...generated].find(tool=>tool.id===step.toolId));
-    if(stepTools.some(tool=>!tool))continue;
-    // Generated steps retain their own Arcade absence gate even inside a reusable workflow.
+    const stepTools=record.definition.steps.map(step=>[...candidates,...generated,...observed].find(tool=>tool.id===step.toolId));
+    if(stepTools.some(tool=>!tool || (tool.provider === "observed" && !tool.connected)))continue;
+    // Generated and learned-network steps retain their Arcade absence gate even inside a reusable workflow.
     let allowed = true;
-    for(const tool of stepTools) if(tool!.provider === "generated") for(const domain of tool!.domains) {
+    for(const tool of stepTools) if(tool!.provider === "generated" || tool!.provider === "observed") for(const domain of tool!.domains) {
       const authority = await binding.engine.search(domain);
       if(authority.status!=="absent" || !authority.fallbackAllowed) allowed=false;
     }
@@ -145,7 +180,7 @@ async function snapshot(binding: ToolRouterBinding) {
     if(redact(JSON.stringify(workflow))!==JSON.stringify(workflow))continue;
     candidates.push(workflow);
   }
-  return { candidates, generated, observed, history, version: hash([ROUTER_VERSION, catalog.map(c => [c.id, c.toolkit, c.metadata]).sort((a,b) => String(a[0]).localeCompare(String(b[0]))), [...candidates].sort((a, b) => a.id.localeCompare(b.id)), generated, observed, [...history].sort()]) };
+  return { candidates, generated, observed, history, version: hash([ROUTER_VERSION, catalog.map(c => [c.id, c.toolkit, c.metadata]).sort((a,b) => String(a[0]).localeCompare(String(b[0]))), [...candidates].sort((a, b) => a.id.localeCompare(b.id)), generated, observed, [...history].sort(), [...vaultDomains].sort()]) };
 }
 function authoritySignature(result: Awaited<ReturnType<ToolRouterBinding["engine"]["search"]>>) { return hash([result.status, result.fallbackAllowed, result.connectors.map(c => c.id).sort()]); }
 function overall(tasks: TaskRoute[]): RouteState {
@@ -199,8 +234,8 @@ async function respond(binding: ToolRouterBinding, method: RouterMethod, input: 
       } else pool = [];
     }
     let ranked = rank(task, pool, current.history);
-    if (fallbackAllowed) ranked = rank(task, [...current.generated, ...current.observed, ...current.candidates.filter(c=>c.provider==="workflow")].filter(c => c.domains.includes(task.domain!)), current.history);
-    if (!ranked.length) ranked = rank(task, current.observed, current.history);
+    if (fallbackAllowed) ranked = rank(task, [...current.generated, ...current.observed, ...current.candidates.filter(c=>c.provider==="workflow"||c.provider==="observed")].filter(c => c.domains.includes(task.domain!)), current.history);
+    if (!ranked.length) ranked = rank(task, [...current.observed, ...current.candidates.filter(c=>c.provider==="observed")], current.history);
     const tools = bounded(ranked, 2).filter(tool => { const bytes = JSON.stringify(tool).length; if (bytes > remainingBytes) return false; remainingBytes -= bytes; return true; }); // At most 16 exact schemas for eight atomic tasks.
     const state: RouteState = tools.length ? tools.some(t => t.connected && t.history !== "unknown") ? "ready" : tools.every(t => t.history === "unknown" || t.reviewRequired) ? "needs_discovery" : "needs_connection" : "needs_discovery";
     tasks.push({ taskId: task.id, state, tools, fallbackAllowed, reason: tools.length ? "Ranked fine-grained schemas with parent provider, owned connection state and verified execution history; missingArguments must still be supplied; routing grants no action authority" : fallbackAllowed ? "Arcade confirms provider absence; discover or build a validated capability" : "No safe exact-schema match; refine this atomic task or provider. Absence has not been authorized" });

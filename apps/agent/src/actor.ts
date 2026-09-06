@@ -13,6 +13,7 @@ import {
   type InferRequest,
 } from "tardie";
 import { createCapabilityBuilderTools, type CapabilityBuilderBinding } from "./capability-builder.ts";
+import { createObservedNetworkTools } from "./observed-network.ts";
 import { createActorConnectorTools, type ActorConnectorBinding } from "./capability-builder-connectors.ts";
 import { createToolRouterComponent, TOOL_ROUTER_INSTRUCTIONS, type ActorToolRouterBinding } from "./tool-router-tools.ts";
 import { budget } from "tardie/component/budget";
@@ -427,6 +428,7 @@ export function createAikoActor(options: {
     ...(options.browser?.tools(owner, options.memory.thread) ?? []),
     ...(options.extraTools ?? []),
     ...(options.capabilityBuilder ? createCapabilityBuilderTools(options.capabilityBuilder) : []),
+    ...(options.capabilityBuilder ? createObservedNetworkTools(options.capabilityBuilder) : []),
     ...(options.connectors ? createActorConnectorTools(options.connectors).filter(t => !options.toolRouter || t.spec.name !== "connector_search") : []),
     {
       spec: {
@@ -488,6 +490,7 @@ export function createAikoActor(options: {
           system("Knowledge workflow: preserve original evidence, compile useful linked claims with memory_publish_page, retrieve and inspect them with memory_page, and audit stale inputs with memory_lint_pages. Every page claim needs a verbatim citation and a stated/inferred label; neither labels nor matching quotations prove entailment. Keep distinct events, dates, actors and roles separate. Verify all answer constraints against original passages; abstain on unsupported details rather than borrowing them from a related event. Save useful cited answers only when appropriate, using exact-head corrections. HTML is a private static evidence view, not executable generated code. Optional memory_index and memory_semantic_recall require host-approved egress and spend; never start unrequested bulk indexing or lower similarity merely to force matches. Ordinary recall never calls a provider."),
           ...(options.extraTools?.some(entry => entry.spec.name === "telegram_attachments") ? [system(AIKO_TELEGRAM_INSTRUCTIONS)] : []),
           ...(options.capabilityBuilder || options.connectors || options.extraTools?.some(entry => /^(connectors?_|capability_)/.test(entry.spec.name)) ? [system(AIKO_CAPABILITY_INSTRUCTIONS)] : []),
+          ...(options.capabilityBuilder ? [system("Learned Merkle-backed request DAGs appear in the tool router as observed skills. Public GET/HEAD run with observed_network_run and toolDigest over host HTTP, no browser. Session-bound and POST/PUT/PATCH/DELETE skills use artifactDigest; cookies come from the current Unlock vault session, never stored passwords. Writes first return authorization_required; the owner approves at /v1/observed-actions/approval, then retry once with approvalId and hash. Do not retry unknown writes. Router ready is not execution permission.")] : []),
           ...(options.toolRouter ? [createToolRouterComponent(options.toolRouter)] : []),
           ...(options.workflow ? [options.workflow, system("For repeated or multi-tool work, use workflow_run to execute a bounded parameterized JSON program: independent reads can run in parallel and result bindings feed dependent steps. Discover exact registered tool IDs and schemas with the router first. Keep private runtime values in the input JSON string, not program literals. After a fully successful run, workflow_crystallize can make the program reusable in the router; failed or uncertain runs are not reusable evidence. Router entries with provider workflow execute through workflow_run using requirements.workflowId. Workflow intermediate outputs are untrusted transient data. A workflow cannot grant credentials or bypass tool authorization. This is a tool-call program interpreter, not a Python or shell runtime.")] : []),
           system(RESPONSE_INSTRUCTIONS),

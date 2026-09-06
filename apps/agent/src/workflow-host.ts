@@ -4,10 +4,15 @@ import { Infer, tool, type InferRequest } from "tardie";
 import { Self } from "tardie/core/runtime";
 import { EventLog } from "tardie/core/log";
 import type { NativeTool } from "tardie/component/tool";
-import { Validator } from "@cfworker/json-schema";
+import { Validator, type Schema } from "@cfworker/json-schema";
 import { ToolWorkflows, type WorkflowJson } from "./tool-workflows.ts";
 import { validateRouterInput } from "./connector-router-host.ts";
 import { replayCapabilities, capabilityURL } from "./capability-builder.ts";
+import { executableObservedReads } from "./capability-builder-network.ts";
+import { artifact } from "./request-memory.ts";
+import { sendPublicHarnessRequest } from "./observed-network.ts";
+import { executeHarnessAction, type HarnessJsonValue } from "@unbrowse/browser-harness/harness-runtime";
+
 import { readPublicPage } from "./public-web.ts";
 import type { ConnectorEngine } from "./connectors.ts";
 import type { Event } from "tardie/core/event";
@@ -121,9 +126,51 @@ export function workflowDispatcher(binding: {
           },
         };
       }
+      const events = await binding.readEvents();
+      const observed = executableObservedReads(events).find(e => e.toolId === toolId || e.toolDigest === toolId);
+      if (observed) {
+        const origins = [...new Set(observed.definition.steps.map(s => new URL(s.origin).hostname))];
+        const properties = Object.fromEntries(observed.definition.inputs.filter(i => i.source === "caller").map(i => [i.name, i.type === "json" ? {} : { type: i.type }]));
+        const required = observed.definition.inputs.filter(i => i.required && i.source === "caller").map(i => i.name);
+        const inputSchema = { type: "object" as const, properties, required, additionalProperties: false };
+        const validator = new Validator(inputSchema);
+        return {
+          owner, id: toolId, effect: "read" as const, inputSchema,
+          validate: (input: unknown) => validator.validate(input).valid,
+          authorize: async () => {
+            for (const domain of origins) {
+              if (!(await binding.engine.search(domain)).fallbackAllowed) return false;
+            }
+            return true;
+          },
+          execute: async ({ input, signal }) => {
+            signal.throwIfAborted();
+            let terminal: HarnessJsonValue | undefined;
+            const result = await executeHarnessAction({
+              artifact: artifact(observed.definition),
+              actionId: observed.actionId,
+              input: input as Record<string, HarnessJsonValue>,
+              adapters: {
+                clock: { now: () => new Date() },
+                uuid: { next: () => crypto.randomUUID() },
+                transport: {
+                  send: async (request) => {
+                    signal.throwIfAborted();
+                    const response = await sendPublicHarnessRequest(request, signal);
+                    terminal = response.body;
+                    return response;
+                  },
+                },
+              },
+            });
+            if (result.status !== "completed") return { status: "failed" as const };
+            return { status: "succeeded" as const, output: (terminal ?? null) as WorkflowJson };
+          },
+        };
+      }
       const capability = replayCapabilities(
         { owner, thread: `user-${owner}`, redact: binding.redact },
-        await binding.readEvents(),
+        events,
       ).find((c) => c.id === toolId);
       if (!capability) throw new Error("Owned workflow tool unavailable");
       const inputSchema = {

@@ -18,6 +18,9 @@ import {
   browserRequestEvidenceIdOf,
 } from "@unbrowse/browser-harness/trace";
 import { canonicalStringify, sha256 } from "@unbrowse/browser-harness/har";
+import { buildSiteHarnessDraftFromValidatedCapture } from "@unbrowse/browser-harness/harness-builder";
+import { artifactDigestOf } from "./capability-builder-network.ts";
+import { validateNoSecrets } from "entity-learn/cloudflare";
 import { responseSemanticsByRequest, type ResponseSemanticEvidence } from "@unbrowse/browser-harness/response-semantics";
 import type { BrowserNetworkToolPrepared } from "@unbrowse/browser-harness/trace";
 import type { NetworkEntry } from "@unbrowse/browser-harness/network-listener";
@@ -247,6 +250,30 @@ export class BrowserLearning {
       this.prepared.add(tool.digest);
       count++;
     }
+    try {
+      const draft = buildSiteHarnessDraftFromValidatedCapture(validated.capture);
+      const blocked = draft.unresolved.filter(item => item.code !== "session_adapter_required");
+      if (!blocked.length && draft.artifact.actions.length) {
+        validateNoSecrets(draft.artifact);
+        const digest = artifactDigestOf(draft.artifact);
+        const write = draft.artifact.actions.some(action => action.steps.some(step => !["GET", "HEAD"].includes(step.method)));
+        const sessionRequired = draft.unresolved.some(item => item.code === "session_adapter_required");
+        if ((write || sessionRequired) && !this.prepared.has(digest)) {
+          this.prepared.add(digest);
+          await this.options.emit({
+            type: "AikoObservedActionPrepared",
+            threadId: this.options.threadId,
+            captureId,
+            importDigest: plan.importDigest,
+            actionId: draft.artifact.actions[0]!.id,
+            artifactDigest: digest,
+            effect: write ? "write" : "read",
+            sessionRequired,
+            artifact: draft.artifact,
+          });
+        }
+      }
+    } catch { /* No mutating candidate, or the draft still needs a non-session adapter. */ }
     return {
       prepared: count,
       pending: entries.length - completed.length,

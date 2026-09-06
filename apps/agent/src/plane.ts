@@ -48,6 +48,7 @@ export const planeManifest = {
     { method: "GET", path: "/v1/memory/knowledge/{observationId}" },
     { method: "GET", path: "/v1/browser" },
     { method: "POST", path: "/v1/browser/approval" },
+    { method: "POST", path: "/v1/observed-actions/approval", body: { id: "approval id", hash: "payload hash", decision: "approve | reject" } },
   ],
   isolation:
     "private account log, memory database and browser profile; not arbitrary-code OS isolation",

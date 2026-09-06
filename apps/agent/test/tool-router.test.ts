@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { createBunHost } from "tardie/bun/host";
 import type { Event } from "tardie/core/event";
 import { createToolRouterActor, routerEventKey, type ToolRouterBinding, type RouterMethod } from "../src/tool-router.ts";
+import { BrowserLearning } from "../src/browser-learning.ts";
+import { ownedNetworkDefinitions } from "../src/capability-builder-network.ts";
 import type { ConnectorDescription, Connection } from "../src/connectors.ts";
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -112,6 +114,25 @@ test("read-only email intent cannot select triage, label, send or delete tools",
 });
 
 
+test("indexed Merkle network DAGs become ready observed skills that execute without the browser", async () => {
+  const f = await fixture();
+  const events: Event[] = [];
+  let sequence = 0;
+  const learning = new BrowserLearning({ threadId: "owned-trace", nextSequence: () => ++sequence, emit: async e => { events.push(e); } });
+  const entry = { startedDateTime: new Date(1000).toISOString(), time: 20, _observationComplete: true, request: { method: "GET", url: "https://api.vendor.com/catalog/items", headers: [], cookies: [] }, response: { status: 200, headers: [], cookies: [], content: { mimeType: "application/json", size: 12, text: '{\"items\":[]}' } } };
+  await learning.observe(entry, 0, true);
+  await learning.compile([entry], [{ callId: "call", action: "navigate", startedAtMs: 999, endedAtMs: 1050, direct: true, resultObserved: true }], "https://api.vendor.com");
+  const prepared = ownedNetworkDefinitions(events)[0]!;
+  f.owned.push(...events);
+  f.setAbsent();
+  const before = await f.call("route", { tasks: [{ id: "items", query: "vendor api network", domain: "api.vendor.com" }] });
+  expect(before.tasks[0].tools.some((t: {provider:string; connected?: boolean}) => t.provider === "observed" && t.connected)).toBe(false);
+  f.owned.push({ type: "AikoRequestMemoryIndexed", toolDigest: prepared.toolDigest });
+  const result = await f.call("route", { tasks: [{ id: "items", query: "vendor api network", domain: "api.vendor.com" }] });
+  expect(result.tasks[0]).toMatchObject({ state: "ready" });
+  expect(result.tasks[0].tools[0]).toMatchObject({ provider: "observed", connected: true, reviewRequired: false, evidenceId: prepared.toolDigest, requirements: { executeWith: "observed_network_run" } });
+  expect(await f.call("describe", { toolIds: [prepared.toolId] })).toMatchObject({ state: "ready", tools: [{ id: prepared.toolId, requirements: { executeWith: "observed_network_run" } }] });
+});
 test("collection search favors query schemas over unknown IDs and unrequested folders", async () => {
   const f = await fixture();
   f.catalog.push(entry("GetEmail", "Gmail", "Find unread email messages in Gmail by email ID", "gmail.com", "email_id"), entry("ListDraftEmails", "Gmail", "Find email messages in Gmail drafts", "gmail.com", "limit"), entry("SearchEmails", "Gmail", "Search email messages using a query", "gmail.com", "query"));

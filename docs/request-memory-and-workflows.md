@@ -1,15 +1,17 @@
 # Request memory and reusable tool workflows
 
-Aiko learns how to fetch information again. The browser VM indexes an observed response with a local, pinned MiniLM embedding and stores its request pointer, schema, and dependency graph through the `entity-learn` library. Raw response bodies are transient. A semantic search finds pointers; hydration executes their observed GET/HEAD dependencies and supplies fresh results to the current inference context.
+Aiko learns how to fetch information again. The browser VM indexes an observed response with a local, pinned MiniLM embedding and stores its request pointer, schema, and dependency graph through the `entity-learn` library. Raw response bodies are transient. A semantic search finds pointers. Session-bound hydration can still recompute inside the owned browser. Indexed public GET/HEAD DAGs are also promoted into the tool router as observed skills and execute on host HTTP **without starting Chromium**.
 
 ```mermaid
 flowchart LR
   Browser[Owned browser capture] --> Compiler[Playground native compiler]
   Compiler --> Memory[Request pointers + DAG + vectors]
   Query[Semantic query] --> Memory
-  Memory --> Replay[Replay dependencies in owned browser]
+  Memory --> Host[Public host HTTP DAG replay]
+  Memory --> Replay[Session hydrate in owned browser]
+  Host --> Router[Tool router observed skill]
   Replay --> Context[Transient response context]
-  Router[Tool router] --> Workflow[Reusable workflow program]
+  Router --> Workflow[Reusable workflow program]
   Workflow --> Tools[Current registered tools]
   Tools --> Context
   Workflow --> Success[Confirmed successful run]
@@ -19,7 +21,11 @@ flowchart LR
 ## Browser request memory
 
 - `request_memory_search` searches the response embeddings, returning pointers and required caller inputs.
-- `request_memory_hydrate` recomputes a pointer from current responses. Dependency bindings use the current upstream result rather than an old captured value.
+- `request_memory_hydrate` recomputes a pointer from current responses inside the owned browser session. Dependency bindings use the current upstream result rather than an old captured value.
+- `observed_network_run` executes a Merkle-validated DAG over host HTTP **without Chromium**. Public GET/HEAD use `toolDigest`. Session-bound and POST/PUT/PATCH/DELETE skills use `artifactDigest` from `AikoObservedActionPrepared`.
+- Cookies come from the owner's **current** Unlock vault session at send time. Passwords stay in the vault login recipe and are never copied into the artifact, router, or tool receipt. CSRF and other response-bound values are produced from prior GET steps, not stored secrets.
+- Writes first return `authorization_required`. The owner approves at `POST /v1/observed-actions/approval` with `{id,hash,decision}`, then retries once with `approvalId` and `hash`. An unknown outcome is never retried automatically.
+- The tool router lists public reads as ready observed skills after indexing, and lists session/write skills with `executeWith: "observed_network_run"`. Session skills are `connected` only when the owner has a vault assignment for those domains.
 - Native playground observation/compiler/runtime modules are imported directly from the linked `@unbrowse/browser-harness` package; `entity-learn` is imported from `packages/entity-learn`.
 - The local embedding model is `Xenova/all-MiniLM-L6-v2`, revision `751bff37182d3f1213fa05d7196b954e230abad9`, quantized CPU inference, 384 dimensions. Text is not sent to an embedding API. Only public model assets are downloaded.
 - The trusted browser session supplies implicit cookies. Explicit authorization headers, writes, missing dependencies, unsafe destinations, and unresolved session requirements cannot be replayed through this path.
