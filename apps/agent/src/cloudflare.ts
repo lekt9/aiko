@@ -46,7 +46,7 @@ import {
 } from "./background.ts";
 import { threadBinding, backgroundThread } from "./account-binding.ts";
 import { memoryScope, memoryTools, openMemory, type MemoryBinding } from "./memory.ts";
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { CodeHarness } from "./code-harness.ts";
 import { createCodeChildActor } from "./code-agents.ts";
 import { createCloudflareCapabilities } from "./cloudflare-capabilities.ts";
@@ -75,6 +75,10 @@ import {
 import { withSpokenHistory } from "./inference.ts";
 import { controlApi } from "./control-api.ts";
 import { requestMemoryEventKey } from "./request-memory-events.ts";
+import { observedActionEventKey } from "./observed-network.ts";
+import { retrieveUnlockSession } from "./unlock-session.ts";
+import { createActionApprovals } from "./action-approval.ts";
+import { EventLog, withWatermark } from "tardie/core/log";
 import { planeManifest, planeMemoryRead } from "./plane.ts";
 import { validateLearningInput } from "./learning.ts";
 import { learningFromBrowserTrace } from "./unbrowse-learning.ts";
@@ -237,6 +241,14 @@ function telegramOf(
 }
 
 /** A durable inventory only; it never holds conversations, credentials, or entity memory. */
+/**
+ * Account object naming epoch. Bumping this abandons (and effectively resets)
+ * every wedged account object: fresh names recreate empty objects while the
+ * durable registry keyed by raw owner id still admits the same accounts.
+ */
+const ACCOUNT_OBJECT_EPOCH = "v2";
+export const accountObjectName = (owner: string) => `${ACCOUNT_OBJECT_EPOCH}:${owner}`;
+
 export class AikoRegistryDO extends DurableObject<AikoCloudflareEnv> {
   constructor(ctx: DurableObjectState, env: AikoCloudflareEnv) {
     super(ctx, env);
@@ -304,7 +316,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
   private bind(owner: string) {
     if (
       !safeUserId(owner) ||
-      (this.ctx.id.name !== undefined && this.ctx.id.name !== owner)
+      (this.ctx.id.name !== undefined &&
+        this.ctx.id.name !== accountObjectName(owner))
     )
       throw new Error("Invalid account object binding");
     if (this.owner !== undefined && this.owner !== owner)
@@ -410,7 +423,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       store:workflowStore,
       dispatcher:workflowDispatcher({owner,engine:connectors,redact,readEvents:()=>host.read(`user-${owner}`)}),guard:validateRouterInput,
     },redact);
-    const routerBinding = { owner, engine: connectors, redact, readOwnedEvents: () => host.read(`user-${owner}`), listWorkflows:()=>workflows.engine.list() };
+    const routerBinding = { owner, engine: connectors, redact, readOwnedEvents: () => host.read(`user-${owner}`), listWorkflows:()=>workflows.engine.list(), vaultDomains: async () => Object.keys(config.connectorVault?.accounts[owner]?.connections ?? {}) };
     const route = routerCaller(routerBinding, () => host);
     const telegramTyping = telegram && createTelegramTyping(owner, telegram, { waitForDelivery: true });
     const telegramTools = telegram
@@ -485,6 +498,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         telegramEventKey(e) ??
         browserTraceKeys.keyOf(e) ??
         requestMemoryEventKey(e) ??
+        observedActionEventKey(e) ??
         harKeys.keyOf(e) ??
         (e.type === "AikoControlReply"
           ? `aiko-control:${e.id}`
@@ -523,7 +537,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                     workflow: workflows.component(),
                     workflowTools: workflows.codeTools(),
                     codeHarness: harnessFor(thread),
-                    capabilityBuilder: { owner, thread, redact, checkArcade: async domain => (await connectors.search(domain)).fallbackAllowed },
+                    capabilityBuilder: { owner, thread, redact, checkArcade: async domain => (await connectors.search(domain)).fallbackAllowed,
+                      session: (origin, signal) => retrieveUnlockSession({ owner, origin, config: config.connectorVault, search: domain => connectors.search(domain), signal }) },
                     connectors: { owner, thread, engine: connectors, deliverConnection: async (input, signal) => {
                       if (!telegram || input.owner !== owner) return { status: "rejected" as const };
                       const wording = compose ? await compose(input.text, signal) : undefined;
@@ -1064,6 +1079,13 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
           observations: [],
         },
       );
+    if (path === "/api/observed-actions/approval" && request.method === "POST") {
+      const log = withWatermark({
+        read: Effect.promise(() => host.read(thread)),
+        append: events => Effect.promise(async () => { for (const event of events) await host.commitRoot(host.self(thread), event); }),
+      });
+      return Effect.runPromise(createActionApprovals({ owner, thread }).handleDecision(request, () => Effect.succeed({ owner, subject: `account:${owner}`, authenticated: true as const })).pipe(Effect.provideService(EventLog, log)));
+    }
     if (["/api/browser/approval", "/api/approvals"].includes(path) && request.method === "POST") {
       let body;
       try {
@@ -1238,7 +1260,7 @@ export default {
         );
       const config = configOf(env);
       if (url.pathname.startsWith("/connect/oauth/") && !config.arcadeOAuthEnabled) return new Response("App OAuth connections are temporarily unavailable.", {status:404,headers:{"cache-control":"no-store"}});
-      if (url.pathname.startsWith("/connect/oauth/")) return oauthBrowserRoute(request,config.operatorToken,(owner,id,action,flowId)=>env.AIKO_ACCOUNTS.getByName(owner).oauthConnection(owner,id,action,flowId));
+      if (url.pathname.startsWith("/connect/oauth/")) return oauthBrowserRoute(request,config.operatorToken,(owner,id,action,flowId)=>env.AIKO_ACCOUNTS.getByName(accountObjectName(owner)).oauthConnection(owner,id,action,flowId));
       if (
         ["/health", "/ready"].includes(url.pathname) &&
         request.method === "GET"
@@ -1343,7 +1365,7 @@ export default {
         if (!(await registry.admit(owner, config.maxAccounts)))
           return json({ error: "limited" }, 429);
         const inbound = received.inbound;
-        const pending = env.AIKO_ACCOUNTS.getByName(owner).acceptTelegram(
+        const pending = env.AIKO_ACCOUNTS.getByName(accountObjectName(owner)).acceptTelegram(
           owner,
           inbound,
         );
@@ -1393,7 +1415,7 @@ export default {
           typeof body.text !== "string" || !body.text.trim() || body.text.length > 12_000)
           return json({ error: "invalid_body" }, 400);
         if (!(await registry.list()).some(entry => entry.owner === body.account)) return json({ error: "not_found" }, 404);
-        const status = await env.AIKO_ACCOUNTS.getByName(body.account).acceptOperatorMessage(body.account, body.id, body.text);
+        const status = await env.AIKO_ACCOUNTS.getByName(accountObjectName(body.account)).acceptOperatorMessage(body.account, body.id, body.text);
         return json({ status, id: `operator:${body.id}`, channel: "telegram" }, status === "conflict" ? 409 : 202);
       }
       if (
@@ -1407,7 +1429,7 @@ export default {
         const accounts = [];
         for (const owner of owners)
           accounts.push(
-            await env.AIKO_ACCOUNTS.getByName(owner).describe(owner),
+            await env.AIKO_ACCOUNTS.getByName(accountObjectName(owner)).describe(owner),
           );
         return json({
           operator: principal.operator,
@@ -1442,7 +1464,7 @@ export default {
         !(await registry.admit(owner, config.maxAccounts))
       )
         return json({ error: "limited" }, 429);
-      return await env.AIKO_ACCOUNTS.getByName(owner).handle(
+      return await env.AIKO_ACCOUNTS.getByName(accountObjectName(owner)).handle(
         owner,
         request,
         principal,
