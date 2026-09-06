@@ -20,8 +20,8 @@ import { sha256 } from "@unbrowse/browser-harness/har";
 export interface ObservedNetworkBinding extends CapabilityBuilderBinding {
   /** Test/host override. Production uses pinned public DNS. */
   send?: HarnessTransport["send"];
-  /** Host-only vault session. Cookies never appear in tool arguments or receipts. */
-  session?: (origin: string, signal: AbortSignal) => Promise<UnlockSessionGrant | undefined>;
+  /** Host-only vault session. Cookies never appear in tool arguments or receipts. Accepts a static grant (host-pinned material) or a resolver that fetches fresh vault cookies. */
+  session?: UnlockSessionGrant | ((origin: string, signal: AbortSignal) => Promise<UnlockSessionGrant | undefined>);
 }
 
 const WRITE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -215,8 +215,11 @@ export function createObservedNetworkTools(binding: ObservedNetworkBinding): Nat
           return { status: "unknown", reason: "Prior write attempt may have completed; inspect the app before retrying" };
         let grant: UnlockSessionGrant | undefined;
         if (sessionNeeded) {
-          if (!binding.session) throw new Error("Unlock session is unavailable");
-          grant = yield* Effect.promise(() => binding.session!(origins[0]!, context.signal));
+          const source = binding.session;
+          if (!source) throw new Error("Unlock session is unavailable");
+          grant = typeof source === "function"
+            ? yield* Effect.promise(() => source(origins[0]!, context.signal))
+            : source;
           if (!grant?.cookies.length) throw new Error("Unlock session is unavailable");
           for (const origin of origins) {
             const host = new URL(origin).hostname;

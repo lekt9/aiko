@@ -173,9 +173,11 @@ export function createActionApprovals(binding: { owner: string; thread: string; 
     if (request.method !== "POST") return new Response(null, { status: 405 });
     const human = yield* authenticate(request).pipe(Effect.catchCause(() => Effect.succeed(undefined)));
     if (!human || human.authenticated !== true || human.owner !== owner) return new Response(null, { status: 403 });
-    const body = yield* Effect.tryPromise(() => request.json()).pipe(Effect.catch(() => Effect.succeed(null)));
-    if (!body || typeof body !== "object" || Object.keys(body).some(k => !["id", "hash", "decision"].includes(k)) || typeof body.id !== "string" || typeof body.hash !== "string" || !["approve", "reject"].includes(body.decision)) return new Response(null, { status: 400 });
-    return yield* decide(human, body).pipe(Effect.map(state => Response.json(state, { headers: { "Cache-Control": "no-store" } })), Effect.catch(() => Effect.succeed(new Response(null, { status: 409 }))));
+    const decoded = yield* Effect.tryPromise<unknown>(() => request.json()).pipe(Effect.catch(() => Effect.succeed(null)));
+    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return new Response(null, { status: 400 });
+    const body = decoded as Record<string, unknown>;
+    if (Object.keys(body).some(k => !["id", "hash", "decision"].includes(k)) || typeof body.id !== "string" || typeof body.hash !== "string" || (body.decision !== "approve" && body.decision !== "reject")) return new Response(null, { status: 400 });
+    return yield* decide(human, { id: body.id, hash: body.hash, decision: body.decision }).pipe(Effect.map(state => Response.json(state, { headers: { "Cache-Control": "no-store" } })), Effect.catch(() => Effect.succeed(new Response(null, { status: 409 }))));
   });
   return { prepare, get, decide, cancel, markUnknown, dispatch, handleDecision };
 }

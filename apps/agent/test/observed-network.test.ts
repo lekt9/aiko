@@ -30,6 +30,8 @@ async function compiled(query = "") {
   return events;
 }
 
+const STALE_SID = { name: "sid", value: "SECRET_COOKIE", domain: ".vendor.com", path: "/", expires: -1, secure: true, httpOnly: true, sameSite: "Lax" as const, hostOnly: false };
+
 function logOf(events: Event[]) {
   return {
     read: Effect.sync(() => events),
@@ -122,4 +124,67 @@ test("vault cookies are attached at send time and never stored on the learned wr
   expect(headers.join("")).toContain("SECRET_COOKIE");
   expect(JSON.stringify(result)).not.toContain("SECRET_COOKIE");
   expect(JSON.stringify(result)).not.toContain("set-cookie");
+});
+
+test("a producer's fresh Set-Cookie recomputes the session cookie for later steps; the log records value-free events", async () => {
+  const events = await compiledWrite();
+  const action = ownedObservedActions(events)[0]!;
+  const inputs = Object.fromEntries(action.artifact.actions[0]!.inputs.map(i => [i.name, i.name.includes("title") ? "n" : "items"]));
+  const session = { connectionId: "conn", revision: "1", domains: ["vendor.com", "api.vendor.com"], cookies: [STALE_SID] };
+  const cookies: string[] = [];
+  const send = async (request: { headers: Record<string, string> }): Promise<HarnessTransportResponse> => {
+    cookies.push(request.headers.cookie ?? "");
+    if (cookies.length === 1) return { status: 200, headers: {}, classification: "application", body: { csrf: "fresh" }, setCookies: ["sid=QnJhbmROZXdWYWx1ZQ"] };
+    return { status: 201, headers: {}, classification: "application", body: { ok: true } };
+  };
+  const pending = await run(events, { artifactDigest: action.artifactDigest, inputs }, { session, send });
+  expect(pending).toMatchObject({ status: "authorization_required", effect: "write" });
+  await Effect.runPromise(createActionApprovals({ owner: "123", thread: "user-123" }).decide(
+    { owner: "123", subject: "account:123", authenticated: true },
+    { id: (pending as any).approvalId, hash: (pending as any).hash, decision: "approve" },
+  ).pipe(Effect.provideService(EventLog, logOf(events))));
+  const result = await run(events, { artifactDigest: action.artifactDigest, inputs, approvalId: (pending as any).approvalId, hash: (pending as any).hash }, {
+    callId: "c2",
+    session,
+    send,
+  });
+  expect(result).toMatchObject({ status: "completed", effect: "write", browser: false, session: true });
+  // The GET carried the vault cookie; the POST rode the freshly recomputed one.
+  expect(cookies[0]).toBe("sid=SECRET_COOKIE");
+  expect(cookies[1]).toBe("sid=QnJhbmROZXdWYWx1ZQ");
+  const lifecycle = events.filter(e => ["AikoObservedSessionResolved", "AikoUnlockSessionRenewed", "AikoObservedHeadersRecomputed"].includes(e.type));
+  expect(lifecycle.filter(e => e.type === "AikoObservedSessionResolved")).toHaveLength(2);
+  const recomputed = lifecycle.find(e => e.type === "AikoObservedHeadersRecomputed");
+  expect(recomputed).toMatchObject({ owner: "123", artifactDigest: action.artifactDigest, sessions: 2, cookies: 1, cookieNames: ["sid"] });
+  expect(JSON.stringify(lifecycle)).not.toContain("SECRET_COOKIE");
+  expect(JSON.stringify(lifecycle)).not.toContain("QnJhbmROZXdWYWx1ZQ");
+});
+
+test("a renewed grant is recorded as ordered lifecycle events before replay", async () => {
+  const events = await compiledWrite();
+  const action = ownedObservedActions(events)[0]!;
+  const inputs = Object.fromEntries(action.artifact.actions[0]!.inputs.map(i => [i.name, i.name.includes("title") ? "n" : "items"]));
+  const pending = await run(events, { artifactDigest: action.artifactDigest, inputs }, {
+    session: async () => ({ connectionId: "conn", revision: "7", domains: ["vendor.com", "api.vendor.com"], cookies: [STALE_SID], renewed: true }),
+    send: async () => ({ status: 201, headers: {}, classification: "application" as const, body: { ok: true } }),
+  });
+  expect(pending).toMatchObject({ status: "authorization_required" });
+  await Effect.runPromise(createActionApprovals({ owner: "123", thread: "user-123" }).decide(
+    { owner: "123", subject: "account:123", authenticated: true },
+    { id: (pending as any).approvalId, hash: (pending as any).hash, decision: "approve" },
+  ).pipe(Effect.provideService(EventLog, logOf(events))));
+  const result = await run(events, { artifactDigest: action.artifactDigest, inputs, approvalId: (pending as any).approvalId, hash: (pending as any).hash }, {
+    callId: "c2",
+    session: async () => ({ connectionId: "conn", revision: "7", domains: ["vendor.com", "api.vendor.com"], cookies: [STALE_SID], renewed: true }),
+    send: async () => ({ status: 201, headers: {}, classification: "application" as const, body: { ok: true } }),
+  });
+  expect(result).toMatchObject({ status: "completed", session: true });
+  const lifecycle = events.filter(e => ["AikoObservedSessionResolved", "AikoUnlockSessionRenewed"].includes(e.type));
+  expect(lifecycle).toHaveLength(4); // renewed+resolved on the prepare run, then again on the dispatch run
+  expect(lifecycle.map(e => e.type)).toEqual([
+    "AikoUnlockSessionRenewed", "AikoObservedSessionResolved",
+    "AikoUnlockSessionRenewed", "AikoObservedSessionResolved",
+  ]);
+  expect(lifecycle[0]).toMatchObject({ owner: "123", connectionId: "conn", revision: "7" });
+  expect(JSON.stringify(lifecycle)).not.toContain("SECRET_COOKIE");
 });

@@ -76,7 +76,7 @@ import { withSpokenHistory } from "./inference.ts";
 import { controlApi } from "./control-api.ts";
 import { requestMemoryEventKey } from "./request-memory-events.ts";
 import { observedActionEventKey } from "./observed-network.ts";
-import { retrieveUnlockSession } from "./unlock-session.ts";
+import { ensureUnlockSession } from "./unlock-session.ts";
 import { createActionApprovals } from "./action-approval.ts";
 import { EventLog, withWatermark } from "tardie/core/log";
 import { planeManifest, planeMemoryRead } from "./plane.ts";
@@ -538,7 +538,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                     workflowTools: workflows.codeTools(),
                     codeHarness: harnessFor(thread),
                     capabilityBuilder: { owner, thread, redact, checkArcade: async domain => (await connectors.search(domain)).fallbackAllowed,
-                      session: (origin, signal) => retrieveUnlockSession({ owner, origin, config: config.connectorVault, search: domain => connectors.search(domain), signal }) },
+                      session: (origin, signal) => ensureUnlockSession({ owner, origin, config: config.connectorVault, search: domain => connectors.search(domain), signal, renew: true }) },
                     connectors: { owner, thread, engine: connectors, deliverConnection: async (input, signal) => {
                       if (!telegram || input.owner !== owner) return { status: "rejected" as const };
                       const wording = compose ? await compose(input.text, signal) : undefined;
