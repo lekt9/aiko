@@ -191,22 +191,36 @@ export class CatalogIndex {
 export class CatalogCache {
   private snapshot?: { value: CatalogSnapshot; until: number };
   private loading?: Promise<CatalogSnapshot>;
+  private revalidating?: Promise<void>;
   private failedUntil = 0;
   private providers?: { value: ConnectorAuthProvider[]; until: number };
   private providersLoading?: Promise<ConnectorAuthProvider[]>;
+  private providersRevalidating?: Promise<void>;
   private providersFailedUntil = 0;
   async catalog(api: CatalogAPI, text: (v: string) => string): Promise<CatalogSnapshot> {
     if (this.snapshot && this.snapshot.until > Date.now()) return this.snapshot.value;
     if (this.loading) return this.loading;
     if (this.failedUntil > Date.now()) throw new Error("Catalog temporarily unavailable");
-    this.loading = fetchCatalog(api, text).then(value => { this.snapshot = { value, until: Date.now() + 300000 }; return value; }, error => { this.snapshot = undefined; this.failedUntil = Date.now() + 5000; throw error; }).finally(() => { this.loading = undefined; });
+    // A stale snapshot serves immediately while a refresh runs in the background;
+    // a cold Arcade page walk takes tens of seconds and must not stall callers.
+    if (this.snapshot) {
+      if (!this.revalidating)
+        this.revalidating = fetchCatalog(api, text).then(value => { this.snapshot = { value, until: Date.now() + 1_800_000 }; }, () => undefined).finally(() => { this.revalidating = undefined; });
+      return this.snapshot.value;
+    }
+    this.loading = fetchCatalog(api, text).then(value => { this.snapshot = { value, until: Date.now() + 1_800_000 }; return value; }, error => { this.snapshot = undefined; this.failedUntil = Date.now() + 5000; throw error; }).finally(() => { this.loading = undefined; });
     return this.loading;
   }
   async authProviders(api: CatalogAPI, text: (v: string) => string): Promise<ConnectorAuthProvider[]> {
     if (this.providers && this.providers.until > Date.now()) return this.providers.value;
     if (this.providersLoading) return this.providersLoading;
     if (this.providersFailedUntil > Date.now()) throw new Error("Auth providers temporarily unavailable");
-    this.providersLoading = fetchAuthProviders(api, text).then(value => { this.providers = { value, until: Date.now() + 300000 }; return value; }, error => { this.providers = undefined; this.providersFailedUntil = Date.now() + 5000; throw error; }).finally(() => { this.providersLoading = undefined; });
+    if (this.providers) {
+      if (!this.providersRevalidating)
+        this.providersRevalidating = fetchAuthProviders(api, text).then(value => { this.providers = { value, until: Date.now() + 1_800_000 }; }, () => undefined).finally(() => { this.providersRevalidating = undefined; });
+      return this.providers.value;
+    }
+    this.providersLoading = fetchAuthProviders(api, text).then(value => { this.providers = { value, until: Date.now() + 1_800_000 }; return value; }, error => { this.providers = undefined; this.providersFailedUntil = Date.now() + 5000; throw error; }).finally(() => { this.providersLoading = undefined; });
     return this.providersLoading;
   }
 }

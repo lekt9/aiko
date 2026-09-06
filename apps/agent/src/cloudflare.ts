@@ -330,7 +330,18 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
   }
   private open(owner: string) {
     this.bind(owner);
-    return (this.runtime ??= this.makeRuntime(owner));
+    // A failed runtime must not stay cached: a rejected promise here wedges the
+    // account object until isolate eviction, stranding every ingress route.
+    if (!this.runtime)
+      this.runtime = this.makeRuntime(owner).catch((error) => {
+        this.runtime = undefined;
+        console.error(
+          "account_runtime_boot_failed",
+          error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 400) : "unknown",
+        );
+        throw error;
+      });
+    return this.runtime;
   }
   private async makeRuntime(owner: string) {
     const config = configOf(this.env);

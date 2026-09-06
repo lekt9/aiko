@@ -39,7 +39,7 @@ await api("setMyCommands", {commands,scope});
 const confirmedCommands = await api("getMyCommands", {scope});
 if (JSON.stringify(confirmedCommands) !== JSON.stringify(commands)) throw new Error("Telegram commands were not verified");
 // Configures native navigation without sending chat messages.
-await api("setChatMenuButton", { menu_button: { type: "web_app", text: "Connect", web_app: { url } } });
+await api("setChatMenuButton", { menu_button: { type: "web_app", text: "Connect apps", web_app: { url } } });
 const result = await api("getChatMenuButton", {}) as { type?: string; text?: string; web_app?: { url?: string } };
 if (result.type !== "web_app" || result.web_app?.url !== url) throw new Error("Telegram menu verification failed");
 await mkdir("artifacts/connectors", { recursive: true });
