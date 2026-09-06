@@ -1,0 +1,12 @@
+{
+  "full_name": "modelcontextprotocol/typescript-sdk",
+  "description": "The official TypeScript SDK for Model Context Protocol servers and clients",
+  "html_url": "https://github.com/modelcontextprotocol/typescript-sdk",
+  "stargazers_count": 13329,
+  "archived": false,
+  "pushed_at": "2026-09-05T04:07:56Z",
+  "default_branch": "main",
+  "license": "NOASSERTION",
+  "commit": "5119ee7fd7790e335a3fb60ef36f85334e2a6326",
+  "checked_at": "2026-09-05T08:55:38.570280+00:00"
+}

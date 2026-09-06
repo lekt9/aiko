@@ -1,0 +1,45 @@
+/* Hallmark · locked Cobalt tokens · locally hosted font assets */
+:root {
+  --color-paper: oklch(98.3% 0.004 260);
+  --color-surface: oklch(100% 0 0);
+  --color-sidebar: oklch(97.2% 0.008 260);
+  --color-subtle: oklch(96% 0.009 260);
+  --color-ink: oklch(25% 0.032 260);
+  --color-secondary: oklch(42% 0.029 260);
+  --color-muted: oklch(48% 0.027 260);
+  --color-faint: oklch(53% 0.024 260);
+  --color-line: oklch(90.8% 0.012 260);
+  --color-line-strong: oklch(80% 0.018 260);
+  --color-accent: oklch(49% 0.215 265);
+  --color-accent-hover: oklch(43% 0.215 265);
+  --color-accent-soft: oklch(95% 0.025 265);
+  --color-positive: oklch(39% 0.094 163);
+  --color-positive-bg: oklch(96% 0.023 163);
+  --color-warning: oklch(42% 0.091 65);
+  --color-warning-bg: oklch(97.5% 0.023 80);
+  --color-warning-line: oklch(89% 0.063 80);
+  --color-danger: oklch(45% 0.17 25);
+  --color-danger-bg: oklch(97% 0.014 25);
+  --color-code: oklch(23% 0.028 262);
+  --color-code-ink: oklch(91% 0.028 255);
+  --color-backdrop: oklch(20% 0.035 260 / 0.35);
+  --color-shadow: oklch(20% 0.035 260 / 0.08);
+  --font-display: "Space Grotesk", sans-serif;
+  --font-body: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --radius-small: 5px;
+  --radius-medium: 8px;
+  --radius-large: 12px;
+  --motion-fast: 140ms;
+  --motion-enter: 180ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+}

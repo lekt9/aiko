@@ -1,0 +1,47 @@
+{
+  "source": "/home/deck/work/unbrowse-playground",
+  "head": "086b37ea622c55d3cb1fc6126c93c812e26cc110",
+  "dirty": true,
+  "originalFiles": {
+    "src/agent-browser-client.ts": "33d33ed84875c20d34835584a68ef54e706ba8e143924f563a553e42a5837a31",
+    "src/browse-harness-contract.ts": "c1f7aacdb27a4baf7bd34a973f045a7dd58701b12abcfdba74f936dfae8132c5",
+    "src/browser-trace.ts": "ea25ee597815bb3101134eb51f0c9a1004c23a9a08e09f1bd04543e634658fd4",
+    "src/har.ts": "35ab51a523fa295a36ed9d72c1fee5bb0ff382d6f591c4d79b6824d5fb0f0a96",
+    "src/harness-artifact.ts": "390d5aa6e3bb35036c66227a1c096227034e511f219a744c847659acd5bd8b76",
+    "src/network-tool-catalog.ts": "4cc9e97ad4607f561be030541193220d677e22bde55eb2d0d0dc4619752ea55a",
+    "test/agent-browser-client.test.ts": "6297ece10fbc0f4111b624dd8b5817de9af9a01ca409052c0bf8f38c4a6d851a"
+  },
+  "adaptedFiles": {
+    "src/agent-browser-client.ts": "dafef1f31e6a23ac6bbff0a51b575a1bdbc97bc7dfe689d919ebd489d5acd6c7",
+    "src/cdp-network-listener.ts": "193864a62d798ef8cddc361be8879b1acbb54ad2872d281d7a88007f959abc47",
+    "src/har-value-profile.ts": "1a3a3b42cca772f8565398501790af59459e8677aae909442d89c1afd1320429",
+    "src/harness-builder.ts": "bed5da0eaa0c6b2c1460a825e7e60d7f5b0ec47d9e10e16d0d35e3e38a940711",
+    "src/har-component.ts": "dd8c2ea7eb3bda07c146ff5d7410bcf4590cedd711a93649daee46f121ae3011",
+    "src/trusted-network.ts": "03189dce8a142d8d83e0dc906124d062500be689bada272e156fa53cda94b35b",
+    "src/observed-network.ts": "ec03ff1babfd2040eea19d52b570ea018007ad7d4dd84dc753e89d47e2559397",
+    "test/agent-browser-client.test.ts": "7748a7bec5ce91016d2d2c58702361a0b2edb63cb406257bc1b1e25aebee721a",
+    "test/cdp-network-listener.test.ts": "116f53ba50ca5401a5f73597bd28707bea5dd8c46a45678efa77915cc6a49a33"
+  },
+  "passiveLearningSourceUpdate": {
+    "date": "2026-09-06",
+    "sourceRoot": "/home/deck/work/unbrowse-playground/runtime",
+    "files": {
+      "src/agent-browser-client.ts": "69c57af44c8c28e78b1e4c59519d4c39a3ca3fd7f3bbd0eb08512621d8cfee19",
+      "src/cdp-network-listener.ts": "2ff86cd32a1e732fcc420f888dafe32a2996083109b3ed84ab807900204c4fd7",
+      "src/har-value-profile.ts": "3c00c799e17647ba0fde4f5aab25eed339887e1584c5c9890a408a29d7e068b4",
+      "src/harness-builder.ts": "d87fa176d2ac8edc23c8352c74d6e2329f21f1c4dd8865ec19e22f3096b35ed3",
+      "src/har-component.ts": "8b922ddd4211d6c798a153705a14ea7f33b2466b3795ddcfccb88e3b64c04ba8",
+      "import-har.ts": "4704e03e962e491b3345675a3235ce194e7a04af29b9158fc32c93b81f8d9f48",
+      "browse-thread.ts": "c0e875db1b6b49107ae93998a386a2e6450fc196fa57558c18a6dbab3af865b6",
+      "test/cdp-network-listener.test.ts": "c81a5722c5d24f54b68e38c42bf44f9e0356bc77b1e92c85ca00f395dea2ac82"
+    },
+    "extractions": {
+      "src/trusted-network.ts": "Original import-har.ts preparation/profile functions through prepareTrustedNetworkEntries; local imports and required type/constant declarations, no CLI/runtime loop.",
+      "src/observed-network.ts": "Original browse-thread.ts eligibleFirstPartyRead through compileObservedReadNetworkTools; local imports and required type/constant declarations, no CLI/runtime loop.",
+      "src/har-component.ts": "Original pure prefix through harKeys; removed the older runtime and intent imports plus actor method/component suffix.",
+      "test/cdp-network-listener.test.ts": "Original first six test declarations (nine cases), retaining assertions; removed older-runtime host fixture and changed preparation import."
+    }
+  },
+  "adaptations": "Client: standalone public wildcard, mandatory filtering proxy, rolling trace, current native cancellation/null-deadline handling, own-CDP discovery and private fixed PNG capture. Worker types: explicit WebSocket structural cast and TextDecoder ignoreBOM:false. Pure extracted functions retain upstream bodies. Full new source copies have trailing-newline normalization. See README for boundaries.",
+  "notes": "Exact source copy before documented Aiko adaptations; no credentials, captures, profiles or databases copied."
+}

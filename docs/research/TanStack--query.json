@@ -1,0 +1,12 @@
+{
+  "full_name": "TanStack/query",
+  "description": "\ud83e\udd16 Powerful asynchronous state management, server-state utilities and data fetching for the web. TS/JS, React Query, Solid Query, Svelte Query and Vue Query.",
+  "html_url": "https://github.com/TanStack/query",
+  "stargazers_count": 50267,
+  "archived": false,
+  "pushed_at": "2026-09-05T06:58:49Z",
+  "default_branch": "main",
+  "license": "MIT",
+  "commit": "1893a965d219032207cbe147880d0e9f757a5a56",
+  "checked_at": "2026-09-05T08:55:35.418924+00:00"
+}

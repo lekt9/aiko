@@ -1,0 +1,7 @@
+type,name,url,username,password,notes
+login,"New, work",https://new.example.test,a@demo.example,CSV_PASSWORD_CANARY,"Note, with comma"
+login,Other user,https://new.example.test,b@demo.example,CSV_PASSWORD_CANARY,NOTE
+login,Copy,https://new.example.test,a@demo.example,CSV_PASSWORD_CANARY,NOTE
+login,GitHub,https://github.example.test,developer@studio.example,CSV_PASSWORD_CANARY,NOTE
+login,Real,https://google.com,real@gmail.com,CSV_PASSWORD_CANARY,NOTE
+card,Card,,,CSV_PASSWORD_CANARY,NOTE

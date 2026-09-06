@@ -1,0 +1,12 @@
+{
+  "full_name": "TanStack/router",
+  "description": "\ud83e\udd16 A client-first, server-capable, fully type-safe router and full-stack framework for the web (React and more).",
+  "html_url": "https://github.com/TanStack/router",
+  "stargazers_count": 15038,
+  "archived": false,
+  "pushed_at": "2026-09-05T08:31:19Z",
+  "default_branch": "main",
+  "license": "MIT",
+  "commit": "f0b5eda544606686a8a8d675a686ca1366428b96",
+  "checked_at": "2026-09-05T08:55:35.000771+00:00"
+}

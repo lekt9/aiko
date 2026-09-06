@@ -1,0 +1,38 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "aiko-agent",
+  "main": "src/cloudflare.ts",
+  "assets": { "directory": "./public", "binding": "CONNECTOR_ASSETS", "run_worker_first": true, "html_handling": "none" },
+  "account_id": "6d81c1b653effb2e0eac5ee071107122",
+  "compatibility_date": "2026-09-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "AIKO_ACCOUNTS", "class_name": "AikoAccountDO" },
+      { "name": "AIKO_REGISTRY", "class_name": "AikoRegistryDO" },
+    ],
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["AikoAccountDO", "AikoRegistryDO"] },
+  ],
+  "rules": [
+    {
+      "type": "Text",
+      "globs": ["**/*.txt", "**/*.sh", "**/*.py"],
+      "fallthrough": true,
+    },
+  ],
+  "observability": { "enabled": true },
+  "limits": { "cpu_ms": 300000 },
+  "vars": {
+    "AIKO_MODE": "live",
+    "AIKO_INSTANCE_ID": "demo",
+    "AIKO_MODEL": "glm-5.3-flash",
+    "AIKO_RAG_PROVIDER": "cerebras",
+    "AIKO_RAG_MODEL": "qwen-3.8-27b",
+    "AIKO_BROWSER_PROVIDER": "cerebras",
+    "AIKO_BROWSER_MODEL": "qwen-3.8-27b",
+    "AIKO_TELEGRAM_PUBLIC": "true",
+    "AIKO_VOICE_ENABLED": "false",
+  },
+}

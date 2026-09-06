@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Unlock — product & architecture discussion</title>
+<style>
+:root{--paper:#f6f4ef;--ink:#202c29;--muted:#56635e;--line:#cdd4cc;--accent:#185640;--wash:#e5eee5}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.65 system-ui,sans-serif}main{max-width:1040px;margin:auto;padding:56px 28px 90px}header{border-top:5px solid var(--accent);padding-top:24px;margin-bottom:44px}.eyebrow{font:700 12px/1.5 system-ui,sans-serif;text-transform:uppercase;letter-spacing:.13em;color:var(--accent)}h1{font:normal clamp(48px,9vw,88px)/1.05 Georgia,serif;letter-spacing:-.05em;margin:18px 0}h2{font:normal 32px/1.2 Georgia,serif;letter-spacing:-.02em;margin:0 0 20px}h3{font-size:18px;margin:20px 0 8px}p{margin:10px 0 18px}.lead{font-size:24px;max-width:800px;line-height:1.4}.muted,small{color:var(--muted)}section{border-top:1px solid var(--line);padding:32px 0 18px}ul,ol{padding-left:23px}li{margin:8px 0}.callout{padding:18px 22px;background:var(--wash);border-left:4px solid var(--accent);margin:24px 0}.callout p:last-child{margin-bottom:0}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:15px;text-align:left}caption{text-align:left;font-weight:700;margin-bottom:12px}th,td{padding:14px 12px;vertical-align:top;border-bottom:1px solid var(--line)}th{color:var(--accent)}code{font:14px/1.5 ui-monospace,monospace;overflow-wrap:anywhere}.flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:12px;align-items:center;margin:24px 0}.node{border:1px solid var(--line);padding:18px;background:#fff;min-height:130px}.node strong{display:block;margin-bottom:7px}.node small{display:block}.arrow{text-align:center;color:var(--accent);font-size:24px}.boundary{border:2px solid var(--accent);padding:20px;margin:16px 0}.boundary .flow{grid-template-columns:1fr auto 1fr}.tag{font-size:12px;font-weight:700;color:var(--accent)}footer{border-top:1px solid var(--line);padding-top:24px;margin-top:30px;font-size:13px;color:var(--muted)}@media(max-width:640px){main{padding:30px 20px 60px}.flow,.boundary .flow{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}.node{min-height:0}.lead{font-size:21px}h2{font-size:28px}}@media print{body{background:white;font-size:11pt}main{padding:0;max-width:none}h1{font-size:48pt}section{break-inside:avoid}.node{background:white}}
+</style>
+</head>
+<body>
+<main>
+<header>
+<div class="eyebrow">Unlock / Discussion draft 0.7 / 5 September 2026</div>
+<h1>The agent's password manager.</h1>
+<p class="lead">Add passwords directly, import them, or connect your existing password manager. Unlock maintains the sessions your agents use—without putting secrets into model context.</p>
+<p class="muted">Updated direction: passwords and sessions; multiple agent profiles; no per-use approval; cookie handoff to existing browser tools; background renewal; OAuth vault access independent of optional MCP; reusable SSO login contexts. Unlock is an authentication layer, not a browser execution proxy. This is a discussion draft, not an implemented or security-verified system. Library candidates below are not live-doc/version verified.</p>
+</header>
+<section aria-labelledby="thesis">
+<div class="eyebrow">01 / Product thesis</div>
+<h2 id="thesis">The useful part of the Link analogy</h2>
+<p>Borrow the durable vault and autofill model of password managers, plus the reusable setup experience of Stripe Link. Link is not universal website SSO; Unlock still needs agent integrations and legitimate authentication mechanisms on destination services.</p>
+<p><strong>Working definition:</strong> Unlock is a password and session manager for agents. It stores authentication material or resolves it from an authorized external password manager, then turns it into working sessions within standing access configured by the owner. Replacing the user's existing password manager is optional.</p>
+<ul>
+<li><strong>Human:</strong> adds credentials or sessions, assigns connections to agent profiles, handles unavoidable provider challenges and can revoke access. Ordinary use does not need a fresh approval.</li>
+<li><strong>Agent developer:</strong> integrates one access interface instead of collecting passwords and building session recovery.</li>
+<li><strong>Unlock:</strong> stores authentication material, authorizes its retrieval by configured profiles, and synchronizes session updates. The existing browser harness executes the task.</li>
+<li><strong>Unbrowse:</strong> is the first integration and an execution consumer—not a required dependency for every other framework.</li>
+</ul>
+<p>The immediate alternative is manual login, copied cookies and per-framework persistent profiles. The product must beat those on repeat-login friction and trust—not merely offer encrypted storage.</p>
+</section>
+<section aria-labelledby="experience">
+<div class="eyebrow">02 / The first useful experience</div>
+<h2 id="experience">Passwords and sessions are independent inputs.</h2>
+<p>A password does not mathematically derive a cookie. Unlock submits it through the provider's login flow; the provider issues authentication state if login and any required challenges succeed. A session may include cookies, tokens and origin/device state, not just a cookie jar.</p>
+<div class="table-wrap"><table>
+<caption>Supported connection states</caption>
+<thead><tr><th scope="col">Saved material</th><th scope="col">Normal behavior</th><th scope="col">Recovery boundary</th></tr></thead>
+<tbody>
+<tr><td>Password only</td><td>Trusted runtime logs in and stores the resulting session.</td><td>Password alone may not satisfy MFA, SSO or a passkey challenge.</td></tr>
+<tr><td>Session only</td><td>Validate identity and reuse it in a compatible execution environment.</td><td>Refresh if supported; otherwise return <code>reauth_required</code> when it expires. A session cannot recover a password.</td></tr>
+<tr><td>Both</td><td>Prefer a healthy session; try supported refresh, then credential-based login.</td><td>Respect failed-login budgets and provider challenges; never blindly retry credentials.</td></tr>
+<tr><td>Neither password nor website session</td><td>Use a configured OAuth/OIDC integration or reusable SSO context where supported; otherwise report <code>connection_required</code>.</td><td>Vault-access OAuth is not destination authentication. A destination still needs a valid authentication path; passkey/device requirements can require user action.</td></tr>
+</tbody></table></div>
+<h3>Import passwords or connect an existing password manager</h3>
+<p><strong>Two distinct onboarding paths, alongside native password entry and session import.</strong> Both are product requirements; neither requires users to replace their current vault.</p>
+<div class="table-wrap"><table>
+<caption>Import versus live integration</caption>
+<thead><tr><th scope="col">Path</th><th scope="col">What Unlock retains</th><th scope="col">Update behavior</th></tr></thead>
+<tbody>
+<tr><td><strong>One-time password import</strong></td><td>Selected usernames, passwords, login URLs and supported labels from an explicitly supplied export, encrypted as native Unlock credentials with source provenance.</td><td>A snapshot, not synchronization. Later password changes in the original manager do not update Unlock; the owner updates or deliberately reimports them.</td></tr>
+<tr><td><strong>Live password-manager integration</strong></td><td>An authorized connector and references to selected vault items. The external manager remains the source of truth; no persistent password copy by default. Unlock separately stores the sessions it creates.</td><td>A trusted credential resolver retrieves the current password when login is needed through the manager's supported API/SDK/CLI. No two-way password write-back by default.</td></tr>
+</tbody></table></div>
+<p>1Password and NordPass exports are initial import candidates, subject to format-specific validation. A live 1Password connector is an initial integration candidate through its supported automation interfaces; available plans, permissions and runtime support must be verified. Do not assume every password manager exposes an unattended API. Where it does not, offer supported import rather than scraping or bypassing its locked vault.</p>
+<ul>
+<li><strong>Import experience:</strong> choose a source format and file in a trusted import UI/CLI; preview non-secret item metadata, select entries, resolve duplicates, then encrypt and save. Do not silently overwrite an existing credential or merge accounts only because their domains match. Unsupported records are reported without secret values.</li>
+<li><strong>Import safety:</strong> exports can be plaintext. Parse outside the LLM, render metadata as inert text, and exclude raw files and secrets from transcripts, repositories, logs, analytics and error reports. Do not retain uploaded originals; minimize and clean up any temporary copies. Tell the owner to remove their source export when finished rather than claiming guaranteed secure erasure.</li>
+<li><strong>Live integration:</strong> the owner authorizes selected items/vaults once using supported least-privilege credentials. The auth runtime resolves the password privately when needed and injects it into login. The LLM cannot choose arbitrary external item references. If caching is later offered, make its encrypted storage, TTL and revocation behavior explicit and opt-in.</li>
+<li><strong>Independent session lifecycle:</strong> source password rotation is picked up on the next uncached resolution. A changed password may or may not invalidate existing website sessions; provider behavior decides. Connector failure returns <code>source_unavailable</code> or <code>source_auth_required</code>, not a silent stale-password fallback. Disconnecting the source stops further source retrieval; derived cookies may remain valid. On observed source disconnection, default to pausing dependent credential-based renewal and new session delivery until the owner explicitly retains or removes the derived sessions; upstream changes cannot be detected instantly without provider signals.</li>
+<li><strong>No implicit authority:</strong> importing or linking an item does not automatically grant it to every profile or start login jobs across the whole vault. The owner selects profile assignments and maintenance during setup. No per-use approval is added. Passkeys, TOTP seeds, recovery codes and attachments require explicit supported handling, not silent inclusion as ordinary passwords.</li>
+</ul>
+<p><strong>Unified path:</strong> native/imported credential or live source reference → trusted credential resolver → login/SSO adapter → versioned session store → existing browser-tool wrapper. If a usable session already exists, no password fetch is needed.</p>
+<h3>Autonomous happy path</h3>
+<ol>
+<li>The owner provisions an agent profile and assigns its allowed connections once, in settings or configuration. No per-task consent screen is required.</li>
+<li>A runtime authenticated as that profile requests a connection. Unlock checks the standing assignment; a model-supplied profile name or task description is not authorization.</li>
+<li>A background session maintainer renews eligible connections independently of agent tasks. The wrapper fetches the latest saved cookies through an authenticated Unlock SDK call. Cookie values go to the trusted harness runtime, not into model-visible tool arguments or results. No run-bound execution lease is required.</li>
+<li>Before the first authenticated navigation, the wrapper injects those cookies into the selected browser context using its native cookie API. The original browser tool then runs normally. The model sees the ordinary navigation/click results, not the authentication payload.</li>
+<li>The wrapper captures relevant rotated/new/deleted cookies and synchronizes them back to Unlock. It does not overwrite a live cookie jar with the same old snapshot before every click.</li>
+<li>If authentication fails, a trusted login adapter can inject a saved password outside model context, follow a supported login flow, and capture the new session. Unsupported login or provider challenges return an explicit recovery state. OAuth API access and browser login remain distinct capabilities.</li>
+<li>Disabling a profile prevents further retrieval and sync through Unlock. Cooperative wrappers can clear their contexts, but cookies already delivered may remain usable until the provider expires or invalidates them.</li>
+</ol>
+<div class="callout"><strong>The demonstration to aim for:</strong> wrap an existing browser toolset, inject an authorized session without changing the agent's navigation calls, capture a rotated cookie, restore the updated state into another supported browser, and prove neither cookie values nor passwords enter the model transcript. Also verify revoked profiles cannot fetch or sync again; do not claim already-exported cookies stop working.</div>
+</section>
+<section aria-labelledby="architecture">
+<div class="eyebrow">03 / Proposed system boundary</div>
+<h2 id="architecture">Bring your own browser. Wrap its tools.</h2>
+<div class="flow" aria-label="The model calls wrapped browser tools which delegate to the existing browser harness">
+<div class="node"><strong>LLM</strong><small>Calls normal browser tools with URLs and actions. No secret-bearing arguments or authentication payloads.</small></div>
+<div class="arrow" aria-hidden="true">→</div>
+<div class="node"><strong>Unlock tool wrapper</strong><small>Fetch/inject cookies, delegate the original tool call, capture and sync session changes.</small></div>
+<div class="arrow" aria-hidden="true">→</div>
+<div class="node"><strong>Existing browser harness</strong><small>Owns browser execution and sends authenticated requests directly to the website.</small></div>
+</div>
+<div class="boundary">
+<div class="tag">PRIVILEGED DATA PATH — NOT MODEL TOOL OUTPUT</div>
+<div class="flow">
+<div class="node"><strong>Unlock vault + profile API</strong><small>Encrypted passwords and sessions; standing profile assignments; versioned session storage.</small></div>
+<div class="arrow" aria-hidden="true">↔</div>
+<div class="node"><strong>Trusted wrapper runtime</strong><small>Receives actual cookies over an authenticated channel; injects them into its browser context; returns updates to Unlock.</small></div>
+</div>
+<p><small>The receiving harness is inside the trust boundary. Cookies leave Unlock and enter that runtime/browser, but stay out of normal model-visible arguments, results and logs. Unlock neither hosts the browser nor proxies its website requests.</small></p>
+</div>
+<div class="table-wrap"><table>
+<caption>Core objects</caption>
+<thead><tr><th scope="col">Object</th><th scope="col">Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>Workspace / AgentProfile</code></td><td>An Unlock account/workspace owns many agent profiles. Each profile has authenticated runtime bindings, its own connection assignments and audit identity. Provisioning is owner-controlled; knowing a profile ID does not let an agent impersonate it.</td></tr>
+<tr><td><code>Connection / Credential</code></td><td>A provider account has optional credentials and sessions. Native/imported credentials contain encrypted secret material; externally backed credentials reference a selected source item. Import provenance is separate from live source linkage. Distinguish draft metadata from verified provider identity, and human-owned from agent-dedicated accounts.</td></tr>
+<tr><td><code>CredentialSource / SourceConnector</code></td><td>A native vault reference or an external provider/connector/vault/item reference with version metadata where supported. Source connector credentials are separate encrypted secrets scoped to the owner. Resolving an item checks tenant, profile assignment, connection and permitted source reference; source authorization is not a substitute for Unlock authorization.</td></tr>
+<tr><td><code>ProfileConnection</code> (standing grant)</td><td>Many-to-many assignment between profiles and connections, with owner-configured boundaries. It authorizes unattended use until revoked or expired, rather than prompting for each run. Never implicitly expose the entire vault to a newly provisioned profile.</td></tr>
+<tr><td><code>RuntimeBinding / OAuthGrant</code></td><td>Authenticates a client runtime for a specific Unlock owner/workspace/profile and approved connection set. OAuth authorization/token endpoints are transport-independent; remote MCP, CLI and SDK clients reuse this layer. Access and refresh tokens stay outside model context. Token expiry governs vault API access, not the lifetime of delivered website cookies.</td></tr>
+<tr><td><code>SSOContext</code></td><td>A private identity-provider login context, separately bound to an explicit identity and compatible browser/runtime. It can help establish several assigned destination connections through their individual SSO flows. Do not implicitly give every task profile the identity provider's root session.</td></tr>
+<tr><td><code>Session</code></td><td>Provider authentication state bound to connection, profile and executor/device where possible. Keep separate browser state per profile; share a credential reference rather than cloning a secret into every profile. Copying one cookie into two jars is not two independently revocable upstream sessions.</td></tr>
+<tr><td><code>Challenge / Event</code></td><td>Durable user-action requests and redacted audit metadata. Never log passwords, cookies, authorization headers or full browser profiles.</td></tr>
+</tbody></table></div>
+<p><strong>Keep the initial deployment small:</strong> a vault/profile service with Postgres and mature key management, a durable renewal-job worker, an SDK, and browser-tool adapters. A database-backed job table can suffice initially. No required browser fleet or website-request proxy. Local versus hosted vault custody is separate from where the customer's browser runs.</p>
+<p>Proposed SDK surface: <code>connections.add</code>, <code>imports.preview/commit</code>, <code>sources.connect/disconnect</code>, <code>profiles.assign</code>, <code>sessions.get</code>, <code>sessions.sync</code>, <code>wrapBrowserTools</code>. These names describe a proposed contract, not existing code. Secret-returning methods are runtime APIs, not LLM tools. Wrapping a model-visible “get cookies” call is not sufficient—the authenticated fetch itself must run privately inside the wrapper.</p>
+<h3>The adapter's lifecycle</h3>
+<ol>
+<li><strong>Bind:</strong> map the authenticated profile and connection to a dedicated browser context. Two accounts on the same service must not accidentally share one cookie jar.</li>
+<li><strong>Hydrate:</strong> import matching cookies once on context initialization/recovery, preserving domain/host-only semantics, path, expiry, Secure, HttpOnly, SameSite and partition metadata when supported. Use native APIs such as Playwright context cookie APIs or CDP—not <code>document.cookie</code> or a universal Cookie header.</li>
+<li><strong>Delegate:</strong> call the original browser tool with its normal arguments; website traffic goes straight from the browser to the service.</li>
+<li><strong>Sync:</strong> capture only the selected connection's relevant updates, including deletion/expiry, at supported mutation or persistence boundaries. Use revisions and conflict handling; do not merge unrelated profiles or let stale snapshots resurrect revoked/deleted state.</li>
+<li><strong>Recover:</strong> on a verified authentication failure, use supported refresh or private password injection, then recapture state. Do not blindly replay a potentially side-effecting action after re-login.</li>
+</ol>
+<h3>Background session maintainer</h3>
+<p><strong>Session storage is active, not just a saved cookie jar.</strong> A background worker keeps configured, supported connections ready even while agents are idle. This authentication-only worker does not execute agent tasks or proxy browser traffic.</p>
+<ol>
+<li><strong>Schedule:</strong> track renewal method, session revision, last verification, known provider expiry, next check, runtime affinity and retry state. Renew shortly before known expiry with jitter; where expiry is unknown, use bounded provider-specific health checks and on-use recovery. Cookie expiry alone is not proof of server-side validity.</li>
+<li><strong>Renew:</strong> prefer a supported refresh flow. Otherwise use a configured SSO context through the destination's normal login redirects, or resolve the current native/imported/external password through a private per-site auth recipe: approved login origin/endpoint, CSRF/bootstrap steps, credential submission, capture of Set-Cookie and required token state, and expected-account verification. Do not assume every service accepts a username/password POST. Google OAuth refresh renews API tokens, not Google browser cookies.</li>
+<li><strong>Place:</strong> use an HTTP worker where the login flow and session portability support it. For browser/device-bound authentication, run the renewal recipe in the associated trusted harness environment; a central server cannot manufacture missing device state. An offline required runtime is an explicit unavailable state.</li>
+<li><strong>Commit:</strong> serialize renewal of the same underlying session/refresh-token family, coordinate account-level login budgets, and atomically publish a verified new revision. Concurrent wrapper writes cannot overwrite newer state. Recheck maintenance authorization before committing; disabling maintenance or revoking/deleting a connection stops jobs and rejects stale in-flight results.</li>
+<li><strong>Distribute:</strong> wrappers receive a revision-only notification or check the revision on their next safe lifecycle boundary, then privately fetch and install updated cookies. Renewing the vault does not automatically update an already-running browser. Avoid replacing cookies during in-flight operations; coordinate providers where a new login invalidates an old session.</li>
+<li><strong>Fail explicitly:</strong> transient errors use bounded backoff; bad credentials, MFA, CAPTCHA or unsupported login return a challenge/reconnect state without repeated login attempts. Session-only connections cannot fall back to a password that was never stored. Explicit owner sign-out/maintenance disable must not be undone by automatic re-login.</li>
+</ol>
+<p><strong>Two recovery paths, one coordinator:</strong> scheduled renewal keeps sessions ready; a wrapper reporting a real authentication failure requests the same renewal job rather than starting a competing login loop. Never blindly replay a side-effecting task after authentication recovery.</p>
+<p><strong>Terminology:</strong> an Unlock account contains agent profiles. A connected website account can be assigned to several profiles. Those profiles isolate local state and authority inside Unlock; they are not automatically separate identities or permission roles at the website.</p>
+</section>
+<section aria-labelledby="constraints">
+<div class="eyebrow">04 / Where the promise can break</div>
+<h2 id="constraints">Security guarantees must match the access mode.</h2>
+<ul>
+<li><strong>Cookies are credentials.</strong> Giving a framework a cookie jar or unrestricted CDP endpoint delegates substantial account authority. Hiding the password does not make that delegation narrow.</li>
+<li><strong>Injection must happen outside model-visible tools.</strong> The wrapper resolves the selected connection through a privileged SDK call, validates its destination and injects cookies via the browser's cookie API. Password injection, when needed, happens in an auth routine with model observation/recording paused. Authentication payloads and runtime credentials must not appear in model arguments/results, screenshots, traces, process arguments or logs.</li>
+<li><strong>The harness is trusted, not sandboxed by Unlock.</strong> Arbitrary JavaScript, CDP, filesystem access or network inspection can expose credentials. This architecture keeps secrets out of the normal LLM data path; it does not guarantee confidentiality against a hostile model with unrestricted access to the same runtime. Integrators must restrict cookie/credential inspection tools if they require that stronger boundary. A masked password field alone is insufficient.</li>
+<li><strong>Cookie handoff is the chosen product contract.</strong> Actual cookie values are intentionally delivered to an authorized runtime. They carry upstream account authority, not narrower permissions invented by Unlock. This is not an execution gateway, and withholding the password does not prevent misuse of granted session access.</li>
+<li><strong>“Read-only” is not a label.</strong> Enforce it using supported provider scopes or verified operation adapters. Arbitrary browser control does not become read-only through a prompt, an HTTP-method filter or a hostname allowlist. Some permitted reads can also expose sensitive credentials or recovery material.</li>
+<li><strong>Revocation stops future delivery, not existing cookies.</strong> Unlock rejects future fetch/sync calls for the revoked profile. Cooperative adapters may clear their local contexts, but cannot erase other copies. Already-delivered cookies can remain valid until provider expiry/invalidation; provider logout can also affect other profiles sharing that session. The UI must distinguish revoking Unlock access from logging out the upstream account.</li>
+<li><strong>Sessions do not refresh universally.</strong> Respect absolute expiry, token rotation, device binding and server-side invalidation. Try supported refresh, then saved-credential login when permitted; surface a challenge only when needed. Never promise perpetual login or automated MFA/CAPTCHA bypass. Storing a TOTP seed would be a separate explicit decision that concentrates both factors in one trust boundary.</li>
+<li><strong>Portability is best-effort.</strong> Some services need localStorage/IndexedDB, CSRF state, compatible partitioning or device-bound keys in addition to cookies. IP/device changes can invalidate a session. Start with a published cookie-compatible service/browser matrix; do not claim universal session transfer.</li>
+<li><strong>Vault custody is explicit.</strong> Encryption at rest with server-accessible keys is not zero knowledge. The vault's key-custody model and the recipient harness are separate trust decisions. Cookie injection does not require Unlock to host browser execution.</li>
+<li><strong>Autonomy is standing authorization, not absent authorization.</strong> No per-use approval by default. Only the owner/control plane can create profile assignments or broaden access; destination content and model instructions cannot. Authenticate runtimes independently of supplied profile IDs. Any setup/challenge links must be request-bound and must not silently authorize access when opened. Use standard OAuth protections where applicable.</li>
+<li><strong>Isolation includes the plumbing.</strong> Tenant/profile authorization for every vault fetch/write, secure runtime authentication, destination validation for secret injection and profile-specific browser contexts are part of the contract. Any server-side URL fetch needs SSRF protection. Never harvest unrelated browser cookies into a connection.</li>
+<li><strong>Audit coverage is bounded.</strong> Unlock can reliably record vault fetch/sync/revocation events. It cannot claim a complete or independently enforced audit of every website action when the browser communicates directly; wrapper-reported action metadata is supplemental and must be redacted.</li>
+</ul>
+<p>Session recovery: <code>validate → reuse</code>; otherwise <code>supported refresh → credential login → challenge/reauth required</code>, skipping unavailable methods. Keep explicit <code>revoked</code> and <code>error</code> outcomes. Serialize refreshes, persist rotated state atomically and coordinate credential-login attempts across profiles; concurrent agents must not overwrite newer state or lock out the account.</p>
+</section>
+<section aria-labelledby="forks">
+<div class="eyebrow">05 / Decisions to make together</div>
+<h2 id="forks">The cookie-handoff model is decided.</h2>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Decision</th><th scope="col">Path A</th><th scope="col">Path B</th></tr></thead>
+<tbody>
+<tr><td>Whose accounts?</td><td><strong>Existing human accounts.</strong> Strong “use my apps” value; higher privacy and authority risk.</td><td><strong>Agent-dedicated accounts.</strong> Easier privilege isolation; less access to existing user data and a separate provisioning problem.</td></tr>
+<tr><td>Where does the vault live?</td><td><strong>Local vault.</strong> Lower cloud custody; installation and device availability matter.</td><td><strong>Hosted vault.</strong> Easier synchronization across runtimes; explicit key-custody and recovery design needed.</td></tr>
+<tr><td>First browser adapter?</td><td><strong>Existing browser-harness/CDP.</strong> Wrap navigation and context lifecycle using its documented cookie primitives; verify actual behavior before implementation claims.</td><td><strong>Playwright-style context API.</strong> Convenient explicit context boundaries; validate with the target framework rather than assuming every browser tool exposes it.</td></tr>
+</tbody></table></div>
+<p><strong>Current direction:</strong> both password and session inputs; standing per-profile access; actual cookie handoff through an authenticated SDK; a trusted wrapper injects and synchronizes cookies around the customer's existing browser tools. No execution proxy or per-run approval/lease. Test with low-risk accounts and choose one vault deployment and one adapter first.</p>
+</section>
+<section aria-labelledby="mvp">
+<div class="eyebrow">06 / A bounded candidate MVP</div>
+<h2 id="mvp">Prove reconnection is unnecessary—not that every site works.</h2>
+<p><strong>In:</strong> passwords and sessions as independent inputs; native entry, one validated password-import format and one verified live password-manager connector as initial delivery targets; one vault deployment and initial browser-tool adapter; Unbrowse as first consumer; three user-selected services; connection/profile settings; encrypted persistence; cookie retrieval/injection/sync; scheduled background refresh/re-login with per-site auth recipes and bounded retries; on-use recovery; provider challenge handoff; redacted vault audit. OAuth vault access is shared by CLI/SDK and optional MCP. Validate one Google-SSO-to-destination flow before expanding SSO providers. Prove portability with one small second adapter before claiming it.</p>
+<p><strong>Out:</strong> rebuilding every consumer password-manager feature, universal password-manager compatibility, two-way password synchronization by default, per-task approval prompts by default, universal cookie migration, autonomous signup/email inbox infrastructure, workflow marketplace, arbitrary-site fine-grained permissions, payment execution and “works with every website.” Password storage and use are core, not deferred.</p>
+<h3>Validation gates</h3>
+<ul>
+<li>Test password-only, session-only, both and neither. Never mark a connection ready just because a secret exists. Verify provider identity after login or session import.</li>
+<li>Test import with synthetic exports: quoting/encoding, missing fields, multiple accounts on one domain, duplicate conflicts, unsupported records and hostile metadata. Repeated import must not silently overwrite newer passwords. Confirm preview/errors/logs/model requests contain no secrets, originals are not retained and imported items get no implicit profile access.</li>
+<li>Test the live source path with controlled fixtures: item-level authorization, wrong-tenant/reference denial, password rotation, source outage, locked vault, revoked connector and disconnect during in-flight resolution. Assert no persistent password caching by default and no writes to the source. Test derived-session handling separately from source revocation, without claiming delivered cookies can be recalled.</li>
+<li>Returning runs under standing access complete without approval clicks. Session state survives restart where supported; measure authentication success without human intervention, time to a usable session and provider challenge frequency.</li>
+<li>Wrong-account, wrong-tenant and wrong-profile retrieval/sync is denied. Forged profile IDs and agent attempts to assign themselves connections fail. Destination identity matches the owner's configured connection.</li>
+<li>Revocation blocks the next vault fetch/write, including stale synchronization attempts. Test cooperative cookie cleanup separately; explicitly demonstrate that an already-exported cookie can remain usable without provider invalidation.</li>
+<li>Trace the full fetch → inject → original tool → capture → sync path. Test normal model-facing output, errors, recordings and telemetry for secret leakage. Document that unrestricted cookie/CDP/filesystem tools defeat isolation against an adversarial agent; do not claim a sandbox the adapter does not implement.</li>
+<li>Round-trip cookie scope/expiry/flags and supported partition metadata. Test cookie deletion, conflicting revisions, cross-profile account mix-ups, unsupported device-bound sessions and repeated tool calls that must not reset fresh cookies to a stale snapshot.</li>
+<li>With a fake clock and controlled auth fixtures, verify proactive renewal before known expiry, unknown-expiry health checks, session-only refresh limits, private credential submission, correct-account verification and retry limits. Provider challenges produce explicit recovery states, not retry storms.</li>
+<li>Race background renewal against wrapper sync, profile revocation and connection deletion. Only the valid newest revision can commit; disabled maintenance never starts a new login. Verify revision propagation into a running wrapper at a safe boundary, including offline-runtime and upstream session-invalidation cases.</li>
+<li>Exercise OAuth through CLI and HTTP MCP independently: PKCE, exact redirect validation, resource/audience checks, token refresh/revocation and wrong-profile denial. Discovery or client registration alone cannot authorize vault access. A local stdio adapter must not require HTTP-MCP discovery simply to use the shared auth module.</li>
+<li>For SSO, establish two destination sessions from one explicitly selected identity-provider context; verify each destination account, workspace and assigned profile. Ensure the parent IdP cookies are absent from child task contexts. Test expired parent SSO, first-time consent, account chooser ambiguity and wrong-identity recovery without silently linking accounts.</li>
+<li>Three prospective users complete their own repeated tasks. Track successful authorized task runs per connected account, reconnect friction and support effort.</li>
+</ul>
+<p>Before real production credentials: threat-model review, recovery/deletion design, provider permission/terms checks and independent security testing. Candidate reuse from Unbrowse must be established by code inspection; this discussion did not inspect its implementation.</p>
+</section>
+<section aria-labelledby="business">
+<div class="eyebrow">07 / Why password-manager businesses have value</div>
+<h2 id="business">They sell trusted convenience, not a database.</h2>
+<p>The following is strategic analysis, not a researched valuation or current financial comparison of 1Password and NordPass.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Value driver</th><th scope="col">Password-manager model</th><th scope="col">Unlock equivalent</th></tr></thead>
+<tbody>
+<tr><td>Daily convenience</td><td>Autofill, sync and reliable access remove repeated effort. Security is easier when it does not demand constant attention.</td><td>Agents reliably authenticate across runs and frameworks without a person babysitting logins.</td></tr>
+<tr><td>Trust</td><td>Security design, independent scrutiny, reliability and an earned reputation make users willing to store their most sensitive secrets.</td><td>Inspectable injection boundaries, isolation, recovery, honest custody claims and security evidence. Trust must be earned; a new vault is initially a liability.</td></tr>
+<tr><td>Embedded workflows</td><td>Family/team sharing, device rollout, access policies and offboarding create organizational switching costs beyond moving password records.</td><td>Profile assignments, framework integrations, session recovery and operational audit become part of how agents run. Retain users through utility, not blocked export.</td></tr>
+<tr><td>Distribution</td><td>Consumer recommendations and organizational deployment compound reach. 1Password illustrates team/developer adoption; NordPass has the Nord product family as a distribution channel.</td><td>Ship through Unbrowse and other agent runtimes; support existing vault sources rather than demanding immediate migration of every password.</td></tr>
+<tr><td>Recurring revenue</td><td>Individuals, families and businesses pay repeatedly for an ongoing service; team adoption can expand paid usage.</td><td>Hypothesis: workspace/profile subscriptions for password and session management. The customer supplies browser execution; do not assume browser-hosting revenue or costs. Validate willingness to pay before choosing a billing unit.</td></tr>
+</tbody></table></div>
+<p><strong>What is not a moat:</strong> encrypted CRUD, a browser extension, secret injection by itself, or simply calling the product “for agents.” Established secrets tools already support injection patterns. Incumbents can build agent features; Unlock needs a measurable lead in unattended session reliability and adoption across runtimes.</p>
+<p><strong>Network effects are possible, not automatic:</strong> traditional personal vaults are primarily trust/habit/workflow businesses. Reusing an Unlock connection across integrated agent apps could reduce setup for subsequent apps, but requires adoption on both sides and must never mean sharing secrets or permissions between unrelated users.</p>
+<h3>If 1Password enters: assume the features are copyable.</h3>
+<p><strong>Current assessment: Unlock does not yet have a demonstrated moat.</strong> Password storage, cookie injection, profile settings, OAuth and a renewal scheduler are a feature set, not durable competitive power. An incumbent's trust, distribution, customer relationships and ability to bundle access are credible advantages. This is a strategic scenario, not a claim about a newly verified competitor launch.</p>
+<p>Do not base the business on “they cannot build it,” “they will be too slow,” or “human password managers will never support autonomy.” We have no demonstrated structural reason an incumbent could not serve this market.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Potential advantage</th><th scope="col">How it could accumulate</th><th scope="col">What would prove it</th></tr></thead>
+<tbody>
+<tr><td>Authentication reliability</td><td>Tested provider/browser compatibility, SSO recovery recipes, safe rotation and rapid diagnosis of real failures. Operational knowledge becomes valuable only if service quality improves faster than a generic integration.</td><td>More successful authenticated task starts without intervention, faster recovery and fewer support incidents on the customer's actual workload.</td></tr>
+<tr><td>Embedded distribution</td><td>Become an integrated authentication option in independent agent runtimes. Unbrowse is an initial proving ground, not evidence of third-party distribution or a moat by itself.</td><td>Independent partners use Unlock in their real onboarding and bring retained, paying users—not just package downloads.</td></tr>
+<tr><td>Workflow switching costs</td><td>Customers rely on tested connections, profile-to-account assignments, SSO recovery and integrations across their runtimes.</td><td>Replacing Unlock entails operational migration and revalidation despite fair export. Stored passwords alone are not meaningful lock-in.</td></tr>
+<tr><td>Vault-neutral service</td><td>Keep native password/session storage, but accept existing vault sources through authorized integrations where supported. Win on operational authentication without requiring users to replace a trusted password manager.</td><td>Customers willingly pay for Unlock while retaining their existing vault. Neutrality is positioning and reduced adoption friction, not an uncopyable moat.</td></tr>
+</tbody></table></div>
+<p><strong>Privacy constraint:</strong> customer passwords, cookies and browsing histories are not a shared data moat. Improve common adapters through sanitized failure patterns, consented aggregate metrics and controlled test fixtures. Integrating an established vault does not remove the need to trust Unlock: the sessions it holds are also sensitive credentials.</p>
+<p><strong>Practical competitive test:</strong> choose one valuable recurring workflow and compare Unlock against a credible baseline of an existing vault plus a persistent browser profile. Measure setup effort, unattended authentication success, recovery latency and operating/support cost. If the baseline matches Unlock and users will not pay for the difference, the current concept is an integration feature; narrow the customer problem or reconsider the business.</p>
+<p><strong>Recommended direction:</strong> compete on reliable authentication across the customer's chosen vaults and agent runtimes, not on replacing their password manager. Start with one customer segment and a small set of required services. Distribution, accumulated reliability and operational dependence must be earned before calling them defensibility.</p>
+<div class="callout"><strong>Positioning hypothesis:</strong> “1Password helps you sign in. Unlock keeps your agents able to sign in.” This describes the intended job, not a claim that incumbents lack automation capabilities or that every session can be kept alive.</div>
+</section>
+<section aria-labelledby="next">
+<div class="eyebrow">08 / Next implementation question</div>
+<h2 id="next">Which browser toolset should we wrap first?</h2>
+<p>The ownership question is resolved: keep the customer's browser harness. Implement its context binding, privileged cookie import/export and lifecycle hooks without changing the model's normal navigation/click interface.</p>
+<p>The installed browser-harness skill documents <code>set_cookies</code>, <code>get_cookies</code> and navigation auto-seeding. These are candidate integration points, not verified implementation evidence. Inspect the code and ensure any existing ambient-cookie auto-seeding cannot override the explicitly selected Unlock account. No live browser or account was accessed for this draft.</p>
+<p>Then select three real services and validate which session material is portable. Native/imported passwords, live password-manager references, session-only import and SSO-derived destination sessions all fit the same wrapper model. Validate an actual source export and a supported live-source interface before claiming compatibility.</p>
+</section>
+<section aria-labelledby="oauth-sso">
+<div class="eyebrow">09 / OAuth and reusable SSO</div>
+<h2 id="oauth-sso">One vault authorization layer. Separate destination logins.</h2>
+<p><strong>OAuth is not an MCP feature to extract.</strong> It is an independent authorization protocol that an HTTP MCP integration can use. Put the authorization server and vault resource API below MCP, CLI and SDK adapters. Keep remote MCP optional; do not make the CLI call an MCP server just to retrieve a session.</p>
+<div class="table-wrap"><table>
+<caption>Three distinct flows</caption>
+<thead><tr><th scope="col">Flow</th><th scope="col">Mechanism</th><th scope="col">Result</th></tr></thead>
+<tbody>
+<tr><td>Owner → Unlock</td><td>Passkey or an upstream identity provider such as Google through OIDC; established SAML/OIDC support if enterprise login is needed.</td><td>An owner identity and Unlock management session. This does not grant access to every website using that identity provider.</td></tr>
+<tr><td>Agent runtime → Unlock vault</td><td>Unlock-issued OAuth access token bound to client, owner/profile, resource and permitted operations. Authorization-code + PKCE; CLI loopback callback or device authorization where the server supports it.</td><td>Authority to retrieve/sync assigned vault sessions. Not a Google token, and not a per-run execution lease.</td></tr>
+<tr><td>Unlock auth adapter → destination</td><td>Existing destination cookies, supported API OAuth, password login or the destination's SSO flow using a persisted IdP browser context.</td><td>A separate provider-scoped API token or website session. Browser cookies still go directly to the trusted task wrapper.</td></tr>
+</tbody></table></div>
+<h3>Vault OAuth contract</h3>
+<ul>
+<li>The CLI's proposed <code>unlock login</code> uses the system browser with PKCE and a validated loopback redirect. Device authorization is an optional headless pairing flow, not something every OAuth server supports. Store refresh tokens in an OS keychain/appropriate secret store, never stdout or model-visible tool output.</li>
+<li>Remote MCP adapts the shared authorization layer to the selected MCP specification's discovery and resource requirements. Validate its exact metadata/client-registration requirements against the chosen spec and SDK before implementation; local stdio MCP need not use the HTTP authorization handshake.</li>
+<li>Issue tokens for the intended resource and map them server-side to the allowed profile and connection set. Check issuer, audience/resource, expiry and authorization; never accept an arbitrary Google token as an Unlock vault credential or pass an Unlock token to a destination website.</li>
+<li>Standing authorization avoids per-task prompts. First-time delegation to a new untrusted OAuth client is still a trust decision. Dynamic registration/discovery does not grant vault access; first-party preconfigured clients can reuse owner-defined standing grants.</li>
+</ul>
+<h3>Reusable Google SSO: one parent, separate destination sessions</h3>
+<ol>
+<li>The owner signs into Google in an explicitly selected, compatible browser login context, completing required MFA. Persist that context securely; do not assume Google's password login can be automated through a generic endpoint.</li>
+<li>A trusted auth adapter starts Site A's normal “Continue with Google” flow in that context. Google may recognize the existing login; Site A still completes its own redirects/callback and creates its own session. First-time consent, account selection or a challenge may require interaction.</li>
+<li>Verify Site A's resulting identity/workspace and save only its required session material as a child connection. Repeat Site B's own flow when needed. Do not redeem a code intended for another application's OAuth client or reuse one site's token for another.</li>
+<li>Distribute the child site's cookies through the existing wrapper model. Keep Google/other IdP cookies in the private login context by default; they may unlock a much broader set of services than the requested child account.</li>
+</ol>
+<p><strong>This can reduce repeated sign-ins across many services using the same Google identity, not create universal access or switch freely among different Google accounts.</strong> Separate Google identities need separately bound login contexts. API access/refresh tokens and browser session cookies are different artifacts. A Google OAuth library does not convert a token into arbitrary website login cookies.</p>
+<p>Apply the same connector abstraction to Microsoft Entra, Okta and other SSO providers, but validate provider-specific OIDC/SAML flows, consent and browser restrictions. A dependency on Google SSO is a recovery path, not permission to discover or connect every service the user could access. Blocked automated login must surface a supported user handoff, not a stealth/bypass strategy.</p>
+<h3>Library candidates by responsibility</h3>
+<p class="muted">Provisional shortlist from established library roles. Public-doc retrieval was blocked by Chrome remote-debugging approval; no current versions, releases or exact MCP compatibility were verified in this turn. Links are reference targets, not fetched evidence.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Responsibility</th><th scope="col">Candidate</th><th scope="col">Boundary</th></tr></thead>
+<tbody>
+<tr><td>Unlock OAuth/OIDC issuer</td><td><a href="https://github.com/panva/node-oidc-provider">oidc-provider</a></td><td>Standards-oriented authorization server foundation. Still needs owner login UI, client/profile policy, persistence, key management and vault authorization.</td></tr>
+<tr><td>OAuth/OIDC client flows</td><td><a href="https://github.com/panva/openid-client">openid-client</a></td><td>Client-side protocol handling for CLI/upstream integrations. Not a browser-cookie or arbitrary SSO-site automation library.</td></tr>
+<tr><td>MCP transport/auth integration</td><td><a href="https://github.com/modelcontextprotocol/typescript-sdk">Official MCP TypeScript SDK</a></td><td>Optional protocol adapter. Verify compatibility against the selected <a href="https://modelcontextprotocol.io/specification/latest/basic/authorization">MCP authorization specification</a>; do not make it the vault's core.</td></tr>
+<tr><td>Persisted browser SSO context</td><td><a href="https://playwright.dev/docs/auth">Playwright authentication state/persistent contexts</a>, or existing browser-harness primitives</td><td>Browser state mechanics, not guaranteed Google automation or universal portability. Cookie/storage snapshots may omit device-bound state; serialize access to a persistent profile.</td></tr>
+</tbody></table></div>
+<p>Auth.js/Better Auth-style social login can help authenticate users into an application you control; that alone does not sign those users into unrelated websites. Evaluate any issuer/MCP plugins separately before substituting them for the authorization-server role above. Google's own <a href="https://developers.google.com/identity/protocols/oauth2">OAuth documentation</a> is the reference target for supported Google API authorization, distinct from browser-session reuse.</p>
+</section>
+<footer>
+<p><strong>Grounding:</strong> supplied Unbrowse Telegram export, 3–5 September 2026. Key discussion: messages 2205070–2205075 (access as infrastructure), 2205104–2205115 (access, security, email), 2205123–2205125 (complement existing browser tools), 2205151–2205165 (independent library and framework compatibility), 2205176–2205179 (session persistence).</p>
+<p>Revision 0.7 makes one-time password import and live password-manager integration explicit product paths, with credential-source resolution, storage/update/revocation rules and validation gates. No passwords were imported and no password manager was connected while editing this document. The incumbent-entry assessment remains: no demonstrated moat yet; validate reliability, embedded distribution, workflow dependence and demand for a vault-neutral service. Prior directions include OAuth vault access shared by optional MCP, CLI and SDK, plus reusable identity-provider login contexts that establish separate destination sessions. Background renewal, cookie handoff, passwords/sessions, multiple profiles and no per-use approval remain. No maintenance job or website login was executed. Browser research stopped at a Chrome remote-debugging approval requirement; library/version recommendations remain provisional. Market analysis is qualitative, not independently verified financial research. Missing photos and linked meeting notes were not available in the supplied HTML text. No credentials, unrelated private conversation or live customer data are reproduced here. No external assets, scripts or network dependencies.</p>
+</footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types", "bun"],
+    "customConditions": ["workerd"],
+    "lib": ["ES2023"]
+  },
+  "include": ["src/cloudflare.ts", "src/assets.d.ts"],
+  "exclude": ["test"]
+}

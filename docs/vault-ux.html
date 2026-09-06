@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unlock — a vault, not a dashboard</title>
+<style>
+:root{--paper:#f7f8fb;--surface:#fff;--ink:#202535;--muted:#535e70;--line:#dce1e9;--accent:#354acb;--soft:#eceffd;--font:system-ui,sans-serif}*{box-sizing:border-box}html,body{overflow-x:clip}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.65 var(--font)}main{max-width:920px;padding:48px 24px 72px;margin:auto}h1{font-size:clamp(32px,6vw,52px);font-weight:600;line-height:1.12;letter-spacing:-1.8px;margin:16px 0 24px}h2{font-size:21px;margin:32px 0 12px}h3{font-size:16px;margin:0 0 8px}p{max-width:68ch;color:var(--muted)}small{font-size:12px;color:var(--muted)}.principle{font-size:22px;line-height:1.5;color:var(--ink);max-width:52ch}.rule{padding:20px 24px;background:var(--soft);border-radius:8px;margin:24px 0}.rule p{margin:0}.layout{border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:24px;margin:24px 0}.layout pre{font:14px/1.8 ui-monospace,monospace;white-space:pre-wrap;margin:0;overflow-wrap:anywhere}.columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:32px}.columns>section{border-top:1px solid var(--line);padding-top:20px}ul,ol{padding-left:20px;color:var(--muted)}li{margin:8px 0}strong{color:var(--ink)}.labels{display:flex;flex-wrap:wrap;gap:8px}.labels span{padding:5px 10px;background:var(--surface);border:1px solid var(--line);border-radius:5px;font-size:13px}a{color:var(--accent)}a:focus-visible{outline:3px solid var(--accent);outline-offset:4px}footer{border-top:1px solid var(--line);padding-top:20px;margin-top:40px;font-size:12px;color:var(--muted)}@media(max-width:600px){main{padding:28px 20px 48px}.columns{grid-template-columns:minmax(0,1fr);gap:24px}.layout{padding:16px}.layout pre{font-size:12px}.principle{font-size:19px}}
+</style>
+</head>
+<body><main>
+<small>UNLOCK · REVISED UX DIRECTION · PROPOSAL, NOT AN APP REBUILD</small>
+<h1>A vault, not a dashboard.</h1>
+<p class="principle">NordPass’s familiar login list.<br>Phantom’s effortless profile switching.<br>No session management in the interface.</p>
+<div class="rule"><p><strong>The mental model:</strong> “These are my saved logins. These are the ones this agent can use.” Nothing else needs explaining on the main screen.</p></div>
+<h2>One main screen</h2>
+<p>Open directly into saved logins. A prominent profile selector, search, and one primary action: <strong>Add login</strong>. On desktop, a list beside the selected login’s details. On mobile, the same list opens a full-page detail view with a normal Back action.</p>
+<figure class="layout"><pre aria-label="Conceptual vault layout">[ My vault ▾ ]            Search logins…       + Add login
+
+Saved logins             GitHub
+                         github.com
+  GitHub
+  Linear                 Email       developer@example.test
+  Notion                 Password    ••••••••••  Show · Copy
+  Figma
+                         Available to
+                         Build agent     Research agent
+                         Edit access
+</pre><figcaption><small>Illustrative layout only. The example identity is fictional; these are not live controls or real credentials.</small></figcaption></figure>
+<div class="columns">
+<section><h3>The profile dropdown</h3><ul><li><strong>My vault</strong> — all logins owned by the user.</li><li><strong>Build agent, Research agent…</strong> — only the logins available to that profile.</li><li><strong>New profile</strong> — name, avatar, choose saved logins, connect the agent.</li><li>Profile settings live here, not on a separate top-level page.</li></ul><p>The name and avatar remain visible everywhere. Switching profiles changes what the owner is viewing; it does not log the owner in as an agent or change permissions.</p></section>
+<section><h3>The login detail</h3><ul><li>Website, username, password with familiar owner-only reveal/copy actions.</li><li>A simple “Available to” section for agent access.</li><li>For passwordless accounts, show the recognizable sign-in method, such as “Google,” rather than a fake password field.</li><li>Normal editing and deletion in an overflow menu.</li></ul><p>No cookie fields, refresh recipes, revisions, expiry timers, or “healthy” badges.</p></section>
+</div>
+<h2>Adding access should take seconds</h2>
+<ol><li><strong>In My vault:</strong> Add login → website, username, password → Save. “Sign in with browser” is an alternative for accounts without a password, not a five-way credential-type wizard.</li><li><strong>In an agent profile:</strong> Add login → choose an existing login or create a new one → Add to Build agent. The target profile is explicit.</li><li><strong>One login, many profiles:</strong> adding an existing login grants access to the same saved item. It does not duplicate credentials.</li></ol>
+<p>“Remove from Build agent” removes only that profile’s access. “Delete login” is a separate vault-wide action and must say who will lose access. Removing access does not promise to invalidate a sign-in already delivered to an agent.</p>
+<h2>When things work, say nothing</h2>
+<p>Unlock maintains sign-ins in the background. The user does not start, pause, refresh, or inspect a session.</p>
+<div class="labels"><span>Notion · Sign in again</span><span>Reconnect 1Password</span></div>
+<p>These appear only when the user genuinely needs to act. Open a private sign-in flow or reconnect the password manager, then return to the login. No maintenance terminology and no technical troubleshooting dashboard in the normal experience.</p>
+<h2>Remove, rather than rearrange</h2>
+<p><strong>Remove from primary navigation:</strong> Overview, Sessions, Agent profiles, Sources, Activity, Developers. The profile switcher replaces the agent-profile page. Settings holds import/connected password managers and optional developer setup. Detailed diagnostics remain support tooling, not a page every user must understand.</p>
+<h2>What to borrow from each reference</h2>
+<p><strong>Phantom:</strong> persistent named profile, avatar, quick switching, simple profile creation. Not balances, networks, wallet-address chrome, or a crypto aesthetic.</p>
+<p><strong>NordPass:</strong> recognizable login rows, search, a conventional detail view, familiar add/edit/reveal/copy actions. Not an enterprise administration console.</p>
+<p>Keep the interface calm and readable: light neutral surfaces, a restrained accent, service icons for recognition, larger everyday text, and comfortable controls. The profile avatar is the distinguishing feature; everything else should feel ordinary.</p>
+<h2>What stays underneath</h2>
+<p>The existing SDK, access assignments and session-handling boundaries can remain. The redesign changes what the user has to think about—not the underlying security model. The current prototype still uses synthetic data only; real credential storage, provider login and unattended maintenance are not implemented.</p>
+<footer>UI/UX Pro Max’s verified Password Manager guidance explicitly recommends a vault-focused interface, not a dashboard. Its generic design-system search returned a marketing layout, which was rejected. Progressive-disclosure and navigation guidance came from the skill’s quick reference after targeted searches returned unrelated matches. Phantom and NordPass are pattern references here, not claims of a fresh live-product audit.<br><br>This proposal adds only <code>docs/vault-ux.html</code>. The application and existing architecture documents are unchanged.</footer>
+</main></body></html>

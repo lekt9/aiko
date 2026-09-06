@@ -1,0 +1,32 @@
+[1;38m{[m
+[1;34m"archived"[m[1;38m:[m [33mfalse[m[1;38m,[m
+[1;34m"created_at"[m[1;38m:[m [32m"2019-09-10T19:23:58Z"[m[1;38m,[m
+[1;34m"default_branch"[m[1;38m:[m [32m"main"[m[1;38m,[m
+[1;34m"description"[m[1;38m:[m [32m"🤖 Powerful asynchronous state management, server-state utilities and data fetching for the web. TS/JS, React Query, Solid Query, Svelte Query and Vue Query."[m[1;38m,[m
+[1;34m"fork"[m[1;38m:[m [33mfalse[m[1;38m,[m
+[1;34m"full_name"[m[1;38m:[m [32m"TanStack/query"[m[1;38m,[m
+[1;34m"homepage"[m[1;38m:[m [32m"https://tanstack.com/query"[m[1;38m,[m
+[1;34m"html_url"[m[1;38m:[m [32m"https://github.com/TanStack/query"[m[1;38m,[m
+[1;34m"license"[m[1;38m:[m [32m"MIT"[m[1;38m,[m
+[1;34m"pushed_at"[m[1;38m:[m [32m"2026-09-05T06:58:49Z"[m[1;38m,[m
+[1;34m"stargazers_count"[m[1;38m:[m 50267[1;38m,[m
+[1;34m"topics"[m[1;38m:[m [1;38m[[m
+[32m"async"[m[1;38m,[m
+[32m"cache"[m[1;38m,[m
+[32m"data"[m[1;38m,[m
+[32m"fetch"[m[1;38m,[m
+[32m"graphql"[m[1;38m,[m
+[32m"hooks"[m[1;38m,[m
+[32m"query"[m[1;38m,[m
+[32m"react"[m[1;38m,[m
+[32m"rest"[m[1;38m,[m
+[32m"solid"[m[1;38m,[m
+[32m"stale"[m[1;38m,[m
+[32m"stale-while-revalidate"[m[1;38m,[m
+[32m"svelte"[m[1;38m,[m
+[32m"typescript"[m[1;38m,[m
+[32m"update"[m[1;38m,[m
+[32m"vue"[m
+[1;38m][m[1;38m,[m
+[1;34m"updated_at"[m[1;38m:[m [32m"2026-09-05T08:18:24Z"[m
+[1;38m}[m

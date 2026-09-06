@@ -1,0 +1,908 @@
+import { afterEach, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdtemp, rm, stat } from "node:fs/promises";
+import { Effect, Layer } from "effect";
+import { Infer, renderMessages, type InferRequest } from "tardie";
+import { parseThreadAddress } from "tardie/core/communication/endpoint";
+import { threadCreated } from "tardie/core/thread";
+import { createService } from "../src/server.ts";
+import { PERSONA, type AikoConfig } from "../src/config.ts";
+import {
+  accountDirectory,
+  accountThreadDatabase,
+  backgroundThread,
+  threadBinding,
+} from "../src/accounts.ts";
+import { credentialDigest } from "../src/plane-auth.ts";
+import { openMemory } from "../src/memory.ts";
+import type { AikoEvent } from "../src/actor.ts";
+import { controlApi } from "../src/control-api.ts";
+
+// Positive live-delivery fixtures only: run the real composer against a deterministic local response.
+const positiveVoiceFetch = async (_url: unknown, init?: RequestInit) => Response.json({
+  status: "success", result: { finalReply: JSON.parse(JSON.parse(String(init?.body)).messages[1].content).DRAFT },
+});
+const cleanup: (() => Promise<void>)[] = [];
+afterEach(async () => {
+  for (const close of cleanup.splice(0).reverse()) await close();
+});
+
+const alice = "aiko_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const bob = "aiko_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const reader = "aiko_rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr";
+
+async function fixture(
+  patch: Partial<AikoConfig> = {},
+  overrides: Parameters<typeof createService>[1] = {},
+) {
+  const stateDir = await mkdtemp("/tmp/aiko-background-");
+  cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
+  const config: AikoConfig = {
+    stateDir,
+    mode: "demo",
+    instanceId: "background-fixture",
+    port: 4242,
+    operatorToken: "operator-background-fixture-123456789012345",
+    modelKey: "model-background-fixture-123456789012345",
+    persona: PERSONA,
+    voiceEnabled: false,
+    allowedUsers: new Set(["123", "456"]),
+    telegramPublic: true,
+    botToken: "123:background-fixture-only",
+    webhookSecret: "background_fixture_webhook_123456789012345",
+    planeCredentials: [
+      {
+        account: "123",
+        digest: credentialDigest(alice),
+        scopes: ["read", "write"],
+      },
+      {
+        account: "456",
+        digest: credentialDigest(bob),
+        scopes: ["read", "write"],
+      },
+      { account: "123", digest: credentialDigest(reader), scopes: ["read"] },
+    ],
+    ...patch,
+  };
+  const deliveries: Record<string, unknown>[] = [];
+  const options: Parameters<typeof createService>[1] = {
+    ...(overrides.model ? { backgroundModel: overrides.model } : {}),
+    telegramFetch: async (_url, init) => {
+      deliveries.push(JSON.parse(String(init?.body)));
+      return Response.json({
+        ok: true,
+        result: { message_id: deliveries.length },
+      });
+    },
+    ...overrides,
+  };
+  let service = await createService(config, options);
+  cleanup.push(() => service.close());
+  const request = (path: string, body?: object, token = alice) =>
+    service.fetch(
+      new Request(`http://127.0.0.1:4242${path}`, {
+        method: body === undefined ? "GET" : "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }),
+    );
+  return {
+    config,
+    deliveries,
+    request,
+    get service() {
+      return service;
+    },
+    events: async (thread: string) =>
+      (await service.host.read(thread)) as readonly AikoEvent[],
+    telegram: (id: number, user = 123, text = "Hello") =>
+      service.acceptTelegram(
+        new Request("http://127.0.0.1:4242/telegram/webhook", {
+          method: "POST",
+          headers: { "x-telegram-bot-api-secret-token": config.webhookSecret! },
+          body: JSON.stringify({
+            update_id: id,
+            message: {
+              message_id: id,
+              date: 1,
+              from: { id: user, is_bot: false },
+              chat: { id: user, type: "private" },
+              text,
+            },
+          }),
+        }),
+      ),
+    restart: async (beforeOpen?: () => void | Promise<void>) => {
+      await service.close();
+      await beforeOpen?.();
+      service = await createService(config, options);
+      await service.host.drive();
+    },
+  };
+}
+
+const learning = (id: string, revision = 1) => ({
+  id,
+  subject: "project:aurorapanda",
+  title: "Aurorapanda release schedule",
+  kind: "fact" as const,
+  type: "release_schedule",
+  payload: {
+    release: "Aurorapanda",
+    revision,
+    day: revision === 1 ? "Tuesday" : "Thursday",
+  },
+});
+
+const ofType = (events: readonly AikoEvent[], type: string) =>
+  events.filter((event) => event.type === type);
+
+test("control thread status follows the current turn and job, not historical failures or unknown deliveries", async () => {
+  const foreground: AikoEvent[] = [
+    { type: "MessageReceived", id: "old", at: 1 },
+    { type: "TurnFailed", turn: "old", at: 2 },
+    {
+      type: "AikoDeliverySettled",
+      turn: "old",
+      result: { status: "unknown" },
+      at: 3,
+    },
+    { type: "AikoHookReceived", id: "hook-old", at: 4 },
+    { type: "AikoHookDispatched", id: "hook-old", at: 5 },
+    { type: "MessageReceived", id: "current", at: 6 },
+  ];
+  const indexer: AikoEvent[] = [
+    { type: "AikoIndexRequested", id: "old-index", at: 1 },
+    { type: "AikoBackgroundFailed", id: "old-index", stage: "snapshot", at: 2 },
+    { type: "AikoIndexRequested", id: "new-index", at: 3 },
+  ];
+  const reflection: AikoEvent[] = [
+    { type: "AikoReflectionRequested", id: "old-reflection", at: 1 },
+    {
+      type: "MessageReceived",
+      id: "reflect:old-reflection",
+      source: "background",
+      at: 2,
+    },
+    { type: "TurnFailed", turn: "reflect:old-reflection", at: 3 },
+    {
+      type: "AikoDecisionRecorded",
+      id: "old-reflection",
+      decision: "silent",
+      at: 4,
+    },
+    { type: "AikoReflectionRequested", id: "new-reflection", at: 5 },
+  ];
+  const logs: Record<string, AikoEvent[]> = {
+    "user-123": foreground,
+    "background-123-indexer": indexer,
+    "background-123-reflection": reflection,
+  };
+  const request = new Request(
+    "http://fixture.invalid/api/control/threads?account=123",
+  );
+  const inspect = async () => {
+    const response = await controlApi({
+      host: {
+        threads: async () => Object.keys(logs),
+        read: async (thread: string) => logs[thread]!,
+      },
+      config: {},
+      principal: { owner: "123", operator: false, scopes: ["read"] },
+      request,
+      url: new URL(request.url),
+      redact: (text: string) => text,
+      validOwner: (owner: string) => owner === "123",
+    } as unknown as Parameters<typeof controlApi>[0]);
+    expect(response.status).toBe(200);
+    return Object.fromEntries(
+      (await response.json()).threads.map((entry: any) => [entry.role, entry]),
+    );
+  };
+  let state = await inspect();
+  expect(state.foreground.status).toBe("running");
+  expect(state.foreground.summary).toBe("Processing durable events");
+  expect(state.indexer.status).toBe("running");
+  expect(state.reflection.status).toBe("running");
+  foreground.push({ type: "TurnCompleted", turn: "current", at: 7 });
+  indexer.push({ type: "AikoKnowledgeUnchanged", id: "new-index", at: 4 });
+  reflection.push({
+    type: "AikoDecisionRecorded",
+    id: "new-reflection",
+    decision: "silent",
+    at: 6,
+  });
+  state = await inspect();
+  expect(state.foreground.status).toBe("idle");
+  expect(state.indexer.status).toBe("idle");
+  expect(state.reflection.status).toBe("idle");
+  foreground.push(
+    { type: "MessageReceived", id: "latest-failure", at: 8 },
+    { type: "TurnFailed", turn: "latest-failure", at: 9 },
+  );
+  indexer.push(
+    { type: "AikoIndexRequested", id: "latest-index", at: 5 },
+    {
+      type: "AikoBackgroundFailed",
+      id: "latest-index",
+      stage: "indexing",
+      at: 6,
+    },
+  );
+  state = await inspect();
+  expect(state.foreground.status).toBe("failed");
+  expect(state.foreground.summary).toStartWith(
+    "Latest conversation turn failed",
+  );
+  expect(state.indexer.status).toBe("failed");
+  foreground.push(
+    { type: "MessageReceived", id: "latest-voice", at: 10 },
+    { type: "TurnCompleted", turn: "latest-voice", at: 11 },
+    {
+      type: "AikoTelegramActionSettled",
+      turn: "latest-voice",
+      result: { status: "unknown", final: true },
+      at: 12,
+    },
+  );
+  expect((await inspect()).foreground.status).toBe("blocked");
+  foreground.push({ type: "MessageReceived", id: "later-turn", at: 13 });
+  expect((await inspect()).foreground.status).toBe("running");
+  foreground.push({ type: "AikoHooksConfigured", paused: true, at: 14 });
+  state = await inspect();
+  expect(state.indexer.status).toBe("blocked");
+  expect(state.reflection.status).toBe("blocked");
+});
+
+function reflectionModel(
+  decide: (
+    changed: { observation: string; subject: string }[],
+    request: InferRequest,
+  ) => object,
+) {
+  let calls = 0;
+  return {
+    get calls() {
+      return calls;
+    },
+    layer: Layer.succeed(Infer, {
+      resolve: () => ({
+        model: { provider: "fixture", model_id: "background" },
+      }),
+      react: (request) => {
+        const message = request.trajectory.findLast(
+          (raw) =>
+            raw.type === "MessageReceived" &&
+            (raw as AikoEvent).id === request.identity.turn,
+        ) as AikoEvent | undefined;
+        if (message?.source !== "background")
+          return Effect.succeed({
+            kind: "complete" as const,
+            output: "Hello.",
+          });
+        calls++;
+        const input = JSON.parse(String(message.text));
+        return Effect.succeed({
+          kind: "complete" as const,
+          output: JSON.stringify(decide(input.changed, request)),
+        });
+      },
+    }),
+  };
+}
+
+test("thread bindings retain one foreground and place each owner's hidden logs in separate private databases", async () => {
+  const f = await fixture();
+  expect(threadBinding("user-123")).toEqual({
+    owner: "123",
+    role: "foreground",
+  });
+  const names = [
+    "user-123",
+    backgroundThread("123", "indexer"),
+    backgroundThread("123", "reflection"),
+  ];
+  const paths = names.map((thread) =>
+    accountThreadDatabase(f.config.stateDir, thread),
+  );
+  expect(new Set(paths).size).toBe(3);
+  expect(
+    paths.every((path) =>
+      path.startsWith(accountDirectory(f.config.stateDir, "123")),
+    ),
+  ).toBe(true);
+  expect(
+    accountThreadDatabase(
+      f.config.stateDir,
+      backgroundThread("456", "indexer"),
+    ),
+  ).not.toBe(paths[1]);
+  for (const path of paths) expect((await stat(path)).mode & 0o777).toBe(0o600);
+  for (const thread of ["background-123-indexer", "background-123-reflection"])
+    expect(threadBinding(thread)?.owner).toBe("123");
+  for (const thread of [
+    "user-../456",
+    "background-123-unknown",
+    "background-../456-indexer",
+    "",
+  ])
+    expect(threadBinding(thread)).toBeUndefined();
+});
+
+test("background threads do not consume account slots or appear in the user's foreground chat", async () => {
+  const f = await fixture({ maxAccounts: 2 });
+  expect(await f.telegram(101, 123)).toBe("accepted");
+  await f.service.host.drive();
+  expect(
+    (await f.request("/v1/hooks", learning("learning_slots_001"))).status,
+  ).toBe(202);
+  await f.service.host.drive();
+  const threads = await f.service.host.threads();
+  expect(
+    threads.filter((thread) => threadBinding(thread)?.owner === "123").sort(),
+  ).toEqual(
+    [
+      backgroundThread("123", "indexer"),
+      backgroundThread("123", "reflection"),
+      "user-123",
+    ].sort(),
+  );
+  expect(await f.telegram(102, 456)).toBe("accepted");
+  await f.service.host.drive();
+  expect(await f.telegram(103, 789)).toBe("limited");
+  const chat = await (await f.request("/v1/messages")).json();
+  expect(JSON.stringify(chat.messages)).not.toContain(
+    "Aurorapanda release schedule",
+  );
+  expect(JSON.stringify(chat.messages)).not.toContain("reflect:");
+  expect(f.deliveries).toHaveLength(2);
+});
+
+test("control panel and native entity memory isolate owners while the operator can see both", async () => {
+  const f = await fixture();
+  await f.request("/v1/hooks", learning("learning_alice_001"));
+  await f.request(
+    "/v1/hooks",
+    {
+      ...learning("learning_bob_001"),
+      subject: "project:bob-only",
+      title: "Bob private evidence",
+    },
+    bob,
+  );
+  await f.service.host.drive();
+  const own = await (await f.request("/api/control/accounts")).json();
+  expect(own.operator).toBe(false);
+  expect(own.accounts.map((item: { account: string }) => item.account)).toEqual(
+    ["123"],
+  );
+  const all = await (
+    await f.request("/api/control/accounts", undefined, f.config.operatorToken)
+  ).json();
+  expect(all.operator).toBe(true);
+  expect(all.accounts.map((item: { account: string }) => item.account)).toEqual(
+    expect.arrayContaining(["123", "456"]),
+  );
+  for (const path of [
+    "/api/control/threads?account=456",
+    `/api/control/events?thread=${backgroundThread("456", "indexer")}&after=0&limit=100`,
+  ])
+    expect([403, 404]).toContain((await f.request(path)).status);
+  const ownThreads = await (
+    await f.request("/api/control/threads?account=123")
+  ).json();
+  expect(
+    ownThreads.threads.some(
+      (item: { role: string; visibility: string }) =>
+        item.role === "indexer" && item.visibility === "background",
+    ),
+  ).toBe(true);
+  const indexed = ofType(
+    await f.events(backgroundThread("123", "indexer")),
+    "AikoLearningIndexed",
+  );
+  expect(indexed).toHaveLength(1);
+  const observation = String(indexed[0].observation);
+  expect(
+    (await f.request(`/v1/memory/observations/${observation}`)).status,
+  ).toBe(200);
+  expect(
+    (await f.request(`/v1/memory/observations/${observation}`, undefined, bob))
+      .status,
+  ).toBe(404);
+  expect(
+    (await f.request("/v1/hooks", learning("readonly_hook_001"), reader))
+      .status,
+  ).toBe(403);
+  expect([403, 404]).toContain(
+    (await f.request("/api/control/hooks", { account: "456", paused: true }))
+      .status,
+  );
+  expect(
+    (
+      await f.request(
+        "/api/control/hooks",
+        { account: "123", paused: true },
+        reader,
+      )
+    ).status,
+  ).toBe(403);
+  const first = await (
+    await f.request(
+      `/api/control/events?thread=${backgroundThread("123", "indexer")}&after=0&limit=2`,
+    )
+  ).json();
+  expect(first.events).toHaveLength(2);
+  expect(first.hasMore).toBe(true);
+  expect(first.nextAfter).toBe(first.events.at(-1).seq);
+  const next = await (
+    await f.request(
+      `/api/control/events?thread=${backgroundThread("123", "indexer")}&after=${first.nextAfter}&limit=2`,
+    )
+  ).json();
+  expect(
+    next.events.every((row: { seq: number }) => row.seq > first.nextAfter),
+  ).toBe(true);
+});
+
+test("hook identity deduplicates observations and reflection across restart; unchanged content preserves the Merkle root", async () => {
+  const model = reflectionModel(() => ({
+    decision: "silent",
+    reason: "Recorded for context",
+    text: "",
+    supports: [],
+  }));
+  const f = await fixture({ mode: "live" }, { model: model.layer });
+  const hook = learning("learning_dedup_001");
+  expect((await f.request("/v1/hooks", hook)).status).toBe(202);
+  await f.service.host.drive();
+  const indexer = backgroundThread("123", "indexer");
+  const initial = await f.events(indexer);
+  const root = ofType(initial, "AikoKnowledgeChanged").at(-1)?.root;
+  expect(typeof root).toBe("string");
+  expect(model.calls).toBe(1);
+  const observation = String(
+    ofType(initial, "AikoLearningIndexed")[0].observation,
+  );
+  await f.restart();
+  const duplicate = await f.request("/v1/hooks", hook);
+  expect([200, 202]).toContain(duplicate.status);
+  await f.service.host.drive();
+  expect(ofType(await f.events(indexer), "AikoHookReceived")).toHaveLength(1);
+  expect(ofType(await f.events(indexer), "AikoLearningIndexed")).toHaveLength(
+    1,
+  );
+  expect(model.calls).toBe(1);
+  const memory = openMemory({
+    stateDir: accountDirectory(f.config.stateDir, "123"),
+    owner: "123",
+  });
+  try {
+    const subject = String(ofType(initial, "AikoLearningIndexed")[0].subject);
+    expect(
+      memory.recall({ subject }).items.map((item) => item.observation.id),
+    ).toEqual([observation]);
+  } finally {
+    memory.close();
+  }
+  expect(
+    (
+      await f.request("/v1/hooks", {
+        ...hook,
+        id: "learning_dedup_002",
+        payload: {
+          day: hook.payload.day,
+          revision: hook.payload.revision,
+          release: hook.payload.release,
+        },
+      })
+    ).status,
+  ).toBe(202);
+  await f.service.host.drive();
+  const unchanged = await f.events(indexer);
+  expect(ofType(unchanged, "AikoKnowledgeChanged")).toHaveLength(1);
+  expect(ofType(unchanged, "AikoKnowledgeUnchanged").at(-1)?.root).toBe(root);
+  expect(model.calls).toBe(1);
+  expect(f.deliveries).toHaveLength(0);
+  expect(
+    (
+      await f.request("/v1/hooks", {
+        ...hook,
+        payload: { unexpected: "same identity, different content" },
+      })
+    ).status,
+  ).toBe(409);
+});
+
+test("a cited decision travels through the foreground outbox and Telegram exactly once after a content change", async () => {
+  const model = reflectionModel((changed) => ({
+    decision: "notify",
+    reason: "The user's recorded release schedule changed",
+    text: "Your Aurorapanda release schedule has changed.",
+    supports: changed.map((item) => item.observation).slice(0, 1),
+  }));
+  const f = await fixture({ mode: "live", voiceKey: "thinkfeel-background-fixture" }, { model: model.layer, voiceFetch: positiveVoiceFetch });
+  expect(await f.telegram(201)).toBe("accepted");
+  await f.service.host.drive();
+  const priorSends = f.deliveries.length;
+  const priorCalls = model.calls;
+  const hook = learning("learning_notification_001", 2);
+  expect((await f.request("/v1/hooks", hook)).status).toBe(202);
+  await f.service.host.drive();
+  expect(model.calls).toBe(priorCalls + 1);
+  expect(f.deliveries).toHaveLength(priorSends + 1);
+  expect(f.deliveries.at(-1)?.chat_id).toBe("123");
+  expect(f.deliveries.at(-1)?.text).toContain(
+    "Aurorapanda release schedule has changed",
+  );
+  const log = await f.events("user-123");
+  const published = ofType(log, "AikoProactiveDecision").at(-1)!;
+  expect(published.sourceThread).toBe(backgroundThread("123", "reflection"));
+  expect(
+    ofType(log, "AikoReplyPrepared").filter(
+      (row) => row.turn === `proactive:${published.id}`,
+    ),
+  ).toHaveLength(1);
+  const count = ofType(log, "AikoProactiveDecision").length;
+  await f.restart();
+  await f.request("/v1/hooks", hook);
+  await f.service.host.drive();
+  expect(
+    ofType(await f.events("user-123"), "AikoProactiveDecision"),
+  ).toHaveLength(count);
+  expect(f.deliveries).toHaveLength(priorSends + 1);
+  expect(model.calls).toBe(priorCalls + 1);
+});
+
+test("a reflection cannot publish another account's evidence or malformed decision JSON", async () => {
+  let support = "obs_missing_foreign_support";
+  let malformed = false;
+  const model = reflectionModel(() =>
+    malformed
+      ? { decision: "notify", reason: "missing required fields" }
+      : {
+          decision: "notify",
+          reason: "foreign source",
+          text: "Foreign evidence must not be sent",
+          supports: [support],
+        },
+  );
+  const f = await fixture({ mode: "live" }, { model: model.layer });
+  await f.request(
+    "/v1/hooks",
+    { ...learning("learning_foreign_001"), subject: "project:bob-private" },
+    bob,
+  );
+  await f.service.host.drive();
+  support = String(
+    ofType(
+      await f.events(backgroundThread("456", "indexer")),
+      "AikoLearningIndexed",
+    )[0].observation,
+  );
+  await f.request("/v1/hooks", learning("learning_unowned_001"));
+  await f.service.host.drive();
+  expect(
+    ofType(await f.events("user-123"), "AikoProactiveDecision"),
+  ).toHaveLength(0);
+  expect(f.deliveries).toHaveLength(0);
+  malformed = true;
+  await f.request("/v1/hooks", learning("learning_malformed_002", 2));
+  await f.service.host.drive();
+  expect(
+    ofType(await f.events("user-123"), "AikoProactiveDecision"),
+  ).toHaveLength(0);
+  const decisions = ofType(
+    await f.events(backgroundThread("123", "reflection")),
+    "AikoDecisionRecorded",
+  );
+  expect(decisions).toHaveLength(2);
+  expect(decisions.every((decision) => decision.decision === "silent")).toBe(
+    true,
+  );
+  expect(model.calls).toBe(3);
+  expect(f.deliveries).toHaveLength(0);
+});
+
+test("pausing hooks survives restart and resuming processes the durable pending change once", async () => {
+  const model = reflectionModel(() => ({
+    decision: "silent",
+    reason: "No interruption needed",
+    text: "",
+    supports: [],
+  }));
+  const f = await fixture({ mode: "live" }, { model: model.layer });
+  expect(await f.telegram(301)).toBe("accepted");
+  await f.service.host.drive();
+  const priorCalls = model.calls;
+  const priorSends = f.deliveries.length;
+  const pause = { account: "123", paused: true };
+  expect([200, 202]).toContain(
+    (await f.request("/api/control/hooks", pause, f.config.operatorToken))
+      .status,
+  );
+  expect(
+    (await f.request("/v1/hooks", learning("learning_paused_001"))).status,
+  ).toBe(202);
+  await f.service.host.drive();
+  expect(model.calls).toBe(priorCalls);
+  await f.restart();
+  const control = await (
+    await f.request("/api/control/threads?account=123")
+  ).json();
+  expect(control.hooks.paused).toBe(true);
+  expect(model.calls).toBe(priorCalls);
+  expect([200, 202]).toContain(
+    (
+      await f.request(
+        "/api/control/hooks",
+        { ...pause, paused: false },
+        f.config.operatorToken,
+      )
+    ).status,
+  );
+  await f.service.host.drive();
+  expect(model.calls).toBe(priorCalls + 1);
+  expect(
+    ofType(
+      await f.events(backgroundThread("123", "indexer")),
+      "AikoLearningIndexed",
+    ),
+  ).toHaveLength(1);
+  await f.restart();
+  expect(model.calls).toBe(priorCalls + 1);
+  expect(f.deliveries).toHaveLength(priorSends);
+});
+
+test("an older same-owner citation cannot support a notification about a newer changed snapshot", async () => {
+  let oldObservation: string | undefined;
+  const model = reflectionModel(() =>
+    oldObservation
+      ? {
+          decision: "notify",
+          reason: "Old evidence",
+          text: "Do not publish this outdated inference",
+          supports: [oldObservation],
+        }
+      : {
+          decision: "silent",
+          reason: "Initial context",
+          text: "",
+          supports: [],
+        },
+  );
+  const f = await fixture({ mode: "live" }, { model: model.layer });
+  await f.request("/v1/hooks", learning("learning_stale_001"));
+  await f.service.host.drive();
+  oldObservation = String(
+    ofType(
+      await f.events(backgroundThread("123", "indexer")),
+      "AikoLearningIndexed",
+    )[0].observation,
+  );
+  await f.request("/v1/hooks", learning("learning_stale_002", 2));
+  await f.service.host.drive();
+  expect(model.calls).toBe(2);
+  expect(
+    ofType(await f.events("user-123"), "AikoProactiveDecision"),
+  ).toHaveLength(0);
+  expect(
+    ofType(
+      await f.events(backgroundThread("123", "reflection")),
+      "AikoDecisionRecorded",
+    ).at(-1)?.decision,
+  ).toBe("silent");
+  expect(f.deliveries).toHaveLength(0);
+});
+
+test("upgrading completed legacy logs activates hooks after history without reflecting or notifying historical turns", async () => {
+  const model = reflectionModel((changed) => ({
+    decision: "notify",
+    reason: "Fixture would notify for every reflected change",
+    text: "A new change was reflected.",
+    supports: changed.map((item) => item.observation).slice(0, 1),
+  }));
+  const f = await fixture({ mode: "live" }, { model: model.layer });
+  const oldAt = Date.now() - 86_400_000;
+  const legacy: AikoEvent[] = [
+    threadCreated(
+      parseThreadAddress(f.service.host.self("user-123")),
+      undefined,
+      oldAt,
+    ),
+  ];
+  for (const turn of ["telegram:old-1", "telegram:old-2"]) {
+    legacy.push(
+      {
+        type: "MessageReceived",
+        id: turn,
+        text: "A historical conversation",
+        source: "telegram",
+        chat: "123",
+        at: oldAt,
+      },
+      {
+        type: "TurnCompleted",
+        turn,
+        epoch: 0,
+        output: "An old reply",
+        at: oldAt,
+      },
+      {
+        type: "AikoReplyPrepared",
+        turn,
+        epoch: 0,
+        result: { text: "An old reply", source: "template" },
+        at: oldAt,
+      },
+      { type: "AikoDeliveryStarted", turn, epoch: 0, at: oldAt },
+      {
+        type: "AikoDeliverySettled",
+        turn,
+        epoch: 0,
+        result: { status: "delivered", providerId: turn },
+        at: oldAt,
+      },
+      {
+        type: "AikoLogMemoryFollowed",
+        turn,
+        after: legacy.length + 6,
+        status: "current",
+        at: oldAt,
+      },
+    );
+  }
+  // Native seed imports an old committed log without waking the new actor.
+  await f.service.host.seed("user-123", legacy);
+  await f.restart();
+  expect(model.calls).toBe(0);
+  expect(f.deliveries).toHaveLength(0);
+  expect(await f.service.host.threads()).toEqual(["user-123"]);
+  const upgraded = await f.events("user-123");
+  expect(upgraded.slice(0, legacy.length)).toEqual(legacy);
+  expect(ofType(upgraded, "AikoHooksActivated")).toHaveLength(1);
+  expect(upgraded[legacy.length].type).toBe("AikoHooksActivated");
+  expect(ofType(upgraded, "AikoHookDispatched")).toHaveLength(0);
+  await f.restart();
+  expect(model.calls).toBe(0);
+  expect(ofType(await f.events("user-123"), "AikoHooksActivated")).toHaveLength(
+    1,
+  );
+  expect(await f.telegram(401, 123, "Hello after the upgrade")).toBe(
+    "accepted",
+  );
+  await f.service.host.drive();
+  expect(model.calls).toBe(0);
+  const dispatches = ofType(await f.events("user-123"), "AikoHookDispatched");
+  expect(dispatches).toHaveLength(1);
+  expect(dispatches[0].id).toBe("log:telegram:401");
+  expect(
+    (await f.request("/v1/hooks", learning("learning_after_upgrade_001")))
+      .status,
+  ).toBe(202);
+  await f.service.host.drive();
+  expect(model.calls).toBe(1);
+});
+
+test("recovery replays lost native routing receipts without repeating reflection or foreground Telegram delivery", async () => {
+  const model = reflectionModel((changed) =>
+    changed.some((item) => item.subject.includes("aurorapanda"))
+      ? {
+          decision: "notify",
+          reason: "New release evidence",
+          text: "A release change is ready to review.",
+          supports: changed
+            .filter((item) => item.subject.includes("aurorapanda"))
+            .map((item) => item.observation)
+            .slice(0, 1),
+        }
+      : {
+          decision: "silent",
+          reason: "Routine greeting",
+          text: "",
+          supports: [],
+        },
+  );
+  const f = await fixture({ mode: "live", voiceKey: "thinkfeel-background-fixture" }, { model: model.layer, voiceFetch: positiveVoiceFetch });
+  expect(await f.telegram(402)).toBe("accepted");
+  await f.service.host.drive();
+  const hook = learning("learning_crash_001");
+  expect((await f.request("/v1/hooks", hook)).status).toBe(202);
+  await f.service.host.drive();
+  const id = `hook:${hook.id}`;
+  const priorCalls = model.calls;
+  const priorSends = f.deliveries.length;
+  expect(priorSends).toBe(2);
+  const foregroundBefore = await f.events("user-123");
+  expect(
+    ofType(foregroundBefore, "AikoProactiveDecision").filter(
+      (event) => event.id === id,
+    ),
+  ).toHaveLength(1);
+  await f.restart(() => {
+    for (const [role, receipt] of [
+      ["indexer", "AikoReflectionDispatched"],
+      ["reflection", "AikoDecisionPublished"],
+    ] as const) {
+      const database = new Database(
+        accountThreadDatabase(f.config.stateDir, backgroundThread("123", role)),
+      );
+      try {
+        const row = database
+          .query<{ seq: number }, [string, string]>(
+            "SELECT seq FROM events WHERE json_extract(event, '$.type') = ? AND json_extract(event, '$.id') = ?",
+          )
+          .get(receipt, id);
+        expect(row).not.toBeNull();
+        // Restore only the sender's durable prefix at the crash boundary; receiver commits remain intact.
+        database.query("DELETE FROM events WHERE seq >= ?").run(row!.seq);
+      } finally {
+        database.close();
+      }
+    }
+  });
+  expect(model.calls).toBe(priorCalls);
+  expect(f.deliveries).toHaveLength(priorSends);
+  expect(await f.events("user-123")).toEqual(foregroundBefore);
+  for (const [role, receipt] of [
+    ["indexer", "AikoReflectionDispatched"],
+    ["reflection", "AikoDecisionPublished"],
+  ] as const) {
+    expect(
+      ofType(await f.events(backgroundThread("123", role)), receipt).filter(
+        (event) => event.id === id,
+      ),
+    ).toHaveLength(1);
+  }
+  await f.restart();
+  expect(model.calls).toBe(priorCalls);
+  expect(f.deliveries).toHaveLength(priorSends);
+  expect(await f.service.host.resting()).toBe(true);
+});
+
+test("the next foreground turn sees the proactive reply that was actually sent to Telegram", async () => {
+  let history: ReturnType<typeof renderMessages> = [];
+  const model = Layer.succeed(Infer, {
+    resolve: () => ({
+      model: { provider: "fixture", model_id: "foreground-history" },
+    }),
+    react: (request) => {
+      if (request.identity.turn === "telegram:404")
+        history = renderMessages(request.trajectory);
+      return Effect.succeed({ kind: "complete" as const, output: "Hello." });
+    },
+  });
+  const background = reflectionModel((changed) => ({
+    decision: "notify",
+    reason: "Private background rationale",
+    text: "Aurorapanda is now scheduled for Thursday.",
+    supports: changed.map((item) => item.observation).slice(0, 1),
+  }));
+  const f = await fixture(
+    { mode: "live", voiceKey: "thinkfeel-background-fixture" },
+    { model, backgroundModel: background.layer, voiceFetch: positiveVoiceFetch },
+  );
+  expect(await f.telegram(403)).toBe("accepted");
+  await f.service.host.drive();
+  expect(
+    (await f.request("/v1/hooks", learning("learning_history_001", 2))).status,
+  ).toBe(202);
+  await f.service.host.drive();
+  const delivered = String(f.deliveries.at(-1)?.text);
+  expect(delivered).toContain("Aurorapanda is now scheduled for Thursday");
+  expect(await f.telegram(404, 123, "What changed in that schedule?")).toBe(
+    "accepted",
+  );
+  await f.service.host.drive();
+  expect(
+    history.some(
+      (message) =>
+        message.role === "assistant" && message.content === delivered,
+    ),
+  ).toBe(true);
+  expect(JSON.stringify(history)).not.toContain("Private background rationale");
+});

@@ -1,0 +1,26 @@
+[1;38m{[m
+[1;34m"archived"[m[1;38m:[m [33mfalse[m[1;38m,[m
+[1;34m"created_at"[m[1;38m:[m [32m"2015-12-02T09:17:41Z"[m[1;38m,[m
+[1;34m"default_branch"[m[1;38m:[m [32m"main"[m[1;38m,[m
+[1;34m"description"[m[1;38m:[m [32m"OpenID Certified™ OAuth 2.0 Authorization Server implementation for Node.js"[m[1;38m,[m
+[1;34m"fork"[m[1;38m:[m [33mfalse[m[1;38m,[m
+[1;34m"full_name"[m[1;38m:[m [32m"panva/node-oidc-provider"[m[1;38m,[m
+[1;34m"homepage"[m[1;38m:[m [32m""[m[1;38m,[m
+[1;34m"html_url"[m[1;38m:[m [32m"https://github.com/panva/node-oidc-provider"[m[1;38m,[m
+[1;34m"license"[m[1;38m:[m [32m"MIT"[m[1;38m,[m
+[1;34m"pushed_at"[m[1;38m:[m [32m"2026-09-04T20:46:20Z"[m[1;38m,[m
+[1;34m"stargazers_count"[m[1;38m:[m 3804[1;38m,[m
+[1;34m"topics"[m[1;38m:[m [1;38m[[m
+[32m"authorization"[m[1;38m,[m
+[32m"authorization-server"[m[1;38m,[m
+[32m"connect"[m[1;38m,[m
+[32m"oauth2"[m[1;38m,[m
+[32m"oidc"[m[1;38m,[m
+[32m"openid"[m[1;38m,[m
+[32m"openid-connect"[m[1;38m,[m
+[32m"openid-provider"[m[1;38m,[m
+[32m"provider"[m[1;38m,[m
+[32m"server"[m
+[1;38m][m[1;38m,[m
+[1;34m"updated_at"[m[1;38m:[m [32m"2026-09-05T06:15:49Z"[m
+[1;38m}[m

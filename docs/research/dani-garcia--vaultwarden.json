@@ -1,0 +1,12 @@
+{
+  "full_name": "dani-garcia/vaultwarden",
+  "description": "Unofficial Bitwarden compatible server written in Rust, formerly known as bitwarden_rs",
+  "html_url": "https://github.com/dani-garcia/vaultwarden",
+  "stargazers_count": 66867,
+  "archived": false,
+  "pushed_at": "2026-09-03T19:17:52Z",
+  "default_branch": "main",
+  "license": "AGPL-3.0",
+  "commit": "a6c3bd6d1826fb527822df4a2655f34fd440d7d4",
+  "checked_at": "2026-09-05T08:55:38.035486+00:00"
+}

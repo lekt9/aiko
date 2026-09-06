@@ -1,0 +1,12 @@
+{
+  "full_name": "panva/openid-client",
+  "description": "OAuth 2 / OpenID Connect Client API for JavaScript Runtimes",
+  "html_url": "https://github.com/panva/openid-client",
+  "stargazers_count": 2403,
+  "archived": false,
+  "pushed_at": "2026-09-01T20:24:56Z",
+  "default_branch": "main",
+  "license": "MIT",
+  "commit": "0081af62fbbfc2fbe7bf3a1d8bd813e88893d93a",
+  "checked_at": "2026-09-05T08:55:35.289049+00:00"
+}

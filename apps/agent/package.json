@@ -1,0 +1,33 @@
+{
+  "name": "@unlock/agent",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#aiko-memory-host": {
+      "workerd": "./src/memory-worker.ts",
+      "default": "./src/memory-node.ts"
+    }
+  },
+  "scripts": {
+    "dev": "bun src/main.ts",
+    "start": "bun src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test test",
+    "build": "bun build src/main.ts --target=bun --packages=external --outdir=dist"
+  },
+  "dependencies": {
+    "@cfworker/json-schema": "4.1.1",
+    "@huggingface/transformers": "3.8.1",
+    "@unbrowse/browser-runtime": "workspace:*",
+    "@unlock/sdk": "workspace:*",
+    "effect": "4.0.0-rc.110",
+    "entity-learn": "workspace:*",
+    "tardie": "0.22.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260906.1",
+    "@types/bun": "^1.3.0",
+    "typescript": "^5.9.3",
+    "wrangler": "4.129.0"
+  }
+}

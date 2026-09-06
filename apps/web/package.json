@@ -1,0 +1,29 @@
+{
+  "name": "@unlock/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 4173",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tanstack/react-start": "1.168.49",
+    "@tanstack/react-router": "1.170.32",
+    "@tanstack/react-query": "^5.90.0",
+    "@unlock/sdk": "workspace:*",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "lucide-react": "^0.468.0",
+    "zod": "^4.1.0",
+    "@fontsource/inter": "^5.2.0",
+    "@fontsource/space-grotesk": "^5.2.0",
+    "@fontsource/jetbrains-mono": "^5.2.0"
+  },
+  "devDependencies": {
+    "vite": "^7.3.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0"
+  }
+}

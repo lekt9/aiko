@@ -1,0 +1,128 @@
+dialog:has(.csv-import) {
+  max-width: 860px;
+}
+.csv-import .demo-note {
+  font-size: 12px;
+}
+.csv-file {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.csv-file input[hidden] {
+  display: none;
+}
+.csv-file small {
+  flex-basis: 100%;
+}
+.csv-file-name {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  color: var(--color-muted);
+}
+.csv-column-settings {
+  margin: 12px 0;
+}
+.csv-column-settings summary {
+  padding: 12px 0;
+  min-height: 44px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.csv-mapping-legend {
+  padding-top: 12px;
+}
+.csv-mapping {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.csv-mapping .field {
+  min-width: 0;
+}
+.csv-mapping select {
+  width: 100%;
+  text-overflow: ellipsis;
+}
+.csv-counts {
+  margin: 12px 0;
+  font-size: 14px;
+}
+.csv-counts strong {
+  color: var(--color-ink);
+}
+.csv-preview {
+  max-height: 360px;
+  overflow: auto;
+  margin-top: 20px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+}
+.csv-preview:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 3px;
+}
+.csv-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+.csv-preview caption {
+  text-align: left;
+  padding: 12px;
+  color: var(--color-muted);
+}
+.csv-preview th,
+.csv-preview td {
+  text-align: left;
+  padding: 12px;
+  border-top: 1px solid var(--color-line);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.csv-preview th:first-child {
+  width: 56px;
+}
+.csv-preview th:nth-child(2) {
+  width: 44%;
+}
+.csv-preview thead {
+  background: var(--color-subtle);
+}
+.csv-preview td span {
+  display: block;
+  color: var(--color-muted);
+}
+.csv-preview td strong {
+  font-weight: 500;
+}
+.csv-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  .csv-mapping {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .csv-preview th,
+  .csv-preview td {
+    padding: 8px;
+  }
+  .csv-pagination {
+    flex-wrap: wrap;
+  }
+  .csv-pagination .button {
+    padding-inline: 10px;
+    font-size: 12px;
+  }
+  .csv-import .form-actions {
+    flex-wrap: wrap;
+  }
+}

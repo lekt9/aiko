@@ -1,0 +1,329 @@
+import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
+import { browserDriverFactory } from "./browser-driver.ts";
+import { replayKeys, unwrapReplay, sealReplay } from "./codegraff.ts";
+import { BrowserEventQueue } from "./browser-event-queue.ts";
+import {
+  agentBrowserAgentToolCallOf,
+  pinnedAgentBrowserAssetFor,
+  pinnedAgentBrowserExecutablePath,
+  verifyPinnedAgentBrowserExecutable,
+} from "@unbrowse/browser-runtime";
+
+// Trusted execution adapter in one tenant VM. Tardigrade stays in the control plane.
+const root = "/home/daytona/aiko";
+const endpoint = "http://127.0.0.1:4860";
+await mkdir(`${root}/operations`, { recursive: true, mode: 0o700 });
+const mode = process.argv[2];
+if (mode === "install") {
+  const asset = pinnedAgentBrowserAssetFor();
+  const path = pinnedAgentBrowserExecutablePath(asset);
+  await mkdir(path.slice(0, path.lastIndexOf("/")), {
+    recursive: true,
+    mode: 0o700,
+  });
+  if (!(await Bun.file(path).exists())) {
+    const res = await fetch(
+      `https://github.com/vercel-labs/agent-browser/releases/download/v0.36.0/${asset.name}`,
+    );
+    if (!res.ok) throw new Error("Browser asset unavailable");
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (bytes.length !== asset.sizeBytes)
+      throw new Error("Browser asset size mismatch");
+    await writeFile(path, bytes, { mode: 0o700 });
+  }
+  await verifyPinnedAgentBrowserExecutable(path, asset);
+  console.log(JSON.stringify({ installed: true, asset: asset.name }));
+} else if (mode === "serve") {
+  const db = new Database(`${root}/runner.sqlite`);
+  db.exec(
+    "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,status TEXT NOT NULL,result TEXT)",
+  );
+  const replayIdentity = replayKeys();
+  let busy = false;
+  const active = new Map<string, AbortController>();
+  const queue = new BrowserEventQueue(db);
+  const batch = () => queue.batch();
+  const driver = await browserDriverFactory("/usr/bin/chromium", {
+    persistentDirectory: `${root}/browser`,
+  })({
+    domains: ["*"],
+    owner: JSON.parse(await readFile(`${root}/owner.json`, "utf8")).owner,
+    emit: async (event) => {
+      queue.append(event);
+    },
+  });
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 4860,
+    async fetch(request) {
+      const url = new URL(request.url);
+      if (url.pathname === "/health")
+        return Response.json({
+          ready: true,
+          replayPublicKey: replayIdentity.publicKey,
+          privateContext: await driver.sessionContext?.(),
+          backend: "playground-agent-browser",
+          persistentProfile: true,
+        });
+      if (url.pathname === "/drain" && request.method === "GET")
+        return Response.json(batch());
+      if (url.pathname === "/acknowledge" && request.method === "POST") {
+        const input = (await request.json()) as { through?: unknown };
+        const through = input?.through;
+        try {
+          queue.acknowledge(through);
+        } catch {
+          return new Response("Invalid cursor", { status: 400 });
+        }
+        return Response.json({ acknowledged: through });
+      }
+      if (url.pathname === "/cancel" && request.method === "POST") {
+        const input = (await request.json()) as { id?: unknown };
+        if (typeof input?.id !== "string" || !/^[a-f0-9-]{36}$/.test(input.id))
+          return new Response("Invalid operation", { status: 400 });
+        active.get(input.id)?.abort();
+        return Response.json({ cancellationRequested: true });
+      }
+      if (url.pathname === "/capture" && request.method === "POST") {
+        if (busy || !driver.screenshot)
+          return new Response("No capture available", { status: 409 });
+        const input = (await request.json()) as { id?: unknown };
+        if (typeof input?.id !== "string" || !/^[a-f0-9-]{36}$/.test(input.id))
+          return new Response("Invalid operation", { status: 400 });
+        const cancellation = new AbortController();
+        active.set(input.id, cancellation);
+        busy = true;
+        try {
+          const bytes = await driver.screenshot(cancellation.signal);
+          // The gateway's file download converts bytes through UTF-8. Keep binary
+          // pixels ASCII-armored in this owner VM; the host verifies original bytes.
+          await writeFile(
+            `${root}/operations/${input.id}.screenshot.png.b64`,
+            Buffer.from(bytes).toString("base64"),
+            { mode: 0o600 },
+          );
+          return Response.json({
+            mimeType: "image/png",
+            size: bytes.byteLength,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+            ...batch(),
+          });
+        } finally {
+          active.delete(input.id);
+          busy = false;
+        }
+      }
+      if (url.pathname === "/request-replay" && request.method === "POST") {
+        if (busy || !driver.requestTransport)
+          return new Response("Unavailable", { status: 409 });
+        busy = true;
+        try {
+          const { key, value } = unwrapReplay(
+            await request.json(),
+            replayIdentity.privateKey,
+          );
+          if (typeof value.id !== "string" || !/^[a-f0-9-]{36}$/.test(value.id))
+            throw new Error("Invalid operation");
+          const cancellation = new AbortController();
+          active.set(value.id, cancellation);
+          // No operation result or plaintext request is journaled. Retrying requires a new read.
+          try {
+            const output =
+              value.operation === "session-install" && driver.installSession
+                ? await driver.installSession(value.input, cancellation.signal)
+                : value.operation === "session-clear" && driver.clearSession
+                  ? await driver.clearSession(value.scope,cancellation.signal).then(()=>({cleared:true}))
+                  : value.operation === "search" && driver.requestSearch
+                ? await driver.requestSearch(
+                    value.query,
+                    value.limit,
+                    cancellation.signal,
+                  )
+                : value.operation === "hydrate" && driver.requestRehydrate
+                  ? await driver.requestRehydrate(
+                      value.pointerId,
+                      value.inputs,
+                      cancellation.signal,
+                    )
+                  : value.operation === "send"
+                    ? await driver.requestTransport.send(value.request)
+                    : (() => {
+                        throw new Error("Unknown replay operation");
+                      })();
+            return Response.json(sealReplay({ output }, key));
+          } catch {
+            return Response.json(
+              sealReplay({ error: "browser_replay_unavailable" }, key),
+            );
+          } finally {
+            active.delete(value.id);
+          }
+        } catch {
+          return new Response("Invalid envelope", { status: 400 });
+        } finally {
+          busy = false;
+        }
+      }
+      if (url.pathname === "/close" && request.method === "POST") {
+        if (busy) return new Response("busy", { status: 409 });
+        await driver.close();
+        setTimeout(() => {
+          server.stop();
+          db.close();
+          process.exit(0);
+        }, 200);
+        return Response.json({ closed: true });
+      }
+      if (url.pathname !== "/execute" || request.method !== "POST")
+        return new Response("Not found", { status: 404 });
+      if (busy) return new Response("busy", { status: 409 });
+      const body = (await request.json()) as {
+        id: string;
+        action: Record<string, unknown>;
+      };
+      if (!/^[a-f0-9-]{36}$/.test(body.id))
+        return new Response("Invalid operation", { status: 400 });
+      const old = db
+        .query("SELECT status,result FROM operations WHERE id=?")
+        .get(body.id) as { status: string; result?: string } | null;
+      if (old)
+        return Response.json({
+          ...(old.result
+            ? JSON.parse(old.result)
+            : { status: "unknown", reason: "interrupted_operation" }),
+          ...batch(),
+        });
+      // The original library performs exact per-operation argument validation.
+      const action = agentBrowserAgentToolCallOf(
+        `agent_browser_${body.action.action}`,
+        Object.fromEntries(
+          Object.entries(body.action).filter(([k]) => k !== "action"),
+        ),
+        ["*"],
+      ).action;
+      if (!action) return new Response("Invalid action", { status: 400 });
+      busy = true;
+      const cancellation = new AbortController();
+      active.set(body.id, cancellation);
+      db.query("INSERT INTO operations(id,status) VALUES(?,'started')").run(
+        body.id,
+      );
+      try {
+        const output = await driver.execute(action, cancellation.signal);
+        const result = JSON.stringify({ status: "completed", output });
+        db.query(
+          "UPDATE operations SET status='completed',result=? WHERE id=?",
+        ).run(result, body.id);
+        return Response.json({ ...JSON.parse(result), ...batch() });
+      } catch {
+        const result = JSON.stringify({ status: "unknown" });
+        db.query(
+          "UPDATE operations SET status='unknown',result=? WHERE id=?",
+        ).run(result, body.id);
+        return Response.json({ status: "unknown", ...batch() });
+      } finally {
+        busy = false;
+        active.delete(body.id);
+      }
+    },
+  });
+} else if (mode === "health") {
+  let ready = await fetch(`${endpoint}/health`)
+    .then((r) => r.ok)
+    .catch(() => false);
+  if (!ready) {
+    const child = Bun.spawn([process.execPath, `${root}/runner.js`, "serve"], {
+      cwd: root,
+      stdin: "ignore",
+      stdout: Bun.file(`${root}/runner.log`),
+      stderr: Bun.file(`${root}/runner-error.log`),
+    });
+    child.unref();
+    for (let i = 0; i < 100 && !ready; i++) {
+      await Bun.sleep(100);
+      ready = await fetch(`${endpoint}/health`)
+        .then((r) => r.ok)
+        .catch(() => false);
+    }
+  }
+  if (!ready) throw new Error("Browser runner did not start");
+  console.log(await (await fetch(`${endpoint}/health`)).text());
+} else if (mode === "close") {
+  const res = await fetch(`${endpoint}/close`, { method: "POST" });
+  if (!res.ok) throw new Error("Runner close failed");
+  console.log(await res.text());
+} else if (mode === "drain") {
+  const res = await fetch(`${endpoint}/drain`);
+  if (!res.ok) throw new Error("Trace drain failed");
+  console.log(await res.text());
+} else if (mode === "acknowledge") {
+  const through = Number(process.argv[3]);
+  if (!Number.isSafeInteger(through) || through < 0)
+    throw new Error("Invalid trace cursor");
+  const res = await fetch(`${endpoint}/acknowledge`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ through }),
+  });
+  if (!res.ok) throw new Error("Trace acknowledgement failed");
+  console.log(await res.text());
+} else if (mode === "cancel") {
+  const id = process.argv[3];
+  if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error("Invalid operation ID");
+  const res = await fetch(`${endpoint}/cancel`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  if (!res.ok) throw new Error("Runner cancellation failed");
+  console.log(await res.text());
+} else if (mode === "discard-screenshot") {
+  const id = process.argv[3];
+  if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error("Invalid operation ID");
+  await Promise.all([
+    rm(`${root}/operations/${id}.screenshot.png`, { force: true }),
+    rm(`${root}/operations/${id}.screenshot.png.b64`, { force: true }),
+  ]);
+  console.log(JSON.stringify({ discarded: true }));
+} else if (mode === "capture" || mode === "screenshot") {
+  const id = process.argv[3];
+  if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error("Invalid operation ID");
+  const res = await fetch(`${endpoint}/capture`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  if (!res.ok) throw new Error("Runner screenshot unavailable");
+  console.log(await res.text());
+} else if (mode === "request-replay") {
+  const id = process.argv[3];
+  if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error("Invalid operation ID");
+  const path = `${root}/operations/${id}.json`;
+  try {
+    const body = await readFile(path, "utf8");
+    if (body.length > 1_500_000) throw new Error("Replay envelope too large");
+    const res = await fetch(`${endpoint}/request-replay`, {
+      method: "POST",
+      body,
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!res.ok) throw new Error("Replay unavailable");
+    console.log(await res.text());
+  } finally {
+    await rm(path, { force: true });
+  }
+} else if (mode === "execute") {
+  const id = process.argv[3];
+  if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error("Invalid operation ID");
+  const body = await readFile(`${root}/operations/${id}.json`, "utf8");
+  if (body.length > 64_000) throw new Error("Operation too large");
+  const res = await fetch(`${endpoint}/execute`, {
+    method: "POST",
+    body,
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) throw new Error(`Runner HTTP ${res.status}`);
+  console.log(await res.text());
+} else throw new Error("Unknown runner operation");

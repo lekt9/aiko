@@ -1,0 +1,2 @@
+# Aiko connections
+Primary workflow: start in Telegram or the existing frontend, name a service or task, search Arcade first, follow an owner-bound authorization link, then use verified tools. Any website may be requested; unsupported or unverified services remain visibly pending discovery. For confirmed catalog absence, discover API evidence from owned logs and public documentation, compile declarative capabilities, and use the secure browser connection surface. Never collect credentials in chat. Existing account login, event-log durability, and user isolation are retained.

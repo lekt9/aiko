@@ -1,0 +1,12 @@
+{
+  "full_name": "buttercup/buttercup-core",
+  "description": ":tophat: The mighty NodeJS password vault",
+  "html_url": "https://github.com/buttercup/buttercup-core",
+  "stargazers_count": 477,
+  "archived": true,
+  "pushed_at": "2025-03-04T08:59:43Z",
+  "default_branch": "master",
+  "license": "MIT",
+  "commit": "556f635907263a89081a6f88a8eea9c82a16f468",
+  "checked_at": "2026-09-05T08:55:38.162632+00:00"
+}

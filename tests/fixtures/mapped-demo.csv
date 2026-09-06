@@ -1,0 +1,2 @@
+host,account,label,password
+https://mapped.example.test,user@demo.example,Mapped,CSV_PASSWORD_CANARY

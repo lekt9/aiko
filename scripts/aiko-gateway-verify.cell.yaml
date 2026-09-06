@@ -1,0 +1,28 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: aiko-gateway-verify
+  description: Verify the account plane and Telegram adapter without paid inference or real messages
+spec:
+  membrane:
+    inputs: {}
+    outputs:
+      result: { schema: object }
+    caps: { allow_spawn: true, allow_write: ["out/**"] }
+  run:
+    kind: python
+    code: |
+      def run(inputs, ctx):
+          import subprocess, pathlib, os
+          root = pathlib.Path(os.environ['UNLOCK_ROOT'])
+          commands = [
+              ['pnpm', 'typecheck'],
+              ['pnpm', 'test'],
+              ['pnpm', 'build'],
+              ['pnpm', 'aiko:build'],
+          ]
+          results = []
+          for i, command in enumerate(commands):
+              completed = subprocess.run(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=300)
+              results.append({'command': ' '.join(command), 'exitCode': completed.returncode, 'output': completed.stdout})
+          return {'result': {'passed': all(r['exitCode'] == 0 for r in results), 'checks': results}}

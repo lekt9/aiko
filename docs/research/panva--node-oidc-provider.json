@@ -1,0 +1,12 @@
+{
+  "full_name": "panva/node-oidc-provider",
+  "description": "OpenID Certified\u2122 OAuth 2.0 Authorization Server implementation for Node.js",
+  "html_url": "https://github.com/panva/node-oidc-provider",
+  "stargazers_count": 3804,
+  "archived": false,
+  "pushed_at": "2026-09-04T20:46:20Z",
+  "default_branch": "main",
+  "license": "MIT",
+  "commit": "eeb4a7592f26e0b2774bbc0d7662db5dccbf9d0b",
+  "checked_at": "2026-09-05T08:55:34.968519+00:00"
+}

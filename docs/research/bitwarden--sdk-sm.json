@@ -1,0 +1,12 @@
+{
+  "full_name": "bitwarden/sdk-sm",
+  "description": "Bitwarden Secrets Manager SDK.",
+  "html_url": "https://github.com/bitwarden/sdk-sm",
+  "stargazers_count": 472,
+  "archived": false,
+  "pushed_at": "2026-09-03T23:41:52Z",
+  "default_branch": "main",
+  "license": "NOASSERTION",
+  "commit": "559b73b4b0572bb22e3b46242e62052b4e8a9c90",
+  "checked_at": "2026-09-05T08:55:38.430790+00:00"
+}

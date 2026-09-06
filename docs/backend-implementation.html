@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unlock backend and SDK</title><style>:root{color-scheme:light}body{font:16px/1.65 system-ui;background:#f5f7fb;color:#202b42;margin:0}main{max-width:1040px;margin:auto;padding:48px 24px}h1{font-size:42px;line-height:1.15;letter-spacing:-1.3px}h2{margin-top:40px}h3{margin-top:26px}li{margin:8px 0}code,pre{font-family:ui-monospace,monospace;font-size:.9em}code{overflow-wrap:anywhere}pre{background:#152139;color:#eff3ff;padding:20px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border-radius:8px}.note{padding:20px;background:#e6edff;border-left:4px solid #244bdc}.warning{background:#fff1d9;border-color:#9b6500}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;vertical-align:top;padding:13px 10px;border-bottom:1px solid #ccd5e4}a{color:#2041a9}.table{overflow:auto}footer{margin-top:48px;color:#4e5c73}</style></head><body><main>
+<p>UNLOCK / BACKEND &amp; SDK</p><h1>A persistent vault behind the familiar interface.</h1>
+<p>The core Node/Postgres service and corresponding SDK are implemented and tested. They are separate from the existing TanStack password-manager demo. <strong>This is not a claim of production readiness or universal website authentication.</strong></p>
+<div class="note">The existing UI remains synthetic. The new service can hold passwords and sessions when explicitly configured, but no real credentials, production accounts, external account logins, paid APIs or deployment were used during implementation. Work was performed directly, without delegation.</div>
+<p><a href="backend-verification.html">Measured verification</a> · <a href="../packages/sdk/README.md">SDK usage</a> · <a href="unlock-discussion.html">Preserved architecture discussion 0.7</a> · <a href="verification.html">Vault UI evidence</a></p>
+<h2>What is implemented</h2><div class="table"><table><thead><tr><th>Area</th><th>Implementation and boundary</th></tr></thead><tbody>
+<tr><td>Durable custody</td><td>Versioned Postgres migration, transactions, tenant predicates/composite constraints and bounded collections. AES-256-GCM envelope encryption with a fresh data key per record, authenticated tenant/purpose/record binding, a supplied local keyring or AWS KMS wrapping adapter. Explicit offline data-key rewrapping.</td></tr>
+<tr><td>Owner authentication</td><td>Upstream OIDC through <code>openid-client</code>: signature/issuer/audience, state, nonce and PKCE checks; explicit subject allowlist; hashed opaque owner sessions, eight-hour lifetime and fifteen-minute recent-auth gate for secret-bearing endpoints. HttpOnly/SameSite cookies, Secure and <code>__Host-</code> in HTTPS configuration; same-origin CSRF on mutations.</td></tr>
+<tr><td>Agent authorization</td><td>Separate <code>oidc-provider</code> issuer at <code>/oauth</code>, owner-approved profile-bound clients, exact registered redirects, authorization-code/S256 PKCE and rotating refresh tokens. Encrypted OAuth payloads with hashed token IDs and atomic consumption. Resource, grant, client, profile and assignment checks remain live.</td></tr>
+<tr><td>Saved logins</td><td>Native passwords, session-only input, or selected source references. Standing profile assignments share the same saved login. Display/policy changes use expected versions. Credential updates do not pretend to change the upstream website password. Identity/site bindings are immutable.</td></tr>
+<tr><td>Whole CSVs</td><td>1 MiB / 1,000 rows, common headers or explicit mapping; encrypted ten-minute staging, password-free preview, explicit row selection, duplicate/invalid/non-login diagnostics, atomic capacity failure, replayable committed receipt and no implicit agent grants. Snapshot imports are independent of their former manager.</td></tr>
+<tr><td>Private session handoff</td><td>Sessions bound to tenant + connection + profile + registered runtime client; exact cookie domains and host-only/partition semantics. Approved recipes verify destination identity before storage. Whole-jar CAS synchronization includes deletions; empty jars stop maintenance rather than silently undoing sign-out.</td></tr>
+<tr><td>Invisible maintenance</td><td>Postgres job claims and expiry recovery, generation/revision fencing, per-account and shared-SSO-parent serialization, scheduled jitter, bounded retries and explicit challenges. Verify/reuse first; refresh/login only when needed. No per-task approvals or execution leases in the product model.</td></tr>
+<tr><td>External sources</td><td>Official 1Password service-account SDK, limited to owner-selected <code>op://</code> references. Resolve privately with no persistent password cache; source disconnection blocks retrieval/renewal and purges the current stored source token. Upstream service-account revocation is separate.</td></tr>
+<tr><td>Reusable SSO</td><td>Encrypted private parent contexts, runtime affinity checks, disjoint child scope, parent checkpoints with CAS and worker fencing, owner reconnection and disable/purge. No parent-cookie agent endpoint. A reviewed recipe must perform provider-specific SSO and verify the destination identity.</td></tr>
+<tr><td>SDK and tools</td><td>Separate metadata, owner-secret, trusted-agent, OAuth, CDP and tool entry points; runtime response validation, bounded redacted transport and no mutation retries. An isolated-context Chromium cookie adapter privately delegates existing browser tools. A JSON CLI handles operator enrollment/status/login metadata. The MCP helper registers only metadata; the host provides its authenticated MCP transport.</td></tr>
+</tbody></table></div>
+<h2>Running the service</h2><p>Use a patched Node 24 LTS and pnpm 10. The verified environment used Node 24.18.1 and PostgreSQL 17. No deployment is performed by these build commands.</p>
+<pre>pnpm install --frozen-lockfile
+pnpm build:backend
+pnpm server:init /private/unlock/server.json
+# Edit the private file outside the agent/model context.
+UNLOCK_CONFIG=/private/unlock/server.json pnpm server:start</pre>
+<p>The initializer writes fresh keys with mode 0600, refuses overwrites and does not provision an owner or bypass authentication. Service startup never silently generates replacement keys. The listener binds only to <code>127.0.0.1</code> on the configured port (default 4180).</p>
+<h3>Required operator configuration</h3><ul>
+<li><code>origin</code>: exact public HTTPS origin, no path. Put a TLS reverse proxy in front of the loopback listener. Preserve the configured Host and strip untrusted forwarded headers. The service pins forwarded scheme/host handling to its configured origin and does not enable CORS.</li>
+<li><code>databaseUrl</code>: dedicated least-privilege Postgres credentials. Remote database connections require certificate validation; URL SSL overrides are rejected. Use system CA trust or <code>NODE_EXTRA_CA_CERTS</code> for a private CA.</li>
+<li><code>encryption</code>: the generated local keyring, or <code>{"kind":"kms","keyId":"operator-key-ARN","region":"operator-region"}</code>. KMS uses the host's IAM credential chain; grant only the required Encrypt/Decrypt key permissions. Do not put AWS credentials in model arguments.</li>
+<li><code>oauth</code>: persisted private signing JWKS and cookie signing keys. Keep old verification keys for their required validity window when rotating.</li>
+<li><code>owner</code>: upstream OIDC issuer, client ID, optional confidential-client secret and an exact <code>allowedSubjects</code> list. Register <code>https://your-origin/auth/callback</code> upstream. Confidential clients default to <code>client_secret_basic</code>; set <code>tokenEndpointAuthMethod: "client_secret_post"</code> if required. No owner configuration means owner login is unavailable.</li>
+<li><code>recipes</code>: operator-approved fixed-origin JSON/form authentication recipes; configure each login's <code>recipeId</code> and standing <code>maintenance</code> intent explicitly. HTTP recipes reject private/loopback DNS destinations and cross-origin redirects.</li>
+<li><code>runtimeId</code>: optional private-runtime affinity identifier for SSO/custom recipes. This is not the OAuth client ID sent by an agent and cannot be selected through an agent request.</li>
+</ul>
+<pre>{
+  "owner": {
+    "issuer": "https://your-identity-provider.test",
+    "clientId": "your-registered-owner-client",
+    "allowedSubjects": ["the-owner's-stable-upstream-subject"]
+  },
+  "recipes": [{
+    "id": "your-approved-service",
+    "origin": "https://your-service.test",
+    "identityPath": "/documented/session/identity",
+    "identityField": "username",
+    "loginPath": "/documented/session/login",
+    "refreshPath": "/documented/session/refresh",
+    "maxSessionMs": 300000
+  }]
+}</pre>
+<p>This is a configuration fragment, not a working provider recipe. Paths must come from that provider's reviewed API/flow. Optional bootstrap/CSRF and form encoding are supported. The generic adapter is not an arbitrary-site password form bot, OAuth-token-to-cookie converter or Google browser SSO implementation.</p>
+<div class="note warning">Only explicit <code>localDevelopment: true</code> permits loopback HTTP for local fixtures. Do not expose that mode publicly. Never aim the original web demo or its CSV dialog at real credentials.</div>
+<h2>API map</h2><div class="table"><table><thead><tr><th>Surface</th><th>Authentication and contents</th></tr></thead><tbody>
+<tr><td><code>/health</code>, <code>/ready</code></td><td>Process information and database readiness. They do not certify upstream provider/KMS availability.</td></tr>
+<tr><td><code>/auth/login</code>, <code>/auth/callback</code></td><td>Owner OIDC bootstrap; fixed callback and browser-bound one-time state.</td></tr>
+<tr><td><code>/oauth/*</code></td><td>Agent discovery, authorization, token, revocation, JWKS and owner interaction. Protected resource metadata is at <code>/.well-known/oauth-protected-resource</code>.</td></tr>
+<tr><td><code>/v1/me</code>, <code>/v1/connections</code>, <code>/v1/profiles</code>, <code>/v1/clients</code>, <code>/v1/sources</code>, <code>/v1/sso</code>, <code>/v1/jobs</code>, <code>/v1/events</code></td><td>Owner cookie. Metadata and standing policy. Mutations additionally require exact Origin and <code>X-Unlock-CSRF</code>.</td></tr>
+<tr><td><code>/v1/owner/*</code></td><td>Recent owner authentication plus CSRF. Passwords, complete CSVs, source tokens and private session/SSO imports. Never mount these methods as ordinary model tools.</td></tr>
+<tr><td><code>/v1/runtime/connections</code> and <code>/:id/session</code>, <code>/:id/renew</code></td><td>Agent bearer token for the configured resource; live intersection of profile assignments and client selection. Session read/write remains trusted-runtime only.</td></tr>
+</tbody></table></div>
+<h2>Operational limits and recovery</h2><ul>
+<li>2,000 active logins per vault; 100 profiles/sources/clients and 20 private SSO parents. Five active import previews/receipts. Soft-deleted login metadata is retained; credentials/sessions/assignments/jobs are removed on login deletion.</li>
+<li>JSON body limit 2 MiB; CSV content 1 MiB; cookie jars 200 entries / 1 MiB, exact domains, Secure cookies. Client response limit 2 MiB. Lists are bounded; owner event/job views return at most 250 records.</li>
+<li>Access tokens: five minutes. Refresh tokens: seven days. Grants: thirty days. Owner sessions: eight hours; secret endpoints require authentication within fifteen minutes.</li>
+<li>Worker claim: sixty seconds, verifier/recipe deadline: twenty-five seconds per attempt, at most three transient retries with exponential backoff and jitter. Challenges stop maintenance until explicit owner recovery. Database fencing prevents stale publication; it cannot cancel already-sent upstream requests. Trusted adapters must honor abort signals.</li>
+<li>Shared private parents serialize authentication across their child accounts. Runtime affinity is fail-closed, not a cross-host dispatcher: deploy the matching trusted worker/recipe environment or surface an unavailable-runtime challenge. No browser execution proxy is introduced.</li>
+<li>Coarse database-backed rate limit: 600 requests/minute per socket peer. Behind the loopback proxy that is a shared service limit; enforce per-user/IP limits and body/concurrency limits at the edge. Never blindly trust client-supplied forwarding headers.</li>
+<li>Expired auth/import/OAuth records are collected by the worker. Audit retention is ninety days and completed job retention thirty days. Keep audit logs metadata-only; configure redacted infrastructure logs and disable secret-bearing body/trace/core-dump capture.</li>
+</ul>
+<h3>Backups and key rotation</h3><p>Back up Postgres and the required key material separately, using encrypted storage and least-privilege access. A database backup alone is deliberately insufficient to recover secrets. The test suite verifies process restart and key rewrapping; an additional real <code>pg_dump</code>/separate-database restore check verifies credential/session recovery with the retained key. Repeat a full restoration drill with your actual KMS/IAM, proxy and storage setup before production use.</p>
+<pre># OFFLINE maintenance: stop every API/worker writer first.
+# Add a new active key, retaining the old decryption keys in private config.
+UNLOCK_MAINTENANCE_WINDOW=1 UNLOCK_CONFIG=/private/unlock/server.json \
+  pnpm server:rewrap
+# Verify all restored reads before retiring old keys or backups.</pre>
+<p>Rewrapping authenticates ciphertext and rewrites wrapped data keys in bounded transactions. It is an operator-controlled offline operation, not an HTTP endpoint or zero-downtime rotation claim. SDK file-token stores have their own encryption keys and cross-process locks; consult the SDK guide before crash recovery or rotation.</p>
+<h2>Trust model and remaining work</h2><p>This is server-accessible custody, not zero knowledge. The trusted service process, database integrity, key access and recipe code are part of the trust boundary. Encryption protects stored sensitive values and record binding; it does not make a compromised application or arbitrary database-write privileges harmless. API/module separation alone cannot contain a model with unrestricted shell, file, process or raw-browser access under the credential-owning account.</p>
+<ul><li><strong>Configuration / authorization:</strong> production owner IdP, subject allowlist, TLS, least-privilege database/key access, authorized 1Password account, key backup/rotation and monitoring.</li><li><strong>Provider-specific code:</strong> reviewed browser/SSO recipes for the actual destination services. Google browser SSO, passkeys, MFA, CAPTCHA and device-bound/nonportable sessions are not universally supported. Unsupported/offline flows return challenges, not invented success.</li><li><strong>Product integration:</strong> migrate the existing synthetic vault UI to the authenticated API and a reviewed owner-secret surface. The current UI intentionally has not been silently converted.</li><li><strong>External validation:</strong> live provider/source/KMS integration, production load and failure drills, operational disaster recovery, independent security review and additional browser/platform testing.</li><li><strong>Revocation:</strong> future vault access is blocked; already-delivered cookies and in-flight website requests may remain valid. Upstream logout/revocation needs the provider's own supported mechanism.</li></ul>
+<footer>Source: <code>apps/server/src</code>, <code>packages/protocol/src</code>, <code>packages/sdk/src</code>. The original discussion and historical UI evidence are preserved. Nothing has been committed, pushed, published or deployed.</footer>
+</main></body></html>

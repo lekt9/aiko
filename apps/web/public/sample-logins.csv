@@ -1,0 +1,4 @@
+name,url,username,password,notes
+Vercel,https://vercel.example.test,deploy@studio.example,demo-password-only,"Synthetic sample, not a real login"
+Docs,https://docs.example.test,writer@studio.example,demo-password-only,"This column is discarded locally"
+GitHub,https://github.example.test,developer@studio.example,demo-password-only,"Already in the demo vault: skipped as a duplicate"

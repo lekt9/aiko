@@ -1,0 +1,614 @@
+/* Aiko by Unbrowse: app-first drawer. Account custody stays in the existing secondary view. */
+.apps-page {
+  max-width: 1160px;
+  margin: 0 auto;
+}
+.apps-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  margin-bottom: 18px;
+}
+.apps-header h1 {
+  font-size: 42px;
+  letter-spacing: -1.8px;
+  margin: 8px 0 10px;
+}
+.apps-header > div > p:last-child {
+  font-size: 15px;
+}
+.aiko-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  font-weight: 600;
+  color: var(--color-accent);
+}
+.aiko-demo-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-muted);
+  font-size: 12px;
+  margin-bottom: 30px;
+}
+.aiko-demo-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-muted);
+  flex-shrink: 0;
+}
+.apps-workspace {
+  display: grid;
+  grid-template-columns: minmax(330px, 1.2fr) minmax(260px, 1fr);
+  gap: 44px;
+  align-items: start;
+}
+.app-drawer-panel {
+  min-width: 0;
+}
+.app-search {
+  margin: 0;
+  border-radius: 13px;
+  min-height: 48px;
+}
+.app-search input {
+  font-size: 16px !important;
+}
+.app-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.app-section-heading > span {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.drawer-caption {
+  margin: 20px 0 14px;
+}
+.app-drawer {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px 8px;
+  margin: 0 -7px 26px;
+}
+.app-tile {
+  border: 1px solid transparent;
+  border-radius: 18px;
+  background: none;
+  padding: 13px 5px;
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  min-height: 146px;
+}
+.app-tile:hover {
+  background: var(--color-subtle);
+}
+.app-tile.selected {
+  background: var(--v-blue);
+  border-color: var(--color-line-strong);
+}
+.app-tile strong {
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  line-height: 1.4;
+  margin-top: 6px;
+}
+.app-tile small {
+  font-size: 11px;
+  text-align: center;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+.app-tile-icon {
+  position: relative;
+}
+.app-tile .service-icon.large {
+  width: 62px;
+  height: 62px;
+  border-radius: 18px;
+  font-size: 28px;
+  border: 1px solid var(--color-line);
+  box-shadow: 0 3px 8px var(--color-shadow);
+}
+.app-tile .service-icon svg {
+  width: 31px;
+  height: 31px;
+}
+.app-favorite {
+  position: absolute;
+  right: -5px;
+  top: -5px;
+  color: var(--v-star);
+  background: var(--color-surface);
+  border-radius: 50%;
+  padding: 3px;
+  box-sizing: content-box;
+}
+.app-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--color-muted);
+  margin-top: 3px;
+}
+.app-state:before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.state-ready {
+  color: var(--v-mint-ink);
+}
+.state-needs-you {
+  color: var(--color-warning);
+}
+.state-access-paused {
+  color: var(--color-muted);
+}
+.add-app-icon {
+  width: 62px;
+  height: 62px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--color-line-strong);
+  border-radius: 18px;
+  color: var(--color-accent);
+  background: var(--color-subtle);
+}
+.drawer-permission {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--v-mint);
+  padding: 18px;
+  border-radius: 15px;
+  color: var(--v-mint-ink);
+}
+.drawer-permission p {
+  color: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.6;
+}
+.drawer-permission span {
+  font-weight: 400;
+  font-size: 12px;
+}
+.app-all-accounts {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--color-line);
+  width: 100%;
+  padding: 20px 3px;
+  text-align: left;
+  font-size: 13px;
+  min-height: 62px;
+}
+.app-all-accounts small {
+  display: block;
+  font-size: 11px;
+  margin-top: 2px;
+}
+.app-all-accounts:hover {
+  color: var(--color-accent);
+}
+.aiko-invitation {
+  border-left: 1px solid var(--color-line);
+  padding: 26px 0 20px 35px;
+  min-width: 0;
+}
+.aiko-monogram {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  background: var(--color-accent);
+  color: white;
+  border-radius: 18px;
+  font: 500 35px/1 var(--font-display);
+  letter-spacing: -2px;
+  margin-bottom: 25px;
+}
+.aiko-invitation h2 {
+  font-family: var(--font-display);
+  font-size: 31px;
+  line-height: 1.2;
+  letter-spacing: -1.2px;
+  margin: 12px 0 18px;
+}
+.aiko-invitation > p:not(.aiko-eyebrow):not(.aiko-fineprint) {
+  font-size: 14px;
+  max-width: 330px;
+}
+.aiko-example {
+  border-left: 2px solid var(--color-line-strong);
+  padding-left: 16px;
+  margin: 26px 0;
+}
+.aiko-example > span {
+  font-size: 11px;
+  color: var(--color-muted);
+}
+.aiko-example p {
+  color: var(--color-ink);
+  font-size: 15px;
+  margin-top: 4px;
+}
+.aiko-fineprint {
+  font-size: 12px;
+  line-height: 1.65;
+  margin-top: 12px;
+}
+.app-access {
+  border-left: 1px solid var(--color-line);
+  padding-left: 28px;
+  min-width: 0;
+}
+.app-access > .text-button {
+  margin-top: -8px;
+  margin-bottom: 20px;
+}
+.app-access-identity {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 30px;
+}
+.app-access-identity > div {
+  min-width: 0;
+}
+.app-access-identity h2 {
+  font-size: 29px;
+  letter-spacing: -1px;
+  margin: 4px 0;
+}
+.app-access-identity p:last-child {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.app-access-section {
+  margin: 24px 0;
+}
+.app-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  border: 1px solid var(--color-line);
+  background: var(--color-subtle);
+  border-radius: 13px;
+  padding: 15px 13px;
+  min-height: 60px;
+  width: 100%;
+  margin: 14px 0;
+  font-size: 13px;
+  white-space: normal;
+}
+.app-suggestion > span {
+  flex: 1;
+  min-width: 0;
+}
+.app-suggestion:hover {
+  border-color: var(--color-accent);
+}
+.app-accounts {
+  margin-top: 14px;
+}
+.app-account {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--color-line);
+  background: none;
+  padding: 17px 0;
+  text-align: left;
+  white-space: normal;
+}
+.app-account:hover {
+  background: var(--color-subtle);
+}
+.app-account-avatar {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--v-blue);
+  color: var(--v-blue-ink);
+  font-size: 12px;
+}
+.app-account-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+}
+.app-account-copy strong {
+  font-size: 12px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.app-account-copy small {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.app-account-status {
+  font-size: 10px;
+  color: var(--v-mint-ink);
+}
+.app-account-status.challenge,
+.app-account-status.source-unavailable {
+  color: var(--color-warning);
+}
+.app-account-status.paused {
+  color: var(--color-muted);
+}
+.app-access-foot {
+  display: flex;
+  gap: 12px;
+  margin-top: 28px;
+  color: var(--color-muted);
+  align-items: flex-start;
+}
+.app-access-foot p {
+  font-size: 11px;
+}
+.aiko-connect-message {
+  display: flex;
+  gap: 16px;
+  color: var(--color-accent);
+  align-items: flex-start;
+  margin: 10px 0 20px;
+}
+.aiko-connect-message p {
+  font-size: 14px;
+  color: var(--color-ink);
+}
+.aiko-console-note {
+  background: var(--color-subtle);
+  border-radius: 12px;
+  padding: 16px;
+  margin: 20px 0;
+  font-size: 13px;
+}
+.aiko-console-note p {
+  font-size: 12px;
+  margin-top: 8px;
+}
+.aiko-logo-label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.aiko-logo-label small {
+  font-family: var(--font-body);
+  font-size: 10px;
+  letter-spacing: 0.01em;
+  font-weight: 400;
+}
+.aiko-logo-mark {
+  width: 34px;
+  height: 34px;
+  background: var(--color-accent);
+  color: var(--color-surface);
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  font: 500 24px/1 var(--font-display);
+  letter-spacing: -1.5px;
+}
+.app-drawer-empty h2 {
+  font-size: 22px;
+}
+.app-drawer-empty p {
+  font-size: 13px;
+}
+@media (min-width: 1450px) {
+  .apps-page {
+    padding-top: 22px;
+  }
+  .apps-workspace {
+    gap: 65px;
+  }
+  .app-drawer {
+    gap: 24px 14px;
+  }
+  .app-tile .service-icon.large,
+  .add-app-icon {
+    width: 70px;
+    height: 70px;
+  }
+}
+@media (max-width: 1100px) and (min-width: 761px) {
+  .apps-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 28px;
+  }
+  .aiko-invitation {
+    border-left: 0;
+    border-top: 1px solid var(--color-line);
+    padding: 26px 0;
+  }
+  .app-access {
+    border-left: 0;
+    border-top: 1px solid var(--color-line);
+    padding: 24px 0;
+  }
+  .has-app-selection .app-drawer-panel {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .apps-page {
+    max-width: 580px;
+  }
+  .apps-header {
+    gap: 12px;
+    align-items: flex-end;
+  }
+  .apps-header h1 {
+    font-size: 34px;
+    margin: 5px 0 8px;
+  }
+  .apps-header > div > p:last-child {
+    font-size: 13px;
+  }
+  .apps-header > .button {
+    padding: 10px 12px;
+    font-size: 12px;
+    gap: 5px;
+    flex-shrink: 0;
+  }
+  .aiko-eyebrow {
+    font-size: 9px;
+  }
+  .aiko-demo-notice {
+    font-size: 10px;
+    margin-bottom: 23px;
+  }
+  .apps-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 28px;
+  }
+  .app-drawer {
+    gap: 16px 5px;
+    margin-bottom: 22px;
+  }
+  .app-tile {
+    padding: 12px 3px;
+    min-height: 144px;
+  }
+  .aiko-invitation {
+    border-left: 0;
+    border-top: 1px solid var(--color-line);
+    padding: 28px 0 12px;
+  }
+  .aiko-invitation h2 {
+    font-size: 29px;
+  }
+  .aiko-invitation > p:not(.aiko-eyebrow):not(.aiko-fineprint) {
+    max-width: 400px;
+  }
+  .app-access {
+    border-left: 0;
+    padding: 0;
+  }
+  .has-app-selection .app-drawer-panel {
+    display: none;
+  }
+  .has-app-selection .apps-header {
+    display: none;
+  }
+  .app-access > .text-button {
+    margin-top: 0;
+  }
+  .app-account-copy strong {
+    font-size: 14px;
+  }
+  .app-account-copy small,
+  .app-account-status {
+    font-size: 12px;
+  }
+  .aiko-logo-label small {
+    font-size: 9px;
+  }
+  .app-access-foot p {
+    font-size: 12px;
+  }
+  .vault-navigation {
+    overflow-x: auto;
+    min-width: 0;
+  }
+  .vault-navigation a {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .app-access .service-icon.large {
+    width: 62px;
+    height: 62px;
+  }
+  .aiko-connect-message p {
+    font-size: 13px;
+  }
+}
+@media (max-width: 900px) {
+  .vault-navigation {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    padding-right: 0;
+    gap: 4px;
+    overflow: visible;
+  }
+  .vault-navigation a {
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    font-size: 10px;
+    line-height: 1.25;
+    min-height: 58px;
+    padding: 8px 3px;
+    white-space: normal;
+    text-align: center;
+  }
+  .sidebar-foot {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    position: static;
+    display: flex;
+    justify-content: flex-end;
+    min-height: 12px;
+  }
+  .sidebar-foot .demo-label {
+    position: static;
+    font-size: 9px;
+  }
+  .vault-sidebar {
+    row-gap: 10px;
+  }
+  .vault-main {
+    padding-top: 26px;
+  }
+}
+@media (max-width: 350px) {
+  .apps-header {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .apps-header h1 {
+    font-size: 32px;
+  }
+  .app-tile .service-icon.large,
+  .add-app-icon {
+    width: 56px;
+    height: 56px;
+  }
+  .app-drawer {
+    gap: 12px 2px;
+  }
+  .app-tile strong {
+    font-size: 12px;
+  }
+}
