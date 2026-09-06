@@ -17,8 +17,8 @@ export interface CapabilityBuilderBinding {
   checkArcade?: (domain: string) => Promise<boolean>;
   /** Host transport must preserve pinned public DNS, bounded responses, no ambient auth. */
   read?: (url: string, signal: AbortSignal) => Promise<PublicPage>;
-  /** Host-only Unlock session grant for session-bound observed actions. Cookies never enter artifacts or receipts. */
-  session?: (origin: string, signal: AbortSignal) => Promise<UnlockSessionGrant | undefined>;
+  /** Host-only Unlock session grant for session-bound observed actions. Cookies never enter artifacts or receipts. A static grant is allowed for hosts that pin material themselves. */
+  session?: UnlockSessionGrant | ((origin: string, signal: AbortSignal) => Promise<UnlockSessionGrant | undefined>);
 }
 export type CapabilityEvidence = { id: string; owner: string; source: "owned-log" | "public-doc"; reference: string; method: "GET"; url: string };
 export type BuiltCapability = { id: string; owner: string; version: 1; method: "GET"; url: string; evidence: CapabilityEvidence };
