@@ -64,8 +64,6 @@ export function ConnectorOnboarding() {
         .Telegram?.WebApp?.initData,
     ),
   );
-  const credential = useRef("");
-  const credentialInput = useRef<HTMLInputElement>(null);
   const telegramEnabled = useRef(true);
   const accountRequests = useRef<AbortController | null>(null);
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
@@ -100,7 +98,6 @@ export function ConnectorOnboarding() {
   const version = useRef(0);
   useEffect(
     () => () => {
-      credential.current = "";
       search.current?.abort();
       accountRequests.current?.abort();
     },
@@ -135,7 +132,7 @@ export function ConnectorOnboarding() {
   }
   useEffect(() => {
     const nativeSignIn = () => {
-      if (!telegramEnabled.current || credential.current) return;
+      if (!telegramEnabled.current) return;
       if (
         (window as Window & { Telegram?: { WebApp?: { initData?: string } } })
           .Telegram?.WebApp?.initData
@@ -173,7 +170,6 @@ export function ConnectorOnboarding() {
       ? AbortSignal.any([signal, accountSignal])
       : accountSignal;
     const response = await connectorRequest<T>(path, body, combined, {
-      bearer: credential.current || undefined,
       telegram: telegramEnabled.current,
     });
     combined.throwIfAborted();
@@ -205,8 +201,6 @@ export function ConnectorOnboarding() {
     finally {setDeciding(false);}
   }
   function clearAccount() {
-    credential.current = "";
-    if (credentialInput.current) credentialInput.current.value = "";
     search.current?.abort();
     accountRequests.current?.abort();
     accountRequests.current = null;
@@ -231,33 +225,6 @@ export function ConnectorOnboarding() {
     setNotice("");
     setError("");
   }
-  async function signIn() {
-    const value = credentialInput.current?.value.trim() ?? "";
-    if (!value || /\s/.test(value)) {
-      if (credentialInput.current) credentialInput.current.value = "";
-      setError(
-        "Enter the Aiko account credential only, without a Bearer prefix or spaces.",
-      );
-      return;
-    }
-    clearAccount();
-    credential.current = value;
-    setPending(true);
-    try {
-      await refresh();
-      setSignedIn(true);
-      setSignedOut(false);
-      setNotice(
-        "Signed in for this tab. Your credential clears on sign-out or reload.",
-      );
-    } catch (failure) {
-      clearAccount();
-      reportError(failure);
-    } finally {
-      setPending(false);
-    }
-  }
-
   async function find() {
     search.current?.abort();
     const controller = new AbortController();
@@ -292,7 +259,7 @@ export function ConnectorOnboarding() {
           status: found.apps.length ? "available" : "absent",
           fallbackAllowed: found.nativeAvailable,
           message: "",
-          connectors: (found.oauthEnabled === true ? found.apps : []).map((app) => ({
+          connectors: found.apps.map((app) => ({
             ...app,
             provider: "arcade",
             toolName: "",
@@ -524,7 +491,7 @@ export function ConnectorOnboarding() {
     }
   }
   const activeConnections =
-    connections?.filter((c) => c.status !== "disconnected" && (c.provider !== "arcade" || oauthEnabled || c.status === "connected")) ?? [];
+    connections?.filter((c) => c.status !== "disconnected") ?? [];
   const connectedCount = activeConnections.filter(
     (c) => c.status === "connected",
   ).length;
@@ -622,46 +589,17 @@ export function ConnectorOnboarding() {
             {pending ? "Signing in…" : "Use my Telegram account"}
           </button>
           {!telegramMiniApp && (
-            <details className="account-alternative">
-              <summary>Use an account credential instead</summary>
-              <form
-                className="connector-credential-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void signIn();
-                }}
-              >
-                <label htmlFor="aiko-account-credential">
-                  Account credential
-                </label>
-                <div className="connector-search">
-                  <input
-                    id="aiko-account-credential"
-                    ref={credentialInput}
-                    type="password"
-                    autoComplete="off"
-                    spellCheck={false}
-                    autoCapitalize="none"
-                    maxLength={4096}
-                    disabled={pending}
-                    aria-describedby="credential-help"
-                  />
-                  <button className="button" disabled={pending}>
-                    {pending ? "Signing in…" : "Sign in to Aiko"}
-                  </button>
-                </div>
-                <p id="credential-help" className="aiko-fineprint">
-                  Use the credential issued by your Aiko operator, not a website
-                  password. It clears on sign-out or reload. Never send it in
-                  chat.
-                </p>
-              </form>
-            </details>
+            <a
+              href={AIKO_TELEGRAM_URL}
+              className="button primary"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open Aiko in Telegram <ArrowUpRight size={16} />
+            </a>
           )}
           {signedOut && (
-            <p className="aiko-fineprint">
-              Reopen from Telegram, or sign in above.
-            </p>
+            <p className="aiko-fineprint">Reopen Aiko from Telegram.</p>
           )}
         </div>
       )}
@@ -899,20 +837,6 @@ export function ConnectorOnboarding() {
             <SecretaryPanel key={accountVersion} request={request} />
           )}
         </details>
-      )}
-      {signedIn && !telegramMiniApp && (
-        <button
-          className="text-button drawer-signout"
-          disabled={pending}
-          onClick={() => {
-            clearAccount();
-            setNotice(
-              "Signed out. Your account details were cleared from this tab.",
-            );
-          }}
-        >
-          Sign out of Aiko
-        </button>
       )}
       {addWebsite && (
         <MiniAppScreen
