@@ -123,8 +123,35 @@ export class ConnectorEngine {
     return structuredClone(await cache.authProviders(api, text));
   }
   /** App identities are toolkit/provider pairs, never matches in another tool's description. */
-  async apps(query = "") {
-    if (this.options.arcadeOAuthEnabled === false) return {apps: [], oauthEnabled: false, nativeAvailable: !!this.options.secureBrowser, nativeInline: this.options.secureBrowser?.native === true};
+  private appCatalog?: { value: Array<{ id: string; name: string; providerId: string; authProviderId: string; scopes: string[]; toolIds: string[]; domains: string[]; authorizationDomains: string[] }>; until: number };
+  private appCatalogLoading?: Promise<void>;
+  /** The computed app catalog persists per account, so a cold isolate serves the
+   * Mini App instantly instead of re-walking an 8,000-tool Arcade catalog. */
+  private async appsAll(): Promise<ReturnType<ConnectorEngine["computeApps"]>> {
+    if (this.appCatalog && this.appCatalog.until > Date.now()) return this.appCatalog.value;
+    const key = `${this.prefix}catalog:apps`;
+    const stored = await this.options.store.get(key).catch(() => undefined);
+    const parsed = typeof stored === "string" ? JSON.parse(stored) as { value: ReturnType<ConnectorEngine["computeApps"]>; at: number } : undefined;
+    if (parsed && Array.isArray(parsed.value)) {
+      // Fresh for 6 hours since persistence; afterwards served stale once while
+      // a background refresh recomputes the catalog.
+      const fresh = typeof parsed.at === "number" && parsed.at > Date.now() - 21_600_000;
+      this.appCatalog = { value: parsed.value, until: fresh ? Date.now() + 1_800_000 : Date.now() };
+      if (fresh) return this.appCatalog.value;
+      if (!this.appCatalogLoading) {
+        this.appCatalogLoading = this.computeApps().then(value => {
+          this.appCatalog = { value, until: Date.now() + 1_800_000 };
+          return this.options.store.set(key, JSON.stringify({ value, at: Date.now() }));
+        }).catch(() => undefined).finally(() => { this.appCatalogLoading = undefined; });
+      }
+      return this.appCatalog.value;
+    }
+    const value = await this.computeApps();
+    this.appCatalog = { value, until: Date.now() + 1_800_000 };
+    await this.options.store.set(key, JSON.stringify({ value, at: Date.now() })).catch(() => undefined);
+    return value;
+  }
+  private async computeApps() {
     const [tools, providers] = await Promise.all([this.listCatalog(), this.listAuthProviders()]);
     const groups = new Map<string, { id: string; name: string; providerId: string; authProviderId: string; scopes: string[]; toolIds: string[]; domains: string[]; authorizationDomains: string[] }>();
     for (const tool of tools) {
@@ -140,8 +167,13 @@ export class ConnectorEngine {
       app.domains = [...new Set([...app.domains, ...tool.domains])];
       groups.set(id, app);
     }
+    return [...groups.values()].filter(app => app.toolIds.length >= 3).sort((a, b) => a.name.localeCompare(b.name));
+  }
+  async apps(query = "") {
+    if (this.options.arcadeOAuthEnabled === false) return {apps: [], oauthEnabled: false, nativeAvailable: !!this.options.secureBrowser, nativeInline: this.options.secureBrowser?.native === true};
+    const all = await this.appsAll();
     const q = query.trim().toLowerCase();
-    return { oauthEnabled: true, apps: [...groups.values()].filter(app => app.toolIds.length >= 3 && (!q || app.name.toLowerCase().includes(q) || app.domains.some(d => d === q))).sort((a, b) => a.name.localeCompare(b.name)), nativeAvailable: !!this.options.secureBrowser, nativeInline: this.options.secureBrowser?.native === true };
+    return { oauthEnabled: true, apps: all.filter(app => !q || app.name.toLowerCase().includes(q) || app.domains.some(d => d === q)), nativeAvailable: !!this.options.secureBrowser, nativeInline: this.options.secureBrowser?.native === true };
   }
   connectApp(appId: string, browser?: OAuthBrowserConfig) { return this.serial(async () => {
     if (this.options.arcadeOAuthEnabled === false) throw Error("App OAuth is temporarily disabled");
