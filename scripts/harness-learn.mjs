@@ -320,6 +320,87 @@ async function readEventRows(file, attempts) {
   throw lastErr;
 }
 
+/**
+ * Shared event-signal rules for Tardigrade runtime events, used by both the
+ * local sqlite miner and the remote export miner. Privacy: user message
+ * content (MessageReceived etc.) is never mined — only failure outcomes and
+ * receipt statuses.
+ */
+function pushEventSignals(e, run) {
+  const t = String(e.type);
+  if (t === "TurnFailed")
+    push({
+      kind: "turn_failed",
+      tool: "tardigrade",
+      run,
+      detail: excerpt(String(e.output ?? e.error ?? "(no output)")),
+      fingerprintInput: `turn_failed::${normalize(
+        String(e.output ?? e.error ?? ""),
+      )}`,
+    });
+  else if (t === "TurnCancelled")
+    push({
+      kind: "turn_cancelled",
+      tool: "tardigrade",
+      run,
+      detail: excerpt(String(e.output ?? e.reason ?? "")) || "(cancelled)",
+      fingerprintInput: `turn_cancelled::${run}`,
+    });
+  else if (t === "AikoDeliverySettled") {
+    const status = e.result?.status;
+    if (status && status !== "delivered")
+      push({
+        kind: `delivery_${status}`,
+        tool: "tardigrade",
+        run,
+        detail: excerpt(
+          `${e.result.providerId ?? "(no provider)"} ${e.result.error ?? ""}`.trim(),
+        ),
+        fingerprintInput: `delivery_${status}::${normalize(
+          String(e.result.error ?? e.result.providerId ?? ""),
+        )}`,
+      });
+  } else if (t === "ToolReturned") {
+    const r = e.result;
+    if (r && typeof r === "object" && typeof r.status === "string") {
+      const good = r.status === "ok" || r.status === "delivered";
+      if (!good)
+        push({
+          kind: r.status === "unknown" ? "receipt_unknown" : `receipt_${r.status}`,
+          tool: r.kind ?? "tool",
+          run,
+          detail: excerpt(
+            String(r.error ?? r.detail ?? (r.status === "unknown" ? "effect completed, outcome unverified" : r.status)),
+          ),
+          fingerprintInput: `receipt_${r.status}::${normalize(
+            `${r.kind ?? ""}${r.error ?? r.detail ?? ""}`,
+          )}`,
+        });
+    }
+  }
+  if (e.error && !"TurnFailed,AikoDeliverySettled,ToolReturned".split(",").includes(t))
+    push({
+      kind: "event_error",
+      tool: t,
+      run,
+      detail: excerpt(String(e.error)),
+      fingerprintInput: `event_error::${t}::${normalize(String(e.error))}`,
+    });
+}
+
+/** Parse one stored event row (may be an object or double-encoded JSON). */
+function parseStoredEvent(raw) {
+  let e = raw;
+  for (let i = 0; i < 2 && typeof e === "string"; i++) {
+    try {
+      e = JSON.parse(e);
+    } catch {
+      return null;
+    }
+  }
+  return e && typeof e === "object" && e.type ? e : null;
+}
+
 async function mineTardigrade(root) {
   try {
     ({ DatabaseSync } = await import("node:sqlite"));
@@ -348,101 +429,50 @@ async function mineTardigrade(root) {
     if (!result.table) continue;
     const { rows } = result;
     for (const row of rows) {
-        let e = row.event;
-        if (typeof e === "string") {
-          try {
-            e = JSON.parse(e);
-          } catch {
-            continue;
-          }
-        }
-        if (typeof e === "string") {
-          try {
-            e = JSON.parse(e);
-          } catch {
-            continue;
-          }
-        }
-        if (!e || typeof e !== "object" || !e.type) continue;
-        mined += 1;
-        const t = String(e.type);
-        if (t === "TurnFailed")
-          push({
-            kind: "turn_failed",
-            tool: "tardigrade",
-            run,
-            file,
-            detail: excerpt(String(e.output ?? e.error ?? "(no output)")),
-            fingerprintInput: `turn_failed::${normalize(
-              String(e.output ?? e.error ?? ""),
-            )}`,
-          });
-        else if (t === "TurnCancelled")
-          push({
-            kind: "turn_cancelled",
-            tool: "tardigrade",
-            run,
-            file,
-            detail: excerpt(String(e.output ?? e.reason ?? "")) || "(cancelled)",
-            fingerprintInput: `turn_cancelled::${run}`,
-          });
-        else if (t === "AikoDeliverySettled") {
-          const status = e.result?.status;
-          if (status && status !== "delivered")
-            push({
-              kind: `delivery_${status}`,
-              tool: "tardigrade",
-              run,
-              file,
-              detail: excerpt(
-                `${e.result.providerId ?? "(no provider)"} ${e.result.error ?? ""}`.trim(),
-              ),
-              fingerprintInput: `delivery_${status}::${normalize(
-                String(e.result.error ?? e.result.providerId ?? ""),
-              )}`,
-            });
-        } else if (t === "ToolReturned") {
-          const r = e.result;
-          if (r && typeof r === "object" && typeof r.status === "string") {
-            if (r.status === "unknown")
-              push({
-                kind: "receipt_unknown",
-                tool: r.kind ?? "tool",
-                run,
-                file,
-                detail: excerpt(String(r.error ?? "effect completed, outcome unverified")),
-                fingerprintInput: `receipt_unknown::${normalize(
-                  `${r.kind ?? ""}${r.error ?? ""}`,
-                )}`,
-              });
-            else if (!"ok,delivered".includes(r.status))
-              push({
-                kind: `receipt_${r.status}`,
-                tool: r.kind ?? "tool",
-                run,
-                file,
-                detail: excerpt(String(r.error ?? r.detail ?? r.status)),
-                fingerprintInput: `receipt_${r.status}::${normalize(
-                  `${r.kind ?? ""}${r.error ?? r.detail ?? ""}`,
-                )}`,
-              });
-          }
-        }
-        if (
-          e.error &&
-          !("AikoDeliverySettled,ToolReturned,TurnFailed".includes(t) && signals.at(-1)?.run === run)
-        )
-          push({
-            kind: "event_error",
-            tool: t,
-            run,
-            file,
-            detail: excerpt(String(e.error)),
-            fingerprintInput: `event_error::${t}::${normalize(String(e.error))}`,
-          });
-      }
+      const e = parseStoredEvent(row.event);
+      if (!e) continue;
+      mined += 1;
+      pushEventSignals(e, run);
+    }
   }
   return { events: mined, skipped };
+}
+
+/**
+ * Mine a remote Aiko deployment via the operator export endpoint
+ * (GET /api/control/export, AIKO_OPERATOR_TOKEN-gated): threads + full event
+ * journals. The raw export is cached under OUT for evidence; thread names are
+ * hashed — account/chat identifiers never enter lessons or PR bodies.
+ */
+async function mineTardigradeRemote({ url, token, exportFile }) {
+  let payload;
+  if (exportFile) {
+    payload = JSON.parse(fs.readFileSync(exportFile, "utf8"));
+  } else {
+    const res = await fetch(`${url.replace(/\/$/, "")}/api/control/export`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!res.ok) throw new Error(`export failed: HTTP ${res.status}`);
+    payload = await res.json();
+    fs.mkdirSync(path.join(OUT, "tardigrade-remote"), { recursive: true });
+    fs.writeFileSync(
+      path.join(OUT, `tardigrade-remote/export-${stamp}.json`),
+      JSON.stringify(payload),
+    );
+  }
+  const threads = payload.threads ?? [];
+  let mined = 0;
+  for (const { thread, events } of threads) {
+    const run = `remote-${sha16(String(thread))}`;
+    for (const raw of events ?? []) {
+      const e = parseStoredEvent(raw);
+      if (!e) continue;
+      mined += 1;
+      pushEventSignals(e, run);
+    }
+  }
+  return { threads: threads.length, events: mined, source: exportFile ? "export-file" : "live" };
 }
 
 // ---------- distillation ----------
@@ -533,12 +563,35 @@ let tardigrade = { root: tardigradeRoot, events: 0, skipped: [] };
 if (tardigradeRoot !== "none")
   tardigrade = { ...tardigrade, ...(await mineTardigrade(tardigradeRoot)) };
 
+// Remote Tardigrade (production Aiko on Cloudflare): enabled when
+// AIKO_EXPORT_URL + AIKO_OPERATOR_TOKEN are set, or --remote-export points at
+// a saved /api/control/export payload. Thread names are hashed; raw export is
+// cached under OUT (gitignored) for evidence.
+const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
+let remote = null;
+const remoteUrl = flag("remote-url", process.env.AIKA_EXPORT_URL ?? "");
+const remoteToken = flag("remote-token", process.env.AIKA_OPERATOR_TOKEN ?? "");
+const remoteExport = flag("remote-export", "");
+if (remoteExport || (remoteUrl && remoteToken)) {
+  try {
+    remote = await mineTardigradeRemote({
+      url: remoteUrl,
+      token: remoteToken,
+      exportFile: remoteExport || undefined,
+    });
+  } catch (err) {
+    remote = { error: String(err.message) };
+    process.stderr.write(
+      `harness-learn: remote tardigrade mining failed: ${err.message}\n`,
+    );
+  }
+}
+
 const state = loadState(path.join(OUT, "state.json"));
 const all = distill();
 const lessons = all.filter((l) => !state.fixed[l.fingerprint]);
 const fixedAlready = all.length - lessons.length;
 
-const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
 fs.mkdirSync(OUT, { recursive: true });
 
 const report = {
@@ -551,6 +604,7 @@ const report = {
     Object.entries(sources).map(([k, v]) => [k, v.length]),
   ),
   tardigrade,
+  remote,
   totals: {
     signals: signals.length,
     distinct_lessons: all.length,

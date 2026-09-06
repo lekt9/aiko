@@ -105,16 +105,16 @@ Tool-usage recovery notes — these exact failure patterns recurred in past runs
 - Do not shell out to cat/grep for source (the codedb guard blocks them); use the codedb tool.
 - Before finishing, complete or explicitly cancel every open todo item and re-run the self-check commands."
 
-PROMPT="You are the harness-fixer agent for this repository (the Aiko/Unbrowse monorepo). A self-learning loop mined this repo's .graff agent logs and found recurring failure patterns. Your mission: make the harness stop repeating them.
+PROMPT="You are the harness-fixer agent for this repository (the Aiko/Unbrowse monorepo). A self-learning loop mined the Aiko runtime's own Tardigrade event logs (turn failures, delivery and receipt outcomes, provider errors) plus this repo's .graff coding-session logs, and found recurring failure patterns. Your mission: fix OUR CODE so the runtime stops producing them.
 
-Read the lessons report at artifacts/harness-learn/lessons-current.json (human summary: artifacts/harness-learn/lessons-current.md). Its lessons have kind (tool_error | retry_loop | harness_retry | stuck_todo | turn_stall), tool, count, runs, and verbatim (redacted) evidence excerpts. Entries with \"new\": false are already fixed elsewhere — ignore them.
+Read the lessons report at artifacts/harness-learn/lessons-current.json (human summary: artifacts/harness-learn/lessons-current.md). Its lessons have kind, tool, count, runs, and verbatim (redacted) evidence excerpts; entries with \"new\": false are already fixed elsewhere — ignore them.
 
-Work the NEW lessons in priority order (highest count first):
-1. Diagnose the root cause in this repo's agent harness under apps/agent/ (actor.ts instruction strings such as AIKO_*_INSTRUCTIONS, tool wrappers, capability-builder, channel-response, tool-router-tools, automations). Distinguish a real harness gap from one-off operator error; lessons that are not harness-fixable are recorded as skipped in the report with the reason.
-2. Implement the smallest change that prevents recurrence: sharpen an instruction clause, add tool input validation or a clearer tool error message, or improve recovery guidance. Prefer instruction and validation fixes over new machinery.
-3. When the fix is code (not only instruction text), add or extend a test under apps/agent/test/ or tests/.
-4. Write the report ${REPORT} with sections: Lessons addressed (fingerprint -> decision), Root cause, Changes, Deliberately not done. Quote the evidence you acted on.
-5. Self-check before finishing: run: pnpm typecheck && pnpm test:aiko — and fix anything you broke.
+Priorities:
+1. Tardigrade runtime lessons first (kind turn_failed, turn_cancelled, delivery_unknown, delivery_rejected, receipt_unknown, receipt_*, event_error; tool tardigrade). Each is a real production turn outcome. For each NEW one: find the code path that produced it — apps/agent/ (actor.ts instruction strings such as AIKO_*_INSTRUCTIONS, tool wrappers, channel-response, reply-policy, cloudflare host, capability-builder, automations) or packages/ (protocol/sdk) when the fault is there — and change our code so the failure cannot recur: validate inputs, handle the provider error and retry/idempotently recover, sharpen the instruction clause that led the model into the dead end, or emit a clearer error receipt. A transient provider outage still warrants a code response: retry with backoff or a explicit degraded-answer path, never a silent give-up.
+2. .graff coding-session lessons second (kind tool_error, retry_loop, harness_retry, stuck_todo, turn_stall): same treatment where the fault is in this repo's code or instructions; the loop's own infra (scripts/harness-*) is owned by the human operator — do not touch it.
+3. Lessons that are genuinely not fixable in this repo are recorded as skipped in the report with the owning component named and the reason. No hand-waving.
+
+When the fix is code (not only instruction text), add or extend a test under apps/agent/test/ or tests/. Write the report ${REPORT} with sections: Lessons addressed (fingerprint -> decision), Root cause, Changes, Deliberately not done. Quote the evidence you acted on. Self-check before finishing: run: pnpm typecheck && pnpm test:aiko — and fix anything you broke.
 
 ${GUARDRAILS}
 

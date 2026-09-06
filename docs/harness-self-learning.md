@@ -69,8 +69,26 @@ attempts made) instead of being silently dropped.
 | `event_error` | any event with `error` | model/budget/provider errors |
 
 Privacy: user message content (`MessageReceived`) is never mined — only
-failure outcomes and receipt statuses. Production runs on Cloudflare Durable
-Objects; point `--tardigrade` at an exported/migrated state dir to mine those.
+failure outcomes and receipt statuses.
+
+### Production (remote) Tardigrade logs
+
+Production Aiko runs on Cloudflare Durable Objects. The loop mines them from
+the operator export endpoint — `GET /api/control/export`, gated by
+`AIKO_OPERATOR_TOKEN` — when these are set:
+
+```sh
+export AIKO_EXPORT_URL="https://aiko-agent.<account>.workers.dev"  # or --remote-url
+export AIKO_OPERATOR_TOKEN="..."                                  # or --remote-token
+```
+
+Alternatively, mine a saved export offline: `--remote-export <file.json>`.
+The raw export is cached (gitignored) under
+`artifacts/harness-learn/tardigrade-remote/` as evidence; **thread names are
+hashed** (`remote-<sha>`) so account/chat identifiers never enter lessons or
+PR bodies. Export endpoint requires the account to be resting (`409
+account_busy` otherwise); a failed fetch is recorded in the report under
+`remote.error` and never aborts the loop.
 
 Signals are normalized (numbers/hex/paths scrubbed, secrets redacted) and
 grouped into **lessons** with fingerprints. A local state file,
@@ -91,8 +109,13 @@ hard guardrails:
   (default 40 min), with `--dedupe-tool-calls` and `--learning-privacy local`.
 - Must run `pnpm typecheck` and `pnpm test:aiko` itself, then the script
   re-runs them; a failed check aborts the PR.
-- Must write a decision report to `docs/harness-learn/<stamp>.md` (lessons
-  addressed → root cause → changes → deliberately not done).
+- Fixer mission: **fix our code** — Tardigrade runtime failures
+  (`turn_failed`, `delivery_*`, `receipt_*`, `event_error`) map to changes in
+  `apps/agent/**` or `packages/**`; `.graff` coding-session lessons are
+  secondary; the loop's own scripts are owned by the operator and off-limits.
+- When the fix is code (not only instruction text), add or extend a test under
+apps/agent/test/ or tests/. Write the report `docs/harness-learn/<stamp>.md`
+(lessons addressed → root cause → changes → deliberately not done).
 
 Only then does the script commit, push, and open a PR whose body embeds the
 lessons table, the fixer's summary, and verification output. After the PR
