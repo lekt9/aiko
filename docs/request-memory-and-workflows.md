@@ -32,6 +32,13 @@ flowchart LR
 - Semantic retrieval uses entity-learn's current-record keyset scan, bounded to 10,000 pointers or 16 MiB. It checks available native definition evidence and model identity, returns at most 24,000 bytes of items, and reports exclusions/coverage. It is not an unlimited vector index.
 - Inspect **`/control` → Node graph → Browser indexing** for recorded request dependencies, preparation, keyed index receipts and failures. The graph is read-only: it does not provision a browser, call embeddings or replay requests. Historical receipts do not prove current pointer availability. See [admin graph](aiko-memory-graph.md).
 
+### Host replay session material and recompute
+
+- `observed_network_run` resolves the owner's current vault grant at execution time. An expired, still-renewable ready session is renewed mechanically: the agent posts `POST /v1/runtime/connections/:id/renew`, the vault runtime executes the stored renewal recipe server-side, and the agent polls status before retrieving material. Passwords never leave the vault; a non-renewable or revoked session fails closed.
+- Cookies enter replay through the harness runtime's session adapter — a single seam. The transport observes final headers only, and material headers fill names the artifact does not already declare; artifact-declared headers always win.
+- Responses recompute the run jar: a producer step's fresh `Set-Cookie` overrides stale base material per cookie name for later steps, the deletion form (`sid=; Max-Age=0`) expires the cookie, foreign-domain cookies are rejected, and unsafe values fail closed. Host-recomputed auth headers ride at dispatch and are never stored.
+- The log records the lifecycle as value-free events: `AikoUnlockSessionRenewed`, `AikoObservedSessionResolved` (before execution), and `AikoObservedHeadersRecomputed` (after execution; counts and sorted names only). Cookie and header values never enter artifacts, inputs, receipts, or events.
+
 Request and response values cross the VM bridge encrypted. Native tool logs contain opaque call handles and receipts. The inference seam expands only bounded transient results. User-facing answers may quote requested facts and enter normal conversation history; this does not mean the response body is retained in the request index.
 
 ## Workflow programs

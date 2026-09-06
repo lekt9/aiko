@@ -17,6 +17,7 @@ pnpm aiko:dev
 This installation is configured for **live GLM 5.3 Flash inference**, with durable allowances of 200 requests/day globally and 40/account/day. Fresh installations still require explicit paid-mode consent. Tardie 0.22 owns execution/recovery; actual `entity-learn@0.2.0` owns private per-account memory. Telegram is an adapter to the channel-independent `@unlock/sdk/aiko` plane. Public URL reading is enabled without cookies or JavaScript. Private app access and VM provisioning remain unmounted.
 
 - [Agent setup and security boundaries](apps/agent/README.md)
+- [Self-learning harness loop: mine agent logs, graff fixer agent, PR](docs/harness-self-learning.md)
 - [Telegram gateway, account isolation, portable SDK and operations](docs/aiko-gateway.md)
 - [Actual entity-learn integration, persistence and recovery](docs/aiko-entity-learn.md)
 - [Public-web browser setup, approvals and real-browser verification](docs/aiko-browser.md)

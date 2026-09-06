@@ -29,7 +29,9 @@
     "test:csv": "node scripts/browser-qa.mjs --csv",
     "test:http": "node scripts/http-smoke.mjs",
     "preview": "pnpm --filter @unlock/web exec vite preview --host 127.0.0.1 --port 4174 --strictPort",
-    "format:check": "prettier --check 'apps/web/src/**/*.{ts,tsx,css}' 'packages/sdk/src/*.ts' 'packages/protocol/src/*.ts' 'apps/server/src/*.ts' 'tests/**/*.ts' tokens.css"
+    "format:check": "prettier --check 'apps/web/src/**/*.{ts,tsx,css}' 'packages/sdk/src/*.ts' 'packages/protocol/src/*.ts' 'apps/server/src/*.ts' 'tests/**/*.ts' tokens.css",
+    "harness:learn": "node scripts/harness-learn.mjs",
+    "harness:selflearn": "bash scripts/harness-selflearn.sh"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
