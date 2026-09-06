@@ -21,3 +21,5 @@ codedb.snapshot
 *.key
 apps/agent/public/
 apps/agent/assets/runner.txt
+__pycache__/
+*.pyc
