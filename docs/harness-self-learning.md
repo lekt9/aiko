@@ -39,7 +39,8 @@ SELFLEARN_NO_PR=1   pnpm harness:selflearn   # agent fix + checks, no push/PR
 ## What gets mined
 
 `scripts/harness-learn.mjs` (no dependencies) reads `.graff/` within a time
-window (default 14 days) and extracts:
+window (default 14 days) **and the Tardigrade server-side event logs** and
+extracts:
 
 | signal | source | meaning |
 |---|---|---|
@@ -48,6 +49,24 @@ window (default 14 days) and extracts:
 | `harness_retry` | traces | harness-level `retry` / `subagent_retry` events |
 | `stuck_todo` | session meta | checklist items still open when the session ended |
 | `turn_stall` | behavior | long gaps between turns |
+
+Server-side **Tardigrade** logs (the Aiko runtime itself) are mined from
+`~/.local/share/unbrowse/aiko` (override with `--tardigrade <dir>`, disable
+with `--tardigrade none`): every `*.sqlite` event store — `actor.sqlite`,
+per-account `thread.sqlite`, background role dbs, and cutover exports — is
+opened read-only and its `events` rows parsed:
+
+| signal | source event | meaning |
+|---|---|---|
+| `turn_failed` | `TurnFailed` | a turn ended in failure (error output mined) |
+| `turn_cancelled` | `TurnCancelled` | turn cancelled mid-flight |
+| `delivery_unknown` / `delivery_rejected` | `AikoDeliverySettled` | message delivery not confirmed |
+| `receipt_unknown` / `receipt_*` | `ToolReturned` | browser/telegram receipt not `ok`/`delivered` |
+| `event_error` | any event with `error` | model/budget/provider errors |
+
+Privacy: user message content (`MessageReceived`) is never mined — only
+failure outcomes and receipt statuses. Production runs on Cloudflare Durable
+Objects; point `--tardigrade` at an exported/migrated state dir to mine those.
 
 Signals are normalized (numbers/hex/paths scrubbed, secrets redacted) and
 grouped into **lessons** with fingerprints. A local state file,

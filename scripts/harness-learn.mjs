@@ -29,6 +29,7 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
@@ -240,6 +241,172 @@ async function mineBehavior(file) {
   });
 }
 
+// ---------- tardigrade server-side event logs ----------
+
+const TARDIGRADE_DEFAULT = path.join(
+  os.homedir(),
+  ".local/share/unbrowse/aiko",
+);
+
+function walkSqlite(dir, depth, out) {
+  if (depth > 5 || !fs.existsSync(dir)) return;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return; // unreadable directory (permissions) — skip silently
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      // entity-learn memory stores are a separate domain (own docs); the
+      // telegram cursor db and host locks carry no agent-turn outcomes.
+      if (entry.name === "memory" || entry.name === "node_modules") continue;
+      walkSqlite(full, depth + 1, out);
+    } else if (
+      entry.name.endsWith(".sqlite") &&
+      !/^(host-lock|model-budget)\.sqlite$/.test(entry.name)
+    )
+      out.push(full);
+  }
+}
+
+/**
+ * Mine Tardigrade per-thread event logs (actor.sqlite, thread.sqlite,
+ * background role dbs, cutover exports). Events are JSON rows in an
+ * `events` / legacy `actor_events` table. Privacy: user message content is
+ * never mined — only failure outcomes and receipt statuses.
+ */
+async function mineTardigrade(root) {
+  let DatabaseSync;
+  try {
+    ({ DatabaseSync } = await import("node:sqlite"));
+  } catch {
+    process.stderr.write("harness-learn: node:sqlite unavailable — skipping tardigrade logs\n");
+    return 0;
+  }
+  const dbs = [];
+  walkSqlite(root, 0, dbs);
+  let mined = 0;
+  for (const file of dbs) {
+    const run = path.relative(root, file);
+    let db;
+    try {
+      db = new DatabaseSync(file, { readOnly: true });
+      const has = (t) =>
+        db
+          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+          .get(t);
+      const table = has("events") ? "events" : has("actor_events") ? "actor_events" : null;
+      if (!table) continue;
+      const rows = db.prepare(`SELECT event FROM "${table}" LIMIT 50000`).all();
+      for (const row of rows) {
+        let e = row.event;
+        if (typeof e === "string") {
+          try {
+            e = JSON.parse(e);
+          } catch {
+            continue;
+          }
+        }
+        if (typeof e === "string") {
+          try {
+            e = JSON.parse(e);
+          } catch {
+            continue;
+          }
+        }
+        if (!e || typeof e !== "object" || !e.type) continue;
+        mined += 1;
+        const t = String(e.type);
+        if (t === "TurnFailed")
+          push({
+            kind: "turn_failed",
+            tool: "tardigrade",
+            run,
+            file,
+            detail: excerpt(String(e.output ?? e.error ?? "(no output)")),
+            fingerprintInput: `turn_failed::${normalize(
+              String(e.output ?? e.error ?? ""),
+            )}`,
+          });
+        else if (t === "TurnCancelled")
+          push({
+            kind: "turn_cancelled",
+            tool: "tardigrade",
+            run,
+            file,
+            detail: excerpt(String(e.output ?? e.reason ?? "")) || "(cancelled)",
+            fingerprintInput: `turn_cancelled::${run}`,
+          });
+        else if (t === "AikoDeliverySettled") {
+          const status = e.result?.status;
+          if (status && status !== "delivered")
+            push({
+              kind: `delivery_${status}`,
+              tool: "tardigrade",
+              run,
+              file,
+              detail: excerpt(
+                `${e.result.providerId ?? "(no provider)"} ${e.result.error ?? ""}`.trim(),
+              ),
+              fingerprintInput: `delivery_${status}::${normalize(
+                String(e.result.error ?? e.result.providerId ?? ""),
+              )}`,
+            });
+        } else if (t === "ToolReturned") {
+          const r = e.result;
+          if (r && typeof r === "object" && typeof r.status === "string") {
+            if (r.status === "unknown")
+              push({
+                kind: "receipt_unknown",
+                tool: r.kind ?? "tool",
+                run,
+                file,
+                detail: excerpt(String(r.error ?? "effect completed, outcome unverified")),
+                fingerprintInput: `receipt_unknown::${normalize(
+                  `${r.kind ?? ""}${r.error ?? ""}`,
+                )}`,
+              });
+            else if (!"ok,delivered".includes(r.status))
+              push({
+                kind: `receipt_${r.status}`,
+                tool: r.kind ?? "tool",
+                run,
+                file,
+                detail: excerpt(String(r.error ?? r.detail ?? r.status)),
+                fingerprintInput: `receipt_${r.status}::${normalize(
+                  `${r.kind ?? ""}${r.error ?? r.detail ?? ""}`,
+                )}`,
+              });
+          }
+        }
+        if (
+          e.error &&
+          !("AikoDeliverySettled,ToolReturned,TurnFailed".includes(t) && signals.at(-1)?.run === run)
+        )
+          push({
+            kind: "event_error",
+            tool: t,
+            run,
+            file,
+            detail: excerpt(String(e.error)),
+            fingerprintInput: `event_error::${t}::${normalize(String(e.error))}`,
+          });
+      }
+    } catch (err) {
+      // locked / unreadable db — note it, keep mining
+      process.stderr.write(`harness-learn: skipped ${run}: ${err.message}\n`);
+    } finally {
+      try {
+        db?.close();
+      } catch {}
+    }
+  }
+  return mined;
+}
+
 // ---------- distillation ----------
 
 function distill() {
@@ -320,6 +487,14 @@ for (const f of sources.transcripts) {
 for (const f of sources.traces) if (fresh(f)) await mineTrace(f);
 for (const f of sources.behavior) if (fresh(f)) await mineBehavior(f);
 
+// Tardigrade server-side event logs (Aiko runtime: TurnFailed, delivery and
+// receipt outcomes). Pass --tardigrade none to disable, or a path to an
+// exported/migrated state dir (e.g. cloudflare-cutover exports).
+const tardigradeRoot = path.resolve(flag("tardigrade", TARDIGRADE_DEFAULT));
+let tardigradeEvents = 0;
+if (tardigradeRoot !== "none")
+  tardigradeEvents = await mineTardigrade(tardigradeRoot);
+
 const state = loadState(path.join(OUT, "state.json"));
 const all = distill();
 const lessons = all.filter((l) => !state.fixed[l.fingerprint]);
@@ -337,6 +512,7 @@ const report = {
   sources: Object.fromEntries(
     Object.entries(sources).map(([k, v]) => [k, v.length]),
   ),
+  tardigrade: { root: tardigradeRoot, events: tardigradeEvents },
   totals: {
     signals: signals.length,
     distinct_lessons: all.length,
