@@ -10,7 +10,7 @@ function fixture(overrides:Partial<BrowserUnlockAuthOptions>={}) {
  let current={owner:nav.owner,contextId:nav.contextId,generation:nav.generation};
  let search:ConnectorSearch=absent;
  const expiry=Date.now()+60000;
- const status={tenantId:tenant,profileId:profile,runtimeId:runtime,connectionId:connection,allowedDomains:["example.com"],verified:true,revision:7,expiresAt:expiry};
+ const status:{tenantId:string;profileId:string;runtimeId:string;connectionId:string;allowedDomains:string[];verified:boolean;revision:number;expiresAt:number;renewable?:boolean}={tenantId:tenant,profileId:profile,runtimeId:runtime,connectionId:connection,allowedDomains:["example.com"],verified:true,revision:7,expiresAt:expiry};
  const metadata={id:connection,name:"Example",identity:"owner@example.com",website:"https://example.com",domains:["example.com"],recipeId:"approved-login",maintenance:true,version:2,sourceId:null,sourceReference:null,hasPassword:true,deleted:false};
  const material={connectionId:connection,profileId:profile,runtimeId:runtime,allowedDomains:["example.com"],revision:7,expiresAt:expiry,cookies:[{name:"sid",value:"fixture-private-cookie-value",domain:"example.com",path:"/",expires:-1,secure:true,httpOnly:true,sameSite:"Lax" as const,hostOnly:true}]};
  const calls:{path:string;method:string}[]=[],installs:PrivateUnlockInstall[]=[],clears:PrivateUnlockScope[]=[];
@@ -152,4 +152,27 @@ test("switching assigned connections clears the old jar before new metadata is f
  f.getConfig().accounts["123"]!.connections["other.com"]=job;
  f.setTransport(path=>{expect(f.clears).toHaveLength(1);return Response.json({error:{code:"REVOKED"}},{status:403});});
  expect((await f.broker.beforeNavigate({...nav,url:"https://other.com"})).status).toBe("unavailable");expect(f.installs).toHaveLength(1);
+});
+
+for (const initial of [false,true]) test(`authoritative renewable flag permits ${initial?"initial":"expired"} SDK maintenance once`,async()=>{
+ const f=fixture();f.status.verified=false;f.status.renewable=true;f.status.expiresAt=initial?0:Date.now()-1000;if(initial)f.status.revision=0;
+ expect(await f.broker.beforeNavigate(nav)).toEqual({status:"renewal_pending"});
+ expect(await f.broker.requestRenewal(nav)).toEqual({status:"renewal_pending"});
+ expect(f.calls.filter(c=>c.method==="POST")).toHaveLength(1);expect(f.installs).toHaveLength(0);
+});
+
+test("authoritative renewable false blocks initial and revoked rows, and legacy expired stays denied",async()=>{
+ for(const initial of [false,true]){
+  const f=fixture();f.status.verified=false;f.status.renewable=false;f.status.expiresAt=0;if(initial)f.status.revision=0;
+  expect((await f.broker.beforeNavigate(nav)).status).toBe("unavailable");expect((await f.broker.requestRenewal(nav)).status).toBe("unavailable");expect(f.calls.some(c=>c.method==="POST")).toBe(false);expect(f.installs).toHaveLength(0);
+ }
+ const legacy=fixture();legacy.status.verified=false;legacy.status.expiresAt=Date.now()-1;
+ expect((await legacy.broker.requestRenewal(nav)).status).toBe("unavailable");expect(legacy.calls.some(c=>c.method==="POST")).toBe(false);
+});
+
+test("a later published revision can renew independently without replaying an uncertain prior POST",async()=>{
+ const f=fixture();f.status.verified=false;f.status.renewable=true;f.status.expiresAt=Date.now()-1;
+ expect((await f.broker.beforeNavigate(nav)).status).toBe("renewal_pending");
+ f.status.revision++;expect((await f.broker.requestRenewal(nav)).status).toBe("renewal_pending");
+ expect((await f.broker.beforeNavigate(nav)).status).toBe("renewal_pending");expect(f.calls.filter(c=>c.method==="POST")).toHaveLength(2);
 });

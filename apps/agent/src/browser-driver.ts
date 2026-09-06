@@ -154,12 +154,11 @@ export function browserDriverFactory(
     const sessions = new PrivateBrowserSessions(context, async () => {
       await startBrowser();
       if (!cookieAdapter) {
-        const {createCdpCookieAdapter} = await import("../../../packages/sdk/src/cdp.ts");
         cookieConnection = await openPrivateBrowserCdp(replayEndpoint!, lifetime.signal);
         const targets = await cookieConnection.send("Target.getTargets", {});
         const pages = targets.targetInfos.filter((target: any) => target.type === "page");
         if (pages.length !== 1 || typeof pages[0].browserContextId !== "string") throw new Error("Exclusively owned browser context unavailable");
-        cookieAdapter = await createCdpCookieAdapter(cookieConnection, {browserContextId: pages[0].browserContextId, targetId: pages[0].targetId});
+        cookieAdapter = await createOwnedCookieAdapter(cookieConnection, {browserContextId: pages[0].browserContextId, targetId: pages[0].targetId});
       }
       return cookieAdapter;
     }, record => {
@@ -552,6 +551,20 @@ export async function openPrivateBrowserCdp(endpoint: string, signal?: AbortSign
       );
     });
   return { send: rpc, close: () => {socket.close();signal?.removeEventListener("abort",abort);} };
+}
+
+/** Chromium reports an opaque default context ID on targets but requires Storage calls
+ * to omit that ID. Normalize only this exclusively owned process's verified default context;
+ * the actual SDK still validates target binding and performs scoped cookie replacement. */
+export async function createOwnedCookieAdapter(cdp: import("../../../packages/sdk/src/cdp.ts").PrivateCdp, binding: {browserContextId:string;targetId:string}) {
+  const {createCdpCookieAdapter}=await import("../../../packages/sdk/src/cdp.ts");
+  const contexts=await cdp.send("Target.getBrowserContexts", {});
+  if(!Array.isArray(contexts.browserContextIds))throw new Error("Private browser contexts unavailable");
+  const isDefault=!contexts.browserContextIds.includes(binding.browserContextId);
+  return createCdpCookieAdapter({send:(method,params,sessionId)=>{
+    if(isDefault&&(method==="Storage.getCookies"||method==="Storage.setCookies")&&params.browserContextId===binding.browserContextId){const {browserContextId:_,...scoped}=params;return cdp.send(method,scoped,sessionId);}
+    return cdp.send(method,params,sessionId);
+  }},binding);
 }
 
 /** Private Unlock metadata only. Neither this lifecycle nor the SDK cookie adapter is a model tool. */

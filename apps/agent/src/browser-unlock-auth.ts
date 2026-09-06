@@ -34,7 +34,7 @@ export interface BrowserUnlockAuthOptions {
 export type BrowserUnlockNavigation = PrivateUnlockContext & { url: string };
 const statusSchema = z.object({
   tenantId: z.string().uuid(), profileId: z.string().uuid(), runtimeId: z.string().uuid(), connectionId: z.string().uuid(),
-  allowedDomains: z.array(z.string()).min(1).max(100), verified: z.boolean(), revision: z.number().int().nonnegative(), expiresAt: z.number().int().nonnegative(),
+  allowedDomains: z.array(z.string()).min(1).max(100), verified: z.boolean(), revision: z.number().int().nonnegative(), expiresAt: z.number().int().nonnegative(), renewable: z.boolean().optional(),
 }).strict();
 type Status = z.infer<typeof statusSchema>;
 const equalDomains = (a: readonly string[], b: readonly string[]) => a.length === b.length && new Set(a).size === a.length && a.every(d => b.includes(d));
@@ -140,15 +140,17 @@ export function createBrowserUnlockAuth(input: BrowserUnlockAuthOptions) {
     await absent(before.allowedDomains);
     const scope:PrivateUnlockScope={...bound,domain,tenantId:account.tenantId,profileId:account.profileId,runtimeId:account.runtimeId,connectionId,allowedDomains:[...before.allowedDomains]};
     const verified=(s:Status)=>s.verified===true && s.revision>0 && s.expiresAt>Date.now();
-    if (renew || !before.verified && before.revision===0 && before.expiresAt===0) {
-      // The old status protocol does not distinguish revoked tombstones from expired/stale sessions.
-      // Only refresh verified access, or a never-published session; do not resurrect an ambiguous row.
-      check(beforeMeta.recipeId && (verified(before) || before.revision===0 && before.expiresAt===0));
-      const prior=renewals.get(connectionId);if(prior)return prior;
+    // The server's explicit false overrides legacy initial-session inference. Legacy expired
+    // rows remain ambiguous; only the authoritative renewable flag permits their renewal.
+    const renewable = before.renewable === true || before.renewable === undefined && before.revision===0 && before.expiresAt===0;
+    if (renew || !before.verified && renewable) {
+      check(beforeMeta.recipeId && (verified(before) || renewable));
+      const renewalKey = `${connectionId}:${beforeMeta.version}:${before.revision}`;
+      const prior=renewals.get(renewalKey);if(prior)return prior;
       check(await clearInstalled());
-      renewals.set(connectionId,unavailable()); // An uncertain POST must not be retried in this broker.
+      renewals.set(renewalKey,unavailable()); // An uncertain POST must not be retried in this broker.
       await agent.requestRenewal(connectionId,{signal});
-      const result:BrowserUnlockReceipt={status:"renewal_pending"};renewals.set(connectionId,result);return result;
+      const result:BrowserUnlockReceipt={status:"renewal_pending"};renewals.set(renewalKey,result);return result;
     }
     check(verified(before));
     const previous=installed.get(connectionId);

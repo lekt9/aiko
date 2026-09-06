@@ -1,6 +1,6 @@
 import {expect,test} from "bun:test";
 import {createCdpCookieAdapter,type PrivateCdp} from "../../../packages/sdk/src/cdp.ts";
-import {PrivateBrowserSessions,type PrivateSessionInstall,type PrivateSessionRecord,type PrivateBrowserContext,openPrivateBrowserCdp} from "../src/browser-driver.ts";
+import {PrivateBrowserSessions,type PrivateSessionInstall,type PrivateSessionRecord,type PrivateBrowserContext,openPrivateBrowserCdp,createOwnedCookieAdapter} from "../src/browser-driver.ts";
 import {replayKeys,wrapReplay,unwrapReplay,sealReplay,openReplay} from "../src/codegraff.ts";
 
 const context:PrivateBrowserContext={owner:"alice",contextId:"owned-context",generation:1};
@@ -111,7 +111,7 @@ const liveEndpoint=process.env.AIKO_SESSION_TEST_CDP;
 (liveEndpoint?test:test.skip)("live Chrome SDK adapter physically installs and revokes an HttpOnly session without model tools",async()=>{
  const cdp=await openPrivateBrowserCdp(liveEndpoint!);
  const targets=await cdp.send("Target.getTargets",{});const target=targets.targetInfos.find((t:any)=>t.type==="page");
- const adapter=await createCdpCookieAdapter(cdp,{browserContextId:target.browserContextId,targetId:target.targetId});
+ const adapter=await createOwnedCookieAdapter(cdp,{browserContextId:target.browserContextId,targetId:target.targetId});
  const metadata:PrivateSessionRecord[]=[];const sessions=new PrivateBrowserSessions(context,async()=>adapter,r=>{metadata.push(r)});
  try{
   await sessions.install(material());
