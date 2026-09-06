@@ -61,6 +61,16 @@ export const TELEGRAM_CONTROL_BUTTONS: TelegramButton[][] = [
 ];
 const positive = (value: unknown): value is number =>
   Number.isSafeInteger(value) && Number(value) > 0;
+/** Publish a Telegram generation draft on paragraph/chunk boundaries, never one letter at a time. */
+export const TELEGRAM_DRAFT_CHUNK_CHARS = 96;
+export function telegramDraftReady(previous: string | undefined, next: string, minChars = TELEGRAM_DRAFT_CHUNK_CHARS) {
+  if (next === previous) return false;
+  if (previous === undefined) return true;
+  if (!next.startsWith(previous)) return true;
+  const added = next.slice(previous.length);
+  if (previous === "") return added.includes("\n") || added.length >= 8;
+  return added.includes("\n") || added.length >= minChars;
+}
 async function responseBody(response: Response) {
   if (!response.body) throw new Error("empty_response");
   const reader = response.body.getReader(),
@@ -499,6 +509,7 @@ export function createTelegramOutbound(options: {
           signal,
         )
       : Promise.resolve<TelegramDelivery>({ status: "rejected" });
+  const publishedDrafts = new Map<string, string>();
   const editProgress = (
     chat: string,
     messageId: number,
@@ -537,18 +548,26 @@ export function createTelegramOutbound(options: {
     text: string,
     signal: AbortSignal,
     context?: { messageThreadId?: number; canStop?: boolean },
-  ) =>
-    canSend(chat) &&
-    (context?.messageThreadId === undefined || positive(context.messageThreadId)) &&
-    Number.isSafeInteger(draftId) &&
-    draftId !== 0 &&
-    [...text].length <= 4096
-      ? call(
-          "sendMessageDraft",
-          { chat_id: chat, draft_id: draftId, text: safe(text), ...(context?.messageThreadId ? { message_thread_id: context.messageThreadId } : {}), ...(context?.canStop ? { can_stop: true, keep_on_stop: false } : {}) },
-          signal,
-        )
-      : Promise.resolve<TelegramDelivery>({ status: "rejected" });
+  ) => {
+    if (
+      !canSend(chat) ||
+      (context?.messageThreadId !== undefined && !positive(context.messageThreadId)) ||
+      !Number.isSafeInteger(draftId) ||
+      draftId === 0 ||
+      [...text].length > 4096
+    )
+      return Promise.resolve<TelegramDelivery>({ status: "rejected" });
+    const key = `${chat}:${draftId}`;
+    const body = safe(text);
+    if (!telegramDraftReady(publishedDrafts.get(key), body))
+      return Promise.resolve<TelegramDelivery>({ status: "delivered" });
+    publishedDrafts.set(key, body);
+    return call(
+      "sendMessageDraft",
+      { chat_id: chat, draft_id: draftId, text: body, ...(context?.messageThreadId ? { message_thread_id: context.messageThreadId } : {}), ...(context?.canStop ? { can_stop: true, keep_on_stop: false } : {}) },
+      signal,
+    );
+  };
   return {
     sendRich,
     action,

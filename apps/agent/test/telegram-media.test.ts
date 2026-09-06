@@ -12,7 +12,7 @@ import {
   type TelegramMediaDescriptor,
   type TelegramMediaKind,
 } from "../src/telegram-media.ts";
-import { createTelegramOutbound } from "../src/telegram-outbound.ts";
+import { createTelegramOutbound, telegramDraftReady } from "../src/telegram-outbound.ts";
 import { createService } from "../src/server.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { Effect, Layer } from "effect";
@@ -853,4 +853,33 @@ test("native Stop and topic context survive durable normalization without accept
   expect(inbound).toMatchObject({user:"123",text:"/cancel",stoppedDraftId:71,messageThreadId:7,kind:"generation_stopped"});
   expect(normalizeTelegramUpdate(JSON.parse(serializeTelegramInbound(inbound)),policy).inbound).toEqual(inbound);
   expect(normalizeTelegramUpdate({...update,stopped_message_generation:{...update.stopped_message_generation,chat:{id:-123,type:"group"}}},policy).inbound).toBeUndefined();
+});
+
+test("generation drafts publish per paragraph or chunk, not per letter", async () => {
+  expect(telegramDraftReady(undefined, "")).toBe(true);
+  expect(telegramDraftReady("", "H")).toBe(false);
+  expect(telegramDraftReady("", "Searching…")).toBe(true);
+  expect(telegramDraftReady("H", "He")).toBe(false);
+  expect(telegramDraftReady("Hello", "Hello world")).toBe(false);
+  expect(telegramDraftReady("Hello", "Hello\nnext")).toBe(true);
+  expect(telegramDraftReady("Hello", "Hello" + "x".repeat(96))).toBe(true);
+  expect(telegramDraftReady("Searching…", "Working on your request…")).toBe(true);
+  const methods: string[] = [];
+  const bodies: string[] = [];
+  const tg = createTelegramOutbound({
+    token: "123:fixture",
+    allowedUsers: new Set(["123"]),
+    fetch: async (url, init) => {
+      methods.push(String(url).split("/").at(-1)!);
+      bodies.push(JSON.parse(String(init?.body)).text);
+      return Response.json({ ok: true, result: true });
+    },
+  });
+  const signal = new AbortController().signal;
+  expect((await tg.draft("123", 7, "", signal)).status).toBe("delivered");
+  expect((await tg.draft("123", 7, "H", signal)).status).toBe("delivered");
+  expect((await tg.draft("123", 7, "He", signal)).status).toBe("delivered");
+  expect((await tg.draft("123", 7, "Hello\nworld", signal)).status).toBe("delivered");
+  expect(methods).toEqual(["sendMessageDraft", "sendMessageDraft"]);
+  expect(bodies).toEqual(["", "Hello\nworld"]);
 });
