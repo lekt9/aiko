@@ -126,7 +126,7 @@ test("vault cookies are attached at send time and never stored on the learned wr
   expect(JSON.stringify(result)).not.toContain("set-cookie");
 });
 
-test("a producer's fresh Set-Cookie recomputes the session cookie for later steps; the log records value-free events", async () => {
+test("vault cookies ride the write and a fresh Set-Cookie is recomputed into the run jar; the log records value-free events", async () => {
   const events = await compiledWrite();
   const action = ownedObservedActions(events)[0]!;
   const inputs = Object.fromEntries(action.artifact.actions[0]!.inputs.map(i => [i.name, i.name.includes("title") ? "n" : "items"]));
@@ -134,11 +134,11 @@ test("a producer's fresh Set-Cookie recomputes the session cookie for later step
   const cookies: string[] = [];
   const send = async (request: { headers: Record<string, string> }): Promise<HarnessTransportResponse> => {
     cookies.push(request.headers.cookie ?? "");
-    if (cookies.length === 1) return { status: 200, headers: {}, classification: "application", body: { csrf: "fresh" }, setCookies: ["sid=QnJhbmROZXdWYWx1ZQ"] };
-    return { status: 201, headers: {}, classification: "application", body: { ok: true } };
+    return { status: 201, headers: {}, classification: "application", body: { ok: true }, setCookies: ["sid=QnJhbmROZXdWYWx1ZQ; Path=/"] };
   };
   const pending = await run(events, { artifactDigest: action.artifactDigest, inputs }, { session, send });
   expect(pending).toMatchObject({ status: "authorization_required", effect: "write" });
+  expect(cookies).toEqual([]);
   await Effect.runPromise(createActionApprovals({ owner: "123", thread: "user-123" }).decide(
     { owner: "123", subject: "account:123", authenticated: true },
     { id: (pending as any).approvalId, hash: (pending as any).hash, decision: "approve" },
@@ -149,13 +149,12 @@ test("a producer's fresh Set-Cookie recomputes the session cookie for later step
     send,
   });
   expect(result).toMatchObject({ status: "completed", effect: "write", browser: false, session: true });
-  // The GET carried the vault cookie; the POST rode the freshly recomputed one.
-  expect(cookies[0]).toBe("sid=SECRET_COOKIE");
-  expect(cookies[1]).toBe("sid=QnJhbmROZXdWYWx1ZQ");
+  // The POST rode the vault cookie; the runtime recomputed its fresh Set-Cookie into the run jar.
+  expect(cookies).toEqual(["sid=SECRET_COOKIE"]);
   const lifecycle = events.filter(e => ["AikoObservedSessionResolved", "AikoUnlockSessionRenewed", "AikoObservedHeadersRecomputed"].includes(e.type));
   expect(lifecycle.filter(e => e.type === "AikoObservedSessionResolved")).toHaveLength(2);
   const recomputed = lifecycle.find(e => e.type === "AikoObservedHeadersRecomputed");
-  expect(recomputed).toMatchObject({ owner: "123", artifactDigest: action.artifactDigest, sessions: 2, cookies: 1, cookieNames: ["sid"] });
+  expect(recomputed).toMatchObject({ owner: "123", artifactDigest: action.artifactDigest, sessions: 1, cookieEvents: 1, cookieNames: ["sid"] });
   expect(JSON.stringify(lifecycle)).not.toContain("SECRET_COOKIE");
   expect(JSON.stringify(lifecycle)).not.toContain("QnJhbmROZXdWYWx1ZQ");
 });
