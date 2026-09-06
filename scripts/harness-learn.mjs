@@ -278,30 +278,76 @@ function walkSqlite(dir, depth, out) {
  * `events` / legacy `actor_events` table. Privacy: user message content is
  * never mined — only failure outcomes and receipt statuses.
  */
-async function mineTardigrade(root) {
-  let DatabaseSync;
-  try {
-    ({ DatabaseSync } = await import("node:sqlite"));
-  } catch {
-    process.stderr.write("harness-learn: node:sqlite unavailable — skipping tardigrade logs\n");
-    return 0;
-  }
-  const dbs = [];
-  walkSqlite(root, 0, dbs);
-  let mined = 0;
-  for (const file of dbs) {
-    const run = path.relative(root, file);
+let DatabaseSync = null;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const SQLITE_TRANSIENT =
+  /SQLITE_(BUSY|LOCKED)|database is locked|database table is locked/i;
+
+/**
+ * Read a tardigrade event store without giving up on transient locks. A live
+ * actor holding the WAL is routine, not an error: wait on busy_timeout, then
+ * retry with backoff before conceding. Returns {table, rows} or {table:null}.
+ */
+async function readEventRows(file, attempts) {
+  let lastErr;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
     let db;
     try {
       db = new DatabaseSync(file, { readOnly: true });
+      try {
+        db.exec("PRAGMA busy_timeout = 3000");
+      } catch {}
       const has = (t) =>
         db
           .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
           .get(t);
       const table = has("events") ? "events" : has("actor_events") ? "actor_events" : null;
-      if (!table) continue;
+      if (!table) return { table: null };
       const rows = db.prepare(`SELECT event FROM "${table}" LIMIT 50000`).all();
-      for (const row of rows) {
+      return { table, rows };
+    } catch (err) {
+      lastErr = err;
+      err.attempts = attempt;
+      if (!SQLITE_TRANSIENT.test(String(err.message)) || attempt === attempts)
+        break;
+      await sleep(150 * 4 ** (attempt - 1)); // 150ms → 600ms → 2.4s → 9.6s
+    } finally {
+      try {
+        db?.close();
+      } catch {}
+    }
+  }
+  throw lastErr;
+}
+
+async function mineTardigrade(root) {
+  try {
+    ({ DatabaseSync } = await import("node:sqlite"));
+  } catch {
+    process.stderr.write("harness-learn: node:sqlite unavailable — skipping tardigrade logs\n");
+    return { events: 0, skipped: [] };
+  }
+  const attempts = Math.max(1, Number(flag("tardigrade-retries", "4")));
+  const dbs = [];
+  walkSqlite(root, 0, dbs);
+  let mined = 0;
+  const skipped = [];
+  for (const file of dbs) {
+    const run = path.relative(root, file);
+    let result;
+    try {
+      result = await readEventRows(file, attempts);
+    } catch (err) {
+      // retries exhausted — keep this visible instead of dropping it silently
+      skipped.push({ db: run, error: String(err.message), attempts: err.attempts ?? attempts });
+      process.stderr.write(
+        `harness-learn: gave up on ${run} after ${attempts} attempts: ${err.message}\n`,
+      );
+      continue;
+    }
+    if (!result.table) continue;
+    const { rows } = result;
+    for (const row of rows) {
         let e = row.event;
         if (typeof e === "string") {
           try {
@@ -395,16 +441,8 @@ async function mineTardigrade(root) {
             fingerprintInput: `event_error::${t}::${normalize(String(e.error))}`,
           });
       }
-    } catch (err) {
-      // locked / unreadable db — note it, keep mining
-      process.stderr.write(`harness-learn: skipped ${run}: ${err.message}\n`);
-    } finally {
-      try {
-        db?.close();
-      } catch {}
-    }
   }
-  return mined;
+  return { events: mined, skipped };
 }
 
 // ---------- distillation ----------
@@ -491,9 +529,9 @@ for (const f of sources.behavior) if (fresh(f)) await mineBehavior(f);
 // receipt outcomes). Pass --tardigrade none to disable, or a path to an
 // exported/migrated state dir (e.g. cloudflare-cutover exports).
 const tardigradeRoot = path.resolve(flag("tardigrade", TARDIGRADE_DEFAULT));
-let tardigradeEvents = 0;
+let tardigrade = { root: tardigradeRoot, events: 0, skipped: [] };
 if (tardigradeRoot !== "none")
-  tardigradeEvents = await mineTardigrade(tardigradeRoot);
+  tardigrade = { ...tardigrade, ...(await mineTardigrade(tardigradeRoot)) };
 
 const state = loadState(path.join(OUT, "state.json"));
 const all = distill();
@@ -512,7 +550,7 @@ const report = {
   sources: Object.fromEntries(
     Object.entries(sources).map(([k, v]) => [k, v.length]),
   ),
-  tardigrade: { root: tardigradeRoot, events: tardigradeEvents },
+  tardigrade,
   totals: {
     signals: signals.length,
     distinct_lessons: all.length,

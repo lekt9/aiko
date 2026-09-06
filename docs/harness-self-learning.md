@@ -54,7 +54,11 @@ Server-side **Tardigrade** logs (the Aiko runtime itself) are mined from
 `~/.local/share/unbrowse/aiko` (override with `--tardigrade <dir>`, disable
 with `--tardigrade none`): every `*.sqlite` event store — `actor.sqlite`,
 per-account `thread.sqlite`, background role dbs, and cutover exports — is
-opened read-only and its `events` rows parsed:
+opened read-only and its `events` rows parsed. Reads never give up on
+transient contention: `busy_timeout` (3s) plus bounded backoff retries
+(`--tardigrade-retries`, default 4, 150ms→9.6s). A store that stays locked
+beyond that is recorded in the report under `tardigrade.skipped` (db, error,
+attempts made) instead of being silently dropped.
 
 | signal | source event | meaning |
 |---|---|---|
