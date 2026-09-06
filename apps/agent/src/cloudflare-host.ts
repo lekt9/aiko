@@ -449,8 +449,12 @@ export async function createCloudflareAccountHost<R>(
           ? sliceThread
           : undefined) ??
         pool.find((thread) => threadNeedsWork(thread) && thread.startsWith("user-")) ??
-        pool.find((thread) => threadNeedsWork(thread));
-      if (next === undefined) throw sliceStop;
+        pool.find((thread) => threadNeedsWork(thread)) ??
+        // A settled runtime with a freshly appended event can report resting before it
+        // reconciles; refusing to pick it here strands ingress behind a +1ms alarm loop.
+        // Serving a genuinely resting actor is a cheap no-op that clears its dirty flag.
+        pool.find((thread) => thread.startsWith("user-")) ??
+        pool[0]!;
       if (sliceThread === undefined) sliceThread = next;
       if (next !== sliceThread) throw sliceStop;
       return next;
